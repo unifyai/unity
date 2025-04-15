@@ -1,4 +1,3 @@
-import logging
 import os
 import random
 import threading
@@ -7,7 +6,6 @@ import time
 import requests
 import unify
 from dotenv import load_dotenv
-from tqdm import tqdm
 from vapi_python.vapi_python import DailyCall, create_web_call
 
 from sys_msgs import vocal_request_taker_sys_msg
@@ -59,28 +57,28 @@ def get_call_logs(call_id):
 
 
 def upload_call_logs(call_id):
-    logging.info(f"uploading call logs for call id {call_id}...")
+    print(f"uploading call logs for call id {call_id}...")
     failures = 0
     failure_limit = 10
     sleep_time = 30
-    with tqdm(total=failure_limit, desc="Uploading logs from call") as pbar:
-        while True:
-            response = get_call_logs(call_id)
-            if response.status_code != 200:
-                if failures < failure_limit:
-                    time.sleep(sleep_time + random.uniform(-2, 2))
-                    failures += 1
-                    pbar.update(1)
-                    continue
-                else:
-                    raise Exception(f"Failed to get call logs for call {call_id}")
-            response = response.json()
-            if response["status"] == "in-progress":
+    time.sleep(15)
+    while True:
+        response = get_call_logs(call_id)
+        if response.status_code != 200:
+            if failures < failure_limit:
+                print(response.json())
+                time.sleep(sleep_time + random.uniform(-2, 2))
+                failures += 1
                 continue
-            elif response["status"] == "ended":
+            else:
+                raise Exception(f"Failed to get call logs for call {call_id}")
+        response = response.json()
+        if response["status"] == "in-progress":
+            continue
+        elif response["status"] == "ended":
+            with unify.Context("Calls", overwrite=True):
                 unify.log(
-                    context="Calls",
                     **{"call_id" if k == "id" else k: v for k, v in response.items()},
                 )
-                break
-    logging.info(f"logs for call id {call_id} uploaded!")
+            break
+    print(f"logs for call id {call_id} uploaded!")
