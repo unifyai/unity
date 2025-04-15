@@ -78,6 +78,9 @@ def upload_call_logs(call_id):
             if response["status"] == "in-progress":
                 continue
             elif response["status"] == "ended":
-                unify.log(context="Calls", **response)
+                unify.log(
+                    context="Calls",
+                    **{"call_id" if k == "id" else k: v for k, v in response.items()},
+                )
                 break
     logging.info(f"logs for call id {call_id} uploaded!")
