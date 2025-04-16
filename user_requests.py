@@ -67,7 +67,6 @@ def upload_call_logs(call_id):
     failures = 0
     failure_limit = 10
     sleep_time = 30
-    time.sleep(15)
     while True:
         response = get_call_logs(call_id)
         if response.status_code != 200:
