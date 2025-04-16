@@ -14,7 +14,8 @@ load_dotenv()
 VAPI_PRIVATE_KEY = os.environ["VAPI_PRIVATE_KEY"]
 
 
-def make_request():
+@unify.cached
+def make_call():
     first_name = os.environ["FIRST_NAME"]
     num_conversations = 0
     summary = ""
@@ -42,7 +43,12 @@ def make_request():
     client.join(web_call_url)
     input("press enter to end the call\n")
     client.leave()
-    thread = threading.Thread(target=upload_call_logs, args=(call_id,))
+    return call_id
+
+
+def make_request():
+    call_id = make_call()
+    thread = threading.Thread(target=upload_request, args=(call_id,))
     thread.start()
     time.sleep(1)
 
@@ -82,3 +88,10 @@ def upload_call_logs(call_id):
                 )
             break
     print(f"logs for call id {call_id} uploaded!")
+    return response
+
+
+def upload_request(call_id):
+    response = upload_call_logs(call_id)
+    # ToDo: extract the request from the call summary, and upload to the platform
+    print("uploaded request")
