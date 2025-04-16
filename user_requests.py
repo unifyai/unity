@@ -105,7 +105,10 @@ def upload_request(call_id):
             indent=4,
         ),
     )
-    requests = [{"request": v} for v in json.loads(requests)["list_of_requests"]]
+    requests = [
+        {"request": v, "source": f"call {call_id}", "status": "not started"}
+        for v in json.loads(requests)["list_of_requests"]
+    ]
     unify.create_logs(
         context="Requests",
         entries=requests,
