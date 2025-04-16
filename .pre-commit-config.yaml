@@ -41,13 +41,3 @@ repos:
     entry: .venv/bin/black
     language: system
     types: [python]
-
-  - id: isort
-    name: isort
-    entry: .venv/bin/isort
-    language: system
-    types: [python]
-    exclude: |
-      (?x)^(
-        .*/__init__\.py      # Exclude all __init__.py files
-      )$

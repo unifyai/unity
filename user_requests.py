@@ -1,32 +1,32 @@
+import json
 import os
 import random
 import threading
 import time
+from typing import List
 
 import requests
 import unify
 from dotenv import load_dotenv
+from pydantic import BaseModel
 from vapi_python.vapi_python import DailyCall, create_web_call
 
-from sys_msgs import vocal_request_taker_sys_msg
+from sys_msgs import (
+    extract_request_from_call_sys_msg,
+    vocal_request_taker_sys_msg,
+)
 
 load_dotenv()
 VAPI_PRIVATE_KEY = os.environ["VAPI_PRIVATE_KEY"]
+FIRST_NAME = os.environ["FIRST_NAME"]
 
 
 @unify.cached
 def make_call():
-    first_name = os.environ["FIRST_NAME"]
-    num_conversations = 0
-    summary = ""
-    past_summary = f"A summary of the past f{num_conversations} conversations with f{first_name} are as follows:{summary}"
     assistant = {
         "assistant": {
-            "firstMessage": f"Hey {first_name}, how can I help?",
-            "context": vocal_request_taker_sys_msg.replace(
-                "{first_name}",
-                first_name,
-            ),
+            "firstMessage": f"Hey {FIRST_NAME}, how can I help?",
+            "context": vocal_request_taker_sys_msg,
             "model": "gpt-4o",
             "voice": "jennifer-playht",
             "recordingEnabled": True,
@@ -43,6 +43,7 @@ def make_call():
     client.join(web_call_url)
     input("press enter to end the call\n")
     client.leave()
+    time.sleep(10)
     return call_id
 
 
@@ -71,7 +72,6 @@ def upload_call_logs(call_id):
         response = get_call_logs(call_id)
         if response.status_code != 200:
             if failures < failure_limit:
-                print(response.json())
                 time.sleep(sleep_time + random.uniform(-2, 2))
                 failures += 1
                 continue
@@ -90,7 +90,24 @@ def upload_call_logs(call_id):
     return response
 
 
+class Requests(BaseModel):
+    list_of_requests: List[str]
+
+
 def upload_request(call_id):
     response = upload_call_logs(call_id)
-    # ToDo: extract the request from the call summary, and upload to the platform
-    print("uploaded request")
+    client = unify.Unify("o3-mini@openai")
+    client.set_system_message(extract_request_from_call_sys_msg)
+    client.set_response_format(Requests)
+    requests = client.generate(
+        json.dumps(
+            {k: v for k, v in response.items() if k in ("summary", "transcript")},
+            indent=4,
+        ),
+    )
+    requests = [{"request": v} for v in json.loads(requests)["list_of_requests"]]
+    unify.create_logs(
+        context="Requests",
+        entries=requests,
+    )
+    print("uploaded requests")
