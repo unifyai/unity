@@ -10,7 +10,8 @@ def _open_gmail():
     """Open gmail.com"""
 
 
-@primitive
+# @observe
+# ToDo: implement observe decorator
 def _signed_in():
     """Check if user is currently signed into Gmail."""
 
@@ -41,7 +42,7 @@ def _enter_password():
 
 
 @primitive
-def _press_enter():
+def _click_enter():
     """Press the Enter key."""
 
 
@@ -52,14 +53,14 @@ def _defer_to_llm():
 def log_into_gmail():
     """Log into GMail using known credentials."""
     _open_gmail()
-    if _signed_in():
-        return "Already signed in"
+    # if _signed_in():
+    #     return "Already signed in"
     _click_sign_in()
     _click_username_field()
     _enter_username()
     _click_password_field()
     _enter_password()
-    _press_enter()
-    if not _signed_in():
-        _defer_to_llm()
+    _click_enter()
+    # if not _signed_in():
+    #     _defer_to_llm()
     return "Signed in successfully"
