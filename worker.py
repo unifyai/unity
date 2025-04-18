@@ -39,14 +39,14 @@ class BrowserWorker(threading.Thread):
         self.start_url = start_url
         self.refresh_interval = refresh_interval
         self.log = log or (lambda *_: None)
-        self._stop = threading.Event()
+        self._stop_event = threading.Event()
 
         # will be initialised inside `run`
         self.runner: CommandRunner | None = None
 
     # ------------------------------------------------------------------ API
     def stop(self) -> None:
-        self._stop.set()
+        self._stop_event.set()
 
     # ------------------------------------------------------------------ run
     def run(self) -> None:
@@ -62,7 +62,7 @@ class BrowserWorker(threading.Thread):
             last_elements: list[dict] = []
 
             try:
-                while not self._stop.is_set():
+                while not self._stop_event.is_set():
                     # -- 1) drain commands --------------------------------
                     while True:
                         try:

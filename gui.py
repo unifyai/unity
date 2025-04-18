@@ -101,6 +101,14 @@ class ControlPanel(tk.Tk):
         make(3, 0, "New tab", "new tab")
         make(3, 1, "Close tab", "close tab")
 
+        # ---- exit button ------------------------------------------------
+        ttk.Button(
+            btns,
+            text="Exit",
+            command=self._on_exit,  # ← defined below
+            style="Danger.TButton",  # optional: red‑looking style
+        ).grid(row=4, column=0, columnspan=2, sticky="ew", pady=(8, 0))
+
         # -------- command bar ------------------------------------------
         bar = tk.Frame(self)
         bar.grid(row=1, column=0, columnspan=2, sticky="ew", padx=5, pady=4)
@@ -114,6 +122,11 @@ class ControlPanel(tk.Tk):
             row=0,
             column=2,
         )
+
+    # ---------------------------------------------------------------- exit
+    def _on_exit(self) -> None:
+        """Gracefully close the GUI; `mainloop()` will return to main.py."""
+        self.quit()
 
     # ---------------------------------------------------------------- events
     def _on_list_click(self, _e: Any) -> None:
