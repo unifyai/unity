@@ -32,7 +32,10 @@ class MirrorPage:
         # keep navigation in sync
         def handle_nav(frame):
             if frame.parent_frame is None:
-                self.page.goto(frame.url)
+                try:
+                    self.page.goto(frame.url, timeout=10000)
+                except Exception:
+                    pass  # ignore aborted navigations
 
         self.visible.on("framenavigated", handle_nav)
 
