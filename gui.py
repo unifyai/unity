@@ -16,7 +16,8 @@ import traceback
 from tkinter import scrolledtext, ttk
 from typing import Any
 
-from agent import Action, parse_instruction
+from agent import parse_instruction
+from helpers import _slug
 from pygments import highlight
 from pygments.formatters import HtmlFormatter
 from pygments.lexers import PythonLexer
@@ -132,33 +133,70 @@ class ControlPanel(tk.Tk):
 
         # free English → LLM  (catch & show full trace) ------------------
         try:
-            # extract (idx, label) pairs for buttons visible in GUI list
-            btns = [(idx, label) for idx, label, _hover in self.elements]
-            action = parse_instruction(
+            response = parse_instruction(
                 text,
                 tabs=self.tab_titles,
                 screenshot=self.screenshot,
-                buttons=btns,
+                buttons=[(idx, label) for idx, label, _ in self.elements],
             )
         except Exception:
-            tb = traceback.format_exc()
-            self._log_trace(tb)
+            self._log_trace(traceback.format_exc())
             return
 
-        if not action:
+        if response is None:
             self._log("❗ Could not interpret instruction")
             return
 
-        cmd = self._action_to_runner_cmd(action)
+        cmd = self._pick_low_level_cmd(response)
         if cmd:
             self._log(f"  ↳ {cmd}")
             self._queue_command(cmd)
         else:
-            self._log("❗ Could not map instruction to command")
+            self._log("❗ No action selected")
 
-    # convert structured Action to low‑level string
-    @staticmethod
-    def _action_to_runner_cmd(act: Action) -> str | None:
+    # ---------------------------------------------------- schema → command
+    def _pick_low_level_cmd(self, resp) -> str | None:
+        """
+        Convert the new agent response (with apply flags) into a single
+        low‑level command string for the worker.
+        """
+        # ----- tab actions -------------------------------------------------
+        for key, obj in resp.tab_actions.model_dump().items():
+            if obj.get("apply"):
+                if key == "new_tab":
+                    return "new tab"
+                if key.startswith("close_tab_"):
+                    tab = key[len("close_tab_") :]
+                    return f"close tab {tab.replace('_', ' ')}"
+                if key.startswith("select_tab_"):
+                    tab = key[len("select_tab_") :]
+                    return f"switch to tab {tab.replace('_', ' ')}"
+        # ----- scroll actions ---------------------------------------------
+        sc = resp.scroll_actions
+        if sc.scroll_up.apply:
+            px = sc.scroll_up.pixels or 300
+            return f"scroll up {px}"
+        if sc.scroll_down.apply:
+            px = sc.scroll_down.pixels or 300
+            return f"scroll down {px}"
+        if getattr(sc, "start_scrolling_up", None) and sc.start_scrolling_up.apply:
+            return "start scroll up"
+        if getattr(sc, "start_scrolling_down", None) and sc.start_scrolling_down.apply:
+            return "start scroll down"
+        if getattr(sc, "stop_scrolling_up", None) and sc.stop_scrolling_up.apply:
+            return "stop scroll"
+        if getattr(sc, "stop_scrolling_down", None) and sc.stop_scrolling_down.apply:
+            return "stop scroll"
+        # ----- button actions ---------------------------------------------
+        slug_to_idx = {_slug(label): idx for idx, label, _ in self.elements}
+        for key, obj in resp.button_actions.model_dump().items():
+            if obj.get("apply") and key.startswith("click_button_"):
+                slug_text = key[len("click_button_") :]
+                if slug_text in slug_to_idx:
+                    return f"click {slug_to_idx[slug_text]}"
+                # fallback: click by button text
+                return f"click button {slug_text.replace('_', ' ')}"
+        return None
         match act.action:
             case "click_button" if act.button_text:
                 return f"click button {act.button_text}"

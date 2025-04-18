@@ -1,3 +1,5 @@
+black
+autoflake
 playwright
 python-dotenv
 openai

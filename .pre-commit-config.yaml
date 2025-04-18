@@ -27,7 +27,7 @@ repos:
   hooks:
   - id: autoflake
     name: autoflake
-    entry: .venv/bin/autoflake
+    entry: .unity/bin/autoflake
     language: system
     types: [python]
     args: [--in-place, --remove-all-unused-imports, --remove-duplicate-keys]
@@ -38,6 +38,6 @@ repos:
 
   - id: black
     name: Format with Black
-    entry: .venv/bin/black
+    entry: .unity/bin/black
     language: system
     types: [python]
