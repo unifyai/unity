@@ -11,21 +11,36 @@ load_dotenv()
 
 from gui import ControlPanel
 from worker import BrowserWorker
+from primitive import init as primitive_init
 
-START_URL = "https://unify.ai"
+
+def run_tasks():
+    from tasks.log_into_gmail import log_into_gmail
+
+    log_into_gmail()
 
 
 def main() -> None:
     # queues
     cmd_q: "queue.Queue[str]" = queue.Queue(maxsize=20)
     up_q: "queue.Queue[list]" = queue.Queue(maxsize=20)
+    text_q: queue.Queue[str] = queue.Queue(maxsize=100)
 
     # start worker thread
-    worker = BrowserWorker(cmd_q, up_q, start_url=START_URL, refresh_interval=0.4)
+    worker = BrowserWorker(
+        cmd_q,
+        up_q,
+        start_url="https://www.google.com/",
+        refresh_interval=0.4,
+    )
     worker.start()
 
     # launch Tk GUI
-    gui = ControlPanel(cmd_q, up_q)
+    gui = ControlPanel(cmd_q, up_q, text_q)
+    primitive_init(text_q.put)
+
+    gui.after(1000, run_tasks)
+
     try:
         gui.mainloop()
     finally:
