@@ -8,6 +8,7 @@ from __future__ import annotations
 import queue
 import threading
 import time
+import shutil
 from pathlib import Path
 from tempfile import mkdtemp
 from typing import Callable
@@ -100,8 +101,11 @@ class BrowserWorker(threading.Thread):
                     last_elements = collect_elements(self.runner.active)
                     boxes = build_boxes(last_elements)
                     # draw overlay both in the UI page and the headless mirror
-                    paint_overlay(self.runner.active, boxes)  # visible window
-                    paint_overlay(mirror.page, boxes)
+                    try:
+                        paint_overlay(self.runner.active, boxes)  # visible window
+                        paint_overlay(mirror.page, boxes)
+                    except Exception as e:
+                        self.log(f"overlay failed: {e}")
                     # ---------- package GUI update --------------------
                     elements_lite = [
                         (i + 1, e["label"], e["hover"])
@@ -132,4 +136,4 @@ class BrowserWorker(threading.Thread):
             finally:
                 mirror.close()
                 ctx.close()
-                profile_dir.unlink(missing_ok=True)
+                shutil.rmtree(profile_dir, ignore_errors=True)
