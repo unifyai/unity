@@ -45,14 +45,12 @@ def _press_enter():
     """Press the Enter key."""
 
 
-@primitive
 def _defer_to_llm():
-    """Defer to LLM for handling unexpected login scenarios."""
+    raise Exception("Not yet implemented")
 
 
 def log_into_gmail():
     """Log into GMail using known credentials."""
-    breakpoint()
     _open_gmail()
     if _signed_in():
         return "Already signed in"
