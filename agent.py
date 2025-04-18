@@ -1,11 +1,10 @@
 from __future__ import annotations
 
-from enum import Enum
-from typing import List, Literal, Optional, Tuple
+from typing import List, Optional, Tuple
 
 import unify
 from helpers import _pascal, _slug
-from pydantic import BaseModel, Field, create_model
+from pydantic import BaseModel, create_model
 from sys_msgs import INTERJECTION_TO_BROWSER_ACTION
 
 client = unify.Unify("o3-mini@openai")
@@ -14,31 +13,7 @@ client.set_system_message(INTERJECTION_TO_BROWSER_ACTION)
 SCROLLING_STATE = None
 
 
-# Return Type #
-
-
-class ActionName(str, Enum):
-    click_button = "click_button"
-    scroll = "scroll"
-    start_scroll = "start_scroll"
-    stop_scroll = "stop_scroll"
-    new_tab = "new_tab"
-    close_tab = "close_tab"
-    switch_tab = "switch_tab"
-
-
-class Action(BaseModel):
-    action: ActionName
-    # click_button
-    button_idx: Optional[int] = None
-    # scrolling
-    direction: Optional[Literal["up", "down"]] = None
-    pixels: Optional[int] = Field(None, ge=1)
-    # tab ops
-    tab_text: Optional[str] = None
-
-
-# Structured Output #
+# Schemas #
 
 _response_fields = {
     "rationale": (Optional[str], ...),
@@ -153,7 +128,7 @@ def parse_instruction(
     tabs: List[str],
     screenshot: bytes,
     buttons: Optional[List[Tuple[int, str]]] = None,
-) -> Optional[Action]:
+) -> Optional[BaseModel]:
     response_format = create_model(
         "ActionSelection",
         tab_actions=create_model(
@@ -173,4 +148,5 @@ def parse_instruction(
     )
     client.set_response_format(response_format)
     ret = client.generate(text)
+    ret = response_format.model_validate_json(ret)
     return ret
