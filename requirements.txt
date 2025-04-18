@@ -4,5 +4,5 @@ playwright
 python-dotenv
 openai
 pygments
-# -e ../../unify # dev mode
+# -e ../unify # dev mode
 git+https://github.com/unifyai/unify # deploy mode
