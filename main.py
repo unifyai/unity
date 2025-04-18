@@ -15,7 +15,7 @@ from primitive import init as primitive_init
 
 import unify
 
-unify.activate("Unity")
+unify.activate("Unity", overwrite=True)
 
 
 def run_tasks():
@@ -23,7 +23,7 @@ def run_tasks():
     # log_into_gmail()
 
 
-# @unify.traced
+@unify.traced
 def main() -> None:
     # queues
     cmd_q: "queue.Queue[str]" = queue.Queue(maxsize=20)
