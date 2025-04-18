@@ -3,7 +3,7 @@ Tk‑based front‑end.
 
 • All Playwright work is done in BrowserWorker (background thread)
 • This file now accepts *arbitrary English* in the command bar, sends it to
-  o3‑mini (OpenAI) via `agent.parse_instruction`, converts the structured
+  o3‑mini (OpenAI) via `agent.primitive_to_browser_action`, converts the structured
   result into the low‑level command strings understood by BrowserWorker,
   and shows everything in the log window.
 """
@@ -16,7 +16,7 @@ import traceback
 from tkinter import scrolledtext, ttk
 from typing import Any
 
-from agent import parse_instruction
+from agent import primitive_to_browser_action
 from helpers import _slug
 from pygments import highlight
 from pygments.formatters import HtmlFormatter
@@ -143,7 +143,7 @@ class ControlPanel(tk.Tk):
 
         # free English → LLM  (catch & show full trace) ------------------
         try:
-            response = parse_instruction(
+            response = primitive_to_browser_action(
                 text,
                 tabs=self.tab_titles,
                 screenshot=self.screenshot,
