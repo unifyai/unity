@@ -123,6 +123,7 @@ def _construct_scroll_actions():
         raise Exception(f"Invalid SCROLLING_STATE {SCROLLING_STATE}")
 
 
+# @unify.traced
 def primitive_to_browser_action(
     text: str,
     tabs: List[str],

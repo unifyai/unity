@@ -13,6 +13,10 @@ from gui import ControlPanel
 from worker import BrowserWorker
 from primitive import init as primitive_init
 
+import unify
+
+unify.activate("Unity")
+
 
 def run_tasks():
     from tasks.log_into_gmail import log_into_gmail
@@ -20,6 +24,7 @@ def run_tasks():
     log_into_gmail()
 
 
+# @unify.traced
 def main() -> None:
     # queues
     cmd_q: "queue.Queue[str]" = queue.Queue(maxsize=20)
