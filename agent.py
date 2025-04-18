@@ -7,7 +7,7 @@ from helpers import _pascal, _slug
 from pydantic import BaseModel, create_model
 from sys_msgs import INTERJECTION_TO_BROWSER_ACTION
 
-client = unify.Unify("o3-mini@openai")
+client = unify.Unify("gpt-4o-mini@openai")
 client.set_system_message(INTERJECTION_TO_BROWSER_ACTION)
 
 SCROLLING_STATE = None
