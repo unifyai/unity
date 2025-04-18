@@ -32,16 +32,26 @@ class ControlPanel(tk.Tk):
         self,
         command_q: "queue.Queue[str]",
         update_q: "queue.Queue[list[tuple[int, str, bool]]]",
+        text_q: queue.Queue[str],
     ):
         super().__init__()
         self.cmd_q = command_q  # GUI → worker
         self.up_q = update_q  # worker → GUI
+        self.text_q = text_q  # requests -> worker
         self.elements: list[tuple[int, str, bool]] = []
         self.screenshot: bytes = b""
         self.tab_titles: list[str] = []
 
         self._build_widgets()
         self.after(self.REFRESH_INTERVAL_MS, self._poll_updates)
+
+        self.bind(
+            "<<SendTextCommand>>",
+            lambda _e: self._handle_input(self._pending_text),
+        )
+        self._pending_text = ""
+
+        self.after(50, self._poll_text_q)
 
     # ------------------------------------------------------------------ UI
     def _build_widgets(self) -> None:
@@ -154,6 +164,16 @@ class ControlPanel(tk.Tk):
         else:
             self._log("❗ No action selected")
 
+    # ---------------------------------------------------------------- public API
+    def send_text_command(self, text: str) -> None:
+        """
+        Called by primitive.init() – simply forwards to _handle_input in
+        the GUI's thread‑safe manner (via event_generate).
+        """
+        # Ensure this runs in Tk's thread
+        self.event_generate("<<SendTextCommand>>", when="tail")
+        self._pending_text = text  # store temporarily
+
     # ---------------------------------------------------- schema → command
     def _pick_low_level_cmd(self, resp) -> str | None:
         """
@@ -244,6 +264,15 @@ class ControlPanel(tk.Tk):
                     f"{idx:>2}. {label}" + (" (on hover)" if hover else ""),
                 )
         self.after(self.REFRESH_INTERVAL_MS, self._poll_updates)
+
+    def _poll_text_q(self):
+        while True:
+            try:
+                txt = self.text_q.get_nowait()
+            except queue.Empty:
+                break
+            self._handle_input(txt)  # reuse existing logic
+        self.after(50, self._poll_text_q)
 
     # ---------------------------------------------------------------- logging
     def _log(self, msg: str) -> None:
