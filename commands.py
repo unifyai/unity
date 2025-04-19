@@ -3,6 +3,7 @@ Command‑parsing and dispatch logic.  All browser‑side actions live here.
 """
 
 import re
+import urllib.parse
 
 from browser_utils import build_boxes, collect_elements, paint_overlay
 from js_snippets import AUTO_SCROLL_JS, HANDLE_SCROLL_JS
@@ -61,31 +62,27 @@ class CommandRunner:
             self.log("No tab matches")
 
     # ---------- search -----------------------------------------------------
-    def search(self, query: str):
+    def search(self, query: str) -> None:
         """
-        Type `query` into the first visible search/text input and press Enter.
-        Falls back to raw keyboard typing if no eligible input is found.
+        Navigate the active tab to Google search results for `query`.
         """
-        try:
-            box = (
-                self.active.locator('input[type="search"], input[type="text"]')
-                .filter(has_text="", has_not="[disabled]")
-                .first
-            )
-            box.wait_for(state="visible", timeout=1000)
-            box.fill(query)
-            box.press("Enter")
-            self.log(f"Searched for {query!r}")
-        except Exception:
-            # coarse fallback – focus the page and type
-            self.active.keyboard.type(query)
-            self.active.keyboard.press("Enter")
-            self.log(f"Searched (fallback) for {query!r}")
+        q = urllib.parse.quote_plus(query.strip())
+        url = f"https://www.google.com/search?q={q}"
+        # 30‑sec timeout, wait for full load
+        self.active.goto(url, timeout=30000, wait_until="load")
 
     # ---------- command string dispatcher ---------------------------------
     def run(self, raw: str):
         cmd = raw.strip().lower()
         if not cmd:
+            return
+        # open_url ------------------------------------------------------
+        m = re.fullmatch(r"open_url\\s+(.+)", cmd)
+        if m:
+            url = m.group(1).strip()
+            if not url.startswith(("http://", "https://")):
+                url = "https://" + url
+            self.active.goto(url, timeout=30000, wait_until="load")
             return
         # smooth scroll ----------------------------------------------------
         m = re.fullmatch(r"scroll\s+(up|down)\s+(\d+)", cmd)

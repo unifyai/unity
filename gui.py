@@ -255,6 +255,12 @@ class ControlPanel(tk.Tk):
             query = sa.get("query", "")
             return f"search {query}"
 
+        # ---------- explicit URL navigation ------------------------------
+        sua = resp.get("search_url_action")
+        if sua and sua.get("apply"):
+            raw = sua.get("url", "").strip()
+            return f"open_url {raw}"
+
         # Nothing selected
         return None
 
