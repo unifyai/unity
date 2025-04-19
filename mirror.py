@@ -12,7 +12,10 @@ from playwright.sync_api import Browser, BrowserContext, Page, Playwright
 class MirrorPage:
     def __init__(self, pw: Playwright, visible_page: Page):
         self.visible = visible_page
-        self._browser: Browser = pw.chromium.launch(headless=True)
+        self._browser: Browser = pw.chromium.launch(
+            headless=True,
+            args=["--disable-blink-features=AutomationControlled"],
+        )
         self._ctx: BrowserContext | None = None
         self.page: Page | None = None
         self._init_mirror()
@@ -25,6 +28,9 @@ class MirrorPage:
         self._ctx = self._browser.new_context(
             viewport={"width": vp["w"], "height": vp["h"]},
             storage_state=storage,
+        )
+        self._ctx.add_init_script(
+            "Object.defineProperty(navigator, 'webdriver', {get: () => undefined});",
         )
         self.page = self._ctx.new_page()
         self.page.goto(self.visible.url)

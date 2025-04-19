@@ -72,5 +72,16 @@ def paint_overlay(page: Page, boxes: list[dict]) -> None:
 def launch_persistent(pw) -> BrowserContext:
     """Create a persistent context so new pages open as real tabs."""
     tmp_profile = Path(mkdtemp(prefix="pw_profile_"))
-    ctx = pw.chromium.launch_persistent_context(tmp_profile, headless=False)
+    ctx = pw.chromium.launch_persistent_context(
+        tmp_profile,
+        headless=False,
+        args=[
+            "--disable-blink-features=AutomationControlled",
+            "--disable-features=IsolateOrigins,site-per-process",
+        ],
+    )
+    # ── mask navigator.webdriver in every new page ──────────────────
+    ctx.add_init_script(
+        "Object.defineProperty(navigator, 'webdriver', {get: () => undefined});",
+    )
     return ctx
