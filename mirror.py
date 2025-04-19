@@ -47,8 +47,14 @@ class MirrorPage:
 
     # ---------------------------------------------------------------- public
     def sync_scroll(self):
-        pos = self.visible.evaluate("() => ({x: scrollX, y: scrollY})")
-        self.page.evaluate("([x,y]) => window.scrollTo(x,y)", [pos["x"], pos["y"]])
+        try:
+            pos = self.visible.evaluate("() => ({x: scrollX, y: scrollY})")
+            self.page.evaluate(
+                "([x,y]) => window.scrollTo(x,y)",
+                [pos["x"], pos["y"]],
+            )
+        except Exception:
+            return
 
     def screenshot(self) -> bytes:
         self.sync_scroll()
