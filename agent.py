@@ -7,7 +7,7 @@ from helpers import _pascal, _slug
 from pydantic import BaseModel, create_model, Field
 from sys_msgs import INTERJECTION_TO_BROWSER_ACTION
 
-client = unify.Unify("gpt-4o-mini@openai")
+client = unify.Unify("gpt-4o-mini@openai", traced=True)
 client.set_system_message(INTERJECTION_TO_BROWSER_ACTION)
 
 SCROLLING_STATE = None
@@ -16,8 +16,20 @@ SCROLLING_STATE = None
 # Schemas #
 
 _response_fields = {
-    "rationale": (Optional[str], ...),
-    "apply": (bool, ...),
+    "rationale": (
+        Optional[str],
+        Field(
+            None,
+            description="Explanation for your decision whether or not to apply this action.",
+        ),
+    ),
+    "apply": (
+        bool,
+        Field(
+            ...,
+            description="Decision to apply this action or not.",
+        ),
+    ),
 }
 
 
@@ -166,6 +178,7 @@ def _construct_select_button_actions(
 
         actions[f"click_button_{slug}"] = create_model(
             f"ClickButton{pascal}",
+            __cls_kwargs__={"description": f"Click the “{raw_text}” button."},
             **_response_fields,
         )
 
