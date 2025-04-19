@@ -58,10 +58,15 @@ class ControlPanel(tk.Tk):
         self.title("Playwright helper")
         self.geometry("900x550")
 
+        # row‑layout:
+        #   0  main split (listbox + preview)
+        #   1  search / open‑url bar
+        #   2  command bar
         self.columnconfigure(0, weight=3)
         self.columnconfigure(1, weight=2)
         self.rowconfigure(0, weight=1)
         self.rowconfigure(1, weight=0)
+        self.rowconfigure(2, weight=0)
 
         # -------- element list ------------------------------------------
         self.listbox = tk.Listbox(self, font=("Helvetica", 11))
@@ -109,9 +114,45 @@ class ControlPanel(tk.Tk):
             style="Danger.TButton",  # optional: red‑looking style
         ).grid(row=4, column=0, columnspan=2, sticky="ew", pady=(8, 0))
 
+        # -------- search / open‑url bar ---------------------------------
+        self.search_var = tk.StringVar()
+        self.search_mode = tk.StringVar(value="google")  # ← default
+        search = tk.Frame(self)
+        search.grid(row=1, column=0, columnspan=2, sticky="ew", padx=5, pady=(0, 4))
+        search.columnconfigure(1, weight=1)
+
+        tk.Label(search, text="Search / URL:").grid(row=0, column=0, sticky="w")
+
+        entry = tk.Entry(search, textvariable=self.search_var)
+        entry.grid(row=0, column=1, sticky="ew")
+        entry.bind("<Return>", lambda _e: self._send_search())
+
+        # radio buttons for mode
+        rb_google = tk.Radiobutton(
+            search,
+            text="Google",
+            variable=self.search_mode,
+            value="google",
+        )
+        rb_url = tk.Radiobutton(
+            search,
+            text="URL",
+            variable=self.search_mode,
+            value="url",
+        )
+        rb_google.grid(row=0, column=2, padx=(6, 0))
+        rb_url.grid(row=0, column=3)
+        rb_google.select()
+
+        ttk.Button(search, text="Go", command=self._send_search).grid(
+            row=0,
+            column=4,
+            padx=(6, 0),
+        )
+
         # -------- command bar ------------------------------------------
         bar = tk.Frame(self)
-        bar.grid(row=1, column=0, columnspan=2, sticky="ew", padx=5, pady=4)
+        bar.grid(row=2, column=0, columnspan=2, sticky="ew", padx=5, pady=4)
         bar.columnconfigure(1, weight=1)
         tk.Label(bar, text="Command:").grid(row=0, column=0, sticky="w")
         self.cmd_var = tk.StringVar()
@@ -140,6 +181,19 @@ class ControlPanel(tk.Tk):
         self.cmd_var.set("")
         if text:
             self._handle_input(text)
+
+    # ---------- search / url helper ------------------------------------
+    def _send_search(self) -> None:
+        txt = self.search_var.get().strip()
+        if not txt:
+            return
+        mode = self.search_mode.get()
+        if mode == "url":
+            cmd = f"open_url {txt}"
+        else:  # google search
+            cmd = f"search {txt}"
+        self._handle_input(cmd)  # reuse existing path
+        self.search_var.set("")  # clear after send
 
     # ---------------------------------------------------------------- logic
     def _handle_input(self, text: str) -> None:
