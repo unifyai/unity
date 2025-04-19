@@ -50,15 +50,13 @@ el => {
         '<no label>';
 
   return {
-    fixed : hasFixedAncestor(el) || isInsideIframe(el),
-    hover : el.matches(':hover'),
-    vleft : rp.left - window.top.scrollX,
-    vtop  : rp.top  - window.top.scrollY,
-    left  : rp.left,
-    top   : rp.top,
-    width : rp.width,
-    height: rp.height,
-    label : label,
+    fixed  : hasFixedAncestor(el) || isInsideIframe(el),
+    hover  : el.matches(':hover'),
+    left   : rp.left,   // absolute page coords (no scroll subtraction)
+    top    : rp.top,
+    width  : rp.width,
+    height : rp.height,
+    label  : label,
   };
 }
 """

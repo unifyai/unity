@@ -52,11 +52,13 @@ class MirrorPage:
 
     def screenshot(self) -> bytes:
         self.sync_scroll()
+        # lightweight readiness probe (optional but nice)
         try:
-            # wait up to 3 s for network to be idle if mirror is navigating
-            self.page.wait_for_load_state("networkidle", timeout=3000)
+            state = self.page.evaluate("document.readyState")
+            if state == "loading":  # still parsing / navigating
+                self.page.wait_for_load_state("domcontentloaded", timeout=2000)
         except Exception:
-            pass  # ignore—just try the screenshot anyway
+            pass  # ignore & just try the screenshot
         return self.page.screenshot(type="png", full_page=False)
 
     def close(self):

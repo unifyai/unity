@@ -69,7 +69,7 @@ class CommandRunner:
         q = urllib.parse.quote_plus(query.strip())
         url = f"https://www.google.com/search?q={q}"
         # 30‑sec timeout, wait for full load
-        self.active.goto(url, timeout=30000, wait_until="load")
+        self.active.goto(url, timeout=15000, wait_until="load")
 
     # ---------- command string dispatcher ---------------------------------
     def run(self, raw: str):
@@ -82,7 +82,7 @@ class CommandRunner:
             url = m.group(1).strip()
             if not url.startswith(("http://", "https://")):
                 url = "https://" + url
-            self.active.goto(url, timeout=30000, wait_until="load")
+            self.active.goto(url, timeout=15000, wait_until="load")
             return
         # smooth scroll ----------------------------------------------------
         m = re.fullmatch(r"scroll\s+(up|down)\s+(\d+)", cmd)
