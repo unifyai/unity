@@ -4,36 +4,43 @@ can `from .js_snippets import *`.
 """
 
 # === element inspection =====================================================
-ELEMENT_INFO_JS = r"""
-(el) => {
-  function hasFixedAncestor(n){
-    while (n && n !== document.body && n !== document.documentElement){
-      const p = getComputedStyle(n).position;
+ELEMENT_INFO_JS = """
+el => {
+  function hasFixedAncestor(node){
+    while (node && node !== document.body && node !== document.documentElement){
+      const p = getComputedStyle(node).position;
       if (p === 'fixed' || p === 'sticky') return true;
-      n = n.parentElement;
+      node = node.parentElement;
     }
     return false;
   }
+
   const r = el.getBoundingClientRect();
-  if (!r.width || !r.height) return null;
+  if (!r.width || !r.height) return null;     // hidden / 0‑size
+
+  const tag = el.tagName.toLowerCase();
+  const label =
+      el.innerText.trim()                         ||
+      (tag === 'input' || tag === 'textarea'
+         ? (el.value || el.placeholder || '')
+         : '')                                    ||
+      el.getAttribute('aria-label')               ||
+      el.getAttribute('alt')                      ||
+      el.getAttribute('title')                    ||
+      el.getAttribute('href')                     ||
+      '<no label>';
+
   return {
-    fixed  : hasFixedAncestor(el),
-    hover  : el.matches(':hover'),
-    vleft  : r.left,
-    vtop   : r.top,
-    left   : r.left + scrollX,
-    top    : r.top  + scrollY,
-    width  : r.width,
-    height : r.height,
-    label  : (el.innerText.trim()           ||
-              el.getAttribute('aria-label') ||
-              el.getAttribute('alt')        ||
-              el.getAttribute('title')      ||
-              el.getAttribute('href')       ||
-              '<no label>')
+    fixed : hasFixedAncestor(el),
+    hover : el.matches(':hover'),
+    vleft : r.left, vtop : r.top,
+    left  : r.left + scrollX, top  : r.top + scrollY,
+    width : r.width, height: r.height,
+    label : label
   };
 }
 """
+
 
 # === overlay painter ========================================================
 UPDATE_OVERLAY_JS = r"""
