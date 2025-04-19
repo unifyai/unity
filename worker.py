@@ -71,6 +71,9 @@ class BrowserWorker(threading.Thread):
                         except queue.Empty:
                             break
 
+                        # show the raw command arriving from the GUI
+                        self.log(f"CMD ➜ {cmd!r}")
+
                         if cmd.startswith("click button "):
                             needle = cmd[len("click button ") :].strip().lower()
                             hit = next(
