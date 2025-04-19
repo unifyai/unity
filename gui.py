@@ -76,7 +76,7 @@ class ControlPanel(tk.Tk):
         sb = ttk.Scrollbar(self, orient="vertical", command=self.listbox.yview)
         sb.grid(row=0, column=0, sticky="nse")
         self.listbox.config(yscrollcommand=sb.set)
-        self.listbox.bind("<Double-1>", self._on_list_click)
+        self.listbox.bind("<ButtonRelease-1>", self._on_list_click)
         self.listbox.bind("<Return>", self._on_list_click)
 
         # -------- right panel (log + buttons) ---------------------------
