@@ -41,6 +41,8 @@ class ControlPanel(tk.Tk):
         self.elements: list[tuple[int, str, bool]] = []
         self.screenshot: bytes = b""
         self.tab_titles: list[str] = []
+        self.history: list[dict] = []
+        self.state: dict[str, Any] = {}
 
         self._build_widgets()
         self.after(self.REFRESH_INTERVAL_MS, self._poll_updates)
@@ -224,6 +226,8 @@ class ControlPanel(tk.Tk):
                 self.screenshot,
                 tabs=self.tab_titles,
                 buttons=[(idx, label) for idx, label, _ in self.elements],
+                history=self.history,
+                state=self.state,
             )
         except Exception:
             self._log_trace(traceback.format_exc())
@@ -342,6 +346,8 @@ class ControlPanel(tk.Tk):
                 payload = self.up_q.get_nowait()
                 self.elements = payload.get("elements", [])
                 self.tab_titles = payload.get("tabs", [])
+                self.history = payload.get("history", self.history)
+                self.state = payload.get("state", self.state)
                 img = payload.get("screenshot", b"")
                 if img:
                     self.screenshot = img
