@@ -151,6 +151,7 @@ def _construct_tab_actions(tabs: List[str], mode: str):
     return {
         f"{field_prefix}{_slug(title)}": create_model(
             f"{model_prefix}{_pascal(_slug(title))}",
+            __cls_kwargs__={"description": f"{mode} the “{title}” tab."},
             **_response_fields,
         )
         for title in tabs
