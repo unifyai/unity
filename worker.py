@@ -25,6 +25,20 @@ from playwright.sync_api import Error as PWError
 from playwright.sync_api import sync_playwright
 
 
+def _update_in_textbox_state(runner, handle):
+    """Update BrowserState.in_textbox after a click."""
+    try:
+        tag = handle.evaluate("el => el.tagName.toLowerCase()")
+        role = handle.evaluate("el => el.getAttribute('role')")
+        runner.state.in_textbox = tag in {"input", "textarea"} or role in {
+            "textbox",
+            "combobox",
+            "searchbox",
+        }
+    except Exception:
+        runner.state.in_textbox = False
+
+
 class BrowserWorker(threading.Thread):
     def __init__(
         self,
@@ -85,7 +99,10 @@ class BrowserWorker(threading.Thread):
                                 None,
                             )
                             if hit:
+                                friendly = f"click {hit['label']}"
+                                self.runner.hist.add(friendly)
                                 hit["handle"].click()
+                                _update_in_textbox_state(self.runner, hit["handle"])
                             else:
                                 self.log(f"No visible element contains “{needle}”")
                         elif cmd.startswith("open url "):
@@ -99,7 +116,11 @@ class BrowserWorker(threading.Thread):
                             try:
                                 idx = int(cmd.split()[1])
                                 if 1 <= idx <= len(last_elements):
-                                    last_elements[idx - 1]["handle"].click()
+                                    h = last_elements[idx - 1]["handle"]
+                                    label = last_elements[idx - 1]["label"]
+                                    self.runner.hist.add(f"click {label}")
+                                    h.click()
+                                    _update_in_textbox_state(self.runner, h)
                                 else:
                                     self.log("Click index out of range")
                             except (ValueError, PWError) as exc:
