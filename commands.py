@@ -76,8 +76,8 @@ class CommandRunner:
         cmd = raw.strip().lower()
         if not cmd:
             return
-        # open_url ------------------------------------------------------
-        m = re.fullmatch(r"open_url\\s+(.+)", cmd)
+        # open url ------------------------------------------------------
+        m = re.fullmatch(r"open url\\s+(.+)", cmd)
         if m:
             url = m.group(1).strip()
             if not url.startswith(("http://", "https://")):
