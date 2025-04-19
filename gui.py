@@ -176,7 +176,7 @@ class ControlPanel(tk.Tk):
         sel = self.listbox.curselection()
         if sel:
             idx = sel[0] + 1  # listbox is 0‑based, worker expects 1‑based
-            self._queue_command(f"click {idx}")
+            self._handle_input(f"click {idx}")
 
     def _send_from_entry(self) -> None:
         text = self.cmd_var.get().strip()
@@ -206,6 +206,7 @@ class ControlPanel(tk.Tk):
         low = text.lower()
         if low.startswith(
             (
+                "click",
                 "scroll",
                 "start scroll",
                 "stop scroll",
