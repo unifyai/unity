@@ -11,7 +11,7 @@ el => {
     return node.ownerDocument.defaultView !== window.top;
   }
 
-  // ---- climb ancestors for fixed / sticky ----------------------------
+  // ---- climb ancestors for fixed / sticky / transform ----------------
   function hasFixedAncestor(node){
     while (node && node !== document.body && node !== document.documentElement){
       const p = getComputedStyle(node).position;
