@@ -189,7 +189,7 @@ class ControlPanel(tk.Tk):
             return
         mode = self.search_mode.get()
         if mode == "url":
-            cmd = f"open_url {txt}"
+            cmd = f"open url {txt}"
         else:  # google search
             cmd = f"search {txt}"
         self._handle_input(cmd)  # reuse existing path
@@ -203,7 +203,16 @@ class ControlPanel(tk.Tk):
         self._log(f"> {text}")
         low = text.lower()
         if low.startswith(
-            ("scroll", "start scroll", "stop scroll", "new tab", "close tab", "switch"),
+            (
+                "scroll",
+                "start scroll",
+                "stop scroll",
+                "search",
+                "open url",
+                "new tab",
+                "close tab",
+                "switch",
+            ),
         ):
             self._queue_command(text)
             return
@@ -313,7 +322,7 @@ class ControlPanel(tk.Tk):
         sua = resp.get("search_url_action")
         if sua and sua.get("apply"):
             raw = sua.get("url", "").strip()
-            return f"open_url {raw}"
+            return f"open url {raw}"
 
         # Nothing selected
         return None
