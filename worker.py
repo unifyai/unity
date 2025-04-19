@@ -88,6 +88,13 @@ class BrowserWorker(threading.Thread):
                                 hit["handle"].click()
                             else:
                                 self.log(f"No visible element contains “{needle}”")
+                        elif cmd.startswith("open_url "):
+                            url = cmd[len("open_url ") :]
+                            self.runner.active.goto(
+                                url,
+                                timeout=30000,
+                                wait_until="load",
+                            )
                         elif cmd.startswith("click "):
                             try:
                                 idx = int(cmd.split()[1])

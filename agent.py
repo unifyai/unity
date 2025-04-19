@@ -141,6 +141,19 @@ class Search(BaseModel):
     apply: bool = Field(..., description="Decision to apply this action or not.")
 
 
+class SearchURL(BaseModel):
+    """
+    Navigate the browser to a specific URL.
+    """
+
+    url: str = Field(..., description="The absolute or bare URL to open.")
+    rationale: Optional[str] = Field(
+        None,
+        description="Explanation for your decision whether or not to apply this action.",
+    )
+    apply: bool = Field(..., description="Decision to apply this action or not.")
+
+
 def _construct_tab_actions(tabs: List[str], mode: str):
     if not tabs:
         return {}
@@ -229,6 +242,7 @@ def _create_full_response_format(
             **_construct_select_button_actions(buttons),
         ),
         search_action=(Search, ...),
+        search_url_action=(SearchURL, ...),
     )
 
 
@@ -258,6 +272,12 @@ def _extract_applied_actions(response: BaseModel) -> Tuple[Dict[str, Any], int]:
         sa = getattr(response, "search_action")
         if sa and getattr(sa, "apply", False):
             applied["search_action"] = sa.model_dump()
+            kept_count += 1
+
+    if hasattr(response, "search_url_action"):
+        sua = getattr(response, "search_url_action")
+        if sua and getattr(sua, "apply", False):
+            applied["search_url_action"] = sua.model_dump()
             kept_count += 1
 
     return applied, kept_count
@@ -342,6 +362,9 @@ def _build_pruned_response_format(applied: Dict[str, Any]) -> BaseModel:
     # ---- single search action -------------------------------------------
     if "search_action" in applied:
         top_level["search_action"] = (Search, ...)
+
+    if "search_url_action" in applied:
+        top_level["search_url_action"] = (SearchURL, ...)
 
     if not top_level:
         raise ValueError(
