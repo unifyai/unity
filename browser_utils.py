@@ -11,14 +11,20 @@ from playwright.sync_api import BrowserContext, Page
 
 MARGIN = 100  # overscan around viewport
 
+# ---------------------------------------------------------------------------
+# Anything that can receive a click or typing focus
 CLICKABLE_CSS = """
 button:not([disabled]):visible,
-input[type=button]:not([disabled]):visible,
-input[type=submit]:not([disabled]):visible,
-input[type=reset]:not([disabled]):visible,
-[role=button]:not([disabled]):visible,
+input:not([disabled]):not([type=hidden]):visible,
+textarea:not([disabled]):visible,
+[role=button]:visible,
+[role=link]:visible,
+[role=textbox]:visible,
+[role=combobox]:visible,
+[role=searchbox]:visible,
 a[href]:visible,
-[onclick]:visible
+[onclick]:visible,
+*[tabindex]:not([tabindex="-1"]):visible
 """
 
 
