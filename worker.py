@@ -101,7 +101,12 @@ class BrowserWorker(threading.Thread):
                             self.runner.run(cmd)
 
                     # -- 2) refresh overlay ------------------------------
-                    last_elements = collect_elements(self.runner.active)
+                    try:
+                        last_elements = collect_elements(self.runner.active)
+                    except Exception as exc:  # navigation in‑flight
+                        self.log(f"collect_elements skipped: {exc}")
+                        time.sleep(0.05)  # brief pause, then continue loop
+                        continue
                     boxes = build_boxes(last_elements)
                     # draw overlay both in the UI page and the headless mirror
                     try:

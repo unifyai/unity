@@ -158,8 +158,8 @@ class ControlPanel(tk.Tk):
         try:
             response = primitive_to_browser_action(
                 text,
+                self.screenshot,
                 tabs=self.tab_titles,
-                screenshot=self.screenshot,
                 buttons=[(idx, label) for idx, label, _ in self.elements],
             )
         except Exception:
@@ -188,66 +188,74 @@ class ControlPanel(tk.Tk):
         self._pending_text = text  # store temporarily
 
     # ---------------------------------------------------- schema → command
-    def _pick_low_level_cmd(self, resp) -> str | None:
+    def _pick_low_level_cmd(self, resp: dict) -> str | None:
         """
-        Convert the new agent response (with apply flags) into a single
-        low‑level command string for the worker.
+        Translate the pruned agent response (already dumped to a plain nested
+        dict) into a single low‑level command string for the worker.
+
+        Every `.get()` has a default, so missing keys are handled gracefully.
         """
-        # ----- tab actions -------------------------------------------------
-        for key, obj in resp.tab_actions.model_dump().items():
-            if obj.get("apply"):
-                if key == "new_tab":
-                    return "new tab"
-                if key.startswith("close_tab_"):
-                    tab = key[len("close_tab_") :]
-                    return f"close tab {tab.replace('_', ' ')}"
-                if key.startswith("select_tab_"):
-                    tab = key[len("select_tab_") :]
-                    return f"switch to tab {tab.replace('_', ' ')}"
-        # ----- scroll actions ---------------------------------------------
-        sc = resp.scroll_actions
-        if sc.scroll_up.apply:
-            px = sc.scroll_up.pixels or 300
-            return f"scroll up {px}"
-        if sc.scroll_down.apply:
-            px = sc.scroll_down.pixels or 300
-            return f"scroll down {px}"
-        if getattr(sc, "start_scrolling_up", None) and sc.start_scrolling_up.apply:
-            return "start scroll up"
-        if getattr(sc, "start_scrolling_down", None) and sc.start_scrolling_down.apply:
-            return "start scroll down"
-        if getattr(sc, "stop_scrolling_up", None) and sc.stop_scrolling_up.apply:
-            return "stop scroll"
-        if getattr(sc, "stop_scrolling_down", None) and sc.stop_scrolling_down.apply:
-            return "stop scroll"
-        # ----- button actions ---------------------------------------------
-        slug_to_idx = {_slug(label): idx for idx, label, _ in self.elements}
-        for key, obj in resp.button_actions.model_dump().items():
-            if obj.get("apply") and key.startswith("click_button_"):
-                slug_text = key[len("click_button_") :]
-                if slug_text in slug_to_idx:
-                    return f"click {slug_to_idx[slug_text]}"
-                # fallback: click by button text
-                return f"click button {slug_text.replace('_', ' ')}"
-        return None
-        # ----- search action ----------------------------------------------
-        if getattr(resp, "search_action", None) and resp.search_action.apply:
-            return f"search {resp.search_action.query}"
-        match act.action:
-            case "click_button" if act.button_text:
-                return f"click button {act.button_text}"
-            case "scroll" if act.direction and act.pixels:
-                return f"scroll {act.direction} {act.pixels}"
-            case "start_scroll" if act.direction:
-                return f"start scroll {act.direction}"
-            case "stop_scroll":
-                return "stop scroll"
-            case "new_tab":
+
+        # ---------- tab actions ------------------------------------------
+        for key, obj in resp.get("tab_actions", {}).items():
+            if not obj.get("apply"):
+                continue
+
+            if key == "new_tab":
                 return "new tab"
-            case "close_tab":
-                return f"close tab {act.tab_text}" if act.tab_text else "close tab"
-            case "switch_tab" if act.tab_text:
-                return f"switch to tab {act.tab_text}"
+
+            if key.startswith("close_tab_"):
+                tab = key[len("close_tab_") :]
+                return f"close tab {tab.replace('_', ' ')}"
+
+            if key.startswith("select_tab_"):
+                tab = key[len("select_tab_") :]
+                return f"switch to tab {tab.replace('_', ' ')}"
+
+        # ---------- scroll actions ---------------------------------------
+        sc = resp.get("scroll_actions", {})
+
+        if sc.get("scroll_up", {}).get("apply"):
+            px = sc["scroll_up"].get("pixels") or 300
+            return f"scroll up {px}"
+
+        if sc.get("scroll_down", {}).get("apply"):
+            px = sc["scroll_down"].get("pixels") or 300
+            return f"scroll down {px}"
+
+        if sc.get("start_scrolling_up", {}).get("apply"):
+            return "start scroll up"
+
+        if sc.get("start_scrolling_down", {}).get("apply"):
+            return "start scroll down"
+
+        if sc.get("stop_scrolling_up", {}).get("apply") or sc.get(
+            "stop_scrolling_down",
+            {},
+        ).get("apply"):
+            return "stop scroll"
+
+        # ---------- button actions ---------------------------------------
+        slug_to_idx = {_slug(label): idx for idx, label, _ in self.elements}
+
+        for key, obj in resp.get("button_actions", {}).items():
+            if not obj.get("apply") or not key.startswith("click_button_"):
+                continue
+
+            slug_text = key[len("click_button_") :]
+            if slug_text in slug_to_idx:
+                return f"click {slug_to_idx[slug_text]}"  # click by index
+
+            # Fallback: click by visible button text
+            return f"click button {slug_text.replace('_', ' ')}"
+
+        # ---------- search action ----------------------------------------
+        sa = resp.get("search_action")
+        if sa and sa.get("apply"):
+            query = sa.get("query", "")
+            return f"search {query}"
+
+        # Nothing selected
         return None
 
     # put message onto command queue
