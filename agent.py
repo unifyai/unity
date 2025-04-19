@@ -4,7 +4,7 @@ from typing import List, Optional, Tuple
 
 import unify
 from helpers import _pascal, _slug
-from pydantic import BaseModel, create_model
+from pydantic import BaseModel, create_model, Field
 from sys_msgs import INTERJECTION_TO_BROWSER_ACTION
 
 client = unify.Unify("gpt-4o-mini@openai")
@@ -22,40 +22,111 @@ _response_fields = {
 
 
 class NewTab(BaseModel):
-    rationale: Optional[str]
-    apply: bool
+    """
+    Open a new tab.
+    """
+
+    rationale: Optional[str] = Field(
+        ...,
+        description="Explanation for your decision whether or not to apply this action.",
+    )
+    apply: bool = Field(..., description="Decision to apply this action or not.")
 
 
 class ScrollUp(BaseModel):
-    rationale: Optional[str]
-    apply: bool
-    pixels: Optional[int]
+    """
+    Scroll up by a certain number of pixels.
+    """
+
+    rationale: Optional[str] = Field(
+        ...,
+        description="Explanation for your decision whether or not to apply this action.",
+    )
+    apply: bool = Field(..., description="Decision to apply this action or not.")
+    pixels: Optional[int] = Field(
+        ...,
+        description="Number of pixels to scroll up, if action is applied.",
+    )
 
 
 class ScrollDown(BaseModel):
-    rationale: Optional[str]
-    apply: bool
-    pixels: Optional[int]
+    """
+    Scroll down by a certain number of pixels.
+    """
+
+    rationale: Optional[str] = Field(
+        ...,
+        description="Explanation for your decision whether or not to apply this action.",
+    )
+    apply: bool = Field(..., description="Decision to apply this action or not.")
+    pixels: Optional[int] = Field(
+        ...,
+        description="Number of pixels to scroll down, if action is applied.",
+    )
 
 
 class StartScrollingUp(BaseModel):
-    rationale: Optional[str]
-    apply: bool
+    """
+    Start gently scrolling upwards, until another stop action is given.
+    """
+
+    rationale: Optional[str] = Field(
+        ...,
+        description="Explanation for your decision whether or not to apply this action.",
+    )
+    apply: bool = Field(..., description="Decision to apply this action or not.")
 
 
 class StartScrollingDown(BaseModel):
-    rationale: Optional[str]
-    apply: bool
+    """
+    Start gently scrolling downwards, until another stop action is given.
+    """
+
+    rationale: Optional[str] = Field(
+        ...,
+        description="Explanation for your decision whether or not to apply this action.",
+    )
+    apply: bool = Field(..., description="Decision to apply this action or not.")
 
 
 class StopScrollingUp(BaseModel):
-    rationale: Optional[str]
-    apply: bool
+    """
+    Stop the upwards scroll motion which is currently occuring.
+    """
+
+    rationale: Optional[str] = Field(
+        ...,
+        description="Explanation for your decision whether or not to apply this action.",
+    )
+    apply: bool = Field(..., description="Decision to apply this action or not.")
 
 
 class StopScrollingDown(BaseModel):
-    rationale: Optional[str]
-    apply: bool
+    """
+    Stop the downwards scroll motion which is currently occuring.
+    """
+
+    rationale: Optional[str] = Field(
+        ...,
+        description="Explanation for your decision whether or not to apply this action.",
+    )
+    apply: bool = Field(..., description="Decision to apply this action or not.")
+
+
+class Search(BaseModel):
+    """
+    Search the web for a new query in the topmost search bar of the browser.
+    """
+
+    rationale: Optional[str] = Field(
+        ...,
+        description="Explanation for your decision whether or not to apply this action.",
+    )
+    apply: bool = Field(..., description="Decision to apply this action or not.")
+    query: str = Field(
+        ...,
+        description="The search query to type into the search bar, at the top of the browser.",
+    )
 
 
 def _construct_tab_actions(tabs: List[str], mode: str):
@@ -146,6 +217,7 @@ def primitive_to_browser_action(
             "ButtonActions",
             **_construct_select_button_actions(buttons),
         ),
+        search_action=(Search, ...),
     )
     client.set_response_format(response_format)
     ret = client.generate(text)

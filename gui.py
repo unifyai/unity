@@ -230,6 +230,9 @@ class ControlPanel(tk.Tk):
                 # fallback: click by button text
                 return f"click button {slug_text.replace('_', ' ')}"
         return None
+        # ----- search action ----------------------------------------------
+        if getattr(resp, "search_action", None) and resp.search_action.apply:
+            return f"search {resp.search_action.query}"
         match act.action:
             case "click_button" if act.button_text:
                 return f"click button {act.button_text}"
