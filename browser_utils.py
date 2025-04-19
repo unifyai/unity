@@ -29,38 +29,33 @@ a[href]:visible,
 
 
 def collect_elements(page: Page) -> list[dict]:
-    """
-    Return info (+ element handle) for all clickable elements *in any frame*
-    that intersect the viewport ±MARGIN.
-    """
-    # viewport size + top‑window scroll offsets
     vp = page.evaluate("() => ({w:innerWidth, h:innerHeight, sx:scrollX, sy:scrollY})")
     vL, vT = -MARGIN, -MARGIN
     vR, vB = vp["w"] + MARGIN, vp["h"] + MARGIN
     sx, sy = vp["sx"], vp["sy"]
 
-    elements: list[dict] = []
+    elements = []
 
-    # ----- scan every frame (main + iframes) ----------------------------
     for frame in page.frames:
-        for handle in frame.locator(CLICKABLE_CSS).element_handles():
-            info = frame.evaluate(ELEMENT_INFO_JS, handle)
+        for h in frame.locator(CLICKABLE_CSS).element_handles():
+            try:
+                info = frame.evaluate(ELEMENT_INFO_JS, h)
+            except Exception:  # cross‑origin or stale element etc.
+                continue
             if not info:
                 continue
 
-            # viewport‑relative coords
             vl = info["left"] - sx
             vt = info["top"] - sy
-            w, h = info["width"], info["height"]
+            w, hgt = info["width"], info["height"]
 
-            # cull anything outside viewport±margin
-            if (vl + w) < vL or vl > vR or (vt + h) < vT or vt > vB:
+            if (vl + w) < vL or vl > vR or (vt + hgt) < vT or vt > vB:
                 continue
 
             info["vleft"] = vl
             info["vtop"] = vt
             info["hover"] = info.get("hover", False)
-            info["handle"] = handle  # keep the handle for clicking
+            info["handle"] = h
             elements.append(info)
 
     return elements
