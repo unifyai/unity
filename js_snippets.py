@@ -6,6 +6,12 @@ can `from .js_snippets import *`.
 # === element inspection =====================================================
 ELEMENT_INFO_JS = """
 el => {
+  // ---- find out if element sits in an iframe -------------------------
+  function isInsideIframe(node) {
+    return node.ownerDocument.defaultView !== window.top;
+  }
+
+  // ---- climb ancestors for fixed / sticky ----------------------------
   function hasFixedAncestor(node){
     while (node && node !== document.body && node !== document.documentElement){
       const p = getComputedStyle(node).position;
@@ -15,28 +21,44 @@ el => {
     return false;
   }
 
-  const r = el.getBoundingClientRect();
-  if (!r.width || !r.height) return null;     // hidden / 0‑size
+  // ---- compute rect relative to the *top* window ---------------------
+  function rectInPage(element){
+    const r = element.getBoundingClientRect();
+    let left = r.left, top = r.top;
+    let win  = element.ownerDocument.defaultView;
+    while (win && win !== window.top && win.frameElement){
+      const fr = win.frameElement.getBoundingClientRect();
+      left += fr.left;
+      top  += fr.top;
+      win = win.parent;
+    }
+    return {left, top, width:r.width, height:r.height};
+  }
+
+  const rp = rectInPage(el);
+  if (!rp.width || !rp.height) return null;        // hidden / 0‑size
 
   const tag = el.tagName.toLowerCase();
   const label =
-      el.innerText.trim()                         ||
-      (tag === 'input' || tag === 'textarea'
-         ? (el.value || el.placeholder || '')
-         : '')                                    ||
-      el.getAttribute('aria-label')               ||
-      el.getAttribute('alt')                      ||
-      el.getAttribute('title')                    ||
-      el.getAttribute('href')                     ||
-      '<no label>';
+        el.innerText.trim()                         ||
+        ((tag === 'input' || tag === 'textarea') ?
+             (el.value || el.placeholder || '') : '') ||
+        el.getAttribute('aria-label')               ||
+        el.getAttribute('alt')                      ||
+        el.getAttribute('title')                    ||
+        el.getAttribute('href')                     ||
+        '<no label>';
 
   return {
-    fixed : hasFixedAncestor(el),
+    fixed : hasFixedAncestor(el) || isInsideIframe(el),
     hover : el.matches(':hover'),
-    vleft : r.left, vtop : r.top,
-    left  : r.left + scrollX, top  : r.top + scrollY,
-    width : r.width, height: r.height,
-    label : label
+    vleft : rp.left - window.top.scrollX,
+    vtop  : rp.top  - window.top.scrollY,
+    left  : rp.left,
+    top   : rp.top,
+    width : rp.width,
+    height: rp.height,
+    label : label,
   };
 }
 """

@@ -29,26 +29,40 @@ a[href]:visible,
 
 
 def collect_elements(page: Page) -> list[dict]:
-    """Return info (+ handle) for all clickable elements near viewport."""
-    vp = page.evaluate("() => ({w:innerWidth, h:innerHeight})")
+    """
+    Return info (+ element handle) for all clickable elements *in any frame*
+    that intersect the viewport ±MARGIN.
+    """
+    # viewport size + top‑window scroll offsets
+    vp = page.evaluate("() => ({w:innerWidth, h:innerHeight, sx:scrollX, sy:scrollY})")
     vL, vT = -MARGIN, -MARGIN
     vR, vB = vp["w"] + MARGIN, vp["h"] + MARGIN
+    sx, sy = vp["sx"], vp["sy"]
 
-    elements = []
-    for handle in page.locator(CLICKABLE_CSS).element_handles():
-        info = page.evaluate(ELEMENT_INFO_JS, handle)
-        if not info:
-            continue
-        vl, vt, w, h = (
-            info["vleft"],
-            info["vtop"],
-            info["width"],
-            info["height"],
-        )
-        if (vl + w) < vL or vl > vR or (vt + h) < vT or vt > vB:
-            continue
-        info["handle"] = handle
-        elements.append(info)
+    elements: list[dict] = []
+
+    # ----- scan every frame (main + iframes) ----------------------------
+    for frame in page.frames:
+        for handle in frame.locator(CLICKABLE_CSS).element_handles():
+            info = frame.evaluate(ELEMENT_INFO_JS, handle)
+            if not info:
+                continue
+
+            # viewport‑relative coords
+            vl = info["left"] - sx
+            vt = info["top"] - sy
+            w, h = info["width"], info["height"]
+
+            # cull anything outside viewport±margin
+            if (vl + w) < vL or vl > vR or (vt + h) < vT or vt > vB:
+                continue
+
+            info["vleft"] = vl
+            info["vtop"] = vt
+            info["hover"] = info.get("hover", False)
+            info["handle"] = handle  # keep the handle for clicking
+            elements.append(info)
+
     return elements
 
 

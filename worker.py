@@ -123,7 +123,7 @@ class BrowserWorker(threading.Thread):
                         self.log(f"overlay failed: {e}")
                     # ---------- package GUI update --------------------
                     elements_lite = [
-                        (i + 1, e["label"], e["hover"])
+                        (i + 1, e["label"], e.get("hover", False))
                         for i, e in enumerate(last_elements)
                     ]
                     tab_titles = [
