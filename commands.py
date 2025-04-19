@@ -60,6 +60,28 @@ class CommandRunner:
         else:
             self.log("No tab matches")
 
+    # ---------- search -----------------------------------------------------
+    def search(self, query: str):
+        """
+        Type `query` into the first visible search/text input and press Enter.
+        Falls back to raw keyboard typing if no eligible input is found.
+        """
+        try:
+            box = (
+                self.active.locator('input[type="search"], input[type="text"]')
+                .filter(has_text="", has_not="[disabled]")
+                .first
+            )
+            box.wait_for(state="visible", timeout=1000)
+            box.fill(query)
+            box.press("Enter")
+            self.log(f"Searched for {query!r}")
+        except Exception:
+            # coarse fallback – focus the page and type
+            self.active.keyboard.type(query)
+            self.active.keyboard.press("Enter")
+            self.log(f"Searched (fallback) for {query!r}")
+
     # ---------- command string dispatcher ---------------------------------
     def run(self, raw: str):
         cmd = raw.strip().lower()
@@ -84,6 +106,13 @@ class CommandRunner:
         if cmd == "stop scroll":
             self.active.evaluate(AUTO_SCROLL_JS, {"dir": "stop", "speed": 0})
             return
+
+        # search -----------------------------------------------------------
+        m = re.fullmatch(r"search\s+(.+)", cmd)
+        if m:
+            self.search(m.group(1))
+            return
+
         # tab ops ----------------------------------------------------------
         if cmd == "new tab":
             self.new_tab()
