@@ -136,6 +136,8 @@ class BrowserWorker(threading.Thread):
                         "elements": elements_lite,
                         "tabs": tab_titles,
                         "screenshot": screenshot_bytes,
+                        "history": self.runner.hist.dump(),
+                        "state": vars(self.runner.state),
                     }
                     while True:  # keep only the latest payload
                         try:

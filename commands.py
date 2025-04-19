@@ -6,7 +6,8 @@ import re
 import urllib.parse
 
 from browser_utils import build_boxes, collect_elements, paint_overlay
-from js_snippets import AUTO_SCROLL_JS, HANDLE_SCROLL_JS
+from js_snippets import HANDLE_SCROLL_JS, AUTO_SCROLL_JS
+from actions import ActionHistory, BrowserState
 from playwright.sync_api import BrowserContext, Page
 
 SCROLL_DURATION = 400  # ms
@@ -16,8 +17,10 @@ AUTO_SCROLL_SPEED = 100 / 400  # px / ms  ≈ 250 px / s
 class CommandRunner:
     def __init__(self, ctx: BrowserContext, log_fn):
         self.ctx = ctx
-        self.active: Page = ctx.pages[0]
         self.log = log_fn
+        self.active: Page = ctx.pages[0]
+        self.state = BrowserState(url=self.active.url, title=self.active.title())
+        self.hist = ActionHistory()
 
     # ---------- high‑level API (called by GUI) ----------------------------
     def new_tab(self):
@@ -73,9 +76,11 @@ class CommandRunner:
 
     # ---------- command string dispatcher ---------------------------------
     def run(self, raw: str):
-        cmd = raw.strip().lower()
+        cmd = raw.strip()
+        low = cmd.lower()
         if not cmd:
             return
+        self.hist.add(cmd)
         # open url ------------------------------------------------------
         m = re.fullmatch(r"open url\\s+(.+)", cmd)
         if m:
@@ -83,6 +88,8 @@ class CommandRunner:
             if not url.startswith(("http://", "https://")):
                 url = "https://" + url
             self.active.goto(url, timeout=15000, wait_until="load")
+            self.state.url = url
+            self.state.title = self.active.title() or url
             return
         # smooth scroll ----------------------------------------------------
         m = re.fullmatch(r"scroll\s+(up|down)\s+(\d+)", cmd)
@@ -92,6 +99,7 @@ class CommandRunner:
                 HANDLE_SCROLL_JS,
                 {"delta": delta, "duration": SCROLL_DURATION},
             )
+            self.state.scroll_y += delta
             return
         # auto scroll ------------------------------------------------------
         if cmd in {"start scroll up", "start scroll down"}:
@@ -99,9 +107,11 @@ class CommandRunner:
                 AUTO_SCROLL_JS,
                 {"dir": "up" if "up" in cmd else "down", "speed": AUTO_SCROLL_SPEED},
             )
+            self.state.auto_scroll = "up" if "up" in cmd else "down"
             return
         if cmd == "stop scroll":
             self.active.evaluate(AUTO_SCROLL_JS, {"dir": "stop", "speed": 0})
+            self.state.auto_scroll = None
             return
 
         # search -----------------------------------------------------------

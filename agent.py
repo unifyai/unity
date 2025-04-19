@@ -5,6 +5,7 @@ from typing import List, Optional, Tuple, Dict, Any
 import unify
 from helpers import _pascal, _slug
 from pydantic import BaseModel, create_model, Field
+from actions import ActionHistory, BrowserState
 from sys_msgs import PRIMITIVE_TO_BROWSER_ACTION_CANDIDATES, PRIMITIVE_TO_BROWSER_ACTION
 
 client = unify.Unify(traced=True)
@@ -382,11 +383,29 @@ def primitive_to_browser_action(
     *,
     tabs: Optional[List[str]],
     buttons: Optional[List[Tuple[int, str]]] = None,
+    history: ActionHistory = None,
+    state: BrowserState = None,
 ) -> Optional[BaseModel]:
 
     response_format = _create_full_response_format(tabs, buttons)
     client.set_endpoint("gpt-4o-mini@openai")
-    client.set_system_message(PRIMITIVE_TO_BROWSER_ACTION_CANDIDATES)
+
+    history_msg = (
+        "\n\nThe low-level action history (most recent first) is as follows:\n"
+        + "\n".join(f"{r['timestamp']:.0f}: {r['command']}" for r in history[-20:])
+    )
+
+    state_msg = f"""\n\nThe current state of the browser is as follows:
+    url: {state.get('url')}
+    title: {state.get('title')}
+    scroll_y: {state.get('scroll_y')}
+    auto_scroll: {state.get('auto_scroll')}
+    in_textbox: {state.get('in_textbox')}
+    """
+
+    client.set_system_message(
+        PRIMITIVE_TO_BROWSER_ACTION_CANDIDATES + history_msg + state_msg,
+    )
     client.set_response_format(response_format)
     ret = client.generate(text)
     ret = response_format.model_validate_json(ret)
@@ -398,7 +417,9 @@ def primitive_to_browser_action(
 
     # decide among the candidate actions
     client.set_endpoint("o3-mini@openai")
-    client.set_system_message(PRIMITIVE_TO_BROWSER_ACTION)
+    client.set_system_message(
+        PRIMITIVE_TO_BROWSER_ACTION + history_msg + state_msg,
+    )
     while num_selected > 1:
         response_format = _build_pruned_response_format(ret)
         client.set_response_format(response_format)
