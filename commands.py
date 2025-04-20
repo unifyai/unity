@@ -114,6 +114,36 @@ class CommandRunner:
             self.state.auto_scroll = None
             return
 
+        # ───────── keyboard shortcuts ─────────────────────────────────
+        keymap = {  # NEW
+            "press backspace": ("Backspace",),
+            "press delete": ("Delete",),
+            "cursor left": ("ArrowLeft",),
+            "cursor right": ("ArrowRight",),
+            "cursor up": ("ArrowUp",),
+            "cursor down": ("ArrowDown",),
+            "select all": ("Control+a",),  # Cmd/⌘ on mac handled by browser
+            "move line start": ("Control+ArrowLeft",),
+            "move line end": ("Control+ArrowRight",),
+            "move word left": ("Alt+ArrowLeft",),
+            "move word right": ("Alt+ArrowRight",),
+        }
+        if cmd in keymap:
+            self.hist.add(cmd)
+            for combo in keymap[cmd]:
+                self.active.keyboard.press(combo)
+            return
+
+        if cmd == "hold shift":  # NEW
+            self.hist.add(cmd)
+            self.active.keyboard.down("Shift")
+            return
+
+        if cmd == "release shift":  # NEW
+            self.hist.add(cmd)
+            self.active.keyboard.up("Shift")
+            return
+
         # press enter -------------------------------------------------------
         if cmd == "press enter":  # NEW
             self.hist.add("press enter")  # NEW
