@@ -87,16 +87,12 @@ class ControlPanel(tk.Tk):
         # ----- main window -------------------------------------------------
         self.title("Playwright helper")
         self.geometry("900x550")
-        # root grid: two columns (left notebook, right panel)
-        self.columnconfigure(0, weight=3)  # left notebook
-        self.columnconfigure(1, weight=2)  # right panel
-        self.rowconfigure(0, weight=1)  # main split (takes cols 0‑1)
-        self.rowconfigure(1, weight=0)  # search / url bar
-        self.rowconfigure(2, weight=0)  # command bar
-        self.rowconfigure(3, weight=0)  # enter‑text bar
-        self.rowconfigure(4, weight=0)  # key buttons row
-        self.rowconfigure(5, weight=0)  # 2nd key row
-        self.rowconfigure(6, weight=0)  # LLM command bar
+
+        paned = tk.PanedWindow(self, orient=tk.HORIZONTAL, sashwidth=4)
+        paned.grid(row=0, column=0, columnspan=2, sticky="nsew")
+        self.rowconfigure(0, weight=1)
+        self.columnconfigure(0, weight=1, minsize=250)  # ✅ enforce min width for left
+        self.columnconfigure(1, weight=2)
 
         # ── top‑right “X” button (absolute) ─────────────────────────────────
         close_btn = ttk.Button(
@@ -115,8 +111,13 @@ class ControlPanel(tk.Tk):
         # ===================================================================
         # LEFT NOTEBOOK  →  Elements  |  Tabs
         # ===================================================================
-        left_nb = ttk.Notebook(self)
-        left_nb.grid(row=0, column=0, sticky="nsew")
+        self.left_wrapper = tk.Frame(paned, width=300)
+        self.left_wrapper.pack_propagate(False)  # ✅ if you're using .pack() inside
+        paned.add(self.left_wrapper, minsize=200, stretch="always")
+
+        left_nb = ttk.Notebook(self.left_wrapper)
+        left_nb.pack(fill="both", expand=True)
+
         left_nb.columnconfigure(0, weight=1)
         left_nb.rowconfigure(0, weight=1)
 
@@ -372,8 +373,9 @@ class ControlPanel(tk.Tk):
         # ================================================================
         # RIGHT‑HAND PANEL →  notebook(Log/Actions) + state + buttons
         # ================================================================
-        right = tk.Frame(self)
-        right.grid(row=0, column=1, sticky="nsew")
+        self.right_panel = tk.Frame(paned)
+        paned.add(self.right_panel, stretch="always")
+        right = self.right_panel
         right.rowconfigure(0, weight=1)
         right.rowconfigure(1, weight=0)
         right.rowconfigure(2, weight=0)
