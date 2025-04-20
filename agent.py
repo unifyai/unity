@@ -376,6 +376,37 @@ def _build_pruned_response_format(applied: Dict[str, Any]) -> BaseModel:
     return create_model("ActionSelection", **top_level)
 
 
+# === helper to expose available actions to the GUI =======================
+def list_available_actions(  # NEW
+    tabs: List[str],
+    buttons: Optional[List[Tuple[int, str]]] | None = None,
+) -> dict[str, list[str]]:
+    """
+    Return a mapping {group_name: [field_names,…]} describing every action
+    that would appear in the full response‑format schema given the current
+    set of browser tabs and visible buttons.
+
+    Groups:
+        • "tab_actions"
+        • "scroll_actions"
+        • "button_actions"
+        • "standalone"   (search_action, search_url_action)
+    """
+    fmt = _create_full_response_format(tabs, buttons)  # reuse existing logic
+    return {
+        "tab_actions": list(
+            fmt.model_fields["tab_actions"].annotation.model_fields,
+        ),
+        "scroll_actions": list(
+            fmt.model_fields["scroll_actions"].annotation.model_fields,
+        ),
+        "button_actions": list(
+            fmt.model_fields["button_actions"].annotation.model_fields,
+        ),
+        "standalone": ["search_action", "search_url_action"],
+    }
+
+
 @unify.traced
 def primitive_to_browser_action(
     text: str,
