@@ -479,7 +479,9 @@ class ControlPanel(tk.Tk):
         for c in self._elements_rows_frame.winfo_children():
             c.destroy()
         for idx, label, hover in self.elements:
-            txt = f"{idx}. {label}" + ("  (hover)" if hover else "")
+            # flatten any embedded newlines to avoid tall buttons
+            flat = " ".join(label.splitlines())
+            txt = f"{idx}. {flat}" + ("  (hover)" if hover else "")
             btn = ttk.Button(
                 self._elements_rows_frame,
                 text=txt,
