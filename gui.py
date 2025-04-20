@@ -74,6 +74,7 @@ class ControlPanel(tk.Tk):
         self.rowconfigure(1, weight=0)  # search / url bar
         self.rowconfigure(2, weight=0)  # command bar
         self.rowconfigure(3, weight=0)  # enter‑text bar
+        self.rowconfigure(4, weight=0)  # key buttons row
 
         # ===================================================================
         # LEFT NOTEBOOK  →  Elements  |  Tabs
@@ -199,6 +200,26 @@ class ControlPanel(tk.Tk):
             padx=(6, 0),
         )
 
+        # ===================================================================
+        #  ROW‑4  →  Key‑buttons bar (stack horizontally)                    # NEW
+        # ===================================================================
+        keyrow = tk.Frame(self)  # NEW
+        keyrow.grid(
+            row=4,
+            column=0,
+            columnspan=2,
+            sticky="ew",
+            padx=5,
+            pady=(0, 8),
+        )  # NEW
+
+        ttk.Button(  # NEW
+            keyrow,
+            text="Enter",
+            command=lambda: self._handle_input("press enter"),
+            width=10,
+        ).pack(side="left")
+
         # ================================================================
         # RIGHT‑HAND PANEL →  notebook(Log/Actions) + state + buttons
         # ================================================================
@@ -254,14 +275,13 @@ class ControlPanel(tk.Tk):
         make(2, 0, "Stop scroll", "stop scroll")
         make(3, 0, "New tab", "new tab")
         make(3, 1, "Close tab", "close tab")
-        make(4, 0, "Press Enter", "press enter")
 
         ttk.Button(
             btns,
             text="Exit",
             command=self._on_exit,
             style="Danger.TButton",
-        ).grid(row=5, column=0, columnspan=2, sticky="ew", pady=(8, 0))
+        ).grid(row=4, column=0, columnspan=2, sticky="ew", pady=(8, 0))
 
     def _send_from_entry(self) -> None:
         text = self.cmd_var.get().strip()
