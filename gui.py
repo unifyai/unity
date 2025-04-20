@@ -55,6 +55,16 @@ class ControlPanel(tk.Tk):
 
         self.after(50, self._poll_text_q)
 
+    def _refresh_state_label(self) -> None:
+        st = self.state or {}
+        self.state_var.set(
+            f"url:         {st.get('url', '')[:60]}\n"
+            f"title:       {st.get('title', '')[:60]}\n"
+            f"scroll_y:    {st.get('scroll_y', 0)}\n"
+            f"auto_scroll: {st.get('auto_scroll', None)}\n"
+            f"in_textbox:  {st.get('in_textbox', False)}",
+        )
+
     # ------------------------------------------------------------------ UI
     def _build_widgets(self) -> None:
         self.title("Playwright helper")
@@ -82,14 +92,27 @@ class ControlPanel(tk.Tk):
         # -------- right panel (log + buttons) ---------------------------
         right = tk.Frame(self)
         right.grid(row=0, column=1, sticky="nsew")
-        right.rowconfigure(0, weight=3)
-        right.rowconfigure(1, weight=1)
+        right.rowconfigure(0, weight=3)  # log
+        right.rowconfigure(1, weight=0)  # browser‑state read‑out  # NEW
+        right.rowconfigure(2, weight=1)  # control buttons
 
+        # log window
         self.log = scrolledtext.ScrolledText(right, state="disabled", height=8)
         self.log.grid(row=0, column=0, sticky="nsew", padx=5, pady=5)
 
+        # ── browser‑state read‑out ─────────────────────────────────────────────
+        self.state_var = tk.StringVar()
+        self.state_lbl = tk.Label(
+            right,
+            textvariable=self.state_var,
+            justify="left",
+            anchor="w",
+            font=("Consolas", 9),  # monospaced for neat columns
+        )
+        self.state_lbl.grid(row=1, column=0, sticky="nsew", padx=5)
+
         btns = tk.Frame(right)
-        btns.grid(row=1, column=0, padx=5, pady=5, sticky="nsew")
+        btns.grid(row=2, column=0, padx=5, pady=5, sticky="nsew")
         for i in range(2):
             btns.columnconfigure(i, weight=1)
 
@@ -356,6 +379,7 @@ class ControlPanel(tk.Tk):
                 self.tab_titles = payload.get("tabs", [])
                 self.history = payload.get("history", self.history)
                 self.state = payload.get("state", self.state)
+                self._refresh_state_label()
                 img = payload.get("screenshot", b"")
                 if img:
                     self.screenshot = img
@@ -370,6 +394,8 @@ class ControlPanel(tk.Tk):
                     "end",
                     f"{idx:>2}. {label}" + (" (on hover)" if hover else ""),
                 )
+        # initial blank state read‑out
+        self._refresh_state_label()
         self.after(self.REFRESH_INTERVAL_MS, self._poll_updates)
 
     def _poll_text_q(self):
