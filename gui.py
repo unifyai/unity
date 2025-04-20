@@ -61,6 +61,18 @@ class ControlPanel(tk.Tk):
         )
         self._pending_text = ""
 
+    # ---------- universal mouse‑wheel helper -------------------------------
+    def _bind_mousewheel(self, target, canvas):  # NEW
+        def wheel(ev):
+            if ev.num == 4 or ev.delta > 0:
+                canvas.yview_scroll(-1, "units")
+            elif ev.num == 5 or ev.delta < 0:
+                canvas.yview_scroll(1, "units")
+
+        target.bind("<MouseWheel>", wheel, add=True)  # Win / macOS
+        target.bind("<Button-4>", wheel, add=True)  # X11 up
+        target.bind("<Button-5>", wheel, add=True)  # X11 down
+
     # ──────────────────────── WIDGET CONSTRUCTION ────────────────────────
     def _build_widgets(self) -> None:
         """Build the full Tk layout (GUI thread)."""
@@ -116,6 +128,10 @@ class ControlPanel(tk.Tk):
 
         self._elements_rows_frame = el_rows
 
+        # ---- universal mouse‑wheel support --------------------------------
+        self._bind_mousewheel(el_canvas, el_canvas)  # NEW
+        self._bind_mousewheel(el_rows, el_canvas)
+
         # ── Tabs pane (scrollable rows with buttons) ────────────────────
         tab_canvas = tk.Canvas(tab_tabs_frame, highlightthickness=0)
         scroll_v = ttk.Scrollbar(
@@ -136,7 +152,8 @@ class ControlPanel(tk.Tk):
         tab_tabs_frame.rowconfigure(0, weight=1)
         tab_tabs_frame.columnconfigure(0, weight=1)
 
-        self._tab_rows_frame = tab_rows  # keep reference for rebuilds
+        self._tab_rows_frame = tab_rows  # keep reference for rebuilds\
+        self._el_canvas = el_canvas
 
         # ── colour‑aware style for element buttons ────────────────────
         # Decide if the window background is “dark” or “light”
@@ -149,12 +166,12 @@ class ControlPanel(tk.Tk):
         bg_active_light, bg_active_dark = "#dcdcdc", "#505050"
 
         style = ttk.Style()
-        style.configure(
+        style.configure(  # tighter vertical padding
             "Element.TButton",
             font=("Helvetica", 11),
             anchor="w",
             relief="flat",
-            padding=(4, 2),
+            padding=(2, 1),  # NEW
             foreground=fg_dark if dark else fg_light,
             background=bg_idle_dark if dark else bg_idle_light,
         )
@@ -465,12 +482,14 @@ class ControlPanel(tk.Tk):
             c.destroy()  # NEW
         for idx, label, hover in self.elements:  # NEW
             txt = f"{idx}. {label}" + ("  (hover)" if hover else "")  # NEW
-            ttk.Button(
+            btn = ttk.Button(  # NEW
                 self._elements_rows_frame,
                 text=txt,
                 style="Element.TButton",
                 command=lambda i=idx, l=label: self._exec_element_click(i, l),
-            ).pack(fill="x", padx=1, pady=1)
+            )
+            btn.pack(fill="x", padx=1, pady=0)
+            self._bind_mousewheel(btn, self._el_canvas)  # NEW
 
     # ───────────────────────────── EXIT ─────────────────────────────────
     def _on_exit(self) -> None:
