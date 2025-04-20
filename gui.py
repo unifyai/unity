@@ -70,7 +70,10 @@ class ControlPanel(tk.Tk):
         self.geometry("900x550")
         self.columnconfigure(0, weight=3)  # left notebook
         self.columnconfigure(1, weight=2)  # right panel
-        self.rowconfigure(0, weight=1)
+        self.rowconfigure(0, weight=1)  # main split
+        self.rowconfigure(1, weight=0)  # search / url bar
+        self.rowconfigure(2, weight=0)  # command bar
+        self.rowconfigure(3, weight=0)  # enter‑text bar
 
         # ===================================================================
         # LEFT NOTEBOOK  →  Elements  |  Tabs
@@ -123,6 +126,78 @@ class ControlPanel(tk.Tk):
         tab_tabs_frame.columnconfigure(0, weight=1)
 
         self._tab_rows_frame = tab_rows  # keep reference for rebuilds
+
+        # ===================================================================
+        #  ROW‑1  →  Search / URL bar
+        # ===================================================================
+        search = tk.Frame(self)
+        search.grid(row=1, column=0, columnspan=2, sticky="ew", padx=5, pady=(0, 4))
+        search.columnconfigure(1, weight=1)
+
+        tk.Label(search, text="Search / URL:").grid(row=0, column=0, sticky="w")
+
+        self.search_var = tk.StringVar()
+        self.search_mode = tk.StringVar(value="google")
+        entry_s = tk.Entry(search, textvariable=self.search_var)
+        entry_s.grid(row=0, column=1, sticky="ew")
+        entry_s.bind("<Return>", lambda _e: self._send_search())
+
+        rb_google = tk.Radiobutton(
+            search,
+            text="Google",
+            variable=self.search_mode,
+            value="google",
+        )
+        rb_url = tk.Radiobutton(
+            search,
+            text="URL",
+            variable=self.search_mode,
+            value="url",
+        )
+        rb_google.grid(row=0, column=2, padx=(6, 0))
+        rb_url.grid(row=0, column=3)
+        rb_google.select()
+
+        ttk.Button(search, text="Go", command=self._send_search).grid(
+            row=0,
+            column=4,
+            padx=(6, 0),
+        )
+
+        # ===================================================================
+        #  ROW‑2  →  Command bar
+        # ===================================================================
+        bar = tk.Frame(self)
+        bar.grid(row=2, column=0, columnspan=2, sticky="ew", padx=5, pady=4)
+        bar.columnconfigure(1, weight=1)
+        tk.Label(bar, text="Command:").grid(row=0, column=0, sticky="w")
+        self.cmd_var = tk.StringVar()
+        entry_c = tk.Entry(bar, textvariable=self.cmd_var)
+        entry_c.grid(row=0, column=1, sticky="ew")
+        entry_c.bind("<Return>", lambda _e: self._send_from_entry())
+        ttk.Button(
+            bar,
+            text="Send",
+            command=self._send_from_entry,
+        ).grid(row=0, column=2)
+
+        # ===================================================================
+        #  ROW‑3  →  Enter‑text bar
+        # ===================================================================
+        et = tk.Frame(self)
+        et.grid(row=3, column=0, columnspan=2, sticky="ew", padx=5, pady=(0, 6))
+        et.columnconfigure(1, weight=1)
+
+        tk.Label(et, text="Enter text:").grid(row=0, column=0, sticky="w")
+        self.enter_var = tk.StringVar()
+        entry_e = tk.Entry(et, textvariable=self.enter_var)
+        entry_e.grid(row=0, column=1, sticky="ew")
+        entry_e.bind("<Return>", lambda _e: self._send_enter_text())
+        ttk.Button(et, text="Go", command=self._send_enter_text).grid(
+            row=0,
+            column=2,
+            padx=(6, 0),
+        )
 
         # ================================================================
         # RIGHT‑HAND PANEL →  notebook(Log/Actions) + state + buttons
@@ -186,6 +261,32 @@ class ControlPanel(tk.Tk):
             command=self._on_exit,
             style="Danger.TButton",
         ).grid(row=4, column=0, columnspan=2, sticky="ew", pady=(8, 0))
+
+    def _send_from_entry(self) -> None:
+        text = self.cmd_var.get().strip()
+        self.cmd_var.set("")
+        if text:
+            self._handle_input(text)
+
+    # ---------- search / url helper ------------------------------------
+    def _send_search(self) -> None:
+        txt = self.search_var.get().strip()
+        if not txt:
+            return
+        mode = self.search_mode.get()
+        cmd = f"open url {txt}" if mode == "url" else f"search {txt}"
+        self._handle_input(cmd)
+        self.search_var.set("")
+
+    # ---------- enter‑text helper ------------------------------------
+    def _send_enter_text(self) -> None:
+        txt = self.enter_var.get()
+        if not txt:
+            return
+        # preserve escape sequences (\n, \t, etc.) for the worker
+        escaped = txt.encode("unicode_escape").decode("ascii")
+        self._handle_input(f"enter text {escaped}")
+        self.enter_var.set("")  # clear box
 
     # ──────────────────────── TABS‑PANE HELPERS ────────────────────────
     def _exec_tab_cmd(self, prefix: str, title: str) -> None:
@@ -289,6 +390,7 @@ class ControlPanel(tk.Tk):
                 "new tab",
                 "close tab",
                 "switch",
+                "enter text",
             ),
         ):
             self._queue_command(text)

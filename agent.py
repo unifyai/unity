@@ -377,7 +377,7 @@ def _build_pruned_response_format(applied: Dict[str, Any]) -> BaseModel:
 
 
 # === helper to expose available actions to the GUI =======================
-def list_available_actions(  # NEW
+def list_available_actions(
     tabs: List[str],
     buttons: Optional[List[Tuple[int, str]]] | None = None,
 ) -> dict[str, list[str]]:
