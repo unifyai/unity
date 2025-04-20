@@ -80,9 +80,9 @@ class ControlPanel(tk.Tk):
         # ----- main window -------------------------------------------------
         self.title("Playwright helper")
         self.geometry("900x550")
+        # root grid: two columns (left notebook, right panel)
         self.columnconfigure(0, weight=3)  # left notebook
         self.columnconfigure(1, weight=2)  # right panel
-        self.columnconfigure(2, weight=0)
         self.rowconfigure(0, weight=1)  # main split (takes cols 0‑1)
         self.rowconfigure(1, weight=0)  # search / url bar
         self.rowconfigure(2, weight=0)  # command bar
@@ -91,20 +91,19 @@ class ControlPanel(tk.Tk):
         self.rowconfigure(5, weight=0)  # 2nd key row
         self.rowconfigure(6, weight=0)  # LLM command bar
 
-        # ── top‑right “X” button ─────────────────────────────────────────────  # NEW
-        ttk.Button(
+        # ── top‑right “X” button (absolute) ─────────────────────────────────
+        close_btn = ttk.Button(
             self,
             text="×",
             width=3,
             style="Danger.TButton",
             command=self._on_exit,
-        ).grid(
-            row=0,
-            column=2,
-            sticky="ne",
-            padx=(0, 4),
-            pady=4,
-        )  # NEW
+        )
+        # place at the top‑right corner (6 px padding)
+        close_btn.place(relx=1.0, rely=0.0, x=-6, y=6, anchor="ne")
+
+        # after all other widgets have been laid out, raise the button
+        self.after_idle(close_btn.lift)  # NEW — guarantees visibility
 
         # ===================================================================
         # LEFT NOTEBOOK  →  Elements  |  Tabs
