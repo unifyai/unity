@@ -114,6 +114,12 @@ class CommandRunner:
             self.state.auto_scroll = None
             return
 
+        # press enter -------------------------------------------------------
+        if cmd == "press enter":  # NEW
+            self.hist.add("press enter")  # NEW
+            self.active.keyboard.press("Enter")  # NEW
+            return  # NEW
+
         # enter text -------------------------------------------------------
         m = re.fullmatch(r"enter text\s+(.+)", cmd, re.DOTALL)
         if m:

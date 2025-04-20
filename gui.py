@@ -254,13 +254,14 @@ class ControlPanel(tk.Tk):
         make(2, 0, "Stop scroll", "stop scroll")
         make(3, 0, "New tab", "new tab")
         make(3, 1, "Close tab", "close tab")
+        make(4, 0, "Press Enter", "press enter")
 
         ttk.Button(
             btns,
             text="Exit",
             command=self._on_exit,
             style="Danger.TButton",
-        ).grid(row=4, column=0, columnspan=2, sticky="ew", pady=(8, 0))
+        ).grid(row=5, column=0, columnspan=2, sticky="ew", pady=(8, 0))
 
     def _send_from_entry(self) -> None:
         text = self.cmd_var.get().strip()
@@ -395,6 +396,7 @@ class ControlPanel(tk.Tk):
                 "close tab",
                 "switch",
                 "enter text",
+                "press enter",
             ),
         ):
             self._queue_command(text)
