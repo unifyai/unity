@@ -143,23 +143,29 @@ class BrowserWorker(threading.Thread):
                     except Exception as e:
                         self.log(f"overlay failed: {e}")
 
-                    # ── update in_textbox from real‑time page state ─────────
+                    # ── update dynamic browser‑state fields ────────────────
                     try:  # NEW
-                        self.runner.state.in_textbox = self.runner.active.evaluate(
-                            """
-                            () => {
-                              const el = document.activeElement;
-                              if (!el) return false;
-                              const tag  = el.tagName.toLowerCase();
-                              const role = el.getAttribute('role');
-                              return ['input','textarea'].includes(tag) ||
-                                     ['textbox','combobox','searchbox'].includes(role);
-                            }
-                            """,
-                        )
+                        js = """
+                            () => ({
+                                inBox : (() => {
+                                    const el = document.activeElement;
+                                    if (!el) return false;
+                                    const tag  = el.tagName.toLowerCase();
+                                    const role = el.getAttribute('role');
+                                    return ['input','textarea'].includes(tag) ||
+                                           ['textbox','combobox','searchbox'].includes(role);
+                                })(),
+                                sy : Math.round(scrollY)
+                            })
+                        """
+                        res = self.runner.active.evaluate(js)
+                        self.runner.state.in_textbox = res["inBox"]
+                        self.runner.state.scroll_y = res["sy"]
                     except Exception:
-                        # on navigation or cross‑origin frames, fall back
+                        # during navigation or cross‑origin frames
                         self.runner.state.in_textbox = False
+                        # leave scroll_y unchanged (best effort)
+                    # ──────────────────────────────────────────────────
 
                     # ---------- package GUI update --------------------
                     elements_lite = [
