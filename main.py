@@ -42,6 +42,7 @@ def main() -> None:
 
     # launch Tk GUI
     gui = ControlPanel(cmd_q, up_q, text_q)
+    gui.set_worker(worker)
     primitive_init(text_q.put)
 
     gui.after(1000, run_tasks)
