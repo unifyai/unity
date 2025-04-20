@@ -280,12 +280,16 @@ class ControlPanel(tk.Tk):
 
     # ---------- enter‑text helper ------------------------------------
     def _send_enter_text(self) -> None:
-        txt = self.enter_var.get()
-        if not txt:
+        raw = self.enter_var.get()
+        if not raw:
             return
-        # preserve escape sequences (\n, \t, etc.) for the worker
-        escaped = txt.encode("unicode_escape").decode("ascii")
-        self._handle_input(f"enter text {escaped}")
+        # decode user‑typed escapes → actual control chars  ( \n \t \b … )
+        try:
+            decoded = bytes(raw, "utf-8").decode("unicode_escape")
+        except Exception:
+            decoded = raw
+        # send with real newline characters so the worker presses <Enter>
+        self._handle_input(f"enter text {decoded}")
         self.enter_var.set("")  # clear box
 
     # ──────────────────────── TABS‑PANE HELPERS ────────────────────────

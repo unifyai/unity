@@ -124,7 +124,13 @@ class CommandRunner:
             except Exception:
                 text = raw
             self.hist.add(f"enter text {text[:30]}…")
-            self.active.keyboard.type(text, delay=20)  # ≈50 cps
+
+            parts = text.split("\n")  # NEW
+            for i, chunk in enumerate(parts):  # NEW
+                if chunk:  # type visible chars
+                    self.active.keyboard.type(chunk, delay=20)
+                if i < len(parts) - 1:  # newline → Enter
+                    self.active.keyboard.press("Enter", delay=20)  # NEW
             return
 
         # search -----------------------------------------------------------
