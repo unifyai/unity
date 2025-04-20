@@ -210,6 +210,20 @@ class ControlPanel(tk.Tk):
             foreground=[("pressed", fg_dark if dark else fg_light)],
         )
 
+        # Disabled and enabled button styles
+        style.map(
+            "TButton",
+            foreground=[
+                ("disabled", "#888888"),
+                ("!disabled", "#ffffff"),
+            ],
+            background=[
+                ("disabled", "#2a2a2a"),
+                ("active", "#505050"),
+                ("!disabled", "#3a3a3a"),
+            ],
+        )
+
         # ===================================================================
         #  ROW‑1  →  Search / URL bar
         # ===================================================================
