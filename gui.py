@@ -409,10 +409,13 @@ class ControlPanel(tk.Tk):
             child.destroy()
 
         for title in self.tab_titles:
+            shown = title if len(title) <= 20 else title[:17] + "…"  # NEW
+            row = ttk.Frame(self._tab_rows_frame)
+            row.pack(fill="x", pady=1, padx=2)
             row = ttk.Frame(self._tab_rows_frame)
             row.pack(fill="x", pady=1, padx=2)
 
-            ttk.Label(row, text=title, anchor="w").pack(
+            ttk.Label(row, text=shown, anchor="w").pack(
                 side="left",
                 fill="x",
                 expand=True,
