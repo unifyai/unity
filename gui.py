@@ -348,6 +348,7 @@ class ControlPanel(tk.Tk):
         make(1, 0, "Start ▲", "start scroll up")
         make(1, 1, "Start ▼", "start scroll down")
         make(2, 0, "Stop scroll", "stop scroll")
+        make(2, 1, "Continue", "continue scroll")
         make(3, 0, "New tab", "new tab")
         make(3, 1, "Close tab", "close tab")
 
@@ -536,6 +537,7 @@ class ControlPanel(tk.Tk):
                 "hold shift",
                 "release shift",
                 "click out",
+                "continue scroll",
             ),
         ):
             self._queue_command(text)

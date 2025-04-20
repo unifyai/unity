@@ -126,6 +126,30 @@ class StopScrollingDown(BaseModel):
     apply: bool = Field(..., description="Decision to apply this action or not.")
 
 
+class ContinueScrollingUp(BaseModel):
+    """
+    Continues the upwards scroll motion which is currently occuring.
+    """
+
+    rationale: Optional[str] = Field(
+        ...,
+        description="Explanation for your decision whether or not to apply this action.",
+    )
+    apply: bool = Field(..., description="Decision to apply this action or not.")
+
+
+class ContinueScrollingDown(BaseModel):
+    """
+    Continues the downwards scroll motion which is currently occuring.
+    """
+
+    rationale: Optional[str] = Field(
+        ...,
+        description="Explanation for your decision whether or not to apply this action.",
+    )
+    apply: bool = Field(..., description="Decision to apply this action or not.")
+
+
 class Search(BaseModel):
     """
     Search the web for a the specified query in the topmost search bar of the browser.
@@ -211,11 +235,13 @@ def _construct_scroll_actions():
     elif SCROLLING_STATE == "up":
         return {
             "stop_scrolling_up": StopScrollingUp,
+            "continue_scrolling_up": ContinueScrollingUp,
             "start_scrolling_down": StartScrollingDown,
         }
     elif SCROLLING_STATE == "down":
         return {
             "stop_scrolling_down": StopScrollingDown,
+            "continue_scrolling_down": ContinueScrollingDown,
             "start_scrolling_up": StartScrollingUp,
         }
     else:

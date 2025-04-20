@@ -100,6 +100,27 @@ class CommandRunner:
                 {"delta": delta, "duration": SCROLL_DURATION},
             )
             self.state.scroll_y += delta
+            try:
+                # 1) try smooth JS scroll (works on ordinary pages)
+                self.active.evaluate(
+                    HANDLE_SCROLL_JS,
+                    {"delta": delta, "duration": SCROLL_DURATION},
+                )
+            except Exception:
+                pass
+
+            # 2) issue a real wheel event – keeps working on cookie dialogs,
+            #    modals, nested iframes, etc.
+            try:
+                self.active.mouse.wheel(0, delta)
+            except Exception:
+                pass
+
+            # update cached scroll position from the page
+            try:
+                self.state.scroll_y = self.active.evaluate("Math.round(scrollY)")
+            except Exception:
+                self.state.scroll_y += delta
             return
         # auto scroll ------------------------------------------------------
         if cmd in {"start scroll up", "start scroll down"}:
@@ -112,6 +133,11 @@ class CommandRunner:
         if cmd == "stop scroll":
             self.active.evaluate(AUTO_SCROLL_JS, {"dir": "stop", "speed": 0})
             self.state.auto_scroll = None
+            return
+
+        # continue scroll (no‑op – lets auto‑scroll keep running)  ───── NEW
+        if cmd == "continue scroll":
+            self.hist.add(cmd)
             return
 
         # click out (remove focus) ------------------------------------------
