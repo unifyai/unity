@@ -338,9 +338,9 @@ class ControlPanel(tk.Tk):
         # ================================================================
         right = tk.Frame(self)
         right.grid(row=0, column=1, sticky="nsew")
-        right.rowconfigure(0, weight=3)
+        right.rowconfigure(0, weight=1)
         right.rowconfigure(1, weight=0)
-        right.rowconfigure(2, weight=1)
+        right.rowconfigure(2, weight=0)
 
         # Log / Actions notebook
         note = ttk.Notebook(right)
