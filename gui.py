@@ -203,22 +203,45 @@ class ControlPanel(tk.Tk):
         # ===================================================================
         #  ROW‑4  →  Key‑buttons bar (stack horizontally)                    # NEW
         # ===================================================================
-        keyrow = tk.Frame(self)  # NEW
-        keyrow.grid(
-            row=4,
-            column=0,
-            columnspan=2,
-            sticky="ew",
-            padx=5,
-            pady=(0, 8),
-        )  # NEW
+        keyrow = tk.Frame(self)
+        keyrow.grid(row=4, column=0, columnspan=2, sticky="ew", padx=5, pady=(0, 8))
 
-        ttk.Button(  # NEW
-            keyrow,
-            text="Enter",
-            command=lambda: self._handle_input("press enter"),
-            width=10,
-        ).pack(side="left")
+        def kbtn(txt, cmd):
+            ttk.Button(
+                keyrow,
+                text=txt,
+                width=10,
+                command=lambda c=cmd: self._handle_input(c),
+            ).pack(side="left", padx=1, pady=1)
+
+        # first row
+        kbtn("Enter", "press enter")
+        kbtn("Backspace", "press backspace")
+        kbtn("Delete", "press delete")
+        kbtn("Select All", "select all")
+        kbtn("Shift ⬇", "hold shift")
+        kbtn("Shift ⬆", "release shift")
+
+        # second row  (line break)
+        keyrow2 = tk.Frame(self)
+        keyrow2.grid(row=5, column=0, columnspan=2, sticky="ew", padx=5, pady=(0, 8))
+
+        def k2(txt, cmd):
+            ttk.Button(
+                keyrow2,
+                text=txt,
+                width=12,
+                command=lambda c=cmd: self._handle_input(c),
+            ).pack(side="left", padx=1, pady=1)
+
+        k2("←", "cursor left")
+        k2("→", "cursor right")
+        k2("↑", "cursor up")
+        k2("↓", "cursor down")
+        k2("⌃←", "move line start")
+        k2("⌃→", "move line end")
+        k2("⌥←", "move word left")
+        k2("⌥→", "move word right")
 
         # ================================================================
         # RIGHT‑HAND PANEL →  notebook(Log/Actions) + state + buttons
@@ -417,6 +440,19 @@ class ControlPanel(tk.Tk):
                 "switch",
                 "enter text",
                 "press enter",
+                "press backspace",
+                "press delete",
+                "cursor left",
+                "cursor right",
+                "cursor up",
+                "cursor down",
+                "select all",
+                "move line start",
+                "move line end",
+                "move word left",
+                "move word right",
+                "hold shift",
+                "release shift",
             ),
         ):
             self._queue_command(text)
