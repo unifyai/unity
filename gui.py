@@ -87,6 +87,8 @@ class ControlPanel(tk.Tk):
         self.rowconfigure(2, weight=0)  # command bar
         self.rowconfigure(3, weight=0)  # enter‑text bar
         self.rowconfigure(4, weight=0)  # key buttons row
+        self.rowconfigure(5, weight=0)  # 2nd key row
+        self.rowconfigure(6, weight=0)  # LLM command bar  # NEW
 
         # ===================================================================
         # LEFT NOTEBOOK  →  Elements  |  Tabs
@@ -216,18 +218,6 @@ class ControlPanel(tk.Tk):
         rb_google.select()
 
         # ===================================================================
-        #  ROW‑2  →  Command bar
-        # ===================================================================
-        bar = tk.Frame(self)
-        bar.grid(row=2, column=0, columnspan=2, sticky="ew", padx=5, pady=4)
-        bar.columnconfigure(1, weight=1)
-        tk.Label(bar, text="Command:").grid(row=0, column=0, sticky="w")
-        self.cmd_var = tk.StringVar()
-        entry_c = tk.Entry(bar, textvariable=self.cmd_var)
-        entry_c.grid(row=0, column=1, sticky="ew")
-        entry_c.bind("<Return>", lambda _e: self._send_from_entry())
-
-        # ===================================================================
         #  ROW‑3  →  Enter‑text bar
         # ===================================================================
         et = tk.Frame(self)
@@ -282,6 +272,25 @@ class ControlPanel(tk.Tk):
         k2("⌃→", "move line end")
         k2("⌥←", "move word left")
         k2("⌥→", "move word right")
+
+        # ===================================================================
+        #  ROW‑6  →  LLM Command bar                                        # NEW
+        # ===================================================================
+        bar = tk.Frame(self)  # NEW
+        bar.grid(
+            row=6,
+            column=0,
+            columnspan=2,
+            sticky="ew",
+            padx=5,
+            pady=(0, 8),
+        )  # NEW
+        bar.columnconfigure(1, weight=1)  # NEW
+        tk.Label(bar, text="LLM Command:").grid(row=0, column=0, sticky="w")  # NEW
+        self.cmd_var = tk.StringVar()  # NEW
+        entry_c = tk.Entry(bar, textvariable=self.cmd_var)  # NEW
+        entry_c.grid(row=0, column=1, sticky="ew")  # NEW
+        entry_c.bind("<Return>", lambda _e: self._send_from_entry())  # NEW
 
         # ================================================================
         # RIGHT‑HAND PANEL →  notebook(Log/Actions) + state + buttons
