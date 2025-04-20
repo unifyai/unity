@@ -114,6 +114,19 @@ class CommandRunner:
             self.state.auto_scroll = None
             return
 
+        # enter text -------------------------------------------------------
+        m = re.fullmatch(r"enter text\s+(.+)", cmd, re.DOTALL)
+        if m:
+            raw = m.group(1)
+            # interpret common escapes (\n, \t, \b, etc.)
+            try:
+                text = bytes(raw, "utf-8").decode("unicode_escape")
+            except Exception:
+                text = raw
+            self.hist.add(f"enter text {text[:30]}…")
+            self.active.keyboard.type(text, delay=20)  # ≈50 cps
+            return
+
         # search -----------------------------------------------------------
         m = re.fullmatch(r"search\s+(.+)", cmd)
         if m:
