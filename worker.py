@@ -142,6 +142,25 @@ class BrowserWorker(threading.Thread):
                         paint_overlay(mirror.page, boxes)
                     except Exception as e:
                         self.log(f"overlay failed: {e}")
+
+                    # ── update in_textbox from real‑time page state ─────────
+                    try:  # NEW
+                        self.runner.state.in_textbox = self.runner.active.evaluate(
+                            """
+                            () => {
+                              const el = document.activeElement;
+                              if (!el) return false;
+                              const tag  = el.tagName.toLowerCase();
+                              const role = el.getAttribute('role');
+                              return ['input','textarea'].includes(tag) ||
+                                     ['textbox','combobox','searchbox'].includes(role);
+                            }
+                            """,
+                        )
+                    except Exception:
+                        # on navigation or cross‑origin frames, fall back
+                        self.runner.state.in_textbox = False
+
                     # ---------- package GUI update --------------------
                     elements_lite = [
                         (i + 1, e["label"], e.get("hover", False))
