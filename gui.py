@@ -93,18 +93,28 @@ class ControlPanel(tk.Tk):
             f.rowconfigure(0, weight=1)
             f.columnconfigure(0, weight=1)
 
-        # ── Elements listbox (clickables) ───────────────────────────────
-        self.listbox = tk.Listbox(tab_elements_frame, font=("Helvetica", 11))
-        self.listbox.grid(row=0, column=0, sticky="nsew")
-        sb_el = ttk.Scrollbar(
+        # ── Elements pane – scrollable buttons ──────────────────────────  # NEW
+        el_canvas = tk.Canvas(tab_elements_frame, highlightthickness=0)  # NEW
+        el_scroll = ttk.Scrollbar(
             tab_elements_frame,
-            orient="vertical",
-            command=self.listbox.yview,
-        )
-        sb_el.grid(row=0, column=0, sticky="nse")
-        self.listbox.config(yscrollcommand=sb_el.set)
-        self.listbox.bind("<ButtonRelease-1>", self._on_list_click)
-        self.listbox.bind("<Return>", self._on_list_click)
+            orient="vertical",  # NEW
+            command=el_canvas.yview,
+        )  # NEW
+        el_rows = ttk.Frame(el_canvas)  # NEW
+        el_canvas.create_window((0, 0), window=el_rows, anchor="nw")  # NEW
+        el_canvas.configure(yscrollcommand=el_scroll.set)  # NEW
+        el_rows.bind(  # NEW
+            "<Configure>",
+            lambda e: el_canvas.configure(  # NEW
+                scrollregion=el_canvas.bbox("all"),
+            ),  # NEW
+        )  # NEW
+        el_canvas.grid(row=0, column=0, sticky="nsew")  # NEW
+        el_scroll.grid(row=0, column=1, sticky="ns")  # NEW
+        tab_elements_frame.rowconfigure(0, weight=1)  # NEW
+        tab_elements_frame.columnconfigure(0, weight=1)  # NEW
+
+        self._elements_rows_frame = el_rows
 
         # ── Tabs pane (scrollable rows with buttons) ────────────────────
         tab_canvas = tk.Canvas(tab_tabs_frame, highlightthickness=0)
@@ -127,6 +137,35 @@ class ControlPanel(tk.Tk):
         tab_tabs_frame.columnconfigure(0, weight=1)
 
         self._tab_rows_frame = tab_rows  # keep reference for rebuilds
+
+        # ── colour‑aware style for element buttons ────────────────────
+        # Decide if the window background is “dark” or “light”
+        r, g, b = [c // 256 for c in self.winfo_rgb(self.cget("bg"))]  # 0‑255
+        brightness = 0.299 * r + 0.587 * g + 0.114 * b  # luminance
+        dark = brightness < 128
+
+        fg_light, fg_dark = "#000000", "#ffffff"
+        bg_idle_light, bg_idle_dark = "#f0f0f0", "#3a3a3a"
+        bg_active_light, bg_active_dark = "#dcdcdc", "#505050"
+
+        style = ttk.Style()
+        style.configure(
+            "Element.TButton",
+            font=("Helvetica", 11),
+            anchor="w",
+            relief="flat",
+            padding=(4, 2),
+            foreground=fg_dark if dark else fg_light,
+            background=bg_idle_dark if dark else bg_idle_light,
+        )
+        style.map(
+            "Element.TButton",
+            background=[
+                ("active", bg_active_dark if dark else bg_active_light),
+                ("pressed", bg_active_dark if dark else bg_active_light),
+            ],
+            foreground=[("pressed", fg_dark if dark else fg_light)],
+        )
 
         # ===================================================================
         #  ROW‑1  →  Search / URL bar
@@ -304,7 +343,13 @@ class ControlPanel(tk.Tk):
             text="Exit",
             command=self._on_exit,
             style="Danger.TButton",
-        ).grid(row=4, column=0, columnspan=2, sticky="ew", pady=(8, 0))
+        ).grid(
+            row=4,
+            column=0,
+            columnspan=2,
+            sticky="ew",
+            pady=(8, 0),
+        )  # NEW
 
     def _send_from_entry(self) -> None:
         text = self.cmd_var.get().strip()
@@ -409,15 +454,23 @@ class ControlPanel(tk.Tk):
             f"in_textbox:  {st.get('in_textbox', False)}",
         )
 
-    # ────────────────────────── LISTBOX CLICK ───────────────────────────
-    def _on_list_click(self, _e: Any) -> None:
-        sel = self.listbox.curselection()
-        if sel:
-            pos = sel[0]
-            idx = pos + 1
-            label = self.elements[pos][1]
-            self._log(f"> click {label}")
-            self._queue_command(f"click {idx}")
+    # ---------- element‑button helpers ---------------------------------      # NEW
+    def _exec_element_click(self, idx: int, label: str) -> None:  # NEW
+        self._log(f"> click {label}")  # NEW
+        self._queue_command(f"click {idx}")  # NEW
+
+    def _rebuild_elements_rows(self) -> None:  # NEW
+        """Refresh the scrollable button list for page elements."""  # NEW
+        for c in self._elements_rows_frame.winfo_children():  # NEW
+            c.destroy()  # NEW
+        for idx, label, hover in self.elements:  # NEW
+            txt = f"{idx}. {label}" + ("  (hover)" if hover else "")  # NEW
+            ttk.Button(
+                self._elements_rows_frame,
+                text=txt,
+                style="Element.TButton",
+                command=lambda i=idx, l=label: self._exec_element_click(i, l),
+            ).pack(fill="x", padx=1, pady=1)
 
     # ───────────────────────────── EXIT ─────────────────────────────────
     def _on_exit(self) -> None:
@@ -566,13 +619,8 @@ class ControlPanel(tk.Tk):
                 break
 
         if updated:
-            # Elements list
-            self.listbox.delete(0, "end")
-            for idx, label, hover in self.elements:
-                self.listbox.insert(
-                    "end",
-                    f"{idx:>2}. {label}" + (" (on hover)" if hover else ""),
-                )
+            # Elements pane (buttons)
+            self._rebuild_elements_rows()  # NEW
             # Tabs & Actions
             self._rebuild_tabs_rows()
             self._refresh_actions_list()
