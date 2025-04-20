@@ -278,48 +278,77 @@ class ControlPanel(tk.Tk):
         # ===================================================================
         #  ROW‑4  →  Key‑buttons bar (stack horizontally)
         # ===================================================================
-        keyrow = tk.Frame(self)
-        keyrow.grid(row=4, column=0, columnspan=2, sticky="ew", padx=5, pady=(0, 8))
 
-        def kbtn(txt, cmd):
+        # Create frame
+        self.keyrow = tk.Frame(self)
+        self.keyrow.bind("<Configure>", lambda e: self._relayout_key_buttons())
+        self.keyrow.grid(
+            row=4,
+            column=0,
+            columnspan=2,
+            sticky="ew",
+            padx=5,
+            pady=(0, 8),
+        )
+
+        # Store buttons in a list
+        self._key_buttons = {}
+        self._key_button_widgets = []
+
+        key_cmds = [
+            ("Enter", "press enter"),
+            ("Backspace", "press backspace"),
+            ("Delete", "press delete"),
+            ("Select All", "select all"),
+            ("Shift ⬇", "hold shift"),
+            ("Shift ⬆", "release shift"),
+            ("Click Out", "click out"),
+        ]
+
+        for label, cmd in key_cmds:
             b = ttk.Button(
-                keyrow,
-                text=txt,
-                width=10,
-                command=lambda c=cmd: self._handle_input(c),
-            )
-            b.pack(side="left", padx=1, pady=1)
-            self._key_buttons[cmd] = b
-
-        # first row
-        kbtn("Enter", "press enter")
-        kbtn("Backspace", "press backspace")
-        kbtn("Delete", "press delete")
-        kbtn("Select All", "select all")
-        kbtn("Shift ⬇", "hold shift")
-        kbtn("Shift ⬆", "release shift")
-        kbtn("Click Out", "click out")
-
-        # second row  (line break)
-        keyrow2 = tk.Frame(self)
-        keyrow2.grid(row=5, column=0, columnspan=2, sticky="ew", padx=5, pady=(0, 8))
-
-        def k2(txt, cmd):
-            ttk.Button(
-                keyrow2,
-                text=txt,
+                self.keyrow,
+                text=label,
                 width=12,
                 command=lambda c=cmd: self._handle_input(c),
-            ).pack(side="left", padx=1, pady=1)
+            )
+            self._key_buttons[cmd] = b
+            self._key_button_widgets.append(b)
 
-        k2("←", "cursor left")
-        k2("→", "cursor right")
-        k2("↑", "cursor up")
-        k2("↓", "cursor down")
-        k2("⌃←", "move line start")
-        k2("⌃→", "move line end")
-        k2("⌥←", "move word left")
-        k2("⌥→", "move word right")
+        # second row  (line break)
+        self.keyrow2 = tk.Frame(self)
+        self.keyrow2.bind("<Configure>", lambda e: self._relayout_arrow_buttons())
+        self.keyrow2.grid(
+            row=5,
+            column=0,
+            columnspan=2,
+            sticky="ew",
+            padx=5,
+            pady=(0, 8),
+        )
+
+        self._arrow_button_widgets = []
+
+        arrow_cmds = [
+            ("←", "cursor left"),
+            ("→", "cursor right"),
+            ("↑", "cursor up"),
+            ("↓", "cursor down"),
+            ("⌃←", "move line start"),
+            ("⌃→", "move line end"),
+            ("⌥←", "move word left"),
+            ("⌥→", "move word right"),
+        ]
+
+        for label, cmd in arrow_cmds:
+            b = ttk.Button(
+                self.keyrow2,
+                text=label,
+                width=12,
+                command=lambda c=cmd: self._handle_input(c),
+            )
+            self._key_buttons[cmd] = b
+            self._arrow_button_widgets.append(b)
 
         # ===================================================================
         #  ROW‑6  →  LLM Command bar
@@ -398,6 +427,44 @@ class ControlPanel(tk.Tk):
         make(2, 1, "Continue", "continue scroll")
         make(3, 0, "New tab", "new tab")
         make(3, 1, "Close tab", "close tab")
+
+    # dynamic key-press button wrap
+    def _relayout_key_buttons(self):
+        for widget in self.keyrow.winfo_children():
+            widget.grid_forget()
+
+        width = self.keyrow.winfo_width()
+        if width == 0:
+            self.after(100, self._relayout_key_buttons)
+            return
+
+        # Approximate button width + padding
+        min_button_px = 120
+        num_cols = max(2, width // min_button_px)
+
+        for i, b in enumerate(self._key_button_widgets):
+            b.grid(row=i // num_cols, column=i % num_cols, sticky="ew", padx=1, pady=1)
+
+        for c in range(num_cols):
+            self.keyrow.columnconfigure(c, weight=1)
+
+    def _relayout_arrow_buttons(self):
+        for widget in self.keyrow2.winfo_children():
+            widget.grid_forget()
+
+        width = self.keyrow2.winfo_width()
+        if width == 0:
+            self.after(100, self._relayout_arrow_buttons)
+            return
+
+        min_button_px = 120
+        num_cols = max(2, width // min_button_px)
+
+        for i, b in enumerate(self._arrow_button_widgets):
+            b.grid(row=i // num_cols, column=i % num_cols, sticky="ew", padx=1, pady=1)
+
+        for c in range(num_cols):
+            self.keyrow2.columnconfigure(c, weight=1)
 
     def _send_from_entry(self) -> None:
         text = self.cmd_var.get().strip()
