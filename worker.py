@@ -147,6 +147,8 @@ class BrowserWorker(threading.Thread):
                     try:  # NEW
                         js = """
                             () => ({
+                                url   : location.href,
+                                title : document.title || "",
                                 inBox : (() => {
                                     const el = document.activeElement;
                                     if (!el) return false;
@@ -159,6 +161,8 @@ class BrowserWorker(threading.Thread):
                             })
                         """
                         res = self.runner.active.evaluate(js)
+                        self.runner.state.url = res["url"]
+                        self.runner.state.title = res["title"]
                         self.runner.state.in_textbox = res["inBox"]
                         self.runner.state.scroll_y = res["sy"]
                     except Exception:
