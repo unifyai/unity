@@ -82,13 +82,29 @@ class ControlPanel(tk.Tk):
         self.geometry("900x550")
         self.columnconfigure(0, weight=3)  # left notebook
         self.columnconfigure(1, weight=2)  # right panel
-        self.rowconfigure(0, weight=1)  # main split
+        self.columnconfigure(2, weight=0)
+        self.rowconfigure(0, weight=1)  # main split (takes cols 0‑1)
         self.rowconfigure(1, weight=0)  # search / url bar
         self.rowconfigure(2, weight=0)  # command bar
         self.rowconfigure(3, weight=0)  # enter‑text bar
         self.rowconfigure(4, weight=0)  # key buttons row
         self.rowconfigure(5, weight=0)  # 2nd key row
         self.rowconfigure(6, weight=0)  # LLM command bar
+
+        # ── top‑right “X” button ─────────────────────────────────────────────  # NEW
+        ttk.Button(
+            self,
+            text="×",
+            width=3,
+            style="Danger.TButton",
+            command=self._on_exit,
+        ).grid(
+            row=0,
+            column=2,
+            sticky="ne",
+            padx=(0, 4),
+            pady=4,
+        )  # NEW
 
         # ===================================================================
         # LEFT NOTEBOOK  →  Elements  |  Tabs
