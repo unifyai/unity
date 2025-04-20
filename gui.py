@@ -47,6 +47,8 @@ class ControlPanel(tk.Tk):
 
         self._build_widgets()
 
+        self._worker = None  # will be set by set_worker()
+
         # first refreshes
         self._refresh_state_label()
         self._refresh_actions_list()
@@ -519,7 +521,17 @@ class ControlPanel(tk.Tk):
 
     # ───────────────────────────── EXIT ─────────────────────────────────
     def _on_exit(self) -> None:
-        self.quit()
+        # ‑‑ stop worker fast and exit ‑‑
+        try:
+            if self._worker:
+                self._worker.stop()
+                self._worker.join(timeout=0.5)
+        except Exception:
+            pass
+        self.destroy()
+        import os
+
+        os._exit(0)
 
     # ─────────────────────── HIGH‑LEVEL INPUT HANDLER ───────────────────
     def _handle_input(self, text: str) -> None:
@@ -582,6 +594,9 @@ class ControlPanel(tk.Tk):
             self._queue_command(cmd)
         else:
             self._log("❗ No action selected")
+
+    def set_worker(self, worker):
+        self._worker = worker
 
     # ───────────────────────── PUBLIC PRIMITIVE API ─────────────────────
     def send_text_command(self, text: str) -> None:
