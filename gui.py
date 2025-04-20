@@ -71,23 +71,41 @@ class ControlPanel(tk.Tk):
         self._log(f"> close tab {title}")
         self._queue_command(f"close tab {title}")
 
-    def _refresh_actions_list(self) -> None:  # NEW
-        """Update the Actions tab with every LLM action currently possible."""
+    # --------------------------------------------------------------------- Actions
+    def _refresh_actions_list(self) -> None:
+        """Update the Actions tab only when the text really changes
+        and keep the user’s scroll position intact.
+        """
         groups = list_available_actions(
             self.tab_titles,
             [(idx, label) for idx, label, _ in self.elements],
         )
+
+        # Build the new text -------------------------------------------------
         lines: list[str] = []
         for grp, names in groups.items():
             lines.append(f"[{grp}]")
             lines.extend(f"  {n}" for n in names)
             lines.append("")
-        txt = "\n".join(lines)
+        new_txt = "\n".join(lines)
 
+        # Skip work if identical --------------------------------------------
+        if getattr(self, "_last_actions_txt", "") == new_txt:
+            return
+        self._last_actions_txt = new_txt  # remember for next time  # NEW
+
+        # Remember current scroll position (tuple of fractions) -------------
+        pos = self.act_box.yview()  # (first, last)           # NEW
+
+        # Rewrite the widget -------------------------------------------------
         self.act_box.configure(state="normal")
         self.act_box.delete("1.0", "end")
-        self.act_box.insert("end", txt)
+        self.act_box.insert("end", new_txt)
         self.act_box.configure(state="disabled")
+
+        # Restore scroll position – unless user was already at the top ------
+        if pos[0] > 0.01:  # if user had scrolled    # NEW
+            self.act_box.yview_moveto(pos[0])  # jump back to where they were
 
     def _refresh_state_label(self) -> None:
         st = self.state or {}
@@ -203,6 +221,8 @@ class ControlPanel(tk.Tk):
         # available actions window
         self.act_box = scrolledtext.ScrolledText(tab_actions, state="disabled")  # NEW
         self.act_box.pack(fill="both", expand=True)  # NEW
+
+        self._last_actions_txt = ""
 
         # -- browser‑state label ---------------------------------------------
         self.state_var = tk.StringVar()
