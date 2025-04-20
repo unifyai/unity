@@ -157,6 +157,7 @@ class ControlPanel(tk.Tk):
         self._tab_rows_frame = tab_rows  # keep reference for rebuilds\
         self._el_canvas = el_canvas
         self._el_scroll = el_scroll
+        self._reset_el_scroll = False
 
         # ── colour‑aware style for element buttons ────────────────────
         # Decide if the window background is “dark” or “light”
@@ -473,6 +474,7 @@ class ControlPanel(tk.Tk):
     def _exec_element_click(self, idx: int, label: str) -> None:
         self._log(f"> click {label}")
         self._queue_command(f"click {idx}")
+        self._reset_el_scroll = True
 
     def _rebuild_elements_rows(self) -> None:
         """Refresh the scrollable button list for page elements."""
@@ -649,6 +651,11 @@ class ControlPanel(tk.Tk):
         if updated:
             # Elements pane (buttons)
             self._rebuild_elements_rows()
+
+            if self._reset_el_scroll:
+                self._el_canvas.yview_moveto(0)
+                self._reset_el_scroll = False
+
             # Tabs & Actions
             self._rebuild_tabs_rows()
             self._refresh_actions_list()
