@@ -6,6 +6,7 @@ import unify
 from helpers import _pascal, _slug
 from pydantic import BaseModel, create_model, Field
 from actions import ActionHistory, BrowserState
+from action_filter import get_valid_actions
 from sys_msgs import PRIMITIVE_TO_BROWSER_ACTION_CANDIDATES, PRIMITIVE_TO_BROWSER_ACTION
 
 client = unify.Unify(traced=True)
@@ -248,29 +249,41 @@ def _construct_scroll_actions():
         raise Exception(f"Invalid SCROLLING_STATE {SCROLLING_STATE}")
 
 
-def _create_full_response_format(
-    tabs: List[str],
-    buttons: Optional[List[Tuple[int, str]]] = None,
-):
-    return create_model(
-        "ActionSelection",
-        tab_actions=create_model(
-            "TabActions",
-            new_tab=(NewTab, ...),
-            **_construct_select_tab_actions(tabs),
-            **_construct_close_tab_actions(tabs),
-        ),
-        scroll_actions=create_model(
-            "ScrollActions",
-            **_construct_scroll_actions(),
-        ),
-        button_actions=create_model(
-            "ButtonActions",
-            **_construct_select_button_actions(buttons),
-        ),
-        search_action=(Search, ...),
-        search_url_action=(SearchURL, ...),
+def _create_full_response_format(tabs, buttons, state=None):
+    valid = get_valid_actions(state)
+
+    def include(name):
+        return any(
+            name == v or (v.endswith("*") and name.startswith(v[:-1])) for v in valid
+        )
+
+    tab_actions = {
+        k: v for k, v in _construct_select_tab_actions(tabs).items() if include(k)
+    }
+    tab_actions.update(
+        {k: v for k, v in _construct_close_tab_actions(tabs).items() if include(k)},
     )
+
+    button_actions = {
+        k: v for k, v in _construct_select_button_actions(buttons).items() if include(k)
+    }
+
+    scroll_actions = {
+        k: v for k, v in _construct_scroll_actions().items() if include(k)
+    }
+
+    fields = {
+        "tab_actions": create_model("TabActions", new_tab=(NewTab, ...), **tab_actions),
+        "scroll_actions": create_model("ScrollActions", **scroll_actions),
+        "button_actions": create_model("ButtonActions", **button_actions),
+    }
+
+    if include("search_action"):
+        fields["search_action"] = (Search, ...)
+    if include("search_url_action"):
+        fields["search_url_action"] = (SearchURL, ...)
+
+    return create_model("ActionSelection", **fields)
 
 
 def _extract_applied_actions(response: BaseModel) -> Tuple[Dict[str, Any], int]:
@@ -406,19 +419,14 @@ def _build_pruned_response_format(applied: Dict[str, Any]) -> BaseModel:
 def list_available_actions(
     tabs: List[str],
     buttons: Optional[List[Tuple[int, str]]] | None = None,
+    state: BrowserState = None,  # ← add this default
 ) -> dict[str, list[str]]:
     """
     Return a mapping {group_name: [field_names,…]} describing every action
     that would appear in the full response‑format schema given the current
     set of browser tabs and visible buttons.
-
-    Groups:
-        • "tab_actions"
-        • "scroll_actions"
-        • "button_actions"
-        • "standalone"   (search_action, search_url_action)
     """
-    fmt = _create_full_response_format(tabs, buttons)  # reuse existing logic
+    fmt = _create_full_response_format(tabs, buttons, state)
     return {
         "tab_actions": list(
             fmt.model_fields["tab_actions"].annotation.model_fields,
@@ -429,7 +437,11 @@ def list_available_actions(
         "button_actions": list(
             fmt.model_fields["button_actions"].annotation.model_fields,
         ),
-        "standalone": ["search_action", "search_url_action"],
+        "standalone": [
+            name
+            for name in ["search_action", "search_url_action"]
+            if name in fmt.model_fields
+        ],
     }
 
 
@@ -444,7 +456,7 @@ def primitive_to_browser_action(
     state: BrowserState = None,
 ) -> Optional[BaseModel]:
 
-    response_format = _create_full_response_format(tabs, buttons)
+    response_format = _create_full_response_format(tabs, buttons, state)
     client.set_endpoint("gpt-4o-mini@openai")
 
     history_msg = (

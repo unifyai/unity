@@ -17,6 +17,8 @@ from tkinter import scrolledtext, ttk
 from typing import Any
 
 from agent import primitive_to_browser_action, list_available_actions
+from actions import BrowserState
+from action_filter import get_valid_actions
 from helpers import _slug
 from pygments import highlight
 from pygments.formatters import HtmlFormatter
@@ -44,6 +46,9 @@ class ControlPanel(tk.Tk):
         self.tab_titles: list[str] = []
         self.history: list[dict] = []
         self.state: dict[str, Any] = {}
+
+        # for graying out when not in textbox
+        self._key_buttons = {}
 
         self._build_widgets()
 
@@ -245,9 +250,9 @@ class ControlPanel(tk.Tk):
 
         tk.Label(et, text="Enter text:").grid(row=0, column=0, sticky="w")
         self.enter_var = tk.StringVar()
-        entry_e = tk.Entry(et, textvariable=self.enter_var)
-        entry_e.grid(row=0, column=1, sticky="ew")
-        entry_e.bind("<Return>", lambda _e: self._send_enter_text())
+        self.enter_text_box = tk.Entry(et, textvariable=self.enter_var)
+        self.enter_text_box.grid(row=0, column=1, sticky="ew")
+        self.enter_text_box.bind("<Return>", lambda _e: self._send_enter_text())
 
         # ===================================================================
         #  ROW‑4  →  Key‑buttons bar (stack horizontally)
@@ -256,12 +261,14 @@ class ControlPanel(tk.Tk):
         keyrow.grid(row=4, column=0, columnspan=2, sticky="ew", padx=5, pady=(0, 8))
 
         def kbtn(txt, cmd):
-            ttk.Button(
+            b = ttk.Button(
                 keyrow,
                 text=txt,
                 width=10,
                 command=lambda c=cmd: self._handle_input(c),
-            ).pack(side="left", padx=1, pady=1)
+            )
+            b.pack(side="left", padx=1, pady=1)
+            self._key_buttons[cmd] = b
 
         # first row
         kbtn("Enter", "press enter")
@@ -450,12 +457,21 @@ class ControlPanel(tk.Tk):
                 command=lambda t=title: self._exec_tab_cmd("close tab", t),
             ).pack(side="right", padx=(0, 2))
 
+    def _refresh_enabled_controls(self, valid):
+        for cmd, btn in self._key_buttons.items():
+            btn.configure(state="normal" if cmd in valid else "disabled")
+        if "enter text" in valid:
+            self.enter_text_box.configure(state="normal")
+        else:
+            self.enter_text_box.configure(state="disabled")
+
     # ──────────────────────── ACTIONS‑PANE HELPER ───────────────────────
     def _refresh_actions_list(self) -> None:
         """Update the Actions tab (anti‑jitter, preserves scroll)."""
         groups = list_available_actions(
             self.tab_titles,
             [(idx, label) for idx, label, _ in self.elements],
+            state=BrowserState(**self.state),
         )
 
         lines: list[str] = []
@@ -476,6 +492,28 @@ class ControlPanel(tk.Tk):
         self.act_box.configure(state="disabled")
         if pos[0] > 0.01:
             self.act_box.yview_moveto(pos[0])
+
+        valid = get_valid_actions(BrowserState(**self.state))
+        self._refresh_enabled_controls(valid)
+
+        self.act_box.configure(state="normal")
+        self.act_box.delete("1.0", "end")
+
+        for grp, names in groups.items():
+            self.act_box.insert("end", f"[{grp}]\n")
+            for name in names:
+                is_valid = any(
+                    name == v or (v.endswith("*") and name.startswith(v[:-1]))
+                    for v in valid
+                )
+                if not is_valid:
+                    self.act_box.insert("end", f"  {name}\n", "disabled")
+                else:
+                    self.act_box.insert("end", f"  {name}\n")
+            self.act_box.insert("end", "\n")
+
+        self.act_box.tag_config("disabled", foreground="gray")
+        self.act_box.configure(state="disabled")
 
     # ───────────────────────── BROWSER‑STATE LABEL ───────────────────────
     def _refresh_state_label(self) -> None:
@@ -696,6 +734,9 @@ class ControlPanel(tk.Tk):
             self._rebuild_tabs_rows()
             self._refresh_actions_list()
             self._refresh_state_label()
+            self._refresh_enabled_controls(
+                get_valid_actions(BrowserState(**self.state)),
+            )
 
         self.after(self.REFRESH_INTERVAL_MS, self._poll_updates)
 
