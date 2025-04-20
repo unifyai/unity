@@ -117,6 +117,8 @@ class ControlPanel(tk.Tk):
         # ===================================================================
         left_nb = ttk.Notebook(self)
         left_nb.grid(row=0, column=0, sticky="nsew")
+        left_nb.columnconfigure(0, weight=1)
+        left_nb.rowconfigure(0, weight=1)
 
         # frames
         tab_elements_frame = ttk.Frame(left_nb)
@@ -192,7 +194,12 @@ class ControlPanel(tk.Tk):
         bg_active_light, bg_active_dark = "#dcdcdc", "#505050"
 
         style = ttk.Style()
-        style.configure(  # tighter vertical padding
+
+        # centre text on buttons
+        style.configure("TButton", anchor="center")
+
+        # tighter vertical padding
+        style.configure(
             "Element.TButton",
             font=("Helvetica", 11),
             anchor="w",
@@ -341,6 +348,7 @@ class ControlPanel(tk.Tk):
         right.rowconfigure(0, weight=1)
         right.rowconfigure(1, weight=0)
         right.rowconfigure(2, weight=0)
+        right.columnconfigure(0, weight=1)
 
         # Log / Actions notebook
         note = ttk.Notebook(right)
@@ -378,6 +386,7 @@ class ControlPanel(tk.Tk):
             ttk.Button(
                 btns,
                 text=txt,
+                width=10,
                 command=lambda: self._handle_input(cmd),
             ).grid(row=r, column=c, sticky="ew")
 
