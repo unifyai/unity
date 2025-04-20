@@ -626,6 +626,10 @@ class ControlPanel(tk.Tk):
 
     # ───────────────────────── COMMAND QUEUE ────────────────────────────
     def _queue_command(self, cmd: str) -> None:
+        # mark commands that likely change the page content  ------------- NEW
+        nav_prefixes = ("open url", "search ", "new tab", "switch to tab")
+        if cmd.lower().startswith(nav_prefixes):
+            self._reset_el_scroll = True
         try:
             self.cmd_q.put_nowait(cmd)
         except queue.Full:
