@@ -114,8 +114,37 @@ class CommandRunner:
             self.state.auto_scroll = None
             return
 
+        # click out (remove focus) ------------------------------------------
+        if cmd == "click out":
+            # ToDo: get thsi working!
+            self.hist.add(cmd)
+
+            js = """
+            () => {
+              // create invisible focusable element far off‑screen
+              const dummy = Object.assign(document.createElement("button"), {
+                type: "button",
+                style:
+                  "position:fixed;left:-9999px;top:-9999px;width:1px;height:1px;opacity:0;",
+              });
+              document.body.appendChild(dummy);
+              dummy.focus({preventScroll:true});
+              // remove after event loop tick so focus sticks
+              setTimeout(() => dummy.remove(), 0);
+              return document.activeElement === dummy;
+            }
+            """
+
+            try:
+                self.active.evaluate(js)
+            except Exception:
+                pass
+
+            self.state.in_textbox = False
+            return
+
         # ───────── keyboard shortcuts ─────────────────────────────────
-        keymap = {  # NEW
+        keymap = {
             "press backspace": ("Backspace",),
             "press delete": ("Delete",),
             "cursor left": ("ArrowLeft",),
@@ -134,21 +163,21 @@ class CommandRunner:
                 self.active.keyboard.press(combo)
             return
 
-        if cmd == "hold shift":  # NEW
+        if cmd == "hold shift":
             self.hist.add(cmd)
             self.active.keyboard.down("Shift")
             return
 
-        if cmd == "release shift":  # NEW
+        if cmd == "release shift":
             self.hist.add(cmd)
             self.active.keyboard.up("Shift")
             return
 
         # press enter -------------------------------------------------------
-        if cmd == "press enter":  # NEW
-            self.hist.add("press enter")  # NEW
-            self.active.keyboard.press("Enter")  # NEW
-            return  # NEW
+        if cmd == "press enter":
+            self.hist.add("press enter")
+            self.active.keyboard.press("Enter")
+            return
 
         # enter text -------------------------------------------------------
         m = re.fullmatch(r"enter text\s+(.+)", cmd, re.DOTALL)
@@ -161,12 +190,12 @@ class CommandRunner:
                 text = raw
             self.hist.add(f"enter text {text[:30]}…")
 
-            parts = text.split("\n")  # NEW
-            for i, chunk in enumerate(parts):  # NEW
+            parts = text.split("\n")
+            for i, chunk in enumerate(parts):
                 if chunk:  # type visible chars
                     self.active.keyboard.type(chunk, delay=20)
                 if i < len(parts) - 1:  # newline → Enter
-                    self.active.keyboard.press("Enter", delay=20)  # NEW
+                    self.active.keyboard.press("Enter", delay=20)
             return
 
         # search -----------------------------------------------------------

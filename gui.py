@@ -62,7 +62,7 @@ class ControlPanel(tk.Tk):
         self._pending_text = ""
 
     # ---------- universal mouse‑wheel helper -------------------------------
-    def _bind_mousewheel(self, target, canvas):  # NEW
+    def _bind_mousewheel(self, target, canvas):
         def wheel(ev):
             if ev.num == 4 or ev.delta > 0:
                 canvas.yview_scroll(-1, "units")
@@ -88,7 +88,7 @@ class ControlPanel(tk.Tk):
         self.rowconfigure(3, weight=0)  # enter‑text bar
         self.rowconfigure(4, weight=0)  # key buttons row
         self.rowconfigure(5, weight=0)  # 2nd key row
-        self.rowconfigure(6, weight=0)  # LLM command bar  # NEW
+        self.rowconfigure(6, weight=0)  # LLM command bar
 
         # ===================================================================
         # LEFT NOTEBOOK  →  Elements  |  Tabs
@@ -107,31 +107,31 @@ class ControlPanel(tk.Tk):
             f.rowconfigure(0, weight=1)
             f.columnconfigure(0, weight=1)
 
-        # ── Elements pane – scrollable buttons ──────────────────────────  # NEW
-        el_canvas = tk.Canvas(tab_elements_frame, highlightthickness=0)  # NEW
+        # ── Elements pane – scrollable buttons ──────────────────────────
+        el_canvas = tk.Canvas(tab_elements_frame, highlightthickness=0)
         el_scroll = ttk.Scrollbar(
             tab_elements_frame,
-            orient="vertical",  # NEW
+            orient="vertical",
             command=el_canvas.yview,
-        )  # NEW
-        el_rows = ttk.Frame(el_canvas)  # NEW
-        el_canvas.create_window((0, 0), window=el_rows, anchor="nw")  # NEW
-        el_canvas.configure(yscrollcommand=el_scroll.set)  # NEW
-        el_rows.bind(  # NEW
+        )
+        el_rows = ttk.Frame(el_canvas)
+        el_canvas.create_window((0, 0), window=el_rows, anchor="nw")
+        el_canvas.configure(yscrollcommand=el_scroll.set)
+        el_rows.bind(
             "<Configure>",
-            lambda e: el_canvas.configure(  # NEW
+            lambda e: el_canvas.configure(
                 scrollregion=el_canvas.bbox("all"),
-            ),  # NEW
-        )  # NEW
-        el_canvas.grid(row=0, column=0, sticky="nsew")  # NEW
-        el_scroll.grid(row=0, column=1, sticky="ns")  # NEW
-        tab_elements_frame.rowconfigure(0, weight=1)  # NEW
-        tab_elements_frame.columnconfigure(0, weight=1)  # NEW
+            ),
+        )
+        el_canvas.grid(row=0, column=0, sticky="nsew")
+        el_scroll.grid(row=0, column=1, sticky="ns")
+        tab_elements_frame.rowconfigure(0, weight=1)
+        tab_elements_frame.columnconfigure(0, weight=1)
 
         self._elements_rows_frame = el_rows
 
         # ---- universal mouse‑wheel support --------------------------------
-        self._bind_mousewheel(el_canvas, el_canvas)  # NEW
+        self._bind_mousewheel(el_canvas, el_canvas)
         self._bind_mousewheel(el_rows, el_canvas)
 
         # ── Tabs pane (scrollable rows with buttons) ────────────────────
@@ -173,7 +173,7 @@ class ControlPanel(tk.Tk):
             font=("Helvetica", 11),
             anchor="w",
             relief="flat",
-            padding=(2, 1),  # NEW
+            padding=(2, 1),
             foreground=fg_dark if dark else fg_light,
             background=bg_idle_dark if dark else bg_idle_light,
         )
@@ -231,7 +231,7 @@ class ControlPanel(tk.Tk):
         entry_e.bind("<Return>", lambda _e: self._send_enter_text())
 
         # ===================================================================
-        #  ROW‑4  →  Key‑buttons bar (stack horizontally)                    # NEW
+        #  ROW‑4  →  Key‑buttons bar (stack horizontally)
         # ===================================================================
         keyrow = tk.Frame(self)
         keyrow.grid(row=4, column=0, columnspan=2, sticky="ew", padx=5, pady=(0, 8))
@@ -251,6 +251,7 @@ class ControlPanel(tk.Tk):
         kbtn("Select All", "select all")
         kbtn("Shift ⬇", "hold shift")
         kbtn("Shift ⬆", "release shift")
+        kbtn("Click Out", "click out")
 
         # second row  (line break)
         keyrow2 = tk.Frame(self)
@@ -274,9 +275,9 @@ class ControlPanel(tk.Tk):
         k2("⌥→", "move word right")
 
         # ===================================================================
-        #  ROW‑6  →  LLM Command bar                                        # NEW
+        #  ROW‑6  →  LLM Command bar
         # ===================================================================
-        bar = tk.Frame(self)  # NEW
+        bar = tk.Frame(self)
         bar.grid(
             row=6,
             column=0,
@@ -284,13 +285,13 @@ class ControlPanel(tk.Tk):
             sticky="ew",
             padx=5,
             pady=(0, 8),
-        )  # NEW
-        bar.columnconfigure(1, weight=1)  # NEW
-        tk.Label(bar, text="LLM Command:").grid(row=0, column=0, sticky="w")  # NEW
-        self.cmd_var = tk.StringVar()  # NEW
-        entry_c = tk.Entry(bar, textvariable=self.cmd_var)  # NEW
-        entry_c.grid(row=0, column=1, sticky="ew")  # NEW
-        entry_c.bind("<Return>", lambda _e: self._send_from_entry())  # NEW
+        )
+        bar.columnconfigure(1, weight=1)
+        tk.Label(bar, text="LLM Command:").grid(row=0, column=0, sticky="w")
+        self.cmd_var = tk.StringVar()
+        entry_c = tk.Entry(bar, textvariable=self.cmd_var)
+        entry_c.grid(row=0, column=1, sticky="ew")
+        entry_c.bind("<Return>", lambda _e: self._send_from_entry())
 
         # ================================================================
         # RIGHT‑HAND PANEL →  notebook(Log/Actions) + state + buttons
@@ -359,7 +360,7 @@ class ControlPanel(tk.Tk):
             columnspan=2,
             sticky="ew",
             pady=(8, 0),
-        )  # NEW
+        )
 
     def _send_from_entry(self) -> None:
         text = self.cmd_var.get().strip()
@@ -402,7 +403,7 @@ class ControlPanel(tk.Tk):
             child.destroy()
 
         for title in self.tab_titles:
-            shown = title if len(title) <= 20 else title[:17] + "…"  # NEW
+            shown = title if len(title) <= 20 else title[:17] + "…"
             row = ttk.Frame(self._tab_rows_frame)
             row.pack(fill="x", pady=1, padx=2)
             row = ttk.Frame(self._tab_rows_frame)
@@ -467,25 +468,25 @@ class ControlPanel(tk.Tk):
             f"in_textbox:  {st.get('in_textbox', False)}",
         )
 
-    # ---------- element‑button helpers ---------------------------------      # NEW
-    def _exec_element_click(self, idx: int, label: str) -> None:  # NEW
-        self._log(f"> click {label}")  # NEW
-        self._queue_command(f"click {idx}")  # NEW
+    # ---------- element‑button helpers ---------------------------------
+    def _exec_element_click(self, idx: int, label: str) -> None:
+        self._log(f"> click {label}")
+        self._queue_command(f"click {idx}")
 
-    def _rebuild_elements_rows(self) -> None:  # NEW
-        """Refresh the scrollable button list for page elements."""  # NEW
-        for c in self._elements_rows_frame.winfo_children():  # NEW
-            c.destroy()  # NEW
-        for idx, label, hover in self.elements:  # NEW
-            txt = f"{idx}. {label}" + ("  (hover)" if hover else "")  # NEW
-            btn = ttk.Button(  # NEW
+    def _rebuild_elements_rows(self) -> None:
+        """Refresh the scrollable button list for page elements."""
+        for c in self._elements_rows_frame.winfo_children():
+            c.destroy()
+        for idx, label, hover in self.elements:
+            txt = f"{idx}. {label}" + ("  (hover)" if hover else "")
+            btn = ttk.Button(
                 self._elements_rows_frame,
                 text=txt,
                 style="Element.TButton",
                 command=lambda i=idx, l=label: self._exec_element_click(i, l),
             )
             btn.pack(fill="x", padx=1, pady=0)
-            self._bind_mousewheel(btn, self._el_canvas)  # NEW
+            self._bind_mousewheel(btn, self._el_canvas)
 
     # ───────────────────────────── EXIT ─────────────────────────────────
     def _on_exit(self) -> None:
@@ -521,6 +522,7 @@ class ControlPanel(tk.Tk):
                 "move word right",
                 "hold shift",
                 "release shift",
+                "click out",
             ),
         ):
             self._queue_command(text)
@@ -635,7 +637,7 @@ class ControlPanel(tk.Tk):
 
         if updated:
             # Elements pane (buttons)
-            self._rebuild_elements_rows()  # NEW
+            self._rebuild_elements_rows()
             # Tabs & Actions
             self._rebuild_tabs_rows()
             self._refresh_actions_list()
