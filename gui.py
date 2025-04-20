@@ -215,12 +215,6 @@ class ControlPanel(tk.Tk):
         rb_url.grid(row=0, column=3)
         rb_google.select()
 
-        ttk.Button(search, text="Go", command=self._send_search).grid(
-            row=0,
-            column=4,
-            padx=(6, 0),
-        )
-
         # ===================================================================
         #  ROW‑2  →  Command bar
         # ===================================================================
@@ -232,11 +226,6 @@ class ControlPanel(tk.Tk):
         entry_c = tk.Entry(bar, textvariable=self.cmd_var)
         entry_c.grid(row=0, column=1, sticky="ew")
         entry_c.bind("<Return>", lambda _e: self._send_from_entry())
-        ttk.Button(
-            bar,
-            text="Send",
-            command=self._send_from_entry,
-        ).grid(row=0, column=2)
 
         # ===================================================================
         #  ROW‑3  →  Enter‑text bar
@@ -250,11 +239,6 @@ class ControlPanel(tk.Tk):
         entry_e = tk.Entry(et, textvariable=self.enter_var)
         entry_e.grid(row=0, column=1, sticky="ew")
         entry_e.bind("<Return>", lambda _e: self._send_enter_text())
-        ttk.Button(et, text="Go", command=self._send_enter_text).grid(
-            row=0,
-            column=2,
-            padx=(6, 0),
-        )
 
         # ===================================================================
         #  ROW‑4  →  Key‑buttons bar (stack horizontally)                    # NEW
