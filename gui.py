@@ -156,6 +156,7 @@ class ControlPanel(tk.Tk):
 
         self._tab_rows_frame = tab_rows  # keep reference for rebuilds\
         self._el_canvas = el_canvas
+        self._el_scroll = el_scroll
 
         # ── colour‑aware style for element buttons ────────────────────
         # Decide if the window background is “dark” or “light”
@@ -487,6 +488,14 @@ class ControlPanel(tk.Tk):
             )
             btn.pack(fill="x", padx=1, pady=0)
             self._bind_mousewheel(btn, self._el_canvas)
+            # ---- show scrollbar only when needed ---------------------------  # NEW
+        self._elements_rows_frame.update_idletasks()
+        content_h = self._elements_rows_frame.winfo_reqheight()
+        pane_h = self._el_canvas.winfo_height()
+        if content_h <= pane_h:
+            self._el_scroll.grid_remove()
+        else:
+            self._el_scroll.grid()  # make sure it is visible
 
     # ───────────────────────────── EXIT ─────────────────────────────────
     def _on_exit(self) -> None:
