@@ -127,7 +127,9 @@ class BrowserWorker(threading.Thread):
                             except (ValueError, PWError) as exc:
                                 self.log(f"Click failed: {exc}")
                         elif cmd == CMD_CLOSE_THIS_TAB:
-                            self.runner.close_tab(None)
+                            self.runner.close_tab()
+                        elif cmd.startswith("close tab "):
+                            self.runner.close_tab(cmd[len("close tab ") :])
                         else:
                             self.runner.run(cmd)
 

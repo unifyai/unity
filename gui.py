@@ -593,8 +593,9 @@ class ControlPanel(tk.Tk):
 
     # ──────────────────────── TABS‑PANE HELPERS ────────────────────────
     def _exec_tab_cmd(self, prefix: str, title: str) -> None:
-        self._log(f"> {prefix} {title}")
-        self._queue_command(f"{prefix} {title}")
+        cmd = prefix.replace("*", title)
+        self._log(f"> {cmd}")
+        self._queue_command(cmd)
 
     def _rebuild_tabs_rows(self) -> None:
         """Re‑create the list of browser tabs with per‑row buttons."""
