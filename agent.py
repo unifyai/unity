@@ -297,6 +297,10 @@ def _construct_scroll_actions():
 
 
 def _create_full_response_format(tabs, buttons, state=None):
+    # ensure we always work with a BrowserState object
+    if state and not isinstance(state, BrowserState):
+        state = BrowserState(**state)
+
     valid = get_valid_actions(state)
 
     def include(name):
