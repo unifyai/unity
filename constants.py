@@ -77,8 +77,8 @@ BUTTON_PATTERNS: set[str] = {
 
 # 4.  Single‑step smooth scroll patterns
 SCROLL_PATTERNS = {
-    "up": CMD_SCROLL_UP,
-    "down": CMD_SCROLL_DOWN,
+    "up": {CMD_SCROLL_UP, CMD_START_SCROLL_UP},
+    "down": {CMD_SCROLL_DOWN, CMD_START_SCROLL_DOWN},
 }
 
 # 5.  Auto‑scroll controls grouped by state
@@ -89,7 +89,8 @@ AUTOSCROLL_ACTIVE: set[str] = {CMD_STOP_SCROLLING, CMD_CONT_SCROLLING}
 ALL_PRIMITIVES: set[str] = (
     TEXTBOX_COMMANDS
     | NAV_COMMANDS
-    | set(SCROLL_PATTERNS.values())
+    | SCROLL_PATTERNS["up"]
+    | SCROLL_PATTERNS["down"]
     | AUTOSCROLL_START
     | AUTOSCROLL_ACTIVE
     | BUTTON_PATTERNS

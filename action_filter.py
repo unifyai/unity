@@ -6,14 +6,7 @@ import every action name or pattern from constants.py.
 
 from actions import BrowserState
 from typing import Union
-from constants import (
-    TEXTBOX_COMMANDS,
-    NAV_COMMANDS,
-    SCROLL_PATTERNS,
-    AUTOSCROLL_START,
-    AUTOSCROLL_ACTIVE,
-    BUTTON_PATTERNS,
-)
+from constants import *
 
 
 def get_valid_actions(state: Union[BrowserState, dict]) -> set[str]:
@@ -28,22 +21,26 @@ def get_valid_actions(state: Union[BrowserState, dict]) -> set[str]:
     # ── text entry & key‑presses ─────────────────────────────────────────
     if state.in_textbox:
         valid.update(TEXTBOX_COMMANDS)
+        return valid
 
-    # ── page navigation & search  (always allowed) ──────────────────────
+    # ── scrolling ──────────────────────────────────────────
+    if state.auto_scroll is None:
+        valid.update({CMD_SCROLL_DOWN, CMD_START_SCROLL_DOWN})
+        if state.scroll_y > 0:
+            valid.update({CMD_SCROLL_UP, CMD_START_SCROLL_UP})
+    elif state.auto_scroll == "up":
+        valid.update({CMD_STOP_SCROLLING, CMD_START_SCROLL_DOWN})
+        return valid
+    elif state.auto_scroll == "down":
+        valid.update({CMD_STOP_SCROLLING, CMD_START_SCROLL_UP})
+        return valid
+    else:
+        raise Exception("Invalid auto_scroll state.")
+
+    # ── page navigation & search ──────────────────────
     valid.update(NAV_COMMANDS)
 
-    # ── smooth one‑off scrolls ──────────────────────────────────────────
-    if state.scroll_y > 0:  # not at absolute top
-        valid.add(SCROLL_PATTERNS["up"])
-    valid.add(SCROLL_PATTERNS["down"])  # you can always scroll further down
-
-    # ── auto‑scroll controls ────────────────────────────────────────────
-    if state.auto_scroll is None:
-        valid.update(AUTOSCROLL_START)  # allow starting auto‑scroll
-    else:
-        valid.update(AUTOSCROLL_ACTIVE)  # allow stop / continue
-
-    # ── dynamic tab & button placeholders (wildcards kept) ──────────────
+    # ── dynamic tab & button placeholders ──────────────
     valid.update(BUTTON_PATTERNS)
 
     return valid
