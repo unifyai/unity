@@ -3,15 +3,7 @@ Command‑parsing and dispatch logic.  All browser‑side actions live here.
 """
 
 import re
-from constants import (
-    CMD_SCROLL_UP,
-    CMD_SCROLL_DOWN,
-    CMD_START_SCROLL_UP,
-    CMD_START_SCROLL_DOWN,
-    CMD_STOP_SCROLLING,
-    CMD_CONT_SCROLLING,
-    CMD_OPEN_URL,
-)
+from constants import *
 import urllib.parse
 
 from browser_utils import build_boxes, collect_elements, paint_overlay
