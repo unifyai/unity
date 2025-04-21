@@ -621,7 +621,11 @@ class ControlPanel(tk.Tk):
         if not txt:
             return
         mode = self.search_mode.get()
-        cmd = f"open url {txt}" if mode == "url" else f"search {txt}"
+        cmd = (
+            CMD_OPEN_URL.replace("*", txt)
+            if mode == "url"
+            else CMD_SEARCH.replace("*", txt)
+        )
         self._handle_input(cmd)
         self.search_var.set("")
 
@@ -669,7 +673,7 @@ class ControlPanel(tk.Tk):
             go_btn = Button(
                 row,
                 text="Go",
-                command=lambda t=title: self._exec_tab_cmd("select tab", t),
+                command=lambda t=title: self._exec_tab_cmd(CMD_SELECT_TAB, t),
                 padx=6,
                 pady=2,
                 relief="flat",
@@ -949,7 +953,7 @@ class ControlPanel(tk.Tk):
             self._log("❗ Could not interpret instruction")
             return
 
-        cmd = self._pick_low_level_cmd(response)
+        cmd = self._llm_resp_to_cmd(response)
         if cmd:
             self._log(f"  ↳ {cmd}")
             self._queue_command(cmd)
@@ -965,28 +969,29 @@ class ControlPanel(tk.Tk):
         self._pending_text = text
 
     # ───────────────────────── PICK LOW‑LEVEL CMD ───────────────────────
-    def _pick_low_level_cmd(self, resp: dict) -> str | None:
+    def _llm_resp_to_cmd(self, resp: dict) -> str | None:
+        # ToDo: fix all of this
         # ----- tab actions -------------------------------------------------
         for key, obj in resp.get("tab_actions", {}).items():
             if not obj.get("apply"):
                 continue
             if key == "new_tab":
                 return CMD_NEW_TAB
-            if key.startswith("close_tab_"):
-                tab = key[len("close_tab_") :]
-                return f"close_tab_{tab.replace('_', ' ')}"
+            if key.startswith("close_tab"):
+                slug = key[len("close_tab ") :]
+                return f"{CMD_CLOSE_TAB.replace('*', slug)}"
             if key.startswith("select_tab_"):
-                tab = key[len("select_tab_") :]
-                return f"selected tab {tab.replace('_', ' ')}"
+                slug = key[len("select_tab_") :]
+                return f"{CMD_SELECT_TAB.replace('*', slug)}"
 
         # ----- scroll actions ---------------------------------------------
         sc = resp.get("scroll_actions", {})
         if sc.get("scroll_up", {}).get("apply"):
             px = sc["scroll_up"].get("pixels") or 300
-            return f"scroll_up {px}"
+            return f"{CMD_SCROLL_UP.replace('*', str(px))}"
         if sc.get("scroll_down", {}).get("apply"):
             px = sc["scroll_down"].get("pixels") or 300
-            return f"scroll_down {px}"
+            return f"{CMD_SCROLL_DOWN.replace('*', str(px))}"
         if sc.get("start_scrolling_up", {}).get("apply"):
             return CMD_START_SCROLL_UP
         if sc.get("start_scrolling_down", {}).get("apply"):
@@ -1007,8 +1012,8 @@ class ControlPanel(tk.Tk):
                 continue
             slug_text = key[len("click_button_") :]
             if slug_text in slug_to_idx:
-                return f"click_{slug_to_idx[slug_text]}"
-            return f"click_button_{slug_text.replace('_', ' ')}"
+                return CMD_CLICK_BUTTON.replace("*", slug_text)
+            return CMD_CLICK_BUTTON.replace("*", slug_text.replace("_", " "))
 
         # ----- search / open‑url ------------------------------------------
         sa = resp.get("search")
@@ -1023,7 +1028,12 @@ class ControlPanel(tk.Tk):
     # ───────────────────────── COMMAND QUEUE ────────────────────────────
     def _queue_command(self, cmd: str) -> None:
         # mark commands that likely change the page content  ------------- NEW
-        nav_prefixes = (CMD_OPEN_URL, "search ", CMD_NEW_TAB, "select tab ")
+        nav_prefixes = (
+            CMD_OPEN_URL.rstrip("*"),
+            CMD_SEARCH.rstrip("*"),
+            CMD_NEW_TAB,
+            CMD_SELECT_TAB.rstrip("*"),
+        )
         if cmd.lower().startswith(nav_prefixes):
             self._reset_el_scroll = True
         try:
