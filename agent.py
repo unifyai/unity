@@ -167,7 +167,6 @@ def _construct_tab_actions(tabs: List[str], mode: str):
         )
         for title in tabs
     }
-    actions["close_this_tab"] = CloseActiveTab
     return actions
 
 
@@ -232,9 +231,12 @@ def _create_full_response_format(tabs, buttons, state=None):
             name == v or (v.endswith("*") and name.startswith(v[:-1])) for v in valid
         )
 
-    tab_actions = {
-        k: v for k, v in _construct_select_tab_actions(tabs).items() if include(k)
-    }
+    tab_actions = {}
+    tab_actions["new_tab"] = NewTab
+    tab_actions["close_this_tab"] = CloseActiveTab
+    tab_actions.update(
+        {k: v for k, v in _construct_select_tab_actions(tabs).items() if include(k)},
+    )
     tab_actions.update(
         {k: v for k, v in _construct_close_tab_actions(tabs).items() if include(k)},
     )
@@ -248,7 +250,7 @@ def _create_full_response_format(tabs, buttons, state=None):
     }
 
     fields = {
-        "tab_actions": create_model("TabActions", new_tab=(NewTab, ...), **tab_actions),
+        "tab_actions": create_model("TabActions", **tab_actions),
         "scroll_actions": create_model("ScrollActions", **scroll_actions),
         "button_actions": create_model("ButtonActions", **button_actions),
     }
