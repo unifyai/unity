@@ -113,6 +113,8 @@ class BrowserWorker(threading.Thread):
                                 timeout=30000,
                                 wait_until="load",
                             )
+                        elif cmd == "click out":
+                            self.runner.run(cmd)
                         elif cmd.startswith("click "):
                             try:
                                 idx = int(cmd.split()[1])
