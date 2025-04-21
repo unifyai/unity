@@ -20,7 +20,6 @@ from gui import ControlPanel
 from worker import BrowserWorker
 from primitive import init as primitive_init
 
-# import unify
 
 # unify.activate("Unity", overwrite=True)
 
