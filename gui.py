@@ -997,7 +997,11 @@ class ControlPanel(tk.Tk):
             return CMD_CONT_SCROLLING
 
         # ----- button actions ---------------------------------------------
-        slug_to_idx = {_slug(label): idx for idx, label, _ in self.elements}
+        slug_to_idx = {}
+        for idx, label, _ in self.elements:
+            base = _slug(label)
+            slug_to_idx[base] = idx
+            slug_to_idx[f"{idx}_{base}"] = idx
         for key, obj in resp.get("button_actions", {}).items():
             if not obj.get("apply") or not key.startswith("click_button_"):
                 continue

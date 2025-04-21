@@ -190,18 +190,30 @@ class CloseActiveTab(BaseModel):
 
 def _construct_select_button_actions(
     buttons: Optional[List[Tuple[int, str]]] = None,
-):
+) -> dict[str, type[BaseModel]]:
+    """
+    Return a mapping {field_name: PydanticModel} for every visible button.
+
+    Each *field_name* is now "click_button_<idx>_<slug_of_label>" so it carries
+    the on‑screen number shown in the coloured overlay.
+    """
     if not buttons:
         return {}
 
-    actions = {}
-    for _, raw_text in buttons:
-        slug = _slug(raw_text)
-        pascal = _pascal(slug)
+    actions: dict[str, type[BaseModel]] = {}
 
-        actions[f"click_button_{slug}"] = create_model(
-            f"ClickButton{pascal}",
-            __doc__=f"Click the “{raw_text}” button.",
+    for idx, raw_text in buttons:
+        base_slug = _slug(raw_text)  # "sign_in"
+        slug = f"{idx}_{base_slug}"  # "7_sign_in"
+        pascal = _pascal(slug)  # "7SignIn"
+
+        field_name = f"click_button_{slug}"
+        model_name = f"ClickButton{pascal}"
+        doc = f"Click the “{raw_text}” button (element #{idx})."
+
+        actions[field_name] = create_model(
+            model_name,
+            __doc__=doc,
             **_response_fields,
         )
 
