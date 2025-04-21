@@ -721,9 +721,14 @@ class ControlPanel(tk.Tk):
         }
 
         def _is_ok(cmd: str) -> bool:
-            return any(
-                cmd == v or (v.endswith("*") and cmd.startswith(v[:-1])) for v in valid
-            )
+            for v in valid:
+                if cmd == v:
+                    return True
+                if v.endswith("*"):
+                    prefix = v[:-1]
+                    if cmd.startswith(prefix) or cmd == prefix.rstrip(" _"):
+                        return True
+            return False
 
         # ---------- key‑button rows ----------------------------------
         for cmd, btn in self._key_buttons.items():
@@ -790,9 +795,14 @@ class ControlPanel(tk.Tk):
         valid = get_valid_actions(BrowserState(**self.state))
 
         def _is_ok(cmd: str) -> bool:
-            return any(
-                cmd == v or (v.endswith("*") and cmd.startswith(v[:-1])) for v in valid
-            )
+            for v in valid:
+                if cmd == v:
+                    return True
+                if v.endswith("*"):
+                    prefix = v[:-1]
+                    if cmd.startswith(prefix) or cmd == prefix.rstrip(" _"):
+                        return True
+            return False
 
         out_lines: list[str] = []
         for grp, names in groups.items():

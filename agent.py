@@ -300,9 +300,25 @@ def _create_full_response_format(tabs, buttons, state=None):
     valid = get_valid_actions(state)
 
     def include(name):
-        return any(
-            name == v or (v.endswith("*") and name.startswith(v[:-1])) for v in valid
-        )
+        """
+        Return True when *name* corresponds to one of the wildcard patterns
+        in `valid`.  Accept three cases:
+
+        1. exact match
+        2. `v` ends with '*' and name starts with `v[:-1]`
+        3. `v` ends with '*' and name equals `v[:-1].rstrip(" _")`
+           (handles bare 'scroll_down' vs pattern 'scroll_down *')
+        """
+        for v in valid:
+            if name == v:
+                return True
+            if v.endswith("*"):
+                prefix = v[:-1]  # drop the '*'
+                if name.startswith(prefix):
+                    return True
+                if name == prefix.rstrip(" _"):
+                    return True
+        return False
 
     tab_actions = {}
     tab_actions["new_tab"] = NewTab
