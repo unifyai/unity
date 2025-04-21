@@ -3,6 +3,15 @@ Command‑parsing and dispatch logic.  All browser‑side actions live here.
 """
 
 import re
+from constants import (
+    CMD_SCROLL_UP,
+    CMD_SCROLL_DOWN,
+    CMD_START_SCROLL_UP,
+    CMD_START_SCROLL_DOWN,
+    CMD_STOP_SCROLLING,
+    CMD_CONT_SCROLLING,
+    CMD_OPEN_URL,
+)
 import urllib.parse
 
 from browser_utils import build_boxes, collect_elements, paint_overlay
@@ -11,7 +20,7 @@ from actions import ActionHistory, BrowserState
 from playwright.sync_api import BrowserContext, Page
 
 SCROLL_DURATION = 400  # ms
-AUTO_SCROLL_SPEED = 100 / 400  # px / ms  ≈ 250 px / s
+AUTO_SCROLL_SPEED = 100 / 400  # px / ms  ≈ 250 px / s
 
 
 class CommandRunner:
@@ -82,7 +91,7 @@ class CommandRunner:
             return
         self.hist.add(cmd)
         # open url ------------------------------------------------------
-        m = re.fullmatch(r"open url\\s+(.+)", cmd)
+        m = re.fullmatch(rf"{CMD_OPEN_URL}\\s+(.+)", cmd)
         if m:
             url = m.group(1).strip()
             if not url.startswith(("http://", "https://")):
@@ -92,7 +101,7 @@ class CommandRunner:
             self.state.title = self.active.title() or url
             return
         # smooth scroll ----------------------------------------------------
-        m = re.fullmatch(r"scroll\s+(up|down)\s+(\d+)", cmd)
+        m = re.fullmatch(rf"{CMD_SCROLL_UP}|{CMD_SCROLL_DOWN}\s+(\d+)", cmd)
         if m:
             delta = (-1 if m.group(1) == "up" else 1) * int(m.group(2))
             self.active.evaluate(
@@ -123,20 +132,20 @@ class CommandRunner:
                 self.state.scroll_y += delta
             return
         # auto scroll ------------------------------------------------------
-        if cmd in {"start scroll up", "start scroll down"}:
+        if cmd in {CMD_START_SCROLL_UP, CMD_START_SCROLL_DOWN}:
             self.active.evaluate(
                 AUTO_SCROLL_JS,
                 {"dir": "up" if "up" in cmd else "down", "speed": AUTO_SCROLL_SPEED},
             )
             self.state.auto_scroll = "up" if "up" in cmd else "down"
             return
-        if cmd == "stop scroll":
+        if cmd == CMD_STOP_SCROLLING:
             self.active.evaluate(AUTO_SCROLL_JS, {"dir": "stop", "speed": 0})
             self.state.auto_scroll = None
             return
 
         # continue scroll (no‑op – lets auto‑scroll keep running)  ───── NEW
-        if cmd == "continue scroll":
+        if cmd == CMD_CONT_SCROLLING:
             self.hist.add(cmd)
             return
 

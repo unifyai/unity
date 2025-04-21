@@ -4,8 +4,15 @@ No Playwright code touches the Tk thread.
 """
 
 import queue
+import logging
 
 from dotenv import load_dotenv  # pip install python-dotenv
+
+logging.basicConfig(
+    level=logging.DEBUG,
+    format="%(asctime)s  %(threadName)s  %(levelname)-8s  %(message)s",
+)
+log = logging.getLogger("unity")
 
 load_dotenv()
 
@@ -13,9 +20,9 @@ from gui import ControlPanel
 from worker import BrowserWorker
 from primitive import init as primitive_init
 
-import unify
+# import unify
 
-unify.activate("Unity", overwrite=True)
+# unify.activate("Unity", overwrite=True)
 
 
 def run_tasks():
@@ -24,7 +31,7 @@ def run_tasks():
     # log_into_gmail()
 
 
-@unify.traced
+# @unify.traced
 def main() -> None:
     # queues
     cmd_q: "queue.Queue[str]" = queue.Queue(maxsize=20)
@@ -37,6 +44,7 @@ def main() -> None:
         up_q,
         start_url="https://www.google.com/",
         refresh_interval=0.4,
+        log=log.debug,
     )
     worker.start()
 

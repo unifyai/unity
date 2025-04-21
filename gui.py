@@ -25,6 +25,78 @@ from pygments.formatters import HtmlFormatter
 from pygments.lexers import PythonLexer
 
 
+def _contrasting(color: str) -> str:
+    """Return black or white depending on background luminance."""
+    color = color.lstrip("#")
+    r, g, b = (int(color[i : i + 2], 16) for i in (0, 2, 4))
+    # perceived luminance (ITU BT.601)
+    y = 0.299 * r + 0.587 * g + 0.114 * b
+    return "#000000" if y > 128 else "#ffffff"
+
+
+class _Tooltip:
+    """Tiny self‑contained tooltip; never escapes the main window."""
+
+    PAD, DELAY = 6, 400  # px, ms
+
+    def __init__(self, widget: tk.Widget, text: str):
+        self.widget, self.text = widget, text
+        self.tip = None
+        widget.bind("<Enter>", self._schedule, add="+")
+        widget.bind("<Leave>", self._hide, add="+")
+
+    # ---------- internal --------------------------------------------------
+    def _schedule(self, *_):
+        self._id = self.widget.after(self.DELAY, self._show)
+
+    def _show(self):
+        if self.tip:  # already visible
+            return
+
+        # -- 1.  Anchor coords inside *screen* space -----------------------
+        try:
+            bx, by, bw, bh = self.widget.bbox("insert")  # Entry/Text
+        except Exception:
+            bx = by = 0
+            bw = self.widget.winfo_width()
+            bh = self.widget.winfo_height()
+
+        x = self.widget.winfo_rootx() + bx + bw // 2
+        y = self.widget.winfo_rooty() + by + bh + self.PAD
+
+        # -- 2.  Clamp inside parent toplevel (so we never cover browser) --
+        top = self.widget.winfo_toplevel()
+        tlx, tly = top.winfo_rootx(), top.winfo_rooty()
+        trw, trh = top.winfo_width(), top.winfo_height()
+        scr_w, scr_h = top.winfo_screenwidth(), top.winfo_screenheight()
+
+        # basic screen‑edge clamp
+        x = max(tlx + self.PAD, min(x, tlx + trw - self.PAD))
+        y = max(tly + self.PAD, min(y, tly + trh - self.PAD))
+
+        # -- 3.  Create the floating window --------------------------------
+        self.tip = tw = tk.Toplevel(self.widget)
+        tw.wm_overrideredirect(True)
+        tw.wm_geometry(f"+{x}+{y}")
+        bg = "#ffffe0"
+        tk.Label(
+            tw,
+            text=self.text,
+            bg=bg,
+            fg=_contrasting(bg),
+            relief="solid",
+            borderwidth=1,
+            font=("tahoma", 8),
+        ).pack()
+
+    def _hide(self, *_):
+        if hasattr(self, "_id"):
+            self.widget.after_cancel(self._id)
+        if self.tip:
+            self.tip.destroy()
+            self.tip = None
+
+
 class ControlPanel(tk.Tk):
     """Main GUI window.  No Playwright calls occur on this thread."""
 
@@ -426,20 +498,27 @@ class ControlPanel(tk.Tk):
         for i in range(2):
             btns.columnconfigure(i, weight=1)
 
+        # ---------------------------------------------------------------
+        # Keep a handle so we can enable/disable + tooltip later
+        # ---------------------------------------------------------------
+        self._cmd_buttons: dict[str, ttk.Button] = {}
+
         def make(r: int, c: int, txt: str, cmd: str) -> None:
-            ttk.Button(
+            b = ttk.Button(
                 btns,
                 text=txt,
                 width=10,
                 command=lambda: self._handle_input(cmd),
-            ).grid(row=r, column=c, sticky="ew")
+            )
+            b.grid(row=r, column=c, sticky="ew")
+            self._cmd_buttons[cmd] = b
 
         make(0, 0, "▲ Scroll 100", "scroll up 100")
         make(0, 1, "▼ Scroll 100", "scroll down 100")
-        make(1, 0, "Start ▲", "start scroll up")
-        make(1, 1, "Start ▼", "start scroll down")
-        make(2, 0, "Stop scroll", "stop scroll")
-        make(2, 1, "Continue", "continue scroll")
+        make(1, 0, "Start ▲", "start scrolling up")
+        make(1, 1, "Start ▼", "start scrolling down")
+        make(2, 0, "Stop scrolling", "stop scrolling")
+        make(2, 1, "Continue", "continue scrolling")
         make(3, 0, "New tab", "new tab")
         make(3, 1, "Close tab", "close tab")
 
@@ -561,12 +640,49 @@ class ControlPanel(tk.Tk):
             self._tab_rows_frame.columnconfigure(0, weight=1)
 
     def _refresh_enabled_controls(self, valid):
+        REASONS = {
+            "enter text": "Only available when the page caret is in a text‑box",
+            "press enter": "Requires focus in a text‑box",
+            "press backspace": "Requires focus in a text‑box",
+            "press delete": "Requires focus in a text‑box",
+            "cursor left": "Requires focus in a text‑box",
+            "cursor right": "Requires focus in a text‑box",
+            "cursor up": "Requires focus in a text‑box",
+            "cursor down": "Requires focus in a text‑box",
+            "select all": "Requires focus in a text‑box",
+            "move line start": "Requires focus in a text‑box",
+            "move line end": "Requires focus in a text‑box",
+            "move word left": "Requires focus in a text‑box",
+            "move word right": "Requires focus in a text‑box",
+            "stop scrolling": "Auto‑scroll isn’t running",
+            "continue scrolling": "Auto‑scroll isn’t running",
+            "start scrolling up": "Already auto‑scrolling",
+            "start scrolling down": "Already auto‑scrolling",
+            "scroll up 100": "Already at the very top of the page",
+        }
+
+        # ---------- key‑button rows ----------------------------------
         for cmd, btn in self._key_buttons.items():
-            btn.configure(state="normal" if cmd in valid else "disabled")
-        if "enter text" in valid:
-            self.enter_text_box.configure(state="normal")
-        else:
-            self.enter_text_box.configure(state="disabled")
+            ok = cmd in valid
+            btn.configure(state="normal" if ok else "disabled")
+            if not ok:
+                _Tooltip(btn, REASONS.get(cmd, "Not valid in current state"))
+
+        # ---------- scroll / tab control buttons ---------------------
+        for cmd, btn in self._cmd_buttons.items():
+            ok = cmd in valid
+            btn.configure(state="normal" if ok else "disabled")
+            if not ok:
+                _Tooltip(btn, REASONS.get(cmd, "Not valid in current state"))
+
+        # ----- Enter‑text input -------------------------------------
+        ok = "enter text" in valid
+        self.enter_text_box.configure(state="normal" if ok else "disabled")
+        if not ok:
+            _Tooltip(
+                self.enter_text_box,
+                "Cannot type – there’s no active text‑box on the page",
+            )
 
     # ──────────────────────── ACTIONS‑PANE HELPER ───────────────────────
     def _refresh_actions_list(self) -> None:
@@ -688,9 +804,9 @@ class ControlPanel(tk.Tk):
         if low.startswith(
             (
                 "click",
-                "scroll",
-                "start scroll",
-                "stop scroll",
+                "scroll ",
+                "start scrolling",
+                "stop scrolling",
                 "search",
                 "open url",
                 "new tab",
@@ -712,7 +828,7 @@ class ControlPanel(tk.Tk):
                 "hold shift",
                 "release shift",
                 "click out",
-                "continue scroll",
+                "continue scrolling",
             ),
         ):
             self._queue_command(text)
@@ -775,14 +891,13 @@ class ControlPanel(tk.Tk):
             px = sc["scroll_down"].get("pixels") or 300
             return f"scroll down {px}"
         if sc.get("start_scrolling_up", {}).get("apply"):
-            return "start scroll up"
+            return "start scrolling up"
         if sc.get("start_scrolling_down", {}).get("apply"):
-            return "start scroll down"
-        if sc.get("stop_scrolling_up", {}).get("apply") or sc.get(
-            "stop_scrolling_down",
-            {},
-        ).get("apply"):
-            return "stop scroll"
+            return "start scrolling down"
+        if sc.get("stop_scrolling", {}).get("apply"):
+            return "stop scrolling"
+        if sc.get("continue_scrolling", {}).get("apply"):
+            return "continue scrolling"
 
         # ----- button actions ---------------------------------------------
         slug_to_idx = {_slug(label): idx for idx, label, _ in self.elements}

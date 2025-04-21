@@ -2,15 +2,15 @@ from __future__ import annotations
 
 from typing import List, Optional, Tuple, Dict, Any
 
-import unify
+# import unify
 from helpers import _pascal, _slug
 from pydantic import BaseModel, create_model, Field
 from actions import ActionHistory, BrowserState
 from action_filter import get_valid_actions
 from sys_msgs import PRIMITIVE_TO_BROWSER_ACTION_CANDIDATES, PRIMITIVE_TO_BROWSER_ACTION
 
-client = unify.Unify(traced=True)
-client.set_system_message(PRIMITIVE_TO_BROWSER_ACTION_CANDIDATES)
+# client = unify.Unify(traced=True)
+# client.set_system_message(PRIMITIVE_TO_BROWSER_ACTION_CANDIDATES)
 
 SCROLLING_STATE = None
 
@@ -103,52 +103,24 @@ class StartScrollingDown(BaseModel):
     apply: bool = Field(..., description="Decision to apply this action or not.")
 
 
-class StopScrollingUp(BaseModel):
-    """
-    Stop the upwards scroll motion which is currently occuring.
-    """
+class StopScrolling(BaseModel):
+    """Stop whichever auto‑scroll is currently active (direction‑agnostic)."""
 
     rationale: Optional[str] = Field(
         ...,
-        description="Explanation for your decision whether or not to apply this action.",
+        description="Why you do / don't want to stop scrolling.",
     )
-    apply: bool = Field(..., description="Decision to apply this action or not.")
+    apply: bool = Field(..., description="Set to true to stop scrolling.")
 
 
-class StopScrollingDown(BaseModel):
-    """
-    Stop the downwards scroll motion which is currently occuring.
-    """
+class ContinueScrolling(BaseModel):
+    """Let the current auto‑scroll motion keep running (no‑op)."""
 
     rationale: Optional[str] = Field(
         ...,
-        description="Explanation for your decision whether or not to apply this action.",
+        description="Why you do / don't want to continue scrolling.",
     )
-    apply: bool = Field(..., description="Decision to apply this action or not.")
-
-
-class ContinueScrollingUp(BaseModel):
-    """
-    Continues the upwards scroll motion which is currently occuring.
-    """
-
-    rationale: Optional[str] = Field(
-        ...,
-        description="Explanation for your decision whether or not to apply this action.",
-    )
-    apply: bool = Field(..., description="Decision to apply this action or not.")
-
-
-class ContinueScrollingDown(BaseModel):
-    """
-    Continues the downwards scroll motion which is currently occuring.
-    """
-
-    rationale: Optional[str] = Field(
-        ...,
-        description="Explanation for your decision whether or not to apply this action.",
-    )
-    apply: bool = Field(..., description="Decision to apply this action or not.")
+    apply: bool = Field(..., description="Set to true to keep scrolling.")
 
 
 class Search(BaseModel):
@@ -233,20 +205,11 @@ def _construct_scroll_actions():
             "start_scrolling_up": StartScrollingUp,
             "start_scrolling_down": StartScrollingDown,
         }
-    elif SCROLLING_STATE == "up":
+    else:  # already auto‑scrolling (either dir)
         return {
-            "stop_scrolling_up": StopScrollingUp,
-            "continue_scrolling_up": ContinueScrollingUp,
-            "start_scrolling_down": StartScrollingDown,
+            "stop_scrolling": StopScrolling,
+            "continue_scrolling": ContinueScrolling,
         }
-    elif SCROLLING_STATE == "down":
-        return {
-            "stop_scrolling_down": StopScrollingDown,
-            "continue_scrolling_down": ContinueScrollingDown,
-            "start_scrolling_up": StartScrollingUp,
-        }
-    else:
-        raise Exception(f"Invalid SCROLLING_STATE {SCROLLING_STATE}")
 
 
 def _create_full_response_format(tabs, buttons, state=None):
@@ -338,8 +301,8 @@ def _get_action_class(action_name: str) -> type[BaseModel]:
         "scroll_down": ScrollDown,
         "start_scrolling_up": StartScrollingUp,
         "start_scrolling_down": StartScrollingDown,
-        "stop_scrolling_up": StopScrollingUp,
-        "stop_scrolling_down": StopScrollingDown,
+        "stop_scrolling": StopScrolling,
+        "continue_scrolling": ContinueScrolling,
     }
     if action_name in fixed:
         return fixed[action_name]
@@ -445,7 +408,7 @@ def list_available_actions(
     }
 
 
-@unify.traced
+# @unify.traced
 def primitive_to_browser_action(
     text: str,
     screenshot: bytes,

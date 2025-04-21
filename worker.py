@@ -137,11 +137,13 @@ class BrowserWorker(threading.Thread):
                         continue
                     boxes = build_boxes(last_elements)
                     # draw overlay both in the UI page and the headless mirror
-                    try:
-                        paint_overlay(self.runner.active, boxes)  # visible window
-                        paint_overlay(mirror.page, boxes)
-                    except Exception as e:
-                        self.log(f"overlay failed: {e}")
+                    for pg in (self.runner.active, mirror.page):
+                        try:
+                            paint_overlay(pg, boxes)
+                        except PWError as e:
+                            # page or context went away – bail early
+                            self.log(f"overlay skipped: {e}")
+                            break
 
                     # ── update dynamic browser‑state fields ────────────────
                     try:  # NEW
