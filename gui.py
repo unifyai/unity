@@ -400,7 +400,7 @@ class ControlPanel(tk.Tk):
         tab_log = ttk.Frame(note)
         tab_actions = ttk.Frame(note)
         note.add(tab_log, text="Log")
-        note.add(tab_actions, text="Actions")
+        note.add(tab_actions, text="Valid Actions")
 
         self.log = scrolledtext.ScrolledText(tab_log, state="disabled")
         self.log.pack(fill="both", expand=True)
