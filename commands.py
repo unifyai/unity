@@ -49,7 +49,7 @@ class CommandRunner:
         if self.ctx.pages:
             self.active = self.ctx.pages[0]
 
-    def switch_tab(self, title_substr: str):
+    def select_tab(self, title_substr: str):
         tgt = next(
             (
                 pg
@@ -61,7 +61,7 @@ class CommandRunner:
         if tgt:
             self.active = tgt
             tgt.bring_to_front()
-            self.log(f"Switched to tab: {tgt.title()}")
+            self.log(f"Selected tab: {tgt.title()}")
         else:
             self.log("No tab matches")
 
@@ -244,7 +244,7 @@ class CommandRunner:
             return
         m = re.fullmatch(r"select\s+to\s+tab\s+(.+)", cmd)
         if m:
-            self.switch_tab(m.group(1))
+            self.select_tab(m.group(1))
             return
         self.log("Unrecognised command")
 
