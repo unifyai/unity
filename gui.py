@@ -970,7 +970,7 @@ class ControlPanel(tk.Tk):
                 return CMD_NEW_TAB
             if key.startswith("close_tab_"):
                 tab = key[len("close_tab_") :]
-                return f"close tab {tab.replace('_', ' ')}"
+                return f"close_tab_{tab.replace('_', ' ')}"
             if key.startswith("select_tab_"):
                 tab = key[len("select_tab_") :]
                 return f"selected tab {tab.replace('_', ' ')}"
@@ -979,10 +979,10 @@ class ControlPanel(tk.Tk):
         sc = resp.get("scroll_actions", {})
         if sc.get("scroll_up", {}).get("apply"):
             px = sc["scroll_up"].get("pixels") or 300
-            return f"scroll up {px}"
+            return f"scroll_up {px}"
         if sc.get("scroll_down", {}).get("apply"):
             px = sc["scroll_down"].get("pixels") or 300
-            return f"scroll down {px}"
+            return f"scroll_down {px}"
         if sc.get("start_scrolling_up", {}).get("apply"):
             return CMD_START_SCROLL_UP
         if sc.get("start_scrolling_down", {}).get("apply"):
@@ -999,16 +999,16 @@ class ControlPanel(tk.Tk):
                 continue
             slug_text = key[len("click_button_") :]
             if slug_text in slug_to_idx:
-                return f"click {slug_to_idx[slug_text]}"
-            return f"click button {slug_text.replace('_', ' ')}"
+                return f"click_{slug_to_idx[slug_text]}"
+            return f"click_button_{slug_text.replace('_', ' ')}"
 
         # ----- search / open‑url ------------------------------------------
-        sa = resp.get("search_action")
+        sa = resp.get("search")
         if sa and sa.get("apply"):
-            return f"search {sa.get('query', '')}"
-        sua = resp.get("search_url_action")
+            return f"search_{sa.get('query', '')}"
+        sua = resp.get("open_url")
         if sua and sua.get("apply"):
-            return f"open url {sua.get('url', '').strip()}"
+            return f"open_url_{sua.get('url', '').strip()}"
 
         return None
 
