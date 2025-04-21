@@ -666,17 +666,6 @@ class ControlPanel(tk.Tk):
 
             btn_font = ("Helvetica", 10, "bold")
 
-            close_btn = Button(
-                row,
-                text="×",
-                command=lambda t=title: self._exec_tab_cmd(CMD_CLOSE_TAB, t),
-                padx=4,
-                pady=2,  # ← bump this slightly to avoid visual clipping
-                relief="flat",
-                font=btn_font,
-            )
-            close_btn.grid(row=0, column=1, padx=(0, 2), sticky="e")
-
             go_btn = Button(
                 row,
                 text="Go",
@@ -686,7 +675,18 @@ class ControlPanel(tk.Tk):
                 relief="flat",
                 font=btn_font,
             )
-            go_btn.grid(row=0, column=2, sticky="e")
+            go_btn.grid(row=0, column=1, sticky="e")
+
+            close_btn = Button(
+                row,
+                text="×",
+                command=lambda t=title: self._exec_tab_cmd(CMD_CLOSE_TAB, t),
+                padx=4,
+                pady=2,  # ← bump this slightly to avoid visual clipping
+                relief="flat",
+                font=btn_font,
+            )
+            close_btn.grid(row=0, column=2, padx=(0, 2), sticky="e")
 
             # keep references for enable/disable
             self._tab_row_buttons.extend([close_btn, go_btn])
