@@ -43,4 +43,7 @@ def get_valid_actions(state: Union[BrowserState, dict]) -> set[str]:
     # ── dynamic tab & button placeholders ──────────────
     valid.update(BUTTON_PATTERNS)
 
-    return valid
+    underscore_aliases = {
+        v.rstrip(" *").replace(" ", "_").rstrip("_") for v in valid  # ← changed
+    }
+    return valid | underscore_aliases
