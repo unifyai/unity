@@ -640,7 +640,7 @@ class ControlPanel(tk.Tk):
         except Exception:
             decoded = raw
         # send with real newline characters so the worker presses <Enter>
-        self._handle_input(f"enter text {decoded}")
+        self._handle_input(f"enter_text {decoded}")
         self.enter_var.set("")  # clear box
 
     # ──────────────────────── TABS‑PANE HELPERS ────────────────────────

@@ -269,7 +269,7 @@ class CommandRunner:
             return
 
         # enter text -------------------------------------------------------
-        m = re.fullmatch(r"enter text\s+(.+)", cmd, re.DOTALL)
+        m = re.fullmatch(r"enter_text\s+(.+)", cmd, re.DOTALL)
         if m:
             raw = m.group(1)
             # interpret common escapes (\n, \t, \b, etc.)
