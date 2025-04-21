@@ -18,6 +18,7 @@ from typing import Any
 
 from agent import primitive_to_browser_action, list_available_actions
 from actions import BrowserState
+from constants import *
 from action_filter import get_valid_actions
 from helpers import _slug
 from pygments import highlight
@@ -382,13 +383,13 @@ class ControlPanel(tk.Tk):
         self._key_button_widgets = []
 
         key_cmds = [
-            ("Enter", "press enter"),
-            ("Backspace", "press backspace"),
-            ("Delete", "press delete"),
-            ("Select All", "select all"),
-            ("Shift ⬇", "hold shift"),
-            ("Shift ⬆", "release shift"),
-            ("Click Out", "click out"),
+            ("Enter", CMD_PRESS_ENTER),
+            ("Backspace", CMD_PRESS_BACKSPACE),
+            ("Delete", CMD_PRESS_DELETE),
+            (CMD_SELECT_ALL, CMD_SELECT_ALL),
+            ("Shift ⬇", CMD_HOLD_SHIFT),
+            ("Shift ⬆", CMD_RELEASE_SHIFT),
+            (CMD_CLICK_OUT, CMD_CLICK_OUT),
         ]
 
         for label, cmd in key_cmds:
@@ -416,14 +417,14 @@ class ControlPanel(tk.Tk):
         self._arrow_button_widgets = []
 
         arrow_cmds = [
-            ("←", "cursor left"),
-            ("→", "cursor right"),
-            ("↑", "cursor up"),
-            ("↓", "cursor down"),
-            ("⌃←", "move line start"),
-            ("⌃→", "move line end"),
-            ("⌥←", "move word left"),
-            ("⌥→", "move word right"),
+            ("←", CMD_CURSOR_LEFT),
+            ("→", CMD_CURSOR_RIGHT),
+            ("↑", CMD_CURSOR_UP),
+            ("↓", CMD_CURSOR_DOWN),
+            ("⌃←", CMD_MOVE_LINE_START),
+            ("⌃→", CMD_MOVE_LINE_END),
+            ("⌥←", CMD_MOVE_WORD_LEFT),
+            ("⌥→", CMD_MOVE_WORD_RIGHT),
         ]
 
         for label, cmd in arrow_cmds:
@@ -513,14 +514,14 @@ class ControlPanel(tk.Tk):
             b.grid(row=r, column=c, sticky="ew")
             self._cmd_buttons[cmd] = b
 
-        make(0, 0, "▲ Scroll 100", "scroll up 100")
-        make(0, 1, "▼ Scroll 100", "scroll down 100")
-        make(1, 0, "Start ▲", "start scrolling up")
-        make(1, 1, "Start ▼", "start scrolling down")
-        make(2, 0, "Stop scrolling", "stop scrolling")
-        make(2, 1, "Continue", "continue scrolling")
-        make(3, 0, "New tab", "new tab")
-        make(3, 1, "Close tab", "close tab")
+        make(0, 0, "▲ Scroll 100", CMD_SCROLL_UP.replace("*", "100"))
+        make(0, 1, "▼ Scroll 100", CMD_SCROLL_DOWN.replace("*", "100"))
+        make(1, 0, "Start ▲", CMD_START_SCROLL_UP)
+        make(1, 1, "Start ▼", CMD_START_SCROLL_DOWN)
+        make(2, 0, "Stop", CMD_STOP_SCROLLING)
+        make(2, 1, "Continue", CMD_CONT_SCROLLING)
+        make(3, 0, "New Tab", CMD_NEW_TAB)
+        make(3, 1, "Close Tab", CMD_CLOSE_THIS_TAB)
 
     # dynamic key-press button wrap
     def _relayout_key_buttons(self):
@@ -617,7 +618,7 @@ class ControlPanel(tk.Tk):
             close_btn = Button(
                 row,
                 text="×",
-                command=lambda t=title: self._exec_tab_cmd("close tab", t),
+                command=lambda t=title: self._exec_tab_cmd(CMD_CLOSE_TAB, t),
                 padx=4,
                 pady=2,  # ← bump this slightly to avoid visual clipping
                 relief="flat",
@@ -641,24 +642,24 @@ class ControlPanel(tk.Tk):
 
     def _refresh_enabled_controls(self, valid):
         REASONS = {
-            "enter text": "Only available when the page caret is in a text‑box",
-            "press enter": "Requires focus in a text‑box",
-            "press backspace": "Requires focus in a text‑box",
-            "press delete": "Requires focus in a text‑box",
-            "cursor left": "Requires focus in a text‑box",
-            "cursor right": "Requires focus in a text‑box",
-            "cursor up": "Requires focus in a text‑box",
-            "cursor down": "Requires focus in a text‑box",
-            "select all": "Requires focus in a text‑box",
-            "move line start": "Requires focus in a text‑box",
-            "move line end": "Requires focus in a text‑box",
-            "move word left": "Requires focus in a text‑box",
-            "move word right": "Requires focus in a text‑box",
-            "stop scrolling": "Auto‑scroll isn’t running",
-            "continue scrolling": "Auto‑scroll isn’t running",
-            "start scrolling up": "Already auto‑scrolling",
-            "start scrolling down": "Already auto‑scrolling",
-            "scroll up": "Already at the very top of the page",
+            CMD_ENTER_TEXT: "Only available when the page caret is in a text‑box",
+            CMD_PRESS_ENTER: "Requires focus in a text‑box",
+            CMD_PRESS_BACKSPACE: "Requires focus in a text‑box",
+            CMD_PRESS_DELETE: "Requires focus in a text‑box",
+            CMD_CURSOR_LEFT: "Requires focus in a text‑box",
+            CMD_CURSOR_RIGHT: "Requires focus in a text‑box",
+            CMD_CURSOR_UP: "Requires focus in a text‑box",
+            CMD_CURSOR_DOWN: "Requires focus in a text‑box",
+            CMD_SELECT_ALL: "Requires focus in a text‑box",
+            CMD_MOVE_LINE_START: "Requires focus in a text‑box",
+            CMD_MOVE_LINE_END: "Requires focus in a text‑box",
+            CMD_MOVE_WORD_LEFT: "Requires focus in a text‑box",
+            CMD_MOVE_WORD_RIGHT: "Requires focus in a text‑box",
+            CMD_STOP_SCROLLING: "Auto‑scroll isn’t running",
+            CMD_CONT_SCROLLING: "Auto‑scroll isn’t running",
+            CMD_START_SCROLL_UP: "Already auto‑scrolling",
+            CMD_START_SCROLL_DOWN: "Already auto‑scrolling",
+            CMD_SCROLL_UP: "Already at the very top of the page",
         }
 
         def _is_ok(cmd: str) -> bool:
@@ -681,7 +682,7 @@ class ControlPanel(tk.Tk):
                 _Tooltip(btn, REASONS.get(cmd, "Not valid in current state"))
 
         # ----- Enter‑text input -------------------------------------
-        ok = _is_ok("enter text")
+        ok = _is_ok(CMD_ENTER_TEXT)
         self.enter_text_box.configure(state="normal" if ok else "disabled")
         if not ok:
             _Tooltip(
@@ -808,32 +809,37 @@ class ControlPanel(tk.Tk):
         low = text.lower()
         if low.startswith(
             (
-                "click",
-                "scroll ",
-                "start scrolling",
-                "stop scrolling",
-                "search",
-                "open url",
-                "new tab",
-                "close tab",
-                "switch",
-                "enter text",
-                "press enter",
-                "press backspace",
-                "press delete",
-                "cursor left",
-                "cursor right",
-                "cursor up",
-                "cursor down",
-                "select all",
-                "move line start",
-                "move line end",
-                "move word left",
-                "move word right",
-                "hold shift",
-                "release shift",
-                "click out",
-                "continue scrolling",
+                s.rstrip("*")
+                for s in (
+                    CMD_CLICK_BUTTON,
+                    CMD_SCROLL_UP,
+                    CMD_SCROLL_DOWN,
+                    CMD_START_SCROLL_UP,
+                    CMD_START_SCROLL_DOWN,
+                    CMD_STOP_SCROLLING,
+                    CMD_SEARCH,
+                    CMD_OPEN_URL,
+                    CMD_NEW_TAB,
+                    CMD_CLOSE_TAB,
+                    CMD_SELECT_TAB,
+                    CMD_ENTER_TEXT,
+                    CMD_PRESS_ENTER,
+                    CMD_PRESS_BACKSPACE,
+                    CMD_PRESS_DELETE,
+                    CMD_CURSOR_LEFT,
+                    CMD_CURSOR_RIGHT,
+                    CMD_CURSOR_UP,
+                    CMD_CURSOR_DOWN,
+                    CMD_SELECT_ALL,
+                    CMD_MOVE_LINE_START,
+                    CMD_MOVE_LINE_END,
+                    CMD_MOVE_WORD_LEFT,
+                    CMD_MOVE_WORD_RIGHT,
+                    CMD_HOLD_SHIFT,
+                    CMD_RELEASE_SHIFT,
+                    CMD_CLICK_OUT,
+                    CMD_CONT_SCROLLING,
+                )
             ),
         ):
             self._queue_command(text)
@@ -879,7 +885,7 @@ class ControlPanel(tk.Tk):
             if not obj.get("apply"):
                 continue
             if key == "new_tab":
-                return "new tab"
+                return CMD_NEW_TAB
             if key.startswith("close_tab_"):
                 tab = key[len("close_tab_") :]
                 return f"close tab {tab.replace('_', ' ')}"
@@ -896,13 +902,13 @@ class ControlPanel(tk.Tk):
             px = sc["scroll_down"].get("pixels") or 300
             return f"scroll down {px}"
         if sc.get("start_scrolling_up", {}).get("apply"):
-            return "start scrolling up"
+            returnCMD_START_SCROLL_UP
         if sc.get("start_scrolling_down", {}).get("apply"):
-            return "start scrolling down"
+            return CMD_START_SCROLL_DOWN
         if sc.get("stop_scrolling", {}).get("apply"):
-            return "stop scrolling"
+            return CMD_STOP_SCROLLING
         if sc.get("continue_scrolling", {}).get("apply"):
-            return "continue scrolling"
+            return CMD_CONT_SCROLLING
 
         # ----- button actions ---------------------------------------------
         slug_to_idx = {_slug(label): idx for idx, label, _ in self.elements}
@@ -927,7 +933,7 @@ class ControlPanel(tk.Tk):
     # ───────────────────────── COMMAND QUEUE ────────────────────────────
     def _queue_command(self, cmd: str) -> None:
         # mark commands that likely change the page content  ------------- NEW
-        nav_prefixes = ("open url", "search ", "new tab", "switch to tab")
+        nav_prefixes = (CMD_OPEN_URL, "search ", CMD_NEW_TAB, "switch to tab")
         if cmd.lower().startswith(nav_prefixes):
             self._reset_el_scroll = True
         try:
