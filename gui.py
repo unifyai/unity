@@ -902,7 +902,7 @@ class ControlPanel(tk.Tk):
             px = sc["scroll_down"].get("pixels") or 300
             return f"scroll down {px}"
         if sc.get("start_scrolling_up", {}).get("apply"):
-            returnCMD_START_SCROLL_UP
+            return CMD_START_SCROLL_UP
         if sc.get("start_scrolling_down", {}).get("apply"):
             return CMD_START_SCROLL_DOWN
         if sc.get("stop_scrolling", {}).get("apply"):
