@@ -144,33 +144,92 @@ class CommandRunner:
             self.hist.add(cmd)
             return
 
-        # click out (remove focus) ------------------------------------------
-        if cmd == CMD_CLICK_OUT:
-            # ToDo: get thsi working!
+        # ------------------------------------------------------------------
+        #  click out  – force the caret out of ANY text‑box on the page
+        # ------------------------------------------------------------------
+        if cmd == "click out":
             self.hist.add(cmd)
 
-            js = """
+            js_is_inbox = """
             () => {
-              // create invisible focusable element far off‑screen
-              const dummy = Object.assign(document.createElement("button"), {
-                type: "button",
-                style:
-                  "position:fixed;left:-9999px;top:-9999px;width:1px;height:1px;opacity:0;",
-              });
-              document.body.appendChild(dummy);
-              dummy.focus({preventScroll:true});
-              // remove after event loop tick so focus sticks
-              setTimeout(() => dummy.remove(), 0);
-              return document.activeElement === dummy;
+              const el = document.activeElement;
+              if (!el) return false;
+              const tag  = el.tagName.toLowerCase();
+              const role = el.getAttribute('role');
+              return ['input','textarea'].includes(tag) ||
+                     ['textbox','combobox','searchbox'].includes(role);
             }
             """
 
+            def still_in_box() -> bool:
+                try:
+                    return self.active.evaluate(js_is_inbox)
+                except Exception:  # cross‑origin frame focused
+                    return True
+
+            # ── 1.  try blur() directly on the element -------------------
             try:
-                self.active.evaluate(js)
+                self.active.evaluate(
+                    """() => {
+                    const a = document.activeElement;
+                    if (a && a.blur) a.blur(); }""",
+                )
             except Exception:
                 pass
+            if not still_in_box():
+                self.state.in_textbox = False
+                return
 
-            self.state.in_textbox = False
+            # ── 2.  focus the BODY element (add tabindex if needed) ------
+            try:
+                self.active.evaluate(
+                    """() => {
+                    if (!document.body.hasAttribute('tabindex'))
+                        document.body.setAttribute('tabindex','-1');
+                    document.body.focus({preventScroll:true});
+                }""",
+                )
+            except Exception:
+                pass
+            if not still_in_box():
+                self.state.in_textbox = False
+                return
+
+            # ── 3.  create + focus an off‑screen dummy button ------------
+            try:
+                self.active.evaluate(
+                    """() => {
+                    const d = Object.assign(document.createElement('button'),{
+                      type:'button',
+                      style:'position:fixed;left:-9999px;top:-9999px;width:1px;height:1px;opacity:0;'
+                    });
+                    document.body.appendChild(d);
+                    d.focus({preventScroll:true});
+                    setTimeout(() => d.remove(), 0);
+                }""",
+                )
+            except Exception:
+                pass
+            if not still_in_box():
+                self.state.in_textbox = False
+                return
+
+            # ── 4.  native click near top‑left corner --------------------
+            try:
+                self.active.bring_to_front()
+                self.active.mouse.click(5, 5, delay=10)
+            except Exception:
+                pass
+            if not still_in_box():
+                self.state.in_textbox = False
+                return
+
+            # ── 5.  final fallback – send Escape -------------------------
+            try:
+                self.active.keyboard.press("Escape")
+            except Exception:
+                pass
+            self.state.in_textbox = not still_in_box()
             return
 
         # ───────── keyboard shortcuts ─────────────────────────────────
