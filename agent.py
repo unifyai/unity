@@ -414,7 +414,7 @@ def list_available_actions(
         "button_actions": list(
             fmt.model_fields["button_actions"].annotation.model_fields,
         ),
-        "standalone": [
+        "search_actions": [
             name for name in ["search", "open_url"] if name in fmt.model_fields
         ],
     }
