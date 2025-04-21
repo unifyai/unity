@@ -658,25 +658,30 @@ class ControlPanel(tk.Tk):
             "continue scrolling": "Auto‑scroll isn’t running",
             "start scrolling up": "Already auto‑scrolling",
             "start scrolling down": "Already auto‑scrolling",
-            "scroll up 100": "Already at the very top of the page",
+            "scroll up": "Already at the very top of the page",
         }
+
+        def _is_ok(cmd: str) -> bool:
+            return any(
+                cmd == v or (v.endswith("*") and cmd.startswith(v[:-1])) for v in valid
+            )
 
         # ---------- key‑button rows ----------------------------------
         for cmd, btn in self._key_buttons.items():
-            ok = cmd in valid
+            ok = _is_ok(cmd)
             btn.configure(state="normal" if ok else "disabled")
             if not ok:
                 _Tooltip(btn, REASONS.get(cmd, "Not valid in current state"))
 
         # ---------- scroll / tab control buttons ---------------------
         for cmd, btn in self._cmd_buttons.items():
-            ok = cmd in valid
+            ok = _is_ok(cmd)
             btn.configure(state="normal" if ok else "disabled")
             if not ok:
                 _Tooltip(btn, REASONS.get(cmd, "Not valid in current state"))
 
         # ----- Enter‑text input -------------------------------------
-        ok = "enter text" in valid
+        ok = _is_ok("enter text")
         self.enter_text_box.configure(state="normal" if ok else "disabled")
         if not ok:
             _Tooltip(
