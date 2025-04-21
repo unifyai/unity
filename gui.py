@@ -167,7 +167,18 @@ class ControlPanel(tk.Tk):
             command=tab_canvas.yview,
         )
         tab_rows = ttk.Frame(tab_canvas)
-        tab_canvas.create_window((0, 0), window=tab_rows, anchor="nw")
+        tab_canvas.create_window(
+            (0, 0),
+            window=tab_rows,
+            anchor="nw",
+            tags="tabframe",
+            width=1,
+        )
+
+        def resize_tabs(event):
+            tab_canvas.itemconfig("tabframe", width=event.width)
+
+        tab_canvas.bind("<Configure>", resize_tabs)
         tab_canvas.configure(yscrollcommand=scroll_v.set)
         tab_rows.bind(
             "<Configure>",
@@ -179,7 +190,8 @@ class ControlPanel(tk.Tk):
         tab_tabs_frame.rowconfigure(0, weight=1)
         tab_tabs_frame.columnconfigure(0, weight=1)
 
-        self._tab_rows_frame = tab_rows  # keep reference for rebuilds\
+        self._tab_rows_frame = tab_rows
+        tab_canvas.columnconfigure(0, weight=1)
         self._el_canvas = el_canvas
         self._el_scroll = el_scroll
         self._reset_el_scroll = False
@@ -511,30 +523,33 @@ class ControlPanel(tk.Tk):
         for title in self.tab_titles:
             shown = title if len(title) <= 20 else title[:17] + "…"
             row = ttk.Frame(self._tab_rows_frame)
-            row.pack(fill="x", pady=1, padx=2)
-            row = ttk.Frame(self._tab_rows_frame)
-            row.pack(fill="x", pady=1, padx=2)
+            row.grid(sticky="ew", padx=2, pady=1)
+            row.columnconfigure(0, weight=1)  # title column stretches
 
-            ttk.Label(row, text=shown, anchor="w").pack(
-                side="left",
-                fill="x",
-                expand=True,
-                padx=(0, 4),
-            )
+            label = ttk.Label(row, text=shown, anchor="w")
+            label.grid(row=0, column=0, sticky="ew", padx=(0, 4))
 
-            ttk.Button(
-                row,
-                text="Go",
-                width=4,
-                command=lambda t=title: self._exec_tab_cmd("switch to tab", t),
-            ).pack(side="right")
+            label.bind("<Enter>", lambda e, full=title: label.configure(text=full))
+            label.bind("<Leave>", lambda e, short=shown: label.configure(text=short))
 
-            ttk.Button(
+            close_btn = ttk.Button(
                 row,
                 text="×",
                 width=2,
                 command=lambda t=title: self._exec_tab_cmd("close tab", t),
-            ).pack(side="right", padx=(0, 2))
+            )
+            close_btn.grid(row=0, column=1, sticky="e", ipadx=2)
+
+            go_btn = ttk.Button(
+                row,
+                text="Go",
+                width=4,
+                command=lambda t=title: self._exec_tab_cmd("switch to tab", t),
+            )
+            go_btn.grid(row=0, column=2, sticky="e", ipadx=4)
+
+            # Stretch row container to fill width
+            self._tab_rows_frame.columnconfigure(0, weight=1)
 
     def _refresh_enabled_controls(self, valid):
         for cmd, btn in self._key_buttons.items():
