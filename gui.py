@@ -13,7 +13,7 @@ from __future__ import annotations
 import queue
 import tkinter as tk
 import traceback
-from tkinter import scrolledtext, ttk
+from tkinter import scrolledtext, ttk, Button
 from typing import Any
 
 from agent import primitive_to_browser_action, list_available_actions
@@ -179,6 +179,7 @@ class ControlPanel(tk.Tk):
             tab_canvas.itemconfig("tabframe", width=event.width)
 
         tab_canvas.bind("<Configure>", resize_tabs)
+
         tab_canvas.configure(yscrollcommand=scroll_v.set)
         tab_rows.bind(
             "<Configure>",
@@ -532,21 +533,29 @@ class ControlPanel(tk.Tk):
             label.bind("<Enter>", lambda e, full=title: label.configure(text=full))
             label.bind("<Leave>", lambda e, short=shown: label.configure(text=short))
 
-            close_btn = ttk.Button(
+            btn_font = ("Helvetica", 10, "bold")
+
+            close_btn = Button(
                 row,
                 text="×",
-                width=2,
                 command=lambda t=title: self._exec_tab_cmd("close tab", t),
+                padx=4,
+                pady=2,  # ← bump this slightly to avoid visual clipping
+                relief="flat",
+                font=btn_font,
             )
-            close_btn.grid(row=0, column=1, sticky="e", ipadx=2)
+            close_btn.grid(row=0, column=1, padx=(0, 2), sticky="e")
 
-            go_btn = ttk.Button(
+            go_btn = Button(
                 row,
                 text="Go",
-                width=4,
                 command=lambda t=title: self._exec_tab_cmd("switch to tab", t),
+                padx=6,
+                pady=2,
+                relief="flat",
+                font=btn_font,
             )
-            go_btn.grid(row=0, column=2, sticky="e", ipadx=4)
+            go_btn.grid(row=0, column=2, sticky="e")
 
             # Stretch row container to fill width
             self._tab_rows_frame.columnconfigure(0, weight=1)
