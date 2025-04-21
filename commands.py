@@ -235,11 +235,11 @@ class CommandRunner:
         if cmd == CMD_NEW_TAB:
             self.new_tab()
             return
-        m = re.fullmatch(r"close\s+tab(?:\s+(.+))?", cmd)
+        m = re.fullmatch(r"close(?:\s+this)?\s+tab(?:\s+(.+))?", low)
         if m:
             self.close_tab(m.group(1))
             return
-        m = re.fullmatch(r"switch\s+to\s+tab\s+(.+)", cmd)
+        m = re.fullmatch(r"select\s+to\s+tab\s+(.+)", cmd)
         if m:
             self.switch_tab(m.group(1))
             return

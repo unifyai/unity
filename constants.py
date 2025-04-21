@@ -63,6 +63,7 @@ TEXTBOX_COMMANDS: set[str] = {
 # 2.  Page navigation / search (always valid)
 NAV_COMMANDS: set[str] = {
     CMD_NEW_TAB,
+    CMD_CLOSE_THIS_TAB,
     CMD_SEARCH,
     CMD_OPEN_URL,
 }

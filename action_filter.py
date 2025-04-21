@@ -5,6 +5,7 @@ import every action name or pattern from constants.py.
 """
 
 from actions import BrowserState
+from typing import Union
 from constants import (
     TEXTBOX_COMMANDS,
     NAV_COMMANDS,
@@ -15,8 +16,12 @@ from constants import (
 )
 
 
-def get_valid_actions(state: BrowserState) -> set[str]:
+def get_valid_actions(state: Union[BrowserState, dict]) -> set[str]:
     """Return a wildcard‑aware set of command strings."""
+
+    # Accept either a BrowserState OR the raw dict we send across Tk queues
+    if not isinstance(state, BrowserState):
+        state = BrowserState(**state)
 
     valid: set[str] = set()
 
