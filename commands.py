@@ -92,37 +92,40 @@ class CommandRunner:
             self.state.url = url
             self.state.title = self.active.title() or url
             return
-        # smooth scroll ----------------------------------------------------
-        m = re.fullmatch(rf"{CMD_SCROLL_UP}|{CMD_SCROLL_DOWN}\s+(\d+)", cmd)
+        # ------------------------------------------------------------------
+        #  smooth scroll   "scroll up 120" / "scroll down 300"
+        # ------------------------------------------------------------------
+        m = re.fullmatch(r"scroll\s+(up|down)\s+(\d+)$", low)
         if m:
-            delta = (-1 if m.group(1) == "up" else 1) * int(m.group(2))
+            direction = m.group(1)
+            pixels = int(m.group(2))
+            delta = (-1 if direction == "up" else 1) * pixels
+
+            # ---- 1.  JS attempt ------------------------------------------
+            old_sy = self.active.evaluate("scrollY")
             self.active.evaluate(
                 HANDLE_SCROLL_JS,
                 {"delta": delta, "duration": SCROLL_DURATION},
             )
-            self.state.scroll_y += delta
-            try:
-                # 1) try smooth JS scroll (works on ordinary pages)
-                self.active.evaluate(
-                    HANDLE_SCROLL_JS,
-                    {"delta": delta, "duration": SCROLL_DURATION},
-                )
-            except Exception:
-                pass
 
-            # 2) issue a real wheel event – keeps working on cookie dialogs,
-            #    modals, nested iframes, etc.
-            try:
-                self.active.mouse.wheel(0, delta)
-            except Exception:
-                pass
+            # ---- 2.  If JS failed, send a native wheel -------------------
+            new_sy = self.active.evaluate("scrollY")
+            if new_sy == old_sy:
+                self.active.bring_to_front()  # some sites need focus
+                try:
+                    self.active.mouse.wheel(0, delta)
+                except Exception:
+                    pass
+                new_sy = self.active.evaluate("scrollY")
 
-            # update cached scroll position from the page
-            try:
-                self.state.scroll_y = self.active.evaluate("Math.round(scrollY)")
-            except Exception:
-                self.state.scroll_y += delta
+            # ---- 3.  Update cached state (only when it really changed) ---
+            if new_sy != old_sy:
+                self.state.scroll_y = new_sy
+            else:
+                self.log("Scroll ignored by page")
+
             return
+
         # auto scroll ------------------------------------------------------
         if cmd in {CMD_START_SCROLL_UP, CMD_START_SCROLL_DOWN}:
             self.active.evaluate(
