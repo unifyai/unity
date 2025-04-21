@@ -150,7 +150,7 @@ class CommandRunner:
             return
 
         # click out (remove focus) ------------------------------------------
-        if cmd == "click out":
+        if cmd == CMD_CLICK_OUT:
             # ToDo: get thsi working!
             self.hist.add(cmd)
 
@@ -180,17 +180,17 @@ class CommandRunner:
 
         # ───────── keyboard shortcuts ─────────────────────────────────
         keymap = {
-            "press backspace": ("Backspace",),
-            "press delete": ("Delete",),
-            "cursor left": ("ArrowLeft",),
-            "cursor right": ("ArrowRight",),
-            "cursor up": ("ArrowUp",),
-            "cursor down": ("ArrowDown",),
-            "select all": ("Control+a",),  # Cmd/⌘ on mac handled by browser
-            "move line start": ("Control+ArrowLeft",),
-            "move line end": ("Control+ArrowRight",),
-            "move word left": ("Alt+ArrowLeft",),
-            "move word right": ("Alt+ArrowRight",),
+            CMD_PRESS_BACKSPACE: ("Backspace",),
+            CMD_PRESS_DELETE: ("Delete",),
+            CMD_CURSOR_LEFT: ("ArrowLeft",),
+            CMD_CURSOR_RIGHT: ("ArrowRight",),
+            CMD_CURSOR_UP: ("ArrowUp",),
+            CMD_CURSOR_DOWN: ("ArrowDown",),
+            CMD_SELECT_ALL: ("Control+a",),  # Cmd/⌘ on mac handled by browser
+            CMD_MOVE_LINE_START: ("Control+ArrowLeft",),
+            CMD_MOVE_LINE_END: ("Control+ArrowRight",),
+            CMD_MOVE_WORD_LEFT: ("Alt+ArrowLeft",),
+            CMD_MOVE_WORD_RIGHT: ("Alt+ArrowRight",),
         }
         if cmd in keymap:
             self.hist.add(cmd)
@@ -198,19 +198,19 @@ class CommandRunner:
                 self.active.keyboard.press(combo)
             return
 
-        if cmd == "hold shift":
+        if cmd == CMD_HOLD_SHIFT:
             self.hist.add(cmd)
             self.active.keyboard.down("Shift")
             return
 
-        if cmd == "release shift":
+        if cmd == CMD_RELEASE_SHIFT:
             self.hist.add(cmd)
             self.active.keyboard.up("Shift")
             return
 
         # press enter -------------------------------------------------------
-        if cmd == "press enter":
-            self.hist.add("press enter")
+        if cmd == CMD_PRESS_ENTER:
+            self.hist.add(CMD_PRESS_ENTER)
             self.active.keyboard.press("Enter")
             return
 
@@ -240,7 +240,7 @@ class CommandRunner:
             return
 
         # tab ops ----------------------------------------------------------
-        if cmd == "new tab":
+        if cmd == CMD_NEW_TAB:
             self.new_tab()
             return
         m = re.fullmatch(r"close\s+tab(?:\s+(.+))?", cmd)
