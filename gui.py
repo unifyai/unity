@@ -979,19 +979,19 @@ class ControlPanel(tk.Tk):
                 return CMD_NEW_TAB
             if key.startswith("close_tab"):
                 slug = key[len("close_tab ") :]
-                return f"{CMD_CLOSE_TAB.replace('*', slug)}"
-            if key.startswith("select_tab_"):
-                slug = key[len("select_tab_") :]
-                return f"{CMD_SELECT_TAB.replace('*', slug)}"
+                return CMD_CLOSE_TAB.replace("*", slug)
+            if key.startswith("select_tab"):
+                slug = key[len("select_tab") :]
+                return CMD_SELECT_TAB.replace("*", slug)
 
         # ----- scroll actions ---------------------------------------------
         sc = resp.get("scroll_actions", {})
         if sc.get("scroll_up", {}).get("apply"):
             px = sc["scroll_up"].get("pixels") or 300
-            return f"{CMD_SCROLL_UP.replace('*', str(px))}"
+            return CMD_SCROLL_UP.replace("*", str(px))
         if sc.get("scroll_down", {}).get("apply"):
             px = sc["scroll_down"].get("pixels") or 300
-            return f"{CMD_SCROLL_DOWN.replace('*', str(px))}"
+            return CMD_SCROLL_DOWN.replace("*", str(px))
         if sc.get("start_scrolling_up", {}).get("apply"):
             return CMD_START_SCROLL_UP
         if sc.get("start_scrolling_down", {}).get("apply"):
@@ -1010,7 +1010,7 @@ class ControlPanel(tk.Tk):
         for key, obj in resp.get("button_actions", {}).items():
             if not obj.get("apply") or not key.startswith("click_button_"):
                 continue
-            slug_text = key[len("click_button_") :]
+            slug_text = key[len("click_button ") :]
             if slug_text in slug_to_idx:
                 return CMD_CLICK_BUTTON.replace("*", slug_text)
             return CMD_CLICK_BUTTON.replace("*", slug_text.replace("_", " "))
@@ -1018,11 +1018,10 @@ class ControlPanel(tk.Tk):
         # ----- search / open‑url ------------------------------------------
         sa = resp.get("search")
         if sa and sa.get("apply"):
-            return f"search_{sa.get('query', '')}"
+            return CMD_SEARCH.replace("*", sa.get("query", ""))
         sua = resp.get("open_url")
         if sua and sua.get("apply"):
-            return f"open_url_{sua.get('url', '').strip()}"
-
+            return CMD_OPEN_URL.replace("*", sua.get("url", "").strip())
         return None
 
     # ───────────────────────── COMMAND QUEUE ────────────────────────────
