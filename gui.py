@@ -16,7 +16,7 @@ import traceback
 from tkinter import scrolledtext, ttk, Button
 from typing import Any
 
-from agent import primitive_to_browser_action, list_available_actions
+from agent import text_to_browser_action, list_available_actions
 from actions import BrowserState
 from constants import *
 from action_filter import get_valid_actions
@@ -937,7 +937,7 @@ class ControlPanel(tk.Tk):
 
         # free English → LLM
         try:
-            response = primitive_to_browser_action(
+            response = text_to_browser_action(
                 text,
                 self.screenshot,
                 tabs=self.tab_titles,

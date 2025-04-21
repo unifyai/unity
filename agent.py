@@ -4,6 +4,7 @@ from typing import List, Optional, Tuple, Dict, Any
 
 import unify
 from helpers import _pascal, _slug
+from constants import *
 from pydantic import BaseModel, create_model, Field
 from actions import ActionHistory, BrowserState
 from action_filter import get_valid_actions
@@ -152,6 +153,66 @@ class SearchURL(BaseModel):
     apply: bool = Field(..., description="Decision to apply this action or not.")
 
 
+class EnterText(BaseModel):
+    """Type the provided text at the current caret position."""
+
+    text: str = Field(..., description="Text to type (may include \\n, \\t, …)")
+    rationale: Optional[str] = Field(
+        None,
+        description="Why you do / don't want to type this text.",
+    )
+    apply: bool = Field(..., description="Type the text if true.")
+
+
+class SimpleKeyAction(BaseModel):
+    """A single key‑press or modifier action."""
+
+    rationale: Optional[str] = Field(
+        None,
+        description="Reason for pressing (or not pressing) the key.",
+    )
+    apply: bool = Field(..., description="Press the key if true.")
+
+
+_SIMPLE_KEY_ACTIONS = {
+    CMD_PRESS_ENTER: "Press the Enter/Return key.",
+    CMD_PRESS_BACKSPACE: "Press Backspace (delete character to the left).",
+    CMD_PRESS_DELETE: "Press Delete (character to the right).",
+    CMD_CURSOR_LEFT: "Move caret one character to the left.",
+    CMD_CURSOR_RIGHT: "Move caret one character to the right.",
+    CMD_CURSOR_UP: "Move caret up one line.",
+    CMD_CURSOR_DOWN: "Move caret down one line.",
+    CMD_SELECT_ALL: "Select the entire text.",
+    CMD_MOVE_LINE_START: "Move caret to the start of the line.",
+    CMD_MOVE_LINE_END: "Move caret to the end of the line.",
+    CMD_MOVE_WORD_LEFT: "Move caret one word to the left.",
+    CMD_MOVE_WORD_RIGHT: "Move caret one word to the right.",
+    CMD_HOLD_SHIFT: "Hold the Shift key down.",
+    CMD_RELEASE_SHIFT: "Release the Shift key.",
+    CMD_CLICK_OUT: "Click outside the text‑box to blur focus.",
+}
+
+
+def _construct_textbox_actions() -> dict[str, type[BaseModel]]:
+    """
+    Build {field_name: PydanticModel} for every text‑box‑only primitive.
+    """
+    actions: dict[str, type[BaseModel]] = {}
+
+    # enter_text *  (wildcard – needs its own model)
+    actions[CMD_ENTER_TEXT.replace("*", "").rstrip()] = EnterText
+
+    # simple key / caret actions
+    for cmd, doc in _SIMPLE_KEY_ACTIONS.items():
+        model_name = _pascal(cmd)
+        actions[cmd] = create_model(
+            model_name,
+            __doc__=doc,
+            __base__=SimpleKeyAction,
+        )
+    return actions
+
+
 def _construct_tab_actions(tabs: List[str], mode: str):
     if not tabs:
         return {}
@@ -261,10 +322,22 @@ def _create_full_response_format(tabs, buttons, state=None):
         k: v for k, v in _construct_scroll_actions().items() if include(k)
     }
 
+    # text‑box actions (only when we're actually in a text input)
+    textbox_actions = {}
+    if state and state.in_textbox:
+        textbox_actions = {
+            k: v for k, v in _construct_textbox_actions().items() if include(k)
+        }
+
     fields = {
         "tab_actions": create_model("TabActions", **tab_actions),
         "scroll_actions": create_model("ScrollActions", **scroll_actions),
         "button_actions": create_model("ButtonActions", **button_actions),
+        "textbox_actions": (
+            create_model("TextboxActions", **textbox_actions)
+            if textbox_actions
+            else create_model("TextboxActions", __base__=BaseModel)
+        ),
     }
 
     if include("search"):
@@ -280,7 +353,12 @@ def _extract_applied_actions(response: BaseModel) -> Tuple[Dict[str, Any], int]:
     kept_count = 0
 
     # ---- grouped (nested) categories --------------------------------------
-    for group in ("tab_actions", "scroll_actions", "button_actions"):
+    for group in (
+        "tab_actions",
+        "scroll_actions",
+        "button_actions",
+        "textbox_actions",
+    ):
         if not hasattr(response, group):
             continue
 
@@ -329,12 +407,24 @@ def _get_action_class(action_name: str) -> type[BaseModel]:
         "start_scrolling_down": StartScrollingDown,
         "stop_scrolling": StopScrolling,
         "continue_scrolling": ContinueScrolling,
+        # ---------- simple key / caret actions -------------------------
+        **{
+            name: create_model(
+                f"{_pascal(name)}",
+                __doc__=_SIMPLE_KEY_ACTIONS[name],
+                __base__=SimpleKeyAction,
+            )
+            for name in _SIMPLE_KEY_ACTIONS
+        },
     }
     if action_name in fixed:
         return fixed[action_name]
 
+    elif action_name == CMD_ENTER_TEXT.replace("*", "").rstrip():
+        return EnterText
+
     # ---- dynamic tab actions ---------------------------------------------
-    if action_name.startswith("select_tab_"):
+    elif action_name.startswith("select_tab_"):
         slug = action_name[len("select_tab_") :]
         title = slug.replace("_", " ").replace("-", " ").title()
         return create_model(
@@ -343,7 +433,7 @@ def _get_action_class(action_name: str) -> type[BaseModel]:
             **_response_fields,
         )
 
-    if action_name.startswith("close_tab_"):
+    elif action_name.startswith("close_tab_"):
         slug = action_name[len("close_tab_") :]
         title = slug.replace("_", " ").replace("-", " ").title()
         return create_model(
@@ -353,7 +443,7 @@ def _get_action_class(action_name: str) -> type[BaseModel]:
         )
 
     # ---- dynamic button actions ------------------------------------------
-    if action_name.startswith("click_button_"):
+    elif action_name.startswith("click_button_"):
         slug = action_name[len("click_button_") :]
         text = slug.replace("_", " ").replace("-", " ").title()
         return create_model(
@@ -375,7 +465,7 @@ def _build_pruned_response_format(applied: Dict[str, Any]) -> BaseModel:
     """
     top_level: Dict[str, tuple[type, ...]] = {}
 
-    # ---- nested groups (tab / scroll / button) ---------------------------
+    # ---- nested groups (tab / scroll / button / textbox) -----------------
     for group, sub in applied.items():
         if group == "search":
             continue  # handled separately
@@ -394,6 +484,8 @@ def _build_pruned_response_format(applied: Dict[str, Any]) -> BaseModel:
 
     if "open_url" in applied:
         top_level["open_url"] = (SearchURL, ...)
+
+    # nothing special needed for textbox_actions; already handled above
 
     if not top_level:
         raise ValueError(
@@ -416,7 +508,7 @@ def list_available_actions(
     set of browser tabs and visible buttons.
     """
     fmt = _create_full_response_format(tabs, buttons, state)
-    return {
+    base = {
         "tab_actions": list(
             fmt.model_fields["tab_actions"].annotation.model_fields,
         ),
@@ -431,9 +523,14 @@ def list_available_actions(
         ],
     }
 
+    if state and state.in_textbox:
+        base["textbox_actions"] = sorted(TEXTBOX_COMMANDS)
+
+    return base
+
 
 # @unify.traced
-def primitive_to_browser_action(
+def text_to_browser_action(
     text: str,
     screenshot: bytes,
     *,
@@ -466,6 +563,12 @@ def primitive_to_browser_action(
     ret = client.generate(text)
     ret = response_format.model_validate_json(ret)
     ret, num_selected = _extract_applied_actions(ret)
+    print(ret)
+    breakpoint()
+    if num_selected == 0:
+        raise Exception(
+            f"At least one browser action must be selected, but agent responded with: {ret}",
+        )
     if num_selected == 1:
         # only one candidate, can already return
         response_format = _build_pruned_response_format(ret)
