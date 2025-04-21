@@ -304,6 +304,44 @@ class ControlPanel(tk.Tk):
             foreground=[("pressed", fg_dark if dark else fg_light)],
         )
 
+        # ── Disabled look (same palette used by main scroll buttons) ──
+        disabled_bg = "#2a2a2a"
+        active_bg = "#505050"
+        idle_bg = bg_idle_dark if dark else bg_idle_light
+        active_fg = fg_dark if dark else fg_light
+
+        # Element‑list rows
+        style.map(
+            "Element.TButton",
+            foreground=[("disabled", "#888888"), ("!disabled", active_fg)],
+            background=[
+                ("disabled", disabled_bg),
+                ("active", active_bg),
+                ("pressed", active_bg),
+                ("!disabled", idle_bg),
+            ],
+        )
+
+        # Per‑tab “×” and Go buttons
+        style.configure(
+            "TabRow.TButton",
+            font=("Helvetica", 10, "bold"),
+            padding=(4, 2),
+            foreground=active_fg,
+            background=idle_bg,
+            relief="flat",
+        )
+        style.map(
+            "TabRow.TButton",
+            foreground=[("disabled", "#888888"), ("!disabled", active_fg)],
+            background=[
+                ("disabled", disabled_bg),
+                ("active", active_bg),
+                ("pressed", active_bg),
+                ("!disabled", idle_bg),
+            ],
+        )
+
         # Disabled and enabled button styles
         style.map(
             "TButton",
@@ -705,6 +743,13 @@ class ControlPanel(tk.Tk):
                 "Disabled while typing in a page text‑box",
             )
 
+        # ----- Numbered element buttons ---------------------------------
+        can_click_el = _is_ok(CMD_CLICK_BUTTON)
+        for btn in getattr(self, "_element_buttons", []):
+            btn.configure(state="normal" if can_click_el else "disabled")
+            if not can_click_el:
+                _Tooltip(btn, "Cannot click elements while typing in a text‑box")
+
         # ----- Per‑row “×” / Go buttons in the Tabs pane --------------
         for btn in getattr(self, "_tab_row_buttons", []):
             # Their commands always start with "close tab" or "select tab"
@@ -783,6 +828,8 @@ class ControlPanel(tk.Tk):
 
     def _rebuild_elements_rows(self) -> None:
         """Refresh the scrollable button list for page elements."""
+        # clear & reset the reference list
+        self._element_buttons: list[ttk.Button] = []
         for c in self._elements_rows_frame.winfo_children():
             c.destroy()
         for idx, label, hover in self.elements:
@@ -796,6 +843,7 @@ class ControlPanel(tk.Tk):
                 command=lambda i=idx, l=label: self._exec_element_click(i, l),
             )
             btn.pack(fill="x", padx=1, pady=0)
+            self._element_buttons.append(btn)
             self._bind_mousewheel(btn, self._el_canvas)
         # ---- show scrollbar only when needed ---------------------------  # NEW
         self._elements_rows_frame.update_idletasks()
