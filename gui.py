@@ -786,14 +786,26 @@ class ControlPanel(tk.Tk):
             state=BrowserState(**self.state),
         )
 
-        lines: list[str] = []
-        for grp, names in groups.items():
-            lines.append(f"[{grp}]")
-            lines.extend(f"  {n}" for n in names)
-            lines.append("")
-        new_txt = "\n".join(lines)
+        # ---------- build text with ONLY currently valid actions ----------
+        valid = get_valid_actions(BrowserState(**self.state))
 
-        if new_txt == self._last_actions_txt:
+        def _is_ok(cmd: str) -> bool:
+            return any(
+                cmd == v or (v.endswith("*") and cmd.startswith(v[:-1])) for v in valid
+            )
+
+        out_lines: list[str] = []
+        for grp, names in groups.items():
+            kept = [n for n in names if _is_ok(n)]
+            if not kept:  # skip empty groups entirely
+                continue
+            out_lines.append(f"[{grp}]")
+            out_lines.extend(f"  {n}" for n in kept)
+            out_lines.append("")
+
+        new_txt = "\n".join(out_lines)
+
+        if new_txt == self._last_actions_txt:  # anti‑jitter cache
             return
         self._last_actions_txt = new_txt
 
@@ -802,29 +814,13 @@ class ControlPanel(tk.Tk):
         self.act_box.delete("1.0", "end")
         self.act_box.insert("end", new_txt)
         self.act_box.configure(state="disabled")
+
         if pos[0] > 0.01:
             self.act_box.yview_moveto(pos[0])
 
-        valid = get_valid_actions(BrowserState(**self.state))
+        # update button/key enablement
         self._refresh_enabled_controls(valid)
 
-        self.act_box.configure(state="normal")
-        self.act_box.delete("1.0", "end")
-
-        for grp, names in groups.items():
-            self.act_box.insert("end", f"[{grp}]\n")
-            for name in names:
-                is_valid = any(
-                    name == v or (v.endswith("*") and name.startswith(v[:-1]))
-                    for v in valid
-                )
-                if not is_valid:
-                    self.act_box.insert("end", f"  {name}\n", "disabled")
-                else:
-                    self.act_box.insert("end", f"  {name}\n")
-            self.act_box.insert("end", "\n")
-
-        self.act_box.tag_config("disabled", foreground="gray")
         self.act_box.configure(state="disabled")
 
     # ───────────────────────── BROWSER‑STATE LABEL ───────────────────────
