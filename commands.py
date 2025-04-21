@@ -83,9 +83,9 @@ class CommandRunner:
             return
         self.hist.add(cmd)
         # open url ------------------------------------------------------
-        m = re.fullmatch(rf"{CMD_OPEN_URL}\\s+(.+)", cmd)
-        if m:
-            url = m.group(1).strip()
+        open_prefix = CMD_OPEN_URL.rstrip("*").rstrip()  # "open_url"
+        if low.startswith(open_prefix):
+            url = cmd[len(open_prefix) :].strip()  # text after 1st space
             if not url.startswith(("http://", "https://")):
                 url = "https://" + url
             self.active.goto(url, timeout=15000, wait_until="load")
@@ -95,7 +95,7 @@ class CommandRunner:
         # ------------------------------------------------------------------
         #  smooth scroll   "scroll up 120" / "scroll down 300"
         # ------------------------------------------------------------------
-        m = re.fullmatch(r"scroll\s+(up|down)\s+(\d+)$", low)
+        m = re.fullmatch(r"scroll_(up|down)\s+(\d+)$", low)
         if m:
             direction = m.group(1)
             pixels = int(m.group(2))
@@ -147,7 +147,7 @@ class CommandRunner:
         # ------------------------------------------------------------------
         #  click out  – force the caret out of ANY text‑box on the page
         # ------------------------------------------------------------------
-        if cmd == "click out":
+        if cmd == CMD_CLICK_OUT:
             self.hist.add(cmd)
 
             js_is_inbox = """
@@ -297,15 +297,19 @@ class CommandRunner:
         if cmd == CMD_NEW_TAB:
             self.new_tab()
             return
-        m = re.fullmatch(r"close(?:\s+this)?\s+tab(?:\s+(.+))?", low)
-        if m:
-            self.close_tab(m.group(1))
+
+        close_prefix = CMD_CLOSE_TAB.rstrip("*").rstrip()  # "close_tab"
+        if low.startswith(close_prefix):
+            title = cmd[len(close_prefix) :].strip()  # may be empty
+            self.close_tab(title or None)
             return
-        m = re.fullmatch(r"select\s+to\s+tab\s+(.+)", cmd)
-        if m:
-            self.select_tab(m.group(1))
+
+        select_prefix = CMD_SELECT_TAB.rstrip("*").rstrip()  # "select_tab"
+        if low.startswith(select_prefix):
+            title = cmd[len(select_prefix) :].strip()
+            if title:
+                self.select_tab(title)
             return
-        self.log("Unrecognised command")
 
     # ---------- helper for GUI refresh ------------------------------------
     def refresh_overlay(self):
