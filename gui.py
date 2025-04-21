@@ -627,14 +627,21 @@ class ControlPanel(tk.Tk):
             )
             btn.pack(fill="x", padx=1, pady=0)
             self._bind_mousewheel(btn, self._el_canvas)
-            # ---- show scrollbar only when needed ---------------------------  # NEW
+        # ---- show scrollbar only when needed ---------------------------  # NEW
         self._elements_rows_frame.update_idletasks()
         content_h = self._elements_rows_frame.winfo_reqheight()
         pane_h = self._el_canvas.winfo_height()
+
+        # If content fits, disable scrolling and pin to top
         if content_h <= pane_h:
             self._el_scroll.grid_remove()
+            self._el_canvas.configure(
+                scrollregion=(0, 0, 0, pane_h),
+            )  # prevent scrolling
+            self._el_canvas.yview_moveto(0)  # pin to top
         else:
-            self._el_scroll.grid()  # make sure it is visible
+            self._el_scroll.grid()  # show scrollbar
+            self._el_canvas.configure(scrollregion=self._el_canvas.bbox("all"))
 
     # ───────────────────────────── EXIT ─────────────────────────────────
     def _on_exit(self) -> None:
