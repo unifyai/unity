@@ -762,12 +762,16 @@ class ControlPanel(tk.Tk):
 
         # ----- Per‑row “×” / Go buttons in the Tabs pane --------------
         for btn in getattr(self, "_tab_row_buttons", []):
-            # Their commands always start with "close tab" or "select tab"
-            cmd_prefix = "close tab" if btn["text"] == "×" else "select tab"
-            ok = _is_ok(f"{cmd_prefix} *")
+            if btn["text"] == "×":  # close‑tab buttons
+                ok = any(name.startswith("close_tab_") for name in valid)
+                reason = "Tab actions disabled while typing"
+            else:  # Go buttons
+                ok = any(name.startswith("select_tab_") for name in valid)
+                reason = "Cannot switch tabs while typing"
+
             btn.configure(state="normal" if ok else "disabled")
             if not ok:
-                _Tooltip(btn, "Not available while typing in a text‑box")
+                _Tooltip(btn, reason)
 
     # ──────────────────────── ACTIONS‑PANE HELPER ───────────────────────
     def _refresh_actions_list(self) -> None:
