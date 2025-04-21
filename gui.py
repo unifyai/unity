@@ -329,9 +329,9 @@ class ControlPanel(tk.Tk):
 
         self.search_var = tk.StringVar()
         self.search_mode = tk.StringVar(value="google")
-        entry_s = tk.Entry(search, textvariable=self.search_var)
-        entry_s.grid(row=0, column=1, sticky="ew")
-        entry_s.bind("<Return>", lambda _e: self._send_search())
+        self.search_entry = tk.Entry(search, textvariable=self.search_var)
+        self.search_entry.grid(row=0, column=1, sticky="ew")
+        self.search_entry.bind("<Return>", lambda _e: self._send_search())
 
         rb_google = tk.Radiobutton(
             search,
@@ -599,6 +599,8 @@ class ControlPanel(tk.Tk):
 
     def _rebuild_tabs_rows(self) -> None:
         """Re‑create the list of browser tabs with per‑row buttons."""
+        self._tab_row_buttons: list[tk.Button] = []
+
         for child in self._tab_rows_frame.winfo_children():
             child.destroy()
 
@@ -630,13 +632,16 @@ class ControlPanel(tk.Tk):
             go_btn = Button(
                 row,
                 text="Go",
-                command=lambda t=title: self._exec_tab_cmd("switch to tab", t),
+                command=lambda t=title: self._exec_tab_cmd("select tab", t),
                 padx=6,
                 pady=2,
                 relief="flat",
                 font=btn_font,
             )
             go_btn.grid(row=0, column=2, sticky="e")
+
+            # keep references for enable/disable
+            self._tab_row_buttons.extend([close_btn, go_btn])
 
             # Stretch row container to fill width
             self._tab_rows_frame.columnconfigure(0, weight=1)
@@ -690,6 +695,24 @@ class ControlPanel(tk.Tk):
                 self.enter_text_box,
                 "Cannot type – there’s no active text‑box on the page",
             )
+
+        # ----- Search / URL entry -------------------------------------
+        ok_search = _is_ok(CMD_SEARCH) or _is_ok(CMD_OPEN_URL)
+        self.search_entry.configure(state="normal" if ok_search else "disabled")
+        if not ok_search:
+            _Tooltip(
+                self.search_entry,
+                "Disabled while typing in a page text‑box",
+            )
+
+        # ----- Per‑row “×” / Go buttons in the Tabs pane --------------
+        for btn in getattr(self, "_tab_row_buttons", []):
+            # Their commands always start with "close tab" or "select tab"
+            cmd_prefix = "close tab" if btn["text"] == "×" else "select tab"
+            ok = _is_ok(f"{cmd_prefix} *")
+            btn.configure(state="normal" if ok else "disabled")
+            if not ok:
+                _Tooltip(btn, "Not available while typing in a text‑box")
 
     # ──────────────────────── ACTIONS‑PANE HELPER ───────────────────────
     def _refresh_actions_list(self) -> None:
@@ -892,7 +915,7 @@ class ControlPanel(tk.Tk):
                 return f"close tab {tab.replace('_', ' ')}"
             if key.startswith("select_tab_"):
                 tab = key[len("select_tab_") :]
-                return f"switch to tab {tab.replace('_', ' ')}"
+                return f"selected tab {tab.replace('_', ' ')}"
 
         # ----- scroll actions ---------------------------------------------
         sc = resp.get("scroll_actions", {})
@@ -934,7 +957,7 @@ class ControlPanel(tk.Tk):
     # ───────────────────────── COMMAND QUEUE ────────────────────────────
     def _queue_command(self, cmd: str) -> None:
         # mark commands that likely change the page content  ------------- NEW
-        nav_prefixes = (CMD_OPEN_URL, "search ", CMD_NEW_TAB, "switch to tab")
+        nav_prefixes = (CMD_OPEN_URL, "search ", CMD_NEW_TAB, "select tab ")
         if cmd.lower().startswith(nav_prefixes):
             self._reset_el_scroll = True
         try:
