@@ -159,7 +159,7 @@ def _construct_tab_actions(tabs: List[str], mode: str):
     field_prefix = f"{mode.lower()}_tab_"
     model_prefix = f"{mode.capitalize()}Tab"
 
-    return {
+    actions = {
         f"{field_prefix}{_slug(title)}": create_model(
             f"{model_prefix}{_pascal(_slug(title))}",
             __doc__=f"{mode} the “{title}” tab.",
@@ -167,6 +167,8 @@ def _construct_tab_actions(tabs: List[str], mode: str):
         )
         for title in tabs
     }
+    actions["close_this_tab"] = CloseActiveTab
+    return actions
 
 
 def _construct_close_tab_actions(tabs: List[str]):
@@ -175,6 +177,16 @@ def _construct_close_tab_actions(tabs: List[str]):
 
 def _construct_select_tab_actions(tabs: List[str]):
     return _construct_tab_actions(tabs, "Select")
+
+
+class CloseActiveTab(BaseModel):
+    """Close the currently active browser tab."""
+
+    rationale: Optional[str] = Field(
+        ...,
+        description="Reason for closing / not closing the tab.",
+    )
+    apply: bool = Field(..., description="Close the active tab if true.")
 
 
 def _construct_select_button_actions(
