@@ -241,10 +241,10 @@ def _create_full_response_format(tabs, buttons, state=None):
         "button_actions": create_model("ButtonActions", **button_actions),
     }
 
-    if include("search_action"):
-        fields["search_action"] = (Search, ...)
-    if include("search_url_action"):
-        fields["search_url_action"] = (SearchURL, ...)
+    if include("search"):
+        fields["search"] = (Search, ...)
+    if include("open_url"):
+        fields["open_url"] = (SearchURL, ...)
 
     return create_model("ActionSelection", **fields)
 
@@ -271,16 +271,16 @@ def _extract_applied_actions(response: BaseModel) -> Tuple[Dict[str, Any], int]:
             applied[group] = kept
 
     # ---- stand‑alone search action ----------------------------------------
-    if hasattr(response, "search_action"):
-        sa = getattr(response, "search_action")
+    if hasattr(response, "search"):
+        sa = getattr(response, "search")
         if sa and getattr(sa, "apply", False):
-            applied["search_action"] = sa.model_dump()
+            applied["search"] = sa.model_dump()
             kept_count += 1
 
-    if hasattr(response, "search_url_action"):
-        sua = getattr(response, "search_url_action")
+    if hasattr(response, "open_url"):
+        sua = getattr(response, "open_url")
         if sua and getattr(sua, "apply", False):
-            applied["search_url_action"] = sua.model_dump()
+            applied["open_url"] = sua.model_dump()
             kept_count += 1
 
     return applied, kept_count
@@ -351,7 +351,7 @@ def _build_pruned_response_format(applied: Dict[str, Any]) -> BaseModel:
 
     # ---- nested groups (tab / scroll / button) ---------------------------
     for group, sub in applied.items():
-        if group == "search_action":
+        if group == "search":
             continue  # handled separately
 
         # Rebuild each kept leaf with the correct BaseModel subclass
@@ -363,11 +363,11 @@ def _build_pruned_response_format(applied: Dict[str, Any]) -> BaseModel:
         top_level[group] = (SubModel, ...)
 
     # ---- single search action -------------------------------------------
-    if "search_action" in applied:
-        top_level["search_action"] = (Search, ...)
+    if "search" in applied:
+        top_level["search"] = (Search, ...)
 
-    if "search_url_action" in applied:
-        top_level["search_url_action"] = (SearchURL, ...)
+    if "open_url" in applied:
+        top_level["open_url"] = (SearchURL, ...)
 
     if not top_level:
         raise ValueError(
@@ -401,9 +401,7 @@ def list_available_actions(
             fmt.model_fields["button_actions"].annotation.model_fields,
         ),
         "standalone": [
-            name
-            for name in ["search_action", "search_url_action"]
-            if name in fmt.model_fields
+            name for name in ["search", "open_url"] if name in fmt.model_fields
         ],
     }
 
