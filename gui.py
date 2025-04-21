@@ -807,10 +807,12 @@ class ControlPanel(tk.Tk):
         out_lines: list[str] = []
         for grp, names in groups.items():
             kept = [n for n in names if _is_ok(n)]
-            if not kept:  # skip empty groups entirely
+            if not kept:
                 continue
             out_lines.append(f"[{grp}]")
-            out_lines.extend(f"  {n}" for n in kept)
+            for name in kept:
+                display = name if len(name) <= 45 else name[:42] + "…"
+                out_lines.append(f"  {display}")
             out_lines.append("")
 
         new_txt = "\n".join(out_lines)
@@ -859,7 +861,8 @@ class ControlPanel(tk.Tk):
         for idx, label, hover in self.elements:
             # flatten any embedded newlines to avoid tall buttons
             flat = " ".join(label.splitlines())
-            txt = f"{idx}. {flat}" + ("  (hover)" if hover else "")
+            shown = flat if len(flat) <= 25 else flat[:22] + "…"
+            txt = f"{idx}. {shown}" + ("  (hover)" if hover else "")
             btn = ttk.Button(
                 self._elements_rows_frame,
                 text=txt,
