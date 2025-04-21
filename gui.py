@@ -819,6 +819,7 @@ class ControlPanel(tk.Tk):
                 CMD_SEARCH,
                 CMD_OPEN_URL,
                 CMD_NEW_TAB,
+                CMD_CLOSE_THIS_TAB,
                 CMD_CLOSE_TAB,
                 CMD_SELECT_TAB,
                 CMD_ENTER_TEXT,

@@ -21,6 +21,7 @@ from browser_utils import (
 )
 from commands import CommandRunner
 from mirror import MirrorPage
+from constants import *
 from playwright.sync_api import Error as PWError
 from playwright.sync_api import sync_playwright
 
@@ -125,6 +126,8 @@ class BrowserWorker(threading.Thread):
                                     self.log("Click index out of range")
                             except (ValueError, PWError) as exc:
                                 self.log(f"Click failed: {exc}")
+                        elif cmd == CMD_CLOSE_THIS_TAB:
+                            self.runner.close_tab(None)
                         else:
                             self.runner.run(cmd)
 
