@@ -48,9 +48,19 @@ class _Tooltip:
 
     # ---------- internal --------------------------------------------------
     def _schedule(self, *_):
+        # Show only when the widget is disabled
+        if str(self.widget.cget("state")) != "disabled":
+            return
         self._id = self.widget.after(self.DELAY, self._show)
 
     def _show(self):
+        # Bail if the widget has been re‑enabled meanwhile
+        if str(self.widget.cget("state")) != "disabled":
+            return
+        if self.tip:
+            return
+        ...
+
         if self.tip:  # already visible
             return
 
