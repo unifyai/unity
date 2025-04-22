@@ -625,7 +625,7 @@ class ControlPanel(tk.Tk):
         self.cmd_var = tk.StringVar()
         entry_c = tk.Entry(bar, textvariable=self.cmd_var)
         entry_c.grid(row=0, column=1, sticky="ew")
-        entry_c.bind("<Return>", lambda _e: self._send_from_entry())
+        entry_c.bind("<Return>", lambda _e: self._send_llm_command())
 
         # ================================================================
         # RIGHT‑HAND PANEL →  notebook(Log/Actions) + state + buttons
@@ -732,7 +732,7 @@ class ControlPanel(tk.Tk):
         for c in range(num_cols):
             self.keyrow2.columnconfigure(c, weight=1)
 
-    def _send_from_entry(self) -> None:
+    def _send_llm_command(self) -> None:
         text = self.cmd_var.get().strip()
         self.cmd_var.set("")
         if text:
