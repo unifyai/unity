@@ -1031,6 +1031,36 @@ class ControlPanel(tk.Tk):
         sua = resp.get("open_url")
         if sua and sua.get("apply"):
             return CMD_OPEN_URL.replace("*", sua.get("url", "").strip())
+
+        # ----- textbox actions ------------------------------------------ NEW
+        tb = resp.get("textbox_actions", {})
+        if tb:
+            # 1. enter_text *
+            et = tb.get("enter_text")
+            if et and et.get("apply"):
+                return CMD_ENTER_TEXT.replace("*", et.get("text", ""))
+
+            # 2. single‑key / caret actions
+            for cmd in (
+                CMD_PRESS_ENTER,
+                CMD_PRESS_BACKSPACE,
+                CMD_PRESS_DELETE,
+                CMD_CURSOR_LEFT,
+                CMD_CURSOR_RIGHT,
+                CMD_CURSOR_UP,
+                CMD_CURSOR_DOWN,
+                CMD_SELECT_ALL,
+                CMD_MOVE_LINE_START,
+                CMD_MOVE_LINE_END,
+                CMD_MOVE_WORD_LEFT,
+                CMD_MOVE_WORD_RIGHT,
+                CMD_HOLD_SHIFT,
+                CMD_RELEASE_SHIFT,
+                CMD_CLICK_OUT,
+            ):
+                fld = tb.get(cmd)
+                if fld and fld.get("apply"):
+                    return cmd
         return None
 
     # ───────────────────────── COMMAND QUEUE ────────────────────────────

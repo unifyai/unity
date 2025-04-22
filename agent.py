@@ -559,7 +559,6 @@ def text_to_browser_action(
     history: ActionHistory = None,
     state: BrowserState = None,
 ) -> Optional[BaseModel]:
-
     response_format = _create_full_response_format(tabs, buttons, state)
     client.set_endpoint("gpt-4o-mini@openai")
 
@@ -583,8 +582,6 @@ def text_to_browser_action(
     ret = client.generate(text)
     ret = response_format.model_validate_json(ret)
     ret, num_selected = _extract_applied_actions(ret)
-    print(ret)
-    breakpoint()
     if num_selected == 0:
         raise Exception(
             f"At least one browser action must be selected, but agent responded with: {ret}",
