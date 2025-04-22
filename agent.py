@@ -324,9 +324,12 @@ def _create_full_response_format(tabs, buttons, state=None):
                     return True
         return False
 
-    tab_actions = {}
-    tab_actions["new_tab"] = NewTab
-    tab_actions["close_this_tab"] = CloseActiveTab
+    tab_actions: dict[str, type[BaseModel]] = {}
+    # only expose when allowed by action_filter
+    if include("new_tab"):
+        tab_actions["new_tab"] = NewTab
+    if include("close_this_tab"):
+        tab_actions["close_this_tab"] = CloseActiveTab
     tab_actions.update(
         {k: v for k, v in _construct_select_tab_actions(tabs).items() if include(k)},
     )
