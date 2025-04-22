@@ -564,7 +564,6 @@ def text_to_browser_action(
 ) -> Optional[BaseModel]:
     response_format = _create_full_response_format(tabs, buttons, state)
     client.set_endpoint("gpt-4o-mini@openai")
-
     history_msg = (
         "\n\nThe low-level action history (most recent first) is as follows:\n"
         + "\n".join(f"{r['timestamp']:.0f}: {r['command']}" for r in history[-20:])
