@@ -1018,48 +1018,53 @@ class ControlPanel(tk.Tk):
 
     # ─────────────────────── HIGH‑LEVEL INPUT HANDLER ───────────────────
     def _handle_input(self, text: str) -> None:
-        self._log(f"> {text}")
-        low = text.lower()
-        valid_starting_strs = tuple(
-            s.rstrip("*")
-            for s in (
-                CMD_CLICK_BUTTON,
-                CMD_SCROLL_UP,
-                CMD_SCROLL_DOWN,
-                CMD_START_SCROLL_UP,
-                CMD_START_SCROLL_DOWN,
-                CMD_STOP_SCROLLING,
-                CMD_SEARCH,
-                CMD_OPEN_URL,
-                CMD_NEW_TAB,
-                CMD_CLOSE_THIS_TAB,
-                CMD_CLOSE_TAB,
-                CMD_SELECT_TAB,
-                CMD_ENTER_TEXT,
-                CMD_PRESS_ENTER,
-                CMD_PRESS_BACKSPACE,
-                CMD_PRESS_DELETE,
-                CMD_CURSOR_LEFT,
-                CMD_CURSOR_RIGHT,
-                CMD_CURSOR_UP,
-                CMD_CURSOR_DOWN,
-                CMD_SELECT_ALL,
-                CMD_MOVE_LINE_START,
-                CMD_MOVE_LINE_END,
-                CMD_MOVE_WORD_LEFT,
-                CMD_MOVE_WORD_RIGHT,
-                CMD_HOLD_SHIFT,
-                CMD_RELEASE_SHIFT,
-                CMD_CLICK_OUT,
-                CMD_CONT_SCROLLING,
+        try:
+            self._log(f"> {text}")
+            low = text.lower()
+            valid_starting_strs = tuple(
+                s.rstrip("*")
+                for s in (
+                    CMD_CLICK_BUTTON,
+                    CMD_SCROLL_UP,
+                    CMD_SCROLL_DOWN,
+                    CMD_START_SCROLL_UP,
+                    CMD_START_SCROLL_DOWN,
+                    CMD_STOP_SCROLLING,
+                    CMD_SEARCH,
+                    CMD_OPEN_URL,
+                    CMD_NEW_TAB,
+                    CMD_CLOSE_THIS_TAB,
+                    CMD_CLOSE_TAB,
+                    CMD_SELECT_TAB,
+                    CMD_ENTER_TEXT,
+                    CMD_PRESS_ENTER,
+                    CMD_PRESS_BACKSPACE,
+                    CMD_PRESS_DELETE,
+                    CMD_CURSOR_LEFT,
+                    CMD_CURSOR_RIGHT,
+                    CMD_CURSOR_UP,
+                    CMD_CURSOR_DOWN,
+                    CMD_SELECT_ALL,
+                    CMD_MOVE_LINE_START,
+                    CMD_MOVE_LINE_END,
+                    CMD_MOVE_WORD_LEFT,
+                    CMD_MOVE_WORD_RIGHT,
+                    CMD_HOLD_SHIFT,
+                    CMD_RELEASE_SHIFT,
+                    CMD_CLICK_OUT,
+                    CMD_CONT_SCROLLING,
+                )
             )
-        )
-        if low.startswith(valid_starting_strs):
-            self._queue_command(text)
-            return
+            if low.startswith(valid_starting_strs):
+                self._queue_command(text)
+                return
 
-        # hand off to background thread (non‑blocking)
-        self._start_llm_thread(text)
+            # hand off to background thread (non‑blocking)
+            self._start_llm_thread(text)
+        except Exception:
+            import traceback as _tb
+
+            self._log_trace(_tb.format_exc())
 
     def set_worker(self, worker):
         self._worker = worker
@@ -1230,6 +1235,6 @@ class ControlPanel(tk.Tk):
             import html as _html, re
 
             ansi = _html.unescape(re.sub(r"<[^>]+>", "", html))
-            self._log(ansi)
+            self._log(ansi.rstrip())
         except Exception:
             self._log(tb)
