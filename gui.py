@@ -15,6 +15,7 @@ import tkinter as tk
 from tkinter import scrolledtext, ttk, Button
 from typing import Any
 import threading
+import itertools
 
 from agent import text_to_browser_action, list_available_actions
 from actions import BrowserState
@@ -133,6 +134,8 @@ class ControlPanel(tk.Tk):
         # ── async LLM helper --------------------------------------------
         self._llm_resp_q: "queue.Queue[tuple[str,Any]]" = queue.Queue()
         self._llm_busy = False
+        self._llm_dots = itertools.cycle([".", "..", "..."])
+        self._llm_line_idx = None
 
         # for graying out when not in textbox
         self._key_buttons = {}
@@ -158,18 +161,49 @@ class ControlPanel(tk.Tk):
         # model poller
         self.after(50, self._poll_llm_resp)
 
+    # ─────────────────────────────────────────
+
+    def _advance_llm_dots(self):
+        if not self._llm_busy or self._llm_line_idx is None:
+            return  # stop when the model reply arrives
+
+        # update the existing line in‑place
+        self.log.configure(state="normal")
+        self.log.delete(self._llm_line_idx, f"{self._llm_line_idx} lineend")
+        new_txt = "⏳ calling model" + next(self._llm_dots)
+        self.log.insert(self._llm_line_idx, new_txt, "llm")
+        self.log.configure(state="disabled")
+        self.log.yview_moveto(1.0)
+
+        self.after(400, self._advance_llm_dots)
+
+    def _log_line(self, text: str, tag: str | None = None) -> str:
+        """
+        Append *text* to the log and return its starting index (Tk text index).
+        Optionally tag the line.
+        """
+        self.log.configure(state="normal")
+        idx = self.log.index("end-1c linestart")
+        self.log.insert("end", text + "\n", tag)
+        self.log.configure(state="disabled")
+        self.log.yview_moveto(1.0)
+        return idx
+
     # ─────────────────── background LLM thread ──────────────────────
     def _start_llm_thread(self, user_text: str) -> None:
         """
         Fire a daemon thread that calls `primitive_to_browser_action`
         and drops (status, payload) tuples onto `_llm_resp_q`.
         """
-
         if self._llm_busy:
             self._log("⚠ LLM still working – please wait")
             return
         self._llm_busy = True
-        self._log("⏳  calling model…")
+
+        # --- spawn animated log line ------------------------------------
+        msg = "⏳ calling model" + next(self._llm_dots)
+        self._llm_line_idx = self._log_line(msg, tag="llm")
+        self.after(400, self._advance_llm_dots)
 
         # snapshot everything the model needs
         screenshot = self.screenshot
@@ -205,17 +239,28 @@ class ControlPanel(tk.Tk):
                 if status == "ok":
                     if payload:
                         cmd = self._llm_resp_to_cmd(payload)
-                        if cmd:
-                            self._log(f"  ↳ {cmd}")
-                            self._queue_command(cmd)
-                        else:
-                            self._log("❗ No action selected")
+                        repl = f"↳ {cmd}" if cmd else "❗ No action selected"
                     else:
-                        self._log("❗ Could not interpret instruction")
+                        repl = "❗ Could not interpret instruction"
                 else:  # "err"
+                    repl = "❗ LLM error – see traceback"
                     self._log_trace(payload)
 
+                # --- replace the animated line ---------------------------
+                if self._llm_line_idx:
+                    self.log.configure(state="normal")
+                    self.log.delete(self._llm_line_idx, f"{self._llm_line_idx} lineend")
+                    self.log.insert(self._llm_line_idx, repl + "\n")
+                    self.log.configure(state="disabled")
+                    self.log.yview_moveto(1.0)
+                    self._llm_line_idx = None
+
+                # if we produced a real command, queue it
+                if repl.startswith("↳ "):
+                    self._queue_command(repl[2:].strip())
+
                 self._llm_busy = False
+
         except queue.Empty:
             pass
         self.after(50, self._poll_llm_resp)
