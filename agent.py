@@ -664,8 +664,9 @@ def text_to_browser_action(
         flat_actions = _list_flat_actions(tabs, buttons, state)
         lines = [
             "You control the browser with ONE low‑level action.",
-            "Choose the best action‑prototype and, when it ends with '*',",
-            "include the concrete value in the `value` field.",
+            "Choose the best action‑prototype."
+            "For search, open_url, scroll_up, and scroll_down",
+            "please also include the query or number of pixels in the `value` field.",
             "",
             "Available prototypes:",
         ]
@@ -697,6 +698,7 @@ def text_to_browser_action(
         else:
             primitive = proto
 
+        breakpoint()
         return {"rationale": reply.rationale, "action": primitive}
 
     # decide among the candidate actions
