@@ -17,7 +17,7 @@ from typing import Any
 import threading
 import itertools
 
-from agent import text_to_browser_action, list_available_actions
+from agent import text_to_browser_action, list_available_actions, ADVANCED_MODE
 from actions import BrowserState
 from constants import *
 from action_filter import get_valid_actions
@@ -238,7 +238,16 @@ class ControlPanel(tk.Tk):
 
                 if status == "ok":
                     if payload:
-                        cmd = self._llm_resp_to_cmd(payload)
+                        cmd = (
+                            payload["action"]
+                            if (not ADVANCED_MODE and isinstance(payload, dict))
+                            else self._llm_resp_to_cmd(payload)
+                        )
+                        if cmd and cmd.startswith("click_button_"):
+                            # keep only the numeric id in front of the slug
+                            idx = cmd[len("click_button_") :].split("_", 1)[0]
+                            cmd = f"click {idx}"
+
                         repl = f"↳ {cmd}" if cmd else "❗ No action selected"
                     else:
                         repl = "❗ Could not interpret instruction"
@@ -727,7 +736,7 @@ class ControlPanel(tk.Tk):
         text = self.cmd_var.get().strip()
         self.cmd_var.set("")
         if text:
-            self._handle_input(text)
+            self._handle_input(text, from_llm_box=True)
 
     # ---------- search / url helper ------------------------------------
     def _send_search(self) -> None:
@@ -1017,45 +1026,21 @@ class ControlPanel(tk.Tk):
         os._exit(0)
 
     # ─────────────────────── HIGH‑LEVEL INPUT HANDLER ───────────────────
-    def _handle_input(self, text: str) -> None:
+    def _handle_input(self, text: str, *, from_llm_box: bool = False) -> None:
         try:
             self._log(f"> {text}")
-            low = text.lower()
-            valid_starting_strs = tuple(
-                s.rstrip("*")
-                for s in (
-                    CMD_CLICK_BUTTON,
-                    CMD_SCROLL_UP,
-                    CMD_SCROLL_DOWN,
-                    CMD_START_SCROLL_UP,
-                    CMD_START_SCROLL_DOWN,
-                    CMD_STOP_SCROLLING,
-                    CMD_SEARCH,
-                    CMD_OPEN_URL,
-                    CMD_NEW_TAB,
-                    CMD_CLOSE_THIS_TAB,
-                    CMD_CLOSE_TAB,
-                    CMD_SELECT_TAB,
-                    CMD_ENTER_TEXT,
-                    CMD_PRESS_ENTER,
-                    CMD_PRESS_BACKSPACE,
-                    CMD_PRESS_DELETE,
-                    CMD_CURSOR_LEFT,
-                    CMD_CURSOR_RIGHT,
-                    CMD_CURSOR_UP,
-                    CMD_CURSOR_DOWN,
-                    CMD_SELECT_ALL,
-                    CMD_MOVE_LINE_START,
-                    CMD_MOVE_LINE_END,
-                    CMD_MOVE_WORD_LEFT,
-                    CMD_MOVE_WORD_RIGHT,
-                    CMD_HOLD_SHIFT,
-                    CMD_RELEASE_SHIFT,
-                    CMD_CLICK_OUT,
-                    CMD_CONT_SCROLLING,
-                )
-            )
-            if low.startswith(valid_starting_strs):
+
+            def _is_valid_primitive(cmd: str) -> bool:
+                valid = get_valid_actions(BrowserState(**self.state))
+                for pat in valid:
+                    if cmd == pat:
+                        return True
+                    if pat.endswith("*") and cmd.startswith(pat[:-1]):
+                        return True  # parameterised match
+                return False
+
+            # skip the fast‑path when the text came from the LLM box
+            if (not from_llm_box) and _is_valid_primitive(text):
                 self._queue_command(text)
                 return
 

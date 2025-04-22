@@ -9,7 +9,7 @@ from typing import Union
 from constants import *
 
 
-def get_valid_actions(state: Union[BrowserState, dict]) -> set[str]:
+def get_valid_actions(state: Union[BrowserState, dict], mode="both") -> set[str]:
     """Return a wildcard‑aware set of command strings."""
 
     # Accept either a BrowserState OR the raw dict we send across Tk queues
@@ -43,5 +43,19 @@ def get_valid_actions(state: Union[BrowserState, dict]) -> set[str]:
     # ── dynamic tab & button placeholders ──────────────
     valid.update(BUTTON_PATTERNS)
 
-    underscore_aliases = {v.replace(" ", "_") for v in valid}
-    return valid | underscore_aliases
+    if mode == "schema":
+        ret = {v.replace(" ", "_") for v in valid}
+        return {
+            (
+                v.replace("_*", "")
+                if v in ("open_url_*", "search_*", "scroll_down_*", "scroll_up_*")
+                else v
+            )
+            for v in ret
+        }
+    elif mode == "actions":
+        return valid
+    elif mode == "both":
+        return valid | {v.replace(" ", "_") for v in valid}
+    else:
+        raise Exception("Invalid mode")
