@@ -697,8 +697,6 @@ def text_to_browser_action(
             primitive = f"{proto} {str(reply.value)}"
         else:
             primitive = proto
-
-        breakpoint()
         return {"rationale": reply.rationale, "action": primitive}
 
     # decide among the candidate actions

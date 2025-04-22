@@ -20,7 +20,6 @@ from gui import ControlPanel
 from worker import BrowserWorker
 
 
-# @unify.traced
 def main() -> None:
 
     # queues
