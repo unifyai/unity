@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import List, Optional, Tuple, Dict, Any
+from typing import List, Optional, Union, Tuple, Dict, Any
 
 import unify
 import base64
@@ -15,6 +15,38 @@ client = unify.Unify(traced=True)
 client.set_system_message(PRIMITIVE_TO_BROWSER_ACTION_CANDIDATES)
 
 SCROLLING_STATE = None
+ADVANCED_MODE = False
+
+# helpers #
+
+
+def _list_flat_actions(tabs, buttons, state) -> list[str]:
+    """
+    Return the flat list of valid primitive strings for the current state.
+    Uses the same logic as the advanced response‑format builder.
+    """
+    valid_schemas = get_valid_actions(state, mode="schema")
+    valid_actions = get_valid_actions(state, mode="actions")
+
+    flat = sorted(valid_schemas)
+
+    # ---- dynamic tab placeholders --------------------------------------
+    if CMD_SELECT_TAB in valid_actions:
+        flat.extend(CMD_SELECT_TAB.replace(" *", f"_{_slug(title)}") for title in tabs)
+        flat.remove("select_tab_*")
+
+    if CMD_CLOSE_TAB in valid_actions:
+        flat.extend(CMD_CLOSE_TAB.replace(" *", f"_{_slug(title)}") for title in tabs)
+        flat.remove("close_tab_*")
+
+    # ---- dynamic button placeholders -----------------------------------
+    if buttons and CMD_CLICK_BUTTON in valid_actions:
+        flat.extend(
+            CMD_CLICK_BUTTON.replace(" *", f"_{idx}_{_slug(lbl)}")
+            for idx, lbl in buttons
+        )
+        flat.remove("click_button_*")
+    return sorted(set([item.replace("*", "").replace(" ", "") for item in flat]))
 
 
 # Schemas #
@@ -297,6 +329,20 @@ def _construct_scroll_actions():
         }
 
 
+class SimpleChoice(BaseModel):
+    """Chosen action and your reasoning for it."""
+
+    rationale: str = Field(..., description="Why you chose this action.")
+    action: str = Field(
+        ...,
+        description="Exactly one action from the list you were given.",
+    )
+    value: Optional[Union[str, int]] = Field(
+        ...,
+        description="The *optional* str or int value associated with *some* actions.",
+    )
+
+
 def _create_full_response_format(tabs, buttons, state=None):
     # ensure we always work with a BrowserState object
     if state and not isinstance(state, BrowserState):
@@ -563,56 +609,97 @@ def text_to_browser_action(
     history: ActionHistory = None,
     state: BrowserState = None,
 ) -> Optional[BaseModel]:
-    response_format = _create_full_response_format(tabs, buttons, state)
-    client.set_endpoint("gpt-4o-mini@openai")
-    history_msg = (
-        "\n\nThe low-level action history (most recent first) is as follows:\n"
-        + "\n".join(f"{r['timestamp']:.0f}: {r['command']}" for r in history[-20:])
-    )
-
-    state_msg = f"""\n\nThe current state of the browser is as follows:
-    url: {state.get('url')}
-    title: {state.get('title')}
-    scroll_y: {state.get('scroll_y')}
-    auto_scroll: {state.get('auto_scroll')}
-    in_textbox: {state.get('in_textbox')}
-    """
-
-    client.set_system_message(
-        PRIMITIVE_TO_BROWSER_ACTION_CANDIDATES + history_msg + state_msg,
-    )
-    client.set_response_format(response_format)
-    screenshot = base64.b64encode(screenshot).decode("utf-8")
-    ret = client.generate(
-        messages=client.messages
-        + [
-            {
-                "role": "user",
-                "content": [
-                    {
-                        "type": "text",
-                        "text": text,
-                    },
-                    {
-                        "type": "image_url",
-                        "image_url": {
-                            "url": f"data:image/jpeg;base64," f"{screenshot}",
-                        },
-                    },
-                ],
-            },
-        ],
-    )
-    ret = response_format.model_validate_json(ret)
-    ret, num_selected = _extract_applied_actions(ret)
-    if num_selected == 0:
-        raise Exception(
-            f"At least one browser action must be selected, but agent responded with: {ret}",
+    if ADVANCED_MODE:
+        response_format = _create_full_response_format(tabs, buttons, state)
+        client.set_endpoint("gpt-4o-mini@openai")
+        history_msg = (
+            "\n\nThe low-level action history (most recent first) is as follows:\n"
+            + "\n".join(f"{r['timestamp']:.0f}: {r['command']}" for r in history[-20:])
         )
-    if num_selected == 1:
-        # only one candidate, can already return
-        response_format = _build_pruned_response_format(ret)
-        return response_format.model_validate(ret).model_dump()
+
+        state_msg = f"""\n\nThe current state of the browser is as follows:
+        url: {state.get('url')}
+        title: {state.get('title')}
+        scroll_y: {state.get('scroll_y')}
+        auto_scroll: {state.get('auto_scroll')}
+        in_textbox: {state.get('in_textbox')}
+        """
+
+        client.set_system_message(
+            PRIMITIVE_TO_BROWSER_ACTION_CANDIDATES + history_msg + state_msg,
+        )
+        client.set_response_format(response_format)
+        screenshot = base64.b64encode(screenshot).decode("utf-8")
+        ret = client.generate(
+            messages=client.messages
+            + [
+                {
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "text",
+                            "text": text,
+                        },
+                        {
+                            "type": "image_url",
+                            "image_url": {
+                                "url": f"data:image/jpeg;base64," f"{screenshot}",
+                            },
+                        },
+                    ],
+                },
+            ],
+        )
+        ret = response_format.model_validate_json(ret)
+        ret, num_selected = _extract_applied_actions(ret)
+        if num_selected == 0:
+            raise Exception(
+                f"At least one browser action must be selected, but agent responded with: {ret}",
+            )
+        if num_selected == 1:
+            # only one candidate, can already return
+            response_format = _build_pruned_response_format(ret)
+            return response_format.model_validate(ret).model_dump()
+    else:
+        flat_actions = _list_flat_actions(tabs, buttons, state)
+        lines = [
+            "You control the browser with ONE low‑level action.",
+            "Choose the best action‑prototype and, when it ends with '*',",
+            "include the concrete value in the `value` field.",
+            "",
+            "Available prototypes:",
+        ]
+        lines += [f"- {a}" for a in flat_actions]
+        lines += [
+            "",
+            "Respond ONLY with valid JSON matching:",
+            '{"rationale": "...", "action": "<prototype>", "value": <value|null>}',
+        ]
+        sys_prompt = "\n".join(lines)
+
+        client.set_endpoint("gpt-4o-mini@openai")
+        client.set_system_message(sys_prompt)
+        client.set_response_format(SimpleChoice)
+
+        try:
+            raw = client.generate(text)
+            reply = SimpleChoice.model_validate_json(raw)
+        except Exception:
+            return None
+
+        proto = reply.action
+        if proto not in flat_actions:
+            return None
+
+        # ----- compose the real primitive string ---------------------------
+        if proto.endswith("*"):
+            if reply.value in (None, ""):
+                return None
+            primitive = proto.replace("*", str(reply.value).strip())
+        else:
+            primitive = proto
+
+        return {"rationale": reply.rationale, "action": primitive}
 
     # decide among the candidate actions
     client.set_endpoint("o3-mini@openai")
