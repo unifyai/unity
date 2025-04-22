@@ -12,9 +12,9 @@ from __future__ import annotations
 
 import queue
 import tkinter as tk
-import traceback
 from tkinter import scrolledtext, ttk, Button
 from typing import Any
+import threading
 
 from agent import text_to_browser_action, list_available_actions
 from actions import BrowserState
@@ -130,6 +130,10 @@ class ControlPanel(tk.Tk):
         self.history: list[dict] = []
         self.state: dict[str, Any] = {}
 
+        # ── async LLM helper --------------------------------------------
+        self._llm_resp_q: "queue.Queue[tuple[str,Any]]" = queue.Queue()
+        self._llm_busy = False
+
         # for graying out when not in textbox
         self._key_buttons = {}
 
@@ -150,6 +154,71 @@ class ControlPanel(tk.Tk):
             lambda _e: self._handle_input(self._pending_text),
         )
         self._pending_text = ""
+
+        # model poller
+        self.after(50, self._poll_llm_resp)
+
+    # ─────────────────── background LLM thread ──────────────────────
+    def _start_llm_thread(self, user_text: str) -> None:
+        """
+        Fire a daemon thread that calls `primitive_to_browser_action`
+        and drops (status, payload) tuples onto `_llm_resp_q`.
+        """
+
+        if self._llm_busy:
+            self._log("⚠ LLM still working – please wait")
+            return
+        self._llm_busy = True
+        self._log("⏳  calling model…")
+
+        # snapshot everything the model needs
+        screenshot = self.screenshot
+        tabs = list(self.tab_titles)
+        buttons = [(i, lbl) for i, lbl, _ in self.elements]
+        history = list(self.history)
+        state = dict(self.state)
+
+        def _worker():
+            try:
+                resp = text_to_browser_action(
+                    user_text,
+                    screenshot,
+                    tabs=tabs,
+                    buttons=buttons,
+                    history=history,
+                    state=state,
+                )
+                self._llm_resp_q.put(("ok", resp))
+            except Exception as exc:
+                import traceback as _tb
+
+                self._llm_resp_q.put(("err", _tb.format_exc()))
+
+        threading.Thread(target=_worker, daemon=True).start()
+
+    def _poll_llm_resp(self):
+        """Check the response queue every 50 ms."""
+        try:
+            while True:
+                status, payload = self._llm_resp_q.get_nowait()
+
+                if status == "ok":
+                    if payload:
+                        cmd = self._llm_resp_to_cmd(payload)
+                        if cmd:
+                            self._log(f"  ↳ {cmd}")
+                            self._queue_command(cmd)
+                        else:
+                            self._log("❗ No action selected")
+                    else:
+                        self._log("❗ Could not interpret instruction")
+                else:  # "err"
+                    self._log_trace(payload)
+
+                self._llm_busy = False
+        except queue.Empty:
+            pass
+        self.after(50, self._poll_llm_resp)
 
     # ---------- universal mouse‑wheel helper -------------------------------
     def _bind_mousewheel(self, target, canvas):
@@ -944,30 +1013,8 @@ class ControlPanel(tk.Tk):
             self._queue_command(text)
             return
 
-        # free English → LLM
-        try:
-            response = text_to_browser_action(
-                text,
-                self.screenshot,
-                tabs=self.tab_titles,
-                buttons=[(idx, label) for idx, label, _ in self.elements],
-                history=self.history,
-                state=self.state,
-            )
-        except Exception:
-            self._log_trace(traceback.format_exc())
-            return
-
-        if response is None:
-            self._log("❗ Could not interpret instruction")
-            return
-
-        cmd = self._llm_resp_to_cmd(response)
-        if cmd:
-            self._log(f"  ↳ {cmd}")
-            self._queue_command(cmd)
-        else:
-            self._log("❗ No action selected")
+        # hand off to background thread (non‑blocking)
+        self._start_llm_thread(text)
 
     def set_worker(self, worker):
         self._worker = worker
