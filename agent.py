@@ -692,10 +692,8 @@ def text_to_browser_action(
             return None
 
         # ----- compose the real primitive string ---------------------------
-        if proto.endswith("*"):
-            if reply.value in (None, ""):
-                return None
-            primitive = proto.replace("*", str(reply.value).strip())
+        if reply.value:
+            primitive = f"{proto} {str(reply.value)}"
         else:
             primitive = proto
 
