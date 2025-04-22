@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import List, Optional, Tuple, Dict, Any
 
 import unify
+import base64
 from helpers import _pascal, _slug
 from constants import *
 from pydantic import BaseModel, create_model, Field
@@ -581,7 +582,27 @@ def text_to_browser_action(
         PRIMITIVE_TO_BROWSER_ACTION_CANDIDATES + history_msg + state_msg,
     )
     client.set_response_format(response_format)
-    ret = client.generate(text)
+    screenshot = base64.b64encode(screenshot).decode("utf-8")
+    ret = client.generate(
+        messages=client.messages
+        + [
+            {
+                "role": "user",
+                "content": [
+                    {
+                        "type": "text",
+                        "text": text,
+                    },
+                    {
+                        "type": "image_url",
+                        "image_url": {
+                            "url": f"data:image/jpeg;base64," f"{screenshot}",
+                        },
+                    },
+                ],
+            },
+        ],
+    )
     ret = response_format.model_validate_json(ret)
     ret, num_selected = _extract_applied_actions(ret)
     if num_selected == 0:
