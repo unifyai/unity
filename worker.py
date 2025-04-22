@@ -89,8 +89,17 @@ class BrowserWorker(threading.Thread):
                         # show the raw command arriving from the GUI
                         self.log(f"CMD ➜ {cmd!r}")
 
-                        if cmd.startswith("click button "):
-                            needle = cmd[len("click button ") :].strip().lower()
+                        if cmd.startswith("click button ") or cmd.startswith(
+                            "click_button ",
+                        ):
+                            tail = (
+                                cmd[len("click button ") :]
+                                if cmd.startswith("click button ")
+                                else cmd[len("click_button ") :]
+                            ).strip()
+
+                            # ---- A) try label substring match (old logic) ----
+                            needle = tail.lower()
                             hit = next(
                                 (
                                     el
@@ -99,13 +108,23 @@ class BrowserWorker(threading.Thread):
                                 ),
                                 None,
                             )
+
+                            # ---- B) if not found, try numeric prefix ----------
+                            if not hit:
+                                prefix, *_ = tail.split("_", 1)
+                                if prefix.isdigit():
+                                    idx = int(prefix)
+                                    if 1 <= idx <= len(last_elements):
+                                        hit = last_elements[idx - 1]
+
+                            # ---- execute the click if we resolved an element --
                             if hit:
                                 friendly = f"click {hit['label']}"
                                 self.runner.hist.add(friendly)
                                 hit["handle"].click()
                                 _update_in_textbox_state(self.runner, hit["handle"])
                             else:
-                                self.log(f"No visible element contains “{needle}”")
+                                self.log(f"No element matches “{tail}”")
                         elif cmd.startswith("open url "):
                             url = cmd[len("open url ") :]
                             self.runner.active.goto(
