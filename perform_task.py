@@ -589,16 +589,9 @@ def implement(fn: callable, module_path: Optional[str] = None):
 if __name__ == "__main__":
 
     @implement
-    def add_two_numbers(x: int, y: int):
+    def find_five_ai_posts_on_linked():
         """
-        Add two integers together.
-
-        Args:
-            x: First integer to add.
-            y: Second integer to add.
-
-        Returns:
-            The sum of the two integers.
+        Spend some time searching through LinkedIn, and find five posts about AI which seem especially interesting.
         """
 
-    add_two_numbers(2, 3)
+    find_five_ai_posts_on_linked()
