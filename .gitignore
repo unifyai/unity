@@ -2,3 +2,4 @@
 .sensitive_data
 __pycache__/
 implementations.py
+.cache.json
