@@ -50,8 +50,6 @@ from {another_module} import {function}
 
 def {name}{signature}:
     {implementation}
-
-This task is to be performed **100% in the browser**. You should not make use of any APIs or external packages whatsoever. Abstracting into a hierarchy of functions can of course be useful, but at the lowest level of the call stack all of these functions will be engaging via a browser with simple browser actions, and **nothing else**.
 """
 
 INIT_CODING_SYS_MESSAGE = """
