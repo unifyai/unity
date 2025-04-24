@@ -61,7 +61,7 @@ async def _speech_dispatcher(
 class VoiceAssistant(Agent):
 
     def __init__(self) -> None:
-        super().__init__(instructions=PHONE_AGENT.replace("{first_name}", FIRST_NAME))
+        super().__init__(instructions=PHONE_AGENT)
 
     async def on_user_turn_completed(self, turn_ctx, new_message) -> None:
         unify.log(
