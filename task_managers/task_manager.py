@@ -1,7 +1,7 @@
 import json
 import queue
 import threading
-from typing import List, Optional
+from typing import List, Dict, Optional
 
 import unify
 from task_managers.sys_msgs import DETECT_TASK_REQUEST, FIRST_TASK, REORGANISE_TASKS
@@ -69,12 +69,12 @@ class TaskManager(threading.Thread):
 
         self._task_organizer_client = unify.Unify("o3-mini@openai")
 
-    def _detect_task_request(self, messages: List[str]) -> bool:
+    def _detect_task_request(self, messages: List[Dict[str, str]]) -> bool:
         raw = self._task_request_client.copy().generate(json.dumps(messages, indent=4))
         parsed = TaskRequested.model_validate_json(raw)
         return parsed.task_was_requested
 
-    def _update_tasks(self, messages):
+    def _update_tasks(self, messages: List[Dict[str, str]]):
         # Debug code ----
         if "Tasks" in unify.get_contexts():
             unify.delete_context("Tasks")
