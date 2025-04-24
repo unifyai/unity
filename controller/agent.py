@@ -23,7 +23,7 @@ ADVANCED_MODE = False
 # helpers #
 
 
-def _list_flat_actions(tabs, buttons, state) -> list[str]:
+def _list_valid_actions(tabs, buttons, state) -> list[str]:
     """
     Return the flat list of valid primitive strings for the current state.
     Uses the same logic as the advanced response‑format builder.
@@ -669,7 +669,7 @@ def text_to_browser_action(
             response_format = _build_pruned_response_format(ret)
             return response_format.model_validate(ret).model_dump()
     else:
-        flat_actions = _list_flat_actions(tabs, buttons, state)
+        valid_actions = _list_valid_actions(tabs, buttons, state)
         lines = [
             "You control the browser with ONE low‑level action.",
             "Choose the best action‑prototype.",
@@ -687,7 +687,7 @@ def text_to_browser_action(
                 )
             return ret
 
-        lines += [_format_action(a) for a in flat_actions]
+        lines += [_format_action(a) for a in valid_actions]
         lines += [
             "",
             "Respond ONLY with valid JSON matching:",
@@ -699,22 +699,17 @@ def text_to_browser_action(
         client.set_system_message(sys_prompt)
         client.set_response_format(SimpleChoice)
 
-        try:
-            raw = client.generate(text)
-            reply = SimpleChoice.model_validate_json(raw)
-        except Exception:
-            return None
+        raw = client.generate(text)
+        reply = SimpleChoice.model_validate_json(raw)
 
-        proto = reply.action
-        if proto not in flat_actions:
-            return None
+        action = reply.action
+        assert (
+            action in valid_actions
+        ), f"selected action {action} not in valid actions {valid_actions}"
 
-        # ----- compose the real primitive string ---------------------------
         if reply.value:
-            primitive = f"{proto} {str(reply.value)}"
-        else:
-            primitive = proto
-        return {"rationale": reply.rationale, "action": primitive}
+            action = f"{action} {str(reply.value)}"
+        return {"rationale": reply.rationale, "action": action}
 
     # decide among the candidate actions
     client.set_endpoint("o3-mini@openai")
