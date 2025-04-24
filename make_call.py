@@ -65,6 +65,7 @@ class VoiceAssistant(Agent):
 
     async def on_user_turn_completed(self, turn_ctx, new_message) -> None:
         unify.log(
+            context="Exchanges",
             sender=FIRST_NAME,
             receiver="Unity",
             medium="phone call",
@@ -87,6 +88,7 @@ class VoiceAssistant(Agent):
             # Yield the chunk onward so TTS (and any client transcript) receives it without delay
             yield chunk
         unify.log(
+            context="Exchanges",
             sender="Unity",
             receiver=FIRST_NAME,
             medium="phone call",
