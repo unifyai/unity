@@ -16,8 +16,8 @@ log = logging.getLogger("unity")
 
 load_dotenv()
 
-from gui import ControlPanel
-from worker import BrowserWorker
+from controller.gui import ControlPanel
+from controller.worker import BrowserWorker
 
 
 def main() -> None:

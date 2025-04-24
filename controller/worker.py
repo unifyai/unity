@@ -13,15 +13,15 @@ from pathlib import Path
 from tempfile import mkdtemp
 from typing import Callable
 
-from browser_utils import (
+from controller.browser_utils import (
     build_boxes,
     collect_elements,
     launch_persistent,
     paint_overlay,
 )
-from commands import CommandRunner
-from mirror import MirrorPage
-from constants import *
+from controller.commands import CommandRunner
+from controller.mirror import MirrorPage
+from controller.constants import *
 from playwright.sync_api import Error as PWError
 from playwright.sync_api import sync_playwright
 

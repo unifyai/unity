@@ -3,12 +3,12 @@ Command‑parsing and dispatch logic.  All browser‑side actions live here.
 """
 
 import re
-from constants import *
+from controller.constants import *
 import urllib.parse
 
-from browser_utils import build_boxes, collect_elements, paint_overlay
-from js_snippets import HANDLE_SCROLL_JS, AUTO_SCROLL_JS
-from actions import ActionHistory, BrowserState
+from controller.browser_utils import build_boxes, collect_elements, paint_overlay
+from controller.js_snippets import HANDLE_SCROLL_JS, AUTO_SCROLL_JS
+from controller.actions import ActionHistory, BrowserState
 from playwright.sync_api import BrowserContext, Page
 
 SCROLL_DURATION = 400  # ms
