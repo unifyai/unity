@@ -38,7 +38,7 @@ def _wrap_async_method(fn, name: str):
             ret = await fn(item)
         else:
             ret = await fn()
-        is_get = fn.__name__ == "get"
+        is_get = fn.__name__ in ("get", "get_nowait")
         unify.log(
             context="Queues",
             queue=name,
@@ -52,13 +52,15 @@ def _wrap_async_method(fn, name: str):
 
 def _log_queue(q):
     if isinstance(q, asyncio.Queue):
-        q.put = _wrap_async_method(q.put, q.name)
-        q.get = _wrap_async_method(q.get, q.name)
+        _wrap_method = _wrap_async_method
     elif isinstance(q, queue.Queue):
-        q.put = _wrap_sync_method(q.put, q.name)
-        q.get = _wrap_sync_method(q.get, q.name)
+        _wrap_method = _wrap_sync_method
     else:
         raise Exception(f"Expected queue, but found {type(q)}")
+    q.put = _wrap_method(q.put, q.name)
+    q.put_nowait = _wrap_method(q.put_nowait, q.name)
+    q.get = _wrap_method(q.get, q.name)
+    q.get_nowait = _wrap_method(q.get_nowait, q.name)
 
 
 class BusManager:
