@@ -50,18 +50,18 @@ class FirstTask(BaseModel):
     )
 
 
-class TaskOrganizer(threading.Thread):
+class TaskManager(threading.Thread):
 
     def __init__(
         self,
-        in_q: "queue.Queue[List[str]]",
-        out_q: "queue.Queue[List[str]]",
+        transcript_q: "queue.Queue[List[str]]",
+        text_command_q: "queue.Queue[List[str]]",
         *,
         daemon: bool = True,
     ) -> None:
         super().__init__(daemon=daemon)
-        self._in_q = in_q
-        self._out_q = out_q
+        self._transcript_q = transcript_q
+        self._text_command_q = text_command_q
 
         self._task_request_client = unify.Unify("gpt-4o-mini@openai")
         self._task_request_client.set_system_message(DETECT_TASK_REQUEST)
@@ -95,8 +95,10 @@ class TaskOrganizer(threading.Thread):
             )
             first_task = FirstTask.model_validate_json(first_task)
             if first_task.should_create:
-                print(f"Scheduling task {first_task.title}, {first_task.description}")
-                self._out_q.put(True)
+                print(
+                    f"\n\nStarting task: {first_task.title} - {first_task.description}\n",
+                )
+                self._text_command_q.put(first_task.description)
             unify.log(
                 context="Tasks",
                 title=first_task.title,
@@ -108,7 +110,7 @@ class TaskOrganizer(threading.Thread):
 
     def run(self) -> None:
         while True:
-            messages = self._in_q.get()
+            messages = self._transcript_q.get()
             if messages is None:
                 break
 

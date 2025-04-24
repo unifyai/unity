@@ -38,7 +38,7 @@ async def _bridge_blocking_to_async() -> None:
         if not msgs:
             continue
         # only take the *latest* text in that list
-        await bus_manager.speech_interupt_q.put(msgs[-1])
+        await bus_manager.task_completion_q.put(msgs[-1])
 
 
 async def _speech_dispatcher(
@@ -48,7 +48,7 @@ async def _speech_dispatcher(
     Waits for text, interrupts any current speech, and speaks the new text.
     """
     while True:
-        next_text = await bus_manager.speech_interupt_q.get()
+        next_text = await bus_manager.task_completion_q.get()
         # 1) stop whatever is playing
         await session.interrupt()  # Docs: “Interrupt current speech”
         # 2) speak the fresh text

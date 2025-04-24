@@ -30,7 +30,7 @@ def _list_flat_actions(tabs, buttons, state) -> list[str]:
     """
 
     if not tabs and not buttons and not state:
-        return ["open_browser"]
+        return ["open browser"]
 
     valid_schemas = get_valid_actions(state, mode="schema")
     valid_actions = get_valid_actions(state, mode="actions")
