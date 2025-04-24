@@ -1,5 +1,5 @@
+import os
 from typing import AsyncIterable
-
 from dotenv import load_dotenv
 from livekit import agents
 from livekit.agents import Agent, AgentSession, RoomInputOptions
@@ -8,6 +8,12 @@ from livekit.plugins.turn_detector.multilingual import MultilingualModel
 
 from sys_msgs import COMMUNICATOR
 
+FIRST_NAME = os.environ["FIRST_NAME"]
+
+import unify
+
+unify.activate("Unity")
+
 
 load_dotenv()
 
@@ -15,11 +21,15 @@ load_dotenv()
 class Assistant(Agent):
 
     def __init__(self) -> None:
-        super().__init__(instructions=COMMUNICATOR)
+        super().__init__(instructions=COMMUNICATOR.replace("{first_name}", FIRST_NAME))
 
     async def on_user_turn_completed(self, turn_ctx, new_message) -> None:
-        # ToDo: publish to queue
-        pass
+        unify.log(
+            sender=FIRST_NAME,
+            receiver="Unity",
+            medium="phone call",
+            msg=new_message.text_content,
+        )
 
     async def transcription_node(
         self,
@@ -32,8 +42,12 @@ class Assistant(Agent):
             collected_chunks.append(chunk)
             # Yield the chunk onward so TTS (and any client transcript) receives it without delay
             yield chunk
-        # Once the LLM output stream is done, combine into full reply and log it
-        # ToDo: publish to queue
+        unify.log(
+            sender="Unity",
+            receiver=FIRST_NAME,
+            medium="phone call",
+            msg="".join(collected_chunks),
+        )
 
 
 async def entrypoint(ctx: agents.JobContext):
@@ -56,7 +70,7 @@ async def entrypoint(ctx: agents.JobContext):
     )
 
     await session.generate_reply(
-        instructions="Greet the user and offer your assistance.",
+        instructions=f"Greet {FIRST_NAME} by name, and ask how it's going.",
     )
 
 
