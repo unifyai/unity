@@ -10,8 +10,8 @@ from livekit.plugins.turn_detector.multilingual import MultilingualModel
 
 load_dotenv()
 
-from sys_msgs import COMMUNICATOR
-from agents.task_request_listener import TaskRequestListener
+from controller.sys_msgs import COMMUNICATOR
+from intermediaries.task_request_listener import TaskRequestListener
 
 FIRST_NAME = os.environ["FIRST_NAME"]
 

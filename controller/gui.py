@@ -17,11 +17,15 @@ from typing import Any
 import threading
 import itertools
 
-from agent import text_to_browser_action, list_available_actions, ADVANCED_MODE
-from actions import BrowserState
-from constants import *
-from action_filter import get_valid_actions
-from helpers import _slug
+from controller.agent import (
+    text_to_browser_action,
+    list_available_actions,
+    ADVANCED_MODE,
+)
+from controller.actions import BrowserState
+from controller.constants import *
+from controller.action_filter import get_valid_actions
+from controller.helpers import _slug
 from pygments import highlight
 from pygments.formatters import HtmlFormatter
 from pygments.lexers import PythonLexer

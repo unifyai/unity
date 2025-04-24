@@ -7,7 +7,7 @@ import os.path
 from typing import Optional
 
 import unify
-from sys_msgs import (
+from controller.sys_msgs import (
     CODING_SYS_MESSAGE_BASE,
     INIT_CODING_SYS_MESSAGE,
     UPDATING_CODING_SYS_MESSAGE,
@@ -429,13 +429,7 @@ def implement(fn: callable, module_path: Optional[str] = None):
                 del IMPLEMENTATIONS[name]
             else:
                 _remove_unify_decorator_if_present(name)
-                _streamed_print(
-                    f"\n`{name}` is already implemented, stepping inside.\n",
-                )
                 return IMPLEMENTATIONS[name]
-        _streamed_print(
-            f"We'll now work together to implement the function `{name}`.\n\n",
-        )
         _add_args_to_system_msg(*args, **kwargs)
         imports, implementations, llm_response = _generate_code()
         client.set_system_message(update_system_message)
@@ -594,4 +588,5 @@ if __name__ == "__main__":
         Spend some time searching through LinkedIn, and find five posts about AI which seem especially interesting.
         """
 
+    breakpoint()
     find_five_ai_posts_on_linked()
