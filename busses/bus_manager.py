@@ -1,8 +1,35 @@
+import json
 import queue
 import asyncio
 from task_managers.task_manager import TaskManager
 from controller.controller import Controller
 from planner.planner import Planner
+
+import unify
+
+
+def _wrap_method(fn: callable, name: str):
+    def _wrapped(item=None):
+        if item is not None:
+            ret = fn(item)
+        else:
+            ret = fn()
+        if ret is not None:
+            is_get = fn.__name__ == "get"
+            unify.log(
+                context="Queues",
+                queue=name,
+                method=fn.__name__,
+                content=json.dumps(ret) if is_get else json.dumps(item),
+            )
+        return ret
+
+    return _wrapped
+
+
+def _log_queue(q):
+    q.put = _wrap_method(q.put, q.name)
+    q.get = _wrap_method(q.get, q.name)
 
 
 class BusManager:
@@ -14,24 +41,38 @@ class BusManager:
 
         # the latest (windowed) user-agent transcript, updated after every new exchange
         self._transcript_q: queue.Queue[list[str]] = queue.Queue()
+        self._transcript_q.name = "transcript_q"
+        _log_queue(self._transcript_q)
 
         # low-level browser actions, in text form
         self._text_action_q: queue.Queue[str] = queue.Queue()
+        self._text_action_q.name = "text_action_q"
+        _log_queue(self._text_action_q)
 
         # user task requests, in text form
         self._text_task_q: queue.Queue[str] = queue.Queue()
+        self._text_task_q.name = "text_task_q"
+        _log_queue(self._text_task_q)
 
         # lower-level browser commands
         self._browser_command_q: queue.Queue[str] = queue.Queue()
+        self._browser_command_q.name = "browser_command_q"
+        _log_queue(self._browser_command_q)
 
         # playwright browser state
         self._browser_state_q: queue.Queue[str] = queue.Queue()
+        self._browser_state_q.name = "browser_state_q"
+        _log_queue(self._browser_state_q)
 
         # actions which have been completed, referenced by their title
         self._action_completion_q: queue.Queue[str] = queue.Queue()
+        self._action_completion_q.name = "action_completion_q"
+        _log_queue(self._action_completion_q)
 
         # tasks which have been completed, referenced by their title
         self._task_completion_q: asyncio.Queue[str] = asyncio.Queue()
+        self._task_completion_q.name = "task_completion_q"
+        _log_queue(self._task_completion_q)
 
         # Managers #
         # ---------#
