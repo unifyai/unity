@@ -11,7 +11,7 @@ from livekit.plugins.turn_detector.multilingual import MultilingualModel
 
 load_dotenv()
 
-from user_facing.sys_msgs import USER_FACING
+from user_facing.sys_msgs import PHONE_AGENT
 from intermediaries.task_request_listener import TaskRequestListener
 
 FIRST_NAME = os.environ["FIRST_NAME"]
@@ -79,7 +79,7 @@ async def _speech_dispatcher(
 class VoiceAssistant(Agent):
 
     def __init__(self) -> None:
-        super().__init__(instructions=USER_FACING.replace("{first_name}", FIRST_NAME))
+        super().__init__(instructions=PHONE_AGENT.replace("{first_name}", FIRST_NAME))
 
     async def on_user_turn_completed(self, turn_ctx, new_message) -> None:
         unify.log(
