@@ -1,6 +1,7 @@
 import json
 import queue
 import asyncio
+from functools import wraps
 from task_managers.task_manager import TaskManager
 from controller.controller import Controller
 from planner.planner import Planner
@@ -8,7 +9,9 @@ from planner.planner import Planner
 import unify
 
 
-def _wrap_method(fn: callable, name: str):
+def _wrap_sync_method(fn: callable, name: str):
+
+    @wraps(fn)
     def _wrapped(item=None):
         if item is not None:
             ret = fn(item)
@@ -27,9 +30,35 @@ def _wrap_method(fn: callable, name: str):
     return _wrapped
 
 
+def _wrap_async_method(fn, name: str):
+
+    @wraps(fn)
+    async def _wrapped(item=None):
+        if item is not None:
+            ret = await fn(item)
+        else:
+            ret = await fn()
+        is_get = fn.__name__ == "get"
+        unify.log(
+            context="Queues",
+            queue=name,
+            method=fn.__name__,
+            content=json.dumps(ret) if is_get else json.dumps(item),
+        )
+        return ret
+
+    return _wrapped
+
+
 def _log_queue(q):
-    q.put = _wrap_method(q.put, q.name)
-    q.get = _wrap_method(q.get, q.name)
+    if isinstance(q, asyncio.Queue):
+        q.put = _wrap_async_method(q.put, q.name)
+        q.get = _wrap_async_method(q.get, q.name)
+    elif isinstance(q, queue.Queue):
+        q.put = _wrap_sync_method(q.put, q.name)
+        q.get = _wrap_sync_method(q.get, q.name)
+    else:
+        raise Exception(f"Expected queue, but found {type(q)}")
 
 
 class BusManager:
