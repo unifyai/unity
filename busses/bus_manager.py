@@ -17,13 +17,13 @@ def _wrap_sync_method(fn: callable, name: str):
             ret = fn(item)
         else:
             ret = fn()
-        if ret is not None:
-            is_get = fn.__name__ == "get"
+        is_put = fn.__name__ == ("put", "put_nowait")
+        if is_put or ret is not None:
             unify.log(
                 context="Queues",
                 queue=name,
                 method=fn.__name__,
-                content=json.dumps(ret) if is_get else json.dumps(item),
+                content=json.dumps(item) if is_put else json.dumps(ret),
             )
         return ret
 
@@ -38,13 +38,14 @@ def _wrap_async_method(fn, name: str):
             ret = await fn(item)
         else:
             ret = await fn()
-        is_get = fn.__name__ in ("get", "get_nowait")
-        unify.log(
-            context="Queues",
-            queue=name,
-            method=fn.__name__,
-            content=json.dumps(ret) if is_get else json.dumps(item),
-        )
+        is_put = fn.__name__ in ("put", "put_nowait")
+        if is_put or ret is not None:
+            unify.log(
+                context="Queues",
+                queue=name,
+                method=fn.__name__,
+                content=json.dumps(item) if is_put else json.dumps(ret),
+            )
         return ret
 
     return _wrapped
