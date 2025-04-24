@@ -28,16 +28,6 @@ listener.start()
 
 
 # ─────────────────────────────────────────────────────────────────────
-async def _demo_interjector(async_q: "asyncio.Queue[str]") -> None:
-    """
-    Wait 20 s after startup, then push a dummy message that should
-    interrupt whatever the agent is saying.  Runs only once.
-    """
-    await asyncio.sleep(20)
-    await async_q.put("Okay, done! What next?")
-
-
-# ─────────────────────────────────────────────────────────────────────
 
 
 async def _bridge_blocking_to_async(
@@ -137,9 +127,6 @@ async def entrypoint(ctx: agents.JobContext):
     asyncio.create_task(_bridge_blocking_to_async(task_q, async_task_q))
     # start the dispatcher that speaks anything it receives
     asyncio.create_task(_speech_dispatcher(session, async_task_q))
-
-    # one-off demo publisher
-    asyncio.create_task(_demo_interjector(async_task_q))
 
     await session.generate_reply(
         instructions=f"Greet {FIRST_NAME} by name, and ask how it's going.",
