@@ -672,13 +672,22 @@ def text_to_browser_action(
         flat_actions = _list_flat_actions(tabs, buttons, state)
         lines = [
             "You control the browser with ONE low‑level action.",
-            "Choose the best action‑prototype."
-            "For search, open_url, scroll_up, and scroll_down",
-            "please also include the query or number of pixels in the `value` field.",
+            "Choose the best action‑prototype.",
             "",
             "Available prototypes:",
         ]
-        lines += [f"- {a}" for a in flat_actions]
+
+        def _format_action(a: str):
+            ret = f"- {a}"
+            if a in ("search", "open url"):
+                ret += " (please also include the query in the `value` field)"
+            elif a in ("scroll up", "scroll down"):
+                ret += (
+                    " (please also include the number of pixels in the `value` field)"
+                )
+            return ret
+
+        lines += [_format_action(a) for a in flat_actions]
         lines += [
             "",
             "Respond ONLY with valid JSON matching:",
