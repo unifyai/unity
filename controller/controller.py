@@ -5,7 +5,7 @@ from controller.worker import BrowserWorker
 from controller.controller import Controller
 
 
-class BusManager:
+class Controller:
 
     def __init__(self) -> None:
 
