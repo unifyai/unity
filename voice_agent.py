@@ -6,6 +6,8 @@ from livekit.agents import Agent, AgentSession, RoomInputOptions
 from livekit.plugins import cartesia, deepgram, noise_cancellation, openai, silero
 from livekit.plugins.turn_detector.multilingual import MultilingualModel
 
+from sys_msgs import COMMUNICATOR
+
 
 load_dotenv()
 
@@ -13,7 +15,7 @@ load_dotenv()
 class Assistant(Agent):
 
     def __init__(self) -> None:
-        super().__init__(instructions="You are a helpful voice AI assistant.")
+        super().__init__(instructions=COMMUNICATOR)
 
     async def on_user_turn_completed(self, turn_ctx, new_message) -> None:
         # ToDo: publish to queue
