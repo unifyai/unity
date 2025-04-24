@@ -1,6 +1,6 @@
 import queue
 import asyncio
-from task_managers.task_organizer import TaskOrganizer
+from task_managers.task_manager import TaskManager
 from controller.controller import Controller
 
 
@@ -8,25 +8,47 @@ class BusManager:
 
     def __init__(self) -> None:
 
-        # Queues
-        self._transcript_q: queue.Queue[list[str]] = queue.Queue()
-        self._browser_command_q: queue.Queue[str] = queue.Queue()
-        self._browser_screenshot_q: queue.Queue[str] = queue.Queue()
-        self._speech_interupt_q: asyncio.Queue[str] = asyncio.Queue()
+        # Queues #
+        # -------#
 
-        # Managers
-        self._task_organizer = TaskOrganizer(
+        # the latest (windowed) user-agent transcript, updated after every new exchange
+        self._transcript_q: queue.Queue[list[str]] = queue.Queue()
+
+        # user task requests, in text form
+        self._text_command_q: queue.Queue[str] = queue.Queue()
+
+        # lower-level browser commands
+        self._browser_command_q: queue.Queue[str] = queue.Queue()
+
+        # playwright browser state
+        self._browser_state_q: queue.Queue[str] = queue.Queue()
+
+        # tasks which have been completed, by their title
+        self._task_completion_q: asyncio.Queue[str] = asyncio.Queue()
+
+        # Managers #
+        # ---------#
+
+        # re-organizes and schedules task, based on transcripts
+        self._task_manager = TaskManager(
             self._transcript_q,
-            self._browser_command_q,
+            self._text_command_q,
         )
+
+        # handles hierarchical task planning + decomposition
+        # ToDo
+        # include self._task_completion_q,
+        # self._planner = ...
+
+        # handles text -> low-level browser commands
         self._controller = Controller(
-            self._transcript_q,
-            self._browser_screenshot_q,
+            self._text_command_q,
+            self._browser_state_q,
             self._browser_command_q,
         )
 
     def start(self):
-        self._task_organizer.start()
+        self._task_manager.start()
         self._controller.start()
 
     # Properties #
@@ -37,5 +59,5 @@ class BusManager:
         return self._transcript_q
 
     @property
-    def speech_interupt_q(self) -> asyncio.Queue[str]:
-        return self._speech_interupt_q
+    def task_completion_q(self) -> asyncio.Queue[str]:
+        return self._task_completion_q

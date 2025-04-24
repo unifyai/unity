@@ -43,6 +43,7 @@ def _update_in_textbox_state(runner, handle):
 class BrowserWorker(threading.Thread):
     def __init__(
         self,
+        *,
         command_q: "queue.Queue[str]",
         update_q: "queue.Queue[list]",
         start_url: str,

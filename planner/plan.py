@@ -588,5 +588,4 @@ if __name__ == "__main__":
         Spend some time searching through LinkedIn, and find five posts about AI which seem especially interesting.
         """
 
-    breakpoint()
     find_five_ai_posts_on_linked()

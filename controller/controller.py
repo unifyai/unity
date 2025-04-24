@@ -1,5 +1,4 @@
 import queue
-import asyncio
 import threading
 from typing import List
 
@@ -23,8 +22,8 @@ class Controller(threading.Thread):
         self._browser_command_q = browser_command_q
 
         self._browser_worker = BrowserWorker(
-            self._browser_command_q,
-            self._browser_state_q,
+            command_q=self._browser_command_q,
+            update_q=self._browser_state_q,
             start_url="https://www.google.com/",
             refresh_interval=0.4,
         )
@@ -48,27 +47,20 @@ class Controller(threading.Thread):
                 history=browser_state.get("history", []),
                 state=browser_state.get("state", {}),
             )
+            assert (
+                cmd is not None
+            ), f"text_command {text_command} returned empty command"
+            action = cmd["action"]
 
-            if cmd == "open browser" and not self._browser_open:
+            if action == "open browser" and not self._browser_open:
                 # ToDo: implement this action
                 self._browser_worker.start()
-            elif cmd == "close browser" and self._browser_open:
+            elif action == "close browser" and self._browser_open:
                 # ToDo: implement this action
                 self._browser_worker.stop()
                 self._browser_worker.join(timeout=2)
             elif not self._browser_open:
                 self._browser_worker.start()
-                self._browser_command_q(cmd)
+                self._browser_command_q.put(action)
             else:
-                self._browser_command_q(cmd)
-
-    # Properties #
-    # -----------#
-
-    @property
-    def user_request_q(self) -> queue.Queue[list[str]]:
-        return self._user_request_q
-
-    @property
-    def speech_interupt_q(self) -> asyncio.Queue[str]:
-        return self._speech_interupt_q
+                self._browser_command_q.put(action)
