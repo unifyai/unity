@@ -13,6 +13,7 @@ class Controller(threading.Thread):
         text_command_q: "queue.Queue[List[str]]",
         browser_state_q: "queue.Queue[List[str]]",
         browser_command_q: "queue.Queue[List[str]]",
+        action_completion_q: "queue.Queue[List[str]]",
         *,
         daemon: bool = True,
     ) -> None:
@@ -20,6 +21,7 @@ class Controller(threading.Thread):
         self._text_command_q = text_command_q
         self._browser_state_q = browser_state_q
         self._browser_command_q = browser_command_q
+        self._action_completion_q = action_completion_q
 
         self._browser_worker = BrowserWorker(
             command_q=self._browser_command_q,
@@ -55,12 +57,18 @@ class Controller(threading.Thread):
             if action == "open browser" and not self._browser_open:
                 # ToDo: implement this action
                 self._browser_worker.start()
+                self._browser_open = True
             elif action == "close browser" and self._browser_open:
                 # ToDo: implement this action
                 self._browser_worker.stop()
                 self._browser_worker.join(timeout=2)
+                self._browser_open = False
             elif not self._browser_open:
                 self._browser_worker.start()
+                self._browser_open = True
                 self._browser_command_q.put(action)
             else:
                 self._browser_command_q.put(action)
+
+            # ToDo: only send this once we KNOW the browser action has completed successfully
+            self._action_completion_q.put(text_command)
