@@ -1,4 +1,5 @@
 import os
+import sys
 import queue
 import asyncio
 from typing import AsyncIterable
@@ -146,6 +147,6 @@ async def entrypoint(ctx: agents.JobContext):
 
 
 if __name__ == "__main__":
-    # if len(sys.argv) == 1:          # no sub-command provided
-    #     sys.argv.append("console")  # pretend the user typed “… console”
+    if len(sys.argv) == 1:  # no sub-command provided
+        sys.argv.append("console")  # pretend the user typed “… console”
     agents.cli.run_app(agents.WorkerOptions(entrypoint_fnc=entrypoint))
