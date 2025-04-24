@@ -10,7 +10,7 @@ from livekit.plugins.turn_detector.multilingual import MultilingualModel
 
 load_dotenv()
 
-from controller.sys_msgs import COMMUNICATOR
+from user_facing.sys_msgs import USER_FACING
 from intermediaries.task_request_listener import TaskRequestListener
 
 FIRST_NAME = os.environ["FIRST_NAME"]
@@ -33,7 +33,7 @@ async def _demo_interjector(async_q: "asyncio.Queue[str]") -> None:
     interrupt whatever the agent is saying.  Runs only once.
     """
     await asyncio.sleep(20)
-    await async_q.put("Automated interjection after 20 seconds.")
+    await async_q.put("Okay, done! What next?")
 
 
 # ─────────────────────────────────────────────────────────────────────
@@ -78,7 +78,7 @@ async def _speech_dispatcher(
 class VoiceAssistant(Agent):
 
     def __init__(self) -> None:
-        super().__init__(instructions=COMMUNICATOR.replace("{first_name}", FIRST_NAME))
+        super().__init__(instructions=USER_FACING.replace("{first_name}", FIRST_NAME))
 
     async def on_user_turn_completed(self, turn_ctx, new_message) -> None:
         unify.log(
@@ -138,7 +138,7 @@ async def entrypoint(ctx: agents.JobContext):
     asyncio.create_task(_speech_dispatcher(session, async_task_q))
 
     # one-off demo publisher
-    # asyncio.create_task(_demo_interjector(async_task_q))
+    asyncio.create_task(_demo_interjector(async_task_q))
 
     await session.generate_reply(
         instructions=f"Greet {FIRST_NAME} by name, and ask how it's going.",
@@ -146,4 +146,6 @@ async def entrypoint(ctx: agents.JobContext):
 
 
 if __name__ == "__main__":
+    # if len(sys.argv) == 1:          # no sub-command provided
+    #     sys.argv.append("console")  # pretend the user typed “… console”
     agents.cli.run_app(agents.WorkerOptions(entrypoint_fnc=entrypoint))
