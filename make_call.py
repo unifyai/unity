@@ -17,7 +17,12 @@ from busses.bus_manager import BusManager
 
 import unify
 
-unify.activate("Unity", overwrite=True)
+unify.activate("Unity")
+
+ctxs = unify.get_contexts()
+for ctx in ("Exchanges", "Queues", "Tasks"):
+    if ctx in ctxs:
+        unify.delete_context(ctx)
 
 bus_manager = BusManager()
 bus_manager.start()
