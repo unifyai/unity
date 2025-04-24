@@ -71,10 +71,10 @@ class VoiceAssistant(Agent):
             medium="phone call",
             msg=new_message.text_content,
         )
-        bus_manager.transcript_q.put(
-            [msg.content[0] for msg in self.chat_ctx.items[1:]]
-            + [new_message.text_content],
-        )
+        msgs = [{msg.role: msg.content[0]} for msg in self.chat_ctx.items[1:]] + [
+            {"user": new_message.text_content},
+        ]
+        bus_manager.transcript_q.put(msgs)
 
     async def transcription_node(
         self,
