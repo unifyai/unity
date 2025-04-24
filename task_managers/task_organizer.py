@@ -75,6 +75,11 @@ class TaskOrganizer(threading.Thread):
         return parsed.task_was_requested
 
     def _update_tasks(self, messages):
+        # Debug code ----
+        if "Tasks" in unify.get_contexts():
+            unify.delete_context("Tasks")
+            unify.create_context("Tasks")
+        # End Debug code ----
         if "Tasks" not in unify.get_contexts():
             unify.create_context("Tasks")
         current_tasks = unify.get_logs(
@@ -90,6 +95,7 @@ class TaskOrganizer(threading.Thread):
             )
             first_task = FirstTask.model_validate_json(first_task)
             if first_task.should_create:
+                print(f"Scheduling task {first_task.title}, {first_task.description}")
                 self._out_q.put(True)
             unify.log(
                 context="Tasks",

@@ -1,29 +1,25 @@
 import queue
 import asyncio
-from task_managers.task_organizer import TaskOrganizer
+import threading
+from typing import List
+
 from controller.worker import BrowserWorker
-from controller.controller import Controller
 
 
-class Controller:
+class Controller(threading.Thread):
 
-    def __init__(self) -> None:
-
-        # Queues
-        self._user_request_q: queue.Queue[list[str]] = queue.Queue()
-        self._browser_command_q: queue.Queue[str] = queue.Queue()
-        self._browser_screenshot_q: queue.Queue[str] = queue.Queue()
-        self._speech_interupt_q: asyncio.Queue[str] = asyncio.Queue()
-
-        # Managers
-        self._task_organizer = TaskOrganizer(
-            self._user_request_q,
-            self._browser_command_q,
-        )
-
-        self._controller = Controller(
-            self._,
-        )
+    def __init__(
+        self,
+        text_command_q: "queue.Queue[List[str]]",
+        browser_screenshot_q: "queue.Queue[List[str]]",
+        browser_command_q: "queue.Queue[List[str]]",
+        *,
+        daemon: bool = True,
+    ) -> None:
+        super().__init__(daemon=daemon)
+        self._text_command_q = text_command_q
+        self._browser_screenshot_q = browser_screenshot_q
+        self._browser_command_q = browser_command_q
 
         self._browser_worker = BrowserWorker(
             self._browser_command_q,
@@ -33,8 +29,20 @@ class Controller:
         )
 
     def start(self):
-        self._task_organizer.start()
         self._browser_worker.start()
+
+    def run(self) -> None:
+        while True:
+            text_command = self._text_command_q.get()
+            if text_command is None:
+                break
+
+            screenshot = self._browser_screenshot_q.get()
+
+            # ToDo: implement LLM logic
+            cmd = None
+
+            self._browser_command_q(cmd)
 
     # Properties #
     # -----------#
