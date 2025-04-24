@@ -1,6 +1,5 @@
 import os
 import sys
-import queue
 import asyncio
 from typing import AsyncIterable
 from dotenv import load_dotenv
@@ -10,30 +9,24 @@ from livekit.plugins import cartesia, deepgram, noise_cancellation, openai, sile
 from livekit.plugins.turn_detector.multilingual import MultilingualModel
 
 load_dotenv()
+FIRST_NAME = os.environ["FIRST_NAME"]
 
 from user_facing.sys_msgs import PHONE_AGENT
-from intermediaries.task_request_listener import TaskRequestListener
+from busses.bus_manager import BusManager
 
-FIRST_NAME = os.environ["FIRST_NAME"]
 
 import unify
 
 unify.activate("Unity")
 
-task_q: queue.Queue[list[str]] = queue.Queue()
-async_task_q: asyncio.Queue[str] = asyncio.Queue()
-
-listener = TaskRequestListener(task_q)
-listener.start()
+bus_manager = BusManager()
+bus_manager.start()
 
 
 # ─────────────────────────────────────────────────────────────────────
 
 
-async def _bridge_blocking_to_async(
-    blocking_q: "queue.Queue[list[str]]",
-    async_q: "asyncio.Queue[str]",
-) -> None:
+async def _bridge_blocking_to_async() -> None:
     """
     Runs forever in the event-loop, pulling from the blocking queue
     (in a thread-safe way) and forwarding into the asyncio queue.
@@ -41,22 +34,21 @@ async def _bridge_blocking_to_async(
     loop = asyncio.get_running_loop()
     while True:
         # .get() is blocking; run it in the default executor
-        msgs = await loop.run_in_executor(None, blocking_q.get)
+        msgs = await loop.run_in_executor(None, bus_manager.task_q.get)
         if not msgs:
             continue
         # only take the *latest* text in that list
-        await async_q.put(msgs[-1])
+        await bus_manager.async_task_q.put(msgs[-1])
 
 
 async def _speech_dispatcher(
     session: AgentSession,
-    async_q: "asyncio.Queue[str]",
 ) -> None:
     """
     Waits for text, interrupts any current speech, and speaks the new text.
     """
     while True:
-        next_text = await async_q.get()
+        next_text = await bus_manager.async_task_q.get()
         # 1) stop whatever is playing
         await session.interrupt()  # Docs: “Interrupt current speech”
         # 2) speak the fresh text
@@ -78,7 +70,7 @@ class VoiceAssistant(Agent):
             medium="phone call",
             msg=new_message.text_content,
         )
-        task_q.put(
+        bus_manager.task_q.put(
             [msg.content[0] for msg in self.chat_ctx.items[1:]]
             + [new_message.text_content],
         )
@@ -124,9 +116,9 @@ async def entrypoint(ctx: agents.JobContext):
     # ── background tasks ──────────────────────────────────────────────
     loop = asyncio.get_running_loop()
     # start the bridge that listens to the thread-based queue
-    asyncio.create_task(_bridge_blocking_to_async(task_q, async_task_q))
+    asyncio.create_task(_bridge_blocking_to_async())
     # start the dispatcher that speaks anything it receives
-    asyncio.create_task(_speech_dispatcher(session, async_task_q))
+    asyncio.create_task(_speech_dispatcher(session))
 
     await session.generate_reply(
         instructions=f"Greet {FIRST_NAME} by name, and ask how it's going.",
