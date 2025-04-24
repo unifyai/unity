@@ -7,6 +7,8 @@ Every other module must import from here.
 # ───────────────────────────────────────────────────────────────────────────
 #  SINGLE‑COMMAND CONSTANTS (keep them alphabetically sorted, please)
 # ───────────────────────────────────────────────────────────────────────────
+CMD_OPEN_BROWSER = "open_browser"
+CMD_CLOSE_BROWSER = "close_browser"
 CMD_CLICK_OUT = "click_out"
 CMD_CONT_SCROLLING = "continue_scrolling"
 CMD_CURSOR_DOWN = "cursor_down"

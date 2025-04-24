@@ -34,7 +34,7 @@ async def _bridge_blocking_to_async() -> None:
     loop = asyncio.get_running_loop()
     while True:
         # .get() is blocking; run it in the default executor
-        msgs = await loop.run_in_executor(None, bus_manager.task_q.get)
+        msgs = await loop.run_in_executor(None, bus_manager._transcript_q.get)
         if not msgs:
             continue
         # only take the *latest* text in that list

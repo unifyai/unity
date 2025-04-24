@@ -28,8 +28,13 @@ def _list_flat_actions(tabs, buttons, state) -> list[str]:
     Return the flat list of valid primitive strings for the current state.
     Uses the same logic as the advanced response‑format builder.
     """
+
+    if not tabs and not buttons and not state:
+        return ["open_browser"]
+
     valid_schemas = get_valid_actions(state, mode="schema")
     valid_actions = get_valid_actions(state, mode="actions")
+    valid_actions.remove("open_browser")
 
     flat = sorted(valid_schemas)
 
