@@ -17,7 +17,7 @@ from busses.bus_manager import BusManager
 
 import unify
 
-unify.activate("Unity")
+unify.activate("Unity", overwrite=True)
 
 bus_manager = BusManager()
 bus_manager.start()
