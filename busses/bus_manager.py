@@ -17,7 +17,7 @@ def _wrap_sync_method(fn: callable, name: str):
             ret = fn(item)
         else:
             ret = fn()
-        is_put = fn.__name__ == ("put", "put_nowait")
+        is_put = fn.__name__ in ("put", "put_nowait")
         if is_put or ret is not None:
             unify.log(
                 context="Queues",
