@@ -610,7 +610,6 @@ def list_available_actions(
     return base
 
 
-@unify.traced
 def text_to_browser_action(
     text: str,
     screenshot: base64,
