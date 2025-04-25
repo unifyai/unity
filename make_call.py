@@ -1,6 +1,7 @@
 import os
 import sys
 import asyncio
+import random
 import logging
 from typing import AsyncIterable
 from dotenv import load_dotenv
@@ -36,21 +37,6 @@ unify.activate("Unity")
 bus_manager = BusManager()
 
 
-async def _bridge_blocking_to_async() -> None:
-    """
-    Runs forever in the event-loop, pulling from the blocking queue
-    (in a thread-safe way) and forwarding into the asyncio queue.
-    """
-    loop = asyncio.get_running_loop()
-    while True:
-        # .get() is blocking; run it in the default executor
-        msgs = await loop.run_in_executor(None, bus_manager._transcript_q.get)
-        if not msgs:
-            continue
-        # only take the *latest* text in that list
-        await bus_manager.task_completion_q.put(msgs[-1])
-
-
 async def _speech_dispatcher(
     session: AgentSession,
 ) -> None:
@@ -63,7 +49,18 @@ async def _speech_dispatcher(
         await session.interrupt()  # Docs: “Interrupt current speech”
         # 2) speak the fresh text
         await session.say(
-            next_text,
+            random.choice(
+                ("And... Done.", "Done.", "Finished.", "That's now done."),
+            )
+            + random.choice(
+                (
+                    "Anything else?",
+                    "What next?",
+                    "Anything else I can do?",
+                    "Need anything else?",
+                    "",
+                ),
+            ),
             allow_interruptions=True,  # let the user break in again if needed
         )
 
@@ -131,8 +128,6 @@ async def entrypoint(ctx: agents.JobContext):
     )
 
     # ── background tasks ──────────────────────────────────────────────
-    # start the bridge that listens to the thread-based queue
-    asyncio.create_task(_bridge_blocking_to_async())
     # start the dispatcher that speaks anything it receives
     asyncio.create_task(_speech_dispatcher(session))
 
