@@ -618,7 +618,7 @@ def text_to_browser_action(
     history: ActionHistory = None,
     state: BrowserState = None,
 ) -> Optional[BaseModel]:
-    print("🤖 Controller: text command to browser action... ⏳")
+    print("\n🤖 Controller: text command to browser action... ⏳\n")
     if ADVANCED_MODE:
         response_format = _create_full_response_format(tabs, buttons, state)
         client.set_endpoint("gpt-4o-mini@openai")
@@ -668,7 +668,7 @@ def text_to_browser_action(
         if num_selected == 1:
             # only one candidate, can already return
             response_format = _build_pruned_response_format(ret)
-            print("🤖 Controller: text command to browser action ✅")
+            print("\n🤖 Controller: text command to browser action ✅\n")
             return response_format.model_validate(ret).model_dump()
 
         # decide among the candidate actions
@@ -683,7 +683,7 @@ def text_to_browser_action(
             ret = response_format.model_validate_json(ret)
             ret, num_selected = _extract_applied_actions(ret)
         response_format = _build_pruned_response_format(ret)
-        print("🤖 Controller: text command to browser action ✅")
+        print("\n🤖 Controller: text command to browser action ✅\n")
         return response_format.model_validate(ret).model_dump()
     else:
         valid_actions = _list_valid_actions(tabs, buttons, state)
@@ -726,5 +726,5 @@ def text_to_browser_action(
 
         if reply.value:
             action = f"{action} {str(reply.value)}"
-        print("🤖 Controller: text command to browser action ✅")
+        print("\n🤖 Controller: text command to browser action ✅\n")
         return {"rationale": reply.rationale, "action": action}
