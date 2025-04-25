@@ -29,12 +29,13 @@ def _wrap_sync_method(fn: callable, name: str):
         ret = fn(*a, **kw)
         is_put = fn.__name__ in ("put", "put_nowait")
         if is_put or ret is not None:
-            if is_put:
-                print(
-                    f"\n🛜 {name}.{fn.__name__}(args={_redacted(a)}, kw={_redacted(kw)})\n",
-                )
-            else:
-                print(f"\n🛜 {name}.{fn.__name__}() -> {_redacted(ret)}\n")
+            if name != "browser_state_q":  # constantly streaming
+                if is_put:
+                    print(
+                        f"\n🛜 {name}.{fn.__name__}(args={_redacted(a)}, kw={_redacted(kw)})\n",
+                    )
+                else:
+                    print(f"\n\n🛜 {name}.{fn.__name__}() -> {_redacted(ret)}\n")
             unify.log(
                 context="Queues",
                 session_id=SESSION_ID,
@@ -54,12 +55,13 @@ def _wrap_async_method(fn, name: str):
         ret = await fn(*a, **kw)
         is_put = fn.__name__ in ("put", "put_nowait")
         if is_put or ret is not None:
-            if is_put:
-                print(
-                    f"\n🛜 {name}.{fn.__name__}(args={_redacted(a)}, kw={_redacted(kw)})\n",
-                )
-            else:
-                print(f"\n🛜 {name}.{fn.__name__}() -> {_redacted(ret)}\n")
+            if name != "browser_state_q":  # constantly streaming
+                if is_put:
+                    print(
+                        f"\n🛜 {name}.{fn.__name__}(args={_redacted(a)}, kw={_redacted(kw)})\n",
+                    )
+                else:
+                    print(f"\n\n🛜 {name}.{fn.__name__}() -> {_redacted(ret)}\n")
             unify.log(
                 context="Queues",
                 session_id=SESSION_ID,
