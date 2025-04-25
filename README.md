@@ -30,9 +30,17 @@ LIVEKIT_API_KEY={value}
 LIVEKIT_API_SECRET={value}
 ```
 
-### Have a Call!
+### Download Required Files
 
 With your venv activated (after calling `source .unity/bin/activate`):
+
+```
+python make_call.py download-files
+```
+
+### Have a Call!
+
+With your venv activated:
 
 ```
 python make_call.py
