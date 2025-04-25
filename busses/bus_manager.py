@@ -1,3 +1,4 @@
+import json
 import queue
 import asyncio
 from functools import wraps
@@ -19,7 +20,11 @@ def _wrap_sync_method(fn: callable, name: str):
                 context="Queues",
                 queue=name,
                 method=fn.__name__,
-                content={"args": a, "kwargs": kw} if is_put else ret,
+                content=(
+                    json.dumps({"args": a, "kwargs": kw}, indent=4)
+                    if is_put
+                    else json.dumps(ret, indent=4)
+                ),
             )
         return ret
 
@@ -37,7 +42,11 @@ def _wrap_async_method(fn, name: str):
                 context="Queues",
                 queue=name,
                 method=fn.__name__,
-                content={"args": a, "kwargs": kw} if is_put else ret,
+                content=(
+                    json.dumps({"args": a, "kwargs": kw}, indent=4)
+                    if is_put
+                    else json.dumps(ret, indent=4)
+                ),
             )
         return ret
 
