@@ -16,7 +16,7 @@ Run [this demo](https://docs.livekit.io/agents/start/voice-ai/#agent-code) (the 
 
 ### Environment Variables
 
-Populate an `.env` file in the same root directory (ie `~/unity/.env`), based on these newly generated keys:
+Populate an `.env` file in the same root directory (ie `~/unity/.env`), based on these newly generated keys, and also create some of your own for assistant customization (name, age etc.):
 ```
 OPENAI_API_KEY={value}
 FIRST_NAME={value}
