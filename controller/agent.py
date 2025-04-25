@@ -643,23 +643,27 @@ def text_to_browser_action(
             PRIMITIVE_TO_BROWSER_ACTION_CANDIDATES + history_msg + state_msg,
         )
         client.set_response_format(response_format)
+        content = [
+            {
+                "type": "text",
+                "text": text,
+            },
+        ]
+        if screenshot:
+            content += [
+                {
+                    "type": "image_url",
+                    "image_url": {
+                        "url": f"data:image/jpeg;base64," f"{screenshot}",
+                    },
+                },
+            ]
         ret = client.generate(
             messages=client.messages
             + [
                 {
                     "role": "user",
-                    "content": [
-                        {
-                            "type": "text",
-                            "text": text,
-                        },
-                        {
-                            "type": "image_url",
-                            "image_url": {
-                                "url": f"data:image/jpeg;base64," f"{screenshot}",
-                            },
-                        },
-                    ],
+                    "content": content,
                 },
             ],
         )
@@ -726,7 +730,30 @@ def text_to_browser_action(
         client.set_system_message(sys_prompt)
         client.set_response_format(SimpleChoice)
 
-        raw = client.generate(text)
+        content = [
+            {
+                "type": "text",
+                "text": text,
+            },
+        ]
+        if screenshot:
+            content += [
+                {
+                    "type": "image_url",
+                    "image_url": {
+                        "url": f"data:image/jpeg;base64," f"{screenshot}",
+                    },
+                },
+            ]
+        raw = client.generate(
+            messages=client.messages
+            + [
+                {
+                    "role": "user",
+                    "content": content,
+                },
+            ],
+        )
         reply = SimpleChoice.model_validate_json(raw)
 
         action = reply.action
