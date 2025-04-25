@@ -6,6 +6,7 @@ from controller.controller import Controller
 from planner.planner import Planner
 
 import unify
+from constants import SESSION_ID
 
 
 def _wrap_sync_method(fn: callable, name: str):
@@ -17,6 +18,7 @@ def _wrap_sync_method(fn: callable, name: str):
         if is_put or ret is not None:
             unify.log(
                 context="Queues",
+                session_id=SESSION_ID,
                 queue=name,
                 method=fn.__name__,
                 content={"args": a, "kwargs": kw} if is_put else {"return": ret},
@@ -35,6 +37,7 @@ def _wrap_async_method(fn, name: str):
         if is_put or ret is not None:
             unify.log(
                 context="Queues",
+                session_id=SESSION_ID,
                 queue=name,
                 method=fn.__name__,
                 content={"args": a, "kwargs": kw} if is_put else {"return": ret},
