@@ -123,6 +123,7 @@ class TaskManager(threading.Thread):
                 in_progress=False,
                 start_at=first_task.start_at,
                 recurring=first_task.recurring,
+                new=True,
             )
 
     def run(self) -> None:
