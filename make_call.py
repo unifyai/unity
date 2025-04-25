@@ -1,22 +1,60 @@
+import sys
 import os
 import sys
 import asyncio
 import random
-import logging
+import logging.config
 from datetime import datetime, timezone
 from typing import AsyncIterable
 from dotenv import load_dotenv
 from livekit import agents
+from livekit.agents.voice import chat_cli
 from livekit.agents import Agent, AgentSession, RoomInputOptions
 from livekit.plugins import cartesia, deepgram, noise_cancellation, openai, silero
 from livekit.plugins.turn_detector.multilingual import MultilingualModel
 
+from user_facing.sys_msgs import PHONE_AGENT
+from busses.bus_manager import BusManager
 from constants import SESSION_ID
+import unify
+
+logging.config.dictConfig(
+    {
+        "version": 1,
+        # <─ KEY LINE ────────────────────────────────────────────────────┐
+        "disable_existing_loggers": True,  # disables *all* library loggers │
+        # ────────────────────────────────────────────────────────────────┘
+        "formatters": {
+            "default": {
+                "format": "%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+                "datefmt": "%Y-%m-%d %H:%M:%S",
+            },
+        },
+        "handlers": {
+            "console": {
+                "class": "logging.StreamHandler",
+                "stream": sys.stderr,
+                "formatter": "default",
+            },
+        },
+        # root prints nothing unless you deliberately raise it later
+        "root": {"level": "CRITICAL", "handlers": ["console"]},
+        # the *only* logger that’s enabled:
+        "loggers": {
+            "myapp": {
+                "level": "INFO",
+                "handlers": ["console"],
+                "propagate": False,
+            },
+        },
+    },
+)
+
+log = logging.getLogger("myapp")
+log.info("This is from my app")
+
 
 # Hack to prevent terminal writies
-from livekit.agents.voice import chat_cli
-
-
 def _silent_print_audio_mode(self, *args, **kwargs):
     sys.stdout.flush()
 
@@ -24,16 +62,8 @@ def _silent_print_audio_mode(self, *args, **kwargs):
 chat_cli.ChatCLI._print_audio_mode = _silent_print_audio_mode
 # End hack
 
-logging.disable(logging.CRITICAL)
-
 load_dotenv()
 FIRST_NAME = os.environ["FIRST_NAME"]
-
-from user_facing.sys_msgs import PHONE_AGENT
-from busses.bus_manager import BusManager
-
-
-import unify
 
 unify.activate("Unity", overwrite=True)
 
