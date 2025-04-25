@@ -1,5 +1,7 @@
 import queue
+import inspect
 import asyncio
+from pathlib import Path
 from functools import wraps
 from asyncio import AbstractEventLoop
 
@@ -32,12 +34,15 @@ def _wrap_sync_method(fn: callable, name: str):
         is_put = fn.__name__ in ("put", "put_nowait")
         if is_put or ret is not None:
             if name != "browser_state_q":  # constantly streaming
+                fpath = f"{Path(__file__).resolve()}:{inspect.currentframe().f_lineno}"
                 if is_put:
                     print(
-                        f"\n🛜 {name}.{fn.__name__}(args={_redacted(a)}, kw={_redacted(kw)})\n",
+                        f"\n🛜 {name}.{fn.__name__}(args={_redacted(a)}, kw={_redacted(kw)}) [{fpath}]\n",
                     )
                 else:
-                    print(f"\n\n🛜 {name}.{fn.__name__}() -> {_redacted(ret)}\n")
+                    print(
+                        f"\n\n🛜 {name}.{fn.__name__}() -> {_redacted(ret)} [{fpath}]\n",
+                    )
             unify.log(
                 context="Queues",
                 session_id=SESSION_ID,
@@ -58,12 +63,15 @@ def _wrap_async_method(fn, name: str):
         is_put = fn.__name__ in ("put", "put_nowait")
         if is_put or ret is not None:
             if name != "browser_state_q":  # constantly streaming
+                fpath = f"{Path(__file__).resolve()}:{inspect.currentframe().f_lineno}"
                 if is_put:
                     print(
-                        f"\n🛜 {name}.{fn.__name__}(args={_redacted(a)}, kw={_redacted(kw)})\n",
+                        f"\n🛜 {name}.{fn.__name__}(args={_redacted(a)}, kw={_redacted(kw)}) [{fpath}]\n",
                     )
                 else:
-                    print(f"\n\n🛜 {name}.{fn.__name__}() -> {_redacted(ret)}\n")
+                    print(
+                        f"\n\n🛜 {name}.{fn.__name__}() -> {_redacted(ret)} [{fpath}]\n",
+                    )
             unify.log(
                 context="Queues",
                 session_id=SESSION_ID,
