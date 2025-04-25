@@ -1,5 +1,6 @@
 import queue
 import threading
+from datetime import datetime, timezone
 from typing import List
 
 from controller.worker import BrowserWorker
@@ -72,3 +73,5 @@ class Controller(threading.Thread):
 
             # ToDo: only send this once we KNOW the browser action has completed successfully
             self._action_completion_q.put(text_command)
+            t = datetime.now(timezone.utc).time().isoformat(timespec="milliseconds")
+            print(f"\n🕹️ Performed Action: {text_command} [⏱️ {t}]\n")
