@@ -21,7 +21,7 @@ class Controller(threading.Thread):
         daemon: bool = True,
     ) -> None:
         super().__init__(daemon=daemon)
-        self._text_command_q = text_command_q
+        self._text_action_q = text_command_q
         self._browser_state_q = browser_state_q
         self._browser_command_q = browser_command_q
         self._action_completion_q = action_completion_q
@@ -36,8 +36,8 @@ class Controller(threading.Thread):
 
     def run(self) -> None:
         while True:
-            text_command = self._text_command_q.get()
-            if text_command is None:
+            text_action = self._text_action_q.get()
+            if text_action is None:
                 break
 
             if self._browser_open:
@@ -49,16 +49,14 @@ class Controller(threading.Thread):
                 name="text_to_browser_action",
             ):
                 cmd = text_to_browser_action(
-                    text=text_command,
+                    text=text_action,
                     screenshot=browser_state.get("screenshot", b""),
                     tabs=browser_state.get("tabs", []),
                     buttons=browser_state.get("elements", []),
                     history=browser_state.get("history", []),
                     state=browser_state.get("state", {}),
                 )
-            assert (
-                cmd is not None
-            ), f"text_command {text_command} returned empty command"
+            assert cmd is not None, f"text_command {text_action} returned empty command"
             action = cmd["action"]
 
             if action == "open browser" and not self._browser_open:
@@ -78,6 +76,6 @@ class Controller(threading.Thread):
                 self._browser_command_q.put(action)
 
             # ToDo: only send this once we KNOW the browser action has completed successfully
-            self._action_completion_q.put(text_command)
+            self._action_completion_q.put(text_action)
             t = datetime.now(timezone.utc).time().isoformat(timespec="milliseconds")
-            print(f"\n🕹️ Performed Action: {text_command} [⏱️ {t}]\n")
+            print(f"\n🕹️ Performed Action: {text_action} [⏱️ {t}]\n")

@@ -35,7 +35,8 @@ from busses.bus_manager import BusManager
 
 import unify
 
-unify.activate("Unity")
+unify.activate("Unity", overwrite=True)
+
 
 bus_manager = BusManager()
 
@@ -47,7 +48,7 @@ async def _speech_dispatcher(
     Waits for text, interrupts any current speech, and speaks the new text.
     """
     while True:
-        next_text = await bus_manager.task_completion_q.get()
+        await bus_manager.task_completion_q.get()
         # 1) stop whatever is playing
         await session.interrupt()  # Docs: “Interrupt current speech”
         # 2) speak the fresh text

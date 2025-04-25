@@ -68,17 +68,24 @@ class TaskManager(threading.Thread):
     ) -> None:
         super().__init__(daemon=daemon)
         self._transcript_q = transcript_q
-        self._text_command_q = text_command_q
-
+        self._text_task_q = text_command_q
         self._task_organizer_client = unify.Unify("o3-mini@openai", traced=True)
+        self._current_task = None
 
     def _maybe_update_tasks(self, messages: List[Dict[str, str]]):
         if "Tasks" not in unify.get_contexts():
             unify.create_context("Tasks")
-        current_tasks = unify.get_logs(
-            context="Tasks",
-        )
+        current_tasks = unify.get_logs(context="Tasks", filter="status != 'completed'")
         if current_tasks:
+            # ToDo: implement this properly
+            current_tasks = {
+                log.entries["title"]: {
+                    k: v
+                    for k, v in log.entries.items()
+                    if k in ("description", "in_progress", "start_at", "recurring")
+                }
+                for log in current_tasks
+            }
             self._task_organizer_client.set_system_message(
                 REORGANISE_TASKS.replace(
                     "{current_tasks}",
@@ -108,18 +115,20 @@ class TaskManager(threading.Thread):
             if not resp.task_was_requested:
                 return
             first_task = resp.first_task
-            if first_task.should_create:
-                self._text_command_q.put(first_task.description)
-            unify.log(
+            self._task_log = unify.log(
                 context="Tasks",
                 session_id=SESSION_ID,
                 title=first_task.title,
                 description=first_task.description,
-                in_progress=False,
+                status="in progress",
                 start_at=first_task.start_at,
                 recurring=first_task.recurring,
                 new=True,
             )
+            if first_task.should_create:
+                self._text_task_q.put(
+                    (self._task_log.to_json(), first_task.description),
+                )
 
     def run(self) -> None:
         while True:
