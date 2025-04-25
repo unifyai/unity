@@ -6,6 +6,7 @@ background thread, so every Playwright call stays on the same thread.
 from __future__ import annotations
 
 import queue
+import base64
 import threading
 import time
 import shutil
@@ -210,11 +211,14 @@ class BrowserWorker(threading.Thread):
                     ]
 
                     screenshot_bytes = mirror.screenshot()
+                    screenshot = screenshot = base64.b64encode(screenshot_bytes).decode(
+                        "utf-8",
+                    )
 
                     payload = {
                         "elements": elements_lite,
                         "tabs": tab_titles,
-                        "screenshot": screenshot_bytes,
+                        "screenshot": screenshot,
                         "history": self.runner.hist.dump(),
                         "state": vars(self.runner.state),
                     }
