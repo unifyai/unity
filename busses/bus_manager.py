@@ -41,7 +41,7 @@ def _wrap_sync_method(fn: callable, name: str):
                     )
                 else:
                     print(
-                        f"\n\n🛜 {name}.{fn.__name__}() -> {_redacted(ret)} [{fpath}]\n",
+                        f"\n🛜 {name}.{fn.__name__}() -> {_redacted(ret)} [{fpath}]\n",
                     )
             unify.log(
                 context="Queues",
@@ -70,7 +70,7 @@ def _wrap_async_method(fn, name: str):
                     )
                 else:
                     print(
-                        f"\n\n🛜 {name}.{fn.__name__}() -> {_redacted(ret)} [{fpath}]\n",
+                        f"\n🛜 {name}.{fn.__name__}() -> {_redacted(ret)} [{fpath}]\n",
                     )
             unify.log(
                 context="Queues",
