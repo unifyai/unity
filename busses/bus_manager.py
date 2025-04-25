@@ -65,7 +65,7 @@ def _wrap_sync_method(fn: callable, name: str):
                     )
                 PRINT_LOCK.release()
             unify.log(
-                context="Queues",
+                context="Events",
                 session_id=SESSION_ID,
                 queue=name,
                 method=fn.__name__,
@@ -110,7 +110,7 @@ def _wrap_async_method(fn, name: str):
                     )
                 PRINT_LOCK.release()
             unify.log(
-                context="Queues",
+                context="Events",
                 session_id=SESSION_ID,
                 queue=name,
                 method=fn.__name__,
