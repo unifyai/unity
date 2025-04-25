@@ -7,23 +7,8 @@ from typing import List, Dict, Optional
 
 import unify
 from constants import SESSION_ID
-from task_managers.sys_msgs import DETECT_TASK_REQUEST, FIRST_TASK, REORGANISE_TASKS
+from task_managers.sys_msgs import FIRST_TASK, REORGANISE_TASKS
 from pydantic import BaseModel, Field
-
-
-class TaskRequested(BaseModel):
-    """
-    Whether or not a task was requested from the user.
-    """
-
-    reasoning: str = Field(
-        ...,
-        description="The reasoning behind your decision as to whether or not a task was requested.",
-    )
-    task_was_requested: bool = Field(
-        ...,
-        description="You believe a task was requested.",
-    )
 
 
 class FirstTask(BaseModel):
@@ -41,7 +26,7 @@ class FirstTask(BaseModel):
     )
     description: str = Field(
         ...,
-        description="If `should_create is True`, then a suitable task description, one or two sentences.",
+        description="If `should_create is True`, then a suitable description of the task, written in third person, ignoring the chat context (no quotes etc.)",
     )
     start_at: Optional[str] = Field(
         ...,
@@ -50,6 +35,25 @@ class FirstTask(BaseModel):
     recurring: Optional[List[str]] = Field(
         ...,
         description="Optional recurring schedule, as a list of days and times (['Monday:HH:MM:SS', 'Wednesday:HH:MM:SS'])",
+    )
+
+
+class FirstTaskResponse(BaseModel):
+    """
+    Whether or not a task was requested from the user. If so, also return a full description of the requested task.
+    """
+
+    reasoning: str = Field(
+        ...,
+        description="The reasoning behind your decision as to whether or not a task was requested.",
+    )
+    task_was_requested: bool = Field(
+        ...,
+        description="You believe a task was requested.",
+    )
+    first_task: Optional[FirstTask] = Field(
+        ...,
+        "Full breakdown of the task specified by the user.",
     )
 
 
@@ -66,51 +70,44 @@ class TaskManager(threading.Thread):
         self._transcript_q = transcript_q
         self._text_command_q = text_command_q
 
-        self._task_request_client = unify.Unify("gpt-4o-mini@openai", traced=True)
-        self._task_request_client.set_system_message(DETECT_TASK_REQUEST)
-        self._task_request_client.set_response_format(TaskRequested)
-
         self._task_organizer_client = unify.Unify("o3-mini@openai", traced=True)
 
-    def _detect_task_request(self, messages: List[Dict[str, str]]) -> bool:
-        t0 = time.perf_counter()
-        t = datetime.now(timezone.utc).time().isoformat(timespec="milliseconds")
-        print(f"\n🤖 Task Manager: transcript to task request... ⏳ [⏱️ {t}]\n")
-        raw = self._task_request_client.copy().generate(json.dumps(messages, indent=4))
-        parsed = TaskRequested.model_validate_json(raw)
-        t = datetime.now(timezone.utc).time().isoformat(timespec="milliseconds")
-        print(
-            f"\n🤖 Task Manager: transcript to task request ✅ [⏱️ {t}] [⏩{(time.perf_counter() - t0):.3g}s]\n",
-        )
-        return parsed.task_was_requested
-
-    def _update_tasks(self, messages: List[Dict[str, str]]):
-        # Debug code ----
-        if "Tasks" in unify.get_contexts():
-            unify.delete_context("Tasks")
-            unify.create_context("Tasks")
-        # End Debug code ----
+    def _maybe_update_tasks(self, messages: List[Dict[str, str]]):
         if "Tasks" not in unify.get_contexts():
             unify.create_context("Tasks")
         current_tasks = unify.get_logs(
             context="Tasks",
         )
         if current_tasks:
-            self._task_organizer_client.set_system_message(REORGANISE_TASKS)
+            self._task_organizer_client.set_system_message(
+                REORGANISE_TASKS.replace(
+                    "{current_tasks}",
+                    json.dumps(current_tasks, indent=4),
+                ),
+            )
         else:
             self._task_organizer_client.set_system_message(FIRST_TASK)
-            self._task_organizer_client.set_response_format(FirstTask)
+            self._task_organizer_client.set_response_format(FirstTaskResponse)
             t0 = time.perf_counter()
             t = datetime.now(timezone.utc).time().isoformat(timespec="milliseconds")
-            print(f"\n🤖 Task Manager: task request to task updates... ⏳ [⏱️ {t}]\n")
-            first_task = self._task_organizer_client.generate(
+            print(
+                f"\n🤖 Task Manager: transcript to possible task updates... ⏳ [⏱️ {t}]\n",
+            )
+            messages = {
+                "latest_message": messages[-1],
+                "message_history": messages[:-1],
+            }
+            resp = self._task_organizer_client.generate(
                 json.dumps(messages, indent=4),
             )
             t = datetime.now(timezone.utc).time().isoformat(timespec="milliseconds")
             print(
-                f"\n🤖 Task Manager: task request to task updates ✅ [⏱️ {t}] [⏩{(time.perf_counter() - t0):.3g}s]\n",
+                f"\n🤖 Task Manager: transcript to possible task updates ✅ [⏱️ {t}] [⏩{(time.perf_counter() - t0):.3g}s]\n",
             )
-            first_task = FirstTask.model_validate_json(first_task)
+            resp = FirstTaskResponse.model_validate_json(resp)
+            if not resp.task_was_requested:
+                return
+            first_task = resp.first_task
             if first_task.should_create:
                 self._text_command_q.put(first_task.description)
             unify.log(
@@ -132,14 +129,6 @@ class TaskManager(threading.Thread):
 
             with unify.Context("LLM Traces"), unify.Log(
                 session_id=SESSION_ID,
-                name="_detect_task_request",
-            ):
-                task_was_requested = self._detect_task_request(messages)
-            if not task_was_requested:
-                continue
-
-            with unify.Context("LLM Traces"), unify.Log(
-                session_id=SESSION_ID,
                 name="_update_tasks",
             ):
-                self._update_tasks(messages)
+                self._maybe_update_tasks(messages)
