@@ -10,9 +10,13 @@ source .unity/bin/activate
 uv pip install -r requirements.txt
 ```
 
+### Run LiveKit Demo
+
+Run [this demo](https://docs.livekit.io/agents/start/voice-ai/#agent-code) (the SST-LLM-TTS one!), and create accounts for all third party platforms, storing the API Keys as needed.
+
 ### Environment Variables
 
-Populate an `.env` file in the same root directory (ie `~/unity/.env`):
+Populate an `.env` file in the same root directory (ie `~/unity/.env`), based on these newly generated keys:
 ```
 OPENAI_API_KEY={value}
 FIRST_NAME={value}
