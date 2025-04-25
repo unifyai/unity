@@ -1,5 +1,6 @@
-import sys
 import os
+
+os.environ["TRANSFORMERS_VERBOSITY"] = "error"
 import sys
 import asyncio
 import random
@@ -50,7 +51,7 @@ logging.config.dictConfig(
     },
 )
 
-log = logging.getLogger("myapp")
+log = logging.getLogger("Unity")
 log.info("This is from my app")
 
 
