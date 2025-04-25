@@ -43,7 +43,8 @@ class Planner(threading.Thread):
             text_action_completed = self._action_completion_q.get()
             assert text_action == text_action_completed
 
-            text_task_log.update_entries(status="completed")
+            # ToDo: work out why this is not working
+            # text_task_log.update_entries(status="completed")
             self._coms_asyncio_loop.call_soon_threadsafe(
                 self._task_completion_q.put_nowait,
                 task_description,
