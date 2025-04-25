@@ -1,27 +1,27 @@
-DETECT_TASK_REQUEST = """
-Your task is to determine whether or not the provided messages contain a request from the user, asking the assistant to perform a task. You should state the reasoning for your decision clearly in the reasoning field, before responding with your final answer, `True` if a task was requested, and `False` if not."
+_BASE = """
+Your task is to first determine whether or not the **latest message** from the user contains an **explicit request** asking the assistant to either update or perform a task. The user-requested task might not be fully encapsulated in this latest message alone. For example, the latest user message in a live call transcript might just be: 'great, can you get started now then?', which is still a request despite not having all of the context. You should therefore consider the context of the **entire conversation history**, before deciding whether or not the latest message is requesting a task be started and/or updated. You should state the reasoning for your decision clearly in the reasoning field."
 """
 
-FIRST_TASK = """
-Your task is to create a new task based on a conversation which *potentially* (not necessarily) contains instructions for a new task which needs to be completed.
+FIRST_TASK = (
+    _BASE
+    + """
+Following this, you must then create a new task based on this prior reasoning.
 
 If no time information is provided, then you should assume the task is to be completed *now*, and that it is *not* a recurring task.
 
 Please respond in the output format specified, stating your reasoning very clearly for each decision made.
-
-The conversation which may or may not contain information about a new task will be provided by the user.
 """
+)
 
-REORGANISE_TASKS = """
-Your task is to update a list of tasks based on a conversation which *potentially* (not necessarily) contains instructions on which tasks to update, and how to update them.
+REORGANISE_TASKS = (
+    _BASE
+    + """
+Following this, your must update the list of tasks based on this prior reasoning.
 
 The current full set of tasks is as follows:
 
 {current_tasks}
 
-The conversation which may or may not contain guidance for updating the tasks:
-
-{conversation}
-
 Please respond in the output format specified, stating your reasoning very clearly for each decision made.
 """
+)
