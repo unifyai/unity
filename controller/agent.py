@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 from typing import List, Optional, Union, Tuple, Dict, Any
+import logging
 
-import unify
+logger = logging.getLogger(__name__)
+
 import base64
 import time
 from datetime import datetime, timezone
@@ -15,6 +17,7 @@ from controller.sys_msgs import (
     PRIMITIVE_TO_BROWSER_ACTION_CANDIDATES,
     PRIMITIVE_TO_BROWSER_ACTION,
 )
+import unify
 
 client = unify.Unify(traced=True)
 client.set_system_message(PRIMITIVE_TO_BROWSER_ACTION_CANDIDATES)
@@ -621,7 +624,7 @@ def text_to_browser_action(
 ) -> Optional[BaseModel]:
     t0 = time.perf_counter()
     t = datetime.now(timezone.utc).time().isoformat(timespec="milliseconds")
-    print(f"\n🤖 Controller: text command to browser action... ⏳ [⏱️ {t}]\n")
+    logger.info(f"\n🤖 Controller: text command to browser action... ⏳ [⏱️ {t}]\n")
     if ADVANCED_MODE:
         response_format = _create_full_response_format(tabs, buttons, state)
         client.set_endpoint("gpt-4o-mini@openai")
@@ -676,7 +679,7 @@ def text_to_browser_action(
             # only one candidate, can already return
             response_format = _build_pruned_response_format(ret)
             t = datetime.now(timezone.utc).time().isoformat(timespec="milliseconds")
-            print(
+            logger.info(
                 f"\n🤖 Controller: text command to browser action ✅ [⏱️ {t}] [⏩{(time.perf_counter() - t0):.3g}s]\n",
             )
             return response_format.model_validate(ret).model_dump()
@@ -694,7 +697,7 @@ def text_to_browser_action(
             ret, num_selected = _extract_applied_actions(ret)
         response_format = _build_pruned_response_format(ret)
         t = datetime.now(timezone.utc).time().isoformat(timespec="milliseconds")
-        print(
+        logger.info(
             f"\n🤖 Controller: text command to browser action ✅ [⏱️ {t}] [⏩{(time.perf_counter() - t0):.3g}s]\n",
         )
         return response_format.model_validate(ret).model_dump()
@@ -763,7 +766,7 @@ def text_to_browser_action(
         if reply.value:
             action = f"{action} {str(reply.value)}"
         t = datetime.now(timezone.utc).time().isoformat(timespec="milliseconds")
-        print(
+        logger.info(
             f"\n🤖 Controller: text command to browser action ✅ [⏱️ {t}] [⏩{(time.perf_counter() - t0):.3g}s]\n",
         )
         return {"rationale": reply.rationale, "action": action}
