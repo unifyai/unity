@@ -16,9 +16,7 @@ Please respond in the output format specified, stating your reasoning very clear
 REORGANISE_TASKS = (
     _BASE
     + """
-Following this, your must update the list of tasks based on this prior reasoning.
-
-The current full set of tasks is as follows:
+Following this, your must update the user's list of tasks based on this prior reasoning:
 
 {current_tasks}
 
