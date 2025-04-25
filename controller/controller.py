@@ -3,6 +3,7 @@ import threading
 from datetime import datetime, timezone
 from typing import List
 
+import unify
 from controller.worker import BrowserWorker
 from controller.agent import text_to_browser_action
 
@@ -42,14 +43,15 @@ class Controller(threading.Thread):
                 browser_state = self._browser_state_q.get()
             else:
                 browser_state = {}
-            cmd = text_to_browser_action(
-                text=text_command,
-                screenshot=browser_state.get("screenshot", b""),
-                tabs=browser_state.get("tabs", []),
-                buttons=browser_state.get("elements", []),
-                history=browser_state.get("history", []),
-                state=browser_state.get("state", {}),
-            )
+            with unify.Context("Traces"), unify.Log(name="text_to_browser_action"):
+                cmd = text_to_browser_action(
+                    text=text_command,
+                    screenshot=browser_state.get("screenshot", b""),
+                    tabs=browser_state.get("tabs", []),
+                    buttons=browser_state.get("elements", []),
+                    history=browser_state.get("history", []),
+                    state=browser_state.get("state", {}),
+                )
             assert (
                 cmd is not None
             ), f"text_command {text_command} returned empty command"

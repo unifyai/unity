@@ -71,6 +71,7 @@ class TaskManager(threading.Thread):
 
         self._task_organizer_client = unify.Unify("o3-mini@openai", traced=True)
 
+    @unify.traced
     def _detect_task_request(self, messages: List[Dict[str, str]]) -> bool:
         t0 = time.perf_counter()
         t = datetime.now(timezone.utc).time().isoformat(timespec="milliseconds")
@@ -83,6 +84,7 @@ class TaskManager(threading.Thread):
         )
         return parsed.task_was_requested
 
+    @unify.traced
     def _update_tasks(self, messages: List[Dict[str, str]]):
         # Debug code ----
         if "Tasks" in unify.get_contexts():
@@ -127,8 +129,10 @@ class TaskManager(threading.Thread):
             if messages is None:
                 break
 
-            task_was_requested = self._detect_task_request(messages)
+            with unify.Context("Traces"), unify.Log(name="_detect_task_request"):
+                task_was_requested = self._detect_task_request(messages)
             if not task_was_requested:
                 continue
 
-            self._update_tasks(messages)
+            with unify.Context("Traces"), unify.Log(name="_update_tasks"):
+                self._update_tasks(messages)
