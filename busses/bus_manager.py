@@ -34,7 +34,13 @@ def _wrap_sync_method(fn: callable, name: str):
         is_put = fn.__name__ in ("put", "put_nowait")
         if is_put or ret is not None:
             if name != "browser_state_q":  # constantly streaming
-                fpath = f"{Path(__file__).resolve()}:{inspect.currentframe().f_lineno}"
+                caller_frame = inspect.currentframe().f_back
+                if caller_frame is not None:
+                    caller_file = Path(caller_frame.f_code.co_filename).resolve()
+                    caller_line = caller_frame.f_lineno
+                    fpath = f"{caller_file}:{caller_line}"
+                else:
+                    fpath = "<unknown>:?"
                 if is_put:
                     print(
                         f"\n🛜 {name}.{fn.__name__}(args={_redacted(a)}, kw={_redacted(kw)}) [{fpath}]\n",
@@ -63,7 +69,13 @@ def _wrap_async_method(fn, name: str):
         is_put = fn.__name__ in ("put", "put_nowait")
         if is_put or ret is not None:
             if name != "browser_state_q":  # constantly streaming
-                fpath = f"{Path(__file__).resolve()}:{inspect.currentframe().f_lineno}"
+                caller_frame = inspect.currentframe().f_back
+                if caller_frame is not None:
+                    caller_file = Path(caller_frame.f_code.co_filename).resolve()
+                    caller_line = caller_frame.f_lineno
+                    fpath = f"{caller_file}:{caller_line}"
+                else:
+                    fpath = "<unknown>:?"
                 if is_put:
                     print(
                         f"\n🛜 {name}.{fn.__name__}(args={_redacted(a)}, kw={_redacted(kw)}) [{fpath}]\n",
