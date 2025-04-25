@@ -19,7 +19,7 @@ def _wrap_sync_method(fn: callable, name: str):
                 context="Queues",
                 queue=name,
                 method=fn.__name__,
-                content={"args": a, "kwargs": kw} if is_put else ret,
+                content={"args": a, "kwargs": kw} if is_put else {"return": ret},
             )
         return ret
 
@@ -37,7 +37,7 @@ def _wrap_async_method(fn, name: str):
                 context="Queues",
                 queue=name,
                 method=fn.__name__,
-                content={"args": a, "kwargs": kw} if is_put else ret,
+                content={"args": a, "kwargs": kw} if is_put else {"return": ret},
             )
         return ret
 
