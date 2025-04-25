@@ -1,8 +1,8 @@
 import queue
-import time
 import inspect
 import asyncio
 import threading
+from datetime import datetime, timezone
 from pathlib import Path
 from functools import wraps
 from asyncio import AbstractEventLoop
@@ -35,7 +35,7 @@ def _wrap_sync_method(fn: callable, name: str):
 
     @wraps(fn)
     def _wrapped(*a, **kw):
-        ts = time.perf_counter()
+        t = datetime.now(timezone.utc).time().isoformat(timespec="milliseconds")
         ret = fn(*a, **kw)
         is_put = fn.__name__ in ("put", "put_nowait")
         if is_put or ret is not None:
@@ -52,16 +52,16 @@ def _wrap_sync_method(fn: callable, name: str):
                 if is_put:
                     print(
                         f"\n🛜 {name}.{fn.__name__}(args={_redacted(a)}, kw={_redacted(kw)})",
-                        f"timestamp({ts})",
-                        f"fpath({fpath})",
-                        f"thread({threading.get_ident()})\n",
+                        f"[{t}])",
+                        f"[{fpath}]",
+                        f"[thread-{threading.get_ident()}]\n",
                     )
                 else:
                     print(
                         f"\n🛜 {name}.{fn.__name__}() -> {_redacted(ret)}",
-                        f"timestamp({ts})",
-                        f"fpath({fpath})",
-                        f"thread({threading.get_ident()})\n",
+                        f"[{t}])",
+                        f"[{fpath}]",
+                        f"[thread-{threading.get_ident()}]\n",
                     )
                 PRINT_LOCK.release()
             unify.log(
@@ -80,7 +80,7 @@ def _wrap_async_method(fn, name: str):
 
     @wraps(fn)
     async def _wrapped(*a, **kw):
-        ts = time.perf_counter()
+        t = datetime.now(timezone.utc).time().isoformat(timespec="milliseconds")
         ret = await fn(*a, **kw)
         is_put = fn.__name__ in ("put", "put_nowait")
         if is_put or ret is not None:
@@ -97,16 +97,16 @@ def _wrap_async_method(fn, name: str):
                 if is_put:
                     print(
                         f"\n🛜 {name}.{fn.__name__}(args={_redacted(a)}, kw={_redacted(kw)})",
-                        f"timestamp({ts})",
-                        f"fpath({fpath})",
-                        f"thread({threading.get_ident()})\n",
+                        f"[{t}])",
+                        f"[{fpath}]",
+                        f"[thread-{threading.get_ident()}]\n",
                     )
                 else:
                     print(
                         f"\n🛜 {name}.{fn.__name__}() -> {_redacted(ret)}",
-                        f"timestamp({ts})",
-                        f"fpath({fpath})",
-                        f"thread({threading.get_ident()})\n",
+                        f"[{t}])",
+                        f"[{fpath}]",
+                        f"[thread-{threading.get_ident()}]\n",
                     )
                 PRINT_LOCK.release()
             unify.log(
