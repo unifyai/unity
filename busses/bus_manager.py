@@ -9,6 +9,19 @@ import unify
 from constants import SESSION_ID
 
 
+def _redacted(obj):
+    if isinstance(obj, dict):
+        return {
+            k: ("{image}" if k == "screenshot" else _redacted(v))
+            for k, v in obj.items()
+        }
+    if isinstance(obj, list):
+        return [_redacted(v) for v in obj]
+    if isinstance(obj, tuple):
+        return tuple(_redacted(v) for v in obj)
+    return obj
+
+
 def _wrap_sync_method(fn: callable, name: str):
 
     @wraps(fn)
@@ -17,9 +30,11 @@ def _wrap_sync_method(fn: callable, name: str):
         is_put = fn.__name__ in ("put", "put_nowait")
         if is_put or ret is not None:
             if is_put:
-                print(f"\n{name}.{fn.__name__}(args={a}, kw={kw})\n")
+                print(
+                    f"\n{name}.{fn.__name__}(args={_redacted(a)}, kw={_redacted(kw)})\n",
+                )
             else:
-                print(f"\n{name}.{fn.__name__}() -> {ret}\n")
+                print(f"\n{name}.{fn.__name__}() -> {_redacted(ret)}\n")
             unify.log(
                 context="Queues",
                 session_id=SESSION_ID,
@@ -40,9 +55,11 @@ def _wrap_async_method(fn, name: str):
         is_put = fn.__name__ in ("put", "put_nowait")
         if is_put or ret is not None:
             if is_put:
-                print(f"\n{name}.{fn.__name__}(args={a}, kw={kw})\n")
+                print(
+                    f"\n{name}.{fn.__name__}(args={_redacted(a)}, kw={_redacted(kw)})\n",
+                )
             else:
-                print(f"\n{name}.{fn.__name__}() -> {ret}\n")
+                print(f"\n{name}.{fn.__name__}() -> {_redacted(ret)}\n")
             unify.log(
                 context="Queues",
                 session_id=SESSION_ID,
