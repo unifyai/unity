@@ -65,11 +65,11 @@ class TaskManager(threading.Thread):
         self._transcript_q = transcript_q
         self._text_command_q = text_command_q
 
-        self._task_request_client = unify.Unify("gpt-4o-mini@openai")
+        self._task_request_client = unify.Unify("gpt-4o-mini@openai", traced=True)
         self._task_request_client.set_system_message(DETECT_TASK_REQUEST)
         self._task_request_client.set_response_format(TaskRequested)
 
-        self._task_organizer_client = unify.Unify("o3-mini@openai")
+        self._task_organizer_client = unify.Unify("o3-mini@openai", traced=True)
 
     def _detect_task_request(self, messages: List[Dict[str, str]]) -> bool:
         t0 = time.perf_counter()
