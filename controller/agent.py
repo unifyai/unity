@@ -5,6 +5,7 @@ from typing import List, Optional, Union, Tuple, Dict, Any
 import unify
 import base64
 import time
+from datetime import datetime, timezone
 from controller.helpers import _pascal, _slug
 from controller.constants import *
 from pydantic import BaseModel, create_model, Field
@@ -620,7 +621,8 @@ def text_to_browser_action(
     state: BrowserState = None,
 ) -> Optional[BaseModel]:
     t0 = time.perf_counter()
-    print("\n🤖 Controller: text command to browser action... ⏳\n")
+    t = datetime.now(timezone.utc).time().isoformat(timespec="milliseconds")
+    print(f"\n🤖 Controller: text command to browser action... ⏳ [{t}]\n")
     if ADVANCED_MODE:
         response_format = _create_full_response_format(tabs, buttons, state)
         client.set_endpoint("gpt-4o-mini@openai")
@@ -670,8 +672,9 @@ def text_to_browser_action(
         if num_selected == 1:
             # only one candidate, can already return
             response_format = _build_pruned_response_format(ret)
+            t = datetime.now(timezone.utc).time().isoformat(timespec="milliseconds")
             print(
-                f"\n🤖 Controller: text command to browser action ✅ ({(time.perf_counter() - t0):.3g}s)\n",
+                f"\n🤖 Controller: text command to browser action ✅ [{t}] [{(time.perf_counter() - t0):.3g}s]\n",
             )
             return response_format.model_validate(ret).model_dump()
 
@@ -687,8 +690,9 @@ def text_to_browser_action(
             ret = response_format.model_validate_json(ret)
             ret, num_selected = _extract_applied_actions(ret)
         response_format = _build_pruned_response_format(ret)
+        t = datetime.now(timezone.utc).time().isoformat(timespec="milliseconds")
         print(
-            f"\n🤖 Controller: text command to browser action ✅ ({(time.perf_counter() - t0):.3g}s)\n",
+            f"\n🤖 Controller: text command to browser action ✅ [{t}] [{(time.perf_counter() - t0):.3g}s]\n",
         )
         return response_format.model_validate(ret).model_dump()
     else:
@@ -732,7 +736,8 @@ def text_to_browser_action(
 
         if reply.value:
             action = f"{action} {str(reply.value)}"
+        t = datetime.now(timezone.utc).time().isoformat(timespec="milliseconds")
         print(
-            f"\n🤖 Controller: text command to browser action ✅({(time.perf_counter() - t0):.3g}s)\n",
+            f"\n🤖 Controller: text command to browser action ✅ [{t}] [{(time.perf_counter() - t0):.3g}s]\n",
         )
         return {"rationale": reply.rationale, "action": action}
