@@ -9,6 +9,17 @@ from livekit.agents import Agent, AgentSession, RoomInputOptions
 from livekit.plugins import cartesia, deepgram, noise_cancellation, openai, silero
 from livekit.plugins.turn_detector.multilingual import MultilingualModel
 
+# Hack to prevent terminal writies
+from livekit.agents.voice import chat_cli
+
+
+def _silent_print_audio_mode(self, *args, **kwargs):
+    sys.stdout.flush()
+
+
+chat_cli.ChatCLI._print_audio_mode = _silent_print_audio_mode
+# End hack
+
 logging.disable(logging.CRITICAL)
 
 load_dotenv()
@@ -23,29 +34,6 @@ import unify
 unify.activate("Unity")
 
 bus_manager = BusManager()
-
-# Hack to stop excessive loging, try to find more elegant solution
-# ----------------------------------------------------------------
-
-import re, sys, io
-
-_meter = re.compile(r"^\[Audio\]")  # lines to drop
-
-
-class CleanOut(io.TextIOWrapper):
-    def write(self, data):
-        if _meter.match(data):
-            return 0  # swallow the meter line
-        return super().write(data)
-
-    def flush(self):
-        super().flush()
-
-
-sys.stdout = CleanOut(sys.stdout.buffer, encoding=sys.stdout.encoding)
-
-
-# ─────────────────────────────────────────────────────────────────────
 
 
 async def _bridge_blocking_to_async() -> None:
