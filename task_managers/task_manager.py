@@ -4,6 +4,9 @@ import queue
 import threading
 from datetime import datetime, timezone
 from typing import List, Dict, Optional
+import logging
+
+logger = logging.getLogger(__name__)
 
 import unify
 from constants import SESSION_ID
@@ -97,7 +100,7 @@ class TaskManager(threading.Thread):
         self._task_organizer_client.set_response_format(FirstTaskResponse)
         t0 = time.perf_counter()
         t = datetime.now(timezone.utc).time().isoformat(timespec="milliseconds")
-        print(
+        logger.info(
             f"\n🤖 Task Manager: transcript to possible task updates... ⏳ [⏱️ {t}]\n",
         )
         messages = {
@@ -108,7 +111,7 @@ class TaskManager(threading.Thread):
             json.dumps(messages, indent=4),
         )
         t = datetime.now(timezone.utc).time().isoformat(timespec="milliseconds")
-        print(
+        logger.info(
             f"\n🤖 Task Manager: transcript to possible task updates ✅ [⏱️ {t}] [⏩{(time.perf_counter() - t0):.3g}s]\n",
         )
         resp = FirstTaskResponse.model_validate_json(resp)

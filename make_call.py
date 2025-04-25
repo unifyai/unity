@@ -4,6 +4,9 @@ os.environ["TRANSFORMERS_VERBOSITY"] = "error"
 import sys
 import asyncio
 import random
+import logging
+
+logger = logging.getLogger(__name__)
 import logging.config
 from datetime import datetime, timezone
 from typing import AsyncIterable
@@ -50,9 +53,6 @@ logging.config.dictConfig(
         },
     },
 )
-
-log = logging.getLogger("Unity")
-log.info("This is from my app")
 
 
 # Hack to prevent terminal writies
@@ -107,7 +107,7 @@ class VoiceAssistant(Agent):
 
     async def on_user_turn_completed(self, turn_ctx, new_message) -> None:
         t = datetime.now(timezone.utc).time().isoformat(timespec="milliseconds")
-        print(f"\n🎙️ Transcribed user speach [⏱️ {t}]\n")
+        logger.info(f"🎙️ Transcribed user speach [⏱️ {t}]")
         unify.log(
             context="Transcripts",
             session_id=SESSION_ID,
@@ -127,7 +127,7 @@ class VoiceAssistant(Agent):
         model_settings,
     ) -> AsyncIterable[str]:
         t = datetime.now(timezone.utc).time().isoformat(timespec="milliseconds")
-        print(f"\n🔈 Playing assistant audio [⏱️ {t}]\n")
+        logger.info(f"\n🔈 Playing assistant audio [⏱️ {t}]\n")
         # This method receives the LLM output as an async stream of text.
         collected_chunks = []
         async for chunk in text:
