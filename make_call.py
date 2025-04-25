@@ -25,6 +25,26 @@ unify.activate("Unity")
 bus_manager = BusManager()
 bus_manager.start()
 
+# Hack to stop excessive loging, try to find more elegant solution
+# ----------------------------------------------------------------
+
+import re, sys, io
+
+_meter = re.compile(r"^\[Audio\]")  # lines to drop
+
+
+class CleanOut(io.TextIOWrapper):
+    def write(self, data):
+        if _meter.match(data):
+            return 0  # swallow the meter line
+        return super().write(data)
+
+    def flush(self):
+        super().flush()
+
+
+sys.stdout = CleanOut(sys.stdout.buffer, encoding=sys.stdout.encoding)
+
 
 # ─────────────────────────────────────────────────────────────────────
 
