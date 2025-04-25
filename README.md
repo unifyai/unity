@@ -53,7 +53,7 @@ Check out various logs in the "Unity" project in the [Unity Interface](https://c
 
 ### Debugging
 
-To interact with the low-level browser controller, you can simply run `test_controller.py` and it will spin up a GUI which shows the browser state and also the available actions (given the browser state). You can also send commands directly to the low-level LLM controller (the same one used in the voice demo above), to see how well the agent can convert english into playwright commands.
+To interact with the low-level browser controller, you can simply run `python test_controller.py` in the root directory, and it will spin up a GUI which shows the browser state and also the available actions (given the browser state). You can also send commands directly to the low-level LLM controller (the same one used in the voice demo above), to see how well the agent can convert english into playwright commands.
 
 <div style="display: block;" align="center">
     <img class="dark-light" width="100%" src="https://raw.githubusercontent.com/unifyai/unifyai.github.io/refs/heads/main/img/externally_linked/unity_gui.png"/>
