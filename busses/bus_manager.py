@@ -92,9 +92,9 @@ def _log_queue(q):
     else:
         raise Exception(f"Expected queue, but found {type(q)}")
     q.put = _wrap_method(q.put, q.name)
-    q.put_nowait = _wrap_method(q.put_nowait, q.name)
+    q.put_nowait = _wrap_sync_method(q.put_nowait, q.name)
     q.get = _wrap_method(q.get, q.name)
-    q.get_nowait = _wrap_method(q.get_nowait, q.name)
+    q.get_nowait = _wrap_sync_method(q.get_nowait, q.name)
 
 
 class BusManager:
