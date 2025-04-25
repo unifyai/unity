@@ -53,7 +53,7 @@ class FirstTaskResponse(BaseModel):
     )
     first_task: Optional[FirstTask] = Field(
         ...,
-        "Full breakdown of the task specified by the user.",
+        description="Full breakdown of the task specified by the user.",
     )
 
 
