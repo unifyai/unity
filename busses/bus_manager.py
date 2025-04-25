@@ -1,6 +1,8 @@
 import queue
 import asyncio
 from functools import wraps
+from asyncio import AbstractEventLoop
+
 from task_managers.task_manager import TaskManager
 from controller.controller import Controller
 from planner.planner import Planner
@@ -129,9 +131,10 @@ class BusManager:
         self._task_completion_q.name = "task_completion_q"
         _log_queue(self._task_completion_q)
 
-        # Managers #
-        # ---------#
+    def set_coms_asyncio_loop(self, loop: AbstractEventLoop) -> None:
+        self._coms_asyncio_loop = loop
 
+    def _create_managers(self):
         # re-organizes and schedules task, based on transcripts
         self._task_manager = TaskManager(
             # [reads from]: detect when a task trigger + change is requested from transcript
@@ -150,6 +153,8 @@ class BusManager:
             self._action_completion_q,
             # [writes to]: writes incremental task progress, so the user-facing assistant stays updated
             self._task_completion_q,
+            # enables writing to action_completion_q, which lives in another asyncio loop
+            self._coms_asyncio_loop,
         )
 
         # handles text -> low-level browser commands
@@ -165,6 +170,7 @@ class BusManager:
         )
 
     def start(self):
+        self._create_managers()
         self._task_manager.start()
         self._planner.start()
         self._controller.start()

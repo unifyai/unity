@@ -23,7 +23,6 @@ import unify
 unify.activate("Unity")
 
 bus_manager = BusManager()
-bus_manager.start()
 
 # Hack to stop excessive loging, try to find more elegant solution
 # ----------------------------------------------------------------
@@ -121,6 +120,9 @@ class VoiceAssistant(Agent):
 
 async def entrypoint(ctx: agents.JobContext):
     await ctx.connect()
+    voice_loop = asyncio.get_running_loop()
+    bus_manager.set_coms_asyncio_loop(voice_loop)
+    bus_manager.start()
 
     session = AgentSession(
         stt=deepgram.STT(model="nova-3", language="multi"),
