@@ -611,7 +611,7 @@ def list_available_actions(
 # @unify.traced
 def text_to_browser_action(
     text: str,
-    screenshot: bytes,
+    screenshot: base64,
     *,
     tabs: Optional[List[str]],
     buttons: Optional[List[Tuple[int, str]]] = None,
@@ -638,7 +638,6 @@ def text_to_browser_action(
             PRIMITIVE_TO_BROWSER_ACTION_CANDIDATES + history_msg + state_msg,
         )
         client.set_response_format(response_format)
-        screenshot = base64.b64encode(screenshot).decode("utf-8")
         ret = client.generate(
             messages=client.messages
             + [

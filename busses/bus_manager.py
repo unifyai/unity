@@ -1,4 +1,3 @@
-import json
 import queue
 import asyncio
 from functools import wraps
@@ -12,18 +11,15 @@ import unify
 def _wrap_sync_method(fn: callable, name: str):
 
     @wraps(fn)
-    def _wrapped(item=None):
-        if item is not None:
-            ret = fn(item)
-        else:
-            ret = fn()
+    def _wrapped(*a, **kw):
+        ret = fn(*a, **kw)
         is_put = fn.__name__ in ("put", "put_nowait")
         if is_put or ret is not None:
             unify.log(
                 context="Queues",
                 queue=name,
                 method=fn.__name__,
-                content=json.dumps(item) if is_put else json.dumps(ret),
+                content={"args": a, "kwargs": kw} if is_put else ret,
             )
         return ret
 
@@ -33,18 +29,15 @@ def _wrap_sync_method(fn: callable, name: str):
 def _wrap_async_method(fn, name: str):
 
     @wraps(fn)
-    async def _wrapped(item=None):
-        if item is not None:
-            ret = await fn(item)
-        else:
-            ret = await fn()
+    async def _wrapped(*a, **kw):
+        ret = await fn(*a, **kw)
         is_put = fn.__name__ in ("put", "put_nowait")
         if is_put or ret is not None:
             unify.log(
                 context="Queues",
                 queue=name,
                 method=fn.__name__,
-                content=json.dumps(item) if is_put else json.dumps(ret),
+                content={"args": a, "kwargs": kw} if is_put else ret,
             )
         return ret
 
