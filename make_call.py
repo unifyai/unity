@@ -129,7 +129,6 @@ async def entrypoint(ctx: agents.JobContext):
     )
 
     # ── background tasks ──────────────────────────────────────────────
-    loop = asyncio.get_running_loop()
     # start the bridge that listens to the thread-based queue
     asyncio.create_task(_bridge_blocking_to_async())
     # start the dispatcher that speaks anything it receives
