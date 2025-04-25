@@ -6,6 +6,7 @@ from typing import List
 import unify
 from controller.worker import BrowserWorker
 from controller.agent import text_to_browser_action
+from constants import SESSION_ID
 
 
 class Controller(threading.Thread):
@@ -43,7 +44,10 @@ class Controller(threading.Thread):
                 browser_state = self._browser_state_q.get()
             else:
                 browser_state = {}
-            with unify.Context("Traces"), unify.Log(name="text_to_browser_action"):
+            with unify.Context("Traces"), unify.Log(
+                session_id=SESSION_ID,
+                name="text_to_browser_action",
+            ):
                 cmd = text_to_browser_action(
                     text=text_command,
                     screenshot=browser_state.get("screenshot", b""),

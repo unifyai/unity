@@ -11,6 +11,8 @@ from livekit.agents import Agent, AgentSession, RoomInputOptions
 from livekit.plugins import cartesia, deepgram, noise_cancellation, openai, silero
 from livekit.plugins.turn_detector.multilingual import MultilingualModel
 
+from constants import SESSION_ID
+
 # Hack to prevent terminal writies
 from livekit.agents.voice import chat_cli
 
@@ -76,6 +78,7 @@ class VoiceAssistant(Agent):
         print(f"\n🎙️ Transcribed user speach [⏱️ {t}]\n")
         unify.log(
             context="Exchanges",
+            session_id=SESSION_ID,
             sender=FIRST_NAME,
             receiver="Unity",
             medium="phone call",
@@ -101,6 +104,7 @@ class VoiceAssistant(Agent):
             yield chunk
         unify.log(
             context="Exchanges",
+            session_id=SESSION_ID,
             sender="Unity",
             receiver=FIRST_NAME,
             medium="phone call",
