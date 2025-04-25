@@ -74,6 +74,7 @@ class VoiceAssistant(Agent):
         super().__init__(instructions=PHONE_AGENT)
 
     async def on_user_turn_completed(self, turn_ctx, new_message) -> None:
+        print("\n🎙️ Transcribed user speach\n")
         unify.log(
             context="Exchanges",
             sender=FIRST_NAME,
@@ -91,6 +92,7 @@ class VoiceAssistant(Agent):
         text: AsyncIterable[str],
         model_settings,
     ) -> AsyncIterable[str]:
+        print("\n🔈 Playing assistant audio\n")
         # This method receives the LLM output as an async stream of text.
         collected_chunks = []
         async for chunk in text:
