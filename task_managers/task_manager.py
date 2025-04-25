@@ -1,4 +1,5 @@
 import json
+import time
 import queue
 import threading
 from typing import List, Dict, Optional
@@ -70,10 +71,13 @@ class TaskManager(threading.Thread):
         self._task_organizer_client = unify.Unify("o3-mini@openai")
 
     def _detect_task_request(self, messages: List[Dict[str, str]]) -> bool:
+        t0 = time.perf_counter()
         print("\n🤖 Task Manager: transcript to task request... ⏳\n")
         raw = self._task_request_client.copy().generate(json.dumps(messages, indent=4))
         parsed = TaskRequested.model_validate_json(raw)
-        print("\n🤖 Task Manager: transcript to task request ✅\n")
+        print(
+            f"\n🤖 Task Manager: transcript to task request ✅({(time.perf_counter() - t0):.3g}s)\n",
+        )
         return parsed.task_was_requested
 
     def _update_tasks(self, messages: List[Dict[str, str]]):
@@ -92,11 +96,14 @@ class TaskManager(threading.Thread):
         else:
             self._task_organizer_client.set_system_message(FIRST_TASK)
             self._task_organizer_client.set_response_format(FirstTask)
+            t0 = time.perf_counter()
             print("\n🤖 Task Manager: task request to task updates... ⏳\n")
             first_task = self._task_organizer_client.generate(
                 json.dumps(messages, indent=4),
             )
-            print("\n🤖 Task Manager: task request to task updates ✅\n")
+            print(
+                f"\n🤖 Task Manager: task request to task updates ✅({(time.perf_counter() - t0):.3g}s)\n",
+            )
             first_task = FirstTask.model_validate_json(first_task)
             if first_task.should_create:
                 self._text_command_q.put(first_task.description)
