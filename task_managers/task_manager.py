@@ -95,9 +95,6 @@ class TaskManager(threading.Thread):
             )
             first_task = FirstTask.model_validate_json(first_task)
             if first_task.should_create:
-                print(
-                    f"\n\nStarting task: {first_task.title} - {first_task.description}\n",
-                )
                 self._text_command_q.put(first_task.description)
             unify.log(
                 context="Tasks",
