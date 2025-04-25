@@ -228,5 +228,25 @@ class BusManager:
         return self._transcript_q
 
     @property
+    def text_action_q(self) -> queue.Queue[str]:
+        return self._text_action_q
+
+    @property
+    def text_task_q(self) -> queue.Queue[str]:
+        return self._text_task_q
+
+    @property
+    def browser_command_q(self) -> queue.Queue[str]:
+        return self._browser_command_q
+
+    @property
+    def browser_state_q(self) -> queue.Queue[str]:
+        return self._browser_state_q
+
+    @property
+    def action_completion_q(self) -> queue.Queue[str]:
+        return self._action_completion_q
+
+    @property
     def task_completion_q(self) -> asyncio.Queue[str]:
         return self._task_completion_q
