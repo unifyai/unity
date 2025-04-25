@@ -1,6 +1,8 @@
 import queue
+import time
 import inspect
 import asyncio
+import threading
 from pathlib import Path
 from functools import wraps
 from asyncio import AbstractEventLoop
@@ -12,6 +14,8 @@ from helpers import _find_project_frame
 
 import unify
 from constants import SESSION_ID
+
+PRINT_LOCK = threading.Lock()
 
 
 def _redacted(obj):
@@ -31,6 +35,7 @@ def _wrap_sync_method(fn: callable, name: str):
 
     @wraps(fn)
     def _wrapped(*a, **kw):
+        ts = time.perf_counter()
         ret = fn(*a, **kw)
         is_put = fn.__name__ in ("put", "put_nowait")
         if is_put or ret is not None:
@@ -42,15 +47,23 @@ def _wrap_sync_method(fn: callable, name: str):
                         f":{caller_frame.f_lineno}"
                     )
                 else:
-                    fpath = "<external>:?"
+                    fpath = "?"
+                PRINT_LOCK.acquire()
                 if is_put:
                     print(
-                        f"\n🛜 {name}.{fn.__name__}(args={_redacted(a)}, kw={_redacted(kw)}) [{fpath}]\n",
+                        f"\n🛜 {name}.{fn.__name__}(args={_redacted(a)}, kw={_redacted(kw)})",
+                        f"timestamp({ts})",
+                        f"fpath({fpath})",
+                        f"thread({threading.get_ident()})\n",
                     )
                 else:
                     print(
-                        f"\n🛜 {name}.{fn.__name__}() -> {_redacted(ret)} [{fpath}]\n",
+                        f"\n🛜 {name}.{fn.__name__}() -> {_redacted(ret)}",
+                        f"timestamp({ts})",
+                        f"fpath({fpath})",
+                        f"thread({threading.get_ident()})\n",
                     )
+                PRINT_LOCK.release()
             unify.log(
                 context="Queues",
                 session_id=SESSION_ID,
@@ -67,6 +80,7 @@ def _wrap_async_method(fn, name: str):
 
     @wraps(fn)
     async def _wrapped(*a, **kw):
+        ts = time.perf_counter()
         ret = await fn(*a, **kw)
         is_put = fn.__name__ in ("put", "put_nowait")
         if is_put or ret is not None:
@@ -78,15 +92,23 @@ def _wrap_async_method(fn, name: str):
                         f":{caller_frame.f_lineno}"
                     )
                 else:
-                    fpath = "<external>:?"
+                    fpath = "?"
+                PRINT_LOCK.acquire()
                 if is_put:
                     print(
-                        f"\n🛜 {name}.{fn.__name__}(args={_redacted(a)}, kw={_redacted(kw)}) [{fpath}]\n",
+                        f"\n🛜 {name}.{fn.__name__}(args={_redacted(a)}, kw={_redacted(kw)})",
+                        f"timestamp({ts})",
+                        f"fpath({fpath})",
+                        f"thread({threading.get_ident()})\n",
                     )
                 else:
                     print(
-                        f"\n🛜 {name}.{fn.__name__}() -> {_redacted(ret)} [{fpath}]\n",
+                        f"\n🛜 {name}.{fn.__name__}() -> {_redacted(ret)}",
+                        f"timestamp({ts})",
+                        f"fpath({fpath})",
+                        f"thread({threading.get_ident()})\n",
                     )
+                PRINT_LOCK.release()
             unify.log(
                 context="Queues",
                 session_id=SESSION_ID,
