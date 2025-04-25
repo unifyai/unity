@@ -6,6 +6,7 @@ from datetime import datetime, timezone
 from typing import List, Dict, Optional
 
 import unify
+from constants import SESSION_ID
 from task_managers.sys_msgs import DETECT_TASK_REQUEST, FIRST_TASK, REORGANISE_TASKS
 from pydantic import BaseModel, Field
 
@@ -116,6 +117,7 @@ class TaskManager(threading.Thread):
                 self._text_command_q.put(first_task.description)
             unify.log(
                 context="Tasks",
+                session_id=SESSION_ID,
                 title=first_task.title,
                 description=first_task.description,
                 in_progress=False,
@@ -129,10 +131,16 @@ class TaskManager(threading.Thread):
             if messages is None:
                 break
 
-            with unify.Context("Traces"), unify.Log(name="_detect_task_request"):
+            with unify.Context("Traces"), unify.Log(
+                session_id=SESSION_ID,
+                name="_detect_task_request",
+            ):
                 task_was_requested = self._detect_task_request(messages)
             if not task_was_requested:
                 continue
 
-            with unify.Context("Traces"), unify.Log(name="_update_tasks"):
+            with unify.Context("Traces"), unify.Log(
+                session_id=SESSION_ID,
+                name="_update_tasks",
+            ):
                 self._update_tasks(messages)
