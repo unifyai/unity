@@ -301,7 +301,7 @@ class ControlPanel(tk.Tk):
         paned = tk.PanedWindow(self, orient=tk.HORIZONTAL, sashwidth=4)
         paned.grid(row=0, column=0, columnspan=2, sticky="nsew")
         self.rowconfigure(0, weight=1)
-        self.columnconfigure(0, weight=1, minsize=250)  # ✅ enforce min width for left
+        self.columnconfigure(0, weight=1, minsize=250)
         self.columnconfigure(1, weight=2)
 
         # ── top‑right “X” button (absolute) ─────────────────────────────────
@@ -322,7 +322,7 @@ class ControlPanel(tk.Tk):
         # LEFT NOTEBOOK  →  Elements  |  Tabs
         # ===================================================================
         self.left_wrapper = tk.Frame(paned, width=300)
-        self.left_wrapper.pack_propagate(False)  # ✅ if you're using .pack() inside
+        self.left_wrapper.pack_propagate(False)
         paned.add(self.left_wrapper, minsize=200, stretch="always")
 
         left_nb = ttk.Notebook(self.left_wrapper)

@@ -31,10 +31,10 @@ def _wrap_sync_method(fn: callable, name: str):
         if is_put or ret is not None:
             if is_put:
                 print(
-                    f"\n{name}.{fn.__name__}(args={_redacted(a)}, kw={_redacted(kw)})\n",
+                    f"\n🛜 {name}.{fn.__name__}(args={_redacted(a)}, kw={_redacted(kw)})\n",
                 )
             else:
-                print(f"\n{name}.{fn.__name__}() -> {_redacted(ret)}\n")
+                print(f"\n🛜 {name}.{fn.__name__}() -> {_redacted(ret)}\n")
             unify.log(
                 context="Queues",
                 session_id=SESSION_ID,
@@ -56,10 +56,10 @@ def _wrap_async_method(fn, name: str):
         if is_put or ret is not None:
             if is_put:
                 print(
-                    f"\n{name}.{fn.__name__}(args={_redacted(a)}, kw={_redacted(kw)})\n",
+                    f"\n🛜 {name}.{fn.__name__}(args={_redacted(a)}, kw={_redacted(kw)})\n",
                 )
             else:
-                print(f"\n{name}.{fn.__name__}() -> {_redacted(ret)}\n")
+                print(f"\n🛜 {name}.{fn.__name__}() -> {_redacted(ret)}\n")
             unify.log(
                 context="Queues",
                 session_id=SESSION_ID,
