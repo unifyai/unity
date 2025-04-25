@@ -44,7 +44,7 @@ class Controller(threading.Thread):
                 browser_state = self._browser_state_q.get()
             else:
                 browser_state = {}
-            with unify.Context("Traces"), unify.Log(
+            with unify.Context("LLM Traces"), unify.Log(
                 session_id=SESSION_ID,
                 name="text_to_browser_action",
             ):

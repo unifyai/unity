@@ -131,7 +131,7 @@ class TaskManager(threading.Thread):
             if messages is None:
                 break
 
-            with unify.Context("Traces"), unify.Log(
+            with unify.Context("LLM Traces"), unify.Log(
                 session_id=SESSION_ID,
                 name="_detect_task_request",
             ):
@@ -139,7 +139,7 @@ class TaskManager(threading.Thread):
             if not task_was_requested:
                 continue
 
-            with unify.Context("Traces"), unify.Log(
+            with unify.Context("LLM Traces"), unify.Log(
                 session_id=SESSION_ID,
                 name="_update_tasks",
             ):

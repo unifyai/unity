@@ -77,7 +77,7 @@ class VoiceAssistant(Agent):
         t = datetime.now(timezone.utc).time().isoformat(timespec="milliseconds")
         print(f"\n🎙️ Transcribed user speach [⏱️ {t}]\n")
         unify.log(
-            context="Exchanges",
+            context="Transcripts",
             session_id=SESSION_ID,
             sender=FIRST_NAME,
             receiver="Unity",
@@ -103,7 +103,7 @@ class VoiceAssistant(Agent):
             # Yield the chunk onward so TTS (and any client transcript) receives it without delay
             yield chunk
         unify.log(
-            context="Exchanges",
+            context="Transcripts",
             session_id=SESSION_ID,
             sender="Unity",
             receiver=FIRST_NAME,
