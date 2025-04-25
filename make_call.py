@@ -73,7 +73,7 @@ class VoiceAssistant(Agent):
 
     async def on_user_turn_completed(self, turn_ctx, new_message) -> None:
         t = datetime.now(timezone.utc).time().isoformat(timespec="milliseconds")
-        print(f"\n🎙️ Transcribed user speach [{t}]\n")
+        print(f"\n🎙️ Transcribed user speach [⏱️ {t}]\n")
         unify.log(
             context="Exchanges",
             sender=FIRST_NAME,
@@ -92,7 +92,7 @@ class VoiceAssistant(Agent):
         model_settings,
     ) -> AsyncIterable[str]:
         t = datetime.now(timezone.utc).time().isoformat(timespec="milliseconds")
-        print(f"\n🔈 Playing assistant audio [{t}]\n")
+        print(f"\n🔈 Playing assistant audio [⏱️ {t}]\n")
         # This method receives the LLM output as an async stream of text.
         collected_chunks = []
         async for chunk in text:
