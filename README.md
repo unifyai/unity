@@ -37,3 +37,7 @@ With your venv activated (after calling `source .unity/bin/activate`):
 ```
 python make_call.py
 ```
+
+### Logging
+
+Check out various logs in the "Unity" project in the [Unity Interface](https://console.unify.ai/interfaces?project=Unity).
