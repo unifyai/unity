@@ -7,7 +7,7 @@ from typing import List, Dict, Optional
 
 import unify
 from constants import SESSION_ID
-from task_managers.sys_msgs import FIRST_TASK, REORGANISE_TASKS
+from task_managers.sys_msgs import FIRST_TASK
 from pydantic import BaseModel, Field
 
 
@@ -76,59 +76,59 @@ class TaskManager(threading.Thread):
         if "Tasks" not in unify.get_contexts():
             unify.create_context("Tasks")
         current_tasks = unify.get_logs(context="Tasks", filter="status != 'completed'")
-        if current_tasks:
-            # ToDo: implement this properly
-            current_tasks = {
-                log.entries["title"]: {
-                    k: v
-                    for k, v in log.entries.items()
-                    if k in ("description", "in_progress", "start_at", "recurring")
-                }
-                for log in current_tasks
-            }
-            self._task_organizer_client.set_system_message(
-                REORGANISE_TASKS.replace(
-                    "{current_tasks}",
-                    json.dumps(current_tasks, indent=4),
-                ),
+        # if current_tasks:
+        #     # ToDo: implement this properly
+        #     current_tasks = {
+        #         log.entries["title"]: {
+        #             k: v
+        #             for k, v in log.entries.items()
+        #             if k in ("description", "in_progress", "start_at", "recurring")
+        #         }
+        #         for log in current_tasks
+        #     }
+        #     self._task_organizer_client.set_system_message(
+        #         REORGANISE_TASKS.replace(
+        #             "{current_tasks}",
+        #             json.dumps(current_tasks, indent=4),
+        #         ),
+        #     )
+        # else:
+        self._task_organizer_client.set_system_message(FIRST_TASK)
+        self._task_organizer_client.set_response_format(FirstTaskResponse)
+        t0 = time.perf_counter()
+        t = datetime.now(timezone.utc).time().isoformat(timespec="milliseconds")
+        print(
+            f"\n🤖 Task Manager: transcript to possible task updates... ⏳ [⏱️ {t}]\n",
+        )
+        messages = {
+            "latest_message": messages[-1],
+            "message_history": messages[:-1],
+        }
+        resp = self._task_organizer_client.generate(
+            json.dumps(messages, indent=4),
+        )
+        t = datetime.now(timezone.utc).time().isoformat(timespec="milliseconds")
+        print(
+            f"\n🤖 Task Manager: transcript to possible task updates ✅ [⏱️ {t}] [⏩{(time.perf_counter() - t0):.3g}s]\n",
+        )
+        resp = FirstTaskResponse.model_validate_json(resp)
+        if not resp.task_was_requested:
+            return
+        first_task = resp.first_task
+        self._task_log = unify.log(
+            context="Tasks",
+            session_id=SESSION_ID,
+            title=first_task.title,
+            description=first_task.description,
+            status="in progress",
+            start_at=first_task.start_at,
+            recurring=first_task.recurring,
+            new=True,
+        )
+        if first_task.should_create:
+            self._text_task_q.put(
+                (self._task_log.to_json(), first_task.description),
             )
-        else:
-            self._task_organizer_client.set_system_message(FIRST_TASK)
-            self._task_organizer_client.set_response_format(FirstTaskResponse)
-            t0 = time.perf_counter()
-            t = datetime.now(timezone.utc).time().isoformat(timespec="milliseconds")
-            print(
-                f"\n🤖 Task Manager: transcript to possible task updates... ⏳ [⏱️ {t}]\n",
-            )
-            messages = {
-                "latest_message": messages[-1],
-                "message_history": messages[:-1],
-            }
-            resp = self._task_organizer_client.generate(
-                json.dumps(messages, indent=4),
-            )
-            t = datetime.now(timezone.utc).time().isoformat(timespec="milliseconds")
-            print(
-                f"\n🤖 Task Manager: transcript to possible task updates ✅ [⏱️ {t}] [⏩{(time.perf_counter() - t0):.3g}s]\n",
-            )
-            resp = FirstTaskResponse.model_validate_json(resp)
-            if not resp.task_was_requested:
-                return
-            first_task = resp.first_task
-            self._task_log = unify.log(
-                context="Tasks",
-                session_id=SESSION_ID,
-                title=first_task.title,
-                description=first_task.description,
-                status="in progress",
-                start_at=first_task.start_at,
-                recurring=first_task.recurring,
-                new=True,
-            )
-            if first_task.should_create:
-                self._text_task_q.put(
-                    (self._task_log.to_json(), first_task.description),
-                )
 
     def run(self) -> None:
         while True:
