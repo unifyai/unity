@@ -1,12 +1,15 @@
 import os
 import sys
 import asyncio
+import logging
 from typing import AsyncIterable
 from dotenv import load_dotenv
 from livekit import agents
 from livekit.agents import Agent, AgentSession, RoomInputOptions
 from livekit.plugins import cartesia, deepgram, noise_cancellation, openai, silero
 from livekit.plugins.turn_detector.multilingual import MultilingualModel
+
+logging.disable(logging.CRITICAL)
 
 load_dotenv()
 FIRST_NAME = os.environ["FIRST_NAME"]
