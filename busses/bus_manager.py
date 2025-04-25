@@ -51,14 +51,14 @@ def _wrap_sync_method(fn: callable, name: str):
                 PRINT_LOCK.acquire()
                 if is_put:
                     print(
-                        f"\n🛜 {name}.{fn.__name__}(args={_redacted(a)}, kw={_redacted(kw)})",
+                        f"\n⬇️ {name}.{fn.__name__}(args={_redacted(a)}, kw={_redacted(kw)})",
                         f"[⏱️ {t}])",
                         f"[🗂️ {fpath}]",
                         f"[🧵thread-{threading.get_ident()}]\n",
                     )
                 else:
                     print(
-                        f"\n🛜 {name}.{fn.__name__}() -> {_redacted(ret)}",
+                        f"\n⬆️ {name}.{fn.__name__}() -> {_redacted(ret)}",
                         f"[⏱️ {t}])",
                         f"[🗂️ {fpath}]",
                         f"[🧵thread-{threading.get_ident()}]\n",
@@ -96,14 +96,14 @@ def _wrap_async_method(fn, name: str):
                 PRINT_LOCK.acquire()
                 if is_put:
                     print(
-                        f"\n🛜 {name}.{fn.__name__}(args={_redacted(a)}, kw={_redacted(kw)})",
+                        f"\n⬇️ {name}.{fn.__name__}(args={_redacted(a)}, kw={_redacted(kw)})",
                         f"[⏱️ {t}])",
                         f"[🗂️ {fpath}]",
                         f"[🧵thread-{threading.get_ident()}]\n",
                     )
                 else:
                     print(
-                        f"\n🛜 {name}.{fn.__name__}() -> {_redacted(ret)}",
+                        f"\n⬆️ {name}.{fn.__name__}() -> {_redacted(ret)}",
                         f"[⏱️ {t}])",
                         f"[🗂️ {fpath}]",
                         f"[🧵thread-{threading.get_ident()}]\n",
