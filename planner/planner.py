@@ -40,8 +40,6 @@ class Planner(threading.Thread):
 
             # there will typically be several actions per task, currently just one
             self._text_action_q.put(text_action)
-            text_action_completed = self._action_completion_q.get()
-            assert text_action == text_action_completed
 
             # ToDo: work out why this is not working
             # text_task_log.update_entries(status="completed")
