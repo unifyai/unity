@@ -8,6 +8,7 @@ from asyncio import AbstractEventLoop
 from task_managers.task_manager import TaskManager
 from controller.controller import Controller
 from planner.planner import Planner
+from helpers import _find_project_frame
 
 import unify
 from constants import SESSION_ID
@@ -34,13 +35,14 @@ def _wrap_sync_method(fn: callable, name: str):
         is_put = fn.__name__ in ("put", "put_nowait")
         if is_put or ret is not None:
             if name != "browser_state_q":  # constantly streaming
-                caller_frame = inspect.currentframe().f_back
+                caller_frame = _find_project_frame(inspect.currentframe().f_back)
                 if caller_frame is not None:
-                    caller_file = Path(caller_frame.f_code.co_filename).resolve()
-                    caller_line = caller_frame.f_lineno
-                    fpath = f"{caller_file}:{caller_line}"
+                    fpath = (
+                        f"{Path(caller_frame.f_code.co_filename).resolve()}"
+                        f":{caller_frame.f_lineno}"
+                    )
                 else:
-                    fpath = "<unknown>:?"
+                    fpath = "<external>:?"
                 if is_put:
                     print(
                         f"\n🛜 {name}.{fn.__name__}(args={_redacted(a)}, kw={_redacted(kw)}) [{fpath}]\n",
@@ -69,13 +71,14 @@ def _wrap_async_method(fn, name: str):
         is_put = fn.__name__ in ("put", "put_nowait")
         if is_put or ret is not None:
             if name != "browser_state_q":  # constantly streaming
-                caller_frame = inspect.currentframe().f_back
+                caller_frame = _find_project_frame(inspect.currentframe().f_back)
                 if caller_frame is not None:
-                    caller_file = Path(caller_frame.f_code.co_filename).resolve()
-                    caller_line = caller_frame.f_lineno
-                    fpath = f"{caller_file}:{caller_line}"
+                    fpath = (
+                        f"{Path(caller_frame.f_code.co_filename).resolve()}"
+                        f":{caller_frame.f_lineno}"
+                    )
                 else:
-                    fpath = "<unknown>:?"
+                    fpath = "<external>:?"
                 if is_put:
                     print(
                         f"\n🛜 {name}.{fn.__name__}(args={_redacted(a)}, kw={_redacted(kw)}) [{fpath}]\n",
