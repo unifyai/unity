@@ -16,6 +16,10 @@ def _wrap_sync_method(fn: callable, name: str):
         ret = fn(*a, **kw)
         is_put = fn.__name__ in ("put", "put_nowait")
         if is_put or ret is not None:
+            if is_put:
+                print(f"\n{name}.{fn.__name__}(args={a}, kw={kw})\n")
+            else:
+                print(f"\n{name}.{fn.__name__}() -> {ret}\n")
             unify.log(
                 context="Queues",
                 session_id=SESSION_ID,
@@ -35,6 +39,10 @@ def _wrap_async_method(fn, name: str):
         ret = await fn(*a, **kw)
         is_put = fn.__name__ in ("put", "put_nowait")
         if is_put or ret is not None:
+            if is_put:
+                print(f"\n{name}.{fn.__name__}(args={a}, kw={kw})\n")
+            else:
+                print(f"\n{name}.{fn.__name__}() -> {ret}\n")
             unify.log(
                 context="Queues",
                 session_id=SESSION_ID,
