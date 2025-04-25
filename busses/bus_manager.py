@@ -52,16 +52,16 @@ def _wrap_sync_method(fn: callable, name: str):
                 if is_put:
                     print(
                         f"\n🛜 {name}.{fn.__name__}(args={_redacted(a)}, kw={_redacted(kw)})",
-                        f"[{t}])",
-                        f"[{fpath}]",
-                        f"[thread-{threading.get_ident()}]\n",
+                        f"[⏱️ {t}])",
+                        f"[🗂️ {fpath}]",
+                        f"[🧵thread-{threading.get_ident()}]\n",
                     )
                 else:
                     print(
                         f"\n🛜 {name}.{fn.__name__}() -> {_redacted(ret)}",
-                        f"[{t}])",
-                        f"[{fpath}]",
-                        f"[thread-{threading.get_ident()}]\n",
+                        f"[⏱️ {t}])",
+                        f"[🗂️ {fpath}]",
+                        f"[🧵thread-{threading.get_ident()}]\n",
                     )
                 PRINT_LOCK.release()
             unify.log(
@@ -97,16 +97,16 @@ def _wrap_async_method(fn, name: str):
                 if is_put:
                     print(
                         f"\n🛜 {name}.{fn.__name__}(args={_redacted(a)}, kw={_redacted(kw)})",
-                        f"[{t}])",
-                        f"[{fpath}]",
-                        f"[thread-{threading.get_ident()}]\n",
+                        f"[⏱️ {t}])",
+                        f"[🗂️ {fpath}]",
+                        f"[🧵thread-{threading.get_ident()}]\n",
                     )
                 else:
                     print(
                         f"\n🛜 {name}.{fn.__name__}() -> {_redacted(ret)}",
-                        f"[{t}])",
-                        f"[{fpath}]",
-                        f"[thread-{threading.get_ident()}]\n",
+                        f"[⏱️ {t}])",
+                        f"[🗂️ {fpath}]",
+                        f"[🧵thread-{threading.get_ident()}]\n",
                     )
                 PRINT_LOCK.release()
             unify.log(

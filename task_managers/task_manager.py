@@ -74,12 +74,12 @@ class TaskManager(threading.Thread):
     def _detect_task_request(self, messages: List[Dict[str, str]]) -> bool:
         t0 = time.perf_counter()
         t = datetime.now(timezone.utc).time().isoformat(timespec="milliseconds")
-        print(f"\n🤖 Task Manager: transcript to task request... ⏳ [{t}]\n")
+        print(f"\n🤖 Task Manager: transcript to task request... ⏳ [⏱️ {t}]\n")
         raw = self._task_request_client.copy().generate(json.dumps(messages, indent=4))
         parsed = TaskRequested.model_validate_json(raw)
         t = datetime.now(timezone.utc).time().isoformat(timespec="milliseconds")
         print(
-            f"\n🤖 Task Manager: transcript to task request ✅ [{t}] [{(time.perf_counter() - t0):.3g}s]\n",
+            f"\n🤖 Task Manager: transcript to task request ✅ [⏱️ {t}] [⏩{(time.perf_counter() - t0):.3g}s]\n",
         )
         return parsed.task_was_requested
 
@@ -101,13 +101,13 @@ class TaskManager(threading.Thread):
             self._task_organizer_client.set_response_format(FirstTask)
             t0 = time.perf_counter()
             t = datetime.now(timezone.utc).time().isoformat(timespec="milliseconds")
-            print(f"\n🤖 Task Manager: task request to task updates... ⏳ [{t}]\n")
+            print(f"\n🤖 Task Manager: task request to task updates... ⏳ [⏱️ {t}]\n")
             first_task = self._task_organizer_client.generate(
                 json.dumps(messages, indent=4),
             )
             t = datetime.now(timezone.utc).time().isoformat(timespec="milliseconds")
             print(
-                f"\n🤖 Task Manager: task request to task updates ✅ [{t}] [{(time.perf_counter() - t0):.3g}s]\n",
+                f"\n🤖 Task Manager: task request to task updates ✅ [⏱️ {t}] [⏩{(time.perf_counter() - t0):.3g}s]\n",
             )
             first_task = FirstTask.model_validate_json(first_task)
             if first_task.should_create:

@@ -622,7 +622,7 @@ def text_to_browser_action(
 ) -> Optional[BaseModel]:
     t0 = time.perf_counter()
     t = datetime.now(timezone.utc).time().isoformat(timespec="milliseconds")
-    print(f"\n🤖 Controller: text command to browser action... ⏳ [{t}]\n")
+    print(f"\n🤖 Controller: text command to browser action... ⏳ [⏱️ {t}]\n")
     if ADVANCED_MODE:
         response_format = _create_full_response_format(tabs, buttons, state)
         client.set_endpoint("gpt-4o-mini@openai")
@@ -674,7 +674,7 @@ def text_to_browser_action(
             response_format = _build_pruned_response_format(ret)
             t = datetime.now(timezone.utc).time().isoformat(timespec="milliseconds")
             print(
-                f"\n🤖 Controller: text command to browser action ✅ [{t}] [{(time.perf_counter() - t0):.3g}s]\n",
+                f"\n🤖 Controller: text command to browser action ✅ [⏱️ {t}] [⏩{(time.perf_counter() - t0):.3g}s]\n",
             )
             return response_format.model_validate(ret).model_dump()
 
@@ -692,7 +692,7 @@ def text_to_browser_action(
         response_format = _build_pruned_response_format(ret)
         t = datetime.now(timezone.utc).time().isoformat(timespec="milliseconds")
         print(
-            f"\n🤖 Controller: text command to browser action ✅ [{t}] [{(time.perf_counter() - t0):.3g}s]\n",
+            f"\n🤖 Controller: text command to browser action ✅ [⏱️ {t}] [⏩{(time.perf_counter() - t0):.3g}s]\n",
         )
         return response_format.model_validate(ret).model_dump()
     else:
@@ -738,6 +738,6 @@ def text_to_browser_action(
             action = f"{action} {str(reply.value)}"
         t = datetime.now(timezone.utc).time().isoformat(timespec="milliseconds")
         print(
-            f"\n🤖 Controller: text command to browser action ✅ [{t}] [{(time.perf_counter() - t0):.3g}s]\n",
+            f"\n🤖 Controller: text command to browser action ✅ [⏱️ {t}] [⏩{(time.perf_counter() - t0):.3g}s]\n",
         )
         return {"rationale": reply.rationale, "action": action}
