@@ -1,1 +1,35 @@
 # unity
+
+## Setup
+
+### Create venv inside this folder
+```
+cd ~/unity (wherever you cloned it)
+uv venv .unity
+source .unity/bin/activate
+uv pip install -r requirements.txt
+```
+
+### Environment Variables
+
+Populate an `.env` file in the same root directory (ie `~/unity/.env`):
+```
+OPENAI_API_KEY={value}
+FIRST_NAME={value}
+AGENT_FIRST={value}
+AGENT_LAST={value}
+AGENT_AGE={value}
+DEEPGRAM_API_KEY={value}
+CARTESIA_API_KEY={value}
+LIVEKIT_URL={value}
+LIVEKIT_API_KEY={value}
+LIVEKIT_API_SECRET={value}
+```
+
+### Have a Call!
+
+With your venv activated (after calling `source .unity/bin/activate`):
+
+```
+python make_call.py
+```
