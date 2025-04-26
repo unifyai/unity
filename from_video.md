@@ -6,7 +6,7 @@
 
 3. Pass all extracted (timestamped) action descriptions, the (timestamped) transcript (if available) as well as some of the screenshots (all of them is probably too expensive) to an LLM, and ask it to generate an overall description of the full task (or append the existing description if one was provided).
 
-4. Iteratively prompt the model merge actions which it deems are semantically identical (ie "click LinkedIn homepage" and "Click on LinkedIn homepage"). Do this until it is happy that no more actions can be merged.
+4. Iteratively prompt the model to merge actions which it deems are semantically identical (ie "click LinkedIn homepage" and "Click on LinkedIn homepage"). Do this until it is happy that no more actions can be merged.
 
 5. Use this overall task description and the (now reduced) series of **semantically distinct** action desriptions (with several actions now repeated throughout the trace) + the transcript (timestamped) to generate a plan for this task, implemented in Python code, in a zero-shot manner using a SOTA model (such as `o3`), inform the agent that the trace of low-level actions must map **exactly** to the trace extracted from the video. Continue looping until the generated code matches the low-level command trace exactly (ideally some higher level patterns have been detected, with nested function calls in the generated code).
 
