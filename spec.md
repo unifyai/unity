@@ -31,13 +31,13 @@ Manages all text-based and voice-based communcation, whether it be with the user
 
 ### Tools
 
-#### TranscriptManager
+#### Probe Transcript
 
-The `ComsManager` can send text-based queries to the `TranscriptManager`, asking anything related to the prior communications.
+The `ComsManager` can send text-based queries to the `TranscriptManager.ask`, asking anything related to the prior communications.
 
-#### KnowledgeManager
+#### Probe Knowledge
 
-The `ComsManager` can send text-based queries to the `KnowledgeManager`, asking anything related to useful knowledge the assistant has accumulated.
+The `ComsManager` can send text-based queries to the `KnowledgeManager.ask`, asking anything related to useful knowledge the assistant has accumulated.
 
 ### Publishes To
 
