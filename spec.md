@@ -171,3 +171,28 @@ Every time a task update (or task trigger if there are no active tasks) is made,
 #### Action Queue
 
 Send sequential text-based actions, each of which corresponds to a *single* action, which would correspond to a single browser command (see `controller/commnds.py`)
+
+
+## Controller
+
+The controller listens for text-based single actions to complete, listens for the latest browser state, uses both to convert the latest action into a well defined browser command (`controller/commands.py`), and then sends this command to the `BrowserWorker` for execution in the browser. It then informs the `Planner` (up the stack) when the action has been completed.
+
+### Subscribed To
+
+#### Action Queue
+
+Listens for text-based actions to complete, sent by the `Planner`.
+
+#### Browser State Queue
+
+Listens for the latest browser state (y axis scroll [pixels], in-textbox [bool], current-url [str], all tabs List[str], all clickable buttons List[str]  etc.), and uses this alongside action description to select an appropriate action browser action (`controller/commands.py`).
+
+### Publishes To
+
+#### Browser Command Queue
+
+Sends the well-defined fixed browser commands (`controller/commands.py`) to the `BrowserWorker`.
+
+#### Action Completion Queue
+
+Once an action is completed, send the text-based action received back to this queue, to inform the `Planner`.
