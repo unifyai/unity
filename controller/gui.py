@@ -22,8 +22,8 @@ from controller.agent import (
     list_available_actions,
     ADVANCED_MODE,
 )
-from controller.actions import BrowserState
-from controller.constants import *
+from controller.states import BrowserState
+from controller.commands import *
 from controller.action_filter import get_valid_actions
 from controller.helpers import _slug
 from pygments import highlight
