@@ -23,7 +23,7 @@ class Planner(threading.Thread):
         Receives a stream of user inputs related to this task (can either be high-level or low-level guidance), and must stream a series of low-level actions to the controller, as quickly and efficiently as possible, in order to complete the task.
 
         Args:
-            task_update_queue (queue.Queue[List[str]]): Where the text-based user updates for the task come from.
+            task_update_queue (queue.Queue[List[str]]): Where the text-based user updates for the task come from, as well as the initial task request.
             text_action_q (queue.Queue[List[str]]): Where the low-level text actions are sent.
             action_completion_q (queue.Queue[List[str]]): Where the completion status of the low-level text actions come from.
             task_completion_q (asyncio.Queue[str]): Where we inform the user that the *overall* task is complete.
