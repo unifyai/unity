@@ -50,3 +50,24 @@ Every time the user sends a message or ends their turn during a call, the `trans
 #### Task Completion Queue
 
 Every time a task is completed, the `ComsManager` is informed, enabling this to be expressed to the user if appropriate.
+
+
+## TranscriptManager
+
+Manages all searches across the entire set of transcripts with other users, across all commumication mediums. Receives text-based questions and uses the available tools to search the backend which stores the entire set of transcripts.
+
+### Tools
+
+#### Get Summaries
+
+Can get exchange summaries flexibly filtered by the sender, receiver, timestamps, summary content, summary length etc. (uses `get_logs` filtering)
+
+#### Get Messages
+
+Can get messages flexibly filtered by the sender, receiver, timestamps, message content, message length etc. (uses `get_logs` filtering)
+
+### Called By
+
+#### ComsManager
+
+The `ComsManager` is able to ask general questions, which the `TranscriptManager` must then try to answer as well as possible using the available tools.
