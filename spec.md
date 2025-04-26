@@ -90,7 +90,7 @@ The `ComsManager` is able to ask general questions, which the `KnowledgeManager`
 
 ## TaskManager
 
-Listens to the Transcript Queue, and for every new segment that arrives, the manager checks if the new segment is requesting a new task to be triggered or an existing task to be modified. This is combined with the prior context of the conversation as well. Optionally the manager can also have access to the `TranscriptManager` if the fixed context window provided isn't enough for full clarity (ie "Could you start working on the task I mentioned last week?"). For every segment of dialogue which **is** deemed to represent a task-related request, the manager parses the dialogue and extracts a clean and clearly written request, updates the flat set of tasks (name + description) stored on the backend (if needed), potentially including pending tasks and scheduled tasks. Then, if (a) a new task is requested to start immediately or (b) the change pertains to a task currently underway, then also publuish the task request on the Task Queue (for the active `Planner` to receive).
+Listens to the Transcript Queue, and for every new segment that arrives, the manager checks if the new segment is requesting a new task to be triggered or an existing task to be modified. This is combined with the prior context of the conversation as well. The manager also has access to the `TranscriptManager`, which it can use if the fixed context window provided isn't enough for full clarity (ie "Could you start working on the task I mentioned last week?"). For every segment of dialogue which **is** deemed to represent a task-related request, the manager parses the dialogue and extracts a clean and clearly written request, sends the update to the TaskListManager to update the flat set of tasks (name + description) stored on the user account (if needed), potentially including pending tasks and scheduled tasks. Then, if (a) a *new* task is requested to start *immediately* or (b) a *change* is requested for a task *currently* underway, then also publuish the task request on the Task Queue (for the active `Planner` to receive, and either trigger a new task or update a live one).
 
 ### Tools
 
@@ -117,3 +117,40 @@ Every time the user sends a message or ends their turn during a call, the `trans
 #### Task Queue
 
 If (a) a *new task* is requested to start *now* OR (b) *changes* are required for an *active* task, then the text-based task update is published on the task queue, for the planner to either (a) initiate the new task or (b) modify the active task.
+
+
+## TaskListManager
+
+Manages all searches and updates across the list of tasks stored in the user account, for *this* assistant. Receives text-based questions and update requests, and uses the available tools to search and update the task list stored in the backend.
+
+### Tools
+
+#### Get Tasks
+
+Can get tasks flexibly filtered by the `assigned_at` and `last_performed` timestamps, `status` flag (active, completed, in progress etc.), recurring frequency, description length, contains or does not contain sub-string etc. (uses `get_logs` filtering)
+
+#### Delete Task
+
+Removes the task for the task list.
+
+#### Change Task Status
+
+Change the status of a task
+
+#### Change Task Description
+
+Change the description of a task.
+
+#### Reschedule Task
+
+Change the scheduled time for a task
+
+#### Merge Tasks
+
+Combine multiple tasks into a single task
+
+### Called By
+
+#### TaskManager
+
+The `TaskManager` is able to ask general questions and submit general requests, both in plain text form, which the `TaskListManager` must then answer and/or perform for the task manager.
