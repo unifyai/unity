@@ -27,7 +27,7 @@ Tasks which have been completed, referenced by their title (plan text). `Planner
 
 ## ComsManager
 
-Manages all text-based and voice-based communcation, whether it be with the user, another person, or another AI assistant. When you call your assistant, it is the ComsManager that picks up the phone, when you send a text, the coms manager parses it and decided whether or not to respond.
+Manages all text-based and voice-based communcation, whether it be with the user, another person, or another AI assistant. When you call your assistant, it is the `ComsManager` that picks up the phone, when you send a text, the `ComsManager` parses it and decided whether or not to respond.
 
 ### Tools
 
@@ -73,7 +73,7 @@ Can get messages flexibly filtered by the sender, receiver, timestamps, message 
 The `ComsManager` is able to ask general questions, which the `TranscriptManager` must then try to answer as well as possible using the available tools.
 
 
-## Knowledge Manager
+## KnowledgeManager
 
 Manages all searches across the entire set of stored knowledge with other users, across all commumication mediums. Receives text-based questions and uses the available tools to search the backend which stores the entire set of transcripts. Also *automatically* triggered at the *end* of *every* exchange, with a general task to "Update the stored knowledge with any new and important information based on the latest conversation, if relevant and useful. Feel free to restructure existing knowledge representation if a new format is now more appealing."
 
