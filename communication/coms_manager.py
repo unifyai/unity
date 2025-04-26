@@ -151,7 +151,7 @@ class ComsManager(threading.Thread):
 
     # Outbound Calls
 
-    def _call(receiver: str, scheduled: Optional[datetime] = None):
+    def _make_call(receiver: str, scheduled: Optional[datetime] = None):
         """
         Phone call the given receiver at the given date and time.
 
@@ -164,13 +164,37 @@ class ComsManager(threading.Thread):
         """
         raise NotImplemented
 
-    def _whatsapp_call(receiver: str, scheduled: Optional[datetime] = None):
+    def _make_whatsapp_call(receiver: str, scheduled: Optional[datetime] = None):
         """
         WhatsApp call the given receiver at the given date and time.
 
         Args:
             receiver (str): The WhatsApp number of the receiver.
             scheduled (Optional[datetime]): The date and time to schedule the WhatsApp call to be made.
+
+        Returns:
+            The live handle of the WhatsApp call, for another agent to take control of.
+        """
+        raise NotImplemented
+
+    def _receive_call(receiver: str):
+        """
+        Accept phone call from the receiver..
+
+        Args:
+            receiver (str): The phone number of the calling receiver.
+
+        Returns:
+            The live handle of the phone call, for another agent to take control of.
+        """
+        raise NotImplemented
+
+    def _receive_whatsapp_call(receiver: str):
+        """
+        Accept WhatsApp call from the receiver..
+
+        Args:
+            receiver (str): The WhatsApp number of the calling receiver.
 
         Returns:
             The live handle of the WhatsApp call, for another agent to take control of.
