@@ -71,3 +71,18 @@ Can get messages flexibly filtered by the sender, receiver, timestamps, message 
 #### ComsManager
 
 The `ComsManager` is able to ask general questions, which the `TranscriptManager` must then try to answer as well as possible using the available tools.
+
+
+## Knowledge Manager
+
+Manages all searches across the entire set of stored knowledge with other users, across all commumication mediums. Receives text-based questions and uses the available tools to search the backend which stores the entire set of transcripts. Also *automatically* triggered at the *end* of *every* exchange, with a general task to "Update the stored knowledge with any new and important information based on the latest conversation, if relevant and useful. Feel free to restructure existing knowledge representation if a new format is now more appealing."
+
+### Tools
+
+TBD - A pretty expressive set of tools (built of top of our logging backend), exposing the full power of multiple tables (contexts), arbitrary columns, different data types etc., depending on the knowledge which must be stored.
+
+### Called By
+
+#### ComsManager
+
+The `ComsManager` is able to ask general questions, which the `KnowledgeManager` must then try to answer as well as possible using the available tools.
