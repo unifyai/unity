@@ -196,3 +196,20 @@ Sends the well-defined fixed browser commands (`controller/commands.py`) to the 
 #### Action Completion Queue
 
 Once an action is completed, send the text-based action received back to this queue, to inform the `Planner`.
+
+
+## BrowserWorker
+
+The browser worker listens for browser commands (`controller/commands.py`) to complete, and then executes them in the browser (using **any means**). Currently `BrowserWorker` is implemented using `playwright`, but the commands in `controller/commands.py` are platform agnostic. Also streams the browser state to the Browser State Queue.
+
+### Subscribed To
+
+#### Browser Command Queue
+
+Listens for browser commands to execute, coming from the `Controller`.
+
+### Publishes To
+
+#### Browser State Queue
+
+Streams the current browser state, for the `Controller` to make use of when deciding on the best browser command, given the text-based action.
