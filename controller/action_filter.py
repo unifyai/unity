@@ -4,9 +4,9 @@ given the live BrowserState.  No literals appear here – we
 import every action name or pattern from constants.py.
 """
 
-from controller.actions import BrowserState
+from controller.states import BrowserState
 from typing import Union
-from controller.constants import *
+from controller.commands import *
 
 
 def get_valid_actions(state: Union[BrowserState, dict], mode="both") -> set[str]:

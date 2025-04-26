@@ -6,7 +6,7 @@ from math import floor
 from pathlib import Path
 from tempfile import mkdtemp
 
-from controller.js_snippets import ELEMENT_INFO_JS, UPDATE_OVERLAY_JS
+from controller.playwright.js_snippets import ELEMENT_INFO_JS, UPDATE_OVERLAY_JS
 from playwright.sync_api import BrowserContext, Page
 
 MARGIN = 100  # overscan around viewport

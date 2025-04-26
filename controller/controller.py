@@ -4,7 +4,7 @@ from datetime import datetime, timezone
 from typing import List
 
 import unify
-from controller.worker import BrowserWorker
+from controller.playwright.worker import BrowserWorker
 from controller.agent import text_to_browser_action
 from constants import SESSION_ID, LOGGER
 
