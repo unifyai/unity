@@ -6,9 +6,6 @@ from datetime import datetime, timezone
 from pathlib import Path
 from functools import wraps
 from asyncio import AbstractEventLoop
-import logging
-
-logger = logging.getLogger(__name__)
 
 from task_managers.task_manager import TaskManager
 from controller.controller import Controller
@@ -16,7 +13,7 @@ from planner.planner import Planner
 from helpers import _find_project_frame
 
 import unify
-from constants import SESSION_ID
+from constants import SESSION_ID, LOGGER
 
 PRINT_LOCK = threading.Lock()
 
@@ -53,18 +50,12 @@ def _wrap_sync_method(fn: callable, name: str):
                     fpath = "?"
                 PRINT_LOCK.acquire()
                 if is_put:
-                    logger.info(
-                        f"\n⬇️ {name}.{fn.__name__}(args={_redacted(a)}, kw={_redacted(kw)})",
-                        f"[⏱️ {t}])",
-                        f"[🗂️ {fpath}]",
-                        f"[🧵thread-{threading.get_ident()}]\n",
+                    LOGGER.info(
+                        f"\n⬇️ {name}.{fn.__name__}(args={_redacted(a)}, kw={_redacted(kw)}) [⏱️ {t}]) [🗂️ {fpath}] [🧵thread-{threading.get_ident()}]\n",
                     )
                 else:
-                    logger.info(
-                        f"\n⬆️ {name}.{fn.__name__}() -> {_redacted(ret)}",
-                        f"[⏱️ {t}])",
-                        f"[🗂️ {fpath}]",
-                        f"[🧵thread-{threading.get_ident()}]\n",
+                    LOGGER.info(
+                        f"\n⬆️ {name}.{fn.__name__}() -> {_redacted(ret)} [⏱️ {t}]) [🗂️ {fpath}] [🧵thread-{threading.get_ident()}]\n",
                     )
                 PRINT_LOCK.release()
             unify.log(
@@ -99,18 +90,12 @@ def _wrap_async_method(fn, name: str):
                     fpath = "?"
                 PRINT_LOCK.acquire()
                 if is_put:
-                    logger.info(
-                        f"\n⬇️ {name}.{fn.__name__}(args={_redacted(a)}, kw={_redacted(kw)})",
-                        f"[⏱️ {t}])",
-                        f"[🗂️ {fpath}]",
-                        f"[🧵thread-{threading.get_ident()}]\n",
+                    LOGGER.info(
+                        f"\n⬇️ {name}.{fn.__name__}(args={_redacted(a)}, kw={_redacted(kw)}) [⏱️ {t}]) [🗂️ {fpath}] [🧵thread-{threading.get_ident()}]\n",
                     )
                 else:
-                    logger.info(
-                        f"\n⬆️ {name}.{fn.__name__}() -> {_redacted(ret)}",
-                        f"[⏱️ {t}])",
-                        f"[🗂️ {fpath}]",
-                        f"[🧵thread-{threading.get_ident()}]\n",
+                    LOGGER.info(
+                        f"\n⬆️ {name}.{fn.__name__}() -> {_redacted(ret)} [⏱️ {t}]) [🗂️ {fpath}] [🧵thread-{threading.get_ident()}]\n",
                     )
                 PRINT_LOCK.release()
             unify.log(
