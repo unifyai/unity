@@ -154,3 +154,20 @@ Combine multiple tasks into a single task
 #### TaskManager
 
 The `TaskManager` is able to ask general questions and submit general requests, both in plain text form, which the `TaskListManager` must then answer and/or perform for the task manager.
+
+
+## Planner
+
+Receives a stream of user inputs related to this task (or a newly created task at the beginning). The requests can either be high-level or low-level guidance, fully text-based in either case. The planner must then stream a series of low-level actions to the `Controller`, as quickly and efficiently as possible in order to complete the task (so the task is not delayed, especially important in cases with live agent-user interaction).
+
+### Subscribed To
+
+#### Task Queue
+
+Every time a task update (or task trigger if there are no active tasks) is made, then this is placed on the queue, and the planner will receice it.
+
+### Publishes To
+
+#### Action Queue
+
+Send sequential text-based actions, each of which corresponds to a *single* action, which would correspond to a single browser command (see `controller/commnds.py`)
