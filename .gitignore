@@ -3,3 +3,7 @@
 __pycache__/
 implementations.py
 .cache.json
+.log.txt
+log.txt
+.logs.txt
+logs.txt
