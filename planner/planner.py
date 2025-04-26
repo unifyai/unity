@@ -11,7 +11,7 @@ class Planner(threading.Thread):
 
     def __init__(
         self,
-        text_task_q: "queue.Queue[List[str]]",
+        task_update_queue: "queue.Queue[List[str]]",
         text_action_q: "queue.Queue[List[str]]",
         action_completion_q: "queue.Queue[List[str]]",
         task_completion_q: asyncio.Queue[str],
@@ -19,8 +19,18 @@ class Planner(threading.Thread):
         *,
         daemon: bool = True,
     ) -> None:
+        """
+        Receives a stream of user inputs related to this task (can either be high-level or low-level guidance), and must stream a series of low-level actions to the controller, as quickly and efficiently as possible, in order to complete the task.
+
+        Args:
+            task_update_queue (queue.Queue[List[str]]): Where the text-based user updates for the task come from.
+            text_action_q (queue.Queue[List[str]]): Where the low-level text actions are sent.
+            action_completion_q (queue.Queue[List[str]]): Where the completion status of the low-level text actions come from.
+            task_completion_q (asyncio.Queue[str]): Where we inform the user that the *overall* task is complete.
+            coms_asyncio_loop (AbstractEventLoop): The asyncio loop for the user-facing agent. Need for task_completion_q.
+        """
         super().__init__(daemon=daemon)
-        self._text_task_q = text_task_q
+        self._text_task_q = task_update_queue
         self._text_action_q = text_action_q
         self._action_completion_q = action_completion_q
         self._task_completion_q = task_completion_q
