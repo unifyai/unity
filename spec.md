@@ -1,5 +1,30 @@
 # Unity Technical Specification
 
+
+## Queues
+
+### Transcript Queue
+The latest user-agent transcript segment (since the last user message). `ComsManager` publishes after **every new user message**, and `TaskManager` subscribes.
+
+### Task Queue
+User task trigger and task update requests, in text form. `TaskManager` publishes, and `Planner` subscribes.
+
+### Action Queue
+Low-level browser actions in text form. `Planner` publishes, and `Controller` subscribes.
+
+### Browser Command Queue
+Lower-level browser commands, based on the exact set of commands defined in `controller/commands.py`. `Controller` publishes, and `BrowserWorker` subscribes.
+
+### Browser State Queue
+The state of the browser (y axis scroll in pixels , "in text-box" bool etc). `BrowserWorker` publishes, `Controller` subscribes.
+
+### Action Completion Queue
+Actions which have been completed, referenced by their title (plain text). `Controller` publishes, `Planner` subscribes.
+
+### Task Completion Queue
+Tasks which have been completed, referenced by their title (plan text). `Planner` publishes, `TaskManager` and `ComsManager` both subscribe.
+
+
 ## ComsManager
 
 Manages all text-based and voice-based communcation, whether it be with the user, another person, or another AI assistant. When you call your assistant, it is the ComsManager that picks up the phone, when you send a text, the coms manager parses it and decided whether or not to respond.
