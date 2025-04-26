@@ -33,11 +33,11 @@ Manages all text-based and voice-based communcation, whether it be with the user
 
 #### Probe Transcript
 
-The `ComsManager` can send text-based queries to the `TranscriptManager.ask`, asking anything related to the prior communications.
+Can send text-based queries to the `TranscriptManager.ask`, asking anything related to the prior communications.
 
 #### Probe Knowledge
 
-The `ComsManager` can send text-based queries to the `KnowledgeManager.ask`, asking anything related to useful knowledge the assistant has accumulated.
+Can send text-based queries to the `KnowledgeManager.ask`, asking anything related to useful knowledge the assistant has accumulated.
 
 ### Publishes To
 
@@ -86,3 +86,34 @@ TBD - A pretty expressive set of tools (built of top of our logging backend), ex
 #### ComsManager
 
 The `ComsManager` is able to ask general questions, which the `KnowledgeManager` must then try to answer as well as possible using the available tools.
+
+
+## TaskManager
+
+Listens to the Transcript Queue, and for every new segment that arrives, the manager checks if the new segment is requesting a new task to be triggered or an existing task to be modified. This is combined with the prior context of the conversation as well. Optionally the manager can also have access to the `TranscriptManager` if the fixed context window provided isn't enough for full clarity (ie "Could you start working on the task I mentioned last week?"). For every segment of dialogue which **is** deemed to represent a task-related request, the manager parses the dialogue and extracts a clean and clearly written request, updates the flat set of tasks (name + description) stored on the backend (if needed), potentially including pending tasks and scheduled tasks. Then, if (a) a new task is requested to start immediately or (b) the change pertains to a task currently underway, then also publuish the task request on the Task Queue (for the active `Planner` to receive).
+
+### Tools
+
+#### Probe Transcript
+
+The `TaskManager` can send text-based queries to the `TranscriptManager.ask`, asking anything related to the prior communications, in rare cases where the immediate context isn't enough to determine the task, such as "Could you start working on the task I mentioned last week?".
+
+#### Probe Task List
+
+If changes are requested in the transcript, then the manager can send text-based queries to the `TaskListManager.ask`, asking anything related to the set of active, completed, pending and scheduled tasks.
+
+#### Update Task List
+
+If changes are requested in the transcript, then the manager can send text-based commands to the `TaskListManager.update`, asking the manager to update the task list in a specific manner.
+
+### Subscribed To
+
+#### Transcript Queue
+
+Every time the user sends a message or ends their turn during a call, the `transcript_q` is populated with all messages *since the last user message*. It is down to the task manager to accumulate these and create windowed context, if needed.
+
+### Publishes To
+
+#### Task Queue
+
+If (a) a *new task* is requested to start *now* OR (b) *changes* are required for an *active* task, then the text-based task update is published on the task queue, for the planner to either (a) initiate the new task or (b) modify the active task.
