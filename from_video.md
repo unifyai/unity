@@ -1,6 +1,6 @@
 # Learning From Video
 
-1. Detect all candidate "Action" timestamps from the video, using some off-the-shelf video action detection model
+1. Detect all candidate "action" timestamps from the video, using some off-the-shelf video action detection model
 
 2. For each adjacent pair of screenshots (either side of the action timestamp), pass the pair of images, the overall task description (if available) and any overlapping transcript (if available), all through a multi-modal LLM.  Ask if an action was performed (structured output with a boolean field), and if so, what would be a good description of the action (structured output, optional str field)
 
