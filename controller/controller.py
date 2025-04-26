@@ -2,14 +2,11 @@ import queue
 import threading
 from datetime import datetime, timezone
 from typing import List
-import logging
-
-logger = logging.getLogger(__name__)
 
 import unify
 from controller.worker import BrowserWorker
 from controller.agent import text_to_browser_action
-from constants import SESSION_ID
+from constants import SESSION_ID, LOGGER
 
 
 class Controller(threading.Thread):
@@ -81,4 +78,4 @@ class Controller(threading.Thread):
             # ToDo: only send this once we KNOW the browser action has completed successfully
             self._action_completion_q.put(action)
             t = datetime.now(timezone.utc).time().isoformat(timespec="milliseconds")
-            logger.info(f"\n🕹️ Performed Action: {action} [⏱️ {t}]\n")
+            LOGGER.info(f"\n🕹️ Performed Action: {action} [⏱️ {t}]\n")

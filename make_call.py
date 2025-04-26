@@ -1,12 +1,13 @@
 import os
 
 os.environ["TRANSFORMERS_VERBOSITY"] = "error"
+
 import sys
+import argparse
 import asyncio
 import random
+import pathlib
 import logging
-
-logger = logging.getLogger(__name__)
 import logging.config
 from datetime import datetime, timezone
 from typing import AsyncIterable
@@ -20,39 +21,71 @@ from livekit.plugins.turn_detector.multilingual import MultilingualModel
 from user_facing.sys_msgs import PHONE_AGENT
 from busses.bus_manager import BusManager
 from constants import SESSION_ID
+
 import unify
 
-logging.config.dictConfig(
-    {
-        "version": 1,
-        # <─ KEY LINE ────────────────────────────────────────────────────┐
-        "disable_existing_loggers": True,  # disables *all* library loggers │
-        # ────────────────────────────────────────────────────────────────┘
-        "formatters": {
-            "default": {
-                "format": "%(asctime)s [%(levelname)s] %(name)s: %(message)s",
-                "datefmt": "%Y-%m-%d %H:%M:%S",
-            },
-        },
-        "handlers": {
-            "console": {
-                "class": "logging.StreamHandler",
-                "stream": sys.stderr,
-                "formatter": "default",
-            },
-        },
-        # root prints nothing unless you deliberately raise it later
-        "root": {"level": "CRITICAL", "handlers": ["console"]},
-        # the *only* logger that’s enabled:
-        "loggers": {
-            "myapp": {
-                "level": "INFO",
-                "handlers": ["console"],
-                "propagate": False,
-            },
-        },
-    },
+# ── bootstrap (runs before other imports) ──────────────────────────────
+_boot = argparse.ArgumentParser(add_help=False)
+_boot.add_argument(
+    "--log",
+    metavar="FILE",
+    help="Write Unify logs to FILE instead of stderr",
 )
+_opts, _rest = _boot.parse_known_args()
+# scrub the option so nobody else complains if they re-parse argv later
+sys.argv[:] = [sys.argv[0], *_rest]
+
+
+def _setup_logging(dest: str | None) -> None:
+    handlers = {}
+    active = []
+
+    if dest:  #  --log given
+        path = pathlib.Path(dest).expanduser()
+        path.parent.mkdir(parents=True, exist_ok=True)
+        handlers["file"] = {
+            "class": "logging.FileHandler",
+            "filename": str(path),
+            "encoding": "utf-8",
+            "mode": "a",
+            "formatter": "default",
+        }
+        active = ["file"]
+    else:  # default: stderr
+        handlers["console"] = {
+            "class": "logging.StreamHandler",
+            "stream": sys.stderr,
+            "formatter": "default",
+        }
+        active = ["console"]
+
+    logging.config.dictConfig(
+        {
+            "version": 1,
+            "disable_existing_loggers": True,
+            "formatters": {
+                "default": {
+                    "format": "%(message)s",
+                    "datefmt": "%Y-%m-%d %H:%M:%S",
+                },
+            },
+            "handlers": handlers,
+            "root": {"level": "CRITICAL", "handlers": []},
+            "loggers": {
+                "unity": {
+                    "level": "INFO",
+                    "handlers": active,
+                    "propagate": False,
+                },
+            },
+        },
+    )
+
+
+_setup_logging(_opts.log)
+from constants import LOGGER
+
+# ── end bootstrap ─────────────────────────────────────────────────────
 
 
 # Hack to prevent terminal writies
@@ -107,7 +140,7 @@ class VoiceAssistant(Agent):
 
     async def on_user_turn_completed(self, turn_ctx, new_message) -> None:
         t = datetime.now(timezone.utc).time().isoformat(timespec="milliseconds")
-        logger.info(f"🎙️ Transcribed user speach [⏱️ {t}]")
+        LOGGER.info(f"\n🎙️ Transcribed user speach [⏱️ {t}]\n")
         unify.log(
             context="Transcripts",
             session_id=SESSION_ID,
@@ -127,7 +160,7 @@ class VoiceAssistant(Agent):
         model_settings,
     ) -> AsyncIterable[str]:
         t = datetime.now(timezone.utc).time().isoformat(timespec="milliseconds")
-        logger.info(f"\n🔈 Playing assistant audio [⏱️ {t}]\n")
+        LOGGER.info(f"\n🔈 Playing assistant audio [⏱️ {t}]\n")
         # This method receives the LLM output as an async stream of text.
         collected_chunks = []
         async for chunk in text:

@@ -20,15 +20,13 @@ Run with:  python text_chat_app.py      (Ctrl‑C or Ctrl‑D to quit)
 
 from __future__ import annotations
 
-import logging
-
-logger = logging.getLogger(__name__)
 import asyncio
 import random
 import sys
 from datetime import datetime, timezone
 from typing import List, Dict
 
+from constants import LOGGER
 from busses.bus_manager import BusManager  # ← your existing helper
 
 # ─────────── configuration ──────────────────────────────────────────────
@@ -63,7 +61,7 @@ async def user_input_worker() -> None:
         if not line.strip():
             continue  # skip blanks
         timestamp = datetime.now(timezone.utc).time().isoformat(timespec="seconds")
-        logger.info(f"[📤 {timestamp}] Sent")
+        LOGGER.info(f"[📤 {timestamp}] Sent")
 
         # Update transcript & broadcast through BusManager
         chat_history.append({"user": line})
@@ -96,7 +94,7 @@ async def display_agent_worker() -> None:
     while True:
         reply = await agent_to_user_q.get()
         timestamp = datetime.now(timezone.utc).time().isoformat(timespec="seconds")
-        logger.info(f"{AGENT_NAME} [📥 {timestamp}]: {reply}")
+        LOGGER.info(f"{AGENT_NAME} [📥 {timestamp}]: {reply}")
 
 
 async def task_completion_listener() -> None:
@@ -104,7 +102,7 @@ async def task_completion_listener() -> None:
     while True:
         msg = await bus_manager.task_completion_q.get()
         timestamp = datetime.now(timezone.utc).time().isoformat(timespec="seconds")
-        logger.info(f"\n✅ Task completed [⏱ {timestamp}]: {msg}\n")
+        LOGGER.info(f"\n✅ Task completed [⏱ {timestamp}]: {msg}\n")
 
 
 async def _typing_spinner(done_evt: asyncio.Event) -> None:
@@ -112,11 +110,11 @@ async def _typing_spinner(done_evt: asyncio.Event) -> None:
     i = 0
     while not done_evt.is_set():
         frame = frames[i % len(frames)]
-        logger.info(f"\r{AGENT_NAME} is typing{frame}", end="", flush=True)
+        LOGGER.info(f"\r{AGENT_NAME} is typing{frame}", end="", flush=True)
         await asyncio.sleep(0.4)
         i += 1
     # clear line
-    logger.info("\r" + " " * (len(AGENT_NAME) + 15) + "\r", end="", flush=True)
+    LOGGER.info("\r" + " " * (len(AGENT_NAME) + 15) + "\r", end="", flush=True)
 
 
 # ─────────── orchestrator ───────────────────────────────────────────────
@@ -139,5 +137,5 @@ if __name__ == "__main__":
     try:
         asyncio.run(main())
     except KeyboardInterrupt:
-        logger.info("\nBye!")
+        LOGGER.info("\nBye!")
         sys.exit(0)
