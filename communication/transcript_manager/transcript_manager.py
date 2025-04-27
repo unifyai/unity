@@ -121,7 +121,7 @@ class TranscriptManager(threading.Thread):
 
         # Verify uniqueness
         for key, value in contact_details.items():
-            if key in ["first_name", "surname"]:
+            if key in ["first_name", "surname"] or value is None:
                 continue
             logs = unify.get_logs(
                 context="Contacts",
