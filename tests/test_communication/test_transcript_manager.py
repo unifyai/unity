@@ -1,7 +1,9 @@
 import random
 from datetime import datetime
+
 from communication.message import Message, VALID_MEDIA
 from communication.transcript_manager import TranscriptManager
+from tests.helpers import _handle_project
 
 CONTACTS = [
     {
@@ -30,6 +32,7 @@ MESSAGES = [
 ]
 
 
+@_handle_project
 def test_log_messages():
     transcript_manager = TranscriptManager()
     transcript_manager.start()
