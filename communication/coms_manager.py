@@ -1,58 +1,24 @@
 import threading
 from datetime import datetime
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Optional
+from communication.transcript_manager import TranscriptManager
 
 
 class ComsManager(threading.Thread):
 
-    def __init__(self, skip_tools: Optional[List[str]] = None):
+    def __init__(self):
         """
         Responsible for *sending*, *summarizing* and *searching through* all communcation channels exposed to the assistant.
-
-        Args:
-            skip_tools (Optional[List[str]]): A list of tools (private methods) to skip. For example, user-facing agent doesn't need "send" tools exposed.
         """
-        self._skip_tools = skip_tools
-        raise NotImplemented
-
-    # Public #
-    # -------#
-
-    # English-Text Command
-
-    def perform_action(text: str) -> Any:
-        """
-        Take in any text command, and use the tools available (the *non-skipped* private methods of this class) to perform the action.
-
-        Args:
-            text (str): The text command to perform.
-
-        Returns:
-            Any: The result of the action.
-        """
-        raise NotImplemented
-
-    # Summarize Exchange(s)
-
-    def summarize(exchange_ids: int, guidance: Optional[str] = None) -> str:
-        """
-        Summarize the email thread, phone call, or a time-clustered text exchange, save the summary in the backend, and also oreturn it.
-
-        Args:
-            exchange_ids (int): The ids of the exchanges to summarize.
-            guidance (Optional[str]): Optional guidance for the summarization.
-
-        Returns:
-            str: The summary of the exchanges.
-        """
+        self._transcript_manager = TranscriptManager()
         raise NotImplemented
 
     # Private #
     # --------#
 
-    # Search
+    # Search Tools
 
-    def _get_messages(
+    def _probe_transcripts(
         filter: Optional[str] = None,
         offset: int = 0,
         limit: int = 20,
@@ -70,7 +36,7 @@ class ComsManager(threading.Thread):
         """
         raise NotImplemented
 
-    def _get_summaries(
+    def _probe_knowledge(
         filter: Optional[str] = None,
         offset: int = 0,
         limit: int = 20,
