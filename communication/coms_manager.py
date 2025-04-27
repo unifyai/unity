@@ -1,7 +1,7 @@
 import threading
 from datetime import datetime
 from typing import List, Dict, Optional
-from communication.transcript_manager import TranscriptManager
+from communication.transcript_manager.transcript_manager import TranscriptManager
 
 
 class ComsManager(threading.Thread):
