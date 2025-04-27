@@ -49,3 +49,27 @@ def test_log_messages():
             for i in range(10)
         ],
     )
+
+
+@_handle_project
+def test_get_messages():
+    transcript_manager = TranscriptManager()
+    transcript_manager.start()
+    # log messages
+    transcript_manager.log_messages(
+        [
+            Message(
+                medium=random.choice(VALID_MEDIA),
+                sender_id=random.randint(0, 2),
+                receiver_id=random.randint(0, 2),
+                timestamp=datetime.now().isoformat(),
+                content=random.choice(MESSAGES),
+                exchange_id=i,
+            )
+            for i in range(10)
+        ],
+    )
+    # get all
+    messages = transcript_manager._get_messages()
+    assert len(messages) == 10
+    assert all(isinstance(msg, Message) for msg in messages)

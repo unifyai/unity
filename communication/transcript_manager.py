@@ -71,7 +71,13 @@ class TranscriptManager(threading.Thread):
         Returns:
             List[Dict[str, str]]: A list of messages.
         """
-        raise NotImplemented
+        logs = unify.get_logs(
+            context="Transcripts",
+            filter=filter,
+            offset=offset,
+            limit=limit,
+        )
+        return [Message(**lg.entries) for lg in logs]
 
     def _get_summaries(
         self,
