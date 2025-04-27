@@ -1,6 +1,9 @@
 import threading
 from typing import List, Dict, Any, Optional
 
+import unify
+from communication.message import Message
+
 
 class TranscriptManager(threading.Thread):
 
@@ -41,6 +44,15 @@ class TranscriptManager(threading.Thread):
             str: The summary of the exchanges.
         """
         raise NotImplemented
+
+    def log_messages(messages: List[Message]):
+        """
+        Log messages onto the platform.
+        """
+        unify.create_logs(
+            context="Transcripts",
+            entries=[msg.model_dump() for msg in messages],
+        )
 
     # Private #
     # --------#
