@@ -6,19 +6,16 @@ from communication.message import Message
 
 
 class TranscriptManager(threading.Thread):
-
-    def __init__(self):
-        """
-        Responsible for *searching through* the full transcripts across all communcation channels exposed to the assistant.
-        """
-        raise NotImplemented
+    """
+    Responsible for *searching through* the full transcripts across all communcation channels exposed to the assistant.
+    """
 
     # Public #
     # -------#
 
     # English-Text Question
 
-    def ask(text: str) -> Any:
+    def ask(self, text: str) -> Any:
         """
         Ask any question as a text command, and use the tools available (the private methods of this class) to perform the action.
 
@@ -32,7 +29,7 @@ class TranscriptManager(threading.Thread):
 
     # Summarize Exchange(s)
 
-    def summarize(exchange_ids: int, guidance: Optional[str] = None) -> str:
+    def summarize(self, exchange_ids: int, guidance: Optional[str] = None) -> str:
         """
         Summarize the email thread, phone call, or a time-clustered text exchange, save the summary in the backend, and also oreturn it.
 
@@ -45,11 +42,11 @@ class TranscriptManager(threading.Thread):
         """
         raise NotImplemented
 
-    def log_messages(messages: List[Message]):
+    def log_messages(self, messages: List[Message]):
         """
         Log messages onto the platform.
         """
-        unify.create_logs(
+        return unify.create_logs(
             context="Transcripts",
             entries=[msg.model_dump() for msg in messages],
         )
@@ -58,6 +55,7 @@ class TranscriptManager(threading.Thread):
     # --------#
 
     def _get_messages(
+        self,
         filter: Optional[str] = None,
         offset: int = 0,
         limit: int = 20,
@@ -76,6 +74,7 @@ class TranscriptManager(threading.Thread):
         raise NotImplemented
 
     def _get_summaries(
+        self,
         filter: Optional[str] = None,
         offset: int = 0,
         limit: int = 20,
