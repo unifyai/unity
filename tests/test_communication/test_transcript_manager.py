@@ -1,4 +1,5 @@
 import time
+import unify
 import random
 from datetime import datetime
 
@@ -32,6 +33,13 @@ MESSAGES = [
     "Wow, did you see that?",
     "Goodbye",
 ]
+
+
+def _create_contacts():
+    unify.create_logs(
+        context="Contacts",
+        entries=CONTACTS,
+    )
 
 
 @_handle_project
@@ -115,3 +123,87 @@ def test_get_messages():
     assert len(messages) == 0
     messages = transcript_manager._get_messages(filter=f"timestamp > '{start_time}'")
     assert len(messages) == 10
+
+
+@_handle_project
+def test_summarize_exchanges():
+    transcript_manager = TranscriptManager()
+    transcript_manager.start()
+
+    # create contacts
+    _create_contacts()
+
+    # phone call
+    transcript_manager.log_messages(
+        [
+            Message(
+                medium="phone_call",
+                sender_id=i % 2,
+                receiver_id=(i + 1) % 2,
+                timestamp=datetime.now().isoformat(),
+                content=msg,
+                exchange_id=0,
+            )
+            for i, msg in enumerate(
+                [
+                    "Hey, how's it going?",
+                    "Yeah good thanks, how can I help you?",
+                    "How are your office staplers doing? Are they underperforming?",
+                    "Actually yeah, they're a bit rusty, but I can't make any buying decisions. My manager can.",
+                    "Okay, no worries. Let's catch up again soon.",
+                ],
+            )
+        ],
+    )
+
+    # email exchange
+    transcript_manager.log_messages(
+        [
+            Message(
+                medium="email",
+                sender_id=i % 2,
+                receiver_id=(i + 1) % 2,
+                timestamp=datetime.now().isoformat(),
+                content=msg,
+                exchange_id=1,
+            )
+            for i, msg in enumerate(
+                [
+                    "Great catching up the other day, did you manage to talk to your manager?",
+                    "Hey, yeah I did actually. I'll reach out soon.",
+                    "Okay great, thanks!",
+                ],
+            )
+        ],
+    )
+
+    # whatsapp exchange
+    transcript_manager.log_messages(
+        [
+            Message(
+                medium="whatsapp_message",
+                sender_id=(i + 1) % 2,
+                receiver_id=i % 2,
+                timestamp=datetime.now().isoformat(),
+                content=msg,
+                exchange_id=2,
+            )
+            for i, msg in enumerate(
+                [
+                    "Hey, yeah we'd love to buy your staplers!",
+                    "Great! Excited to hear :)",
+                ],
+            )
+        ],
+    )
+
+    # summarize
+    summary = transcript_manager.summarize([0, 1, 2])
+
+    # retrieve summary
+    summaries = transcript_manager._get_summaries()
+    assert len(summaries) == 1
+    assert summaries[0].model_dump() == {
+        "exchange_ids": [0, 1, 2],
+        "summary": summary,
+    }
