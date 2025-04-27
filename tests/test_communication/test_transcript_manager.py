@@ -1,8 +1,9 @@
+import time
 import random
 from datetime import datetime
 
 from communication.message import Message, VALID_MEDIA
-from communication.transcript_manager import TranscriptManager
+from communication.transcript_manager.transcript_manager import TranscriptManager
 from tests.helpers import _handle_project
 
 CONTACTS = [
@@ -27,6 +28,7 @@ CONTACTS = [
 MESSAGES = [
     "Hello, how are you?",
     "Sorry I couldn't hear you",
+    "Hell no, I won't do that",
     "Wow, did you see that?",
     "Goodbye",
 ]
@@ -53,6 +55,9 @@ def test_log_messages():
 
 @_handle_project
 def test_get_messages():
+    start_time = datetime.now().isoformat()
+    time.sleep(0.1)
+    random.seed(0)
     transcript_manager = TranscriptManager()
     transcript_manager.start()
     # log messages
@@ -69,7 +74,44 @@ def test_get_messages():
             for i in range(10)
         ],
     )
-    # get all
+
+    ## get all
+
     messages = transcript_manager._get_messages()
     assert len(messages) == 10
     assert all(isinstance(msg, Message) for msg in messages)
+
+    ## search
+
+    # sender
+
+    messages = transcript_manager._get_messages(filter="sender_id == 0")
+    assert len(messages) == 3
+    assert all(isinstance(msg, Message) for msg in messages)
+
+    # contains
+
+    messages = transcript_manager._get_messages(filter="'Hell' in content")
+    assert len(messages) == 3
+    assert all(isinstance(msg, Message) for msg in messages)
+
+    # does not contain
+
+    messages = transcript_manager._get_messages(filter="',' not in content")
+    assert len(messages) == 5
+    assert all(isinstance(msg, Message) for msg in messages)
+
+    # medium
+
+    messages = transcript_manager._get_messages(
+        filter="medium in ('email', 'whatsapp_message')",
+    )
+    assert len(messages) == 1
+    assert all(isinstance(msg, Message) for msg in messages)
+
+    # timestamp
+
+    messages = transcript_manager._get_messages(filter=f"timestamp < '{start_time}'")
+    assert len(messages) == 0
+    messages = transcript_manager._get_messages(filter=f"timestamp > '{start_time}'")
+    assert len(messages) == 10
