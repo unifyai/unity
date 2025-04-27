@@ -3,7 +3,7 @@ import unify
 import random
 from datetime import datetime
 
-from communication.message import Message, VALID_MEDIA
+from communication.types.message import Message, VALID_MEDIA
 from communication.transcript_manager.transcript_manager import TranscriptManager
 from tests.helpers import _handle_project
 
@@ -40,6 +40,26 @@ def _create_contacts():
         context="Contacts",
         entries=CONTACTS,
     )
+
+
+@_handle_project
+def test_create_contact():
+    transcript_manager = TranscriptManager()
+    transcript_manager.start()
+    transcript_manager.create_contact(
+        first_name="Dan",
+    )
+    contacts = transcript_manager._get_contacts()
+    assert len(contacts) == 1
+    contact = contacts[0]
+    assert contact.model_dump() == {
+        "contact_id": 0,
+        "first_name": "Dan",
+        "surname": None,
+        "email_address": None,
+        "phone_number": None,
+        "whatsapp_number": None,
+    }
 
 
 @_handle_project
