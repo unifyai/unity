@@ -1,8 +1,11 @@
+import json
 import threading
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any, Optional, Union
 
 import unify
 from communication.message import Message
+from communication.summary import Summary
+from communication.transcript_manager.sys_msgs import SUMMARIZE
 
 
 class TranscriptManager(threading.Thread):
@@ -29,7 +32,11 @@ class TranscriptManager(threading.Thread):
 
     # Summarize Exchange(s)
 
-    def summarize(self, exchange_ids: int, guidance: Optional[str] = None) -> str:
+    def summarize(
+        self,
+        exchange_ids: Union[int, List[int]],
+        guidance: Optional[str] = None,
+    ) -> str:
         """
         Summarize the email thread, phone call, or a time-clustered text exchange, save the summary in the backend, and also oreturn it.
 
@@ -40,7 +47,24 @@ class TranscriptManager(threading.Thread):
         Returns:
             str: The summary of the exchanges.
         """
-        raise NotImplemented
+        if not isinstance(exchange_ids, list):
+            exchange_ids = [exchange_ids]
+        client = unify.Unify("gpt-4o@openai")
+        client.set_system_message(
+            SUMMARIZE.replace("{guidance}", f"\n{guidance}\n" if guidance else ""),
+        )
+        msgs = self._get_messages(filter=f"exchange_id in {exchange_ids}")
+        exchanges = {
+            id: [msg.content for msg in msgs if msg.exchange_id == id]
+            for id in exchange_ids
+        }
+        summary = client.generate(json.dumps(exchanges, indent=4))
+        unify.log(
+            context="TranscriptSummaries",
+            exchange_ids=exchange_ids,
+            summary=summary,
+        )
+        return summary
 
     def log_messages(self, messages: List[Message]):
         """
@@ -58,7 +82,7 @@ class TranscriptManager(threading.Thread):
         self,
         filter: Optional[str] = None,
         offset: int = 0,
-        limit: int = 20,
+        limit: Optional[int] = None,
     ) -> List[Dict[str, str]]:
         """
         Retrieve messages from the transcript history, based on flexible filtering for a specific sender, group of senders, receiver, group of receivers, medium, set of mediums, timestamp range, message length, messages containing a phrase, not containing a phrase, or anything else.
@@ -83,7 +107,7 @@ class TranscriptManager(threading.Thread):
         self,
         filter: Optional[str] = None,
         offset: int = 0,
-        limit: int = 20,
+        limit: Optional[int] = None,
     ) -> List[Dict[str, str]]:
         """
         Retrieve summaries from the transcript history, based on flexible filtering for a specific exchange id, group of exchange ids, medium, set of mediums, timestamp range, summary length, summaries containing a phrase, not containing a phrase, or anything else.
@@ -96,4 +120,10 @@ class TranscriptManager(threading.Thread):
         Returns:
             List[Dict[str, str]]: A list of exchange summaries.
         """
-        raise NotImplemented
+        logs = unify.get_logs(
+            context="TranscriptSummaries",
+            filter=filter,
+            offset=offset,
+            limit=limit,
+        )
+        return [Summary(**lg.entries) for lg in logs]
