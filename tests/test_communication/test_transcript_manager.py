@@ -63,6 +63,53 @@ def test_create_contact():
 
 
 @_handle_project
+def test_create_contacts():
+    transcript_manager = TranscriptManager()
+    transcript_manager.start()
+
+    # first
+    transcript_manager.create_contact(
+        first_name="Dan",
+    )
+    contacts = transcript_manager._get_contacts()
+    assert len(contacts) == 1
+    contact = contacts[0]
+    assert contact.model_dump() == {
+        "contact_id": 0,
+        "first_name": "Dan",
+        "surname": None,
+        "email_address": None,
+        "phone_number": None,
+        "whatsapp_number": None,
+    }
+
+    # second
+    transcript_manager.create_contact(
+        first_name="Tom",
+    )
+    contacts = transcript_manager._get_contacts()
+    assert len(contacts) == 2
+    contact = contacts[0]
+    assert contact.model_dump() == {
+        "contact_id": 1,
+        "first_name": "Tom",
+        "surname": None,
+        "email_address": None,
+        "phone_number": None,
+        "whatsapp_number": None,
+    }
+
+
+@_handle_project
+def test_search_contacts():
+    transcript_manager = TranscriptManager()
+    transcript_manager.start()
+    transcript_manager.create_contact(
+        first_name="Dan",
+    )
+
+
+@_handle_project
 def test_log_messages():
     transcript_manager = TranscriptManager()
     transcript_manager.start()
