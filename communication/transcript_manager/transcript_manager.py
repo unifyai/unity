@@ -41,12 +41,7 @@ class TranscriptManager(threading.Thread):
         from communication.transcript_manager.sys_msgs import ANSWER
 
         client = unify.Unify("o4-mini@openai")
-        client.set_system_message(
-            ANSWER.replace(
-                "{contact_schema}",
-                "",
-            ),
-        )
+        client.set_system_message(ANSWER)
         return tool_use_loop(client, text, self._tools)
 
     # Summarize Exchange(s)
