@@ -40,7 +40,7 @@ class TranscriptManager(threading.Thread):
         """
         from communication.transcript_manager.sys_msgs import ANSWER
 
-        client = unify.Unify("o3-mini@openai")
+        client = unify.Unify("o4-mini@openai")
         client.set_system_message(
             ANSWER.replace(
                 "{contact_schema}",
