@@ -185,7 +185,7 @@ async def entrypoint(ctx: agents.JobContext):
 
     session = AgentSession(
         stt=deepgram.STT(model="nova-3", language="multi"),
-        llm=openai.LLM(model="gpt-4o"),
+        llm=openai.LLM(model="o4-mini"),
         tts=cartesia.TTS(),
         vad=silero.VAD.load(),
         turn_detection=MultilingualModel(),
