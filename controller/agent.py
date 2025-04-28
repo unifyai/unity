@@ -624,7 +624,7 @@ def text_to_browser_action(
     LOGGER.info(f"\n🤖 Controller: text command to browser action... ⏳ [⏱️ {t}]\n")
     if ADVANCED_MODE:
         response_format = _create_full_response_format(tabs, buttons, state)
-        client.set_endpoint("gpt-4o-mini@openai")
+        client.set_endpoint("o4-mini-mini@openai")
         history_msg = (
             "\n\nThe low-level action history (most recent first) is as follows:\n"
             + "\n".join(f"{r['timestamp']:.0f}: {r['command']}" for r in history[-20:])
@@ -725,7 +725,7 @@ def text_to_browser_action(
         ]
         sys_prompt = "\n".join(lines)
 
-        client.set_endpoint("gpt-4o-mini@openai")
+        client.set_endpoint("o4-mini-mini@openai")
         client.set_system_message(sys_prompt)
         client.set_response_format(SimpleChoice)
 

@@ -9,20 +9,20 @@ from tests.helpers import _handle_project
 
 CONTACTS = [
     {
-        "user_id": 0,
+        "contact_id": 0,
         "first_name": "John",
         "surname": "Smith",
-        "email": "johnsmith11@gmail.com",
-        "phone": "+1234567890",
-        "whatsapp": "+1234567890",
+        "email_address": "johnsmith11@gmail.com",
+        "phone_number": "+1234567890",
+        "whatsapp_number": "+1234567890",
     },
     {
-        "user_id": 1,
+        "contact_id": 1,
         "first_name": "Nancy",
         "surname": "Gray",
-        "email": "nancy_gray@outlook.com",
-        "phone": "+1987654320",
-        "whatsapp": "+1987654320",
+        "email_address": "nancy_gray@outlook.com",
+        "phone_number": "+1987654320",
+        "whatsapp_number": "+1987654320",
     },
 ]
 
@@ -49,7 +49,7 @@ def test_create_contact():
     transcript_manager.create_contact(
         first_name="Dan",
     )
-    contacts = transcript_manager._get_contacts()
+    contacts = transcript_manager._search_contacts()
     assert len(contacts) == 1
     contact = contacts[0]
     assert contact.model_dump() == {
@@ -73,7 +73,7 @@ def test_update_contact():
     )
 
     # check
-    contacts = transcript_manager._get_contacts()
+    contacts = transcript_manager._search_contacts()
     assert len(contacts) == 1
     contact = contacts[0]
     assert contact.model_dump() == {
@@ -92,7 +92,7 @@ def test_update_contact():
     )
 
     # check
-    contacts = transcript_manager._get_contacts()
+    contacts = transcript_manager._search_contacts()
     assert len(contacts) == 1
     contact = contacts[0]
     assert contact.model_dump() == {
@@ -114,7 +114,7 @@ def test_create_contacts():
     transcript_manager.create_contact(
         first_name="Dan",
     )
-    contacts = transcript_manager._get_contacts()
+    contacts = transcript_manager._search_contacts()
     assert len(contacts) == 1
     contact = contacts[0]
     assert contact.model_dump() == {
@@ -130,7 +130,7 @@ def test_create_contacts():
     transcript_manager.create_contact(
         first_name="Tom",
     )
-    contacts = transcript_manager._get_contacts()
+    contacts = transcript_manager._search_contacts()
     assert len(contacts) == 2
     contact = contacts[0]
     assert contact.model_dump() == {
@@ -195,7 +195,7 @@ def test_get_messages():
 
     ## get all
 
-    messages = transcript_manager._get_messages()
+    messages = transcript_manager._search_messages()
     assert len(messages) == 10
     assert all(isinstance(msg, Message) for msg in messages)
 
@@ -203,25 +203,25 @@ def test_get_messages():
 
     # sender
 
-    messages = transcript_manager._get_messages(filter="sender_id == 0")
+    messages = transcript_manager._search_messages(filter="sender_id == 0")
     assert len(messages) == 3
     assert all(isinstance(msg, Message) for msg in messages)
 
     # contains
 
-    messages = transcript_manager._get_messages(filter="'Hell' in content")
+    messages = transcript_manager._search_messages(filter="'Hell' in content")
     assert len(messages) == 3
     assert all(isinstance(msg, Message) for msg in messages)
 
     # does not contain
 
-    messages = transcript_manager._get_messages(filter="',' not in content")
+    messages = transcript_manager._search_messages(filter="',' not in content")
     assert len(messages) == 5
     assert all(isinstance(msg, Message) for msg in messages)
 
     # medium
 
-    messages = transcript_manager._get_messages(
+    messages = transcript_manager._search_messages(
         filter="medium in ('email', 'whatsapp_message')",
     )
     assert len(messages) == 1
@@ -229,9 +229,9 @@ def test_get_messages():
 
     # timestamp
 
-    messages = transcript_manager._get_messages(filter=f"timestamp < '{start_time}'")
+    messages = transcript_manager._search_messages(filter=f"timestamp < '{start_time}'")
     assert len(messages) == 0
-    messages = transcript_manager._get_messages(filter=f"timestamp > '{start_time}'")
+    messages = transcript_manager._search_messages(filter=f"timestamp > '{start_time}'")
     assert len(messages) == 10
 
 
@@ -311,7 +311,7 @@ def test_summarize_exchanges():
     summary = transcript_manager.summarize([0, 1, 2])
 
     # retrieve summary
-    summaries = transcript_manager._get_summaries()
+    summaries = transcript_manager._search_summaries()
     assert len(summaries) == 1
     assert summaries[0].model_dump() == {
         "exchange_ids": [0, 1, 2],

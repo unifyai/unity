@@ -6,13 +6,22 @@ import unify
 from communication.types.contact import Contact
 from communication.types.message import Message
 from communication.types.summary import Summary
-from communication.transcript_manager.sys_msgs import SUMMARIZE
+from llm_helpers import tool_use_loop
 
 
 class TranscriptManager(threading.Thread):
-    """
-    Responsible for *searching through* the full transcripts across all communcation channels exposed to the assistant.
-    """
+
+    def __init__(self, *, daemon: bool = True) -> None:
+        """
+        Responsible for *searching through* the full transcripts across all communcation channels exposed to the assistant.
+        """
+        super().__init__(daemon=daemon)
+        self._tools = {
+            self.summarize.__name__: self.summarize,
+            self._search_contacts.__name__: self._search_contacts,
+            self._search_messages.__name__: self._search_messages,
+            self._search_summaries.__name__: self._search_summaries,
+        }
 
     # Public #
     # -------#
@@ -29,7 +38,16 @@ class TranscriptManager(threading.Thread):
         Returns:
             Any: The answer to the question.
         """
-        raise NotImplemented
+        from communication.transcript_manager.sys_msgs import ANSWER
+
+        client = unify.Unify("o3-mini@openai")
+        client.set_system_message(
+            ANSWER.replace(
+                "{contact_schema}",
+                "",
+            ),
+        )
+        return tool_use_loop(client, text, self._tools)
 
     # Summarize Exchange(s)
 
@@ -39,7 +57,7 @@ class TranscriptManager(threading.Thread):
         guidance: Optional[str] = None,
     ) -> str:
         """
-        Summarize the email thread, phone call, or a time-clustered text exchange, save the summary in the backend, and also oreturn it.
+        Summarize the email thread, phone call, or a time-clustered text exchange, save the summary in the backend, and also return it.
 
         Args:
             exchange_ids (int): The ids of the exchanges to summarize.
@@ -48,13 +66,15 @@ class TranscriptManager(threading.Thread):
         Returns:
             str: The summary of the exchanges.
         """
+        from communication.transcript_manager.sys_msgs import SUMMARIZE
+
         if not isinstance(exchange_ids, list):
             exchange_ids = [exchange_ids]
-        client = unify.Unify("gpt-4o@openai")
+        client = unify.Unify("o4-mini@openai")
         client.set_system_message(
             SUMMARIZE.replace("{guidance}", f"\n{guidance}\n" if guidance else ""),
         )
-        msgs = self._get_messages(filter=f"exchange_id in {exchange_ids}")
+        msgs = self._search_messages(filter=f"exchange_id in {exchange_ids}")
         exchanges = {
             id: [msg.content for msg in msgs if msg.exchange_id == id]
             for id in exchange_ids
@@ -206,7 +226,7 @@ class TranscriptManager(threading.Thread):
     # Private #
     # --------#
 
-    def _get_contacts(
+    def _search_contacts(
         self,
         filter: Optional[str] = None,
         offset: int = 0,
@@ -231,7 +251,7 @@ class TranscriptManager(threading.Thread):
         )
         return [Contact(**lg.entries) for lg in logs]
 
-    def _get_messages(
+    def _search_messages(
         self,
         filter: Optional[str] = None,
         offset: int = 0,
@@ -256,7 +276,7 @@ class TranscriptManager(threading.Thread):
         )
         return [Message(**lg.entries) for lg in logs]
 
-    def _get_summaries(
+    def _search_summaries(
         self,
         filter: Optional[str] = None,
         offset: int = 0,
