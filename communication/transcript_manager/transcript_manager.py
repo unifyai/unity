@@ -146,6 +146,63 @@ class TranscriptManager(threading.Thread):
             new=True,
         )
 
+    def update_contact(
+        self,
+        contact_id: int,
+        *,
+        first_name: Optional[str] = None,
+        surname: Optional[str] = None,
+        email_address: Optional[str] = None,
+        phone_number: Optional[str] = None,
+        whatsapp_number: Optional[str] = None,
+    ) -> int:
+        """
+        Update the contact details of a contact.
+
+        Args:
+            contact_id (int): The id of the contact to update.
+            first_name (Optional[str]): The first name of the contact.
+            surname (Optional[str]): The surname of the contact.
+            email_address (Optional[str]): The email address of the contact.
+            phone_number (Optional[str]): The phone number of the contact.
+            whatsapp_number (Optional[str]): The WhatsApp number of the contact.
+
+        Returns:
+            int: The id of the updated contact.
+        """
+        # Prune None values
+        contact_details = {
+            "first_name": first_name,
+            "surname": surname,
+            "email_address": email_address,
+            "phone_number": phone_number,
+            "whatsapp_number": whatsapp_number,
+        }
+        assert any(
+            contact_details.values(),
+        ), "At least one contact detail must be provided."
+
+        # Verify uniqueness
+        for key, value in contact_details.items():
+            if key in ["first_name", "surname"] or value is None:
+                continue
+            logs = unify.get_logs(
+                context="Contacts",
+                filter=f"{key} == '{value}'",
+            )
+            assert (
+                len(logs) == 0
+            ), f"Invalid, contact with {key} {value} already exists."
+
+        # get log id
+        logs = unify.get_logs(context="Contacts", filter=f"contact_id == {contact_id}")
+        assert len(logs) == 1
+        log: unify.Log = logs[0]
+        log.update_entries(
+            **contact_details,
+            contact_id=contact_id,
+        )
+
     # Private #
     # --------#
 
