@@ -725,7 +725,7 @@ def text_to_browser_action(
         ]
         sys_prompt = "\n".join(lines)
 
-        client.set_endpoint("o4-mini-mini@openai")
+        client.set_endpoint("o4-mini@openai")
         client.set_system_message(sys_prompt)
         client.set_response_format(SimpleChoice)
 
