@@ -18,7 +18,7 @@ from livekit.agents import Agent, AgentSession, RoomInputOptions
 from livekit.plugins import cartesia, deepgram, noise_cancellation, openai, silero
 from livekit.plugins.turn_detector.multilingual import MultilingualModel
 
-from user_facing.sys_msgs import PHONE_AGENT
+from communication.sys_msgs import PHONE_AGENT
 from busses.bus_manager import BusManager
 from constants import SESSION_ID
 
