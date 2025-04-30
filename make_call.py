@@ -102,7 +102,7 @@ FIRST_NAME = os.environ["FIRST_NAME"]
 unify.activate("Unity", overwrite=True)
 
 
-bus_manager = BusManager(with_browser_use=bool(os.environ.get("BROWSER_USE", False)))
+bus_manager = BusManager(with_browser_use=bool(os.environ.get("OFF_THE_SHELF", False)))
 
 
 async def _speech_dispatcher(
