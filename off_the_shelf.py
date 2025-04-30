@@ -56,6 +56,7 @@ class OffTheShelf(threading.Thread):
                 break
             self._agent.add_new_task(messages)
             result = await self._agent.run()
+            result = result.model_dump_json()
             LOGGER.info(result)
             self._action_completion_q.put(result)
             self._coms_asyncio_loop.call_soon_threadsafe(
