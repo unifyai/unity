@@ -1,21 +1,21 @@
+import unify
+import requests
 import threading
-from typing import List, Tuple, Any, Dict, Optional
+from typing import List, Tuple, Any, Dict, Optional, Union
+from knowledge.types import ColumnType
 
 
 class KnowledgeManager(threading.Thread):
-
-    def __init__(self):
-        """
-        Responsible for *adding to*, *updating* and *searching through* all knowledge the assistant has stored in memory.
-        """
-        raise NotImplemented
+    """
+    Responsible for *adding to*, *updating* and *searching through* all knowledge the assistant has stored in memory.
+    """
 
     # Public #
     # -------#
 
     # English-Text Command
 
-    def perform_action(text: str) -> Any:
+    def act(self, text: str) -> Any:
         """
         Take in any text command, and use the tools available (the *non-skipped* private methods of this class) to perform the action.
 
@@ -30,13 +30,63 @@ class KnowledgeManager(threading.Thread):
     # Private #
     # --------#
 
-    def _list_tables() -> List[str]:
+    # Tables
+
+    def _create_table(
+        self,
+        name: str,
+        columns: Optional[Dict[str, ColumnType]] = None,
+    ) -> str:
         """
-        List the tables which are currently being used to store all agent knowledge.
+        Create a new table for storing long-term knowledge.
+
+        Args:
+            name (str): The name of the table to create.
+
+            columns (Optional[Dict[str, ColumnType]]): A dictionary of column names and their types.
+
+        Returns:
+            str: The name of the table that was created.
         """
-        raise NotImplemented
+        unify.create_context(f"Knowledge/{name}")
+        if not columns:
+            return
+        # ToDo: replace with column creation once [this task](https://app.clickup.com/t/86c3aab77) is done.
+        url = "https://api.unify.ai/v0/project/eval-project/contexts/experiment1/trial1/artifacts"
+        headers = {"Authorization": f"Bearer {unify.API_KEY}"}
+        json_input = {"artifacts": {"columns": columns}}
+        response = requests.request("POST", url, json=json_input, headers=headers)
+        if not response.ok:
+            raise response.json()
+
+    def _list_tables(
+        self,
+        include_columns: bool = False,
+    ) -> Union[List[str], List[Dict[str, ColumnType]]]:
+        """
+        List the tables which are being used to store all knowledge.
+
+        Args:
+            include_columns (bool): Whether to include the columns in the returned list.
+
+        Returns:
+            Union[List[str], List[Dict[str, ColumnType]]]: A list of table names.
+        """
+        return {
+            k.lstrip("Knowledge/"): v
+            for k, v in unify.get_contexts(prefix="Knowledge/").items()
+        }
+
+    def _rename_table(self):
+        pass
+
+    def _delete_table(self):
+        pass
+
+    # Columns
 
     def _list_columns(
+        self,
         tables: Optional[List[str]] = None,
     ) -> Dict[str, List[Tuple[str, str]]]:
         """
@@ -50,8 +100,107 @@ class KnowledgeManager(threading.Thread):
         """
         raise NotImplemented
 
-    def _rename_table():
+    def _create_empty_column(
+        self,
+        table: str,
+        column_name: str,
+        column_type: str,
+    ) -> None:
+        """
+        Adds an empty column to the table, which is initialized with `None` values.
+
+        Args:
+            table (str): The name of the table to add the column to.
+
+            column_name (str): The name of the column to add.
+
+            column_type (str): The type of the column to add.
+        """
+        # ToDo: replace with column creation once [this task](https://app.clickup.com/t/86c3aab77) is done.
+        url = f"https://api.unify.ai/v0/project/{unify.active_project()}/contexts/Knowledge/{table}/artifacts"
+        headers = {"Authorization": f"Bearer {unify.API_KEY}"}
+        json_input = {"artifacts": {"columns": {column_name: column_type}}}
+        response = requests.request("POST", url, json=json_input, headers=headers)
+        if not response.ok:
+            raise response.json()
+
+    def _create_derived_column(
+        self,
+        table: str,
+        column_name: str,
+        column_type: str,
+        equation: str,
+    ):
+        """
+        Create a new column in the table, derived from the other columns in the table.
+
+        Args:
+            table (str): The name of the table to add the column to.
+
+            column_name (str): The name of the column to add.
+
+            equation (str): The equation to use to derive the column.
+        """
+        url = "https://api.unify.ai/v0/logs/derived"
+        headers = {"Authorization": f"Bearer {unify.API_KEY}"}
+        json_input = {
+            "project": unify.active_project(),
+            "context": f"Knowledge/{table}",
+            "key": column_name,
+            "equation": equation,
+            "referenced_logs": {"log": {}},
+        }
+        response = requests.request("POST", url, json=json_input, headers=headers)
+        return response.json()
+
+    def _delete_column(self, table: str, column_name: str):
+        """
+        Delete column from the table, and all of the data.
+
+        Args:
+            table (str): The name of the table to delete the column from.
+        """
+        unify.delete_log_fields(column_name)
+        url = f"https://api.unify.ai/v0/project/{unify.active_project()}/contexts/Knowledge/{table}/artifacts"
+        headers = {"Authorization": f"Bearer {unify.API_KEY}"}
+        response = requests.request("DELETE", url, headers=headers)
+        return response.json()
+
+    def _rename_column(self):
         pass
 
-    def _rename_column():
+    def _transform_column(self):
         pass
+
+    # Add Data
+
+    def _add_data(self, table: str, data: List[Dict[str, Any]]):
+        """
+        Add data to the specified table. Will automatically create new columns if any keys are not present in the table already.
+
+        Args:
+            table (str): The name of the table to add the data to.
+
+            data (List[Dict[str, Any]]): The data to add to the table.
+        """
+        unify.create_logs(
+            context=f"Knowledge/{table}",
+            entries=data,
+        )
+
+    # Search
+
+    def _search(self, query: str, tables: Optional[List[str]] = None):
+        """
+        Search the query through all of the tables, and return the results across all tables.
+        """
+        if tables is None:
+            tables = self._list_tables()
+        # ToDo: convert to map function
+        results = dict()
+        for table in tables:
+            results[table] = unify.get_logs(
+                context="Knowledge",
+                filter=query,
+            )
+        return results
