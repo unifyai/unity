@@ -1,4 +1,5 @@
 import asyncio
+import json
 from dotenv import load_dotenv
 import os
 import threading
@@ -56,7 +57,13 @@ class OffTheShelf(threading.Thread):
                 break
             self._agent.add_new_task(messages)
             result = await self._agent.run()
-            result = result.model_dump_json()
+            result = json.loads(result.model_dump_json())
+            history_list = []
+            for history in result["history"]:
+                history.pop("state")
+                history.pop("metadata")
+                history_list.append(history)
+            result = json.dumps({"result": history_list})
             LOGGER.info(result)
             self._action_completion_q.put(result)
             self._coms_asyncio_loop.call_soon_threadsafe(
