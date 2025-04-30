@@ -20,7 +20,7 @@ Populate an `.env` file in the same root directory (ie `~/unity/.env`), based on
 ```
 UNIFY_KEY={value}
 UNIFY_BASE_URL={value}
-# BROWSER_USE=true # uncomment for using browser_use
+# OFF_THE_SHELF=true # uncomment for using browser_use
 OPENAI_API_KEY={value}
 FIRST_NAME={value}
 AGENT_FIRST={value}
