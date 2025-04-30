@@ -18,6 +18,9 @@ Run [this demo](https://docs.livekit.io/agents/start/voice-ai/#agent-code) (the 
 
 Populate an `.env` file in the same root directory (ie `~/unity/.env`), based on these newly generated keys, and also create some of your own for assistant customization (name, age etc.):
 ```
+UNIFY_KEY={value}
+UNIFY_BASE_URL={value}
+# BROWSER_USE=true # uncomment for using browser_use
 OPENAI_API_KEY={value}
 FIRST_NAME={value}
 AGENT_FIRST={value}
@@ -58,3 +61,10 @@ To interact with the low-level browser controller, you can simply run `python te
 <div style="display: block;" align="center">
     <img class="dark-light" width="100%" src="https://raw.githubusercontent.com/unifyai/unifyai.github.io/refs/heads/main/img/externally_linked/unity_gui.png"/>
 </div>
+
+**Note**:
+
+> In case you run into issues setting up tkinter on macos with uv,
+> you'd need to set the TCL_LIBRARY and TK_LIBRARY env vars pointing
+> to the path for tcl and tk in your system. It's generally found
+> under ~/.local/share/yv/python/<version>/lib
