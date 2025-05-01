@@ -83,17 +83,16 @@ class Planner(threading.Thread):
             # Priority 0: Check for reimplement requests from Verifier (highest priority)
             try:
                 reimplement_queue = Verifier.get_reimplement_queue()
-                function_name = reimplement_queue.get_nowait()
+                fn_obj = reimplement_queue.get_nowait()
 
                 # Pause the plan execution
                 self.paused = True
 
-                # Find the function node by name in the current plan
-                if self.current_plan:
-                    function_node = getattr(self.current_plan, function_name, None)
-                    if function_node:
-                        # Rewrite the plan section using CodeRewriter
-                        rewrite_function(function_node)
+                # backward‐compatible: if a name was enqueued
+                if isinstance(fn_obj, str):
+                    fn_obj = getattr(self._plan_module, fn_obj, None)
+                if callable(fn_obj):
+                    rewrite_function(fn_obj)
 
                 # Unpause the plan
                 self.paused = False

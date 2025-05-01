@@ -67,7 +67,7 @@ def verify(fn):
             try:
                 result = fn(*args, **kwargs)
             except NotImplementedError:
-                code_rewriter.rewrite_function(fn)
+                Verifier.get_reimplement_queue().put(fn)
                 continue
 
             after = get_snapshot()
@@ -76,7 +76,7 @@ def verify(fn):
             if verdict == "ok":
                 return result
             elif verdict == "reimplement":
-                code_rewriter.rewrite_function(fn)
+                Verifier.get_reimplement_queue().put(fn)
                 continue
             elif verdict == "push_up_stack":
                 raise BubbleUp(f"Intent '{fn.__name__}' requires pushing up")
