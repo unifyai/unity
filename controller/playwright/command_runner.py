@@ -315,6 +315,30 @@ class CommandRunner:
                 self.select_tab(title)
             return
 
+        # browser navigation --------------------------------------------------
+        if cmd == CMD_GO_BACK:
+            try:
+                self.active.go_back(wait_until="domcontentloaded")
+            except Exception:
+                self.log("go_back failed")
+            return
+        if cmd == CMD_GO_FORWARD:
+            try:
+                self.active.go_forward(wait_until="domcontentloaded")
+            except Exception:
+                self.log("go_forward failed")
+            return
+
+        # duplicate tab -------------------------------------------------------
+        if cmd == CMD_DUPLICATE_TAB:
+            try:
+                url = self.active.url
+                self.new_tab()
+                self.active.goto(url, timeout=15000, wait_until="load")
+            except Exception:
+                self.log("duplicate_tab failed")
+            return
+
     # ---------- helper for GUI refresh ------------------------------------
     def refresh_overlay(self):
         elements = collect_elements(self.active)

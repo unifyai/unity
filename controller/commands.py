@@ -38,6 +38,9 @@ CMD_STOP_SCROLLING = "stop_scrolling"
 CMD_CLICK_BUTTON = "click_button *"
 CMD_SELECT_TAB = "select_tab *"
 CMD_CLOSE_TAB = "close_tab *"
+CMD_GO_BACK = "go_back"
+CMD_GO_FORWARD = "go_forward"
+CMD_DUPLICATE_TAB = "duplicate_tab"
 
 # ───────────────────────────────────────────────────────────────────────────
 #  WILDCARD GROUPS (sets reused by GUI / agent / filters)
@@ -68,6 +71,9 @@ NAV_COMMANDS: set[str] = {
     CMD_CLOSE_THIS_TAB,
     CMD_SEARCH,
     CMD_OPEN_URL,
+    CMD_GO_BACK,
+    CMD_GO_FORWARD,
+    CMD_DUPLICATE_TAB,
 }
 
 # 3.  Wildcard placeholders for dynamic GUI elements

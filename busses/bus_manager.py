@@ -158,6 +158,11 @@ class BusManager:
         self._browser_state_q.name = "browser_state_q"
         _log_queue(self._browser_state_q)
 
+        # broadcast channel for browser state (non-blocking reads)
+        self._browser_state_broadcast_q: queue.Queue[str] = queue.Queue()
+        self._browser_state_broadcast_q.name = "browser_state_broadcast_q"
+        _log_queue(self._browser_state_broadcast_q)
+
         # actions which have been completed, referenced by their title
         self._action_completion_q: queue.Queue[str] = queue.Queue()
         self._action_completion_q.name = "action_completion_q"
@@ -245,6 +250,10 @@ class BusManager:
     @property
     def browser_state_q(self) -> queue.Queue[str]:
         return self._browser_state_q
+        
+    @property
+    def browser_state_broadcast_q(self) -> queue.Queue[str]:
+        return self._browser_state_broadcast_q
 
     @property
     def action_completion_q(self) -> queue.Queue[str]:
