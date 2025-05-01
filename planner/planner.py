@@ -8,7 +8,8 @@ from asyncio import AbstractEventLoop
 from .context import context as planner_context
 from . import zero_shot, update_handler
 from .verifier import Verifier
-from .code_rewriter import CodeRewriter
+from .code_rewriter import rewrite_function
+import logging
 
 
 class Planner(threading.Thread):
@@ -50,6 +51,32 @@ class Planner(threading.Thread):
         self.current_plan = None
         self.paused = False
         self.plan_stack = []
+        self._plan_module = None
+        self._plan_thread = None
+
+    def _run_plan_wrapper(self, fn):
+        """
+        Wrapper function that manages call stack and executes the plan function.
+
+        Args:
+            fn: The root function of the plan to execute
+        """
+        # Push the function name to the call stack
+        planner_context.push_frame("root")
+
+        try:
+            planner_context.push_frame(fn.__name__)
+            fn()
+            status = "Task completed successfully"
+        except Exception as exc:
+            logging.exception("Plan crashed in %s", fn.__name__)
+            status = f"Task crashed: {exc!r}"
+        finally:
+            planner_context.pop_frame()
+
+        self._coms_asyncio_loop.call_soon_threadsafe(
+            self._task_completion_q.put_nowait, status
+        )
 
     def run(self) -> None:
         while True:
@@ -63,16 +90,11 @@ class Planner(threading.Thread):
 
                 # Find the function node by name in the current plan
                 if self.current_plan:
-                    function_node = self.current_plan.get_function_by_name(
-                        function_name
-                    )
+                    function_node = getattr(self.current_plan, function_name, None)
                     if function_node:
                         # Rewrite the plan section using CodeRewriter
-                        CodeRewriter.rewrite_plan_section(function_node)
-                        if self.current_plan:
-                            self.current_plan._expected_primitive = None
+                        rewrite_function(function_node)
 
-                # Clear the queue entry by consuming it (already done with get_nowait)
                 # Unpause the plan
                 self.paused = False
             except queue.Empty:
@@ -89,41 +111,6 @@ class Planner(threading.Thread):
                 self._handle_task_event(task_description)
             except queue.Empty:
                 pass
-
-            # Priority 2: Check for action completions (non-blocking)
-            try:
-                action_string = self._action_completion_q.get(block=False)
-                if self.current_plan:
-                    # Pass the raw action string to mark_action_done
-                    self.current_plan.mark_action_done(action_string)
-            except queue.Empty:
-                pass
-
-            # Priority 3: If not paused and plan is ready, send next action
-            if not self.paused and self.current_plan and self.current_plan.ready():
-                next_action = self.current_plan.next_action()
-                if next_action:
-                    # Send the action string to the action queue
-                    self._text_action_q.put(next_action)
-                else:
-                    # Plan is complete
-                    self._coms_asyncio_loop.call_soon_threadsafe(
-                        self._task_completion_q.put_nowait,
-                        "Task completed successfully",
-                    )
-
-                    # Reset paused state
-                    self.paused = False
-
-                    # Pop from plan stack if available
-                    if self.plan_stack:
-                        self.current_plan = self.plan_stack.pop()
-                        planner_context.set_current_plan(self.current_plan)
-                        self.current_plan._expected_primitive = None
-                    else:
-                        self.current_plan = None
-                        planner_context.set_current_plan(None)
-                        self.paused = False
 
             # Small sleep to prevent CPU spinning
             time.sleep(0.01)
@@ -147,23 +134,30 @@ class Planner(threading.Thread):
         """
         Start a new plan based on the task description.
         Uses zero-shot planning to generate a sequence of actions.
+        Launches a daemon thread to execute the plan.
 
         Args:
             task_description: The description of the task to plan for
         """
-        # Create a new plan using zero-shot planning
-        self.current_plan = zero_shot.create_initial_plan(task_description)
-
-        # Set up queues for primitives to block on
+        # Set up queues for primitives to block on (do this only once)
         from .primitives import set_queues
 
         set_queues(self._text_action_q, self._action_completion_q)
 
-        # Set the task completion queue
-        self.current_plan.task_completion_q = self._task_completion_q
+        # Create a new plan using zero-shot planning
+        module, root_fn = zero_shot.create_initial_plan(task_description)
+        self._plan_module = module
+        self.current_plan = module
+        self._root_fn = root_fn
 
         # Update the current plan in PlannerContext
         planner_context.set_current_plan(self.current_plan)
 
         # Ensure planner is not paused
         self.paused = False
+
+        # Launch a daemon thread to execute the plan
+        self._plan_thread = threading.Thread(
+            target=self._run_plan_wrapper, args=(self._root_fn,), daemon=True
+        )
+        self._plan_thread.start()
