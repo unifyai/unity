@@ -45,9 +45,6 @@ def test_verify_reimplement():
         "title": "Changed Example",
     }  # Different
 
-    # Track rewrite attempts
-    rewrite_attempts = []
-
     # Mock get_snapshot to return different snapshots in sequence
     with patch(
         "planner.context.get_snapshot", side_effect=[snapshot1, snapshot2, snapshot3]
@@ -56,30 +53,22 @@ def test_verify_reimplement():
         with patch(
             "planner.verifier.Verifier.check", side_effect=["reimplement", "ok"]
         ):
-            # Mock CodeRewriter.rewrite_function to track calls
-            with patch("planner.code_rewriter.rewrite_function") as mock_rewrite:
+            # Define a decorated function
+            @verify
+            def foo():
+                # Return a Primitive to simulate a browser action
+                return Primitive("open_browser", {}, "open_browser")
 
-                def track_rewrite(fn):
-                    rewrite_attempts.append(fn.__name__)
+            # Call the function
+            result = foo()
 
-                mock_rewrite.side_effect = track_rewrite
+            # Assert the function was eventually called successfully
+            assert isinstance(result, Primitive)
+            assert result.call_literal == "open_browser"
 
-                # Define a decorated function
-                @verify
-                def foo():
-                    # Return a Primitive to simulate a browser action
-                    return Primitive("open_browser", {}, "open_browser")
-
-                # Call the function
-                result = foo()
-
-                # Assert the function was eventually called successfully
-                assert isinstance(result, Primitive)
-                assert result.call_literal == "open_browser"
-
-                # Assert at least one rewrite was attempted
-                assert len(rewrite_attempts) >= 1
-                assert "foo" in rewrite_attempts
+            # Assert the function object was enqueued
+            fn_obj = reimplement_queue.get_nowait()
+            assert fn_obj.__name__ == "foo"
 
 
 def test_verify_push_up():
