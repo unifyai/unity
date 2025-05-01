@@ -250,7 +250,7 @@ class BusManager:
     @property
     def browser_state_q(self) -> queue.Queue[str]:
         return self._browser_state_q
-        
+
     @property
     def browser_state_broadcast_q(self) -> queue.Queue[str]:
         return self._browser_state_broadcast_q

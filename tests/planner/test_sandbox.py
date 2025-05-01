@@ -6,14 +6,15 @@ from planner.primitives import set_queues
 import threading
 import time
 
+
 def test_exec_plan_returns_callable_root_plan():
     src = (
         "from planner.primitives import open_browser"
         "\n"
         "root_plan = lambda: open_browser()"
     )
-    
-     # Setup the command and acknowledgment queues
+
+    # Setup the command and acknowledgment queues
     text_q = queue.Queue()
     ack_q = queue.Queue()
     set_queues(text_q, ack_q)
@@ -44,10 +45,14 @@ def test_exec_plan_returns_callable_root_plan():
     # Cleanup
     thread.join(timeout=1)
 
-@pytest.mark.parametrize("malicious_code", [
-    "import os",
-    "__import__('socket')",
-])
+
+@pytest.mark.parametrize(
+    "malicious_code",
+    [
+        "import os",
+        "__import__('socket')",
+    ],
+)
 def test_exec_plan_raises_security_error(malicious_code):
     with pytest.raises(SecurityError):
         exec_plan(malicious_code)
