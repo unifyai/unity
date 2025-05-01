@@ -9,6 +9,7 @@ only whitelisted primitives from the planner module.
 import builtins
 import types
 import sys
+import linecache
 from typing import Dict, Any, Set, Optional, List
 from types import ModuleType
 
@@ -137,6 +138,9 @@ def exec_plan(src: str, filename: str = "<string>") -> ModuleType:
         # Execute the source code in the restricted environment
         # Compile the source with the correct filename for code objects
         code_obj = compile(src, filename, "exec")
+        # Cache the source code so inspect.getsource can find dynamic modules
+        lines = src.splitlines(keepends=True)
+        linecache.cache[filename] = (len(src), None, lines, filename)
         exec(code_obj, plan_module.__dict__)
     except (NameError, ImportError) as e:
         # Convert NameError or ImportError to SecurityError for forbidden names/imports
