@@ -25,7 +25,7 @@ class VoiceAssistant(Agent):
     """Converses with the user *and* orchestrates browser tasks.
 
     – Maintains an internal flag so it knows when a task is running.
-    – Exposes 3 tools so the LLM can explicitly start tasks and query progress.
+    – Exposes 8 tools so the LLM can explicitly start tasks and query progress.
     – Receives task-completion notifications via `notify_task_completed()`.
     """
 
