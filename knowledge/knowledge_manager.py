@@ -276,7 +276,7 @@ class KnowledgeManager(threading.Thread):
 
     # Search
 
-    def _search(self, query: str, tables: Optional[List[str]] = None):
+    def _search(self, query: Optional[str] = None, tables: Optional[List[str]] = None):
         """
         Search the query through all of the tables, and return the results across all tables.
         """
@@ -285,8 +285,11 @@ class KnowledgeManager(threading.Thread):
         # ToDo: convert to map function
         results = dict()
         for table in tables:
-            results[table] = unify.get_logs(
-                context="Knowledge",
-                filter=query,
-            )
+            results[table] = [
+                log.entries
+                for log in unify.get_logs(
+                    context=f"Knowledge/{table}",
+                    filter=query,
+                )
+            ]
         return results
