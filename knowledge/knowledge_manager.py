@@ -80,8 +80,14 @@ class KnowledgeManager(threading.Thread):
     def _rename_table(self):
         pass
 
-    def _delete_table(self):
-        pass
+    def _delete_table(self, table: str) -> None:
+        """
+        Delete the specified table, and all of its data from the knowledge store.
+
+        Args:
+            name (str): The name of the table to delete.
+        """
+        unify.delete_context(f"Knowledge/{table}")
 
     # Columns
 
@@ -166,11 +172,35 @@ class KnowledgeManager(threading.Thread):
         response = requests.request("DELETE", url, headers=headers)
         return response.json()
 
-    def _rename_column(self):
-        pass
+    def _rename_column(self, table: str, old_name: str, new_name: str):
+        """
+        Rename the specified column.
 
-    def _transform_column(self):
-        pass
+        Args:
+            table (str): The name of the table to rename the column in.
+
+            old_name (str): The name of the column to rename.
+        """
+
+    def _transform_column(
+        self,
+        table: str,
+        column_name: str,
+        equation: str,
+        new_column_name: Optional[str] = None,
+    ):
+        """
+        Transform the specified column, based on the specified equation.
+
+        Args:
+            table (str): The name of the table to transform the column in.
+
+            column_name (str): The name of the column to transform.
+
+            equation (str): The equation to use to transform the column.
+
+            new_column_name (Optional[str]): The name of the new column to create. If not specified, the original column will be overwritten.é
+        """
 
     # Add Data
 
