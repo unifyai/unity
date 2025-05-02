@@ -1,0 +1,201 @@
+import json
+from dotenv import load_dotenv
+import os
+import sys
+import asyncio
+from typing import Optional
+
+load_dotenv()
+
+from browser_use import Agent as BrowserAgent, Browser, BrowserConfig
+from browser_use.browser.context import BrowserContext
+from langchain_openai import ChatOpenAI
+
+from livekit import agents
+from livekit.agents import Agent, AgentSession, RoomInputOptions, function_tool
+from livekit.plugins import cartesia, deepgram, noise_cancellation, openai, silero
+from livekit.plugins.turn_detector.multilingual import MultilingualModel
+
+from communication.sys_msgs import AGENT_INFO  # single prompt is enough here
+
+# ---------------------------------------------------------------------------
+#  1) THE PRIMARY VOICE ASSISTANT
+# ---------------------------------------------------------------------------
+class VoiceAssistant(Agent):
+    """Converses with the user *and* orchestrates browser tasks.
+
+    – Maintains an internal flag so it knows when a task is running.
+    – Exposes 3 tools so the LLM can explicitly start tasks and query progress.
+    – Receives task-completion notifications via `notify_task_completed()`.
+    """
+
+    # --------------------------- INIT ------------------------------------
+    def __init__(self) -> None:
+        super().__init__(instructions=AGENT_INFO)
+        self._browser_loop = asyncio.new_event_loop()
+        self._task_running: bool = False
+        self._task_paused: bool = False
+        self._latest_dialogue_window: list[dict[str, str]] = []
+        self._last_task_result: Optional[str] = None
+        self._last_step_result: Optional[str] = None
+        self._browser = Browser(config=BrowserConfig(disable_security=True))
+        self._browser_context = BrowserContext(browser=self._browser)
+        self._browser_agent = BrowserAgent(
+            task="You're a web assistant. Wait for user instructions.",
+            llm=ChatOpenAI(
+                model="gpt-4.1@openai",
+                base_url=os.getenv("UNIFY_BASE_URL"),
+                api_key=os.getenv("UNIFY_KEY"),
+            ),
+            browser=self._browser,
+            browser_context=self._browser_context,
+        )
+        # call the action and track the result
+    
+    def set_last_task_result(self, result: BrowserAgent):
+        """Set the result of the previous task"""
+        last_action = result.state.history.last_action()
+        self._last_step_result = json.dumps(
+            {} if last_action is None else last_action
+        )
+
+    def notify_task_completed(self, result: str) -> None:
+        """Called by an *external* coroutine when the OffTheShelf helper finishes."""
+        self._task_running = False
+        self._last_task_result = result
+
+    async def browser_run(self, messages: list[dict[str, str]]):
+        """Run the browser agent to fulfill the task represented by the current conversation."""
+        result = await self._browser_agent.run(
+            on_step_end=self.set_last_task_result
+        )
+        result = json.loads(result.model_dump_json())
+        history_list = []
+        for history in result["history"]:
+            history.pop("state")
+            history.pop("metadata")
+            history_list.append(history)
+        result = json.dumps({"result": history_list}, indent=4)
+        self.notify_task_completed(result)
+
+    # --------------------------- TOOLS -----------------------------------
+    @function_tool()
+    def is_task_running(self) -> bool:
+        """Return *True* if a browser task is currently underway."""
+        return self._task_running
+    
+    @function_tool()
+    def is_task_paused(self) -> bool:
+        """Return *True* if a browser task is currently paused."""
+        return self._task_paused
+
+    @function_tool()
+    def create_task(self) -> str:
+        """Send the latest user-assistant exchange to the browser helper.
+
+        Should be called *after* the assistant has clarified the desired
+        action and is ready to launch the task.
+        """
+        if self._task_running:
+            return "I'm already working on something for you. Ask me anything else meanwhile!"
+
+        self._task_running = True
+        self._last_task_result = None
+        self._browser_agent.state.history.history = []
+        self._browser_agent.add_new_task("\n" + json.dumps(self._latest_dialogue_window, indent=4) + "\n")
+        if not self._task_paused:
+            self._browser_loop.create_task(self.browser_run(self._latest_dialogue_window))
+        return "Alright, let me get on with that. I'll let you know how it goes!"
+
+    @function_tool()
+    def pause_task(self) -> str:
+        """Pause the current task."""
+        if not self._task_running:
+            return "No task is currently running."
+        self._browser_agent.pause()
+        self._task_running = False
+        self._task_paused = True
+        return "Task paused. You can resume it later."
+    
+    @function_tool()
+    def cancel_task(self) -> str:
+        """Cancel the current task."""
+        if not self._task_running:
+            return "No task is currently running."
+        self._browser_agent.stop()
+        self._task_running = False
+
+    @function_tool()
+    def resume_task(self) -> str:
+        """Resume the current task."""
+        if not self._task_running:
+            return "No task is currently running."
+        self._browser_agent.resume()
+        self._task_running = True
+        self._task_paused = False
+        return "Task resumed. I'll let you know how it goes!"
+
+    @function_tool()
+    def get_last_task_result(self) -> str:
+        """Fetch the final result once a task has completed."""
+        if self._task_running:
+            return "Still working on it – I'll have an update soon."
+        if self._last_task_result is None:
+            return "There isn't a completed task yet."
+        return self._last_task_result
+
+    @function_tool()
+    def get_last_step_result(self) -> str:
+        """Fetch the step of the current running task."""
+        if not self._task_running:
+            return "No task is currently running."
+        return self._last_step_result
+
+    # -------------------- RUNTIME HOOKS (LiveKit) ------------------------
+    async def on_user_turn_completed(self, turn_ctx, new_message):
+        # Build a compact dialogue window to hand over to the browser helper
+        self._latest_dialogue_window = [
+            {msg.role: msg.content[0]}
+            for msg in self.chat_ctx.items[1:]
+            if msg.type not in ["function_call", "function_call_output"]
+        ] + [{"user": new_message.text_content}]
+        print(self._latest_dialogue_window)
+
+# ---------------------------------------------------------------------------
+#  2) LIVEKIT ENTRYPOINT
+# ---------------------------------------------------------------------------
+async def entrypoint(ctx: agents.JobContext):
+    await ctx.connect()
+
+    # Create the LiveKit voice session ------------------------------------
+    assistant = VoiceAssistant()
+
+    session = AgentSession(
+        stt=deepgram.STT(model="nova-3", language="multi"),
+        llm=openai.LLM(model="o4-mini"),
+        tts=cartesia.TTS(),
+        vad=silero.VAD.load(),
+        turn_detection=MultilingualModel(),
+    )
+
+    await session.start(
+        room=ctx.room,
+        agent=assistant,
+        room_input_options=RoomInputOptions(
+            noise_cancellation=noise_cancellation.BVC(),
+        ),
+    )
+
+    # Initial greeting ----------------------------------------------------
+    await session.generate_reply(
+        instructions=f"Hi {os.environ.get('FIRST_NAME')}! What can I do for you today?",
+    )
+
+
+# ---------------------------------------------------------------------------
+#  3) SCRIPT LAUNCHER (mirror `make_call.py` behaviour)
+# ---------------------------------------------------------------------------
+if __name__ == "__main__":
+    if len(sys.argv) == 1:
+        sys.argv.append("console")
+    agents.cli.run_app(agents.WorkerOptions(entrypoint_fnc=entrypoint))
