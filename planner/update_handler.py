@@ -1,12 +1,13 @@
-from .model import FunctionNode, Plan
+import inspect
 from . import primitives, zero_shot
 from .unify_client import (
     generate_prompt,
     set_system_message,
-    client,
     set_stateful as _set_stateful,
 )
 from .context import context
+from .code_rewriter import rewrite_function
+import logging
 
 
 def _classify_update(update_text: str) -> str:
@@ -47,68 +48,87 @@ def _classify_update(update_text: str) -> str:
     return "modify"
 
 
-def _find_node(root: FunctionNode, name: str) -> FunctionNode:
-    """
-    Recursively search for a FunctionNode with the given name.
-    """
-    if root.name == name:
-        return root
-    for child in root.body:
-        if isinstance(child, FunctionNode):
-            result = _find_node(child, name)
-            if result:
-                return result
-    return None
-
-
 def _handle_exploration(planner, update_text: str) -> None:
     """
-    Handle an exploratory user update by opening a new tab, cloning state, and closing it.
+    Handle an exploratory user update by generating a Python function that opens a new tab,
+    performs exploration, and then closes the tab. The function is executed via the call queue
+    while the main plan is paused.
     """
-    # Pause the current plan
-    planner.paused = True
+    # Pause the current plan execution
+    planner._pause()
 
     # Record the original URL from the current browser state
     browser_state = context.last_state_snapshot()
-    if browser_state:
-        original_url = browser_state.get("url")
-        original_tab_id = browser_state.get("active_tab")
+    original_url = browser_state.get("url", "") if browser_state else ""
+    original_tab_id = browser_state.get("active_tab", "") if browser_state else ""
 
-    # Build an exploration plan: open new tab, clone placeholder, close tab, return to original
-    body = [
-        primitives.new_tab(),
-        # Use the update text as the search query for better exploration
-        primitives.search(update_text),
-    ]
+    # Build a zero-shot prompt to generate the exploration function
+    system_message = (
+        "You are an expert Python programmer creating a browser automation function."
+        "The function should explore a topic in a new tab and then return to the original state."
+    )
+    set_system_message(system_message)
+    _set_stateful(False)
 
-    # Add navigation back to original state when closing
-    if original_tab_id:
-        body.append(primitives.close_this_tab())
-        body.append(primitives.select_tab(original_tab_id))
-    elif original_url:
-        body.append(primitives.close_this_tab())
-        body.append(primitives.go_back())
-    else:
-        body.append(primitives.close_this_tab())
-    exploration_node = FunctionNode("exploration_temp", body)
+    # Create the prompt for generating the exploration function
+    prompt = (
+        f"Write a Python function named 'exploratory_task' that:\n"
+        f"1. Opens a new browser tab\n"
+        f"2. Searches for: '{update_text}'\n"
+        f"3. Closes the tab when done\n"
+        f"4. Returns to the original state\n\n"
+        f"Original URL: {original_url}\n"
+        f"Original tab ID: {original_tab_id}\n\n"
+        f"Use only these primitives: new_tab(), search(), close_this_tab(), select_tab(), go_back()\n"
+        f"The function should have no parameters and return None.\n"
+        f"Provide ONLY the function code, no explanations."
+    )
 
-    # Create exploration plan with same task completion queue
-    original_plan = planner.current_plan
-    exploration_plan = Plan(exploration_node, planner._task_completion_q)
-    exploration_plan.task_completion_q = original_plan.task_completion_q
+    # Generate the exploration function code
+    exploration_code = generate_prompt(prompt)
 
-    # Push current plan and start exploration
-    planner.plan_stack.append(original_plan)
-    planner.current_plan = exploration_plan
-    planner.paused = False
+    try:
+        # Execute the generated code in the planner module's namespace
+        exec(exploration_code, planner._plan_module.__dict__)
+
+        # Get the function from the module
+        exploratory_task = getattr(planner._plan_module, "exploratory_task")
+
+        # Create a wrapper function that executes the task and resumes the plan
+        def wrapper_function():
+            planner._resume()
+            exploratory_task()
+
+        # Schedule the wrapper function to be executed via the call queue
+        planner._call_queue.put(wrapper_function)
+
+    except Exception as e:
+        # Fallback if there's an error with the generated code
+        logging.error(f"Error executing exploration code: {e}")
+
+        # Define a simple fallback function with resume at the start
+        def fallback_wrapper():
+            planner._resume()
+            # Define the fallback exploratory task
+            primitives.new_tab()
+            primitives.search(update_text)
+            primitives.close_this_tab()
+            if original_tab_id:
+                primitives.select_tab(original_tab_id)
+            elif original_url:
+                primitives.go_back()
+
+        # Schedule the fallback wrapper function
+        planner._call_queue.put(fallback_wrapper)
 
 
 def _handle_modification(planner, update_text: str) -> None:
     """
-    Handle a modifying user update by rewriting a function node and course-correcting.
+    Handle a modifying user update by identifying the target function,
+    rewriting it, and scheduling a course correction function.
     """
-    # Pause execution
-    planner.paused = True
+    # Pause the plan execution
+    planner._pause()
 
     # Get the current call stack
     call_stack = context.get_call_stack()
@@ -119,10 +139,11 @@ def _handle_modification(planner, update_text: str) -> None:
         else "Call stack is empty"
     )
 
-    # Create a plan sketch for context
+    # Create a plan sketch by listing all functions in the module
     plan_sketch = ""
-    if planner.current_plan and planner.current_plan.root:
-        plan_sketch = _create_plan_sketch(planner.current_plan.root)
+    for name, obj in planner._plan_module.__dict__.items():
+        if callable(obj) and not name.startswith("_") and inspect.isfunction(obj):
+            plan_sketch += f"- {name}\n"
 
     # Set system message and disable stateful context
     system_message = "You are an assistant that identifies which function in a plan needs to be modified based on a user update."
@@ -133,102 +154,88 @@ def _handle_modification(planner, update_text: str) -> None:
     prompt_node = (
         f"Given the user update: {update_text}\n\n"
         f"{call_stack_str}\n\n"
-        f"Plan structure:\n{plan_sketch}\n\n"
-        "Which function in the current plan should be patched to address this update?\n"
+        f"Available functions:\n{plan_sketch}\n\n"
+        "Which function in the current plan should be modified to address this update?\n"
         "Respond with just the exact function name, no additional text."
     )
-    node_name = generate_prompt(prompt_node).strip()
+    target_function_name = generate_prompt(prompt_node).strip()
 
-    # Locate the target FunctionNode
-    root = planner.current_plan.root
-    target_node = _find_node(root, node_name)
-
-    # If node not found, default to root-level patching
-    if not target_node:
-        # Log the fallback
-        print(
-            f"Warning: Function '{node_name}' not found in the current plan. Falling back to root-level patching."
+    # Get the target function from the module
+    target_function = None
+    try:
+        target_function = getattr(planner._plan_module, target_function_name)
+    except AttributeError:
+        logging.warning(
+            f"Warning: Function '{target_function_name}' not found in the current plan."
         )
-        target_node = root
+        # If the function doesn't exist, we'll create a course correction function instead
 
-    # Generate revised code for that function via zero-shot
-    prompt_rewrite = (
-        f"Rewrite the function '{target_node.name}' to satisfy: {update_text}.\n"
-        "Use only the primitive helpers and preserve signature and docstring.\n"
-        "Ensure the code is complete and syntactically correct."
+    if target_function and callable(target_function):
+        # Generate revised code for the target function
+        prompt_rewrite = (
+            f"Rewrite the function '{target_function_name}' to satisfy: {update_text}.\n"
+            "Use only the primitive helpers and preserve signature and docstring.\n"
+            "Ensure the code is complete and syntactically correct."
+        )
+        new_code = generate_prompt(prompt_rewrite)
+
+        try:
+            # Rewrite the function using the code_rewriter
+            rewrite_function(target_function, new_code)
+        except Exception as e:
+            logging.error(f"Error rewriting function: {e}")
+
+    # Generate a course correction function to handle the update
+    system_message = (
+        "You are an expert Python programmer creating a browser automation function."
     )
-    new_code = generate_prompt(prompt_rewrite)
+    set_system_message(system_message)
+
+    prompt_course_correction = (
+        f"Write a Python function named 'course_correction' that implements this update: '{update_text}'.\n"
+        f"The function should use browser primitives to make the necessary adjustments.\n"
+        f"Use only these primitives: search(), click_button(), enter_text(), press_enter(), etc.\n"
+        f"The function should have no parameters and return None.\n"
+        f"Provide ONLY the function code, no explanations."
+    )
+
+    course_correction_code = generate_prompt(prompt_course_correction)
 
     try:
-        # Parse the new function into a FunctionNode
-        new_plan = zero_shot._parse_generated_code(new_code)
-        new_node = new_plan.root
+        # Execute the generated code in the planner module's namespace
+        exec(course_correction_code, planner._plan_module.__dict__)
 
-        # Preserve parent link and replace in tree
-        parent = target_node.parent
-        new_node.parent = parent
-        if parent:
-            idx = parent.body.index(target_node)
-            parent.body[idx] = new_node
-        else:
-            # Root-level replacement
-            planner.current_plan.root = new_node
-            planner.current_plan.current_node = new_node
+        # Get the function from the module
+        course_correction = getattr(planner._plan_module, "course_correction")
 
-        # Create a flat course-correction plan from the new node's primitives
-        flat_node = FunctionNode("course_correction", list(new_node.body))
-        course_plan = Plan(flat_node, planner._task_completion_q)
+        # Create a wrapper function that executes the course correction and resumes the plan
+        def wrapper_function():
+            planner._resume()
+            course_correction()
 
-        # Store original plan state for restoration
-        original_plan = planner.current_plan
-
-        # Push the modified original plan and execute course correction
-        planner.plan_stack.append(original_plan)
-        planner.current_plan = course_plan
-
-        # Ensure the course correction plan uses the same task completion queue
-        course_plan.task_completion_q = original_plan.task_completion_q
+        # Schedule the wrapper function to be executed via the call queue
+        planner._call_queue.put(wrapper_function)
 
     except Exception as e:
-        # Handle parsing errors by falling back to simpler approach
-        print(
-            f"Error parsing generated code: {e}. Falling back to root-level patching."
-        )
+        # Fallback if there's an error with the generated code
+        logging.error(f"Error executing course correction code: {e}")
 
-        # Create a simple correction with just a search primitive as fallback
-        fallback_node = FunctionNode(
-            "fallback_correction", [primitives.search(update_text)]
-        )
-        course_plan = Plan(fallback_node, planner._task_completion_q)
-        planner.plan_stack.append(planner.current_plan)
-        planner.current_plan = course_plan
+        # Define a simple fallback function with resume at the start
+        def fallback_wrapper():
+            planner._resume()
+            primitives.search(update_text)
 
-    planner.paused = False
-
-
-def _create_plan_sketch(node: FunctionNode, depth: int = 0) -> str:
-    """
-    Create a hierarchical sketch of the plan structure for better context.
-    """
-    indent = "  " * depth
-    result = f"{indent}- {node.name}\n"
-
-    for child in node.body:
-        if isinstance(child, FunctionNode):
-            result += _create_plan_sketch(child, depth + 1)
-
-    return result
+        # Schedule the fallback wrapper function
+        planner._call_queue.put(fallback_wrapper)
 
 
 def handle_update(planner, update_text: str) -> None:
     """
     Entrypoint to process a user update and dispatch to exploration or modification.
+    Uses the new pause/resume mechanism with callable scheduling.
     """
     kind = _classify_update(update_text)
     if kind == "exploratory":
         _handle_exploration(planner, update_text)
     else:
         _handle_modification(planner, update_text)
-
-    # Ensure planner is unpaused after handling the update
-    planner.paused = False
