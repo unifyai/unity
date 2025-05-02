@@ -4,6 +4,8 @@ Each function corresponds to a CMD_* constant and returns a Primitive instance.
 """
 
 import queue
+import threading
+from typing import Callable, Optional
 from .model import Primitive
 
 from controller.commands import (
@@ -47,6 +49,10 @@ from controller.commands import (
 _text_q = None
 # Queue for receiving acknowledgments from the controller
 _ack_q = None
+# Event for pausing primitive execution
+_pause_event: Optional[threading.Event] = None
+# Queue for scheduling callables to run during pauses
+_call_queue: Optional["queue.Queue[Callable]"] = None
 
 
 def set_queues(text_q: queue.Queue, ack_q: queue.Queue):
@@ -54,6 +60,15 @@ def set_queues(text_q: queue.Queue, ack_q: queue.Queue):
     global _text_q, _ack_q
     _text_q = text_q
     _ack_q = ack_q
+
+
+def set_runtime_controls(
+    pause_event: threading.Event, call_queue: "queue.Queue[Callable]"
+):
+    """Set the runtime control mechanisms for pausing and scheduling callables."""
+    global _pause_event, _call_queue
+    _pause_event = pause_event
+    _call_queue = call_queue
 
 
 def _to_queue(fn):
@@ -67,9 +82,25 @@ def _to_queue(fn):
         if _text_q is None or _ack_q is None:
             raise RuntimeError("Queues not initialised; call set_queues() first.")
 
+        # Create the primitive first
         primitive = fn(*args, **kwargs)
 
-        # Enqueue the command
+        # If paused, continuously drain the call queue until unpaused
+        if _pause_event is not None and _call_queue is not None:
+            import time
+
+            while not _pause_event.is_set():
+                drained = False
+                while True:
+                    try:
+                        _call_queue.get_nowait()()
+                        drained = True
+                    except queue.Empty:
+                        break
+                if not drained:
+                    time.sleep(0.01)
+
+        # Enqueue the command (only after pause is lifted)
         _text_q.put(primitive.call_literal)
 
         # Wait for acknowledgment in a loop
