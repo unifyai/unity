@@ -44,6 +44,17 @@ class KnowledgeManager(threading.Thread):
         ret = response.json()
         return {k: v["data_type"] for k, v in ret.items()}
 
+    def _add_table_description(self, table, description):
+        ctx = f"Knowledge/{table}"
+        proj = unify.active_project()
+        url = f"https://api.unify.ai/v0/project/{proj}/contexts/{ctx}/artifacts"
+        headers = {"Authorization": f"Bearer {API_KEY}"}
+        json_input = {"artifacts": {"description": description}}
+        response = requests.request("POST", url, json=json_input, headers=headers)
+        if not response.ok:
+            raise response.json()
+        return response.json()
+
     # Private #
     # --------#
 
@@ -52,6 +63,8 @@ class KnowledgeManager(threading.Thread):
     def _create_table(
         self,
         name: str,
+        *,
+        description: Optional[str] = None,
         columns: Optional[Dict[str, ColumnType]] = None,
     ) -> str:
         """
@@ -60,6 +73,8 @@ class KnowledgeManager(threading.Thread):
         Args:
             name (str): The name of the table to create.
 
+            description (Optional[str]): A description of the table.
+
             columns (Optional[Dict[str, ColumnType]]): A dictionary of column names and their types.
 
         Returns:
@@ -67,7 +82,7 @@ class KnowledgeManager(threading.Thread):
         """
         ctx = f"Knowledge/{name}"
         proj = unify.active_project()
-        unify.create_context(ctx)
+        unify.create_context(ctx, description=description)
         if not columns:
             return
         url = f"https://api.unify.ai/v0/project/{proj}/contexts/{ctx}/columns"
