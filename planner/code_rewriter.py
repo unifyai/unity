@@ -1,4 +1,4 @@
-from typing import List, Callable
+from typing import List, Callable, Optional
 import inspect
 import textwrap
 import uuid
@@ -8,47 +8,50 @@ from .unify_client import set_system_message, generate_prompt
 from . import sandbox
 
 
-def rewrite_function(fn: Callable) -> None:
+def rewrite_function(fn: Callable, new_src: Optional[str] = None) -> None:
     """
-    Rewrites the given function by prompting the LLM with its current code,
-    call stack context, and browser state. Updates the function in its module.
+    Rewrites the given function by either using the provided source code or
+    prompting the LLM with its current code, call stack context, and browser state.
+    Updates the function in its module.
 
     Args:
         fn: The function object to rewrite
+        new_src: Optional source code to use instead of generating via LLM
 
     Raises:
         RuntimeError: If the function cannot be rewritten
     """
-    # Get the source code of the function
-    try:
-        source = inspect.getsource(fn)
-    except (TypeError, OSError) as e:
-        raise RuntimeError(f"Could not get source code for function: {e}")
+    if new_src is None:
+        # Get the source code of the function
+        try:
+            source = inspect.getsource(fn)
+        except (TypeError, OSError) as e:
+            raise RuntimeError(f"Could not get source code for function: {e}")
 
-    # Gather context for rewriting
-    call_stack = context.get_call_stack()
-    state_snapshot = context.last_state_snapshot()
+        # Gather context for rewriting
+        call_stack = context.get_call_stack()
+        state_snapshot = context.last_state_snapshot()
 
-    # Construct prompt for Unify
-    prompt_parts: List[str] = [
-        f"# Original function: {fn.__name__}",
-        f"# Function source code:",
-        source,
-        "# Call stack context:",
-        repr(call_stack),
-        "# Browser state snapshot:",
-        repr(state_snapshot),
-        f"# Instruction: Revise the function '{fn.__name__}' while preserving its overall purpose.",
-    ]
-    prompt = "\n".join(prompt_parts)
+        # Construct prompt for Unify
+        prompt_parts: List[str] = [
+            f"# Original function: {fn.__name__}",
+            f"# Function source code:",
+            source,
+            "# Call stack context:",
+            repr(call_stack),
+            "# Browser state snapshot:",
+            repr(state_snapshot),
+            f"# Instruction: Revise the function '{fn.__name__}' while preserving its overall purpose.",
+        ]
+        prompt = "\n".join(prompt_parts)
 
-    # Set system message and generate patched code
-    set_system_message(
-        "You are an expert Python developer. Rewrite the provided function to improve it based on the context."
-    )
-    new_src = generate_prompt(prompt)
-    if not isinstance(new_src, str):
-        raise RuntimeError("Unify did not return valid code string for rewriting.")
+        # Set system message and generate patched code
+        set_system_message(
+            "You are an expert Python developer. Rewrite the provided function to improve it based on the context."
+        )
+        new_src = generate_prompt(prompt)
+        if not isinstance(new_src, str):
+            raise RuntimeError("Unify did not return valid code string for rewriting.")
 
     # Dedent the source code
     new_src = textwrap.dedent(new_src)
@@ -57,7 +60,9 @@ def rewrite_function(fn: Callable) -> None:
     try:
         sandbox.exec_plan(new_src)
     except Exception as e:
-        raise RuntimeError(f"Generated code failed sandbox validation: {e}")
+        raise RuntimeError(
+            f"{'Provided' if new_src is not None else 'Generated'} code failed sandbox validation: {e}"
+        )
 
     # Get the module where the function is defined
     module = inspect.getmodule(fn)
