@@ -194,7 +194,10 @@ def notify_task_completed_wrapped(
         # coroutine executed inside the LiveKit loop
         await session.generate_reply(
             instructions=(
-                'By the way, your requested browser task has completed. Here are the details:\n\n'
+                "This is a message of acknowledgement of the task completion, "
+                "be explicit about it. It is not a response to the user's request."
+                "Start by saying something like 'By the way, your requested browser "
+                "task has completed. Here are the details:'\n\n"
                 f'{result}'
             )
         )
