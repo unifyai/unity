@@ -3,7 +3,7 @@ from dotenv import load_dotenv
 import os
 import sys
 import asyncio
-from typing import Callable, Optional
+from typing import Optional
 import threading
 
 load_dotenv()
@@ -53,7 +53,7 @@ class VoiceAssistant(Agent):
         self._task_paused: bool = False
         self._latest_dialogue_window: list[dict[str, str]] = []
         self._last_task_result: Optional[str] = None
-        self._last_step_result: Optional[str] = None
+        self._last_step_results: list[str] = []
         self._browser = Browser(config=BrowserConfig(disable_security=True))
         self._browser_context = BrowserContext(browser=self._browser)
         self._browser_agent = BrowserAgent(
@@ -67,7 +67,7 @@ class VoiceAssistant(Agent):
     async def set_last_task_result(self, result: BrowserAgent):
         """Set the result of the previous task (async to satisfy BrowserAgent callback)."""
         last_action = result.state.history.last_action()
-        self._last_step_result = json.dumps({} if last_action is None else last_action)
+        self._last_step_results.append(json.dumps({} if last_action is None else last_action))
 
     async def browser_run(self):
         """Run the browser agent to fulfill the task represented by the current conversation."""
@@ -103,13 +103,16 @@ class VoiceAssistant(Agent):
         if self._task_running:
             return "I'm already working on something for you. Ask me anything else meanwhile!"
 
-        self._task_running = True
-        self._last_task_result = None
-        self._browser_agent.state.history.history = []
         self._browser_agent.add_new_task(
             "\n" + json.dumps(self._latest_dialogue_window, indent=4) + "\n"
         )
         if not self._task_paused:
+            # reset the state of the browser agent
+            self._task_running = True
+            self._last_task_result = None
+            self._last_step_results = []
+            self._browser_agent.state.history.history = []
+
             # submit the coroutine to the dedicated browser loop safely
             fut = asyncio.run_coroutine_threadsafe(
                 self.browser_run(),
@@ -164,11 +167,11 @@ class VoiceAssistant(Agent):
         return self._last_task_result
 
     @function_tool()
-    async def get_last_step_result(self) -> str:
+    async def get_last_step_results(self) -> list[str]:
         """Fetch the step of the current running task."""
         if not self._task_running:
             return "No task is currently running."
-        return self._last_step_result
+        return self._last_step_results
 
     # -------------------- RUNTIME HOOKS (LiveKit) ------------------------
     async def on_user_turn_completed(self, turn_ctx, new_message):
