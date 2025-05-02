@@ -134,10 +134,11 @@ class KnowledgeManager(threading.Thread):
 
             column_type (str): The type of the column to add.
         """
-        # ToDo: replace with column creation once [this task](https://app.clickup.com/t/86c3aab77) is done.
-        url = f"https://api.unify.ai/v0/project/{unify.active_project()}/contexts/Knowledge/{table}/artifacts"
+        ctx = f"Knowledge/{table}"
+        proj = unify.active_project()
+        url = f"https://api.unify.ai/v0/project/{proj}/contexts/{ctx}/columns"
         headers = {"Authorization": f"Bearer {API_KEY}"}
-        json_input = {"artifacts": {"columns": {column_name: column_type}}}
+        json_input = {"columns": {column_name: column_type}}
         response = requests.request("POST", url, json=json_input, headers=headers)
         if not response.ok:
             raise response.json()
