@@ -1,8 +1,11 @@
+import os
 import unify
 import requests
 import threading
 from typing import List, Tuple, Any, Dict, Optional, Union
 from knowledge.types import ColumnType
+
+API_KEY = os.environ["UNIFY_KEY"]
 
 
 class KnowledgeManager(threading.Thread):
@@ -48,13 +51,14 @@ class KnowledgeManager(threading.Thread):
         Returns:
             str: The name of the table that was created.
         """
-        unify.create_context(f"Knowledge/{name}")
+        ctx = f"Knowledge/{name}"
+        proj = unify.active_project()
+        unify.create_context(ctx)
         if not columns:
             return
-        # ToDo: replace with column creation once [this task](https://app.clickup.com/t/86c3aab77) is done.
-        url = "https://api.unify.ai/v0/project/eval-project/contexts/experiment1/trial1/artifacts"
-        headers = {"Authorization": f"Bearer {unify.API_KEY}"}
-        json_input = {"artifacts": {"columns": columns}}
+        url = f"https://api.unify.ai/v0/project/{proj}/contexts/{ctx}/columns"
+        headers = {"Authorization": f"Bearer {API_KEY}"}
+        json_input = {"columns": columns}
         response = requests.request("POST", url, json=json_input, headers=headers)
         if not response.ok:
             raise response.json()
@@ -132,7 +136,7 @@ class KnowledgeManager(threading.Thread):
         """
         # ToDo: replace with column creation once [this task](https://app.clickup.com/t/86c3aab77) is done.
         url = f"https://api.unify.ai/v0/project/{unify.active_project()}/contexts/Knowledge/{table}/artifacts"
-        headers = {"Authorization": f"Bearer {unify.API_KEY}"}
+        headers = {"Authorization": f"Bearer {API_KEY}"}
         json_input = {"artifacts": {"columns": {column_name: column_type}}}
         response = requests.request("POST", url, json=json_input, headers=headers)
         if not response.ok:
@@ -156,7 +160,7 @@ class KnowledgeManager(threading.Thread):
             equation (str): The equation to use to derive the column.
         """
         url = "https://api.unify.ai/v0/logs/derived"
-        headers = {"Authorization": f"Bearer {unify.API_KEY}"}
+        headers = {"Authorization": f"Bearer {API_KEY}"}
         json_input = {
             "project": unify.active_project(),
             "context": f"Knowledge/{table}",
@@ -176,7 +180,7 @@ class KnowledgeManager(threading.Thread):
         """
         unify.delete_log_fields(column_name)
         url = f"https://api.unify.ai/v0/project/{unify.active_project()}/contexts/Knowledge/{table}/artifacts"
-        headers = {"Authorization": f"Bearer {unify.API_KEY}"}
+        headers = {"Authorization": f"Bearer {API_KEY}"}
         response = requests.request("DELETE", url, headers=headers)
         return response.json()
 

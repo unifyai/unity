@@ -13,6 +13,16 @@ def test_create_table():
 
 
 @_handle_project
+def test_create_table_w_cols():
+    knowledge_manager = KnowledgeManager()
+    knowledge_manager.start()
+    knowledge_manager._create_table("MyTable", {"ColA": "int", "ColB": "str"})
+    tables = knowledge_manager._list_tables()
+    assert len(tables) == 1
+    assert tables == {"MyTable": {"ColA": "int", "ColB": "str"}}
+
+
+@_handle_project
 def test_list_tables():
     knowledge_manager = KnowledgeManager()
     knowledge_manager.start()
