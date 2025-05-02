@@ -1,8 +1,11 @@
+import os
 import unify
 import requests
 import threading
 from typing import List, Tuple, Any, Dict, Optional, Union
 from knowledge.types import ColumnType
+
+API_KEY = os.environ["UNIFY_KEY"]
 
 
 class KnowledgeManager(threading.Thread):
@@ -48,13 +51,14 @@ class KnowledgeManager(threading.Thread):
         Returns:
             str: The name of the table that was created.
         """
-        unify.create_context(f"Knowledge/{name}")
+        ctx = f"Knowledge/{name}"
+        proj = unify.active_project()
+        unify.create_context(ctx)
         if not columns:
             return
-        # ToDo: replace with column creation once [this task](https://app.clickup.com/t/86c3aab77) is done.
-        url = "https://api.unify.ai/v0/project/eval-project/contexts/experiment1/trial1/artifacts"
-        headers = {"Authorization": f"Bearer {unify.API_KEY}"}
-        json_input = {"artifacts": {"columns": columns}}
+        url = f"https://api.unify.ai/v0/project/{proj}/contexts/{ctx}/columns"
+        headers = {"Authorization": f"Bearer {API_KEY}"}
+        json_input = {"columns": columns}
         response = requests.request("POST", url, json=json_input, headers=headers)
         if not response.ok:
             raise response.json()
@@ -77,11 +81,25 @@ class KnowledgeManager(threading.Thread):
             for k, v in unify.get_contexts(prefix="Knowledge/").items()
         }
 
-    def _rename_table(self):
-        pass
+    def _rename_table(self, old_name: str, new_name: str) -> None:
+        """
+        Rename the table.
 
-    def _delete_table(self):
-        pass
+        Args:
+            old_name (str): The old name of the table.
+
+            new_name (str): The new name for the table.
+        """
+        raise unify.rename_context(old_name, new_name)
+
+    def _delete_table(self, table: str) -> None:
+        """
+        Delete the specified table, and all of its data from the knowledge store.
+
+        Args:
+            name (str): The name of the table to delete.
+        """
+        unify.delete_context(f"Knowledge/{table}")
 
     # Columns
 
@@ -116,10 +134,11 @@ class KnowledgeManager(threading.Thread):
 
             column_type (str): The type of the column to add.
         """
-        # ToDo: replace with column creation once [this task](https://app.clickup.com/t/86c3aab77) is done.
-        url = f"https://api.unify.ai/v0/project/{unify.active_project()}/contexts/Knowledge/{table}/artifacts"
-        headers = {"Authorization": f"Bearer {unify.API_KEY}"}
-        json_input = {"artifacts": {"columns": {column_name: column_type}}}
+        ctx = f"Knowledge/{table}"
+        proj = unify.active_project()
+        url = f"https://api.unify.ai/v0/project/{proj}/contexts/{ctx}/columns"
+        headers = {"Authorization": f"Bearer {API_KEY}"}
+        json_input = {"columns": {column_name: column_type}}
         response = requests.request("POST", url, json=json_input, headers=headers)
         if not response.ok:
             raise response.json()
@@ -142,7 +161,7 @@ class KnowledgeManager(threading.Thread):
             equation (str): The equation to use to derive the column.
         """
         url = "https://api.unify.ai/v0/logs/derived"
-        headers = {"Authorization": f"Bearer {unify.API_KEY}"}
+        headers = {"Authorization": f"Bearer {API_KEY}"}
         json_input = {
             "project": unify.active_project(),
             "context": f"Knowledge/{table}",
@@ -162,15 +181,39 @@ class KnowledgeManager(threading.Thread):
         """
         unify.delete_log_fields(column_name)
         url = f"https://api.unify.ai/v0/project/{unify.active_project()}/contexts/Knowledge/{table}/artifacts"
-        headers = {"Authorization": f"Bearer {unify.API_KEY}"}
+        headers = {"Authorization": f"Bearer {API_KEY}"}
         response = requests.request("DELETE", url, headers=headers)
         return response.json()
 
-    def _rename_column(self):
-        pass
+    def _rename_column(self, table: str, old_name: str, new_name: str):
+        """
+        Rename the specified column.
 
-    def _transform_column(self):
-        pass
+        Args:
+            table (str): The name of the table to rename the column in.
+
+            old_name (str): The name of the column to rename.
+        """
+
+    def _transform_column(
+        self,
+        table: str,
+        column_name: str,
+        equation: str,
+        new_column_name: Optional[str] = None,
+    ):
+        """
+        Transform the specified column, based on the specified equation.
+
+        Args:
+            table (str): The name of the table to transform the column in.
+
+            column_name (str): The name of the column to transform.
+
+            equation (str): The equation to use to transform the column.
+
+            new_column_name (Optional[str]): The name of the new column to create. If not specified, the original column will be overwritten.é
+        """
 
     # Add Data
 
