@@ -62,7 +62,6 @@ class VoiceAssistant(Agent):
             browser=self._browser,
             browser_context=self._browser_context,
         )
-        # call the action and track the result
 
     async def set_last_task_result(self, result: BrowserAgent):
         """Set the result of the previous task (async to satisfy BrowserAgent callback)."""
