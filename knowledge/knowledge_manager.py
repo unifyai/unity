@@ -30,6 +30,20 @@ class KnowledgeManager(threading.Thread):
         """
         raise NotImplemented
 
+    # Helpers #
+    # --------#
+
+    def _get_columns(self, table):
+        ctx = f"Knowledge/{table}"
+        proj = unify.active_project()
+        url = f"https://api.unify.ai/v0/logs/fields?project={proj}&context={ctx}"
+        headers = {"Authorization": f"Bearer {API_KEY}"}
+        response = requests.request("GET", url, headers=headers)
+        if not response.ok:
+            raise response.json()
+        ret = response.json()
+        return {k: v["data_type"] for k, v in ret.items()}
+
     # Private #
     # --------#
 
@@ -62,6 +76,7 @@ class KnowledgeManager(threading.Thread):
         response = requests.request("POST", url, json=json_input, headers=headers)
         if not response.ok:
             raise response.json()
+        return response.json()
 
     def _list_tables(
         self,
@@ -76,10 +91,13 @@ class KnowledgeManager(threading.Thread):
         Returns:
             Union[List[str], List[Dict[str, ColumnType]]]: A list of table names.
         """
-        return {
-            k.lstrip("Knowledge/"): v
+        tables = {
+            k.lstrip("Knowledge/"): {"description": v}
             for k, v in unify.get_contexts(prefix="Knowledge/").items()
         }
+        if not include_columns:
+            return tables
+        return {k: {**v, "columns": self._get_columns(k)} for k, v in tables.items()}
 
     def _rename_table(self, old_name: str, new_name: str) -> None:
         """
@@ -99,6 +117,7 @@ class KnowledgeManager(threading.Thread):
         response = requests.request("PATCH", url, json=json_input, headers=headers)
         if not response.ok:
             raise response.json()
+        return response.json()
 
     def _delete_table(self, table: str) -> None:
         """
@@ -150,6 +169,7 @@ class KnowledgeManager(threading.Thread):
         response = requests.request("POST", url, json=json_input, headers=headers)
         if not response.ok:
             raise response.json()
+        return response.json()
 
     def _create_derived_column(
         self,
@@ -234,7 +254,7 @@ class KnowledgeManager(threading.Thread):
 
             data (List[Dict[str, Any]]): The data to add to the table.
         """
-        unify.create_logs(
+        return unify.create_logs(
             context=f"Knowledge/{table}",
             entries=data,
         )
