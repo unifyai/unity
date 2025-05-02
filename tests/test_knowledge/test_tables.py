@@ -10,3 +10,20 @@ def test_create_table():
     tables = knowledge_manager._list_tables()
     assert len(tables) == 1
     assert "MyTable" in tables
+
+
+@_handle_project
+def test_delete_table():
+    knowledge_manager = KnowledgeManager()
+    knowledge_manager.start()
+
+    # create
+    knowledge_manager._create_table("MyTable")
+    tables = knowledge_manager._list_tables()
+    assert len(tables) == 1
+    assert "MyTable" in tables
+
+    # delete
+    knowledge_manager._delete_table("MyTable")
+    tables = knowledge_manager._list_tables()
+    assert len(tables) == 0
