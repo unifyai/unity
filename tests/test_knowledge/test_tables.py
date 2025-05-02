@@ -16,11 +16,23 @@ def test_create_table():
 def test_create_table_w_cols():
     knowledge_manager = KnowledgeManager()
     knowledge_manager.start()
-    knowledge_manager._create_table("MyTable", {"ColA": "int", "ColB": "str"})
+    knowledge_manager._create_table("MyTable", columns={"ColA": "int", "ColB": "str"})
     tables = knowledge_manager._list_tables(include_columns=True)
     assert len(tables) == 1
     assert tables == {
         "MyTable": {"description": None, "columns": {"ColA": "int", "ColB": "str"}},
+    }
+
+
+@_handle_project
+def test_create_table_w_desc():
+    knowledge_manager = KnowledgeManager()
+    knowledge_manager.start()
+    knowledge_manager._create_table("MyTable", description="For storing my data.")
+    tables = knowledge_manager._list_tables()
+    assert len(tables) == 1
+    assert tables == {
+        "MyTable": {"description": "For storing my data."},
     }
 
 
@@ -35,7 +47,10 @@ def test_list_tables():
     knowledge_manager._create_table("MySecondTable")
     tables = knowledge_manager._list_tables()
     assert len(tables) == 2
-    assert tables == {"MyFirstTable": None, "MySecondTable": None}
+    assert tables == {
+        "MyFirstTable": {"description": None},
+        "MySecondTable": {"description": None},
+    }
 
 
 @_handle_project
