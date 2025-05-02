@@ -33,7 +33,7 @@ Following is the pseudo code of the user flow you're supposed to follow:
 
 2. User doesn't ask for doing something new on the browser
     2.1 asks about the status of the current task (in terms of the steps completed so far)
-        - use the `get_last_step_results` tool to get the current state of the task and the steps completed so far
+        - use the `get_last_step_results` tool to get the current state of the task and the steps completed so far (oldest step first).
 
     2.2 asks to pause, update, resume or cancel the current task
         - if asked to pause the task, use the `pause_task` tool, inform them that the task will only resume if the user explicitly asks you to resume it, in which case you should first check if there's a task in progress. If there is, you should use the `resume_task` tool to resume it.
