@@ -4,6 +4,7 @@ import os
 import sys
 import asyncio
 from typing import Optional
+import threading
 
 load_dotenv()
 
@@ -16,7 +17,7 @@ from livekit.agents import Agent, AgentSession, RoomInputOptions, function_tool
 from livekit.plugins import cartesia, deepgram, noise_cancellation, openai, silero
 from livekit.plugins.turn_detector.multilingual import MultilingualModel
 
-from communication.sys_msgs import AGENT_INFO  # single prompt is enough here
+from communication.sys_msgs import NEW_AGENT  # single prompt is enough here
 
 # ---------------------------------------------------------------------------
 #  1) THE PRIMARY VOICE ASSISTANT
@@ -31,8 +32,19 @@ class VoiceAssistant(Agent):
 
     # --------------------------- INIT ------------------------------------
     def __init__(self) -> None:
-        super().__init__(instructions=AGENT_INFO)
+        super().__init__(instructions=NEW_AGENT)
+        # Create a separate event-loop dedicated to browser tasks
         self._browser_loop = asyncio.new_event_loop()
+
+        # Spin up a daemon thread that runs this loop forever
+        def _run_loop(loop: asyncio.AbstractEventLoop):
+            asyncio.set_event_loop(loop)
+            loop.run_forever()
+
+        self._browser_thread = threading.Thread(
+            target=_run_loop, args=(self._browser_loop,), daemon=True
+        )
+        self._browser_thread.start()
         self._task_running: bool = False
         self._task_paused: bool = False
         self._latest_dialogue_window: list[dict[str, str]] = []
@@ -42,29 +54,23 @@ class VoiceAssistant(Agent):
         self._browser_context = BrowserContext(browser=self._browser)
         self._browser_agent = BrowserAgent(
             task="You're a web assistant. Wait for user instructions.",
-            llm=ChatOpenAI(
-                model="gpt-4.1@openai",
-                base_url=os.getenv("UNIFY_BASE_URL"),
-                api_key=os.getenv("UNIFY_KEY"),
-            ),
+            llm=ChatOpenAI(model="gpt-4.1"),
             browser=self._browser,
             browser_context=self._browser_context,
         )
         # call the action and track the result
     
-    def set_last_task_result(self, result: BrowserAgent):
-        """Set the result of the previous task"""
+    async def set_last_task_result(self, result: BrowserAgent):
+        """Set the result of the previous task (async to satisfy BrowserAgent callback)."""
         last_action = result.state.history.last_action()
-        self._last_step_result = json.dumps(
-            {} if last_action is None else last_action
-        )
+        self._last_step_result = json.dumps({} if last_action is None else last_action)
 
     def notify_task_completed(self, result: str) -> None:
         """Called by an *external* coroutine when the OffTheShelf helper finishes."""
         self._task_running = False
         self._last_task_result = result
 
-    async def browser_run(self, messages: list[dict[str, str]]):
+    async def browser_run(self):
         """Run the browser agent to fulfill the task represented by the current conversation."""
         result = await self._browser_agent.run(
             on_step_end=self.set_last_task_result
@@ -80,17 +86,17 @@ class VoiceAssistant(Agent):
 
     # --------------------------- TOOLS -----------------------------------
     @function_tool()
-    def is_task_running(self) -> bool:
+    async def is_task_running(self) -> bool:
         """Return *True* if a browser task is currently underway."""
         return self._task_running
     
     @function_tool()
-    def is_task_paused(self) -> bool:
+    async def is_task_paused(self) -> bool:
         """Return *True* if a browser task is currently paused."""
         return self._task_paused
 
     @function_tool()
-    def create_task(self) -> str:
+    async def create_task(self) -> str:
         """Send the latest user-assistant exchange to the browser helper.
 
         Should be called *after* the assistant has clarified the desired
@@ -102,13 +108,28 @@ class VoiceAssistant(Agent):
         self._task_running = True
         self._last_task_result = None
         self._browser_agent.state.history.history = []
-        self._browser_agent.add_new_task("\n" + json.dumps(self._latest_dialogue_window, indent=4) + "\n")
+        self._browser_agent.add_new_task(
+            "\n" + json.dumps(self._latest_dialogue_window, indent=4) + "\n"
+        )
         if not self._task_paused:
-            self._browser_loop.create_task(self.browser_run(self._latest_dialogue_window))
+            # submit the coroutine to the dedicated browser loop safely
+            fut = asyncio.run_coroutine_threadsafe(
+                self.browser_run(),
+                self._browser_loop,
+            )
+
+            # Log any exception that might occur in the background task
+            def _log_bg_exc(fut):
+                try:
+                    fut.result()
+                except Exception as e:
+                    print("[BrowserLoop] task raised an exception:", e)
+
+            fut.add_done_callback(_log_bg_exc)
         return "Alright, let me get on with that. I'll let you know how it goes!"
 
     @function_tool()
-    def pause_task(self) -> str:
+    async def pause_task(self) -> str:
         """Pause the current task."""
         if not self._task_running:
             return "No task is currently running."
@@ -118,7 +139,7 @@ class VoiceAssistant(Agent):
         return "Task paused. You can resume it later."
     
     @function_tool()
-    def cancel_task(self) -> str:
+    async def cancel_task(self) -> str:
         """Cancel the current task."""
         if not self._task_running:
             return "No task is currently running."
@@ -126,7 +147,7 @@ class VoiceAssistant(Agent):
         self._task_running = False
 
     @function_tool()
-    def resume_task(self) -> str:
+    async def resume_task(self) -> str:
         """Resume the current task."""
         if not self._task_running:
             return "No task is currently running."
@@ -136,7 +157,7 @@ class VoiceAssistant(Agent):
         return "Task resumed. I'll let you know how it goes!"
 
     @function_tool()
-    def get_last_task_result(self) -> str:
+    async def get_last_task_result(self) -> str:
         """Fetch the final result once a task has completed."""
         if self._task_running:
             return "Still working on it – I'll have an update soon."
@@ -145,7 +166,7 @@ class VoiceAssistant(Agent):
         return self._last_task_result
 
     @function_tool()
-    def get_last_step_result(self) -> str:
+    async def get_last_step_result(self) -> str:
         """Fetch the step of the current running task."""
         if not self._task_running:
             return "No task is currently running."
@@ -172,7 +193,7 @@ async def entrypoint(ctx: agents.JobContext):
 
     session = AgentSession(
         stt=deepgram.STT(model="nova-3", language="multi"),
-        llm=openai.LLM(model="o4-mini"),
+        llm=openai.LLM(model="gpt-4.1"),
         tts=cartesia.TTS(),
         vad=silero.VAD.load(),
         turn_detection=MultilingualModel(),
