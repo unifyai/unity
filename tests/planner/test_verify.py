@@ -3,6 +3,7 @@ import queue
 
 from planner.verifier import verify, BubbleUp, Verifier
 from planner.model import Primitive
+from planner.context import context
 
 
 # Helper function to set up queues for testing
@@ -127,3 +128,38 @@ def test_verify_push_up(monkeypatch):
     # Assert that calling high() raises BubbleUp
     with pytest.raises(BubbleUp):
         high()
+
+
+def test_verify_timeout(monkeypatch):
+    """
+    Test that the verify decorator raises RuntimeError when it times out.
+
+    This test:
+    1. Sets up queues that never change snapshot
+    2. Mocks get_snapshot to always return the same snapshot
+    3. Mocks Verifier.check to always return 'reimplement'
+    4. Defines a decorated function
+    5. Asserts that calling the function raises RuntimeError due to timeout
+    """
+    import planner.verifier as verifier
+
+    verifier._HEURISTIC_TIMEOUT_S = 0.5
+    broadcast_q, re_q = set_queues(queue.Queue(), queue.Queue())
+    # snapshots never change → Verifier will keep asking to reimplement
+    snapshot = {"url": "x", "title": "x"}
+
+    def mock_get_snapshot():
+        return snapshot
+
+    monkeypatch.setattr("planner.context.get_snapshot", mock_get_snapshot)
+    # Bypass real LLM; always ask to reimplement
+    monkeypatch.setattr(
+        "planner.verifier.Verifier.check", lambda *a, **k: "reimplement"
+    )
+
+    @verify
+    def spam():  # primitive stub
+        return Primitive("open_browser", {}, "open_browser")
+
+    with pytest.raises(RuntimeError):
+        spam()
