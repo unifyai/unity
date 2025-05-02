@@ -77,8 +77,16 @@ class KnowledgeManager(threading.Thread):
             for k, v in unify.get_contexts(prefix="Knowledge/").items()
         }
 
-    def _rename_table(self):
-        pass
+    def _rename_table(self, old_name: str, new_name: str) -> None:
+        """
+        Rename the table.
+
+        Args:
+            old_name (str): The old name of the table.
+
+            new_name (str): The new name for the table.
+        """
+        raise unify.rename_context(old_name, new_name)
 
     def _delete_table(self, table: str) -> None:
         """
