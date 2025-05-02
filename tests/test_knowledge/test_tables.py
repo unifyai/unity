@@ -10,3 +10,62 @@ def test_create_table():
     tables = knowledge_manager._list_tables()
     assert len(tables) == 1
     assert "MyTable" in tables
+
+
+@_handle_project
+def test_create_table_w_cols():
+    knowledge_manager = KnowledgeManager()
+    knowledge_manager.start()
+    knowledge_manager._create_table("MyTable", {"ColA": "int", "ColB": "str"})
+    tables = knowledge_manager._list_tables()
+    assert len(tables) == 1
+    assert tables == {"MyTable": {"ColA": "int", "ColB": "str"}}
+
+
+@_handle_project
+def test_list_tables():
+    knowledge_manager = KnowledgeManager()
+    knowledge_manager.start()
+    knowledge_manager._create_table("MyFirstTable")
+    tables = knowledge_manager._list_tables()
+    assert len(tables) == 1
+    assert "MyFirstTable" in tables
+    knowledge_manager._create_table("MySecondTable")
+    tables = knowledge_manager._list_tables()
+    assert len(tables) == 2
+    assert tables == {"MyFirstTable": None, "MySecondTable": None}
+
+
+@_handle_project
+def test_delete_table():
+    knowledge_manager = KnowledgeManager()
+    knowledge_manager.start()
+
+    # create
+    knowledge_manager._create_table("MyTable")
+    tables = knowledge_manager._list_tables()
+    assert len(tables) == 1
+    assert "MyTable" in tables
+
+    # delete
+    knowledge_manager._delete_table("MyTable")
+    tables = knowledge_manager._list_tables()
+    assert len(tables) == 0
+
+
+@_handle_project
+def test_rename_table():
+    knowledge_manager = KnowledgeManager()
+    knowledge_manager.start()
+
+    # create
+    knowledge_manager._create_table("MyTable")
+    tables = knowledge_manager._list_tables()
+    assert len(tables) == 1
+    assert "MyTable" in tables
+
+    # rename
+    knowledge_manager._rename_table("MyTable", "MyNewTable")
+    tables = knowledge_manager._list_tables()
+    assert len(tables) == 1
+    assert tables[0] == "MyNewTable"
