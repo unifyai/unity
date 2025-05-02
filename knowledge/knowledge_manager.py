@@ -90,7 +90,15 @@ class KnowledgeManager(threading.Thread):
 
             new_name (str): The new name for the table.
         """
-        raise unify.rename_context(old_name, new_name)
+        old_name = f"Knowledge/{old_name}"
+        new_name = f"Knowledge/{new_name}"
+        proj = unify.active_project()
+        url = f"https://api.unify.ai/v0/project/{proj}/contexts/{old_name}/rename"
+        headers = {"Authorization": f"Bearer {API_KEY}"}
+        json_input = {"name": new_name}
+        response = requests.request("PATCH", url, json=json_input, headers=headers)
+        if not response.ok:
+            raise response.json()
 
     def _delete_table(self, table: str) -> None:
         """
