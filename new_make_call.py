@@ -17,7 +17,7 @@ from livekit.agents import Agent, AgentSession, RoomInputOptions, function_tool
 from livekit.plugins import cartesia, deepgram, noise_cancellation, openai, silero
 from livekit.plugins.turn_detector.multilingual import MultilingualModel
 
-from communication.sys_msgs import NEW_AGENT  # single prompt is enough here
+from communication.sys_msgs import NEW_AGENT
 
 notify_task_completed = None
 
@@ -30,7 +30,6 @@ class VoiceAssistant(Agent):
 
     – Maintains an internal flag so it knows when a task is running.
     – Exposes 8 tools so the LLM can explicitly start tasks and query progress.
-    – Receives task-completion notifications via `notify_task_completed()`.
     """
 
     # --------------------------- INIT ------------------------------------
@@ -234,6 +233,10 @@ async def entrypoint(ctx: agents.JobContext):
     )
 
     # Capture the main LiveKit loop so we can safely schedule from the browser thread
+    global notify_task_completed
+    main_loop = asyncio.get_running_loop()
+    notify_task_completed = notify_task_completed_wrapped(session, main_loop)
+
     assistant = VoiceAssistant()
 
     await session.start(
