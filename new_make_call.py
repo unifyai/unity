@@ -186,19 +186,34 @@ class VoiceAssistant(Agent):
 # ---------------------------------------------------------------------------
 
 
-def notify_task_completed_wrapped(session: AgentSession):
-    def notify_task_completed(assistant: VoiceAssistant, result: str) -> None:
-        """Called by an *external* coroutine when the OffTheShelf helper finishes."""
-        assistant._task_running = False
-        assistant._last_task_result = result
-        session.interrupt()
-        session.generate_reply(
+def notify_task_completed_wrapped(
+    session: AgentSession, loop: asyncio.AbstractEventLoop
+):
+    """Return a thread-safe callback to be called from the browser thread."""
+
+    async def _send_completion_reply(result: str):
+        # coroutine executed inside the LiveKit loop
+        await session.generate_reply(
             instructions=(
-                'Start with something like "by the way" assuming there was some other '
-                "convo going on and notify the user that the task is completed and provide "
-                f"details about the result\n\n{result}"
+                'By the way, your requested browser task has completed. Here are the details:\n\n'
+                f'{result}'
             )
         )
+
+    def notify_task_completed(assistant: VoiceAssistant, result: str) -> None:
+        # executed from the browser thread / loop
+        assistant._task_running = False
+        assistant._last_task_result = result
+
+        # Define a function that will run in the LiveKit (main) loop
+        def _on_main_thread():
+            # interrupt any ongoing TTS/inference safely inside the right loop
+            session.interrupt()
+            # schedule the async reply coroutine
+            asyncio.create_task(_send_completion_reply(result))
+
+        # marshal to the main event-loop thread-safely
+        loop.call_soon_threadsafe(_on_main_thread)
 
     return notify_task_completed
 
@@ -218,8 +233,10 @@ async def entrypoint(ctx: agents.JobContext):
         turn_detection=MultilingualModel(),
     )
 
-    global notify_task_completed
-    notify_task_completed = notify_task_completed_wrapped(session)
+    # Capture the main LiveKit loop so we can safely schedule from the browser thread
+    main_loop = asyncio.get_running_loop()
+
+    notify_task_completed = notify_task_completed_wrapped(session, main_loop)
 
     assistant = VoiceAssistant()
 
