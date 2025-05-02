@@ -1,4 +1,3 @@
-import pytest
 from tests.helpers import _handle_project
 from knowledge.knowledge_manager import KnowledgeManager
 
@@ -13,15 +12,16 @@ def test_create_table():
     assert "MyTable" in tables
 
 
-@pytest.mark.skip(reason="Context path parameter fix needed.")
 @_handle_project
 def test_create_table_w_cols():
     knowledge_manager = KnowledgeManager()
     knowledge_manager.start()
     knowledge_manager._create_table("MyTable", {"ColA": "int", "ColB": "str"})
-    tables = knowledge_manager._list_tables()
+    tables = knowledge_manager._list_tables(include_columns=True)
     assert len(tables) == 1
-    assert tables == {"MyTable": {"ColA": "int", "ColB": "str"}}
+    assert tables == {
+        "MyTable": {"description": None, "columns": {"ColA": "int", "ColB": "str"}},
+    }
 
 
 @_handle_project
