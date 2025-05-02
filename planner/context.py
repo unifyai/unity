@@ -70,6 +70,8 @@ class PlannerContext:
             "scroll_y": state_part.get("scroll_y"),
             "in_textbox": state_part.get("in_textbox"),
             "active_tab": state_part.get("active_tab"),
+            "dom_sha": state_part.get("dom_sha"),
+            "focused_xpath": state_part.get("focused_xpath"),
         }
         return canonical
 
