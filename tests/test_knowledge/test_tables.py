@@ -13,6 +13,20 @@ def test_create_table():
 
 
 @_handle_project
+def test_list_tables():
+    knowledge_manager = KnowledgeManager()
+    knowledge_manager.start()
+    knowledge_manager._create_table("MyFirstTable")
+    tables = knowledge_manager._list_tables()
+    assert len(tables) == 1
+    assert "MyFirstTable" in tables
+    knowledge_manager._create_table("MySecondTable")
+    tables = knowledge_manager._list_tables()
+    assert len(tables) == 2
+    assert tables == {"MyFirstTable": None, "MySecondTable": None}
+
+
+@_handle_project
 def test_delete_table():
     knowledge_manager = KnowledgeManager()
     knowledge_manager.start()
