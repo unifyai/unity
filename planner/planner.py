@@ -2,13 +2,14 @@ import queue
 import asyncio
 import threading
 import time
-from typing import List, Optional, Any
+from typing import List, Optional, Any, Callable
 from asyncio import AbstractEventLoop
 
 from .context import context as planner_context
 from . import zero_shot, update_handler
 from .verifier import Verifier
 from .code_rewriter import rewrite_function
+from .primitives import set_runtime_controls
 import logging
 
 
@@ -54,6 +55,11 @@ class Planner(threading.Thread):
         self._plan_module = None
         self._plan_thread = None
 
+        # Runtime control mechanisms
+        self._pause_event = threading.Event()
+        self._pause_event.set()  # Not paused by default
+        self._call_queue = queue.Queue()
+
     def _run_plan_wrapper(self, fn):
         """
         Wrapper function that manages call stack and executes the plan function.
@@ -86,7 +92,7 @@ class Planner(threading.Thread):
                 fn_obj = reimplement_queue.get_nowait()
 
                 # Pause the plan execution
-                self.paused = True
+                self._pause()
 
                 # backward‐compatible: if a name was enqueued
                 if isinstance(fn_obj, str):
@@ -95,7 +101,7 @@ class Planner(threading.Thread):
                     rewrite_function(fn_obj)
 
                 # Unpause the plan
-                self.paused = False
+                self._resume()
             except queue.Empty:
                 pass
 
@@ -113,6 +119,22 @@ class Planner(threading.Thread):
 
             # Small sleep to prevent CPU spinning
             time.sleep(0.01)
+
+    def _pause(self):
+        """
+        Pause plan execution by clearing the pause event.
+        Primitives will block until the event is set again.
+        """
+        self._pause_event.clear()
+        self.paused = True
+
+    def _resume(self):
+        """
+        Resume plan execution by setting the pause event.
+        This allows blocked primitives to continue execution.
+        """
+        self._pause_event.set()
+        self.paused = False
 
     def _handle_task_event(self, task_description):
         """
@@ -142,6 +164,9 @@ class Planner(threading.Thread):
         from .primitives import set_queues
 
         set_queues(self._text_action_q, self._action_completion_q)
+
+        # Set up runtime control mechanisms
+        set_runtime_controls(self._pause_event, self._call_queue)
 
         # Create a new plan using zero-shot planning
         module, root_fn = zero_shot.create_initial_plan(task_description)
