@@ -17,7 +17,7 @@ class PlannerContext:
     This class provides access to:
     - The latest browser state snapshot
     - The current function call stack
-    - The current active plan
+    - The current active plan module
 
     All planner modules should import and use this singleton to share context.
     """
@@ -100,7 +100,7 @@ class PlannerContext:
 
     def push_frame(self, fn_name: str) -> None:
         """
-        Record entry into a FunctionNode call by adding it to the call stack.
+        Record entry into a function call by adding it to the call stack.
 
         Args:
             fn_name: Name of the function being entered
@@ -110,7 +110,7 @@ class PlannerContext:
 
     def pop_frame(self) -> Optional[str]:
         """
-        Record exit from a FunctionNode call by removing it from the call stack.
+        Record exit from a function call by removing it from the call stack.
 
         Returns:
             The name of the function that was exited, or None if the stack was empty
@@ -122,20 +122,20 @@ class PlannerContext:
 
     def get_current_plan(self) -> Optional[Any]:
         """
-        Get the currently active Plan.
+        Get the currently active plan module.
 
         Returns:
-            The current Plan object, or None if no plan is active
+            The current plan module object, or None if no plan is active
         """
         with self._context_lock:
             return self._current_plan
 
     def set_current_plan(self, plan: Any) -> None:
         """
-        Set the currently active Plan.
+        Set the currently active plan module.
 
         Args:
-            plan: The Plan object to set as current
+            plan: The plan module object to set as current
         """
         with self._context_lock:
             self._current_plan = plan

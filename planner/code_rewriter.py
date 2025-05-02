@@ -60,9 +60,7 @@ def rewrite_function(fn: Callable, new_src: Optional[str] = None) -> None:
     try:
         sandbox.exec_plan(new_src)
     except Exception as e:
-        raise RuntimeError(
-            f"{'Provided' if new_src is not None else 'Generated'} code failed sandbox validation: {e}"
-        )
+        raise RuntimeError(f"Generated code failed sandbox validation: {e}")
 
     # Get the module where the function is defined
     module = inspect.getmodule(fn)

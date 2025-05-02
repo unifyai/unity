@@ -51,7 +51,7 @@ class Planner(threading.Thread):
         # New instance variables for plan management
         self.current_plan = None
         self.paused = False
-        self.plan_stack = []
+
         self._plan_module = None
         self._plan_thread = None
 
@@ -67,9 +67,6 @@ class Planner(threading.Thread):
         Args:
             fn: The root function of the plan to execute
         """
-        # Push the function name to the call stack
-        planner_context.push_frame("root")
-
         try:
             planner_context.push_frame(fn.__name__)
             fn()
