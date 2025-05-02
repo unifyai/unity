@@ -235,8 +235,6 @@ async def entrypoint(ctx: agents.JobContext):
     )
 
     # Capture the main LiveKit loop so we can safely schedule from the browser thread
-    main_loop = asyncio.get_running_loop()
-
     assistant = VoiceAssistant()
 
     await session.start(
