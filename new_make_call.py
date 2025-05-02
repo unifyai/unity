@@ -187,8 +187,6 @@ class VoiceAssistant(Agent):
 # ---------------------------------------------------------------------------
 #  2) Function for task completion
 # ---------------------------------------------------------------------------
-
-
 def notify_task_completed_wrapped(
     session: AgentSession, loop: asyncio.AbstractEventLoop
 ):
@@ -238,8 +236,6 @@ async def entrypoint(ctx: agents.JobContext):
 
     # Capture the main LiveKit loop so we can safely schedule from the browser thread
     main_loop = asyncio.get_running_loop()
-
-    notify_task_completed = notify_task_completed_wrapped(session, main_loop)
 
     assistant = VoiceAssistant()
 
