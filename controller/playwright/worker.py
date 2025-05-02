@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import queue
 import base64
+import hashlib
 import threading
 import time
 import shutil
@@ -200,6 +201,31 @@ class BrowserWorker(threading.Thread):
                         self.runner.state.in_textbox = False
                         # leave scroll_y unchanged (best effort)
                     # ──────────────────────────────────────────────────
+                    html = self.runner.active.evaluate(
+                        "document.documentElement.outerHTML"
+                    )
+                    dom_sha = hashlib.sha1(html.encode()).hexdigest()
+                    # Compute focused element XPath
+                    focused_xpath = self.runner.active.evaluate(
+                        """() => {
+                             const el = document.activeElement;
+                             if (!el) return null;
+                             let path = [];
+                             while (el && el.nodeType === 1) {
+                               let idx = 0;
+                               let sib = el.previousSibling;
+                               while (sib) {
+                                 if (sib.nodeType === 1) idx++;
+                                 sib = sib.previousSibling;
+                               }
+                               path.unshift(`${el.nodeName.toLowerCase()}[${idx}]`);
+                               el = el.parentNode;
+                             }
+                             return '/' + path.join('/');
+                         }"""
+                    )
+                    self.runner.state.dom_sha = dom_sha
+                    self.runner.state.focused_xpath = focused_xpath
 
                     # ---------- package GUI update --------------------
                     elements_lite = [
