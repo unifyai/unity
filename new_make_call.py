@@ -3,7 +3,7 @@ from dotenv import load_dotenv
 import os
 import sys
 import asyncio
-from typing import Optional
+from typing import Callable, Optional
 import threading
 
 load_dotenv()
@@ -19,6 +19,9 @@ from livekit.plugins.turn_detector.multilingual import MultilingualModel
 
 from communication.sys_msgs import NEW_AGENT  # single prompt is enough here
 
+notify_task_completed = None
+
+
 # ---------------------------------------------------------------------------
 #  1) THE PRIMARY VOICE ASSISTANT
 # ---------------------------------------------------------------------------
@@ -33,6 +36,7 @@ class VoiceAssistant(Agent):
     # --------------------------- INIT ------------------------------------
     def __init__(self) -> None:
         super().__init__(instructions=NEW_AGENT)
+
         # Create a separate event-loop dedicated to browser tasks
         self._browser_loop = asyncio.new_event_loop()
 
@@ -59,22 +63,15 @@ class VoiceAssistant(Agent):
             browser_context=self._browser_context,
         )
         # call the action and track the result
-    
+
     async def set_last_task_result(self, result: BrowserAgent):
         """Set the result of the previous task (async to satisfy BrowserAgent callback)."""
         last_action = result.state.history.last_action()
         self._last_step_result = json.dumps({} if last_action is None else last_action)
 
-    def notify_task_completed(self, result: str) -> None:
-        """Called by an *external* coroutine when the OffTheShelf helper finishes."""
-        self._task_running = False
-        self._last_task_result = result
-
     async def browser_run(self):
         """Run the browser agent to fulfill the task represented by the current conversation."""
-        result = await self._browser_agent.run(
-            on_step_end=self.set_last_task_result
-        )
+        result = await self._browser_agent.run(on_step_end=self.set_last_task_result)
         result = json.loads(result.model_dump_json())
         history_list = []
         for history in result["history"]:
@@ -82,14 +79,15 @@ class VoiceAssistant(Agent):
             history.pop("metadata")
             history_list.append(history)
         result = json.dumps({"result": history_list}, indent=4)
-        self.notify_task_completed(result)
+        if notify_task_completed is not None:
+            notify_task_completed(self, result)
 
     # --------------------------- TOOLS -----------------------------------
     @function_tool()
     async def is_task_running(self) -> bool:
         """Return *True* if a browser task is currently underway."""
         return self._task_running
-    
+
     @function_tool()
     async def is_task_paused(self) -> bool:
         """Return *True* if a browser task is currently paused."""
@@ -137,7 +135,7 @@ class VoiceAssistant(Agent):
         self._task_running = False
         self._task_paused = True
         return "Task paused. You can resume it later."
-    
+
     @function_tool()
     async def cancel_task(self) -> str:
         """Cancel the current task."""
@@ -182,15 +180,36 @@ class VoiceAssistant(Agent):
         ] + [{"user": new_message.text_content}]
         print(self._latest_dialogue_window)
 
+
 # ---------------------------------------------------------------------------
-#  2) LIVEKIT ENTRYPOINT
+#  2) Function for task completion
+# ---------------------------------------------------------------------------
+
+
+def notify_task_completed_wrapped(session: AgentSession):
+    def notify_task_completed(assistant: VoiceAssistant, result: str) -> None:
+        """Called by an *external* coroutine when the OffTheShelf helper finishes."""
+        assistant._task_running = False
+        assistant._last_task_result = result
+        session.interrupt()
+        session.generate_reply(
+            instructions=(
+                'Start with something like "by the way" assuming there was some other '
+                "convo going on and notify the user that the task is completed and provide "
+                f"details about the result\n\n{result}"
+            )
+        )
+
+    return notify_task_completed
+
+
+# ---------------------------------------------------------------------------
+#  3) LIVEKIT ENTRYPOINT
 # ---------------------------------------------------------------------------
 async def entrypoint(ctx: agents.JobContext):
     await ctx.connect()
 
     # Create the LiveKit voice session ------------------------------------
-    assistant = VoiceAssistant()
-
     session = AgentSession(
         stt=deepgram.STT(model="nova-3", language="multi"),
         llm=openai.LLM(model="gpt-4.1"),
@@ -198,6 +217,11 @@ async def entrypoint(ctx: agents.JobContext):
         vad=silero.VAD.load(),
         turn_detection=MultilingualModel(),
     )
+
+    global notify_task_completed
+    notify_task_completed = notify_task_completed_wrapped(session)
+
+    assistant = VoiceAssistant()
 
     await session.start(
         room=ctx.room,
@@ -214,7 +238,7 @@ async def entrypoint(ctx: agents.JobContext):
 
 
 # ---------------------------------------------------------------------------
-#  3) SCRIPT LAUNCHER (mirror `make_call.py` behaviour)
+#  4) SCRIPT LAUNCHER (mirror `make_call.py` behaviour)
 # ---------------------------------------------------------------------------
 if __name__ == "__main__":
     if len(sys.argv) == 1:
