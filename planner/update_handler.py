@@ -9,9 +9,49 @@ from .context import context
 from .code_rewriter import rewrite_function
 import logging
 import difflib
+import json
 
 
-# P4-BEGIN _select_stack_function
+def _build_diff_payload(fn_name, old_src, new_src):
+    """
+    Build a JSON payload containing diff information, call stack context, and browser state.
+
+    Args:
+        fn_name: Name of the function being modified
+        old_src: Original source code of the function
+        new_src: New source code of the function
+
+    Returns:
+        JSON string containing diff, call stack, and browser state information
+    """
+    # Generate unified diff
+    diff = difflib.unified_diff(
+        old_src.splitlines(keepends=True),
+        new_src.splitlines(keepends=True),
+        fromfile=f"a/{fn_name}",
+        tofile=f"b/{fn_name}",
+        n=3,
+    )
+    diff_text = "".join(diff)
+
+    # Get call stack context (last 3 frames)
+    call_stack = context.get_call_stack()
+    stack_context = call_stack[-3:] if len(call_stack) >= 3 else call_stack
+
+    # Get current browser state
+    browser_state = context.last_state_snapshot()
+
+    # Build the payload
+    payload = {
+        "diff": diff_text,
+        "function_name": fn_name,
+        "call_stack": stack_context,
+        "browser_state": browser_state,
+    }
+
+    return json.dumps(payload, indent=2)
+
+
 def _select_stack_function(update_text: str) -> str:
     """
     Select the most appropriate function from the call stack to modify based on the update text.
@@ -58,9 +98,6 @@ def _select_stack_function(update_text: str) -> str:
     return call_stack[-1] if call_stack else None
 
 
-# P4-END
-
-
 def _classify_update(update_text: str) -> str:
     """
     Classify the user update as 'exploratory' or 'modify' using the Unify agent.
@@ -99,7 +136,6 @@ def _classify_update(update_text: str) -> str:
     return "modify"
 
 
-# P4-BEGIN _handle_exploration
 def _handle_exploration(planner, update_text: str) -> None:
     """
     Handle an exploratory user update by generating a Python function that reuses a single
@@ -222,7 +258,6 @@ def _handle_modification(planner, update_text: str) -> None:
     # Pause the plan execution
     planner._pause()
 
-    # P4-BEGIN modification_improvements
     # Use the new stack selection function to identify the target function
     target_function_name = _select_stack_function(update_text)
 
@@ -247,7 +282,6 @@ def _handle_modification(planner, update_text: str) -> None:
             "Respond with just the exact function name, no additional text."
         )
         target_function_name = generate_prompt(prompt_node).strip()
-    # P4-END modification_improvements
 
     # Get the target function from the module
     target_function = None
@@ -259,7 +293,6 @@ def _handle_modification(planner, update_text: str) -> None:
         )
         # If the function doesn't exist, we'll create a course correction function instead
 
-    # P4-BEGIN diff_generation
     # Get the original source code if the target function exists
     old_src = ""
     if target_function and callable(target_function):
@@ -299,65 +332,71 @@ def _handle_modification(planner, update_text: str) -> None:
         except Exception as e:
             logging.error(f"Error rewriting function: {e}")
 
-    # Generate a diff between old and new code
-    diff_payload = ""
-    if old_src and new_src:
-        diff = difflib.unified_diff(
-            old_src.splitlines(keepends=True),
-            new_src.splitlines(keepends=True),
-            fromfile=f"a/{target_function_name}",
-            tofile=f"b/{target_function_name}",
-            n=3,
-        )
-        diff_payload = "".join(diff)
-    # P4-END diff_generation
+    # Build the diff payload with context information
+    diff_payload = _build_diff_payload(target_function_name, old_src, new_src)
 
-    # Generate a course correction function to handle the update
-    system_message = (
-        "You are an expert Python programmer creating a browser automation function."
-    )
+    # Generate a bridge function to handle the update
+    system_message = "You are an expert Python programmer creating a browser automation bridge function."
     set_system_message(system_message)
 
-    prompt_course_correction = (
-        f"Write a Python function named 'course_correction' that implements this update: '{update_text}'.\n"
-        f"The function should use browser primitives to make the necessary adjustments.\n"
-        f"Use only these primitives: search(), click_button(), enter_text(), press_enter(), etc.\n"
+    prompt_bridge = (
+        f"Write a Python function named 'bridge' that implements this update: '{update_text}'.\n"
+        f"The function should use browser primitives to make the necessary adjustments and bridge between the old and new behavior.\n"
+        f"Use only these primitives: search(), click_button(), enter_text(), press_enter(), scroll(), wait_for_page_load(), etc.\n"
         f"The function should have no parameters and return None.\n"
-        f"Provide ONLY the function code, no explanations."
+        f"The bridge function will be executed once and then automatically removed.\n"
+        f"Provide ONLY the function code, no explanations.\n\n"
+        f"Context information:\n```\n{diff_payload}\n```\n"
     )
 
-    # Include diff information if available
-    if diff_payload:
-        prompt_course_correction += (
-            f"\nThe following changes were made to the '{target_function_name}' function:\n"
-            f"```\n{diff_payload}\n```\n"
-            f"Your course_correction function should complement these changes.\n"
-        )
-    course_correction_code = generate_prompt(prompt_course_correction)
+    bridge_code = generate_prompt(prompt_bridge)
 
     try:
         # Execute the generated code in the planner module's namespace
-        exec(course_correction_code, planner._plan_module.__dict__)
+        exec(bridge_code, planner._plan_module.__dict__)
 
-        # Get the function from the module
-        course_correction = getattr(planner._plan_module, "course_correction")
+        # Get the bridge function from the module
+        bridge_function = getattr(planner._plan_module, "bridge")
 
-        # Create a wrapper function that executes the course correction and resumes the plan
+        # Check if we need to apply verification decorator
+        if hasattr(planner._plan_module, "verify"):
+            # Apply verification decorator if available
+            verify = getattr(planner._plan_module, "verify")
+            bridge_function = verify(bridge_function)
+            # Update the module with the decorated function
+            setattr(planner._plan_module, "bridge", bridge_function)
+
+        # Create a wrapper function that executes the bridge and resumes the plan
         def wrapper_function():
-            planner._resume()
-            course_correction()
+            try:
+                # Execute the bridge function
+                bridge_function()
+            except Exception as e:
+                logging.error(f"Error executing bridge function: {e}")
+            finally:
+                # Clean up by removing the bridge function from the module
+                if hasattr(planner._plan_module, "bridge"):
+                    delattr(planner._plan_module, "bridge")
+                # Resume the plan
+                planner._resume()
 
         # Schedule the wrapper function to be executed via the call queue
         planner._call_queue.put(wrapper_function)
 
     except Exception as e:
         # Fallback if there's an error with the generated code
-        logging.error(f"Error executing course correction code: {e}")
+        logging.error(f"Error executing bridge code: {e}")
 
         # Define a simple fallback function with resume at the start
         def fallback_wrapper():
-            planner._resume()
-            primitives.search(update_text)
+            try:
+                # Simple fallback behavior
+                primitives.search(update_text)
+            except Exception as fallback_error:
+                logging.error(f"Error in fallback handler: {fallback_error}")
+            finally:
+                # Always resume the plan
+                planner._resume()
 
         # Schedule the fallback wrapper function
         planner._call_queue.put(fallback_wrapper)
