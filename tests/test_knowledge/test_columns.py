@@ -49,5 +49,20 @@ def test_delete_column():
 
 
 @_handle_project
+def test_delete_empty_column():
+    knowledge_manager = KnowledgeManager()
+    knowledge_manager.start()
+    knowledge_manager._create_table("MyTable")
+    knowledge_manager._create_empty_column("MyTable", "x", "int")
+    tables = knowledge_manager._list_tables(include_columns=True)
+    assert tables == {"MyTable": {"description": None, "columns": {"x": "int"}}}
+    knowledge_manager._delete_column("MyTable", "x")
+    tables = knowledge_manager._list_tables(include_columns=True)
+    assert tables == {"MyTable": {"description": None, "columns": {}}}
+    data = knowledge_manager._search()
+    assert data == {"MyTable": []}
+
+
+@_handle_project
 def test_transform_column():
     pass
