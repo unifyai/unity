@@ -30,3 +30,24 @@ def test_create_derived_column():
             {"x": 3, "y": 4, "distance": (3**2 + 4**2) ** 0.5},
         ],
     }
+
+
+@_handle_project
+def test_delete_column():
+    knowledge_manager = KnowledgeManager()
+    knowledge_manager.start()
+    knowledge_manager._create_table("MyTable")
+    knowledge_manager._add_data("MyTable", [{"x": 1, "y": 2}, {"x": 3, "y": 4}])
+    knowledge_manager._delete_column("MyTable", "x")
+    data = knowledge_manager._search()
+    assert data == {
+        "MyTable": [
+            {"y": 2},
+            {"y": 4},
+        ],
+    }
+
+
+@_handle_project
+def test_transform_column():
+    pass
