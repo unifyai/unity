@@ -222,10 +222,17 @@ class KnowledgeManager(threading.Thread):
         Args:
             table (str): The name of the table to delete the column from.
         """
-        unify.delete_log_fields(column_name)
-        url = f"https://api.unify.ai/v0/project/{unify.active_project()}/contexts/Knowledge/{table}/artifacts"
+        url = "https://api.unify.ai/v0/logs?delete_empty_logs=True"
         headers = {"Authorization": f"Bearer {API_KEY}"}
-        response = requests.request("DELETE", url, headers=headers)
+        json_input = {
+            "project": unify.active_project(),
+            "context": f"Knowledge/{table}",
+            "ids_and_fields": [[None, column_name]],
+            "source_type": "all",
+        }
+        response = requests.request("DELETE", url, json=json_input, headers=headers)
+        if not response.ok:
+            raise response.json()
         return response.json()
 
     def _rename_column(self, table: str, old_name: str, new_name: str):
