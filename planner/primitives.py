@@ -359,3 +359,40 @@ def _raw_duplicate_tab() -> Primitive:
 
 
 duplicate_tab = _to_queue(_raw_duplicate_tab)
+
+
+def _raw_wait_for_user_signal(timeout: float = None) -> Primitive:
+    """
+    Creates a primitive that waits for the user to signal continuation.
+
+    This function blocks until the pause event is set, indicating that the user
+    has signaled to continue execution.
+
+    Args:
+        timeout: Optional timeout in seconds. If None, waits indefinitely.
+
+    Returns:
+        A Primitive representing the wait operation.
+    """
+    # Check if pause event is initialized
+    if _pause_event is None:
+        raise RuntimeError(
+            "Pause event not initialized; call set_runtime_controls() first."
+        )
+
+    # Wait for the pause event to be set (i.e., wait until unpaused)
+    if not _pause_event.wait(timeout):
+        # If we get here with a timeout, the event wasn't set within the timeout period
+        pass  # We still return the primitive even if we timed out
+
+    # Return a primitive with no actual controller command
+    return Primitive("wait_for_user_signal", {"timeout": timeout}, "")
+
+
+wait_for_user_signal = _to_queue(_raw_wait_for_user_signal)
+
+# P4-BEGIN primitive aliases
+click_on = click_button
+select_tab_alias = select_tab
+go_to_url = open_url
+# P4-END
