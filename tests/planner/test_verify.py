@@ -94,7 +94,7 @@ def test_verify_push_up(monkeypatch):
     This test:
     1. Sets up the queues
     2. Mocks get_snapshot to always return the same snapshot
-    3. Mocks Verifier.check to return 'push_up_stack'
+    3. Mocks Verifier.check to return 'push_up_stack' for high() and 'ok' for low()
     4. Defines nested decorated functions
     5. Asserts that calling the outer function raises BubbleUp
     """
@@ -111,8 +111,9 @@ def test_verify_push_up(monkeypatch):
     monkeypatch.setattr("planner.context.get_snapshot", mock_get_snapshot)
 
     # Mock Verifier.check to return 'push_up_stack'
-    def mock_check(*args, **kwargs):
-        return "push_up_stack"
+    def mock_check(src, *_, **__):
+        fn_name = src.split("def ")[1].split("(")[0].strip()
+        return "push_up_stack" if fn_name == "high" else "ok"
 
     monkeypatch.setattr("planner.verifier.Verifier.check", mock_check)
 
