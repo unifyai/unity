@@ -190,7 +190,6 @@ class KnowledgeManager(threading.Thread):
         self,
         table: str,
         column_name: str,
-        column_type: str,
         equation: str,
     ):
         """
@@ -205,12 +204,13 @@ class KnowledgeManager(threading.Thread):
         """
         url = "https://api.unify.ai/v0/logs/derived"
         headers = {"Authorization": f"Bearer {API_KEY}"}
+        equation = equation.replace("{", "{lg:")
         json_input = {
             "project": unify.active_project(),
             "context": f"Knowledge/{table}",
             "key": column_name,
             "equation": equation,
-            "referenced_logs": {"log": {}},
+            "referenced_logs": {"lg": {"context": f"Knowledge/{table}"}},
         }
         response = requests.request("POST", url, json=json_input, headers=headers)
         return response.json()
