@@ -39,6 +39,9 @@ class PlannerContext:
         self._current_plan = None
         self._call_stack = []
         self._context_lock = threading.Lock()
+        self._exploration_depth = 0
+        self._exploration_tab_id = None
+        self._main_tab_id = None
 
     def set_broadcast_queue(self, broadcast_queue: "queue.Queue[Any]"):
         """
@@ -153,6 +156,69 @@ class PlannerContext:
             The canonicalized state dict, or None if no snapshot is available
         """
         return self.last_state_snapshot()
+
+    def enter_exploration(self, tab_id, main_tab=None) -> None:
+        """
+        Enter an exploration context with the given tab ID.
+
+        Args:
+            tab_id: The ID of the tab being used for exploration
+            main_tab: The ID of the main tab to return to after exploration
+        """
+        with self._context_lock:
+            self._exploration_depth += 1
+            self._exploration_tab_id = tab_id
+            # Only store the main tab when first entering exploration
+            if self._exploration_depth == 1 and main_tab is not None:
+                self._main_tab_id = main_tab
+
+    def exit_exploration(self) -> Optional[Any]:
+        """
+        Exit the current exploration context.
+        Decrements the exploration depth and clears the tab ID if depth reaches 0.
+
+        Returns:
+            The ID of the main tab when exiting the outermost exploration, or None otherwise
+        """
+        with self._context_lock:
+            main_tab = None
+            if self._exploration_depth > 0:
+                self._exploration_depth -= 1
+            if self._exploration_depth == 0:
+                main_tab = self._main_tab_id
+                self._exploration_tab_id = None
+                self._main_tab_id = None
+            return main_tab
+
+    def in_exploration(self) -> bool:
+        """
+        Check if currently in an exploration context.
+
+        Returns:
+            True if in an exploration context, False otherwise
+        """
+        with self._context_lock:
+            return self._exploration_depth > 0
+
+    def get_exploration_tab(self) -> Optional[Any]:
+        """
+        Get the ID of the current exploration tab.
+
+        Returns:
+            The ID of the current exploration tab, or None if not in exploration
+        """
+        with self._context_lock:
+            return self._exploration_tab_id
+
+    def get_main_tab(self) -> Optional[Any]:
+        """
+        Get the ID of the main tab to return to after exploration.
+
+        Returns:
+            The ID of the main tab, or None if not in exploration or no main tab was set
+        """
+        with self._context_lock:
+            return self._main_tab_id
 
 
 context = PlannerContext()
