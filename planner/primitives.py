@@ -5,6 +5,7 @@ Each function corresponds to a CMD_* constant and returns a Primitive instance.
 
 import queue
 import threading
+import contextvars
 from typing import Callable, Optional
 from .model import Primitive
 
@@ -53,6 +54,21 @@ _ack_q = None
 _pause_event: Optional[threading.Event] = None
 # Queue for scheduling callables to run during pauses
 _call_queue: Optional["queue.Queue[Callable]"] = None
+# Current primitive being executed
+_current_primitive = contextvars.ContextVar("current_primitive", default=None)
+
+
+def last_primitive() -> Optional[Primitive]:
+    """
+    Get the current primitive being executed.
+
+    Returns:
+        The current primitive or None if not set
+    """
+    try:
+        return _current_primitive.get()
+    except LookupError:
+        return None
 
 
 def set_queues(text_q: queue.Queue, ack_q: queue.Queue):
@@ -84,6 +100,9 @@ def _to_queue(fn):
 
         # Create the primitive first
         primitive = fn(*args, **kwargs)
+
+        # Store the primitive in thread-local state
+        _current_primitive.set(primitive)
 
         # If paused, continuously drain the call queue until unpaused
         if _pause_event is not None and _call_queue is not None:
@@ -441,4 +460,6 @@ __all__ = [
     # Aliases
     "click_on",
     "go_to_url",
+    # Helper functions
+    "last_primitive",
 ]
