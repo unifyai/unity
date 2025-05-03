@@ -205,6 +205,8 @@ class BusManager:
                 self._task_completion_q,
                 # enables writing to action_completion_q, which lives in another asyncio loop
                 self._coms_asyncio_loop,
+                # browser state broadcast queue for verifier
+                browser_state_broadcast_q=self._browser_state_broadcast_q,
             )
 
             # handles text -> low-level browser commands
@@ -217,6 +219,7 @@ class BusManager:
                 self._browser_command_q,
                 # [writes to]: sends the name of the completed action, once it is completed
                 self._action_completion_q,
+                broadcast_q=self._browser_state_broadcast_q,
             )
 
     def start(self):

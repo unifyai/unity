@@ -51,10 +51,12 @@ class BrowserWorker(threading.Thread):
         start_url: str,
         refresh_interval: float = 0.5,
         log: Callable[[str], None] | None = None,
+        broadcast_q: "queue.Queue[dict]" = None,
     ):
         super().__init__(daemon=True)
         self.command_q = command_q
         self.update_q = update_q
+        self.broadcast_q = broadcast_q
         self.start_url = start_url
         self.refresh_interval = refresh_interval
         self.log = log or (lambda *_: None)
@@ -160,7 +162,7 @@ class BrowserWorker(threading.Thread):
                     # -- 2) refresh overlay ------------------------------
                     try:
                         last_elements = collect_elements(self.runner.active)
-                    except Exception as exc:  # navigation in‑flight
+                    except Exception as exc:  # navigation in-flight
                         self.log(f"collect_elements skipped: {exc}")
                         time.sleep(0.05)  # brief pause, then continue loop
                         continue
@@ -174,7 +176,7 @@ class BrowserWorker(threading.Thread):
                             self.log(f"overlay skipped: {e}")
                             break
 
-                    # ── update dynamic browser‑state fields ────────────────
+                    # ── update dynamic browser-state fields ────────────────
                     try:  # NEW
                         js = """
                             () => ({
@@ -197,7 +199,7 @@ class BrowserWorker(threading.Thread):
                         self.runner.state.in_textbox = res["inBox"]
                         self.runner.state.scroll_y = res["sy"]
                     except Exception:
-                        # during navigation or cross‑origin frames
+                        # during navigation or cross-origin frames
                         self.runner.state.in_textbox = False
                         # leave scroll_y unchanged (best effort)
                     # ──────────────────────────────────────────────────
@@ -251,6 +253,9 @@ class BrowserWorker(threading.Thread):
                     while True:  # keep only the latest payload
                         try:
                             self.update_q.put_nowait(payload)
+                            # Also push to broadcast queue if it exists
+                            if self.broadcast_q is not None:
+                                self.broadcast_q.put_nowait(payload)
                             break
                         except queue.Full:
                             try:

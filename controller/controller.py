@@ -17,6 +17,7 @@ class Controller(threading.Thread):
         browser_state_q: "queue.Queue[List[str]]",
         browser_command_q: "queue.Queue[List[str]]",
         action_completion_q: "queue.Queue[List[str]]",
+        broadcast_q: "queue.Queue[dict]" = None,
         *,
         daemon: bool = True,
     ) -> None:
@@ -25,10 +26,12 @@ class Controller(threading.Thread):
         self._browser_state_q = browser_state_q
         self._browser_command_q = browser_command_q
         self._action_completion_q = action_completion_q
+        self._broadcast_q = broadcast_q
 
         self._browser_worker = BrowserWorker(
             command_q=self._browser_command_q,
             update_q=self._browser_state_q,
+            broadcast_q=self._broadcast_q,
             start_url="https://www.google.com/",
             refresh_interval=0.4,
         )

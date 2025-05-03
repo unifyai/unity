@@ -82,6 +82,9 @@ class PlannerContext:
         """
         Get the latest browser state from a non-blocking read of the broadcast queue.
         Returns the canonicalised state dict (or None).
+
+        This is a convenience method that drains the queue to get the latest state.
+        For waiting on a new snapshot, use get_snapshot() with a wait parameter.
         """
         if self._broadcast_queue is None:
             return None
@@ -145,17 +148,27 @@ class PlannerContext:
         with self._context_lock:
             self._current_plan = plan
 
-    def get_snapshot(self) -> Optional[dict]:
+    def get_snapshot(self, wait: float = 0.0) -> Optional[dict]:
         """
         Get the latest browser state snapshot.
 
-        This is a thin wrapper over last_state_snapshot() that retrieves
-        the latest browser state from the broadcast queue.
+        Args:
+            wait: Time in seconds to wait for a snapshot. If 0, returns immediately.
 
         Returns:
             The canonicalized state dict, or None if no snapshot is available
         """
-        return self.last_state_snapshot()
+        if self._broadcast_queue is None:
+            return None
+
+        try:
+            if wait > 0:
+                snapshot = self._broadcast_queue.get(timeout=wait)
+            else:
+                snapshot = self._broadcast_queue.get_nowait()
+            return self._normalize_snapshot(snapshot)
+        except queue.Empty:
+            return None
 
     def enter_exploration(self, tab_id, main_tab=None) -> None:
         """
