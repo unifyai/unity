@@ -7,7 +7,7 @@ from asyncio import AbstractEventLoop
 
 from .context import context as planner_context
 from . import zero_shot, update_handler
-from .verifier import Verifier
+from .verifier import Verifier, BubbleUp
 from .code_rewriter import rewrite_function
 from .primitives import set_runtime_controls
 import logging
@@ -71,6 +71,19 @@ class Planner(threading.Thread):
             planner_context.push_frame(fn.__name__)
             fn()
             status = "Task completed successfully"
+        except BubbleUp:
+            # Rewrite the root function and retry once
+            rewrite_function(fn)
+            try:
+                # Retry execution after rewriting
+                fn()
+                status = "Task completed successfully"
+            except Exception as exc:
+                # Let any subsequent failures propagate normally
+                logging.exception(
+                    "Plan crashed in %s after BubbleUp retry", fn.__name__
+                )
+                status = f"Task crashed: {exc!r}"
         except Exception as exc:
             logging.exception("Plan crashed in %s", fn.__name__)
             status = f"Task crashed: {exc!r}"
