@@ -244,26 +244,20 @@ class KnowledgeManager(threading.Thread):
 
             old_name (str): The name of the column to rename.
         """
-
-    def _transform_column(
-        self,
-        table: str,
-        column_name: str,
-        equation: str,
-        new_column_name: Optional[str] = None,
-    ):
-        """
-        Transform the specified column, based on the specified equation.
-
-        Args:
-            table (str): The name of the table to transform the column in.
-
-            column_name (str): The name of the column to transform.
-
-            equation (str): The equation to use to transform the column.
-
-            new_column_name (Optional[str]): The name of the new column to create. If not specified, the original column will be overwritten.é
-        """
+        proj = unify.active_project()
+        ctx = f"Knowledge/{table}"
+        url = "https://api.unify.ai/v0/logs/rename_field"
+        headers = {"Authorization": f"Bearer {API_KEY}"}
+        json_input = {
+            "project": proj,
+            "context": ctx,
+            "old_field_name": old_name,
+            "new_field_name": new_name,
+        }
+        response = requests.request("POST", url, json=json_input, headers=headers)
+        if not response.ok:
+            raise response.json()
+        return response.json()
 
     # Add Data
 

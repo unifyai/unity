@@ -64,5 +64,16 @@ def test_delete_empty_column():
 
 
 @_handle_project
-def test_transform_column():
-    pass
+def test_rename_column():
+    knowledge_manager = KnowledgeManager()
+    knowledge_manager.start()
+    knowledge_manager._create_table("MyTable")
+    knowledge_manager._add_data("MyTable", [{"x": 1, "y": 2}, {"x": 3, "y": 4}])
+    knowledge_manager._rename_column("MyTable", "x", "X")
+    data = knowledge_manager._search()
+    assert data == {
+        "MyTable": [
+            {"y": 4, "X": 3},
+            {"y": 2, "X": 1},
+        ],
+    }
