@@ -21,7 +21,6 @@ def test_create_derived_column():
     knowledge_manager._create_derived_column(
         "MyTable",
         "distance",
-        "float",
         "({x}**2 + {y}**2)**0.5",
     )
     data = knowledge_manager._search()
