@@ -155,8 +155,9 @@ class PlannerContext:
         return self.last_state_snapshot()
 
 
-# Create the singleton instance
 context = PlannerContext()
 
-# Export get_snapshot at the module level
 get_snapshot = context.get_snapshot
+push_frame = context.push_frame
+pop_frame = context.pop_frame
+get_call_stack = context.get_call_stack
