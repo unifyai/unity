@@ -11,6 +11,64 @@ import logging
 import difflib
 import json
 
+"""
+Update handler module for the planner.
+
+This module provides functions to handle user updates during plan execution.
+After rewriting a target function on modify, we now generate and schedule a 
+course_correction() state-sync helper instead of an ad-hoc bridge.
+"""
+
+
+def _build_course_payload():
+    """
+    Build a JSON payload containing browser state and call stack information
+    for course correction.
+
+    Returns:
+        JSON string containing url, scroll position, and target entry function
+    """
+    # Get current browser state
+    browser_state = context.last_state_snapshot()
+    url = browser_state.get("url", "") if browser_state else ""
+    scroll_y = browser_state.get("scroll_y", 0) if browser_state else 0
+
+    # Get the current entry function from the call stack
+    call_stack = context.get_call_stack()
+    target_entry_fn = call_stack[-1] if call_stack else ""
+
+    # Build the payload
+    payload = {"url": url, "scroll_y": scroll_y, "target_entry_fn": target_entry_fn}
+
+    return json.dumps(payload, indent=2)
+
+
+def _schedule_and_resume(planner, fn_name):
+    """
+    Schedule a function to be executed via the call queue and resume the plan afterward.
+
+    Args:
+        planner: The planner instance
+        fn_name: The name of the function to execute
+    """
+
+    def wrapper_function():
+        try:
+            # Get and execute the function
+            fn = getattr(planner._plan_module, fn_name)
+            fn()
+        except Exception as e:
+            logging.error(f"Error executing {fn_name} function: {e}")
+        finally:
+            # Clean up by removing the function from the module
+            if hasattr(planner._plan_module, fn_name):
+                delattr(planner._plan_module, fn_name)
+            # Resume the plan
+            planner._resume()
+
+    # Schedule the wrapper function to be executed via the call queue
+    planner._call_queue.put(wrapper_function)
+
 
 def _build_diff_payload(fn_name, old_src, new_src):
     """
@@ -332,60 +390,45 @@ def _handle_modification(planner, update_text: str) -> None:
         except Exception as e:
             logging.error(f"Error rewriting function: {e}")
 
-    # Build the diff payload with context information
-    diff_payload = _build_diff_payload(target_function_name, old_src, new_src)
+    # Build the course payload with browser state and call stack information
+    course_payload = _build_course_payload()
 
-    # Generate a bridge function to handle the update
-    system_message = "You are an expert Python programmer creating a browser automation bridge function."
+    # Generate a course correction function to handle the update
+    system_message = "You are an expert Python programmer creating a browser automation course correction function."
     set_system_message(system_message)
 
-    prompt_bridge = (
-        f"Write a Python function named 'bridge' that implements this update: '{update_text}'.\n"
-        f"The function should use browser primitives to make the necessary adjustments and bridge between the old and new behavior.\n"
-        f"Use only these primitives: search(), click_button(), enter_text(), press_enter(), scroll(), wait_for_page_load(), etc.\n"
+    prompt_cc = (
+        f"Write a Python function named 'course_correction' that syncs browser state before resuming execution after this update: '{update_text}'.\n"
+        f"The function should use browser primitives to navigate to the correct URL, set scroll position, and ensure the browser is in the right state.\n"
+        f"Use only these primitives: navigate_to(), scroll(), click_button(), enter_text(), press_enter(), wait_for_page_load(), etc.\n"
         f"The function should have no parameters and return None.\n"
-        f"The bridge function will be executed once and then automatically removed.\n"
+        f"The course_correction function will be executed once and then automatically removed.\n"
         f"Provide ONLY the function code, no explanations.\n\n"
-        f"Context information:\n```\n{diff_payload}\n```\n"
+        f"Context information:\n```\n{course_payload}\n```\n"
     )
 
-    bridge_code = generate_prompt(prompt_bridge)
+    course_correction_code = generate_prompt(prompt_cc)
 
     try:
         # Execute the generated code in the planner module's namespace
-        exec(bridge_code, planner._plan_module.__dict__)
-
-        # Get the bridge function from the module
-        bridge_function = getattr(planner._plan_module, "bridge")
+        exec(course_correction_code, planner._plan_module.__dict__)
 
         # Check if we need to apply verification decorator
         if hasattr(planner._plan_module, "verify"):
             # Apply verification decorator if available
             verify = getattr(planner._plan_module, "verify")
-            bridge_function = verify(bridge_function)
+            course_correction_fn = verify(
+                getattr(planner._plan_module, "course_correction")
+            )
             # Update the module with the decorated function
-            setattr(planner._plan_module, "bridge", bridge_function)
+            setattr(planner._plan_module, "course_correction", course_correction_fn)
 
-        # Create a wrapper function that executes the bridge and resumes the plan
-        def wrapper_function():
-            try:
-                # Execute the bridge function
-                bridge_function()
-            except Exception as e:
-                logging.error(f"Error executing bridge function: {e}")
-            finally:
-                # Clean up by removing the bridge function from the module
-                if hasattr(planner._plan_module, "bridge"):
-                    delattr(planner._plan_module, "bridge")
-                # Resume the plan
-                planner._resume()
-
-        # Schedule the wrapper function to be executed via the call queue
-        planner._call_queue.put(wrapper_function)
+        # Schedule the course correction function and resume the plan
+        _schedule_and_resume(planner, "course_correction")
 
     except Exception as e:
         # Fallback if there's an error with the generated code
-        logging.error(f"Error executing bridge code: {e}")
+        logging.error(f"Error executing course correction code: {e}")
 
         # Define a simple fallback function with resume at the start
         def fallback_wrapper():
@@ -405,7 +448,23 @@ def _handle_modification(planner, update_text: str) -> None:
 def handle_update(planner, update_text: str) -> None:
     """
     Entrypoint to process a user update and dispatch to exploration or modification.
-    Uses the new pause/resume mechanism with callable scheduling.
+
+    For exploratory updates:
+    - Creates or reuses an exploration tab
+    - Executes the exploration in a dedicated context
+    - Returns to the original tab when done
+
+    For modification updates:
+    - Identifies and rewrites the target function
+    - Generates a course_correction() function to sync browser state
+    - Schedules the course_correction to run before resuming the plan
+
+    Uses the pause/resume mechanism with callable scheduling to ensure
+    clean transitions between plan states.
+
+    Args:
+        planner: The planner instance
+        update_text: The user's update request text
     """
     kind = _classify_update(update_text)
     if kind == "exploratory":
