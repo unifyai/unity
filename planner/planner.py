@@ -7,6 +7,8 @@ from asyncio import AbstractEventLoop
 
 from .context import context as planner_context
 from . import zero_shot, update_handler
+from . import primitives
+from .context import context
 from .verifier import Verifier, BubbleUp
 from .code_rewriter import rewrite_function
 from .primitives import set_runtime_controls
@@ -123,6 +125,15 @@ class Planner(threading.Thread):
                 # Handle payloads that may come as (meta, description)
                 if isinstance(task_description, tuple):
                     task_description = task_description[1]
+
+                # P4-BEGIN exploration-done detection
+                if task_description == "__exploration_done__":
+                    primitives.close_this_tab()
+                    main_tab = context.exit_exploration()
+                    primitives.select_tab(main_tab)
+                    continue
+                # P4-END
+
                 self._handle_task_event(task_description)
             except queue.Empty:
                 pass
