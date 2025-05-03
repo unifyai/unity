@@ -5,87 +5,22 @@ import hashlib
 import json
 import time
 import logging
-from typing import Any, Optional
+from typing import Any, Optional, Dict, Tuple, Union
 
-from . import context
-from .unify_client import set_system_message, generate_prompt, set_stateful
+from .context import context
+from .model import Primitive
+from .primitives import last_primitive
+from .verifier_utils import _hash_dom, dom_diff_summary
+from .unify_client import (
+    set_system_message,
+    generate_prompt,
+    set_stateful,
+    generate_user,
+)
 
 
 _HEURISTIC_TIMEOUT_S = 60
 _MAX_REWRITES_PER_FN = 3
-
-
-def _fingerprint(state: dict) -> str:
-    """
-    Generate a stable fingerprint of the browser state.
-
-    Args:
-        state: Browser state snapshot
-
-    Returns:
-        A hash string representing the state fingerprint
-    """
-    if not state:
-        return ""
-
-    # Extract key fields for fingerprinting
-    fingerprint_data = (
-        state.get("url"),
-        state.get("title"),
-        state.get("scroll_y"),
-        state.get("in_textbox"),
-        state.get("active_tab"),
-        state.get("dom_sha"),
-    )
-
-    # Convert to JSON string and hash
-    json_data = json.dumps(fingerprint_data, sort_keys=True)
-    return hashlib.sha256(json_data.encode()).hexdigest()
-
-
-def _cheap_heuristic(fn_name: str, before: dict, after: dict) -> Optional[str]:
-    """
-    Apply cheap heuristics to determine if a function succeeded or failed.
-
-    Args:
-        fn_name: Name of the function being verified
-        before: Browser state snapshot before function execution
-        after: Browser state snapshot after function execution
-
-    Returns:
-        Verdict string or None if heuristic can't determine
-    """
-    if before is None or after is None:
-        return "ok"  # Can't verify without snapshots
-
-    # Get fingerprints
-    before_fp = _fingerprint(before)
-    after_fp = _fingerprint(after)
-
-    # Check for common patterns
-    if fn_name.startswith("open_url") or fn_name.startswith("navigate_to"):
-        before_url = before.get("url")
-        after_url = after.get("url")
-
-        if before_url == after_url:
-            return "reimplement"  # URL should change for navigation functions
-
-    elif (
-        fn_name.startswith("click")
-        or fn_name.startswith("press")
-        or fn_name.startswith("select")
-    ):
-        # For interactive functions, something should change
-        if before_fp == after_fp:
-            return "reimplement"  # State should change for interactive functions
-
-    elif fn_name.startswith("search") or fn_name.startswith("fill_form"):
-        # For search/form functions, either URL or DOM should change
-        if before_fp == after_fp:
-            return "reimplement"
-
-    # No clear determination from heuristics
-    return None
 
 
 class BubbleUp(Exception):
@@ -114,50 +49,162 @@ class Verifier:
         return Verifier._reimplement_queue
 
     @staticmethod
-    def check(src: str, before: Any, after: Any, args: Any, kwargs: Any) -> str:
+    def check(*payload) -> str:
         """
-        Check whether the function execution matched the intent
-        by comparing before and after state snapshots.
-        Should return one of: "ok", "reimplement", "push_up_stack".
+        Dispatcher for checking whether the function execution matched the intent.
+        Routes to appropriate helper based on input type.
 
         Args:
-            src: The source code of the function being verified
-            before: Browser state snapshot before function execution
-            after: Browser state snapshot after function execution
-            args: Positional arguments passed to the function
-            kwargs: Keyword arguments passed to the function
+            *payload: Variable arguments that will be routed to the appropriate helper
 
         Returns:
             Verdict string: "ok", "reimplement", or "push_up_stack"
         """
-        # Get function name from the source code
-        fn_name = src.strip().split("def ")[1].split("(")[0].strip()
+        if isinstance(payload[0], Primitive):
+            return Verifier._check_primitive(payload[0], payload[1], payload[2])
+        else:
+            return Verifier._check_src(
+                payload[0], payload[1], payload[2], payload[3], payload[4]
+            )
 
-        # Try cheap heuristics first
-        heuristic_result = _cheap_heuristic(fn_name, before, after)
-        if heuristic_result is not None:
-            return heuristic_result
+    # TODO: remove this once we've verified that the new verifier is working
+    @staticmethod
+    def _check_src(
+        src: str,
+        before: Dict[str, Any],
+        after: Dict[str, Any],
+        args: Tuple,
+        kwargs: Dict,
+    ) -> str:
+        """
+        Legacy check method for source code based verification.
 
-        # Calculate fingerprints for before and after states
-        before_fp = _fingerprint(before) if before else ""
-        after_fp = _fingerprint(after) if after else ""
+        Args:
+            src: Source code of the function being verified
+            before: Browser state snapshot before function execution
+            after: Browser state snapshot after function execution
+            args: Function arguments
+            kwargs: Function keyword arguments
 
-        # Prepare payload for LLM
+        Returns:
+            Verdict string: "ok", "reimplement", or "push_up_stack"
+        """
+        if before is None or after is None:
+            return "ok"  # Can't verify without snapshots
+
+        # Tier 1: Zero-cost heuristics for specific primitives
+        # Navigation primitives check (URL change)
+        if "open_url" in src or "go_back" in src or "go_forward" in src:
+            before_url = before.get("url")
+            after_url = after.get("url")
+
+            if before_url == after_url:
+                return "reimplement"  # URL should change for navigation functions
+            return "ok"
+
+        # Default to "ok" for legacy calls
+        return "ok"
+
+    @staticmethod
+    def _check_primitive(
+        primitive: Primitive, before: Dict[str, Any], after: Dict[str, Any]
+    ) -> str:
+        """
+        Check whether the primitive execution matched the intent
+        by comparing before and after state snapshots.
+
+        Args:
+            primitive: The primitive action that was executed
+            before: Browser state snapshot before function execution
+            after: Browser state snapshot after function execution
+
+        Returns:
+            Verdict string: "ok", "reimplement", or "push_up_stack"
+        """
+        if before is None or after is None:
+            return "ok"  # Can't verify without snapshots
+
+        # Get primitive name and args
+        primitive_name = primitive.name
+        primitive_args = primitive.args
+
+        # Tier 1: Zero-cost heuristics for specific primitives
+
+        # Navigation primitives
+        if primitive_name in ["open_url", "go_back", "go_forward"]:
+            before_url = before.get("url")
+            after_url = after.get("url")
+
+            if before_url == after_url:
+                return "reimplement"  # URL should change for navigation functions
+            return "ok"
+
+        # Scroll primitives
+        if primitive_name in [
+            "scroll_up",
+            "scroll_down",
+            "start_scrolling_up",
+            "start_scrolling_down",
+            "stop_scrolling",
+            "continue_scrolling",
+        ]:
+            return "ok"  # Assume scrolling always works
+
+        # Click button primitive
+        if primitive_name == "click_button":
+            before_dom_hash = before.get("dom_sha")
+            after_dom_hash = after.get("dom_sha")
+
+            if before_dom_hash and after_dom_hash and before_dom_hash != after_dom_hash:
+                return "ok"  # DOM changed, so click likely worked
+
+        # Tier 2: Fast fallback - DOM hash comparison
+        before_dom_hash = before.get("dom_sha")
+        after_dom_hash = after.get("dom_sha")
+
+        if before_dom_hash and after_dom_hash and before_dom_hash != after_dom_hash:
+            return "ok"  # DOM changed, so action likely worked
+
+        # For interactive functions, if DOM didn't change, likely failed
+        if (
+            primitive_name.startswith("click")
+            or primitive_name.startswith("press")
+            or primitive_name.startswith("select")
+        ):
+            return "reimplement"
+
+        # Tier 3: LLM fallback with DOM diff
         try:
-            # Convert args and kwargs to strings to avoid serialization issues
-            args_str = str(args)
-            kwargs_str = str(kwargs)
+            # Summarize snapshots for LLM
+            before_summary = context.summarise_snapshot(before)
+            after_summary = context.summarise_snapshot(after)
+
+            # Generate DOM diff if available
+            diff_summary = ""
+            if "dom" in before and "dom" in after:
+                try:
+                    diff_summary = dom_diff_summary(
+                        before.get("dom", {}), after.get("dom", {})
+                    )
+                except Exception as e:
+                    logging.warning(f"Error generating DOM diff: {e}")
 
             # Build a payload for the LLM
             payload = {
-                "fn_name": fn_name,
-                "args": args_str,
-                "kwargs": kwargs_str,
-                "before": before,
-                "after": after,
-                "before_fp": before_fp,
-                "after_fp": after_fp,
-                "src": src,
+                "primitive_name": primitive_name,
+                "primitive_args": primitive_args,
+                "before_url": before.get("url"),
+                "after_url": after.get("url"),
+                "before_title": before.get("title"),
+                "after_title": after.get("title"),
+                "dom_changed": (
+                    before_dom_hash != after_dom_hash
+                    if before_dom_hash and after_dom_hash
+                    else "unknown"
+                ),
+                "diff_summary": (
+                    diff_summary[:1000] if diff_summary else "No diff available"
+                ),
             }
 
             # Convert to JSON string for the prompt
@@ -165,27 +212,22 @@ class Verifier:
 
             # Set up the LLM for verification
             set_stateful(False)
-            set_system_message(
-                """You are a verification expert for browser automation tasks.
-                Analyze the function execution and determine if it succeeded.
-                Reply with EXACTLY ONE of these verdicts:
-                - "ok" if the function achieved its intent
-                - "reimplement" if the function failed and should be rewritten
-                - "push_up_stack" if the intent should be handled at a higher level
-                Base your decision on the function name, code, arguments, and browser state changes."""
-            )
 
             # Generate the verdict using LLM
             prompt = f"""
-            Verify if this browser automation function succeeded:
+            Verify if this browser automation primitive succeeded:
             
-            Function information:
+            Primitive information:
             {payload_json}
             
             Respond with exactly one of: "ok", "reimplement", or "push_up_stack"
+            Explanation:
+            - "ok" if the primitive achieved its intent
+            - "reimplement" if the primitive failed and should be rewritten
+            - "push_up_stack" if the intent should be handled at a higher level
             """
 
-            verdict = generate_prompt(prompt).strip().lower()
+            verdict = generate_user(prompt).strip().lower()
 
             # Validate the verdict
             if verdict in ["ok", "reimplement", "push_up_stack"]:
@@ -208,7 +250,6 @@ class Verifier:
 def verify(fn):
     @functools.wraps(fn)
     def wrapper(*args, **kwargs):
-        src = inspect.getsource(fn)
         retries = 0
         t_start = time.time()
 
@@ -225,7 +266,10 @@ def verify(fn):
 
                 before = context.get_snapshot()
                 try:
+                    # Execute the function and get the primitive
+                    src = inspect.getsource(fn)
                     result = fn(*args, **kwargs)
+                    primitive = last_primitive()
                 except NotImplementedError:
                     Verifier.get_reimplement_queue().put(fn)
                     retries += 1
@@ -237,6 +281,8 @@ def verify(fn):
                     continue
 
                 after = context.get_snapshot()
+
+                # Use the primitive for verification if available
                 verdict = Verifier.check(src, before, after, args, kwargs)
 
                 if verdict == "ok":
