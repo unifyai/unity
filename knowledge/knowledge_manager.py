@@ -34,8 +34,8 @@ class KnowledgeManager(threading.Thread):
     # --------#
 
     def _get_columns(self, table):
-        ctx = f"Knowledge/{table}"
         proj = unify.active_project()
+        ctx = f"Knowledge/{table}"
         url = f"https://api.unify.ai/v0/logs/fields?project={proj}&context={ctx}"
         headers = {"Authorization": f"Bearer {API_KEY}"}
         response = requests.request("GET", url, headers=headers)
@@ -45,8 +45,8 @@ class KnowledgeManager(threading.Thread):
         return {k: v["data_type"] for k, v in ret.items()}
 
     def _add_table_description(self, table, description):
-        ctx = f"Knowledge/{table}"
         proj = unify.active_project()
+        ctx = f"Knowledge/{table}"
         url = f"https://api.unify.ai/v0/project/{proj}/contexts/{ctx}/artifacts"
         headers = {"Authorization": f"Bearer {API_KEY}"}
         json_input = {"artifacts": {"description": description}}
@@ -80,8 +80,8 @@ class KnowledgeManager(threading.Thread):
         Returns:
             str: The name of the table that was created.
         """
-        ctx = f"Knowledge/{name}"
         proj = unify.active_project()
+        ctx = f"Knowledge/{name}"
         unify.create_context(ctx, description=description)
         if not columns:
             return
@@ -123,9 +123,9 @@ class KnowledgeManager(threading.Thread):
 
             new_name (str): The new name for the table.
         """
+        proj = unify.active_project()
         old_name = f"Knowledge/{old_name}"
         new_name = f"Knowledge/{new_name}"
-        proj = unify.active_project()
         url = f"https://api.unify.ai/v0/project/{proj}/contexts/{old_name}/rename"
         headers = {"Authorization": f"Bearer {API_KEY}"}
         json_input = {"name": new_name}
@@ -176,8 +176,8 @@ class KnowledgeManager(threading.Thread):
 
             column_type (str): The type of the column to add.
         """
-        ctx = f"Knowledge/{table}"
         proj = unify.active_project()
+        ctx = f"Knowledge/{table}"
         url = f"https://api.unify.ai/v0/project/{proj}/contexts/{ctx}/columns"
         headers = {"Authorization": f"Bearer {API_KEY}"}
         json_input = {"columns": {column_name: column_type}}
