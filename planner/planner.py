@@ -126,13 +126,12 @@ class Planner(threading.Thread):
                 if isinstance(task_description, tuple):
                     task_description = task_description[1]
 
-                # P4-BEGIN exploration-done detection
                 if task_description == "__exploration_done__":
                     primitives.close_this_tab()
                     main_tab = context.exit_exploration()
-                    primitives.select_tab(main_tab)
+                    if main_tab is not None:
+                        primitives.select_tab(main_tab)
                     continue
-                # P4-END
 
                 self._handle_task_event(task_description)
             except queue.Empty:
