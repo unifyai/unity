@@ -7,7 +7,12 @@ across different planner components, including browser state snapshots and call 
 
 import queue
 import threading
-from typing import List, Optional, Any
+from typing import List, Optional, Any, Dict
+
+try:
+    from planner.verifier_utils import _hash_dom
+except ImportError:
+    _hash_dom = None
 
 
 class PlannerContext:
@@ -77,6 +82,47 @@ class PlannerContext:
             "focused_xpath": state_part.get("focused_xpath"),
         }
         return canonical
+
+    def summarise_snapshot(self, snap: dict, max_elems: int = 50) -> dict:
+        """
+        Create a summarized version of a snapshot suitable for LLM prompting.
+
+        This method:
+        1. Removes binary fields like 'screenshot'
+        2. Truncates 'elements' list to max_elems
+        3. Computes dom_hash if missing but dom is present
+
+        Args:
+            snap: The snapshot dictionary to summarize
+            max_elems: Maximum number of elements to include (default: 50)
+
+        Returns:
+            A summarized copy of the snapshot
+        """
+        if snap is None:
+            return None
+
+        # Create a shallow copy to avoid modifying the original
+        summary = {k: v for k, v in snap.items() if k != "screenshot"}
+
+        # Truncate elements list if present
+        if "elements" in summary and isinstance(summary["elements"], list):
+            elements = summary["elements"]
+            if len(elements) > max_elems:
+                summary["elements"] = elements[:max_elems]
+                summary["elements"].append({"_truncated": len(elements) - max_elems})
+
+        # Compute dom_hash if missing but dom is present
+        if "dom" in summary and "dom_hash" not in summary and _hash_dom is not None:
+            try:
+                summary["dom_hash"] = _hash_dom(summary["dom"])
+                # Legacy alias for existing tests
+                summary["dom_sha"] = summary["dom_hash"]
+            except Exception:
+                # If hashing fails, continue without the hash
+                pass
+
+        return summary
 
     def last_state_snapshot(self) -> Optional[Any]:
         """
