@@ -391,8 +391,54 @@ def _raw_wait_for_user_signal(timeout: float = None) -> Primitive:
 
 wait_for_user_signal = _to_queue(_raw_wait_for_user_signal)
 
-# P4-BEGIN primitive aliases
-click_on = click_button
-select_tab_alias = select_tab
-go_to_url = open_url
-# P4-END
+_PRIMITIVE_PUBLIC_ALIASES = {
+    "click_on": click_button,
+    "select_tab": select_tab,
+    "go_to_url": open_url,
+    "wait_for_user_signal": wait_for_user_signal,
+}
+
+# Update globals with aliases
+globals().update(_PRIMITIVE_PUBLIC_ALIASES)
+
+# Define what's publicly available from this module
+__all__ = [
+    "open_browser",
+    "close_browser",
+    "click_out",
+    "continue_scrolling",
+    "cursor_down",
+    "cursor_left",
+    "cursor_right",
+    "cursor_up",
+    "enter_text",
+    "hold_shift",
+    "move_line_end",
+    "move_line_start",
+    "move_word_left",
+    "move_word_right",
+    "new_tab",
+    "close_this_tab",
+    "press_backspace",
+    "press_delete",
+    "press_enter",
+    "release_shift",
+    "scroll_down",
+    "scroll_up",
+    "search",
+    "open_url",
+    "select_all",
+    "start_scrolling_down",
+    "start_scrolling_up",
+    "stop_scrolling",
+    "click_button",
+    "select_tab",
+    "close_tab",
+    "go_back",
+    "go_forward",
+    "duplicate_tab",
+    "wait_for_user_signal",
+    # Aliases
+    "click_on",
+    "go_to_url",
+]
