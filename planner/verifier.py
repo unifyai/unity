@@ -11,7 +11,7 @@ from . import context
 from .unify_client import set_system_message, generate_prompt, set_stateful
 
 
-_HEURISTIC_TIMEOUT_S = 15
+_HEURISTIC_TIMEOUT_S = 60
 _MAX_REWRITES_PER_FN = 3
 
 
@@ -89,7 +89,12 @@ def _cheap_heuristic(fn_name: str, before: dict, after: dict) -> Optional[str]:
 
 
 class BubbleUp(Exception):
-    """Raised when the intent should be pushed up the call stack."""
+    """Raised by a child function to request that its caller be rewritten.
+
+    This exception is used to signal that the current function cannot fulfill
+    its intent and the responsibility should be pushed up to its parent in
+    the call stack for reimplementation.
+    """
 
     pass
 
@@ -207,33 +212,44 @@ def verify(fn):
         retries = 0
         t_start = time.time()
 
-        while True:
-            # Check if we've exceeded retry limits or timeout
-            elapsed = time.time() - t_start
-            if retries >= _MAX_REWRITES_PER_FN or elapsed > _HEURISTIC_TIMEOUT_S:
-                raise RuntimeError(
-                    f"Verifier gave up on {fn.__name__} after {retries} retries and {elapsed:.2f}s"
-                )
+        # Push the current function onto the call stack
+        context.push_frame(fn.__name__)
+        try:
+            while True:
+                # Check if we've exceeded retry limits or timeout
+                elapsed = time.time() - t_start
+                if retries >= _MAX_REWRITES_PER_FN or elapsed > _HEURISTIC_TIMEOUT_S:
+                    raise RuntimeError(
+                        f"Verifier gave up on {fn.__name__} after {retries} retries and {elapsed:.2f}s"
+                    )
 
-            before = context.get_snapshot()
-            try:
-                result = fn(*args, **kwargs)
-            except NotImplementedError:
-                Verifier.get_reimplement_queue().put(fn)
-                retries += 1
-                continue
+                before = context.get_snapshot()
+                try:
+                    result = fn(*args, **kwargs)
+                except NotImplementedError:
+                    Verifier.get_reimplement_queue().put(fn)
+                    retries += 1
+                    continue
+                except BubbleUp as e:
+                    # Enqueue this function for rewrite and retry
+                    Verifier.get_reimplement_queue().put(fn)
+                    retries += 1
+                    continue
 
-            after = context.get_snapshot()
-            verdict = Verifier.check(src, before, after, args, kwargs)
+                after = context.get_snapshot()
+                verdict = Verifier.check(src, before, after, args, kwargs)
 
-            if verdict == "ok":
-                return result
-            elif verdict == "reimplement":
-                Verifier.get_reimplement_queue().put(fn)
-                retries += 1
-                continue
-            elif verdict == "push_up_stack":
-                raise BubbleUp(f"Intent '{fn.__name__}' requires pushing up")
+                if verdict == "ok":
+                    return result
+                elif verdict == "reimplement":
+                    Verifier.get_reimplement_queue().put(fn)
+                    retries += 1
+                    continue
+                elif verdict == "push_up_stack":
+                    raise BubbleUp(f"Intent '{fn.__name__}' requires pushing up")
+        finally:
+            # Ensure we pop the frame from the call stack
+            context.pop_frame()
 
     wrapper._wrapped_fn = fn
     return wrapper
