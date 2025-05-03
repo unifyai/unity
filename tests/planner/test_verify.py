@@ -164,3 +164,28 @@ def test_verify_timeout(monkeypatch):
 
     with pytest.raises(RuntimeError):
         spam()
+
+
+def test_verifier_sees_snapshot():
+    """
+    Test that the context.get_snapshot method correctly receives and processes snapshots.
+
+    This test:
+    1. Creates a new queue.Queue
+    2. Sets it as the broadcast queue using context.set_broadcast_queue()
+    3. Puts a test snapshot into the queue
+    4. Verifies that context.get_snapshot() returns the expected data
+    """
+    # Create a new queue
+    bq = queue.Queue()
+
+    # Set it as the broadcast queue
+    context.set_broadcast_queue(bq)
+
+    # Put a test snapshot into the queue
+    bq.put({"state": {"url": "https://x"}})
+
+    # Verify that get_snapshot returns the expected data
+    snapshot = context.get_snapshot(wait=0.0)
+    assert snapshot is not None
+    assert snapshot["url"] == "https://x"
