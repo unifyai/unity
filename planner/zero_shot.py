@@ -4,6 +4,9 @@ import re
 import sys
 import uuid
 import textwrap
+import ast
+import inspect
+import linecache
 from typing import Dict, Any, List, Tuple, Callable
 from types import ModuleType
 
@@ -36,8 +39,128 @@ Define a root Python function named `root_plan`.
 Include at least one call to a primitive helper and stub any other logic
 with `raise NotImplementedError` statements.
 
+Only the FIRST primitive call will be executed; subsequent helpers will be stubbed with `raise NotImplementedError` and decorated with `@verify`.
+
 Return ONLY valid Python code without any explanations or markdown formatting.
 """
+
+
+def _ensure_verify(decorator_list):
+    """
+    Ensures that @verify is in the decorator list of a function.
+
+    Args:
+        decorator_list: List of AST decorator nodes
+
+    Returns:
+        Updated decorator list with @verify added if not present
+    """
+    # Check if @verify is already in the decorator list
+    has_verify = False
+    for dec in decorator_list:
+        if isinstance(dec, ast.Name) and dec.id == "verify":
+            has_verify = True
+            break
+
+    # Add @verify if not present
+    if not has_verify:
+        decorator_list.append(ast.Name(id="verify", ctx=ast.Load()))
+
+    return decorator_list
+
+
+def _stubify_tree(tree):
+    """
+    Process an AST to:
+    1. Keep only the first primitive call in each function
+    2. Add @verify decorator to all helper functions
+    3. Add NotImplementedError to functions without concrete code
+
+    Args:
+        tree: The AST to process
+
+    Returns:
+        The processed source code as a string
+    """
+    # Get all primitive names from the primitives module
+    from . import primitives
+
+    primitive_names = [
+        name
+        for name in dir(primitives)
+        if not name.startswith("_") and callable(getattr(primitives, name))
+    ]
+
+    # Track which functions have been processed
+    processed_functions = set()
+
+    class PlanTransformer(ast.NodeTransformer):
+        def visit_FunctionDef(self, node):
+            # Skip if already processed
+            if node.name in processed_functions:
+                return node
+
+            processed_functions.add(node.name)
+
+            # Ensure @verify decorator is present for all functions
+            node.decorator_list = _ensure_verify(node.decorator_list)
+
+            # Process the function body
+            has_primitive = False
+            new_body = []
+
+            for stmt in node.body:
+                # If we've already found a primitive call, don't add more statements
+                if has_primitive:
+                    break
+
+                # Check if this statement contains a primitive call
+                primitive_call = False
+
+                class PrimitiveVisitor(ast.NodeVisitor):
+                    def visit_Call(self, call_node):
+                        nonlocal primitive_call
+                        if (
+                            isinstance(call_node.func, ast.Name)
+                            and call_node.func.id in primitive_names
+                        ):
+                            primitive_call = True
+                        self.generic_visit(call_node)
+
+                visitor = PrimitiveVisitor()
+                visitor.visit(stmt)
+
+                # Add the statement to the new body
+                new_body.append(stmt)
+
+                # If this statement had a primitive call, mark it
+                if primitive_call:
+                    has_primitive = True
+
+            # If the function has no body or no primitive call, add NotImplementedError
+            if not new_body or not has_primitive:
+                # Add a NotImplementedError statement
+                error_stmt = ast.Expr(
+                    value=ast.Call(
+                        func=ast.Name(id="NotImplementedError", ctx=ast.Load()),
+                        args=[
+                            ast.Constant(value=f"Function {node.name} not implemented")
+                        ],
+                        keywords=[],
+                    )
+                )
+                new_body.append(ast.Raise(exc=error_stmt.value))
+
+            # Update the function body
+            node.body = new_body
+            return node
+
+    # Apply the transformation
+    transformed = PlanTransformer().visit(tree)
+    ast.fix_missing_locations(transformed)
+
+    # Convert back to source code
+    return ast.unparse(transformed)
 
 
 def create_initial_plan(task_str: str) -> Tuple[ModuleType, Callable]:
@@ -83,6 +206,15 @@ def create_initial_plan(task_str: str) -> Tuple[ModuleType, Callable]:
     # Strip markdown fences if present
     generated_code = _strip_markdown_fences(generated_code)
 
+    # Process the generated code with AST to enforce single primitive and add stubs
+    try:
+        processed_code = textwrap.dedent(generated_code).strip()
+        processed_code = _stubify_tree(ast.parse(processed_code))
+        generated_code = processed_code
+    except Exception:
+        # Fall back to raw code if parsing fails
+        pass
+
     # Ensure the code has a root_plan function
     if "def root_plan" not in generated_code:
         # Add a stub root_plan function if missing
@@ -103,6 +235,11 @@ def create_initial_plan(task_str: str) -> Tuple[ModuleType, Callable]:
     # Execute the plan in the sandbox, passing the filepath so inspect.getsource can locate the source
     try:
         module = sandbox.exec_plan(full_code, filename=file_path)
+
+        # Ensure inspect.getsource returns stubified code without PREAMBLE
+        processed_src = textwrap.dedent(generated_code)
+        lines = processed_src.splitlines(keepends=True)
+        linecache.cache[file_path] = (len(processed_src), None, lines, file_path)
     except Exception as e:
         raise ValueError(f"Failed to execute plan: {str(e)}")
 
