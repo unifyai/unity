@@ -48,7 +48,7 @@ def test_store_simple_fact():
     km = KnowledgeManager()
     km.start()
 
-    km.store("Please remember that Adrian was born in 1994.")
+    km.store("Adrian was born in 1994.")
 
     all_data = km._search()
     assert _contains(json.dumps(all_data), "1994"), all_data
@@ -83,7 +83,7 @@ def test_round_trip_simple_fact():
     km = KnowledgeManager()
     km.start()
 
-    km.store("Please remember that Adrian was born in 1994.")
+    km.store("Adrian was born in 1994.")
 
     answer = km.retrieve("When was Adrian born?")
     assert _contains(answer, "1994"), _assertion_failed(answer, km._search())
@@ -105,14 +105,13 @@ def test_schema_expands_and_new_field_retrievable():
     km = KnowledgeManager()
     km.start()
 
-    km.store("Remember that Bob is 35 years old.")
+    km.store("Bob is 35 years old.")
 
     answer = km.retrieve("How old is Bob?")
     assert _contains(answer, "35"), _assertion_failed(answer, km._search())
 
     km.store(
-        "Also remember that Bob's favourite colour is green "
-        "and his height is 180 centimetres.",
+        "Bob's favourite colour is green and his height is 180 centimetres.",
     )
 
     answer = km.retrieve("How tall is Bob?")
@@ -142,9 +141,9 @@ def test_multiple_tables_and_join_like_query():
     km = KnowledgeManager()
     km.start()
 
-    km.store("Store that the Apple iPhone 15 costs 999 US dollars.")
+    km.store("The Apple iPhone 15 costs 999 US dollars.")
     km.store(
-        "Store that Daniel bought an iPhone 15 on 3 May 2025 " "using his credit card.",
+        "Daniel bought an iPhone 15 on 3 May 2025 using his credit card.",
     )
 
     answer = km.retrieve("How much did Daniel pay for his purchase?")
@@ -171,10 +170,10 @@ def test_incremental_updates_and_refactor():
     km = KnowledgeManager()
     km.start()
 
-    km.store("Remember that Carol owns a dog named Fido.")
-    km.store("Update: Carol also owns a cat named Luna.")
+    km.store("Carol owns a dog named Fido.")
+    km.store("Carol also owns a cat named Luna.")
 
-    answer = km.retrieve("List all of Carol's pets by name.")
+    answer = km.retrieve("What are the names of Carol's pets?")
     assert _contains(answer, "Fido", "Luna"), _assertion_failed(answer, km._search())
 
 
@@ -197,8 +196,8 @@ def test_numeric_reasoning_after_multiple_points():
     km = KnowledgeManager()
     km.start()
 
-    km.store("Record that point P has coordinates x = 3 and y = 4.")
-    km.store("Record that point Q has coordinates x = 1 and y = 10.")
+    km.store("Point P has coordinates x = 3 and y = 4.")
+    km.store("Point Q has coordinates x = 1 and y = 10.")
 
     answer = km.retrieve(
         "Which points lie in the first quadrant but have y less than 5?",
