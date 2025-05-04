@@ -1,3 +1,4 @@
+from datetime import datetime, timezone, timedelta
 from tests.helpers import _handle_project
 from task_list_manager.task_list_manager import TaskListManager
 
@@ -50,3 +51,20 @@ def test_update_task_description():
         task_list[0]["description"]
         == "Call Jeff Smith, kindly congratulating him and explaining that he has been promoted from sales rep to sales manager."
     )
+
+
+@_handle_project
+def test_update_task_start_at():
+    tlm = TaskListManager()
+    tlm.start()
+
+    tlm._create_task(
+        name="Send customer survey",
+        description="Email Q2 customer-satisfaction survey.",
+    )
+
+    start = (datetime.now(timezone.utc) + timedelta(days=1)).isoformat()
+    tlm._update_task_start_at(task_id=0, new_start_at=start)
+
+    task_list = tlm._search()
+    assert task_list[0]["start_at"] == start
