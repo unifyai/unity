@@ -55,7 +55,7 @@ class TaskListManager(threading.Thread):
         deadline: Optional[datetime] = None,
         repeat: Optional[List[str]] = None,
         priority: Optional[Priority] = None,
-    ) -> str:
+    ) -> int:
         """
         Create a new task in the task list.
 
@@ -73,7 +73,7 @@ class TaskListManager(threading.Thread):
             priority (Optional[Priority]): The priority of the task.
 
         Returns:
-            str: The id of the new task.
+            int: The id of the new task.
         """
 
         # Prune None values
@@ -93,7 +93,7 @@ class TaskListManager(threading.Thread):
                 **task_details,
                 task_id=0,
                 new=True,
-            )
+            ).id
 
         # Verify uniqueness
         for key, value in task_details.items():

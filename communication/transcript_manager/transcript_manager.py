@@ -104,7 +104,7 @@ class TranscriptManager(threading.Thread):
         email_address: Optional[str] = None,
         phone_number: Optional[str] = None,
         whatsapp_number: Optional[str] = None,
-    ) -> str:
+    ) -> int:
         """
         Creates a new contact with the following contact details, as available.
 
@@ -115,7 +115,7 @@ class TranscriptManager(threading.Thread):
             phone_number (str): The phone number of the contact.
             whatsapp_number (str): The WhatsApp number of the contact.
         Returns:
-            str: The id of the newly created contact.
+            int: The id of the newly created contact.
         """
 
         # Prune None values
@@ -137,7 +137,7 @@ class TranscriptManager(threading.Thread):
                 **contact_details,
                 contact_id=0,
                 new=True,
-            )
+            ).id
 
         # Verify uniqueness
         for key, value in contact_details.items():
@@ -164,7 +164,7 @@ class TranscriptManager(threading.Thread):
             **contact_details,
             contact_id=this_id,
             new=True,
-        )
+        ).id
 
     def update_contact(
         self,
