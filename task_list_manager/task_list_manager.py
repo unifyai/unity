@@ -43,6 +43,27 @@ class TaskListManager(threading.Thread):
             return ans, client.messages
         return ans
 
+    def _get_log_by_task_id(
+        self,
+        task_id: int,
+    ) -> unify.Log:
+        """
+        Get the log for the specified task id.
+
+        Args:
+            task_id (int): The id of the task to get the log for.
+
+        Returns:
+            unify.Log: The log for the specified task id.
+        """
+        log_ids = unify.get_logs(
+            context="Tasks",
+            filter=f"task_id == {task_id}",
+            return_ids_only=True,
+        )
+        assert len(log_ids) == 1
+        return log_ids[0]
+
     # Private #
     # --------#
 
@@ -135,13 +156,7 @@ class TaskListManager(threading.Thread):
             Dict[str, str]: Whether the task was deleted or not.
         """
         # ToDo: replace with single API call once this task [https://app.clickup.com/t/86c3c1awp] is done
-        log_ids = unify.get_logs(
-            context="Tasks",
-            filter=f"task_id == {task_id}",
-            return_ids_only=True,
-        )
-        assert len(log_ids) == 1
-        log_id = log_ids[0]
+        log_id = self._get_log_by_task_id(task_id=task_id)
         unify.delete_logs(
             context="Tasks",
             logs=log_id,
