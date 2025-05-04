@@ -28,12 +28,14 @@ class TranscriptManager(threading.Thread):
 
     # English-Text Question
 
-    def ask(self, text: str) -> Any:
+    def ask(self, text: str, return_reasoning_steps: bool = False) -> Any:
         """
         Ask any question as a text command, and use the tools available (the private methods of this class) to perform the action.
 
         Args:
             text (str): The text-based question to answer.
+
+            return_reasoning_steps (bool): Whether to return the reasoning steps for the question.
 
         Returns:
             Any: The answer to the question.
@@ -42,7 +44,10 @@ class TranscriptManager(threading.Thread):
 
         client = unify.Unify("o4-mini@openai")
         client.set_system_message(ANSWER)
-        return tool_use_loop(client, text, self._tools)
+        ans = tool_use_loop(client, text, self._tools)
+        if return_reasoning_steps:
+            return ans, client.messages
+        return ans
 
     # Summarize Exchange(s)
 
