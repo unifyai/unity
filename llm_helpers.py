@@ -40,25 +40,58 @@ def _dumps(
     return json.dumps(ret, indent=indent) if base else ret
 
 
-def annotation_to_schema(ann):
-    # 1. Primitive types → same as today
+def annotation_to_schema(ann: Any) -> Dict[str, Any]:
+    """Convert a Python type annotation into an OpenAI-compatible JSON-Schema
+    fragment, including full support for Pydantic BaseModel subclasses.
+    """
+
+    # ── 0. Remove typing.Annotated wrapper, if any ────────────────────────────
+    origin = get_origin(ann)
+    if origin is not None and origin.__name__ == "Annotated":  # Py ≥3.10
+        ann = get_args(ann)[0]
+
+    # ── 1. Primitive scalars (str/int/float/bool) ────────────────────────────
     if ann in TYPE_MAP:
         return {"type": TYPE_MAP[ann]}
 
-    # 2. Enum → string + explicit enumeration
+    # ── 2. Enum subclasses (e.g. ColumnType) ─────────────────────────────────
     if isinstance(ann, type) and issubclass(ann, Enum):
-        return {"type": "string", "enum": [m.value for m in ann]}
+        return {"type": "string", "enum": [member.value for member in ann]}
 
-    # 3. Dict[*, V] → JSON object with additionalProperties = V
+    # ── 3. Pydantic model ────────────────────────────────────────────────────
+    if isinstance(ann, type) and issubclass(ann, BaseModel):
+        # Pydantic already produces an OpenAPI/JSON-Schema compliant dictionary.
+        # We can embed that verbatim.  (It contains 'title', 'type', 'properties',
+        # 'required', etc.  Any 'definitions' block is also allowed by the spec.)
+        return ann.model_json_schema()
+
+    # ── 4. typing.Dict[K, V]  → JSON object whose values follow V ────────────
     origin = get_origin(ann)
-    if origin is dict:
+    if origin is dict or origin is Dict:
+        # ignore key type; JSON object keys are always strings
         _, value_type = get_args(ann)
         return {
             "type": "object",
             "additionalProperties": annotation_to_schema(value_type),
         }
 
-    # 4. Fallback – keep existing behaviour
+    # ── 5. typing.List[T] or list[T]  → JSON array of T ──────────────────────
+    if origin in (list, List):
+        (item_type,) = get_args(ann)
+        return {
+            "type": "array",
+            "items": annotation_to_schema(item_type),
+        }
+
+    # ── 6. typing.Union / Optional …  → anyOf schemas ────────────────────────
+    if origin is Union:
+        sub_schemas = [annotation_to_schema(a) for a in get_args(ann)]
+        # Collapse trivial Optional[X] (i.e. Union[X, NoneType]) into X
+        if len(sub_schemas) == 2 and {"type": "null"} in sub_schemas:
+            return next(s for s in sub_schemas if s != {"type": "null"})
+        return {"anyOf": sub_schemas}
+
+    # ── 7. Fallback – treat as generic string ────────────────────────────────
     return {"type": "string"}
 
 
