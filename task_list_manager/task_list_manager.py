@@ -5,6 +5,7 @@ from typing import Dict, List, Any, Optional
 import unify
 from llm_helpers import tool_use_loop
 from task_list_manager.types.priority import Priority
+from task_list_manager.types.repetition import RepeatPattern
 
 
 class TaskListManager(threading.Thread):
@@ -76,7 +77,7 @@ class TaskListManager(threading.Thread):
         description: str,
         start_at: Optional[datetime] = None,
         deadline: Optional[datetime] = None,
-        repeat: Optional[List[str]] = None,
+        repeat: Optional[List[RepeatPattern]] = None,
         priority: Optional[Priority] = None,
     ) -> int:
         """
@@ -105,7 +106,7 @@ class TaskListManager(threading.Thread):
             "description": description,
             "start_at": start_at,
             "deadline": deadline,
-            "repeat": repeat,
+            "repeat": [r.model_dump() for r in repeat] if repeat else None,
             "priority": priority,
         }
 
@@ -254,8 +255,22 @@ class TaskListManager(threading.Thread):
             overwrite=True,
         )
 
-    def _update_task_repetition():
-        pass
+    def _update_task_repetition(
+        self,
+        *,
+        task_id: int,
+        new_repeat: List[RepeatPattern],
+    ) -> Dict[str, str]:
+        """
+        Update the repeat pattern for the specified task.
+        """
+        log_id = self._get_log_by_task_id(task_id=task_id)
+        return unify.update_logs(
+            logs=log_id,
+            context="Tasks",
+            entries={"repeat": [r.model_dump() for r in new_repeat]},
+            overwrite=True,
+        )
 
     def _update_task_priority(
         self,
