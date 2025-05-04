@@ -50,7 +50,7 @@ def test_search_w_filter():
         "MyTable",
         [{"x": 0, "y": 1}, {"x": 1, "y": 2}, {"x": 2, "y": 3}, {"x": 3, "y": 4}],
     )
-    data = knowledge_manager._search(query="x > 1 and y < 4")
+    data = knowledge_manager._search(filter="x > 1 and y < 4")
     assert data == {
         "MyTable": [
             {"x": 2, "y": 3},
