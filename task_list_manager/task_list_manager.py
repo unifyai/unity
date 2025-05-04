@@ -67,6 +67,8 @@ class TaskListManager(threading.Thread):
     # Private #
     # --------#
 
+    # Create
+
     def _create_task(
         self,
         *,
@@ -141,6 +143,8 @@ class TaskListManager(threading.Thread):
             new=True,
         ).id
 
+    # Delete
+
     def _delete_task(
         self,
         *,
@@ -161,6 +165,8 @@ class TaskListManager(threading.Thread):
             context="Tasks",
             logs=log_id,
         )
+
+    # Update
 
     def _update_task_name(
         self,
@@ -213,6 +219,32 @@ class TaskListManager(threading.Thread):
             entries={"description": new_description},
             overwrite=True,
         )
+
+    def _update_task_start_at(
+        self,
+        *,
+        task_id: int,
+        new_start_at: datetime,
+    ) -> Dict[str, str]:
+        """
+        Update the start date for the specified task.
+        """
+        log_id = self._get_log_by_task_id(task_id=task_id)
+        return unify.update_logs(
+            logs=log_id,
+            context="Tasks",
+            entries={"start_at": new_start_at},
+            overwrite=True,
+        )
+
+    def update_task_deadline():
+        pass
+
+    def update_task_repetition():
+        pass
+
+    def update_task_priority():
+        pass
 
     # Search
 
