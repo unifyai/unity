@@ -5,6 +5,7 @@ import threading
 from typing import List, Tuple, Any, Dict, Optional, Union
 from knowledge.types import ColumnType
 from llm_helpers import tool_use_loop
+from helpers import _handle_exceptions
 
 API_KEY = os.environ["UNIFY_KEY"]
 
@@ -87,8 +88,7 @@ class KnowledgeManager(threading.Thread):
         url = f"https://api.unify.ai/v0/logs/fields?project={proj}&context={ctx}"
         headers = {"Authorization": f"Bearer {API_KEY}"}
         response = requests.request("GET", url, headers=headers)
-        if not response.ok:
-            raise response.json()
+        _handle_exceptions(response)
         ret = response.json()
         return {k: v["data_type"] for k, v in ret.items()}
 
@@ -126,8 +126,7 @@ class KnowledgeManager(threading.Thread):
         headers = {"Authorization": f"Bearer {API_KEY}"}
         json_input = {"columns": columns}
         response = requests.request("POST", url, json=json_input, headers=headers)
-        if not response.ok:
-            raise response.json()
+        response = _handle_exceptions(response)
         return response.json()
 
     def _list_tables(
@@ -167,8 +166,7 @@ class KnowledgeManager(threading.Thread):
         headers = {"Authorization": f"Bearer {API_KEY}"}
         json_input = {"name": new_name}
         response = requests.request("PATCH", url, json=json_input, headers=headers)
-        if not response.ok:
-            raise response.json()
+        response = _handle_exceptions(response)
         return response.json()
 
     def _delete_table(self, table: str) -> None:
@@ -219,8 +217,7 @@ class KnowledgeManager(threading.Thread):
         headers = {"Authorization": f"Bearer {API_KEY}"}
         json_input = {"columns": {column_name: column_type}}
         response = requests.request("POST", url, json=json_input, headers=headers)
-        if not response.ok:
-            raise response.json()
+        response = _handle_exceptions(response)
         return response.json()
 
     def _create_derived_column(
@@ -268,8 +265,7 @@ class KnowledgeManager(threading.Thread):
             "source_type": "all",
         }
         response = requests.request("DELETE", url, json=json_input, headers=headers)
-        if not response.ok:
-            raise response.json()
+        response = _handle_exceptions(response)
         return response.json()
 
     def _rename_column(self, table: str, old_name: str, new_name: str):
@@ -292,8 +288,7 @@ class KnowledgeManager(threading.Thread):
             "new_field_name": new_name,
         }
         response = requests.request("POST", url, json=json_input, headers=headers)
-        if not response.ok:
-            raise response.json()
+        response = _handle_exceptions(response)
         return response.json()
 
     # Add Data

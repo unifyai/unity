@@ -1,3 +1,4 @@
+import requests
 from pathlib import Path
 
 from constants import PROJECT_ROOT, VENV_DIR
@@ -23,3 +24,10 @@ def _find_project_frame(start):
             return frame  # ← first “real” project frame
         frame = frame.f_back
     return None
+
+
+def _handle_exceptions(response):
+    try:
+        response.raise_for_status()
+    except requests.HTTPError as e:
+        raise RuntimeError(f"HTTP {response.status_code}: {response.text}") from e
