@@ -1,6 +1,6 @@
 import threading
 from datetime import datetime
-from typing import Dict, List, Optional
+from typing import Dict, List, Any, Optional
 
 import unify
 from llm_helpers import tool_use_loop
@@ -46,7 +46,7 @@ class TaskListManager(threading.Thread):
     # Private #
     # --------#
 
-    def create_task(
+    def _create_task(
         self,
         *,
         name: str,
@@ -118,4 +118,36 @@ class TaskListManager(threading.Thread):
             **task_details,
             task_id=this_id,
             new=True,
-        )
+        ).id
+
+    # Search
+
+    def _search(
+        self,
+        filter: Optional[str] = None,
+        offset: int = 0,
+        limit: int = 100,
+        tables: Optional[List[str]] = None,
+    ) -> Dict[str, List[Dict[str, Any]]]:
+        """
+        Apply the filter to the the list of tasks, and return the results following the filter.
+
+        Args:
+            filter (Optional[str]): Arbitrary Python logical expressions which evaluate to `bool`, with column names expressed as standard variables. For example, a filter expression of "'email'in description and priority == 'normal'" would be a valid. The expression just needs to be valid Python with the column names as variables.
+
+            offset (int): The offset to start the search from, in the paginated result.
+
+            limit (int): The number of rows to return, in the paginated result.
+
+        Returns:
+            List[Dict[str, Any]]: A list where each item in the list is a dict representing a row in the table.
+        """
+        return [
+            log.entries
+            for log in unify.get_logs(
+                context="Tasks",
+                filter=filter,
+                offset=offset,
+                limit=limit,
+            )
+        ]
