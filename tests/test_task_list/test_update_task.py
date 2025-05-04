@@ -68,3 +68,20 @@ def test_update_task_start_at():
 
     task_list = tlm._search()
     assert task_list[0]["start_at"] == start
+
+
+@_handle_project
+def test_update_task_deadline():
+    tlm = TaskListManager()
+    tlm.start()
+
+    tlm._create_task(
+        name="File quarterly taxes",
+        description="Prepare documents for accounting.",
+    )
+
+    deadline = (datetime.now(timezone.utc) + timedelta(days=30)).isoformat()
+    tlm._update_task_deadline(task_id=0, new_deadline=deadline)
+
+    task_list = tlm._search()
+    assert task_list[0]["deadline"] == deadline
