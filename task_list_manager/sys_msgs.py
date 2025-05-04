@@ -1,5 +1,5 @@
 import json
-from task_list_manager.types.task_list import Task
+from task_list_manager.types.task import Task
 
 UPDATE = f"""
 Your task is to update the list of tasks based on the plain-text request from the user, and you should continue using the tools available until you are satisfied that the list of tasks has been updated correctly.
