@@ -14,6 +14,7 @@ No private helpers (_search, _list_tables, …) are imported or poked.
 """
 
 import re
+import json
 import pytest
 
 from knowledge.knowledge_manager import KnowledgeManager
@@ -31,7 +32,24 @@ def _contains(text: str, *needles: str) -> bool:
 
 
 # --------------------------------------------------------------------------- #
-# 1.  Basic single-fact round-trip                                            #
+# 1.  Basic single-fact storage                                               #
+# --------------------------------------------------------------------------- #
+
+
+@pytest.mark.timeout(120)
+@_handle_project
+def test_store_simple_fact():
+    km = KnowledgeManager()
+    km.start()
+
+    km.store("Please remember that Adrian was born in 1994.")
+
+    all_data = km._search()
+    assert _contains(json.dumps(all_data), "1994"), all_data
+
+
+# --------------------------------------------------------------------------- #
+# 2.  Basic single-fact round-trip                                            #
 # --------------------------------------------------------------------------- #
 
 
@@ -48,7 +66,7 @@ def test_round_trip_simple_fact():
 
 
 # --------------------------------------------------------------------------- #
-# 2.  Schema expansion inside *one* table                                     #
+# 3.  Schema expansion inside *one* table                                     #
 # --------------------------------------------------------------------------- #
 
 
@@ -74,7 +92,7 @@ def test_schema_expands_and_new_field_retrievable():
 
 
 # --------------------------------------------------------------------------- #
-# 3.  Multiple tables & cross-table reasoning                                 #
+# 4.  Multiple tables & cross-table reasoning                                 #
 # --------------------------------------------------------------------------- #
 
 
@@ -102,7 +120,7 @@ def test_multiple_tables_and_join_like_query():
 
 
 # --------------------------------------------------------------------------- #
-# 4.  Long multi-turn conversation with incremental updates                   #
+# 5.  Long multi-turn conversation with incremental updates                   #
 # --------------------------------------------------------------------------- #
 
 
@@ -129,7 +147,7 @@ def test_incremental_updates_and_refactor():
 
 
 # --------------------------------------------------------------------------- #
-# 5.  Complex numeric scenario – implicit filtering                           #
+# 6.  Complex numeric scenario – implicit filtering                           #
 # --------------------------------------------------------------------------- #
 
 
