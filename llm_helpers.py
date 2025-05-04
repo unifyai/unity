@@ -206,7 +206,7 @@ def tool_use_loop(
                 raise Exception(
                     "Aborted after too many consecutive tool failures.\n"
                     f"Last stack trace:\n{result}\n"
-                    f"Conversation history:\n{client.messages}\n",
+                    f"Conversation history:\n{json.dumps(client.messages, indent=4)}\n",
                 )
 
         else:
