@@ -16,6 +16,7 @@ No private helpers (_search, _list_tables, …) are imported or poked.
 import re
 import json
 import pytest
+from typing import Dict, List, Any
 
 from knowledge.knowledge_manager import KnowledgeManager
 from tests.helpers import _handle_project
@@ -29,6 +30,11 @@ from tests.helpers import _handle_project
 def _contains(text: str, *needles: str) -> bool:
     """Return True when every needle appears (case-insensitive)."""
     return all(re.search(n, text, re.I) for n in needles)
+
+
+def _assertion_failed(answer: str, data: Dict[str, List[Dict[str, Any]]]):
+    data = json.dumps(data, indent=4)
+    return f"\nanswer:\n{answer}\ndata:\n{data}"
 
 
 # --------------------------------------------------------------------------- #
@@ -63,7 +69,7 @@ def test_retrieve_simple_fact():
     km._add_data("MyTable", [{"name": "Adrian", "birth_year": "1994"}])
 
     answer = km.retrieve("When was Adrian born?")
-    assert _contains(answer, "1994"), answer
+    assert _contains(answer, "1994"), _assertion_failed(answer, km._search())
 
 
 # --------------------------------------------------------------------------- #
@@ -80,7 +86,7 @@ def test_round_trip_simple_fact():
     km.store("Please remember that Adrian was born in 1994.")
 
     answer = km.retrieve("When was Adrian born?")
-    assert _contains(answer, "1994"), answer
+    assert _contains(answer, "1994"), _assertion_failed(answer, km._search())
 
 
 # --------------------------------------------------------------------------- #
@@ -102,7 +108,7 @@ def test_schema_expands_and_new_field_retrievable():
     km.store("Remember that Bob is 35 years old.")
 
     answer = km.retrieve("How old is Bob?")
-    assert _contains(answer, "35"), answer
+    assert _contains(answer, "35"), _assertion_failed(answer, km._search())
 
     km.store(
         "Also remember that Bob's favourite colour is green "
@@ -110,11 +116,11 @@ def test_schema_expands_and_new_field_retrievable():
     )
 
     answer = km.retrieve("How tall is Bob?")
-    assert _contains(answer, "180"), answer
+    assert _contains(answer, "180"), _assertion_failed(answer, km._search())
     answer = km.retrieve("What is Bob's favourite colour?")
-    assert _contains(answer, "green"), answer
+    assert _contains(answer, "green"), _assertion_failed(answer, km._search())
     answer = km.retrieve("How old is Bob?")
-    assert _contains(answer, "35"), answer
+    assert _contains(answer, "35"), _assertion_failed(answer, km._search())
 
 
 # --------------------------------------------------------------------------- #
@@ -142,7 +148,7 @@ def test_multiple_tables_and_join_like_query():
     )
 
     answer = km.retrieve("How much did Daniel pay for his purchase?")
-    assert _contains(answer, "999"), answer
+    assert _contains(answer, "999"), _assertion_failed(answer, km._search())
 
 
 # --------------------------------------------------------------------------- #
@@ -169,7 +175,7 @@ def test_incremental_updates_and_refactor():
     km.store("Update: Carol also owns a cat named Luna.")
 
     answer = km.retrieve("List all of Carol's pets by name.")
-    assert _contains(answer, "Fido", "Luna"), answer
+    assert _contains(answer, "Fido", "Luna"), _assertion_failed(answer, km._search())
 
 
 # --------------------------------------------------------------------------- #
@@ -197,4 +203,4 @@ def test_numeric_reasoning_after_multiple_points():
     answer = km.retrieve(
         "Which points lie in the first quadrant but have y less than 5?",
     )
-    assert "P" in answer and "Q" not in answer, answer
+    assert "P" in answer and "Q" not in answer, _assertion_failed(answer, km._search())
