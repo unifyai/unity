@@ -237,13 +237,27 @@ class TaskListManager(threading.Thread):
             overwrite=True,
         )
 
-    def update_task_deadline():
+    def _update_task_deadline(
+        self,
+        *,
+        task_id: int,
+        new_deadline: datetime,
+    ) -> Dict[str, str]:
+        """
+        Update the deadline for the specified task.
+        """
+        log_id = self._get_log_by_task_id(task_id=task_id)
+        return unify.update_logs(
+            logs=log_id,
+            context="Tasks",
+            entries={"deadline": new_deadline},
+            overwrite=True,
+        )
+
+    def _update_task_repetition():
         pass
 
-    def update_task_repetition():
-        pass
-
-    def update_task_priority():
+    def _update_task_priority():
         pass
 
     # Search
