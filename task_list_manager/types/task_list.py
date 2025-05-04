@@ -3,7 +3,7 @@ from typing import Optional, List
 from task_list_manager.types.priority import Priority
 
 
-class TaskList(BaseModel):
+class Task(BaseModel):
     task_id: int
     name: str
     description: str
