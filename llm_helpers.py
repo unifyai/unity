@@ -1,7 +1,8 @@
 import json
 import inspect
 from pydantic import BaseModel
-from typing import List, Dict, Union, Any, get_type_hints
+from enum import Enum
+from typing import List, Dict, Union, Any, get_type_hints, get_origin, get_args
 
 import unify
 from constants import LOGGER
@@ -39,12 +40,35 @@ def _dumps(
     return json.dumps(ret, indent=indent) if base else ret
 
 
+def annotation_to_schema(ann):
+    # 1. Primitive types → same as today
+    if ann in TYPE_MAP:
+        return {"type": TYPE_MAP[ann]}
+
+    # 2. Enum → string + explicit enumeration
+    if isinstance(ann, type) and issubclass(ann, Enum):
+        return {"type": "string", "enum": [m.value for m in ann]}
+
+    # 3. Dict[*, V] → JSON object with additionalProperties = V
+    origin = get_origin(ann)
+    if origin is dict:
+        _, value_type = get_args(ann)
+        return {
+            "type": "object",
+            "additionalProperties": annotation_to_schema(value_type),
+        }
+
+    # 4. Fallback – keep existing behaviour
+    return {"type": "string"}
+
+
 def method_to_schema(bound_method):
     sig = inspect.signature(bound_method)
     hints = get_type_hints(bound_method)
     props, required = {}, []
     for name, param in sig.parameters.items():
-        props[name] = {"type": TYPE_MAP.get(hints.get(name, str), "string")}
+        ann = hints.get(name, str)
+        props[name] = annotation_to_schema(ann)
         if param.default is inspect._empty:
             required.append(name)
 
