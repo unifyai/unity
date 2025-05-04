@@ -2,6 +2,7 @@ from datetime import datetime, timezone, timedelta
 from tests.helpers import _handle_project
 from task_list_manager.types.priority import Priority
 from task_list_manager.task_list_manager import TaskListManager
+from task_list_manager.types.repetition import RepeatPattern, Frequency, Weekday
 
 
 @_handle_project
@@ -86,6 +87,24 @@ def test_update_task_deadline():
 
     task_list = tlm._search()
     assert task_list[0]["deadline"] == deadline
+
+
+@_handle_project
+def test_update_task_repetition():
+    tlm = TaskListManager()
+    tlm.start()
+
+    tlm._create_task(
+        name="Daily stand-up",
+        description="10-minute team sync",
+    )
+
+    rule = RepeatPattern(frequency=Frequency.WEEKLY, interval=1, weekdays=[Weekday.MO])
+    tlm._update_task_repetition(task_id=0, new_repeat=[rule])
+
+    task_list = tlm._search()
+    # The manager stores *.model_dump()* (a plain dict) so compare like-for-like
+    assert task_list[0]["repeat"] == [rule.model_dump()]
 
 
 @_handle_project
