@@ -35,10 +35,9 @@ def _contains(text: str, *needles: str) -> bool:
 def _assertion_failed(
     answer: str,
     data: Dict[str, List[Dict[str, Any]]],
-    reasoning: str,
+    reasoning: List,
 ):
-    data = json.dumps(data, indent=4)
-    return f"\nAnswer:\n{answer}\nData:\n{data}\nReasoning:\n{reasoning}\n"
+    return f"\nAnswer:\n{answer}\nData:\n{json.dumps(data, indent=4)}\nReasoning:\n{json.dumps(reasoning, indent=4)}\n"
 
 
 # --------------------------------------------------------------------------- #
