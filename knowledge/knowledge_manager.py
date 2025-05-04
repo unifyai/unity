@@ -135,7 +135,7 @@ class KnowledgeManager(threading.Thread):
         headers = {"Authorization": f"Bearer {API_KEY}"}
         json_input = {"columns": columns}
         response = requests.request("POST", url, json=json_input, headers=headers)
-        response = _handle_exceptions(response)
+        _handle_exceptions(response)
         return response.json()
 
     def _list_tables(
@@ -178,7 +178,7 @@ class KnowledgeManager(threading.Thread):
         headers = {"Authorization": f"Bearer {API_KEY}"}
         json_input = {"name": new_name}
         response = requests.request("PATCH", url, json=json_input, headers=headers)
-        response = _handle_exceptions(response)
+        _handle_exceptions(response)
         return response.json()
 
     def _delete_table(self, table: str) -> Dict[str, str]:
@@ -220,7 +220,7 @@ class KnowledgeManager(threading.Thread):
         headers = {"Authorization": f"Bearer {API_KEY}"}
         json_input = {"columns": {column_name: column_type}}
         response = requests.request("POST", url, json=json_input, headers=headers)
-        response = _handle_exceptions(response)
+        _handle_exceptions(response)
         return response.json()
 
     def _create_derived_column(
@@ -276,7 +276,7 @@ class KnowledgeManager(threading.Thread):
             "source_type": "all",
         }
         response = requests.request("DELETE", url, json=json_input, headers=headers)
-        response = _handle_exceptions(response)
+        _handle_exceptions(response)
         return response.json()
 
     def _rename_column(
@@ -309,7 +309,7 @@ class KnowledgeManager(threading.Thread):
             "new_field_name": new_name,
         }
         response = requests.request("POST", url, json=json_input, headers=headers)
-        response = _handle_exceptions(response)
+        _handle_exceptions(response)
         return response.json()
 
     # Add Data
