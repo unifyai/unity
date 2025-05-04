@@ -1,5 +1,6 @@
 from datetime import datetime, timezone, timedelta
 from tests.helpers import _handle_project
+from task_list_manager.types.priority import Priority
 from task_list_manager.task_list_manager import TaskListManager
 
 
@@ -85,3 +86,19 @@ def test_update_task_deadline():
 
     task_list = tlm._search()
     assert task_list[0]["deadline"] == deadline
+
+
+@_handle_project
+def test_update_task_priority():
+    tlm = TaskListManager()
+    tlm.start()
+
+    tlm._create_task(
+        name="Patch security vulnerability",
+        description="Apply CVE-2025-1234 hot-fix to production.",
+    )
+
+    tlm._update_task_priority(task_id=0, new_priority=Priority.high)
+
+    task_list = tlm._search()
+    assert task_list[0]["priority"] == Priority.high
