@@ -257,8 +257,22 @@ class TaskListManager(threading.Thread):
     def _update_task_repetition():
         pass
 
-    def _update_task_priority():
-        pass
+    def _update_task_priority(
+        self,
+        *,
+        task_id: int,
+        new_priority: Priority,
+    ) -> Dict[str, str]:
+        """
+        Update the priority for the specified task.
+        """
+        log_id = self._get_log_by_task_id(task_id=task_id)
+        return unify.update_logs(
+            logs=log_id,
+            context="Tasks",
+            entries={"priority": new_priority},
+            overwrite=True,
+        )
 
     # Search
 
