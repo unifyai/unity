@@ -94,12 +94,16 @@ def test_schema_expands_and_new_field_retrievable():
     """
     • First fact gives Bob only ‘age’.
     • Second fact adds two *previously unseen* attributes.
-    • We can immediately query one of the new attributes.
+    • We can always query any of the attributes.
     """
     km = KnowledgeManager()
     km.start()
 
     km.store("Remember that Bob is 35 years old.")
+
+    answer = km.retrieve("How old is Bob?")
+    assert _contains(answer, "35"), answer
+
     km.store(
         "Also remember that Bob's favourite colour is green "
         "and his height is 180 centimetres.",
@@ -107,6 +111,10 @@ def test_schema_expands_and_new_field_retrievable():
 
     answer = km.retrieve("How tall is Bob?")
     assert _contains(answer, "180"), answer
+    answer = km.retrieve("What is Bob's favourite colour?")
+    assert _contains(answer, "green"), answer
+    answer = km.retrieve("How old is Bob?")
+    assert _contains(answer, "35"), answer
 
 
 # --------------------------------------------------------------------------- #
