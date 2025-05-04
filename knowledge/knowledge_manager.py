@@ -2,7 +2,7 @@ import os
 import unify
 import requests
 import threading
-from typing import List, Tuple, Any, Dict, Optional, Union
+from typing import List, Any, Dict, Optional, Union
 from knowledge.types import ColumnType
 from llm_helpers import tool_use_loop
 from helpers import _handle_exceptions
@@ -27,7 +27,6 @@ class KnowledgeManager(threading.Thread):
             # Columns
             self._create_empty_column.__name__: self._create_empty_column,
             self._create_derived_column.__name__: self._create_derived_column,
-            self._list_columns.__name__: self._list_columns,
             self._rename_column.__name__: self._rename_column,
             self._delete_column.__name__: self._delete_column,
         }
@@ -103,19 +102,19 @@ class KnowledgeManager(threading.Thread):
         *,
         description: Optional[str] = None,
         columns: Optional[Dict[str, ColumnType]] = None,
-    ) -> str:
+    ) -> Dict[str, str]:
         """
         Create a new table for storing long-term knowledge.
 
         Args:
             name (str): The name of the table to create.
 
-            description (Optional[str]): A description of the table.
+            description (Optional[str]): A description of the table and the main purpose.
 
             columns (Optional[Dict[str, ColumnType]]): A dictionary of column names and their types.
 
         Returns:
-            str: The name of the table that was created.
+            Dict[str, str]: Message explaining whether the table was created or not.
         """
         proj = unify.active_project()
         ctx = f"Knowledge/{name}"
@@ -137,10 +136,10 @@ class KnowledgeManager(threading.Thread):
         List the tables which are being used to store all knowledge.
 
         Args:
-            include_columns (bool): Whether to include the columns in the returned list.
+            include_columns (bool): Whether to include the columns and their types for each table in the returned list.
 
         Returns:
-            Union[List[str], List[Dict[str, ColumnType]]]: A list of table names.
+            List[Dict[str, Dict[str, Union[str, ColumnType]]]]: Table names and their descriptions, and optionally also column names and types.
         """
         tables = {
             k.lstrip("Knowledge/"): {"description": v}
@@ -150,7 +149,7 @@ class KnowledgeManager(threading.Thread):
             return tables
         return {k: {**v, "columns": self._get_columns(k)} for k, v in tables.items()}
 
-    def _rename_table(self, old_name: str, new_name: str) -> None:
+    def _rename_table(self, old_name: str, new_name: str) -> Dict[str, str]:
         """
         Rename the table.
 
@@ -158,6 +157,9 @@ class KnowledgeManager(threading.Thread):
             old_name (str): The old name of the table.
 
             new_name (str): The new name for the table.
+
+        Returns:
+            Dict[str, str]: Message explaining whether the table was renamed or not.
         """
         proj = unify.active_project()
         old_name = f"Knowledge/{old_name}"
@@ -169,38 +171,26 @@ class KnowledgeManager(threading.Thread):
         response = _handle_exceptions(response)
         return response.json()
 
-    def _delete_table(self, table: str) -> None:
+    def _delete_table(self, table: str) -> Dict[str, str]:
         """
         Delete the specified table, and all of its data from the knowledge store.
 
         Args:
             name (str): The name of the table to delete.
-        """
-        unify.delete_context(f"Knowledge/{table}")
-
-    # Columns
-
-    def _list_columns(
-        self,
-        tables: Optional[List[str]] = None,
-    ) -> Dict[str, List[Tuple[str, str]]]:
-        """
-        List the columns for each specified table.
-
-        Args:
-            tables (List[str]): The tables to list the columns for. Default is all tables.
 
         Returns:
-            List[Tuple[str, str]]: A  dict, where keys are table names and values are lists of tuples, where each tuple contains the column name and type.
+            Dict[str, str]: Message explaining whether the table was deleted or not.
         """
-        raise NotImplemented
+        return unify.delete_context(f"Knowledge/{table}")
+
+    # Columns
 
     def _create_empty_column(
         self,
         table: str,
         column_name: str,
         column_type: str,
-    ) -> None:
+    ) -> Dict[str, str]:
         """
         Adds an empty column to the table, which is initialized with `None` values.
 
@@ -210,6 +200,9 @@ class KnowledgeManager(threading.Thread):
             column_name (str): The name of the column to add.
 
             column_type (str): The type of the column to add.
+
+        Returns:
+            Dict[str, str]: Message explaining whether the column was created or not.
         """
         proj = unify.active_project()
         ctx = f"Knowledge/{table}"
@@ -225,7 +218,7 @@ class KnowledgeManager(threading.Thread):
         table: str,
         column_name: str,
         equation: str,
-    ):
+    ) -> Dict[str, str]:
         """
         Create a new column in the table, derived from the other columns in the table.
 
@@ -234,7 +227,10 @@ class KnowledgeManager(threading.Thread):
 
             column_name (str): The name of the column to add.
 
-            equation (str): The equation to use to derive the column.
+            equation (str): The equation to use to derive the column. This is arbitrary Python code, with column names expressed as standard variables. For example, if a table includes two float columns `x` and `y`, then an equation of "(x**2 + y**2)**0.5" would be a valid, computing the length. Indexing is also supported `x[0]` for valid types `dict`, `list`, `str` etc., as is `len(x)`, casting to str via `str(x)` etc. The expression just needs to be valid Python with the column names as variables.
+
+        Returns:
+            Dict[str, str]: Message explaining whether the column was created or not.
         """
         url = "https://api.unify.ai/v0/logs/derived"
         headers = {"Authorization": f"Bearer {API_KEY}"}
@@ -249,12 +245,17 @@ class KnowledgeManager(threading.Thread):
         response = requests.request("POST", url, json=json_input, headers=headers)
         return response.json()
 
-    def _delete_column(self, table: str, column_name: str):
+    def _delete_column(self, table: str, column_name: str) -> Dict[str, str]:
         """
         Delete column from the table, and all of the data.
 
         Args:
             table (str): The name of the table to delete the column from.
+
+            column_name (str): The name of the column to delete.
+
+        Returns:
+            Dict[str, str]: Message explaining whether the column was deleted or not.
         """
         url = "https://api.unify.ai/v0/logs?delete_empty_logs=True"
         headers = {"Authorization": f"Bearer {API_KEY}"}
@@ -268,7 +269,12 @@ class KnowledgeManager(threading.Thread):
         response = _handle_exceptions(response)
         return response.json()
 
-    def _rename_column(self, table: str, old_name: str, new_name: str):
+    def _rename_column(
+        self,
+        table: str,
+        old_name: str,
+        new_name: str,
+    ) -> Dict[str, str]:
         """
         Rename the specified column.
 
@@ -276,6 +282,11 @@ class KnowledgeManager(threading.Thread):
             table (str): The name of the table to rename the column in.
 
             old_name (str): The name of the column to rename.
+
+            new_name (str): The new name for the column.
+
+        Returns:
+            Dict[str, str]: Message explaining whether the column was renamed or not.
         """
         proj = unify.active_project()
         ctx = f"Knowledge/{table}"
@@ -293,7 +304,7 @@ class KnowledgeManager(threading.Thread):
 
     # Add Data
 
-    def _add_data(self, table: str, data: List[Dict[str, Any]]):
+    def _add_data(self, table: str, data: List[Dict[str, Any]]) -> Dict[str, str]:
         """
         Add data to the specified table. Will automatically create new columns if any keys are not present in the table already.
 
@@ -301,6 +312,9 @@ class KnowledgeManager(threading.Thread):
             table (str): The name of the table to add the data to.
 
             data (List[Dict[str, Any]]): The data to add to the table.
+
+        Returns:
+            Dict[str, str]: Message explaining whether the data was added or not.
         """
         return unify.create_logs(
             context=f"Knowledge/{table}",
@@ -309,9 +323,25 @@ class KnowledgeManager(threading.Thread):
 
     # Search
 
-    def _search(self, query: Optional[str] = None, tables: Optional[List[str]] = None):
+    def _search(
+        self,
+        filter: Optional[str] = None,
+        offset: int = 0,
+        limit: int = 100,
+        tables: Optional[List[str]] = None,
+    ) -> Dict[str, List[Dict[str, Any]]]:
         """
-        Search the query through all of the tables, and return the results across all tables.
+        Apply the filter to all of the specified tables, and return the results following the filter.
+
+        Args:
+            filter (Optional[str]): Arbitrary Python logical expressions which evaluate to `bool`, with column names expressed as standard variables. For example, if a table includes two integer columns `x` and `y`, then a filter expression of "x > 3 and y < 2" would be a valid. Indexing is also supported `x[0]` for valid types `dict`, `list`, `str` etc., as is `len(x)`, casting to str via `str(x)` etc. The expression just needs to be valid Python with the column names as variables.
+
+            offset (int): The offset to start the search from, in the paginated result.
+
+            limit (int): The number of rows to return, in the paginated result.
+
+        Returns:
+            Dict[str, List[Dict[str, Any]]]: A dictionary where keys are table names and values are lists, where each item in the list is a dict representing a row in the table.
         """
         if tables is None:
             tables = self._list_tables()
@@ -322,7 +352,9 @@ class KnowledgeManager(threading.Thread):
                 log.entries
                 for log in unify.get_logs(
                     context=f"Knowledge/{table}",
-                    filter=query,
+                    filter=filter,
+                    offset=offset,
+                    limit=limit,
                 )
             ]
         return results

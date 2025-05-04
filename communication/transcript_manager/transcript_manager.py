@@ -225,7 +225,7 @@ class TranscriptManager(threading.Thread):
         self,
         filter: Optional[str] = None,
         offset: int = 0,
-        limit: Optional[int] = None,
+        limit: int = 100,
     ) -> List[Dict[str, str]]:
         """
         Retrieve contact details, based on flexible filtering for first name, surname, email address, WhatsApp number, phone number, or anything else.
@@ -250,7 +250,7 @@ class TranscriptManager(threading.Thread):
         self,
         filter: Optional[str] = None,
         offset: int = 0,
-        limit: Optional[int] = None,
+        limit: int = 100,
     ) -> List[Dict[str, str]]:
         """
         Retrieve messages from the transcript history, based on flexible filtering for a specific sender, group of senders, receiver, group of receivers, medium, set of mediums, timestamp range, message length, messages containing a phrase, not containing a phrase, or anything else.
@@ -275,7 +275,7 @@ class TranscriptManager(threading.Thread):
         self,
         filter: Optional[str] = None,
         offset: int = 0,
-        limit: Optional[int] = None,
+        limit: int = 100,
     ) -> List[Dict[str, str]]:
         """
         Retrieve summaries from the transcript history, based on flexible filtering for a specific exchange id, group of exchange ids, medium, set of mediums, timestamp range, summary length, summaries containing a phrase, not containing a phrase, or anything else.
