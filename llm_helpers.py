@@ -134,7 +134,7 @@ def tool_use_loop(
     message: str,
     tools: Dict[str, Callable],
     *,
-    max_consecutive_failures: int = 3,  # ← new parameter
+    max_consecutive_failures: int = 3,
 ):
     """
     Keep invoking the model until it stops calling tools **or**
@@ -203,9 +203,9 @@ def tool_use_loop(
                     f"🚨 Aborting: reached "
                     f"{max_consecutive_failures} consecutive tool failures.",
                 )
-                return (
+                raise Exception(
                     "Aborted after too many consecutive tool failures.\n"
-                    f"Last stack trace:\n{result}"
+                    f"Last stack trace:\n{result}",
                 )
 
         else:
