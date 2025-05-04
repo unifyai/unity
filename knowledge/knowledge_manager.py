@@ -4,31 +4,79 @@ import requests
 import threading
 from typing import List, Tuple, Any, Dict, Optional, Union
 from knowledge.types import ColumnType
+from llm_helpers import tool_use_loop
 
 API_KEY = os.environ["UNIFY_KEY"]
 
 
 class KnowledgeManager(threading.Thread):
-    """
-    Responsible for *adding to*, *updating* and *searching through* all knowledge the assistant has stored in memory.
-    """
+
+    def __init__(self, *, daemon: bool = True) -> None:
+        """
+        Responsible for *adding to*, *updating* and *searching through* all knowledge the assistant has stored in memory.
+        """
+        super().__init__(daemon=daemon)
+
+        refactor_tools = {
+            # Tables
+            self._create_table.__name__: self._create_table,
+            self._list_tables.__name__: self._list_tables,
+            self._rename_table.__name__: self._rename_table,
+            self._delete_table.__name__: self._delete_table,
+            # Columns
+            self._create_empty_column.__name__: self._create_empty_column,
+            self._create_derived_column.__name__: self._create_derived_column,
+            self._list_columns.__name__: self._list_columns,
+            self._rename_column.__name__: self._rename_column,
+            self._delete_column.__name__: self._delete_column,
+        }
+
+        self._store_tools = {
+            **refactor_tools,
+            self._add_data.__name__: self._add_data,
+        }
+
+        self._retrieve_tools = {
+            **refactor_tools,
+            self._search.__name__: self._search,
+        }
 
     # Public #
     # -------#
 
     # English-Text Command
 
-    def act(self, text: str) -> Any:
+    def store(self, text: str) -> Any:
         """
-        Take in any text command, and use the tools available (the *non-skipped* private methods of this class) to perform the action.
+        Take in any storage text command, and use the tools available (the *non-skipped* private methods of this class) to store the information, refactoring the table and column schema along the way if needed.
 
         Args:
-            text (str): The text command to perform.
+            text (str): The information storage request, as a plain-text command.
 
         Returns:
-            Any: The result of the action.
+            bool: Whether the storage request completed successfully.
         """
-        raise NotImplemented
+        from knowledge.sys_msgs import STORE
+
+        client = unify.Unify("o4-mini@openai")
+        client.set_system_message(STORE)
+        return tool_use_loop(client, text, self._store_tools)
+
+    def retrieve(self, text: str) -> str:
+        """
+        Take in any retrieval text command, and use the tools available (the *non-skipped* private methods of this class) to retireve the information, refactoring the table and column schema along the way if needed.
+
+        Args:
+            text (str): The information retrieval request, as a plain-text command.
+
+        Returns:
+            str: The result of the retrieval.
+        """
+        from knowledge.sys_msgs import RETRIEVE
+
+        client = unify.Unify("o4-mini@openai")
+        client.set_system_message(RETRIEVE)
+        return tool_use_loop(client, text, self._retrieve_tools)
 
     # Helpers #
     # --------#
@@ -43,17 +91,6 @@ class KnowledgeManager(threading.Thread):
             raise response.json()
         ret = response.json()
         return {k: v["data_type"] for k, v in ret.items()}
-
-    def _add_table_description(self, table, description):
-        proj = unify.active_project()
-        ctx = f"Knowledge/{table}"
-        url = f"https://api.unify.ai/v0/project/{proj}/contexts/{ctx}/artifacts"
-        headers = {"Authorization": f"Bearer {API_KEY}"}
-        json_input = {"artifacts": {"description": description}}
-        response = requests.request("POST", url, json=json_input, headers=headers)
-        if not response.ok:
-            raise response.json()
-        return response.json()
 
     # Private #
     # --------#
