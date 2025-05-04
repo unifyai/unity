@@ -51,5 +51,5 @@ The tools enable you to create, rename, modify, search and delete tables and col
 
 You are strongly encouraged to refactor the table and column designs.
 
-If this retrieval request could be handled with an improved schema, then please implement this new layout via consecutive tool use (adding, deleting, renaming tables/columns etc.), before returning, with your answer.
+If this retrieval request could be handled with an improved schema, then please implement this new layout via consecutive tool use (adding, deleting, renaming tables/columns etc.), before returning with your answer.
 """
