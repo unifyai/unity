@@ -32,9 +32,13 @@ def _contains(text: str, *needles: str) -> bool:
     return all(re.search(n, text, re.I) for n in needles)
 
 
-def _assertion_failed(answer: str, data: Dict[str, List[Dict[str, Any]]]):
+def _assertion_failed(
+    answer: str,
+    data: Dict[str, List[Dict[str, Any]]],
+    reasoning: str,
+):
     data = json.dumps(data, indent=4)
-    return f"\nanswer:\n{answer}\ndata:\n{data}"
+    return f"\nAnswer:\n{answer}\nData:\n{data}\nReasoning:\n{reasoning}\n"
 
 
 # --------------------------------------------------------------------------- #
@@ -68,8 +72,11 @@ def test_retrieve_simple_fact():
     km._create_table("MyTable")
     km._add_data("MyTable", [{"name": "Adrian", "birth_year": "1994"}])
 
-    answer = km.retrieve("When was Adrian born?")
-    assert _contains(answer, "1994"), _assertion_failed(answer, km._search())
+    answer, reasoning = km.retrieve(
+        "When was Adrian born?",
+        return_reasoning_steps=True,
+    )
+    assert _contains(answer, "1994"), _assertion_failed(answer, km._search(), reasoning)
 
 
 # --------------------------------------------------------------------------- #
@@ -85,8 +92,11 @@ def test_round_trip_simple_fact():
 
     km.store("Adrian was born in 1994.")
 
-    answer = km.retrieve("When was Adrian born?")
-    assert _contains(answer, "1994"), _assertion_failed(answer, km._search())
+    answer, reasoning = km.retrieve(
+        "When was Adrian born?",
+        return_reasoning_steps=True,
+    )
+    assert _contains(answer, "1994"), _assertion_failed(answer, km._search(), reasoning)
 
 
 # --------------------------------------------------------------------------- #
@@ -107,19 +117,26 @@ def test_schema_expands_and_new_field_retrievable():
 
     km.store("Bob is 35 years old.")
 
-    answer = km.retrieve("How old is Bob?")
-    assert _contains(answer, "35"), _assertion_failed(answer, km._search())
+    answer, reasoning = km.retrieve("How old is Bob?", return_reasoning_steps=True)
+    assert _contains(answer, "35"), _assertion_failed(answer, km._search(), reasoning)
 
     km.store(
         "Bob's favourite colour is green and his height is 180 centimetres.",
     )
 
-    answer = km.retrieve("How tall is Bob?")
-    assert _contains(answer, "180"), _assertion_failed(answer, km._search())
-    answer = km.retrieve("What is Bob's favourite colour?")
-    assert _contains(answer, "green"), _assertion_failed(answer, km._search())
-    answer = km.retrieve("How old is Bob?")
-    assert _contains(answer, "35"), _assertion_failed(answer, km._search())
+    answer, reasoning = km.retrieve("How tall is Bob?", return_reasoning_steps=True)
+    assert _contains(answer, "180"), _assertion_failed(answer, km._search(), reasoning)
+    answer, reasoning = km.retrieve(
+        "What is Bob's favourite colour?",
+        return_reasoning_steps=True,
+    )
+    assert _contains(answer, "green"), _assertion_failed(
+        answer,
+        km._search(),
+        reasoning,
+    )
+    answer, reasoning = km.retrieve("How old is Bob?", return_reasoning_steps=True)
+    assert _contains(answer, "35"), _assertion_failed(answer, km._search(), reasoning)
 
 
 # --------------------------------------------------------------------------- #
@@ -146,8 +163,11 @@ def test_multiple_tables_and_join_like_query():
         "Daniel bought an iPhone 15 on 3 May 2025 using his credit card.",
     )
 
-    answer = km.retrieve("How much did Daniel pay for his purchase?")
-    assert _contains(answer, "999"), _assertion_failed(answer, km._search())
+    answer, reasoning = km.retrieve(
+        "How much did Daniel pay for his purchase?",
+        return_reasoning_steps=True,
+    )
+    assert _contains(answer, "999"), _assertion_failed(answer, km._search(), reasoning)
 
 
 # --------------------------------------------------------------------------- #
@@ -173,8 +193,15 @@ def test_incremental_updates_and_refactor():
     km.store("Carol owns a dog named Fido.")
     km.store("Carol also owns a cat named Luna.")
 
-    answer = km.retrieve("What are the names of Carol's pets?")
-    assert _contains(answer, "Fido", "Luna"), _assertion_failed(answer, km._search())
+    answer, reasoning = km.retrieve(
+        "What are the names of Carol's pets?",
+        return_reasoning_steps=True,
+    )
+    assert _contains(answer, "Fido", "Luna"), _assertion_failed(
+        answer,
+        km._search(),
+        reasoning,
+    )
 
 
 # --------------------------------------------------------------------------- #
@@ -199,7 +226,12 @@ def test_numeric_reasoning_after_multiple_points():
     km.store("Point P has coordinates x = 3 and y = 4.")
     km.store("Point Q has coordinates x = 1 and y = 10.")
 
-    answer = km.retrieve(
+    answer, reasoning = km.retrieve(
         "Which points lie in the first quadrant but have y less than 5?",
+        return_reasoning_steps=True,
     )
-    assert "P" in answer and "Q" not in answer, _assertion_failed(answer, km._search())
+    assert "P" in answer and "Q" not in answer, _assertion_failed(
+        answer,
+        km._search(),
+        reasoning,
+    )

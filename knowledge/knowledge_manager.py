@@ -46,12 +46,14 @@ class KnowledgeManager(threading.Thread):
 
     # English-Text Command
 
-    def store(self, text: str) -> Any:
+    def store(self, text: str, return_reasoning_steps: bool = False) -> Any:
         """
         Take in any storage text command, and use the tools available (the *non-skipped* private methods of this class) to store the information, refactoring the table and column schema along the way if needed.
 
         Args:
             text (str): The information storage request, as a plain-text command.
+
+            return_reasoning_steps (bool): Whether to return the reasoning steps for the storage request.
 
         Returns:
             bool: Whether the storage request completed successfully.
@@ -60,14 +62,19 @@ class KnowledgeManager(threading.Thread):
 
         client = unify.Unify("o4-mini@openai")
         client.set_system_message(STORE)
-        return tool_use_loop(client, text, self._store_tools)
+        ans = tool_use_loop(client, text, self._store_tools)
+        if return_reasoning_steps:
+            return ans, client.messages
+        return ans
 
-    def retrieve(self, text: str) -> str:
+    def retrieve(self, text: str, return_reasoning_steps: bool = False) -> str:
         """
         Take in any retrieval text command, and use the tools available (the *non-skipped* private methods of this class) to retireve the information, refactoring the table and column schema along the way if needed.
 
         Args:
             text (str): The information retrieval request, as a plain-text command.
+
+            return_reasoning_steps (bool): Whether to return the reasoning steps for the retrieval request.
 
         Returns:
             str: The result of the retrieval.
@@ -76,7 +83,10 @@ class KnowledgeManager(threading.Thread):
 
         client = unify.Unify("o4-mini@openai")
         client.set_system_message(RETRIEVE)
-        return tool_use_loop(client, text, self._retrieve_tools)
+        ans = tool_use_loop(client, text, self._retrieve_tools)
+        if return_reasoning_steps:
+            return ans, client.messages
+        return ans
 
     # Helpers #
     # --------#
