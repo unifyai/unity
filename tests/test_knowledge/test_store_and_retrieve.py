@@ -49,7 +49,25 @@ def test_store_simple_fact():
 
 
 # --------------------------------------------------------------------------- #
-# 2.  Basic single-fact round-trip                                            #
+# 2.  Basic single-fact retrieval                                             #
+# --------------------------------------------------------------------------- #
+
+
+@pytest.mark.timeout(120)
+@_handle_project
+def test_retrieve_simple_fact():
+    km = KnowledgeManager()
+    km.start()
+
+    km._create_table("MyTable")
+    km._add_data("MyTable", [{"name": "Adrian", "birth_year": "1994"}])
+
+    answer = km.retrieve("When was Adrian born?")
+    assert _contains(answer, "1994"), answer
+
+
+# --------------------------------------------------------------------------- #
+# 3.  Basic single-fact round-trip                                            #
 # --------------------------------------------------------------------------- #
 
 
@@ -66,7 +84,7 @@ def test_round_trip_simple_fact():
 
 
 # --------------------------------------------------------------------------- #
-# 3.  Schema expansion inside *one* table                                     #
+# 4.  Schema expansion inside *one* table                                     #
 # --------------------------------------------------------------------------- #
 
 
@@ -92,7 +110,7 @@ def test_schema_expands_and_new_field_retrievable():
 
 
 # --------------------------------------------------------------------------- #
-# 4.  Multiple tables & cross-table reasoning                                 #
+# 5.  Multiple tables & cross-table reasoning                                 #
 # --------------------------------------------------------------------------- #
 
 
@@ -120,7 +138,7 @@ def test_multiple_tables_and_join_like_query():
 
 
 # --------------------------------------------------------------------------- #
-# 5.  Long multi-turn conversation with incremental updates                   #
+# 6.  Long multi-turn conversation with incremental updates                   #
 # --------------------------------------------------------------------------- #
 
 
@@ -147,7 +165,7 @@ def test_incremental_updates_and_refactor():
 
 
 # --------------------------------------------------------------------------- #
-# 6.  Complex numeric scenario – implicit filtering                           #
+# 7.  Complex numeric scenario – implicit filtering                           #
 # --------------------------------------------------------------------------- #
 
 
