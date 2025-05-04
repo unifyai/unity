@@ -120,6 +120,33 @@ class TaskListManager(threading.Thread):
             new=True,
         ).id
 
+    def _delete_task(
+        self,
+        *,
+        task_id: int,
+    ) -> Dict[str, str]:
+        """
+        Deletes the specified task from the task list.
+
+        Args:
+            task_id (int): The id of the task to delete.
+
+        Returns:
+            Dict[str, str]: Whether the task was deleted or not.
+        """
+        # ToDo: replace with single API call once this task [https://app.clickup.com/t/86c3c1awp] is done
+        log_ids = unify.get_logs(
+            context="Tasks",
+            filter=f"task_id == {task_id}",
+            return_ids_only=True,
+        )
+        assert len(log_ids) == 1
+        log_id = log_ids[0]
+        unify.delete_logs(
+            context="Tasks",
+            logs=log_id,
+        )
+
     # Search
 
     def _search(
