@@ -26,8 +26,8 @@ def test_create_derived_column():
     data = knowledge_manager._search()
     assert data == {
         "MyTable": [
-            {"x": 1, "y": 2, "distance": (1**2 + 2**2) ** 0.5},
             {"x": 3, "y": 4, "distance": (3**2 + 4**2) ** 0.5},
+            {"x": 1, "y": 2, "distance": (1**2 + 2**2) ** 0.5},
         ],
     }
 
@@ -42,8 +42,8 @@ def test_delete_column():
     data = knowledge_manager._search()
     assert data == {
         "MyTable": [
-            {"y": 2},
             {"y": 4},
+            {"y": 2},
         ],
     }
 
