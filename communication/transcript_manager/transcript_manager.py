@@ -28,7 +28,7 @@ class TranscriptManager(threading.Thread):
 
     # English-Text Question
 
-    def ask(self, text: str, return_reasoning_steps: bool = False) -> Any:
+    def ask(self, *, text: str, return_reasoning_steps: bool = False) -> Any:
         """
         Ask any question as a text command, and use the tools available (the private methods of this class) to perform the action.
 
@@ -53,6 +53,7 @@ class TranscriptManager(threading.Thread):
 
     def summarize(
         self,
+        *,
         exchange_ids: Union[int, List[int]],
         guidance: Optional[str] = None,
     ) -> str:
@@ -87,7 +88,7 @@ class TranscriptManager(threading.Thread):
         )
         return summary
 
-    def log_messages(self, messages: List[Message]):
+    def log_messages(self, *, messages: List[Message]):
         """
         Log messages onto the platform.
         """
@@ -168,8 +169,8 @@ class TranscriptManager(threading.Thread):
 
     def update_contact(
         self,
-        contact_id: int,
         *,
+        contact_id: int,
         first_name: Optional[str] = None,
         surname: Optional[str] = None,
         email_address: Optional[str] = None,
@@ -228,6 +229,7 @@ class TranscriptManager(threading.Thread):
 
     def _search_contacts(
         self,
+        *,
         filter: Optional[str] = None,
         offset: int = 0,
         limit: int = 100,
@@ -253,6 +255,7 @@ class TranscriptManager(threading.Thread):
 
     def _search_messages(
         self,
+        *,
         filter: Optional[str] = None,
         offset: int = 0,
         limit: int = 100,
@@ -278,6 +281,7 @@ class TranscriptManager(threading.Thread):
 
     def _search_summaries(
         self,
+        *,
         filter: Optional[str] = None,
         offset: int = 0,
         limit: int = 100,

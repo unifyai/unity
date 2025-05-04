@@ -19,6 +19,7 @@ class ComsManager(threading.Thread):
     # Search Tools
 
     def _probe_transcripts(
+        *,
         filter: Optional[str] = None,
         offset: int = 0,
         limit: int = 20,
@@ -37,6 +38,7 @@ class ComsManager(threading.Thread):
         raise NotImplemented
 
     def _probe_knowledge(
+        *,
         filter: Optional[str] = None,
         offset: int = 0,
         limit: int = 20,
@@ -57,6 +59,7 @@ class ComsManager(threading.Thread):
     # Outbound Text
 
     def _send_email(
+        *,
         receiver: str,
         content: str,
         exchange_id: Optional[int] = None,
@@ -76,6 +79,7 @@ class ComsManager(threading.Thread):
         raise NotImplemented
 
     def _send_text(
+        *,
         receiver: str,
         content: str,
         exchange_id: Optional[int] = None,
@@ -96,6 +100,7 @@ class ComsManager(threading.Thread):
         raise NotImplemented
 
     def _send_whatsapp_message(
+        *,
         receiver: str,
         content: str,
         exchange_id: Optional[int] = None,
@@ -117,7 +122,7 @@ class ComsManager(threading.Thread):
 
     # Outbound Calls
 
-    def _make_call(receiver: str, scheduled: Optional[datetime] = None):
+    def _make_call(*, receiver: str, scheduled: Optional[datetime] = None):
         """
         Phone call the given receiver at the given date and time.
 
@@ -130,7 +135,7 @@ class ComsManager(threading.Thread):
         """
         raise NotImplemented
 
-    def _make_whatsapp_call(receiver: str, scheduled: Optional[datetime] = None):
+    def _make_whatsapp_call(*, receiver: str, scheduled: Optional[datetime] = None):
         """
         WhatsApp call the given receiver at the given date and time.
 
@@ -143,7 +148,7 @@ class ComsManager(threading.Thread):
         """
         raise NotImplemented
 
-    def _receive_call(receiver: str):
+    def _receive_call(*, receiver: str):
         """
         Accept phone call from the receiver..
 
@@ -155,7 +160,7 @@ class ComsManager(threading.Thread):
         """
         raise NotImplemented
 
-    def _receive_whatsapp_call(receiver: str):
+    def _receive_whatsapp_call(*, receiver: str):
         """
         Accept WhatsApp call from the receiver..
 

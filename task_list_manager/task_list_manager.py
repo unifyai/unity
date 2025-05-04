@@ -23,7 +23,12 @@ class TaskListManager(threading.Thread):
 
     # English-Text update request
 
-    def update(self, text: str, return_reasoning_steps: bool = False) -> Dict[str, str]:
+    def update(
+        self,
+        *,
+        text: str,
+        return_reasoning_steps: bool = False,
+    ) -> Dict[str, str]:
         """
         Handle any plain-text english command to update the list of tasks in some manner.
 
@@ -46,6 +51,7 @@ class TaskListManager(threading.Thread):
 
     def _get_log_by_task_id(
         self,
+        *,
         task_id: int,
     ) -> unify.Log:
         """
@@ -293,6 +299,7 @@ class TaskListManager(threading.Thread):
 
     def _search(
         self,
+        *,
         filter: Optional[str] = None,
         offset: int = 0,
         limit: int = 100,

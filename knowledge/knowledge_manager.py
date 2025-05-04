@@ -46,7 +46,7 @@ class KnowledgeManager(threading.Thread):
 
     # English-Text Command
 
-    def store(self, text: str, return_reasoning_steps: bool = False) -> Any:
+    def store(self, *, text: str, return_reasoning_steps: bool = False) -> Any:
         """
         Take in any storage text command, and use the tools available (the *non-skipped* private methods of this class) to store the information, refactoring the table and column schema along the way if needed.
 
@@ -67,7 +67,7 @@ class KnowledgeManager(threading.Thread):
             return ans, client.messages
         return ans
 
-    def retrieve(self, text: str, return_reasoning_steps: bool = False) -> str:
+    def retrieve(self, *, text: str, return_reasoning_steps: bool = False) -> str:
         """
         Take in any retrieval text command, and use the tools available (the *non-skipped* private methods of this class) to retireve the information, refactoring the table and column schema along the way if needed.
 
@@ -91,7 +91,7 @@ class KnowledgeManager(threading.Thread):
     # Helpers #
     # --------#
 
-    def _get_columns(self, table):
+    def _get_columns(self, *, table: str) -> Dict[str, str]:
         proj = unify.active_project()
         ctx = f"Knowledge/{table}"
         url = f"https://api.unify.ai/v0/logs/fields?project={proj}&context={ctx}"
@@ -108,8 +108,8 @@ class KnowledgeManager(threading.Thread):
 
     def _create_table(
         self,
-        name: str,
         *,
+        name: str,
         description: Optional[str] = None,
         columns: Optional[Dict[str, ColumnType]] = None,
     ) -> Dict[str, str]:
@@ -140,6 +140,7 @@ class KnowledgeManager(threading.Thread):
 
     def _list_tables(
         self,
+        *,
         include_columns: bool = False,
     ) -> Union[List[str], List[Dict[str, ColumnType]]]:
         """
@@ -157,9 +158,11 @@ class KnowledgeManager(threading.Thread):
         }
         if not include_columns:
             return tables
-        return {k: {**v, "columns": self._get_columns(k)} for k, v in tables.items()}
+        return {
+            k: {**v, "columns": self._get_columns(table=k)} for k, v in tables.items()
+        }
 
-    def _rename_table(self, old_name: str, new_name: str) -> Dict[str, str]:
+    def _rename_table(self, *, old_name: str, new_name: str) -> Dict[str, str]:
         """
         Rename the table.
 
@@ -181,7 +184,7 @@ class KnowledgeManager(threading.Thread):
         _handle_exceptions(response)
         return response.json()
 
-    def _delete_table(self, table: str) -> Dict[str, str]:
+    def _delete_table(self, *, table: str) -> Dict[str, str]:
         """
         Delete the specified table, and all of its data from the knowledge store.
 
@@ -197,6 +200,7 @@ class KnowledgeManager(threading.Thread):
 
     def _create_empty_column(
         self,
+        *,
         table: str,
         column_name: str,
         column_type: str,
@@ -225,6 +229,7 @@ class KnowledgeManager(threading.Thread):
 
     def _create_derived_column(
         self,
+        *,
         table: str,
         column_name: str,
         equation: str,
@@ -255,7 +260,7 @@ class KnowledgeManager(threading.Thread):
         response = requests.request("POST", url, json=json_input, headers=headers)
         return response.json()
 
-    def _delete_column(self, table: str, column_name: str) -> Dict[str, str]:
+    def _delete_column(self, *, table: str, column_name: str) -> Dict[str, str]:
         """
         Delete column from the table, and all of the data.
 
@@ -281,6 +286,7 @@ class KnowledgeManager(threading.Thread):
 
     def _rename_column(
         self,
+        *,
         table: str,
         old_name: str,
         new_name: str,
@@ -314,7 +320,7 @@ class KnowledgeManager(threading.Thread):
 
     # Add Data
 
-    def _add_data(self, table: str, data: List[Dict[str, Any]]) -> Dict[str, str]:
+    def _add_data(self, *, table: str, data: List[Dict[str, Any]]) -> Dict[str, str]:
         """
         Add data to the specified table. Will automatically create new columns if any keys are not present in the table already.
 
@@ -335,6 +341,7 @@ class KnowledgeManager(threading.Thread):
 
     def _search(
         self,
+        *,
         filter: Optional[str] = None,
         offset: int = 0,
         limit: int = 100,
