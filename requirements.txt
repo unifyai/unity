@@ -10,3 +10,5 @@ livekit-plugins-noise-cancellation~=0.2
 git+https://github.com/unifyai/unify # deploy mode
 browser_use
 langchain-openai
+textual
+textual-dev
