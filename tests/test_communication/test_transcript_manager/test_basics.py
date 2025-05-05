@@ -308,7 +308,7 @@ def test_summarize_exchanges():
     )
 
     # summarize
-    summary = transcript_manager.summarize([0, 1, 2])
+    summary = transcript_manager.summarize(exchange_ids=[0, 1, 2])
 
     # retrieve summary
     summaries = transcript_manager._search_summaries()

@@ -7,7 +7,10 @@ def test_search():
     knowledge_manager = KnowledgeManager()
     knowledge_manager.start()
     knowledge_manager._create_table("MyTable")
-    knowledge_manager._add_data("MyTable", [{"x": 0, "y": 1}, {"x": 2, "y": 3}])
+    knowledge_manager._add_data(
+        table="MyTable",
+        data=[{"x": 0, "y": 1}, {"x": 2, "y": 3}],
+    )
     data = knowledge_manager._search()
     assert data == {
         "MyTable": [
@@ -22,9 +25,15 @@ def test_search_specific_tables():
     knowledge_manager = KnowledgeManager()
     knowledge_manager.start()
     knowledge_manager._create_table("MyTable")
-    knowledge_manager._add_data("MyTable", [{"x": 0, "y": 1}, {"x": 2, "y": 3}])
+    knowledge_manager._add_data(
+        table="MyTable",
+        data=[{"x": 0, "y": 1}, {"x": 2, "y": 3}],
+    )
     knowledge_manager._create_table("MyOtherTable")
-    knowledge_manager._add_data("MyOtherTable", [{"t": 0, "v": 3}, {"t": 1, "v": 2}])
+    knowledge_manager._add_data(
+        table="MyOtherTable",
+        data=[{"t": 0, "v": 3}, {"t": 1, "v": 2}],
+    )
     data = knowledge_manager._search(tables=["MyTable"])
     assert data == {
         "MyTable": [
@@ -47,8 +56,8 @@ def test_search_w_filter():
     knowledge_manager.start()
     knowledge_manager._create_table("MyTable")
     knowledge_manager._add_data(
-        "MyTable",
-        [{"x": 0, "y": 1}, {"x": 1, "y": 2}, {"x": 2, "y": 3}, {"x": 3, "y": 4}],
+        table="MyTable",
+        data=[{"x": 0, "y": 1}, {"x": 1, "y": 2}, {"x": 2, "y": 3}, {"x": 3, "y": 4}],
     )
     data = knowledge_manager._search(filter="x > 1 and y < 4")
     assert data == {
