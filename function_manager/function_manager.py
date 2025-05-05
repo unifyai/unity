@@ -138,13 +138,12 @@ class FunctionManager(threading.Thread):
     _CTX = "Functions"
 
     def _get_log_by_function_id(self, *, function_id: int) -> unify.Log:
-        log_ids = unify.get_logs(
+        logs = unify.get_logs(
             context=self._CTX,
             filter=f"function_id == {function_id}",
-            return_ids_only=True,
         )
-        assert len(log_ids) == 1, f"No function with id {function_id!r} exists."
-        return log_ids[0]
+        assert len(logs) == 1, f"No function with id {function_id!r} exists."
+        return logs[0]
 
     def _next_function_id(self) -> int:
         if self._CTX not in unify.get_contexts():
@@ -296,12 +295,10 @@ class FunctionManager(threading.Thread):
         >>> mgr.search_functions(filter="'price' in docstring and 'sum' in calls")
         >>> mgr.search_functions(filter="name.startswith('get_')")
         """
-        return [
-            lg.entries
-            for lg in unify.get_logs(
-                context=self._CTX,
-                filter=filter,
-                offset=offset,
-                limit=limit,
-            )
-        ]
+        logs = unify.get_logs(
+            context=self._CTX,
+            filter=filter,
+            offset=offset,
+            limit=limit,
+        )
+        return [lg.entries for lg in logs]
