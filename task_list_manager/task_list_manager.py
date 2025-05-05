@@ -42,7 +42,7 @@ class TaskListManager(threading.Thread):
         """
         from task_list_manager.sys_msgs import UPDATE
 
-        client = unify.Unify("o4-mini@openai")
+        client = unify.Unify("o4-mini@openai", cache=True, traced=True)
         client.set_system_message(UPDATE)
         ans = tool_use_loop(client, text, self._tools)
         if return_reasoning_steps:

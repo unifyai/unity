@@ -347,7 +347,7 @@ def _llm_assert_correct(question: str, expected: str, candidate: str) -> None:
 
         {"correct": false}
     """
-    judge = unify.Unify("o4-mini@openai")
+    judge = unify.Unify("o4-mini@openai", cache=True, traced=True)
     judge.set_system_message(
         "You are a strict unit-test judge. "
         "You will be given a question, a ground-truth answer derived "
