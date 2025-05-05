@@ -88,9 +88,16 @@ def test_rename_column():
     )
     knowledge_manager._rename_column(table="MyTable", old_name="x", new_name="X")
     data = knowledge_manager._search()
+
+    # Assert the exact structure and order of keys
+    assert list(data.keys()) == ["MyTable"]
+    assert list(data["MyTable"][0].keys()) == ["X", "y"]
+    assert list(data["MyTable"][1].keys()) == ["X", "y"]
+
+    # Assert the values
     assert data == {
         "MyTable": [
-            {"y": 4, "X": 3},
-            {"y": 2, "X": 1},
+            {"X": 3, "y": 4},
+            {"X": 1, "y": 2},
         ],
     }

@@ -335,6 +335,7 @@ class KnowledgeManager(threading.Thread):
         return unify.create_logs(
             context=f"Knowledge/{table}",
             entries=data,
+            batched=True,  # NOTE: async logger can mess with the order of the data
         )
 
     # Search
