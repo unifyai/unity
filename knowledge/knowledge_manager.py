@@ -46,7 +46,7 @@ class KnowledgeManager(threading.Thread):
 
     # English-Text Command
 
-    def store(self, *, text: str, return_reasoning_steps: bool = False) -> Any:
+    def store(self, text: str, *, return_reasoning_steps: bool = False) -> Any:
         """
         Take in any storage text command, and use the tools available (the *non-skipped* private methods of this class) to store the information, refactoring the table and column schema along the way if needed.
 
@@ -67,7 +67,7 @@ class KnowledgeManager(threading.Thread):
             return ans, client.messages
         return ans
 
-    def retrieve(self, *, text: str, return_reasoning_steps: bool = False) -> str:
+    def retrieve(self, text: str, *, return_reasoning_steps: bool = False) -> str:
         """
         Take in any retrieval text command, and use the tools available (the *non-skipped* private methods of this class) to retireve the information, refactoring the table and column schema along the way if needed.
 
@@ -108,8 +108,8 @@ class KnowledgeManager(threading.Thread):
 
     def _create_table(
         self,
-        *,
         name: str,
+        *,
         description: Optional[str] = None,
         columns: Optional[Dict[str, ColumnType]] = None,
     ) -> Dict[str, str]:
@@ -184,7 +184,7 @@ class KnowledgeManager(threading.Thread):
         _handle_exceptions(response)
         return response.json()
 
-    def _delete_table(self, *, table: str) -> Dict[str, str]:
+    def _delete_table(self, table: str) -> Dict[str, str]:
         """
         Delete the specified table, and all of its data from the knowledge store.
 

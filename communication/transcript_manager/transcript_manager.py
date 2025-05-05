@@ -28,7 +28,7 @@ class TranscriptManager(threading.Thread):
 
     # English-Text Question
 
-    def ask(self, *, text: str, return_reasoning_steps: bool = False) -> Any:
+    def ask(self, text: str, *, return_reasoning_steps: bool = False) -> Any:
         """
         Ask any question as a text command, and use the tools available (the private methods of this class) to perform the action.
 
@@ -88,7 +88,7 @@ class TranscriptManager(threading.Thread):
         )
         return summary
 
-    def log_messages(self, *, messages: List[Message]):
+    def log_messages(self, messages: List[Message]):
         """
         Log messages onto the platform.
         """

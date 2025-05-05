@@ -82,7 +82,7 @@ def test_rename_table():
     assert "MyTable" in tables
 
     # rename
-    knowledge_manager._rename_table("MyTable", "MyNewTable")
+    knowledge_manager._rename_table(old_name="MyTable", new_name="MyNewTable")
     tables = knowledge_manager._list_tables()
     assert len(tables) == 1
     assert "MyNewTable" in tables

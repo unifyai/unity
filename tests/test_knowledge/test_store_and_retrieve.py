@@ -69,7 +69,7 @@ def test_retrieve_simple_fact():
     km.start()
 
     km._create_table("MyTable")
-    km._add_data("MyTable", [{"name": "Adrian", "birth_year": "1994"}])
+    km._add_data(table="MyTable", data=[{"name": "Adrian", "birth_year": "1994"}])
 
     answer, reasoning = km.retrieve(
         "When was Adrian born?",

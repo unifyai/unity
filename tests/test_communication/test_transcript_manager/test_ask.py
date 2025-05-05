@@ -91,7 +91,7 @@ class ScenarioBuilder:
         self._seed_key_exchanges()
         self._seed_filler()
         # One stored summary just so summaries exist
-        self.tm.summarize([0, 1])
+        self.tm.summarize(exchange_ids=[0, 1])
 
     # --------------------------------------------------------------------- #
     def _seed_contacts(self) -> None:
