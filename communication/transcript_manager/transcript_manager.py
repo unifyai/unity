@@ -42,7 +42,7 @@ class TranscriptManager(threading.Thread):
         """
         from communication.transcript_manager.sys_msgs import ANSWER
 
-        client = unify.Unify("o4-mini@openai")
+        client = unify.Unify("o4-mini@openai", cache=True, traced=True)
         client.set_system_message(ANSWER)
         ans = tool_use_loop(client, text, self._tools)
         if return_reasoning_steps:
@@ -71,7 +71,7 @@ class TranscriptManager(threading.Thread):
 
         if not isinstance(exchange_ids, list):
             exchange_ids = [exchange_ids]
-        client = unify.Unify("o4-mini@openai")
+        client = unify.Unify("o4-mini@openai", cache=True, traced=True)
         client.set_system_message(
             SUMMARIZE.replace("{guidance}", f"\n{guidance}\n" if guidance else ""),
         )

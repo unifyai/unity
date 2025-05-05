@@ -69,7 +69,11 @@ class TaskManager(threading.Thread):
         super().__init__(daemon=daemon)
         self._transcript_q = transcript_q
         self._text_task_q = text_command_q
-        self._task_organizer_client = unify.Unify("o4-mini@openai", traced=True)
+        self._task_organizer_client = unify.Unify(
+            "o4-mini@openai",
+            cache=True,
+            traced=True,
+        )
         self._current_task = None
 
     def _maybe_update_tasks(self, messages: List[Dict[str, str]]):
