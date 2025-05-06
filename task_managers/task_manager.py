@@ -1,10 +1,10 @@
 import json
 import time
-import queue
 import threading
 from datetime import datetime, timezone
 from typing import List, Dict, Optional
 
+import redis
 import unify
 from constants import SESSION_ID, LOGGER
 from task_managers.sys_msgs import FIRST_TASK
@@ -59,21 +59,12 @@ class FirstTaskResponse(BaseModel):
 
 class TaskManager(threading.Thread):
 
-    def __init__(
-        self,
-        transcript_q: "queue.Queue[List[str]]",
-        text_command_q: "queue.Queue[List[str]]",
-        *,
-        daemon: bool = True,
-    ) -> None:
+    def __init__(self, *, daemon: bool = True) -> None:
         super().__init__(daemon=daemon)
-        self._transcript_q = transcript_q
-        self._text_task_q = text_command_q
-        self._task_organizer_client = unify.Unify(
-            "o4-mini@openai",
-            cache=True,
-            traced=True,
-        )
+        self._redis_client = redis.Redis(host="localhost", port=6379, db=0)
+        self._pubsub = self._redis_client.pubsub()
+        self._pubsub.subscribe("transcript")
+        self._task_organizer_client = unify.Unify("o4-mini@openai", cache=True, traced=True)
         self._current_task = None
 
     def _maybe_update_tasks(self, messages: List[Dict[str, str]]):
@@ -130,16 +121,15 @@ class TaskManager(threading.Thread):
             new=True,
         )
         if first_task.should_create:
-            self._text_task_q.put(
-                (self._task_log.to_json(), first_task.description),
-            )
+            self._redis_client.publish("text_task_q", json.dumps([
+                self._task_log.to_json(), first_task.description
+            ]))
 
     def run(self) -> None:
-        while True:
-            messages = self._transcript_q.get()
-            if messages is None:
-                break
-
+        for transcript in self._pubsub.listen():
+            if transcript["type"] != "message":
+                continue
+            messages = json.loads(transcript["data"])
             with unify.Context("LLM Traces"), unify.Log(
                 session_id=SESSION_ID,
                 name="_update_tasks",

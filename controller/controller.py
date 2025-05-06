@@ -3,6 +3,7 @@ import threading
 from datetime import datetime, timezone
 from typing import List
 
+import redis
 import unify
 from controller.playwright.worker import BrowserWorker
 from controller.agent import text_to_browser_action
@@ -11,37 +12,27 @@ from constants import SESSION_ID, LOGGER
 
 class Controller(threading.Thread):
 
-    def __init__(
-        self,
-        text_command_q: "queue.Queue[List[str]]",
-        browser_state_q: "queue.Queue[List[str]]",
-        browser_command_q: "queue.Queue[List[str]]",
-        action_completion_q: "queue.Queue[List[str]]",
-        *,
-        daemon: bool = True,
-    ) -> None:
+    def __init__(self, *, daemon: bool = True) -> None:
         super().__init__(daemon=daemon)
-        self._text_action_q = text_command_q
-        self._browser_state_q = browser_state_q
-        self._browser_command_q = browser_command_q
-        self._action_completion_q = action_completion_q
+        self._redis_client = redis.Redis(host="localhost", port=6379, db=0)
+        self._pubsub_text_action = self._redis_client.pubsub()
+        self._pubsub_text_action.subscribe("text_action")
+        self._pubsub_browser_state = self._redis_client.pubsub()
+        self._pubsub_browser_state.subscribe("browser_state")
 
         self._browser_worker = BrowserWorker(
-            command_q=self._browser_command_q,
-            update_q=self._browser_state_q,
             start_url="https://www.google.com/",
             refresh_interval=0.4,
         )
         self._browser_open = False
 
     def run(self) -> None:
-        while True:
-            text_action = self._text_action_q.get()
-            if text_action is None:
-                break
-
+        for text_action_ in self._pubsub_text_action.listen():
+            if text_action_["type"] != "message":
+                continue
+            text_action = text_action_["data"]
             if self._browser_open:
-                browser_state = self._browser_state_q.get()
+                browser_state = self._pubsub_browser_state.get_message()
             else:
                 browser_state = {}
             with unify.Context("LLM Traces"), unify.Log(
@@ -71,11 +62,11 @@ class Controller(threading.Thread):
             elif not self._browser_open:
                 self._browser_worker.start()
                 self._browser_open = True
-                self._browser_command_q.put(action)
+                self._redis_client.publish("browser_state", action)
             else:
-                self._browser_command_q.put(action)
+                self._redis_client.publish("browser_state", action)
 
             # ToDo: only send this once we KNOW the browser action has completed successfully
-            self._action_completion_q.put(action)
+            self._redis_client.publish("action_completion", action)
             t = datetime.now(timezone.utc).time().isoformat(timespec="milliseconds")
             LOGGER.info(f"\n🕹️ Performed Action: {action} [⏱️ {t}]\n")

@@ -130,89 +130,21 @@ class BusManager:
     def __init__(self, with_browser_use: bool = False) -> None:
         self._with_browser_use = with_browser_use
 
-        # Queues #
-        # -------#
-
-        # the latest (windowed) user-agent transcript, updated after every new exchange
-        self._transcript_q: queue.Queue[list[str]] = queue.Queue()
-        self._transcript_q.name = "transcript_q"
-        _log_queue(self._transcript_q)
-
-        # low-level browser actions, in text form
-        self._text_action_q: queue.Queue[str] = queue.Queue()
-        self._text_action_q.name = "text_action_q"
-        _log_queue(self._text_action_q)
-
-        # user task requests, in text form
-        self._text_task_q: queue.Queue[str] = queue.Queue()
-        self._text_task_q.name = "text_task_q"
-        _log_queue(self._text_task_q)
-
-        # lower-level browser commands
-        self._browser_command_q: queue.Queue[str] = queue.Queue()
-        self._browser_command_q.name = "browser_command_q"
-        _log_queue(self._browser_command_q)
-
-        # playwright browser state
-        self._browser_state_q: queue.Queue[str] = queue.Queue()
-        self._browser_state_q.name = "browser_state_q"
-        _log_queue(self._browser_state_q)
-
-        # actions which have been completed, referenced by their title
-        self._action_completion_q: queue.Queue[str] = queue.Queue()
-        self._action_completion_q.name = "action_completion_q"
-        _log_queue(self._action_completion_q)
-
-        # tasks which have been completed, referenced by their title
-        self._task_completion_q: asyncio.Queue[str] = asyncio.Queue()
-        self._task_completion_q.name = "task_completion_q"
-        _log_queue(self._task_completion_q)
-
     def set_coms_asyncio_loop(self, loop: AbstractEventLoop) -> None:
         self._coms_asyncio_loop = loop
 
     def _create_managers(self):
         if self._with_browser_use:
-            self._browser_use = OffTheShelf(
-                self._transcript_q,
-                self._task_completion_q,
-                self._action_completion_q,
-                self._coms_asyncio_loop,
-            )
+            self._browser_use = OffTheShelf()
         else:
             # re-organizes and schedules task, based on transcripts
-            self._task_manager = TaskManager(
-                # [reads from]: detect when a task trigger + change is requested from transcript
-                self._transcript_q,
-                # [writes to]: parses intent from transcript + sends clear text commands
-                self._text_task_q,
-            )
+            self._task_manager = TaskManager()
 
             # handles hierarchical task planning + decomposition
-            self._planner = Planner(
-                # [read from]: take high-level text-based tasks and decomposes into low-level text-based actions
-                self._text_task_q,
-                # [writes to]: send these low-level text-based actions to the controller
-                self._text_action_q,
-                # [reads from]: determines when the low-level actions are completed
-                self._action_completion_q,
-                # [writes to]: writes incremental task progress, so the user-facing assistant stays updated
-                self._task_completion_q,
-                # enables writing to action_completion_q, which lives in another asyncio loop
-                self._coms_asyncio_loop,
-            )
+            self._planner = Planner()
 
             # handles text -> low-level browser commands
-            self._controller = Controller(
-                # [reads from]: take low-level text-based actions and convert to browser actions
-                self._text_action_q,
-                # [reads from]: use the browser state as context for text->action controller
-                self._browser_state_q,
-                # [writes to]: send the browser commands for the browser worker to execute
-                self._browser_command_q,
-                # [writes to]: sends the name of the completed action, once it is completed
-                self._action_completion_q,
-            )
+            self._controller = Controller()
 
     def start(self):
         self._create_managers()
@@ -222,34 +154,3 @@ class BusManager:
             self._task_manager.start()
             self._planner.start()
             self._controller.start()
-
-    # Properties #
-    # -----------#
-
-    @property
-    def transcript_q(self) -> queue.Queue[list[str]]:
-        return self._transcript_q
-
-    @property
-    def text_action_q(self) -> queue.Queue[str]:
-        return self._text_action_q
-
-    @property
-    def text_task_q(self) -> queue.Queue[str]:
-        return self._text_task_q
-
-    @property
-    def browser_command_q(self) -> queue.Queue[str]:
-        return self._browser_command_q
-
-    @property
-    def browser_state_q(self) -> queue.Queue[str]:
-        return self._browser_state_q
-
-    @property
-    def action_completion_q(self) -> queue.Queue[str]:
-        return self._action_completion_q
-
-    @property
-    def task_completion_q(self) -> asyncio.Queue[str]:
-        return self._task_completion_q
