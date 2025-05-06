@@ -39,7 +39,7 @@ Define a root Python function named `root_plan`.
 Include at least one call to a primitive helper and stub any other logic
 with `raise NotImplementedError` statements.
 
-Only the FIRST primitive call will be executed; subsequent helpers will be stubbed with `raise NotImplementedError` and decorated with `@verify`.
+Only the FIRST primitive call will be executed; subsequent helper calls **must** be stubbed with `raise NotImplementedError` and decorated with `@verify`.
 
 Return ONLY valid Python code without any explanations or markdown formatting.
 """
@@ -110,10 +110,6 @@ def _stubify_tree(tree):
             new_body = []
 
             for stmt in node.body:
-                # If we've already found a primitive call, don't add more statements
-                if has_primitive:
-                    break
-
                 # Check if this statement contains a primitive call
                 primitive_call = False
 
@@ -136,20 +132,29 @@ def _stubify_tree(tree):
                 # If this statement had a primitive call, mark it
                 if primitive_call:
                     has_primitive = True
+                    # Add NotImplementedError after the first primitive call
+                    if len(new_body) < len(node.body):
+                        error_stmt = ast.Call(
+                            func=ast.Name(id="NotImplementedError", ctx=ast.Load()),
+                            args=[
+                                ast.Constant(value="Subsequent primitive calls are stubbed")
+                            ],
+                            keywords=[],
+                        )
+                        new_body.append(ast.Raise(exc=error_stmt))
+                        break
 
             # If the function has no body or no primitive call, add NotImplementedError
             if not new_body or not has_primitive:
                 # Add a NotImplementedError statement
-                error_stmt = ast.Expr(
-                    value=ast.Call(
-                        func=ast.Name(id="NotImplementedError", ctx=ast.Load()),
-                        args=[
-                            ast.Constant(value=f"Function {node.name} not implemented")
-                        ],
-                        keywords=[],
-                    )
+                error_stmt = ast.Call(
+                    func=ast.Name(id="NotImplementedError", ctx=ast.Load()),
+                    args=[
+                        ast.Constant(value=f"Function {node.name} not implemented")
+                    ],
+                    keywords=[],
                 )
-                new_body.append(ast.Raise(exc=error_stmt.value))
+                new_body.append(ast.Raise(exc=error_stmt))
 
             # Update the function body
             node.body = new_body

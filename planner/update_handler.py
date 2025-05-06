@@ -400,7 +400,7 @@ def _handle_modification(planner, update_text: str) -> None:
     prompt_cc = (
         f"Write a Python function named 'course_correction' that syncs browser state before resuming execution after this update: '{update_text}'.\n"
         f"The function should use browser primitives to navigate to the correct URL, set scroll position, and ensure the browser is in the right state.\n"
-        f"Use only these primitives: navigate_to(), scroll(), click_button(), enter_text(), press_enter(), wait_for_page_load(), etc.\n"
+        f"Use only these primitives: open_url, scroll_down, click_button, enter_text, press_enter, select_tab, wait_for_user_signal.\n"
         f"The function should have no parameters and return None.\n"
         f"The course_correction function will be executed once and then automatically removed.\n"
         f"Provide ONLY the function code, no explanations.\n\n"
