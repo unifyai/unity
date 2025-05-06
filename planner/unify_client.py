@@ -8,8 +8,8 @@ from datetime import datetime, timezone
 import unify
 from constants import LOGGER
 
-# Single traced Unify client for all planner interactions
-client = unify.Unify(traced=True)
+# Single cached and traced Unify client for all planner interactions
+client = unify.Unify(cache=True, traced=True)
 client.set_endpoint("o4-mini@openai")
 client.set_stateful(True)
 
