@@ -17,6 +17,7 @@ from .unify_client import (
     set_stateful,
     generate_user,
 )
+from . import sys_msg
 
 
 _HEURISTIC_TIMEOUT_S = 60
@@ -214,18 +215,7 @@ class Verifier:
             set_stateful(False)
 
             # Generate the verdict using LLM
-            prompt = f"""
-            Verify if this browser automation primitive succeeded:
-            
-            Primitive information:
-            {payload_json}
-            
-            Respond with exactly one of: "ok", "reimplement", or "push_up_stack"
-            Explanation:
-            - "ok" if the primitive achieved its intent
-            - "reimplement" if the primitive failed and should be rewritten
-            - "push_up_stack" if the intent should be handled at a higher level
-            """
+            prompt = sys_msg.VERIFY_PRIMITIVE_PROMPT.format(payload_json=payload_json)
 
             verdict = generate_user(prompt).strip().lower()
 

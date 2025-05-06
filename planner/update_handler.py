@@ -1,5 +1,5 @@
 import inspect
-from . import primitives, zero_shot
+from . import primitives, zero_shot, sys_msg
 from .unify_client import (
     generate_prompt,
     set_system_message,
@@ -128,8 +128,7 @@ def _select_stack_function(update_text: str) -> str:
         return None
 
     # Set system message and disable stateful context
-    system_message = "You are an assistant that identifies which function in a call stack needs to be modified based on a user update."
-    set_system_message(system_message)
+    set_system_message(sys_msg.SELECT_STACK_FUNCTION_SYS_MSG)
     _set_stateful(False)
 
     # Format the call stack for the prompt
@@ -138,12 +137,8 @@ def _select_stack_function(update_text: str) -> str:
     )
 
     # Ask which function to patch
-    prompt = (
-        f"Given the user update: {update_text}\n\n"
-        f"{call_stack_str}\n\n"
-        "Which function in the current call stack should be modified to address this update?\n"
-        "Consider the semantic meaning of the function names and the user's request.\n"
-        "Respond with just the exact function name from the stack, no additional text."
+    prompt = sys_msg.SELECT_STACK_FUNCTION_PROMPT.format(
+        update_text=update_text, call_stack_str=call_stack_str
     )
 
     selected_function = generate_prompt(prompt).strip()
@@ -161,21 +156,10 @@ def _classify_update(update_text: str) -> str:
     Classify the user update as 'exploratory' or 'modify' using the Unify agent.
     """
     # Set system message with explicit schema and disable stateful context
-    system_message = (
-        "You are a classifier that determines if a user update is exploratory or modifying.\n"
-        "An 'exploratory' update is when the user wants to investigate or explore something new.\n"
-        "A 'modify' update is when the user wants to change or adjust the current plan."
-    )
-    set_system_message(system_message)
+    set_system_message(sys_msg.CLASSIFY_UPDATE_SYS_MSG)
     _set_stateful(False)
 
-    prompt = (
-        f"Classify the following user update as either 'exploratory' or 'modify':\n\n"
-        f"{update_text}\n\n"
-        "An 'exploratory' update is when the user wants to investigate or explore something new.\n"
-        "A 'modify' update is when the user wants to change or adjust the current plan.\n\n"
-        "Respond with EXACTLY one word, either 'exploratory' or 'modify'. No other text."
-    )
+    prompt = sys_msg.CLASSIFY_UPDATE_PROMPT.format(update_text=update_text)
     response = generate_prompt(prompt).strip().lower()
 
     # Strict matching for exact responses
@@ -211,25 +195,22 @@ def _handle_exploration(planner, update_text: str) -> None:
     exploration_tab_id = context.get_exploration_tab()
 
     # Build a zero-shot prompt to generate the exploration function
-    system_message = (
-        "You are an expert Python programmer creating a browser automation function. "
-        "The function should explore a topic in a dedicated tab and support nested explorations."
-    )
-    set_system_message(system_message)
+    set_system_message(sys_msg.EXPLORATION_FUNCTION_SYS_MSG)
     _set_stateful(False)
 
     # Create the prompt for generating the exploration function
-    prompt = (
-        f"Write a Python function named 'exploratory_task' that:\n"
-        f"1. {'Uses' if exploration_tab_id else 'Creates'} a dedicated exploration tab\n"
-        f"2. Searches for: '{update_text}'\n"
-        f"3. Allows the user to explore and signals when exploration is complete\n"
-        f"4. Returns to the original tab when done\n\n"
-        f"Original tab ID: {original_tab_id}\n"
-        f"{'Existing exploration tab ID: ' + exploration_tab_id if exploration_tab_id else 'No existing exploration tab'}\n\n"
-        f"Use these primitives: new_tab(), search(), select_tab(), wait_for_user_signal()\n"
-        f"The function should have no parameters and return None.\n"
-        f"Provide ONLY the function code, no explanations."
+    tab_action = "Uses" if exploration_tab_id else "Creates"
+    exploration_tab_info = (
+        f"Existing exploration tab ID: {exploration_tab_id}"
+        if exploration_tab_id
+        else "No existing exploration tab"
+    )
+
+    prompt = sys_msg.EXPLORATION_FUNCTION_PROMPT.format(
+        tab_action=tab_action,
+        update_text=update_text,
+        original_tab_id=original_tab_id,
+        exploration_tab_info=exploration_tab_info,
     )
 
     # Generate the exploration function code
@@ -328,16 +309,12 @@ def _handle_modification(planner, update_text: str) -> None:
                 plan_sketch += f"- {name}\n"
 
         # Set system message and disable stateful context
-        system_message = "You are an assistant that identifies which function in a plan needs to be modified based on a user update."
-        set_system_message(system_message)
+        set_system_message(sys_msg.SELECT_PLAN_FUNCTION_SYS_MSG)
         _set_stateful(False)
 
         # Ask which function to patch with improved context
-        prompt_node = (
-            f"Given the user update: {update_text}\n\n"
-            f"Available functions:\n{plan_sketch}\n\n"
-            "Which function in the current plan should be modified to address this update?\n"
-            "Respond with just the exact function name, no additional text."
+        prompt_node = sys_msg.SELECT_PLAN_FUNCTION_PROMPT.format(
+            update_text=update_text, plan_sketch=plan_sketch
         )
         target_function_name = generate_prompt(prompt_node).strip()
 
@@ -362,11 +339,10 @@ def _handle_modification(planner, update_text: str) -> None:
     # Generate revised code for the target function
     new_src = ""
     if target_function and callable(target_function):
-        prompt_rewrite = (
-            f"Rewrite the function '{target_function_name}' to satisfy: {update_text}.\n"
-            "Use only the primitive helpers and preserve signature and docstring.\n"
-            "Ensure the code is complete and syntactically correct.\n"
-            f"Original code:\n{old_src}"
+        prompt_rewrite = sys_msg.REWRITE_FUNCTION_PROMPT.format(
+            target_function_name=target_function_name,
+            update_text=update_text,
+            old_src=old_src,
         )
         new_src = generate_prompt(prompt_rewrite)
 
@@ -394,17 +370,10 @@ def _handle_modification(planner, update_text: str) -> None:
     course_payload = _build_course_payload()
 
     # Generate a course correction function to handle the update
-    system_message = "You are an expert Python programmer creating a browser automation course correction function."
-    set_system_message(system_message)
+    set_system_message(sys_msg.COURSE_CORRECTION_SYS_MSG)
 
-    prompt_cc = (
-        f"Write a Python function named 'course_correction' that syncs browser state before resuming execution after this update: '{update_text}'.\n"
-        f"The function should use browser primitives to navigate to the correct URL, set scroll position, and ensure the browser is in the right state.\n"
-        f"Use only these primitives: open_url, scroll_down, click_button, enter_text, press_enter, select_tab, wait_for_user_signal.\n"
-        f"The function should have no parameters and return None.\n"
-        f"The course_correction function will be executed once and then automatically removed.\n"
-        f"Provide ONLY the function code, no explanations.\n\n"
-        f"Context information:\n```\n{course_payload}\n```\n"
+    prompt_cc = sys_msg.COURSE_CORRECTION_PROMPT.format(
+        update_text=update_text, course_payload=course_payload
     )
 
     course_correction_code = generate_prompt(prompt_cc)

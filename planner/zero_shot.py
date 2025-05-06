@@ -14,35 +14,12 @@ from .model import Primitive
 from . import primitives
 from .unify_client import set_system_message, generate_prompt
 from . import sandbox
+from . import sys_msg
 
 
 PREAMBLE = (
     "from planner.verifier import verify\n" "from planner.primitives import *\n\n"
 )
-
-
-# Template for the prompt to generate the initial plan
-PROMPT_TEMPLATE = """
-You are an expert Python programmer tasked with creating execution plans.
-Your plans must be valid Python code that can be parsed and executed.
-Always define a root function named 'root_plan' and include primitive helper calls.
-
-You are given a task: {task_str}
-
-Use ONLY the following primitive helper functions (no others):
-{helper_list}
-
-For each primitive, here's its purpose:
-{helper_descriptions}
-
-Define a root Python function named `root_plan`.
-Include at least one call to a primitive helper and stub any other logic
-with `raise NotImplementedError` statements.
-
-Only the FIRST primitive call will be executed; subsequent helper calls **must** be stubbed with `raise NotImplementedError` and decorated with `@verify`.
-
-Return ONLY valid Python code without any explanations or markdown formatting.
-"""
 
 
 def _ensure_verify(decorator_list):
@@ -137,7 +114,9 @@ def _stubify_tree(tree):
                         error_stmt = ast.Call(
                             func=ast.Name(id="NotImplementedError", ctx=ast.Load()),
                             args=[
-                                ast.Constant(value="Subsequent primitive calls are stubbed")
+                                ast.Constant(
+                                    value="Subsequent primitive calls are stubbed"
+                                )
                             ],
                             keywords=[],
                         )
@@ -149,9 +128,7 @@ def _stubify_tree(tree):
                 # Add a NotImplementedError statement
                 error_stmt = ast.Call(
                     func=ast.Name(id="NotImplementedError", ctx=ast.Load()),
-                    args=[
-                        ast.Constant(value=f"Function {node.name} not implemented")
-                    ],
+                    args=[ast.Constant(value=f"Function {node.name} not implemented")],
                     keywords=[],
                 )
                 new_body.append(ast.Raise(exc=error_stmt))
@@ -198,8 +175,8 @@ def create_initial_plan(task_str: str) -> Tuple[ModuleType, Callable]:
         doc = func.__doc__ or f"Helper function to {name.replace('_', ' ')}"
         helper_descriptions += f"- {name}: {doc.strip()}\n"
 
-    # Build the prompt using the template
-    prompt = PROMPT_TEMPLATE.format(
+    # Build the prompt using the imported template
+    prompt = sys_msg.ZERO_SHOT_PROMPT.format(
         task_str=task_str,
         helper_list=", ".join(helper_names),
         helper_descriptions=helper_descriptions,

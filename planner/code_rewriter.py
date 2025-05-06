@@ -6,6 +6,7 @@ import uuid
 from .context import context
 from .unify_client import set_system_message, generate_prompt
 from . import sandbox
+from . import sys_msg
 
 
 def rewrite_function(fn: Callable, new_src: Optional[str] = None) -> None:
@@ -32,23 +33,16 @@ def rewrite_function(fn: Callable, new_src: Optional[str] = None) -> None:
         call_stack = context.get_call_stack()
         state_snapshot = context.last_state_snapshot()
 
-        # Construct prompt for Unify
-        prompt_parts: List[str] = [
-            f"# Original function: {fn.__name__}",
-            f"# Function source code:",
-            source,
-            "# Call stack context:",
-            repr(call_stack),
-            "# Browser state snapshot:",
-            repr(state_snapshot),
-            f"# Instruction: Revise the function '{fn.__name__}' while preserving its overall purpose.",
-        ]
-        prompt = "\n".join(prompt_parts)
+        # Format the prompt with function details
+        prompt = sys_msg.REWRITE_FUNCTION_PROMPT.format(
+            fn_name=fn.__name__,
+            source=source,
+            call_stack=repr(call_stack),
+            state_snapshot=repr(state_snapshot),
+        )
 
         # Set system message and generate patched code
-        set_system_message(
-            "You are an expert Python developer. Rewrite the provided function to improve it based on the context."
-        )
+        set_system_message(sys_msg.REWRITE_FUNCTION_SYS_MSG)
         new_src = generate_prompt(prompt)
         if not isinstance(new_src, str):
             raise RuntimeError("Unify did not return valid code string for rewriting.")
