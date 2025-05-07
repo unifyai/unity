@@ -121,7 +121,7 @@ class TaskManager(threading.Thread):
             new=True,
         )
         if first_task.should_create:
-            self._redis_client.publish("text_task_q", json.dumps([
+            self._redis_client.publish("text_task", json.dumps([
                 self._task_log.to_json(), first_task.description
             ]))
 

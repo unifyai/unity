@@ -116,7 +116,10 @@ async def _speech_dispatcher(
     redis_client = redis.Redis(host="localhost", port=6379, db=0)
     pubsub = redis_client.pubsub()
     pubsub.subscribe("task_completion")
-    for task_completion in pubsub.listen():
+    while True:
+        task_completion = pubsub.get_message()
+        if task_completion["type"] != "message":
+            continue
         # 1) stop whatever is playing
         await session.interrupt()  # Docs: "Interrupt current speech"
         # 2) speak the fresh text
@@ -237,7 +240,7 @@ class VoiceAssistant(Agent):
     # -------------------- RUNTIME HOOKS (LiveKit) ------------------------
     async def on_user_turn_completed(self, turn_ctx, new_message) -> None:
         t = datetime.now(timezone.utc).time().isoformat(timespec="milliseconds")
-        LOGGER.info(f"\n🎙️ Transcribed user speech [⏱️ {t}]\n")
+        LOGGER.info(f"\n🎙️ Transcribed user speech [⏱️ {t}]\n{new_message.text_content}")
         unify.log(
             context="Transcripts",
             session_id=SESSION_ID,
@@ -251,7 +254,7 @@ class VoiceAssistant(Agent):
             for msg in self.chat_ctx.items[1:]
             if msg.type not in ["function_call", "function_call_output"]
         ] + [{"user": new_message.text_content}]
-        self._redis_client.publish("transcript_q", json.dumps(msgs))
+        self._redis_client.publish("transcript", json.dumps(msgs))
 
     async def transcription_node(
         self,
