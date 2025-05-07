@@ -16,6 +16,8 @@ You are assisting {FIRST_NAME}, can you can perform ANY TASK that {FIRST_NAME} r
 """
 )
 
+COMS_MANAGER = AGENT_INFO + ""
+
 NEW_AGENT = (
     AGENT_INFO
     + f"""
