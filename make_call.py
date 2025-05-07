@@ -1,3 +1,5 @@
+from dotenv import load_dotenv
+load_dotenv()
 import os
 
 os.environ["TRANSFORMERS_VERBOSITY"] = "error"
@@ -13,7 +15,6 @@ import logging
 import logging.config
 from datetime import datetime, timezone
 from typing import AsyncIterable
-from dotenv import load_dotenv
 from livekit import agents
 from livekit.agents.voice import chat_cli
 from livekit.agents import Agent, AgentSession, RoomInputOptions, function_tool
@@ -98,10 +99,9 @@ def _silent_print_audio_mode(self, *args, **kwargs):
 chat_cli.ChatCLI._print_audio_mode = _silent_print_audio_mode
 # End hack
 
-load_dotenv()
 FIRST_NAME = os.environ["FIRST_NAME"]
 
-unify.activate("Unity", overwrite=True)
+unify.activate("Unity")
 
 
 bus_manager = BusManager(with_browser_use=bool(os.environ.get("OFF_THE_SHELF", False)))
@@ -116,8 +116,7 @@ async def _speech_dispatcher(
     redis_client = redis.Redis(host="localhost", port=6379, db=0)
     pubsub = redis_client.pubsub()
     pubsub.subscribe("task_completion")
-    while True:
-        task_completion = pubsub.get_message()
+    for task_completion in pubsub.listen():
         if task_completion["type"] != "message":
             continue
         # 1) stop whatever is playing
