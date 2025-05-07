@@ -7,6 +7,7 @@ from typing import (
     List,
     Dict,
     Union,
+    Optional,
     Any,
     get_type_hints,
     get_origin,
@@ -134,6 +135,7 @@ def tool_use_loop(
     message: str,
     tools: Dict[str, Callable],
     *,
+    name: Optional[str] = None,
     max_consecutive_failures: int = 3,
 ):
     """
@@ -150,7 +152,11 @@ def tool_use_loop(
     LOGGER.info(f"\n🧑‍💻 {message}\n")
 
     tools_schema = [method_to_schema(v) for v in tools.values()]
-    client.append_messages([{"role": "user", "content": message}])
+    msg = {"role": "user", "content": message}
+    if name is not None:
+        # apparently this works: https://chatgpt.com/share/681af318-91b0-8012-aeb5-1159f5c250a4
+        msg["name"] = name
+    client.append_messages([msg])
 
     consecutive_failures = 0
 
