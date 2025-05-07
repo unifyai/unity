@@ -15,6 +15,7 @@ from textual.widgets import Header, Static, Button, Input
 from textual.containers import VerticalScroll, HorizontalGroup, Container
 from textual.reactive import reactive
 from textual import work
+from textual.worker import Worker, WorkerState
 
 from unify import AsyncUnify
 
@@ -76,6 +77,10 @@ class MessagesView(VerticalScroll):
 
     
 class ChatApp(App):
+    def __init__(self, *args, **kwargs):
+        self.llm_worker: Worker = None
+        super().__init__(*args, **kwargs)
+
     def compose(self) -> ComposeResult:
         yield Header()
         yield MessagesView()
@@ -89,7 +94,18 @@ class ChatApp(App):
             msg_view.scroll_end()
             print(msg_view.messages)
             event.input.value = ""
-            self.llm_response()
+            self.llm_worker = self.llm_response()
+
+    def on_input_changed(self, event: Input.Changed):
+        if self.llm_worker:
+            was_running = self.llm_worker.state == WorkerState.RUNNING
+            if was_running and event.value != "":
+                self.llm_worker.cancel()
+                msg_view = self.query_one(MessagesView)
+                msg_view.ai_typing = False
+                self.llm_worker = self.llm_response()
+            
+
 
     @work(exclusive=True)
     async def llm_response(self):
@@ -102,6 +118,7 @@ class ChatApp(App):
         msg_view.ai_typing = False
         msg_view.messages = msg_view.messages + [{"role": "assistant", "content": res, "date": datetime.now()}]
         msg_view.scroll_end()
+        self.llm_worker = None
 
 
 app = ChatApp()
