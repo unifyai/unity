@@ -1,4 +1,5 @@
 from dotenv import load_dotenv
+
 load_dotenv()
 import os
 
@@ -21,11 +22,12 @@ from livekit.agents import Agent, AgentSession, RoomInputOptions, function_tool
 from livekit.plugins import cartesia, deepgram, noise_cancellation, openai, silero
 from livekit.plugins.turn_detector.multilingual import MultilingualModel
 
-from communication.sys_msgs import PHONE_AGENT
+from communication.sys_msgs import NEW_AGENT, PHONE_AGENT
 from busses.bus_manager import BusManager
 from constants import SESSION_ID
 
 import unify
+from state import State
 
 # ── bootstrap (runs before other imports) ──────────────────────────────
 _boot = argparse.ArgumentParser(add_help=False)
@@ -142,99 +144,77 @@ async def _speech_dispatcher(
 class VoiceAssistant(Agent):
 
     def __init__(self) -> None:
-        super().__init__(instructions=PHONE_AGENT)
+        super().__init__(instructions=NEW_AGENT)  # PHONE_AGENT)
         self._redis_client = redis.Redis(host="localhost", port=6379, db=0)
+        self._latest_dialogue_window: list[dict[str, str]] = []
+        self._state = State()
 
     # --------------------------- TOOLS -----------------------------------
-    # @function_tool()
-    # async def is_task_running(self) -> bool:
-    #     """Return *True* if a browser task is currently underway."""
-    #     return self._task_running
+    @function_tool()
+    async def is_task_running(self) -> bool:
+        """Return *True* if a browser task is currently underway."""
+        return self._state.task_running
 
-    # @function_tool()
-    # async def is_task_paused(self) -> bool:
-    #     """Return *True* if a browser task is currently paused."""
-    #     return self._task_paused
+    @function_tool()
+    async def is_task_paused(self) -> bool:
+        """Return *True* if a browser task is currently paused."""
+        return self._state.task_paused
 
-    # @function_tool()
-    # async def create_task(self) -> str:
-    #     """Send the latest user-assistant exchange to the browser helper.
+    @function_tool()
+    async def create_task(self) -> str:
+        """Send the latest user-assistant exchange to the browser helper.
 
-    #     Should be called *after* the assistant has clarified the desired
-    #     action and is ready to launch the task.
-    #     """
-    #     if self._task_running:
-    #         return "I'm already working on something for you. Ask me anything else meanwhile!"
+        Should be called *after* the assistant has clarified the desired
+        action and is ready to launch the task.
+        """
+        if self._state.task_running:
+            return "I'm already working on something for you. Ask me anything else meanwhile!"
+        cmd = json.dumps(
+            {"action": "create_task", "payload": self._latest_dialogue_window}
+        )
+        self._redis_client.publish("transcript", cmd)
+        return "Alright, let me get on with that. I'll let you know how it goes!"
 
-    #     self._browser_agent.add_new_task(
-    #         "\n" + json.dumps(self._latest_dialogue_window, indent=4) + "\n"
-    #     )
-    #     if not self._task_paused:
-    #         # reset the state of the browser agent
-    #         self._task_running = True
-    #         self._last_task_result = None
-    #         self._last_step_results = []
-    #         self._browser_agent.state.history.history = []
+    @function_tool()
+    async def pause_task(self) -> str:
+        """Pause the current task."""
+        if not self._state.task_running:
+            return "No task is currently running."
+        self._redis_client.publish("command", json.dumps({"action": "pause_task"}))
+        return "Task paused. You can resume it later."
 
-    #         # submit the coroutine to the dedicated browser loop safely
-    #         fut = asyncio.run_coroutine_threadsafe(
-    #             self.browser_run(),
-    #             self._browser_loop,
-    #         )
+    @function_tool()
+    async def cancel_task(self) -> str:
+        """Cancel the current task."""
+        if not (self._state.task_running or self._state.task_paused):
+            return "No task is currently running."
+        self._redis_client.publish("command", json.dumps({"action": "cancel_task"}))
+        return "Task cancelled. Let me know if there's anything else."
 
-    #         # Log any exception that might occur in the background task
-    #         def _log_bg_exc(fut):
-    #             try:
-    #                 fut.result()
-    #             except Exception as e:
-    #                 print("[BrowserLoop] task raised an exception:", e)
+    @function_tool()
+    async def resume_task(self) -> str:
+        """Resume the current task."""
+        if not self._state.task_paused:
+            return "No task is currently paused."
+        self._redis_client.publish("command", json.dumps({"action": "resume_task"}))
+        return "Task resumed."
 
-    #         fut.add_done_callback(_log_bg_exc)
-    #     return "Alright, let me get on with that. I'll let you know how it goes!"
+    @function_tool()
+    async def get_last_task_result(self) -> str:
+        """Fetch the final result once a task has completed."""
+        if self._state.task_running:
+            return "Still working on it – I'll have an update soon."
+        result = self._state.last_task_result
+        if not result:
+            return "There isn't a completed task yet."
+        return result
 
-    # @function_tool()
-    # async def pause_task(self) -> str:
-    #     """Pause the current task."""
-    #     if not self._task_running:
-    #         return "No task is currently running."
-    #     self._browser_agent.pause()
-    #     self._task_running = False
-    #     self._task_paused = True
-    #     return "Task paused. You can resume it later."
-
-    # @function_tool()
-    # async def cancel_task(self) -> str:
-    #     """Cancel the current task."""
-    #     if not self._task_running:
-    #         return "No task is currently running."
-    #     self._browser_agent.stop()
-    #     self._task_running = False
-
-    # @function_tool()
-    # async def resume_task(self) -> str:
-    #     """Resume the current task."""
-    #     if not self._task_running:
-    #         return "No task is currently running."
-    #     self._browser_agent.resume()
-    #     self._task_running = True
-    #     self._task_paused = False
-    #     return "Task resumed. I'll let you know how it goes!"
-
-    # @function_tool()
-    # async def get_last_task_result(self) -> str:
-    #     """Fetch the final result once a task has completed."""
-    #     if self._task_running:
-    #         return "Still working on it – I'll have an update soon."
-    #     if self._last_task_result is None:
-    #         return "There isn't a completed task yet."
-    #     return self._last_task_result
-
-    # @function_tool()
-    # async def get_last_step_results(self) -> list[str]:
-    #     """Fetch the step of the current running task."""
-    #     if not self._task_running:
-    #         return "No task is currently running."
-    #     return self._last_step_results
+    @function_tool()
+    async def get_last_step_results(self) -> list[str]:
+        """Fetch the steps of the current running task (oldest first)."""
+        if not (self._state.task_running or self._state.task_paused):
+            return ["No task is currently running."]
+        return self._state.last_step_results
 
     # -------------------- RUNTIME HOOKS (LiveKit) ------------------------
     async def on_user_turn_completed(self, turn_ctx, new_message) -> None:
@@ -248,12 +228,11 @@ class VoiceAssistant(Agent):
             medium="phone call",
             msg=new_message.text_content,
         )
-        msgs = [
+        self._latest_dialogue_window = [
             {msg.role: msg.content[0]}
             for msg in self.chat_ctx.items[1:]
             if msg.type not in ["function_call", "function_call_output"]
         ] + [{"user": new_message.text_content}]
-        self._redis_client.publish("transcript", json.dumps(msgs))
 
     async def transcription_node(
         self,
@@ -302,7 +281,7 @@ async def entrypoint(ctx: agents.JobContext):
 
     # ── background tasks ──────────────────────────────────────────────
     # start the dispatcher that speaks anything it receives
-    asyncio.create_task(_speech_dispatcher(session))
+    # asyncio.create_task(_speech_dispatcher(session))
 
     await session.generate_reply(
         instructions=f"Greet {FIRST_NAME} by name, and ask how it's going.",

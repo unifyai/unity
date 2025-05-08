@@ -64,7 +64,9 @@ class TaskManager(threading.Thread):
         self._redis_client = redis.Redis(host="localhost", port=6379, db=0)
         self._pubsub = self._redis_client.pubsub()
         self._pubsub.subscribe("transcript")
-        self._task_organizer_client = unify.Unify("o4-mini@openai", cache=True, traced=True)
+        self._task_organizer_client = unify.Unify(
+            "o4-mini@openai", cache=True, traced=True
+        )
         self._current_task = None
 
     def _maybe_update_tasks(self, messages: List[Dict[str, str]]):
@@ -121,9 +123,10 @@ class TaskManager(threading.Thread):
             new=True,
         )
         if first_task.should_create:
-            self._redis_client.publish("text_task", json.dumps([
-                self._task_log.to_json(), first_task.description
-            ]))
+            self._redis_client.publish(
+                "text_task",
+                json.dumps([self._task_log.to_json(), first_task.description]),
+            )
 
     def run(self) -> None:
         for transcript in self._pubsub.listen():

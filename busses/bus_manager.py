@@ -7,7 +7,7 @@ from pathlib import Path
 from functools import wraps
 from asyncio import AbstractEventLoop
 
-from off_the_shelf import OffTheShelf
+from off_the_shelf import BrowserAssistant, BrowserController
 from task_managers.task_manager import TaskManager
 from controller.controller import Controller
 from planner.planner import Planner
@@ -135,7 +135,14 @@ class BusManager:
 
     def _create_managers(self):
         if self._with_browser_use:
-            self._browser_use = OffTheShelf()
+            # helps manipulate the browser
+            self._browser_assistant = BrowserAssistant()
+
+            # helps stop, pause, resume the browser assistant
+            self._browser_controller = BrowserController()
+
+            # Connect controller to assistant
+            self._browser_controller.set_browser_assistant(self._browser_assistant)
         else:
             # re-organizes and schedules task, based on transcripts
             self._task_manager = TaskManager()
@@ -149,7 +156,8 @@ class BusManager:
     def start(self):
         self._create_managers()
         if self._with_browser_use:
-            self._browser_use.start()
+            self._browser_assistant.start()
+            self._browser_controller.start()
         else:
             self._task_manager.start()
             self._planner.start()

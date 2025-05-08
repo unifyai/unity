@@ -5,8 +5,6 @@ For now, to run make sure textual is installed, simply do python new_start_chat.
 To Exit the Terminal run `Ctrl + q`.
 """
 
-
-
 import asyncio
 from datetime import datetime
 
@@ -25,9 +23,12 @@ load_dotenv()
 
 client = AsyncUnify(endpoint="gpt-4o@openai")
 
+
 class Message(HorizontalGroup):
 
-    def __init__(self, role: str, content: str, date: datetime.date=None, *args, **kwargs):
+    def __init__(
+        self, role: str, content: str, date: datetime.date = None, *args, **kwargs
+    ):
         super().__init__(*args, **kwargs)
         self.role = role
         self.content = content
@@ -57,7 +58,7 @@ class Message(HorizontalGroup):
             msg.styles.color = "black"
             msg.styles.min_width = 20
             msg.styles.max_width = 50
-            msg.styles.border = ("round", "blue" if self.role=="user" else "red")
+            msg.styles.border = ("round", "blue" if self.role == "user" else "red")
             msg.border_title = "You" if self.role == "user" else "AI"
             msg.border_subtitle = str(self.date)
             msg.styles.max_height = "100%"
@@ -65,17 +66,19 @@ class Message(HorizontalGroup):
 
             yield msg
 
+
 class MessagesView(VerticalScroll):
     messages = reactive([], recompose=True)
     ai_typing = reactive(False, recompose=True)
 
     def compose(self) -> ComposeResult:
         self.styles.align_horizontal = "center"
-        yield from [Message(role=msg["role"], content=msg["content"], date=msg["date"]) for msg in self.messages] + ([Message(
-            role="typing", content=""
-        )] if self.ai_typing else [])
+        yield from [
+            Message(role=msg["role"], content=msg["content"], date=msg["date"])
+            for msg in self.messages
+        ] + ([Message(role="typing", content="")] if self.ai_typing else [])
 
-    
+
 class ChatApp(App):
     def __init__(self, *args, **kwargs):
         self.llm_worker: Worker = None
@@ -85,12 +88,14 @@ class ChatApp(App):
         yield Header()
         yield MessagesView()
         yield Input(placeholder="Enter your Message", id="message_input")
-    
+
     def on_input_submitted(self, event: Input.Submitted):
         if event.input.id == "message_input":
             msg_view = self.query_one(MessagesView)
             print(msg_view.messages)
-            msg_view.messages = msg_view.messages + [{"role": "user", "content": event.input.value, "date": datetime.now()}] 
+            msg_view.messages = msg_view.messages + [
+                {"role": "user", "content": event.input.value, "date": datetime.now()}
+            ]
             msg_view.scroll_end()
             print(msg_view.messages)
             event.input.value = ""
@@ -104,8 +109,6 @@ class ChatApp(App):
                 msg_view = self.query_one(MessagesView)
                 msg_view.ai_typing = False
                 self.llm_worker = self.llm_response()
-            
-
 
     @work(exclusive=True)
     async def llm_response(self):
@@ -114,9 +117,15 @@ class ChatApp(App):
         await asyncio.sleep(1.0)
         msg_view.ai_typing = True
         await asyncio.sleep(2.0)
-        res = await client.generate(messages=[{"role": m["role"], "content": m["content"]} for m in msg_view.messages])
+        res = await client.generate(
+            messages=[
+                {"role": m["role"], "content": m["content"]} for m in msg_view.messages
+            ]
+        )
         msg_view.ai_typing = False
-        msg_view.messages = msg_view.messages + [{"role": "assistant", "content": res, "date": datetime.now()}]
+        msg_view.messages = msg_view.messages + [
+            {"role": "assistant", "content": res, "date": datetime.now()}
+        ]
         msg_view.scroll_end()
         self.llm_worker = None
 
