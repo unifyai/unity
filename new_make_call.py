@@ -65,7 +65,9 @@ class VoiceAssistant(Agent):
     async def set_last_task_result(self, result: BrowserAgent):
         """Set the result of the previous task (async to satisfy BrowserAgent callback)."""
         last_action = result.state.history.last_action()
-        self._last_step_results.append(json.dumps({} if last_action is None else last_action))
+        self._last_step_results.append(
+            json.dumps({} if last_action is None else last_action)
+        )
 
     async def browser_run(self):
         """Run the browser agent to fulfill the task represented by the current conversation."""
@@ -198,7 +200,7 @@ def notify_task_completed_wrapped(
                 "be explicit about it. It is not a response to the user's request."
                 "Start by saying something like 'By the way, your requested browser "
                 "task has completed. Here are the details:'\n\n"
-                f'{result}'
+                f"{result}"
             )
         )
 

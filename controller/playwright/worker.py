@@ -14,6 +14,8 @@ from pathlib import Path
 from tempfile import mkdtemp
 from typing import Callable
 
+import redis
+
 from controller.playwright.browser_utils import (
     build_boxes,
     collect_elements,
@@ -45,15 +47,14 @@ class BrowserWorker(threading.Thread):
     def __init__(
         self,
         *,
-        command_q: "queue.Queue[str]",
-        update_q: "queue.Queue[list]",
         start_url: str,
         refresh_interval: float = 0.5,
         log: Callable[[str], None] | None = None,
     ):
         super().__init__(daemon=True)
-        self.command_q = command_q
-        self.update_q = update_q
+        self._redis_client = redis.Redis(host="localhost", port=6379, db=0)
+        self._pubsub = self._redis_client.pubsub()
+        self._pubsub.subscribe("browser_command")
         self.start_url = start_url
         self.refresh_interval = refresh_interval
         self.log = log or (lambda *_: None)
@@ -83,10 +84,12 @@ class BrowserWorker(threading.Thread):
                 while not self._stop_event.is_set():
                     # -- 1) drain commands --------------------------------
                     while True:
-                        try:
-                            cmd = self.command_q.get_nowait()
-                        except queue.Empty:
+                        cmd = self._pubsub.get_message()
+                        if cmd is None:
                             break
+                        if cmd["type"] != "message":
+                            continue
+                        cmd = cmd["data"]
 
                         # show the raw command arriving from the GUI
                         self.log(f"CMD ➜ {cmd!r}")
@@ -224,13 +227,10 @@ class BrowserWorker(threading.Thread):
                     }
                     while True:  # keep only the latest payload
                         try:
-                            self.update_q.put_nowait(payload)
+                            self._redis_client.publish("browser_state", payload)
                             break
-                        except queue.Full:
-                            try:
-                                self.update_q.get_nowait()  # discard oldest
-                            except queue.Empty:
-                                pass
+                        except Exception:
+                            pass
                     time.sleep(self.refresh_interval)
 
             finally:
