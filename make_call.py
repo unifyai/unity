@@ -1,3 +1,6 @@
+from dotenv import load_dotenv
+
+load_dotenv()
 import os
 
 os.environ["TRANSFORMERS_VERBOSITY"] = "error"
@@ -5,24 +8,26 @@ os.environ["TRANSFORMERS_VERBOSITY"] = "error"
 import sys
 import argparse
 import asyncio
+import json
 import random
+import redis
 import pathlib
 import logging
 import logging.config
 from datetime import datetime, timezone
 from typing import AsyncIterable
-from dotenv import load_dotenv
 from livekit import agents
 from livekit.agents.voice import chat_cli
-from livekit.agents import Agent, AgentSession, RoomInputOptions
+from livekit.agents import Agent, AgentSession, RoomInputOptions, function_tool
 from livekit.plugins import cartesia, deepgram, noise_cancellation, openai, silero
 from livekit.plugins.turn_detector.multilingual import MultilingualModel
 
-from communication.sys_msgs import PHONE_AGENT
+from communication.sys_msgs import NEW_AGENT, PHONE_AGENT
 from busses.bus_manager import BusManager
 from constants import SESSION_ID
 
 import unify
+from state import State
 
 # ── bootstrap (runs before other imports) ──────────────────────────────
 _boot = argparse.ArgumentParser(add_help=False)
@@ -96,10 +101,9 @@ def _silent_print_audio_mode(self, *args, **kwargs):
 chat_cli.ChatCLI._print_audio_mode = _silent_print_audio_mode
 # End hack
 
-load_dotenv()
 FIRST_NAME = os.environ["FIRST_NAME"]
 
-unify.activate("Unity", overwrite=True)
+unify.activate("Unity")
 
 
 bus_manager = BusManager(with_browser_use=bool(os.environ.get("OFF_THE_SHELF", False)))
@@ -111,10 +115,14 @@ async def _speech_dispatcher(
     """
     Waits for text, interrupts any current speech, and speaks the new text.
     """
-    while True:
-        await bus_manager.task_completion_q.get()
+    redis_client = redis.Redis(host="localhost", port=6379, db=0)
+    pubsub = redis_client.pubsub()
+    pubsub.subscribe("task_completion")
+    for task_completion in pubsub.listen():
+        if task_completion["type"] != "message":
+            continue
         # 1) stop whatever is playing
-        await session.interrupt()  # Docs: “Interrupt current speech”
+        await session.interrupt()  # Docs: "Interrupt current speech"
         # 2) speak the fresh text
         await session.say(
             random.choice(
@@ -136,11 +144,82 @@ async def _speech_dispatcher(
 class VoiceAssistant(Agent):
 
     def __init__(self) -> None:
-        super().__init__(instructions=PHONE_AGENT)
+        super().__init__(instructions=NEW_AGENT)  # PHONE_AGENT)
+        self._redis_client = redis.Redis(host="localhost", port=6379, db=0)
+        self._latest_dialogue_window: list[dict[str, str]] = []
+        self._state = State()
 
+    # --------------------------- TOOLS -----------------------------------
+    @function_tool()
+    async def is_task_running(self) -> bool:
+        """Return *True* if a browser task is currently underway."""
+        return self._state.task_running
+
+    @function_tool()
+    async def is_task_paused(self) -> bool:
+        """Return *True* if a browser task is currently paused."""
+        return self._state.task_paused
+
+    @function_tool()
+    async def create_task(self) -> str:
+        """Send the latest user-assistant exchange to the browser helper.
+
+        Should be called *after* the assistant has clarified the desired
+        action and is ready to launch the task.
+        """
+        if self._state.task_running:
+            return "I'm already working on something for you. Ask me anything else meanwhile!"
+        cmd = json.dumps(
+            {"action": "create_task", "payload": self._latest_dialogue_window}
+        )
+        self._redis_client.publish("transcript", cmd)
+        return "Alright, let me get on with that. I'll let you know how it goes!"
+
+    @function_tool()
+    async def pause_task(self) -> str:
+        """Pause the current task."""
+        if not self._state.task_running:
+            return "No task is currently running."
+        self._redis_client.publish("command", json.dumps({"action": "pause_task"}))
+        return "Task paused. You can resume it later."
+
+    @function_tool()
+    async def cancel_task(self) -> str:
+        """Cancel the current task."""
+        if not (self._state.task_running or self._state.task_paused):
+            return "No task is currently running."
+        self._redis_client.publish("command", json.dumps({"action": "cancel_task"}))
+        return "Task cancelled. Let me know if there's anything else."
+
+    @function_tool()
+    async def resume_task(self) -> str:
+        """Resume the current task."""
+        if not self._state.task_paused:
+            return "No task is currently paused."
+        self._redis_client.publish("command", json.dumps({"action": "resume_task"}))
+        return "Task resumed."
+
+    @function_tool()
+    async def get_last_task_result(self) -> str:
+        """Fetch the final result once a task has completed."""
+        if self._state.task_running:
+            return "Still working on it – I'll have an update soon."
+        result = self._state.last_task_result
+        if not result:
+            return "There isn't a completed task yet."
+        return result
+
+    @function_tool()
+    async def get_last_step_results(self) -> list[str]:
+        """Fetch the steps of the current running task (oldest first)."""
+        if not (self._state.task_running or self._state.task_paused):
+            return ["No task is currently running."]
+        return self._state.last_step_results
+
+    # -------------------- RUNTIME HOOKS (LiveKit) ------------------------
     async def on_user_turn_completed(self, turn_ctx, new_message) -> None:
         t = datetime.now(timezone.utc).time().isoformat(timespec="milliseconds")
-        LOGGER.info(f"\n🎙️ Transcribed user speach [⏱️ {t}]\n")
+        LOGGER.info(f"\n🎙️ Transcribed user speech [⏱️ {t}]\n{new_message.text_content}")
         unify.log(
             context="Transcripts",
             session_id=SESSION_ID,
@@ -149,10 +228,11 @@ class VoiceAssistant(Agent):
             medium="phone call",
             msg=new_message.text_content,
         )
-        msgs = [{msg.role: msg.content[0]} for msg in self.chat_ctx.items[1:]] + [
-            {"user": new_message.text_content},
-        ]
-        bus_manager.transcript_q.put(msgs)
+        self._latest_dialogue_window = [
+            {msg.role: msg.content[0]}
+            for msg in self.chat_ctx.items[1:]
+            if msg.type not in ["function_call", "function_call_output"]
+        ] + [{"user": new_message.text_content}]
 
     async def transcription_node(
         self,
@@ -201,7 +281,7 @@ async def entrypoint(ctx: agents.JobContext):
 
     # ── background tasks ──────────────────────────────────────────────
     # start the dispatcher that speaks anything it receives
-    asyncio.create_task(_speech_dispatcher(session))
+    # asyncio.create_task(_speech_dispatcher(session))
 
     await session.generate_reply(
         instructions=f"Greet {FIRST_NAME} by name, and ask how it's going.",
@@ -210,5 +290,5 @@ async def entrypoint(ctx: agents.JobContext):
 
 if __name__ == "__main__":
     if len(sys.argv) == 1:  # no sub-command provided
-        sys.argv.append("console")  # pretend the user typed “… console”
+        sys.argv.append("console")  # pretend the user typed "… console"
     agents.cli.run_app(agents.WorkerOptions(entrypoint_fnc=entrypoint))

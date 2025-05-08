@@ -29,8 +29,6 @@ def main() -> None:
 
     # start worker thread
     worker = BrowserWorker(
-        command_q=gui_to_browser_queue,
-        update_q=browser_to_gui_queue,
         start_url="https://www.google.com/",
         refresh_interval=0.4,
         log=log.debug,
