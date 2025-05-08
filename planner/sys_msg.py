@@ -23,6 +23,8 @@ with `raise NotImplementedError` statements.
 Only the FIRST primitive call will be executed; subsequent helper calls **must** be stubbed with `raise NotImplementedError` and decorated with `@verify`.
 
 Return ONLY valid Python code without any explanations or markdown formatting.
+
+# Reusable library: {library_block}
 """
 
 #### Update Handler Prompts ####
@@ -99,6 +101,10 @@ Context information:
 """
 
 #### Verifier Prompts ####
+VERIFY_PRIMITIVE_SYS_MSG = """
+You are a QA agent comparing a primitive call to before/after browser snapshots. Respond with only one keyword: ok, reimplement, or push_up_stack. Use concrete examples when available.
+"""
+
 VERIFY_PRIMITIVE_PROMPT = """
 Verify if this browser automation primitive succeeded:
 

@@ -9,7 +9,6 @@ from typing import Any, Optional, Dict, Tuple, Union
 
 from .context import context
 from .model import Primitive
-from .primitives import last_primitive
 from .verifier_utils import _hash_dom, dom_diff_summary
 from .unify_client import (
     set_system_message,
@@ -259,7 +258,6 @@ def verify(fn):
                     # Execute the function and get the primitive
                     src = inspect.getsource(fn)
                     result = fn(*args, **kwargs)
-                    primitive = last_primitive()
                 except NotImplementedError:
                     Verifier.get_reimplement_queue().put(fn)
                     retries += 1

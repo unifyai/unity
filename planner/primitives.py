@@ -8,6 +8,7 @@ import threading
 import contextvars
 from typing import Callable, Optional
 from .model import Primitive
+from .verifier import verify
 
 from controller.commands import (
     CMD_OPEN_BROWSER,
@@ -131,7 +132,7 @@ def _to_queue(fn):
 
         return primitive
 
-    return wrapper
+    return verify(wrapper)
 
 
 def _raw_open_browser() -> Primitive:

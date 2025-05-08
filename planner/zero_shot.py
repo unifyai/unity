@@ -15,6 +15,7 @@ from . import primitives
 from .unify_client import set_system_message, generate_prompt
 from . import sandbox
 from . import sys_msg
+from function_manager.function_manager import FunctionManager
 
 
 PREAMBLE = (
@@ -175,11 +176,16 @@ def create_initial_plan(task_str: str) -> Tuple[ModuleType, Callable]:
         doc = func.__doc__ or f"Helper function to {name.replace('_', ' ')}"
         helper_descriptions += f"- {name}: {doc.strip()}\n"
 
+    # Fetch reusable functions from the function manager
+    lib = {}#FunctionManager().list_functions(include_implementations=True) #TODO: uncomment this once we have the FunctionManager working
+    library_block = "\n\n".join(lib.values()) if lib else "# <no library>"
+
     # Build the prompt using the imported template
     prompt = sys_msg.ZERO_SHOT_PROMPT.format(
         task_str=task_str,
         helper_list=", ".join(helper_names),
         helper_descriptions=helper_descriptions,
+        library_block=library_block,
     )
 
     # Invoke LLM to generate the plan code
