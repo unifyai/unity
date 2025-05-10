@@ -12,3 +12,4 @@ browser_use
 langchain-openai
 textual
 textual-dev
+redis
