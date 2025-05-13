@@ -13,9 +13,10 @@ from __future__ import annotations
 import queue
 import tkinter as tk
 from tkinter import scrolledtext, ttk, Button
-from typing import Any
+from typing import Any, Callable
 import threading
 import itertools
+import asyncio
 
 from controller.agent import (
     text_to_browser_action,
@@ -35,7 +36,7 @@ def _contrasting(color: str) -> str:
     """Return black or white depending on background luminance."""
     color = color.lstrip("#")
     r, g, b = (int(color[i : i + 2], 16) for i in (0, 2, 4))
-    # perceived luminance (ITU BT.601)
+    # perceived luminance (ITU BT.601)
     y = 0.299 * r + 0.587 * g + 0.114 * b
     return "#000000" if y > 128 else "#ffffff"
 
@@ -162,6 +163,32 @@ class ControlPanel(tk.Tk):
         )
         self._pending_text = ""
 
+        # Dial-pad buttons for DTMF (1-9, 0, *, #)
+        dial = tk.Frame(self)
+        dial.grid(row=2, column=0, columnspan=2, sticky="ew", padx=5, pady=(0, 8))
+        for c in range(3):
+            dial.columnconfigure(c, weight=1)
+
+        keys = [
+            "1", "2", "3",
+            "4", "5", "6",
+            "7", "8", "9",
+            "*", "0", "#",
+        ]
+
+        def _make_btn(lbl: str):
+            return ttk.Button(
+                dial,
+                text=lbl,
+                width=6,
+                command=lambda d=lbl: self._on_dtmf(d),
+            )
+
+        for i, k in enumerate(keys):
+            btn = _make_btn(k)
+            r, c = divmod(i, 3)
+            btn.grid(row=r, column=c, padx=2, pady=2, sticky="ew")
+
         # model poller
         self.after(50, self._poll_llm_resp)
 
@@ -235,7 +262,7 @@ class ControlPanel(tk.Tk):
         threading.Thread(target=_worker, daemon=True).start()
 
     def _poll_llm_resp(self):
-        """Check the response queue every 50 ms."""
+        """Check the response queue every 50 ms."""
         try:
             while True:
                 status, payload = self._llm_resp_q.get_nowait()
@@ -304,7 +331,7 @@ class ControlPanel(tk.Tk):
         self.columnconfigure(0, weight=1, minsize=250)
         self.columnconfigure(1, weight=2)
 
-        # ── top‑right “X” button (absolute) ─────────────────────────────────
+        # ── top‑right "X" button (absolute) ─────────────────────────────────
         close_btn = ttk.Button(
             self,
             text="×",
@@ -312,7 +339,7 @@ class ControlPanel(tk.Tk):
             style="Danger.TButton",
             command=self._on_exit,
         )
-        # place at the top‑right corner (6 px padding)
+        # place at the top‑right corner (6 px padding)
         close_btn.place(relx=1.0, rely=0.0, x=-6, y=6, anchor="ne")
 
         # after all other widgets have been laid out, raise the button
@@ -408,7 +435,7 @@ class ControlPanel(tk.Tk):
         self._reset_el_scroll = False
 
         # ── colour‑aware style for element buttons ────────────────────
-        # Decide if the window background is “dark” or “light”
+        # Decide if the window background is "dark" or "light"
         r, g, b = [c // 256 for c in self.winfo_rgb(self.cget("bg"))]  # 0‑255
         brightness = 0.299 * r + 0.587 * g + 0.114 * b  # luminance
         dark = brightness < 128
@@ -459,7 +486,7 @@ class ControlPanel(tk.Tk):
             ],
         )
 
-        # Per‑tab “×” and Go buttons
+        # Per‑tab "×" and Go buttons
         style.configure(
             "TabRow.TButton",
             font=("Helvetica", 10, "bold"),
@@ -625,7 +652,7 @@ class ControlPanel(tk.Tk):
             pady=(0, 8),
         )
         bar.columnconfigure(1, weight=1)
-        tk.Label(bar, text="LLM Command:").grid(row=0, column=0, sticky="w")
+        tk.Label(bar, text="LLM Command:").grid(row=0, column=0, sticky="w")
         self.cmd_var = tk.StringVar()
         entry_c = tk.Entry(bar, textvariable=self.cmd_var)
         entry_c.grid(row=0, column=1, sticky="ew")
@@ -840,8 +867,8 @@ class ControlPanel(tk.Tk):
             CMD_MOVE_LINE_END: "Requires focus in a text‑box",
             CMD_MOVE_WORD_LEFT: "Requires focus in a text‑box",
             CMD_MOVE_WORD_RIGHT: "Requires focus in a text‑box",
-            CMD_STOP_SCROLLING: "Auto‑scroll isn’t running",
-            CMD_CONT_SCROLLING: "Auto‑scroll isn’t running",
+            CMD_STOP_SCROLLING: "Auto‑scroll isn't running",
+            CMD_CONT_SCROLLING: "Auto‑scroll isn't running",
             CMD_START_SCROLL_UP: "Already auto‑scrolling",
             CMD_START_SCROLL_DOWN: "Already auto‑scrolling",
             CMD_SCROLL_UP: "Already at the very top of the page",
@@ -877,7 +904,7 @@ class ControlPanel(tk.Tk):
         if not ok:
             _Tooltip(
                 self.enter_text_box,
-                "Cannot type – there’s no active text‑box on the page",
+                "Cannot type – there's no active text‑box on the page",
             )
 
         # ----- Search / URL entry -------------------------------------
@@ -896,7 +923,7 @@ class ControlPanel(tk.Tk):
             if not can_click_el:
                 _Tooltip(btn, "Cannot click elements while typing in a text‑box")
 
-        # ----- Per‑row “×” / Go buttons in the Tabs pane --------------
+        # ----- Per‑row "×" / Go buttons in the Tabs pane --------------
         for btn in getattr(self, "_tab_row_buttons", []):
             if btn["text"] == "×":  # close‑tab buttons
                 ok = any(name.startswith("close_tab_") for name in valid)
@@ -1227,3 +1254,32 @@ class ControlPanel(tk.Tk):
             self._log(ansi.rstrip())
         except Exception:
             self._log(tb)
+
+    # ─────────────────────── number-key helper ──────────────────────── NEW
+    def _on_dtmf(self, digit: str) -> None:
+        """Handle dial-pad press – send DTMF and click numbered element when 1-9."""
+        # Skip when an Entry widget currently has focus to avoid hijacking typing
+        if isinstance(self.focus_get(), tk.Entry):
+            return
+
+        self._log(f"[dtmf] {digit}")
+
+        if _dtmf_publisher is not None:
+            try:
+                ret = _dtmf_publisher(digit)
+                if asyncio.iscoroutine(ret):
+                    asyncio.create_task(ret)
+            except Exception as exc:
+                self._log(f"⚠ DTMF publish error: {exc}")
+
+# Optional: external LiveKit DTMF publisher callback
+_dtmf_publisher: "Callable[[int], None] | None" = None
+
+def register_dtmf_publisher(fn):
+    """Register a callback that sends DTMF for the given digit (1-9).
+
+    The *fn* can be synchronous or async; if it returns a coroutine it will
+    be scheduled on the current running loop.
+    """
+    global _dtmf_publisher
+    _dtmf_publisher = fn
