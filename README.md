@@ -56,8 +56,6 @@ Check out various logs in the "Unity" project in the [Unity Interface](https://c
 
 ### Debugging
 
-**Prerequisites**: [Install](https://redis.io/docs/latest/operate/oss_and_stack/install/install-stack/) `redis` locally. Run `redis-server` for spinning up an instance. `test_controller.py` should be out of the box once this step is done.
-
 To interact with the low-level browser controller, you can simply run `python test_controller.py` in the root directory, and it will spin up a GUI which shows the browser state and also the available actions (given the browser state). You can also send commands directly to the low-level LLM controller (the same one used in the voice demo above), to see how well the agent can convert english into playwright commands.
 
 <div style="display: block;" align="center">
