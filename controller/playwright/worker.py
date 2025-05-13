@@ -13,6 +13,7 @@ import shutil
 from pathlib import Path
 from tempfile import mkdtemp
 from typing import Callable
+import json
 
 import redis
 
@@ -91,6 +92,18 @@ class BrowserWorker(threading.Thread):
                             continue
                         cmd = cmd["data"]
 
+                        # Redis delivers raw bytes – convert to str for command parsing
+                        if isinstance(cmd, (bytes, bytearray)):
+                            try:
+                                cmd = cmd.decode()
+                            except Exception:
+                                # fall back to latin-1 to prevent crash, then log & skip
+                                try:
+                                    cmd = cmd.decode("latin-1")
+                                except Exception:
+                                    self.log(f"cannot decode command payload {cmd!r}")
+                                    continue
+
                         # show the raw command arriving from the GUI
                         self.log(f"CMD ➜ {cmd!r}")
 
@@ -129,7 +142,7 @@ class BrowserWorker(threading.Thread):
                                 hit["handle"].click()
                                 _update_in_textbox_state(self.runner, hit["handle"])
                             else:
-                                self.log(f"No element matches “{tail}”")
+                                self.log(f'No element matches "{tail}"')
                         elif cmd.startswith("open url "):
                             url = cmd[len("open url ") :]
                             self.runner.active.goto(
@@ -225,12 +238,10 @@ class BrowserWorker(threading.Thread):
                         "history": self.runner.hist.dump(),
                         "state": vars(self.runner.state),
                     }
-                    while True:  # keep only the latest payload
-                        try:
-                            self._redis_client.publish("browser_state", payload)
-                            break
-                        except Exception:
-                            pass
+                    try:
+                        self._redis_client.publish("browser_state", json.dumps(payload))
+                    except Exception:
+                        pass
                     time.sleep(self.refresh_interval)
 
             finally:
