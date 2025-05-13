@@ -123,13 +123,13 @@ class ControlPanel(tk.Tk):
     def __init__(
         self,
         command_q: "queue.Queue[str]",
-        update_q: "queue.Queue[list[tuple[int, str, bool]]]",
-        text_q: queue.Queue[str],
+        update_q: "queue.Queue[dict] | None" = None,
+        text_q: queue.Queue[str] | None = None,
     ):
         super().__init__()
         self.cmd_q = command_q  # GUI → worker
-        self.up_q = update_q  # worker → GUI
-        self.text_q = text_q  # primitive → GUI
+        self.up_q = update_q  # worker → GUI (may be None when using Redis)
+        self.text_q = text_q or queue.Queue()  # primitive → GUI
         self.elements: list[tuple[int, str, bool]] = []
         self.screenshot: bytes = b""
         self.tab_titles: list[str] = []
@@ -163,34 +163,39 @@ class ControlPanel(tk.Tk):
         )
         self._pending_text = ""
 
-        # Dial-pad buttons for DTMF (1-9, 0, *, #)
-        dial = tk.Frame(self)
-        dial.grid(row=2, column=0, columnspan=2, sticky="ew", padx=5, pady=(0, 8))
-        for c in range(3):
-            dial.columnconfigure(c, weight=1)
-
-        keys = [
-            "1", "2", "3",
-            "4", "5", "6",
-            "7", "8", "9",
-            "*", "0", "#",
-        ]
-
-        def _make_btn(lbl: str):
-            return ttk.Button(
-                dial,
-                text=lbl,
-                width=6,
-                command=lambda d=lbl: self._on_dtmf(d),
-            )
-
-        for i, k in enumerate(keys):
-            btn = _make_btn(k)
-            r, c = divmod(i, 3)
-            btn.grid(row=r, column=c, padx=2, pady=2, sticky="ew")
-
         # model poller
         self.after(50, self._poll_llm_resp)
+
+        # If no update queue provided, subscribe to Redis browser_state
+        if self.up_q is None:
+            import redis, ast, json
+
+            self._redis_pub = redis.Redis(host="localhost", port=6379, db=0).pubsub()
+            self._redis_pub.subscribe("browser_state")
+
+            def _get_update_from_redis():
+                msg = self._redis_pub.get_message()
+                if msg and msg["type"] == "message":
+                    data = msg["data"]
+                    try:
+                        return json.loads(data)
+                    except Exception:
+                        try:
+                            return ast.literal_eval(data.decode() if isinstance(data, bytes) else data)
+                        except Exception:
+                            return None
+                return None
+
+            self._pull_update = _get_update_from_redis
+        else:
+            # pull from queue
+            def _get_update_from_queue():
+                try:
+                    return self.up_q.get_nowait()
+                except queue.Empty:
+                    return None
+
+            self._pull_update = _get_update_from_queue
 
     # ─────────────────────────────────────────
 
@@ -1196,18 +1201,20 @@ class ControlPanel(tk.Tk):
     def _poll_updates(self) -> None:
         updated = False
         while True:
-            try:
-                payload = self.up_q.get_nowait()
-                self.elements = payload.get("elements", [])
-                self.tab_titles = payload.get("tabs", [])
-                self.history = payload.get("history", self.history)
-                self.state = payload.get("state", self.state)
-                img = payload.get("screenshot", b"")
-                if img:
-                    self.screenshot = img
-                updated = True
-            except queue.Empty:
+            payload = self._pull_update()
+            if payload is None:
                 break
+            # ensure dict
+            if not isinstance(payload, dict):
+                continue
+            self.elements = payload.get("elements", [])
+            self.tab_titles = payload.get("tabs", [])
+            self.history = payload.get("history", self.history)
+            self.state = payload.get("state", self.state)
+            img = payload.get("screenshot", b"")
+            if img:
+                self.screenshot = img
+            updated = True
 
         if updated:
             # Elements pane (buttons)
@@ -1228,6 +1235,33 @@ class ControlPanel(tk.Tk):
         self.after(self.REFRESH_INTERVAL_MS, self._poll_updates)
 
     # ──────────────────────── PRIMITIVE TEXT POLL ───────────────────────
+    def _poll_text_q(self):
+        while True:
+            try:
+                txt = self.text_q.get_nowait()
+            except queue.Empty:
+                break
+            self._handle_input(txt)
+        self.after(50, self._poll_text_q)
+
+    # ─────────────────────────── LOGGING ────────────────────────────────
+    def _log(self, msg: str) -> None:
+        self.log.configure(state="normal")
+        self.log.insert("end", msg + "\n")
+        self.log.configure(state="disabled")
+        self.log.yview_moveto(1.0)
+
+    def _log_trace(self, tb: str) -> None:
+        """Insert a colourised traceback into the log."""
+        try:
+            html = highlight(tb, PythonLexer(), HtmlFormatter(nowrap=True))
+            import html as _html, re
+
+            ansi = _html.unescape(re.sub(r"<[^>]+>", "", html))
+            self._log(ansi.rstrip())
+        except Exception:
+            self._log(tb)
+
     def _poll_text_q(self):
         while True:
             try:
