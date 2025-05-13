@@ -1,7 +1,9 @@
 from pydantic import BaseModel
-from typing import Optional, List
+from typing import Optional
 from task_list_manager.types.priority import Priority
 from task_list_manager.types.status import Status
+from task_list_manager.types.schedule import Schedule
+from task_list_manager.types.repetition import RepeatPattern
 
 
 class Task(BaseModel):
@@ -9,7 +11,7 @@ class Task(BaseModel):
     name: str
     description: str
     status: Status
-    start_at: Optional[str]
+    schedule: Schedule
     deadline: Optional[str]
-    repeat: Optional[List[str]]
-    priority: Optional[Priority]
+    repeat: Optional[RepeatPattern]
+    priority: Priority

@@ -173,7 +173,34 @@ class TaskListManager(threading.Thread):
             logs=log_id,
         )
 
-    # Update
+    # stop / continue
+
+    def _stop():
+        pass
+
+    def _continue():
+        pass
+
+    # Active task
+
+    def _get_active_task():
+        pass
+
+    # update Status
+
+    def _cancel_tasks():
+        pass
+
+    def _get_task_queue():
+        pass
+
+    def _reorder_task_queue():
+        pass
+
+    def _add_task_to_queue():
+        pass
+
+    # Update Tasks
 
     def _update_task_name(
         self,
