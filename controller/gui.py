@@ -236,6 +236,10 @@ class ControlPanel(tk.Tk):
             return
         self._llm_busy = True
 
+        # Disable entry & show loader icon
+        self.llm_entry.configure(state="disabled")
+        self.llm_loader.grid()
+
         # --- spawn animated log line ------------------------------------
         msg = "⏳ calling model" + next(self._llm_dots)
         self._llm_line_idx = self._log_line(msg, tag="llm")
@@ -305,6 +309,10 @@ class ControlPanel(tk.Tk):
                     self._queue_command(repl[2:].strip())
 
                 self._llm_busy = False
+
+                # Re-enable command entry & hide loader
+                self.llm_entry.configure(state="normal")
+                self.llm_loader.grid_remove()
 
         except queue.Empty:
             pass
@@ -688,12 +696,18 @@ class ControlPanel(tk.Tk):
             padx=5,
             pady=(0, 8),
         )
-        bar.columnconfigure(1, weight=1)
+        bar.columnconfigure(2, weight=1)
         tk.Label(bar, text="LLM Command:").grid(row=0, column=0, sticky="w")
+
+        # Loader icon (hourglass) – hidden until LLM busy
+        self.llm_loader = tk.Label(bar, text="⏳")
+        self.llm_loader.grid(row=0, column=1, padx=(4, 0))
+        self.llm_loader.grid_remove()
+
         self.cmd_var = tk.StringVar()
-        entry_c = tk.Entry(bar, textvariable=self.cmd_var)
-        entry_c.grid(row=0, column=1, sticky="ew")
-        entry_c.bind("<Return>", lambda _e: self._send_llm_command())
+        self.llm_entry = tk.Entry(bar, textvariable=self.cmd_var)
+        self.llm_entry.grid(row=0, column=2, sticky="ew")
+        self.llm_entry.bind("<Return>", lambda _e: self._send_llm_command())
 
         # ================================================================
         # RIGHT‑HAND PANEL →  notebook(Log/Actions) + state + buttons
