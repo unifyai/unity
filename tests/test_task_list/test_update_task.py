@@ -1,5 +1,6 @@
 from datetime import datetime, timezone, timedelta
 from tests.helpers import _handle_project
+from task_list_manager.types.status import Status
 from task_list_manager.types.priority import Priority
 from task_list_manager.task_list_manager import TaskListManager
 from task_list_manager.types.repetition import RepeatPattern, Frequency, Weekday
@@ -53,6 +54,31 @@ def test_update_task_description():
         task_list[0]["description"]
         == "Call Jeff Smith, kindly congratulating him and explaining that he has been promoted from sales rep to sales manager."
     )
+
+
+@_handle_project
+def test_update_task_status():
+    task_list_manager = TaskListManager()
+    task_list_manager.start()
+
+    # create
+    task_list_manager._create_task(
+        name="Promote Jeff Smith",
+        description="Send an email to Jeff Smith, kindly congratulating him and explaining that he has been promoted from sales rep to sales manager.",
+    )
+    task_list = task_list_manager._search()
+    assert (
+        task_list[0]["description"]
+        == "Send an email to Jeff Smith, kindly congratulating him and explaining that he has been promoted from sales rep to sales manager."
+    )
+
+    # update status
+    task_list_manager._update_task_status(
+        task_id=0,
+        new_status=Status.cancelled,
+    )
+    task_list = task_list_manager._search()
+    assert task_list[0]["status"] == "cancelled"
 
 
 @_handle_project
