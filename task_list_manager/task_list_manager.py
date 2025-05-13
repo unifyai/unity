@@ -227,6 +227,32 @@ class TaskListManager(threading.Thread):
             overwrite=True,
         )
 
+    def _update_task_status(
+        self,
+        *,
+        task_id: int,
+        new_status: str,
+    ) -> Dict[str, str]:
+        """
+        Update the status for the specified task.
+
+        Args:
+            task_id (int): The id of the task to update.
+
+            new_status (str): The new status for the task.
+
+        Returns:
+            Dict[str, str]: Whether the task was updated or not.
+        """
+        # ToDo: replace with single API call once this task [https://app.clickup.com/t/86c3c1y63] is done
+        log_id = self._get_log_by_task_id(task_id=task_id)
+        return unify.update_logs(
+            logs=log_id,
+            context="Tasks",
+            entries={"status": new_status},
+            overwrite=True,
+        )
+
     def _update_task_start_at(
         self,
         *,
