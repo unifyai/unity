@@ -645,10 +645,10 @@ class ControlPanel(tk.Tk):
             self._arrow_button_widgets.append(b)
 
         # ===================================================================
-        #  ROW‑6  →  Dial-pad (DTMF) buttons
+        #  ROW‑6  →  Bottom bar (Tab controls)
         # ===================================================================
-        pad = tk.Frame(self)
-        pad.grid(
+        bottom_bar = tk.Frame(self)
+        bottom_bar.grid(
             row=6,
             column=0,
             columnspan=2,
@@ -657,21 +657,24 @@ class ControlPanel(tk.Tk):
             pady=(0, 8),
         )
 
-        digits = ["1", "2", "3", "4", "5", "6", "7", "8", "9", "*", "0", "#"]
-        self._dtmf_buttons = []
-        for i, d in enumerate(digits):
-            r, c = divmod(i, 3)
-            btn = ttk.Button(
-                pad,
-                text=d,
-                width=6,
-                command=lambda digit=d: self._on_dtmf(digit),
-            )
-            btn.grid(row=r, column=c, sticky="ew", padx=1, pady=1)
-            self._dtmf_buttons.append(btn)
+        bottom_bar.columnconfigure(0, weight=1)
+        bottom_bar.columnconfigure(1, weight=1)
 
-        for col in range(3):
-            pad.columnconfigure(col, weight=1)
+        # Ensure command-button registry exists before any buttons are created below.
+        self._cmd_buttons: dict[str, ttk.Button] = {}
+
+        def _mk_tab_btn(col: int, txt: str, cmd: str):
+            b = ttk.Button(
+                bottom_bar,
+                text=txt,
+                width=12,
+                command=lambda: self._handle_input(cmd),
+            )
+            b.grid(row=0, column=col, sticky="ew", padx=2)
+            self._cmd_buttons[cmd] = b
+
+        _mk_tab_btn(0, "New Tab", CMD_NEW_TAB)
+        _mk_tab_btn(1, "Close Tab", CMD_CLOSE_THIS_TAB)
 
         # ===================================================================
         #  ROW‑7  →  LLM Command bar (shifted down)
@@ -736,25 +739,77 @@ class ControlPanel(tk.Tk):
             btns.columnconfigure(i, weight=1)
 
         # ---------------------------------------------------------------
-        # Keep a handle so we can enable/disable + tooltip later
+        # _cmd_buttons already initialised above
         # ---------------------------------------------------------------
-        self._cmd_buttons: dict[str, ttk.Button] = {}
 
-        def make(r: int, c: int, txt: str, cmd: str) -> None:
-            b = ttk.Button(
-                btns,
-                text=txt,
-                width=10,
-                command=lambda: self._handle_input(cmd),
+        # ── SCROLL CONTROLS BLOCK (step scroll + auto-scroll toggle) ----
+        scroll_block = tk.Frame(btns)
+        scroll_block.grid(row=0, column=0, columnspan=2, sticky="nsew")
+
+        # ── Left half: Dial-pad ---------------------------------------
+        keypad = tk.Frame(scroll_block)
+        keypad.grid(row=0, column=0, sticky="n")
+
+        digits = ["1", "2", "3", "4", "5", "6", "7", "8", "9", "*", "0", "#"]
+        self._dtmf_buttons = []  # recreate in new parent
+        for i, d in enumerate(digits):
+            r, c = divmod(i, 3)
+            btn = ttk.Button(
+                keypad,
+                text=d,
+                width=4,
+                command=lambda digit=d: self._on_dtmf(digit),
             )
-            b.grid(row=r, column=c, sticky="ew")
-            self._cmd_buttons[cmd] = b
+            btn.grid(row=r, column=c, sticky="ew", padx=1, pady=1)
+            self._dtmf_buttons.append(btn)
+
+        for col in range(3):
+            keypad.columnconfigure(col, weight=1)
+
+        # ── Right half: step scroll + toggle ---------------------------
+
+        self.scroll_px_var = tk.StringVar(value="100")
+
+        step = tk.Frame(scroll_block)
+        step.grid(row=0, column=1, sticky="n", padx=(8, 0))
+        step.rowconfigure(1, weight=1)
+
+        def _step_pixels() -> str:
+            val = self.scroll_px_var.get().strip()
+            return val if val.isdigit() and int(val) > 0 else "100"
+
+        up_btn = ttk.Button(
+            step,
+            text="▲",
+            width=4,
+            command=lambda: self._handle_input(
+                CMD_SCROLL_UP.replace("*", _step_pixels()),
+            ),
+        )
+        up_btn.grid(row=0, column=0, sticky="ew")
+
+        px_entry = tk.Entry(step, textvariable=self.scroll_px_var, width=6, justify="center")
+        px_entry.grid(row=1, column=0, sticky="ew", pady=2)
+
+        down_btn = ttk.Button(
+            step,
+            text="▼",
+            width=4,
+            command=lambda: self._handle_input(
+                CMD_SCROLL_DOWN.replace("*", _step_pixels()),
+            ),
+        )
+        down_btn.grid(row=2, column=0, sticky="ew")
+
+        self._step_widgets = [up_btn, down_btn, px_entry]
 
         # --- Three-position auto-scroll toggle -------------------------
-        toggle_frame = tk.Frame(btns)
-        toggle_frame.grid(row=0, column=1, rowspan=3, sticky="nsew", padx=(12, 0))
-        # ensure the button column (0) still expands
-        btns.columnconfigure(0, weight=1)
+        toggle_frame = tk.Frame(scroll_block)
+        toggle_frame.grid(row=0, column=2, sticky="n", padx=(8, 0))
+
+        scroll_block.columnconfigure(0, weight=1)  # keypad
+        scroll_block.columnconfigure(1, weight=1)  # step
+        scroll_block.columnconfigure(2, weight=1)  # toggle
 
         # IntVar: 0 = up, 1 = stop, 2 = down  (middle is default)
         self._scroll_mode = tk.IntVar(value=1)
@@ -806,60 +861,6 @@ class ControlPanel(tk.Tk):
         for row_idx, txt in enumerate(["▲", "■", "▼"]):
             tk.Label(lbls, text=txt).grid(row=row_idx, column=0, sticky="n")
             lbls.rowconfigure(row_idx, weight=1)
-
-        make(0, 0, "▲ Scroll 100", CMD_SCROLL_UP.replace("*", "100"))
-        make(1, 0, "▼ Scroll 100", CMD_SCROLL_DOWN.replace("*", "100"))
-        # make(2, 0, "Continue", CMD_CONT_SCROLLING)
-        make(2, 0, "New Tab", CMD_NEW_TAB)
-        make(3, 0, "Close Tab", CMD_CLOSE_THIS_TAB)
-
-        # -----------------------------------------------------------------
-        # Global click handler: clicking anywhere outside the scroll toggle
-        # resets it to the middle (stop) position. This lets users quickly
-        # stop auto-scroll without precisely targeting the slider.
-        # -----------------------------------------------------------------
-
-        def _is_descendant(parent: tk.Widget, child: tk.Widget | None) -> bool:
-            """Return True if *child* is *parent* or nested inside it."""
-            while child is not None:
-                if child is parent:
-                    return True
-                child = child.master  # type: ignore[attr-defined]
-            return False
-
-        def _blank_click_toggle(event):
-            # Ignore clicks inside the toggle itself (including on its knob)
-            if _is_descendant(self.scroll_toggle, event.widget):
-                return
-
-            current = int(self._scroll_mode.get())  # 0 up,1 stop,2 down
-
-            if current == 1:  # currently stopped → resume opposite dir
-                # Determine next direction: flip last dir, default to 'up'
-                next_dir = (
-                    "down" if self._last_scroll_dir == "up" else "up"
-                )
-                self._scroll_toggle_guard = True
-                self.scroll_toggle.set(0 if next_dir == "up" else 2)
-                self._scroll_toggle_guard = False
-                if next_dir == "up":
-                    self._queue_command(CMD_START_SCROLL_UP)
-                else:
-                    self._queue_command(CMD_START_SCROLL_DOWN)
-                self._last_scroll_dir = next_dir
-                self.scroll_toggle.configure(state="disabled")
-                self._scroll_pending_target = 0 if next_dir == "up" else 2
-            else:  # currently auto-scrolling → stop
-                self._scroll_toggle_guard = True
-                self.scroll_toggle.set(1)
-                self._scroll_toggle_guard = False
-                self._queue_command(CMD_STOP_SCROLLING)
-                self._manual_stop_pending = True
-                self.scroll_toggle.configure(state="disabled")
-                self._scroll_pending_target = 1
-
-        # Bind to every left-click; *add* preserves existing bindings
-        self.bind_all("<Button-1>", _blank_click_toggle, add="+")
 
     # dynamic key-press button wrap
     def _relayout_key_buttons(self):
@@ -1071,6 +1072,11 @@ class ControlPanel(tk.Tk):
             btn.configure(state="normal" if ok else "disabled")
             if not ok:
                 _Tooltip(btn, reason)
+
+        # ----- Step-scroll widgets ------------------------------------ NEW
+        auto = self.state.get("auto_scroll", None)
+        for w in getattr(self, "_step_widgets", []):
+            w.configure(state="disabled" if auto else "normal")
 
     # ──────────────────────── ACTIONS‑PANE HELPER ───────────────────────
     def _refresh_actions_list(self) -> None:
