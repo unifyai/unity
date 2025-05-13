@@ -328,7 +328,7 @@ class ControlPanel(tk.Tk):
 
         # ----- main window -------------------------------------------------
         self.title("Playwright helper")
-        self.geometry("900x550")
+        self.geometry("1000x650")
 
         paned = tk.PanedWindow(self, orient=tk.HORIZONTAL, sashwidth=4)
         paned.grid(row=0, column=0, columnspan=2, sticky="nsew")
@@ -645,11 +645,40 @@ class ControlPanel(tk.Tk):
             self._arrow_button_widgets.append(b)
 
         # ===================================================================
-        #  ROW‑6  →  LLM Command bar
+        #  ROW‑6  →  Dial-pad (DTMF) buttons
+        # ===================================================================
+        pad = tk.Frame(self)
+        pad.grid(
+            row=6,
+            column=0,
+            columnspan=2,
+            sticky="ew",
+            padx=5,
+            pady=(0, 8),
+        )
+
+        digits = ["1", "2", "3", "4", "5", "6", "7", "8", "9", "*", "0", "#"]
+        self._dtmf_buttons = []
+        for i, d in enumerate(digits):
+            r, c = divmod(i, 3)
+            btn = ttk.Button(
+                pad,
+                text=d,
+                width=6,
+                command=lambda digit=d: self._on_dtmf(digit),
+            )
+            btn.grid(row=r, column=c, sticky="ew", padx=1, pady=1)
+            self._dtmf_buttons.append(btn)
+
+        for col in range(3):
+            pad.columnconfigure(col, weight=1)
+
+        # ===================================================================
+        #  ROW‑7  →  LLM Command bar (shifted down)
         # ===================================================================
         bar = tk.Frame(self)
         bar.grid(
-            row=6,
+            row=7,
             column=0,
             columnspan=2,
             sticky="ew",
@@ -1235,33 +1264,6 @@ class ControlPanel(tk.Tk):
         self.after(self.REFRESH_INTERVAL_MS, self._poll_updates)
 
     # ──────────────────────── PRIMITIVE TEXT POLL ───────────────────────
-    def _poll_text_q(self):
-        while True:
-            try:
-                txt = self.text_q.get_nowait()
-            except queue.Empty:
-                break
-            self._handle_input(txt)
-        self.after(50, self._poll_text_q)
-
-    # ─────────────────────────── LOGGING ────────────────────────────────
-    def _log(self, msg: str) -> None:
-        self.log.configure(state="normal")
-        self.log.insert("end", msg + "\n")
-        self.log.configure(state="disabled")
-        self.log.yview_moveto(1.0)
-
-    def _log_trace(self, tb: str) -> None:
-        """Insert a colourised traceback into the log."""
-        try:
-            html = highlight(tb, PythonLexer(), HtmlFormatter(nowrap=True))
-            import html as _html, re
-
-            ansi = _html.unescape(re.sub(r"<[^>]+>", "", html))
-            self._log(ansi.rstrip())
-        except Exception:
-            self._log(tb)
-
     def _poll_text_q(self):
         while True:
             try:
