@@ -750,14 +750,116 @@ class ControlPanel(tk.Tk):
             b.grid(row=r, column=c, sticky="ew")
             self._cmd_buttons[cmd] = b
 
+        # --- Three-position auto-scroll toggle -------------------------
+        toggle_frame = tk.Frame(btns)
+        toggle_frame.grid(row=0, column=1, rowspan=3, sticky="nsew", padx=(12, 0))
+        # ensure the button column (0) still expands
+        btns.columnconfigure(0, weight=1)
+
+        # IntVar: 0 = up, 1 = stop, 2 = down  (middle is default)
+        self._scroll_mode = tk.IntVar(value=1)
+        # Track last non-stop direction to flip on successive blank-clicks
+        self._last_scroll_dir: str | None = None  # 'up' or 'down'
+        # Pending slider state awaiting browser confirmation (0/1/2)
+        self._scroll_pending_target: int | None = None
+
+        self._scroll_toggle_guard = False  # re-entrancy flag
+        self._manual_stop_pending = False   # wait until worker confirms
+
+        def _on_scroll_toggle(val):
+            if self._scroll_toggle_guard:
+                return  # ignore programmatic updates
+            try:
+                mode = int(float(val))
+            except Exception:
+                return
+            if mode == 0:
+                self._queue_command(CMD_START_SCROLL_UP)
+                self._last_scroll_dir = "up"
+            elif mode == 2:
+                self._queue_command(CMD_START_SCROLL_DOWN)
+                self._last_scroll_dir = "down"
+            else:
+                self._queue_command(CMD_STOP_SCROLLING)
+                self._manual_stop_pending = True
+
+            # Disable toggle until browser confirms
+            self.scroll_toggle.configure(state="disabled")
+            self._scroll_pending_target = mode
+
+        # horizontal slider with 3 notches
+        self.scroll_toggle = tk.Scale(
+            toggle_frame,
+            from_=0,
+            to=2,
+            orient="vertical",
+            length=100,
+            showvalue=False,
+            variable=self._scroll_mode,
+            command=_on_scroll_toggle,
+        )
+        self.scroll_toggle.grid(row=0, column=0, sticky="ew")
+
+        # Label markers – placed to the right of the vertical slider
+        lbls = tk.Frame(toggle_frame)
+        lbls.grid(row=0, column=1, sticky="ns", padx=(4, 0))
+        for row_idx, txt in enumerate(["▲", "■", "▼"]):
+            tk.Label(lbls, text=txt).grid(row=row_idx, column=0, sticky="n")
+            lbls.rowconfigure(row_idx, weight=1)
+
         make(0, 0, "▲ Scroll 100", CMD_SCROLL_UP.replace("*", "100"))
-        make(0, 1, "▼ Scroll 100", CMD_SCROLL_DOWN.replace("*", "100"))
-        make(1, 0, "Start ▲", CMD_START_SCROLL_UP)
-        make(1, 1, "Start ▼", CMD_START_SCROLL_DOWN)
-        make(2, 0, "Stop", CMD_STOP_SCROLLING)
-        make(2, 1, "Continue", CMD_CONT_SCROLLING)
-        make(3, 0, "New Tab", CMD_NEW_TAB)
-        make(3, 1, "Close Tab", CMD_CLOSE_THIS_TAB)
+        make(1, 0, "▼ Scroll 100", CMD_SCROLL_DOWN.replace("*", "100"))
+        # make(2, 0, "Continue", CMD_CONT_SCROLLING)
+        make(2, 0, "New Tab", CMD_NEW_TAB)
+        make(3, 0, "Close Tab", CMD_CLOSE_THIS_TAB)
+
+        # -----------------------------------------------------------------
+        # Global click handler: clicking anywhere outside the scroll toggle
+        # resets it to the middle (stop) position. This lets users quickly
+        # stop auto-scroll without precisely targeting the slider.
+        # -----------------------------------------------------------------
+
+        def _is_descendant(parent: tk.Widget, child: tk.Widget | None) -> bool:
+            """Return True if *child* is *parent* or nested inside it."""
+            while child is not None:
+                if child is parent:
+                    return True
+                child = child.master  # type: ignore[attr-defined]
+            return False
+
+        def _blank_click_toggle(event):
+            # Ignore clicks inside the toggle itself (including on its knob)
+            if _is_descendant(self.scroll_toggle, event.widget):
+                return
+
+            current = int(self._scroll_mode.get())  # 0 up,1 stop,2 down
+
+            if current == 1:  # currently stopped → resume opposite dir
+                # Determine next direction: flip last dir, default to 'up'
+                next_dir = (
+                    "down" if self._last_scroll_dir == "up" else "up"
+                )
+                self._scroll_toggle_guard = True
+                self.scroll_toggle.set(0 if next_dir == "up" else 2)
+                self._scroll_toggle_guard = False
+                if next_dir == "up":
+                    self._queue_command(CMD_START_SCROLL_UP)
+                else:
+                    self._queue_command(CMD_START_SCROLL_DOWN)
+                self._last_scroll_dir = next_dir
+                self.scroll_toggle.configure(state="disabled")
+                self._scroll_pending_target = 0 if next_dir == "up" else 2
+            else:  # currently auto-scrolling → stop
+                self._scroll_toggle_guard = True
+                self.scroll_toggle.set(1)
+                self._scroll_toggle_guard = False
+                self._queue_command(CMD_STOP_SCROLLING)
+                self._manual_stop_pending = True
+                self.scroll_toggle.configure(state="disabled")
+                self._scroll_pending_target = 1
+
+        # Bind to every left-click; *add* preserves existing bindings
+        self.bind_all("<Button-1>", _blank_click_toggle, add="+")
 
     # dynamic key-press button wrap
     def _relayout_key_buttons(self):
@@ -1033,6 +1135,18 @@ class ControlPanel(tk.Tk):
             f"auto_scroll: {st.get('auto_scroll', None)}\n"
             f"in_textbox:  {st.get('in_textbox', False)}",
         )
+
+        # sync the auto-scroll toggle --------------------------------
+        if hasattr(self, "scroll_toggle"):
+            # If awaiting confirmation, re-enable when state matches target
+            if self._scroll_pending_target is not None:
+                mode_to_state = {0: "up", 1: None, 2: "down"}
+                expected = mode_to_state[self._scroll_pending_target]
+                if self.state.get("auto_scroll") == expected:
+                    self.scroll_toggle.configure(state="normal")
+                    self._scroll_pending_target = None
+                    if self._manual_stop_pending and expected is None:
+                        self._manual_stop_pending = False
 
     # ---------- element‑button helpers ---------------------------------
     def _exec_element_click(self, idx: int, label: str) -> None:
