@@ -410,14 +410,31 @@ def _create_full_response_format(tabs, buttons, state=None):
             k: v for k, v in _construct_textbox_actions().items() if include(k)
         }
 
+    # Helper to build a Pydantic model from a mapping of field->type
+    # ensuring each field is provided as a **(annotation, default)** tuple
+    # to satisfy Pydantic v2's stricter requirements.
+    def _make_group_model(model_name: str, mapping: dict[str, type[BaseModel]]):
+        if mapping:
+            return create_model(
+                model_name,
+                **{k: (cls, ...) for k, cls in mapping.items()},
+            )
+        # Empty mapping → fall back to a blank BaseModel subclass
+        return create_model(model_name, __base__=BaseModel)
+
     fields = {
-        "tab_actions": create_model("TabActions", **tab_actions),
-        "scroll_actions": create_model("ScrollActions", **scroll_actions),
-        "button_actions": create_model("ButtonActions", **button_actions),
+        "tab_actions": (_make_group_model("TabActions", tab_actions), ...),
+        "scroll_actions": (
+            _make_group_model("ScrollActions", scroll_actions),
+            ...,
+        ),
+        "button_actions": (
+            _make_group_model("ButtonActions", button_actions),
+            ...,
+        ),
         "textbox_actions": (
-            create_model("TextboxActions", **textbox_actions)
-            if textbox_actions
-            else create_model("TextboxActions", __base__=BaseModel)
+            _make_group_model("TextboxActions", textbox_actions),
+            ...,
         ),
     }
 
@@ -573,7 +590,7 @@ def _build_pruned_response_format(applied: Dict[str, Any]) -> BaseModel:
             "Cannot build a pruned response‑format — no actions had apply=True.",
         )
 
-    # “ActionSelection” is the same top‑level model name used originally
+    # "ActionSelection" is the same top‑level model name used originally
     return create_model("ActionSelection", **top_level)
 
 
