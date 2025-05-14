@@ -30,6 +30,11 @@ class TaskListManager(threading.Thread):
         # ToDo: implement the tools
         self._tools = {"search_similar": self._search_similar}
 
+        # Internal monotonically-increasing task-id counter.  We keep it local
+        # to the manager to avoid an expensive scan across *all* logs every
+        # time we create a task.  Initialised lazily on first use.
+        self._next_id: Optional[int] = None
+
     # Public #
     # -------#
 
@@ -182,11 +187,22 @@ class TaskListManager(threading.Thread):
             raise ValueError("Scheduled tasks require a future start_time")
 
         # ------------------  generate new task_id  ------------------ #
-        if "Tasks" not in unify.get_contexts():
-            next_id = 0
-        else:
-            all_ids = [lg.entries["task_id"] for lg in unify.get_logs(context="Tasks")]
-            next_id = (max(all_ids) + 1) if all_ids else 0
+        # We avoid fetching *all* logs just to know the next id.  Instead we
+        # maintain a simple counter that is initialised the first time we
+        # create a task in this process by looking at the *largest* existing
+        # id (if any) through a single, cheap query.
+
+        if self._next_id is None:
+            # First use – find the current maximum task_id (if any) with a
+            # limited query.  The stubbed SDK doesn't expose sorting, so we
+            # fall back to scanning just once during initialisation which is
+            # acceptable in practise.
+            existing = [lg.entries.get("task_id") for lg in unify.get_logs(context="Tasks")]  # type: ignore[arg-type]
+            existing = [i for i in existing if i is not None]
+            self._next_id = (max(existing) + 1) if existing else 0
+
+        next_id = self._next_id
+        self._next_id += 1
 
         # ------------------  assemble payload  ------------------ #
         task_details = {
@@ -484,6 +500,11 @@ class TaskListManager(threading.Thread):
                 "prev_task": prev_tid,
                 "next_task": next_tid,
             }
+
+            # Only include *start_time* when we actually know one (i.e. when
+            # the task was explicitly scheduled by the user).  For plain queue
+            # insertions `start_ts` will be *None* and we leave the field
+            # absent.
             if start_ts is not None:
                 sched_payload["start_time"] = start_ts
 
