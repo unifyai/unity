@@ -74,7 +74,7 @@ def test_update_task_status():
 
     # update status
     task_list_manager._update_task_status(
-        task_id=0,
+        task_ids=0,
         new_status=Status.cancelled,
     )
     task_list = task_list_manager._search()
