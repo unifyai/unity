@@ -220,18 +220,15 @@ class KnowledgeManager(threading.Thread):
         Returns:
             Dict[str, str]: Message explaining whether the column was created or not.
         """
-        url = "https://api.unify.ai/v0/logs/derived"
-        headers = {"Authorization": f"Bearer {API_KEY}"}
         equation = equation.replace("{", "{lg:")
-        json_input = {
-            "project": unify.active_project(),
-            "context": f"Knowledge/{table}",
-            "key": column_name,
-            "equation": equation,
-            "referenced_logs": {"lg": {"context": f"Knowledge/{table}"}},
-        }
-        response = requests.request("POST", url, json=json_input, headers=headers)
-        return response.json()
+        context = f"Knowledge/{table}"
+        return unify.update_derived_log(
+            target=None,  # TODO required argument
+            key=column_name,
+            equation=equation,
+            referenced_logs={"lg": {"context": context}},
+            context=context,
+        )
 
     def _delete_column(self, *, table: str, column_name: str) -> Dict[str, str]:
         """
