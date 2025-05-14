@@ -83,7 +83,9 @@ class TaskListManager(threading.Thread):
             filter=f"task_id in {task_ids}",
             return_ids_only=True,
         )
-        assert not singular or len(log_ids) == 1
+        assert (
+            not singular or len(log_ids) == 1
+        ), f"Expected 1 log for singular task_id, but got {len(log_ids)}"
         return log_ids
 
     # Private #
@@ -156,7 +158,7 @@ class TaskListManager(threading.Thread):
 
         active_task = self._get_active_task()
 
-        # figure out if schedule is “future”
+        # figure out if schedule is "future"
         future_start = False
         if schedule and schedule.start_time:
             future_start = _parse_iso(schedule.start_time) > datetime.now(timezone.utc)
@@ -251,7 +253,9 @@ class TaskListManager(threading.Thread):
             Optional[Task]: The complete Task object of the paused task, or None if no task is paused.
         """
         paused_tasks = self._search(filter="status == 'paused'")
-        assert len(paused_tasks) <= 1, f"More than one paused task found {paused_tasks}"
+        assert (
+            len(paused_tasks) <= 1
+        ), f"More than one paused task found: {paused_tasks}"
         if not paused_tasks:
             return
         return paused_tasks[0]
@@ -264,7 +268,9 @@ class TaskListManager(threading.Thread):
             Optional[Task]: The complete Task object of the active task, or None if no task is active.
         """
         active_tasks = self._search(filter="status == 'active'")
-        assert len(active_tasks) <= 1, f"More than one active task found {active_tasks}"
+        assert (
+            len(active_tasks) <= 1
+        ), f"More than one active task found: {active_tasks}"
         if not active_tasks:
             return
         return active_tasks[0]
@@ -312,7 +318,7 @@ class TaskListManager(threading.Thread):
         completed_task_ids = [lg["task_id"] for lg in completed_tasks]
         assert not set(task_ids).intersection(
             set(completed_task_ids),
-        ), "Cannot cancel completed tasks"
+        ), f"Cannot cancel completed tasks. Attempted to cancel: {set(task_ids).intersection(set(completed_task_ids))}"
         self._update_task_status(task_ids=task_ids, new_status="cancelled")
 
     # Update Task Queue
@@ -381,8 +387,10 @@ class TaskListManager(threading.Thread):
                 ),
                 limit=2,
             )
-            assert head_candidates, "Queue is malformed – no head found"
-            assert len(head_candidates) == 1, "Multiple heads detected"
+            assert head_candidates, f"Queue is malformed – no head found"
+            assert (
+                len(head_candidates) == 1
+            ), f"Multiple heads detected: {head_candidates}"
             start_row = head_candidates[0]
 
         # ----------  not in queue yet? return empty list  ---------- #
@@ -447,11 +455,13 @@ class TaskListManager(threading.Thread):
         and the tail's `next_task`.
         """
         # -------  sanity checks  -------
-        assert len(set(original)) == len(original), "'original' contains duplicates"
-        assert len(set(new)) == len(new), "'new' contains duplicates"
+        assert len(set(original)) == len(
+            original,
+        ), f"'original' contains duplicates: {original}"
+        assert len(set(new)) == len(new), f"'new' contains duplicates: {new}"
         assert set(original).issubset(
             set(new),
-        ), "update cannot remove existing tasks; cancel them first"
+        ), f"update cannot remove existing tasks; cancel them first. Missing tasks: {set(original) - set(new)}"
 
         # -------  gather existing logs  -------
         existing_logs = {
