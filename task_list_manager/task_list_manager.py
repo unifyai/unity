@@ -4,7 +4,9 @@ from typing import Dict, List, Any, Optional, Union
 
 import unify
 from llm_helpers import tool_use_loop
+from task_list_manager.types.status import Status
 from task_list_manager.types.priority import Priority
+from task_list_manager.types.schedule import Schedule
 from task_list_manager.types.repetition import RepeatPattern
 
 
@@ -87,10 +89,11 @@ class TaskListManager(threading.Thread):
         *,
         name: str,
         description: str,
-        start_at: Optional[datetime] = None,
-        deadline: Optional[datetime] = None,
+        status: Status = Status.queued,
+        schedule: Optional[Schedule] = None,
+        deadline: Optional[str] = None,
         repeat: Optional[List[RepeatPattern]] = None,
-        priority: Optional[Priority] = None,
+        priority: Priority = Priority.normal,
     ) -> int:
         """
         Create a new task in the task list.
@@ -98,10 +101,11 @@ class TaskListManager(threading.Thread):
         Args:
             name (str): The name of the task.
             description (str): The description of the task.
-            start_at (Optional[datetime]): The start date of the task.
-            deadline (Optional[datetime]): The deadline of the task.
+            status (Status): The status of the task (default: queued).
+            schedule (Optional[Schedule]): The schedule information for the task.
+            deadline (Optional[str]): The deadline of the task in ISO-8601 format.
             repeat (Optional[List[RepeatPattern]]): The repeat pattern of the task.
-            priority (Optional[Priority]): The priority of the task.
+            priority (Priority): The priority of the task (default: normal).
 
         Returns:
             int: The id of the new task.
@@ -111,7 +115,8 @@ class TaskListManager(threading.Thread):
         task_details = {
             "name": name,
             "description": description,
-            "start_at": start_at,
+            "status": status,
+            "schedule": schedule.model_dump() if schedule else None,
             "deadline": deadline,
             "repeat": [r.model_dump() for r in repeat] if repeat else None,
             "priority": priority,
@@ -176,7 +181,7 @@ class TaskListManager(threading.Thread):
 
     # Pause / Continue Active Task
 
-    def _paused_task(self) -> Optional[int]:
+    def _get_paused_task(self) -> Optional[int]:
         """
         Get the currently paused task, if any.
 
@@ -189,7 +194,7 @@ class TaskListManager(threading.Thread):
             return
         return paused_tasks[0]
 
-    def _active_task(self) -> Optional[int]:
+    def _get_active_task(self) -> Optional[int]:
         """
         Get the currently active task, if any.
 
@@ -209,7 +214,7 @@ class TaskListManager(threading.Thread):
         Returns:
             Optional[Dict[str, str]]: The result of updating the task status, or None if no active task.
         """
-        active_task = self._active_task()
+        active_task = self._get_active_task()
         if not active_task:
             return
         return self._update_task_status(task_id=active_task, new_status="paused")
@@ -221,7 +226,7 @@ class TaskListManager(threading.Thread):
         Returns:
             Optional[Dict[str, str]]: The result of updating the task status, or None if no paused task.
         """
-        paused_task = self._paused_task()
+        paused_task = self._get_paused_task()
         if not paused_task:
             return
         return self._update_task_status(task_id=paused_task, new_status="active")
@@ -253,7 +258,7 @@ class TaskListManager(threading.Thread):
     def _add_task_to_queue():
         pass
 
-    # Update Single Task
+    # Update Name / Description
 
     def _update_task_name(
         self,
@@ -305,7 +310,7 @@ class TaskListManager(threading.Thread):
             overwrite=True,
         )
 
-    # Update Multiple Task(s)
+    # Update Task(s) Status / Schedule / Deadline / Repetition / Priority
 
     def _update_task_status(
         self,
