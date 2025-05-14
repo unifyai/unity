@@ -75,6 +75,7 @@ class TaskListManager(threading.Thread):
         *,
         text: str,
         return_reasoning_steps: bool = False,
+        log_tool_steps: bool = False,
     ) -> Dict[str, str]:
         """
         Handle any plain-text english question to ask something about the list of tasks.
@@ -82,6 +83,7 @@ class TaskListManager(threading.Thread):
         Args:
             text (str): The text-based question to ask about the task list.
             return_reasoning_steps (bool): Whether to return the reasoning steps for the update request.
+            log_tool_steps (bool): Whether to log the steps taken by the tool.
 
         Returns:
             Dict[str, str]: The answer to the question.
@@ -89,7 +91,7 @@ class TaskListManager(threading.Thread):
 
         client = unify.Unify("o4-mini@openai", cache=True, traced=True)
         client.set_system_message(ASK)
-        ans = tool_use_loop(client, text, self._ask_tools)
+        ans = tool_use_loop(client, text, self._ask_tools, log_steps=log_tool_steps)
         if return_reasoning_steps:
             return ans, client.messages
         return ans
@@ -101,6 +103,7 @@ class TaskListManager(threading.Thread):
         *,
         text: str,
         return_reasoning_steps: bool = False,
+        log_tool_steps: bool = False,
     ) -> Dict[str, str]:
         """
         Handle any plain-text english command to update the list of tasks in some manner.
@@ -108,6 +111,7 @@ class TaskListManager(threading.Thread):
         Args:
             text (str): The text-based request to update the task list.
             return_reasoning_steps (bool): Whether to return the reasoning steps for the update request.
+            log_tool_steps (bool): Whether to log the steps taken by the tool.
 
         Returns:
             Dict[str, str]: Whether the task list was updated, and if so then how.
@@ -116,7 +120,7 @@ class TaskListManager(threading.Thread):
 
         client = unify.Unify("o4-mini@openai", cache=True, traced=True)
         client.set_system_message(UPDATE)
-        ans = tool_use_loop(client, text, self._update_tools)
+        ans = tool_use_loop(client, text, self._update_tools, log_steps=log_tool_steps)
         if return_reasoning_steps:
             return ans, client.messages
         return ans

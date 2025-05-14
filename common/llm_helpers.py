@@ -137,19 +137,21 @@ def tool_use_loop(
     *,
     name: Optional[str] = None,
     max_consecutive_failures: int = 3,
+    log_steps: bool = False,
 ):
     """
     Keep invoking the model until it stops calling tools **or**
     `max_consecutive_failures` is exceeded.
 
     A *failed* attempt = the Python callable raised an Exception.
-    Every failure’s full stack-trace is returned to the model as the
+    Every failure's full stack-trace is returned to the model as the
     content of the relevant ``tool`` message.
 
     The failure counter resets to 0 after any *successful* tool call.
     """
 
-    LOGGER.info(f"\n🧑‍💻 {message}\n")
+    if log_steps:
+        LOGGER.info(f"\n🧑‍💻 {message}\n")
 
     tools_schema = [method_to_schema(v) for v in tools.values()]
     msg = {"role": "user", "content": message}
@@ -181,15 +183,17 @@ def tool_use_loop(
                     raw_result = tools[name](**args)
                     result = _dumps(raw_result, indent=4)
                     consecutive_failures = 0  # reset on success
-                    LOGGER.info(f"\n🛠️ {name}({args}) = {result}\n")
+                    if log_steps:
+                        LOGGER.info(f"\n🛠️ {name}({args}) = {result}\n")
 
                 except Exception:
                     consecutive_failures += 1
                     result = traceback.format_exc()
-                    LOGGER.error(
-                        f"\n❌ {name}({args}) raised an exception "
-                        f"(attempt {consecutive_failures}/{max_consecutive_failures}):\n{result}",
-                    )
+                    if log_steps:
+                        LOGGER.error(
+                            f"\n❌ {name}({args}) raised an exception "
+                            f"(attempt {consecutive_failures}/{max_consecutive_failures}):\n{result}",
+                        )
 
                 # Feed the (successful result **or** stack trace) back to the model
                 new_msgs.append(
@@ -217,5 +221,6 @@ def tool_use_loop(
 
         else:
             # ── No tool call – final answer ─────────────────────────────────
-            LOGGER.info(f"\n🤖 {msg.content}\n")
+            if log_steps:
+                LOGGER.info(f"\n🤖 {msg.content}\n")
             return msg.content
