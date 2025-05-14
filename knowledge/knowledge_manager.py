@@ -1,13 +1,10 @@
 import os
 import unify
-import requests
 import threading
 from typing import List, Any, Dict, Optional, Union
 from knowledge.types import ColumnType
 from llm_helpers import tool_use_loop
-from helpers import _handle_exceptions
 
-API_KEY = os.environ["UNIFY_KEY"]
 
 
 class KnowledgeManager(threading.Thread):
