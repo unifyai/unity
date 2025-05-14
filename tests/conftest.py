@@ -180,6 +180,11 @@ def _install_unify_stub() -> None:  # noqa: C901 – long but linear
                     lg.entries = {**lg.entries, **entries}
         return {"updated": True}
 
+    def get_contexts():
+        """Return a list of all context names in the current project."""
+        prj = _active_project()
+        return list(_projects.get(prj, {}).keys())
+
     # ------------------------------------------------------------------ #
     #  Build proxy module                                                #
     # ------------------------------------------------------------------ #
@@ -196,6 +201,7 @@ def _install_unify_stub() -> None:  # noqa: C901 – long but linear
         "activate": activate,
         "list_projects": list_projects,
         "delete_project": delete_project,
+        "get_contexts": get_contexts,
     }.items():
         setattr(stub, _k, _v)
 
