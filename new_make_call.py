@@ -45,7 +45,9 @@ class VoiceAssistant(Agent):
             loop.run_forever()
 
         self._browser_thread = threading.Thread(
-            target=_run_loop, args=(self._browser_loop,), daemon=True
+            target=_run_loop,
+            args=(self._browser_loop,),
+            daemon=True,
         )
         self._browser_thread.start()
         self._task_running: bool = False
@@ -66,7 +68,7 @@ class VoiceAssistant(Agent):
         """Set the result of the previous task (async to satisfy BrowserAgent callback)."""
         last_action = result.state.history.last_action()
         self._last_step_results.append(
-            json.dumps({} if last_action is None else last_action)
+            json.dumps({} if last_action is None else last_action),
         )
 
     async def browser_run(self):
@@ -104,7 +106,7 @@ class VoiceAssistant(Agent):
             return "I'm already working on something for you. Ask me anything else meanwhile!"
 
         self._browser_agent.add_new_task(
-            "\n" + json.dumps(self._latest_dialogue_window, indent=4) + "\n"
+            "\n" + json.dumps(self._latest_dialogue_window, indent=4) + "\n",
         )
         if not self._task_paused:
             # reset the state of the browser agent
@@ -188,7 +190,8 @@ class VoiceAssistant(Agent):
 #  2) Function for task completion
 # ---------------------------------------------------------------------------
 def notify_task_completed_wrapped(
-    session: AgentSession, loop: asyncio.AbstractEventLoop
+    session: AgentSession,
+    loop: asyncio.AbstractEventLoop,
 ):
     """Return a thread-safe callback to be called from the browser thread."""
 
@@ -201,7 +204,7 @@ def notify_task_completed_wrapped(
                 "Start by saying something like 'By the way, your requested browser "
                 "task has completed. Here are the details:'\n\n"
                 f"{result}"
-            )
+            ),
         )
 
     def notify_task_completed(assistant: VoiceAssistant, result: str) -> None:

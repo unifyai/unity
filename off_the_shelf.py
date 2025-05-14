@@ -39,13 +39,15 @@ class BrowserAssistant(threading.Thread):
 
         # Start a daemon thread for the browser loop
         self._browser_thread = threading.Thread(
-            target=self._run_browser_loop, daemon=True
+            target=self._run_browser_loop,
+            daemon=True,
         )
         self._browser_thread.start()
 
         # Initialize browser objects in the browser thread
         future = asyncio.run_coroutine_threadsafe(
-            self._initialize_browser(), self._browser_loop
+            self._initialize_browser(),
+            self._browser_loop,
         )
         # Wait for browser initialization to complete
         self._browser, self._browser_context, self._browser_agent = future.result()
@@ -84,14 +86,16 @@ class BrowserAssistant(threading.Thread):
 
                 # Send the task to the browser agent
                 future = asyncio.run_coroutine_threadsafe(
-                    self._add_new_task(messages), self._browser_loop
+                    self._add_new_task(messages),
+                    self._browser_loop,
                 )
                 future.result()  # Wait for task to be added
 
                 if not _state.task_running:
                     # Reset state for a new task
                     future = asyncio.run_coroutine_threadsafe(
-                        self._reset_agent_history(), self._browser_loop
+                        self._reset_agent_history(),
+                        self._browser_loop,
                     )
                     future.result()
 
@@ -104,7 +108,8 @@ class BrowserAssistant(threading.Thread):
                     # Run the browser task on the browser thread
                     print(f"Starting browser task with agent: {self._browser_agent}")
                     future = asyncio.run_coroutine_threadsafe(
-                        self._browser_run(), self._browser_loop
+                        self._browser_run(),
+                        self._browser_loop,
                     )
 
                     # Set up callback for when task completes
@@ -141,7 +146,7 @@ class BrowserAssistant(threading.Thread):
         """Callback used by browser agent after each step."""
         last_action = result.state.history.last_action()
         self._last_step_results.append(
-            json.dumps({} if last_action is None else last_action)
+            json.dumps({} if last_action is None else last_action),
         )
         _state.set_last_step_results(self._last_step_results)
 
@@ -150,7 +155,7 @@ class BrowserAssistant(threading.Thread):
         try:
             # This is called on the browser thread, so we can await directly
             result = await self._browser_agent.run(
-                on_step_end=self.set_last_step_result
+                on_step_end=self.set_last_step_result,
             )
 
             # Process the result
@@ -211,7 +216,8 @@ class BrowserController(threading.Thread):
                 if command.get("action") == "pause_task":
                     # Execute command on browser thread
                     future = asyncio.run_coroutine_threadsafe(
-                        self._pause_task(browser_agent), browser_loop
+                        self._pause_task(browser_agent),
+                        browser_loop,
                     )
                     future.result()
                     _state.set_task_running(False)
@@ -220,7 +226,8 @@ class BrowserController(threading.Thread):
 
                 elif command.get("action") == "resume_task":
                     future = asyncio.run_coroutine_threadsafe(
-                        self._resume_task(browser_agent), browser_loop
+                        self._resume_task(browser_agent),
+                        browser_loop,
                     )
                     future.result()
                     _state.set_task_running(True)
@@ -229,7 +236,8 @@ class BrowserController(threading.Thread):
 
                 elif command.get("action") == "cancel_task":
                     future = asyncio.run_coroutine_threadsafe(
-                        self._cancel_task(browser_agent), browser_loop
+                        self._cancel_task(browser_agent),
+                        browser_loop,
                     )
                     future.result()
                     _state.set_task_running(False)

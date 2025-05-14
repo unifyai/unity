@@ -9,8 +9,8 @@ import asyncio
 from datetime import datetime
 
 from textual.app import App, ComposeResult
-from textual.widgets import Header, Static, Button, Input
-from textual.containers import VerticalScroll, HorizontalGroup, Container
+from textual.widgets import Header, Static, Input
+from textual.containers import VerticalScroll, HorizontalGroup
 from textual.reactive import reactive
 from textual import work
 from textual.worker import Worker, WorkerState
@@ -27,7 +27,12 @@ client = AsyncUnify(endpoint="gpt-4o@openai")
 class Message(HorizontalGroup):
 
     def __init__(
-        self, role: str, content: str, date: datetime.date = None, *args, **kwargs
+        self,
+        role: str,
+        content: str,
+        date: datetime.date = None,
+        *args,
+        **kwargs,
     ):
         super().__init__(*args, **kwargs)
         self.role = role
@@ -94,7 +99,7 @@ class ChatApp(App):
             msg_view = self.query_one(MessagesView)
             print(msg_view.messages)
             msg_view.messages = msg_view.messages + [
-                {"role": "user", "content": event.input.value, "date": datetime.now()}
+                {"role": "user", "content": event.input.value, "date": datetime.now()},
             ]
             msg_view.scroll_end()
             print(msg_view.messages)
@@ -120,11 +125,11 @@ class ChatApp(App):
         res = await client.generate(
             messages=[
                 {"role": m["role"], "content": m["content"]} for m in msg_view.messages
-            ]
+            ],
         )
         msg_view.ai_typing = False
         msg_view.messages = msg_view.messages + [
-            {"role": "assistant", "content": res, "date": datetime.now()}
+            {"role": "assistant", "content": res, "date": datetime.now()},
         ]
         msg_view.scroll_end()
         self.llm_worker = None

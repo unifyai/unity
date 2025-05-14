@@ -1,7 +1,5 @@
-import queue
 import threading
 from datetime import datetime, timezone
-from typing import List
 
 import redis
 import unify

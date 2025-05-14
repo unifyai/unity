@@ -5,7 +5,6 @@ background thread, so every Playwright call stays on the same thread.
 
 from __future__ import annotations
 
-import queue
 import base64
 import threading
 import time

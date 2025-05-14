@@ -130,8 +130,10 @@ class CommandRunner:
 
         # ───────────────────── Popup primitives ──────────────────────
         if cmd == CMD_CLOSE_POPUP:
-            target = self.active if self.active in self._popups else (
-                self._popups[-1] if self._popups else None
+            target = (
+                self.active
+                if self.active in self._popups
+                else (self._popups[-1] if self._popups else None)
             )
             if target:
                 try:

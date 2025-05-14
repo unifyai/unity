@@ -185,7 +185,7 @@ class ControlPanel(tk.Tk):
                     except Exception:
                         try:
                             return ast.literal_eval(
-                                data.decode() if isinstance(data, bytes) else data
+                                data.decode() if isinstance(data, bytes) else data,
                             )
                         except Exception:
                             return None
@@ -768,12 +768,18 @@ class ControlPanel(tk.Tk):
 
         self.dialog_msg_var = tk.StringVar()
         tk.Label(dialog_bar, textvariable=self.dialog_msg_var, anchor="w").grid(
-            row=0, column=0, sticky="w"
+            row=0,
+            column=0,
+            sticky="w",
         )
 
         # Entry for prompt text (enabled only for prompt dialogs)
         self.dialog_input_var = tk.StringVar()
-        self.dialog_entry = tk.Entry(dialog_bar, textvariable=self.dialog_input_var, width=24)
+        self.dialog_entry = tk.Entry(
+            dialog_bar,
+            textvariable=self.dialog_input_var,
+            width=24,
+        )
         self.dialog_entry.grid(row=0, column=1, sticky="ew", padx=(6, 4))
 
         self.dialog_accept_btn = ttk.Button(
@@ -922,7 +928,10 @@ class ControlPanel(tk.Tk):
         up_btn.grid(row=0, column=0, sticky="ew")
 
         px_entry = tk.Entry(
-            step, textvariable=self.scroll_px_var, width=6, justify="center"
+            step,
+            textvariable=self.scroll_px_var,
+            width=6,
+            justify="center",
         )
         px_entry.grid(row=1, column=0, sticky="ew", pady=2)
 
