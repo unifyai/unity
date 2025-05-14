@@ -84,6 +84,10 @@ def _install_unify_stub() -> None:  # noqa: C901 – long but linear
         def __repr__(self):  # pragma: no cover
             return f"<Log {self.id} {self.entries}>"
 
+        def update_entries(self, **kwargs):
+            """Update the entries with the provided key-value pairs."""
+            self.entries.update(kwargs)
+
     def _active_project() -> str:
         nonlocal _current
         if _current is None:
@@ -233,7 +237,7 @@ def _install_unify_stub() -> None:  # noqa: C901 – long but linear
         msg = "⚠  Full stub: no real `unify` library found – offline mode"
 
     sys.modules["unify"] = stub
-    print(msg)  # so it’s clear in pytest output
+    print(msg)  # so it's clear in pytest output
 
 
 # --------------------------------------------------------------------------- #
