@@ -1,4 +1,6 @@
 import json
+
+from communication.transcript_manager.transcript_manager import TranscriptManager
 from communication.types.contact import Contact
 from communication.types.message import Message
 from communication.types.summary import Summary
@@ -21,7 +23,18 @@ As a recap, the schemas for contacts, messages and summaries are as follows:
 
 {json.dumps(Summary.model_json_schema(), indent=4)}
 
-Some example filter expressions (`filter: str`) for the three tools are as follows.
+Available tools:
+• {TranscriptManager.summarize.__name__}(exchange_ids, guidance?): summarise one or more exchanges.
+• {TranscriptManager._search_contacts.__name__.lstrip("_")}(filter?, offset=0, limit=100) → List[Contact] – flexible boolean filtering.
+• {TranscriptManager._search_messages.__name__.lstrip("_")}(filter?, offset=0, limit=100) → List[Message] – flexible boolean filtering.
+• {TranscriptManager._search_summaries.__name__.lstrip("_")}(filter?, offset=0, limit=100) → List[Summary] – flexible boolean filtering.
+• {TranscriptManager._nearest_messages.__name__.lstrip("_")}(text: str, k: int = 10) → List[Message] – returns the top-k messages semantically similar to the given text.
+
+Example usage:
+# Find top-3 messages semantically similar to "banking and budgeting"
+nearest_messages(text="banking and budgeting", k=3)
+
+Some example filter expressions (`filter: str`) for the tools are as follows.
 
 {TranscriptManager._search_contacts.__name__.lstrip("_")}:
 
@@ -44,4 +57,6 @@ Some example filter expressions (`filter: str`) for the three tools are as follo
 - Summary includes the substrings "sale" and "stapler":  `filter="sale" in summary and "stapler" in summary"`
 - Summary includes either exchange id 0 or 1: `filter="0 in exchange_ids or 1 in exchange_ids"`
 - Flexible logical expressions and nesting. Exchange id 0 or 1 and "sale" or "stapler" in summary: `filter="(0 in exchange_ids or 1 in exchange_ids) and ("sale" in summary or "stapler" in summary")"`
+
+Remember that while filter-based search is useful for exact matches, the `nearest_messages` tool is more effective for finding semantically related content when you don't know the exact wording.
 """
