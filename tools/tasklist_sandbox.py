@@ -71,45 +71,66 @@ def _seed_scenario(tlm: TaskListManager) -> None:
     )
 
 
-def _dispatch(tlm: TaskListManager, raw: str) -> Tuple[str, str]:
-    """Route the user input to the appropriate method and return (kind, result)."""
+def _dispatch(
+    tlm: TaskListManager,
+    raw: str,
+    *,
+    show_steps: bool,
+) -> Tuple[str, str, list | None]:
+    """Route user input; return (kind, answer, reasoning_steps)."""
 
     raw = raw.strip()
     if raw.lower().startswith("ask:"):
-        res = tlm.ask(text=raw[4:].strip())
-        return "ask", res
+        ans, steps = tlm.ask(
+            text=raw[4:].strip(),
+            return_reasoning_steps=show_steps,
+            log_tool_steps=show_steps,
+        )
+        return "ask", ans, steps
     if raw.lower().startswith("update:"):
-        res = tlm.update(text=raw[7:].strip())
-        return "update", res
+        ans, steps = tlm.update(
+            text=raw[7:].strip(),
+            return_reasoning_steps=show_steps,
+            log_tool_steps=show_steps,
+        )
+        return "update", ans, steps
 
-    # Heuristic: treat questions (ending with ?) as ask; everything else update
+    # Heuristic: treat questions (?) as ask
     if raw.endswith("?"):
-        res = tlm.ask(text=raw)
-        return "ask", res
+        ans, steps = tlm.ask(
+            text=raw,
+            return_reasoning_steps=show_steps,
+            log_tool_steps=show_steps,
+        )
+        return "ask", ans, steps
 
-    res = tlm.update(text=raw)
-    return "update", res
+    ans, steps = tlm.update(
+        text=raw,
+        return_reasoning_steps=show_steps,
+        log_tool_steps=show_steps,
+    )
+    return "update", ans, steps
 
 
 def main() -> None:
-    if "tasklist_sandbox" in unify.list_projects():
-        unify.delete_project("tasklist_sandbox")
-    unify.activate("tasklist_sandbox")
+    unify.activate("tasklist_sandbox", overwrite=True)
 
     tlm = TaskListManager()
     tlm.start()
 
-    # Ensure the 'Tasks' context exists to avoid 404 on first get_logs
-    try:
-        unify.create_context("Tasks", description="TaskListManager sandbox context")
-    except Exception:
-        # ignore if it already exists or API not available
-        pass
+    # Ensure the 'Tasks' context exists to avoid 404 errors on first queries
+    unify.set_context("Tasks")
 
     _seed_scenario(tlm)
 
+    # simple arg parsing
+    silent = "--silent" in sys.argv or "-s" in sys.argv
+
     print(
-        "TaskListManager sandbox – type natural language. Prefix with 'ask:' or 'update:' to specify. 'quit' to exit.\n",
+        "TaskListManager sandbox – type natural language. Prefix with 'ask:' or 'update:' to specify. 'quit' to exit.\n"
+        "Verbose reasoning is {} by default (add --silent to disable).\n".format(
+            "ON" if not silent else "OFF",
+        ),
     )
     while True:
         try:
@@ -123,8 +144,16 @@ def main() -> None:
         if not line:
             continue
 
-        kind, result = _dispatch(tlm, line)
+        kind, result, steps = _dispatch(tlm, line, show_steps=not silent)
         print(f"[{kind}] => {result}\n")
+        if steps and not silent:
+            print("Reasoning steps:")
+            for msg in steps:
+                role = msg.get("role", "?")
+                content = msg.get("content")
+                if content is not None:
+                    print(f"  [{role}] {content}")
+            print()
 
 
 if __name__ == "__main__":
