@@ -3,15 +3,21 @@ from datetime import datetime
 from typing import Dict, List, Any, Optional, Union
 
 import unify
-from llm_helpers import tool_use_loop
+
+from common.embed_utils import EMBED_MODEL, ensure_vector_column
+from common.llm_helpers import tool_use_loop
 from task_list_manager.types.status import Status
 from task_list_manager.types.priority import Priority
 from task_list_manager.types.schedule import Schedule
 from task_list_manager.types.repetition import RepeatPattern
+from task_list_manager.types.schedule import Schedule
+from task_list_manager.types.status import Status
 from task_list_manager.types.task import Task
 
 
 class TaskListManager(threading.Thread):
+
+    _VEC_TASK = "task_emb"
 
     def __init__(self, *, daemon: bool = True) -> None:
         """
@@ -22,7 +28,7 @@ class TaskListManager(threading.Thread):
         """
         super().__init__(daemon=daemon)
         # ToDo: implement the tools
-        self._tools = {}
+        self._tools = {"search_similar": self._search_similar}
 
     # Public #
     # -------#
@@ -438,6 +444,47 @@ class TaskListManager(threading.Thread):
         )
 
     # Search Across Tasks
+
+    def _bootstrap_embeddings(self) -> None:
+        """
+        Ensure that the vector embedding column exists for task search.
+        Creates a derived column combining name and description for embedding.
+        """
+        expr = "str({name}) + ' || ' + str({description})"
+        ensure_vector_column(
+            "Tasks",
+            self._VEC_TASK,
+            derived_column="name_plus_desc",
+            derived_expr=expr,
+        )
+
+    def _search_similar(
+        self,
+        *,
+        text: str,
+        k: int = 5,
+    ) -> List[Task]:
+        """
+        Find tasks semantically similar to the provided text.
+
+        Args:
+            text (str): The text to find similar tasks to.
+            k (int): The number of similar tasks to return.
+
+        Returns:
+            List[Task]: A list of Task objects similar to the provided text.
+        """
+        self._bootstrap_embeddings()
+        return [
+            log.entries
+            for log in unify.get_logs(
+                context="Tasks",
+                sorting={
+                    f"cosine({self._VEC_TASK}, embed('{text}', model='{EMBED_MODEL}'))": "ascending",
+                },
+                limit=k,
+            )
+        ]
 
     def _search(
         self,

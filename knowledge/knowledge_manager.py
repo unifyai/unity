@@ -2,9 +2,15 @@ import os
 import unify
 import requests
 import threading
-from typing import List, Any, Dict, Optional, Union
+from typing import Any, Dict, List, Optional, Union
+
+import requests
+import unify
+
+from common.embed_utils import EMBED_MODEL, ensure_vector_column
+from helpers import _handle_exceptions
 from knowledge.types import ColumnType
-from llm_helpers import tool_use_loop
+from common.llm_helpers import tool_use_loop
 from helpers import _handle_exceptions
 
 API_KEY = os.environ["UNIFY_KEY"]
@@ -39,6 +45,7 @@ class KnowledgeManager(threading.Thread):
         self._retrieve_tools = {
             **refactor_tools,
             self._search.__name__: self._search,
+            self._nearest.__name__: self._nearest,
         }
 
     # Public #
@@ -131,9 +138,9 @@ class KnowledgeManager(threading.Thread):
         unify.create_context(ctx, description=description)
         if not columns:
             return
-        url = f"https://api.unify.ai/v0/project/{proj}/contexts/{ctx}/columns"
+        url = f"https://api.unify.ai/v0/logs/fields"
         headers = {"Authorization": f"Bearer {API_KEY}"}
-        json_input = {"columns": columns}
+        json_input = {"project": proj, "context": ctx, "fields": columns}
         response = requests.request("POST", url, json=json_input, headers=headers)
         _handle_exceptions(response)
         return response.json()
@@ -337,6 +344,59 @@ class KnowledgeManager(threading.Thread):
             entries=data,
             batched=True,  # NOTE: async logger can mess with the order of the data
         )
+
+    # Vector Search Helpers
+    def _ensure_table_vector(self, table: str, column: str, source: str) -> None:
+        """
+        Ensure that a vector column exists in the given table. If it doesn't exist,
+        create it as a derived column from the source column.
+
+        Args:
+            table (str): The name of the table to ensure the vector column in.
+            column (str): The name of the vector column to ensure.
+            source (str): The name of the column to derive the vector column from.
+        """
+        context = f"Knowledge/{table}"
+        ensure_vector_column(context, embed_column=column, source_column=source)
+
+    def _nearest(
+        self,
+        *,
+        tables: List[str],
+        column: str,
+        source: str,
+        text: str,
+        k: int = 5,
+    ) -> List[unify.Log]:
+        """
+        Find the k nearest entries in the table to the given text using vector embeddings.
+
+        Args:
+            table (str): The name of the table to search in.
+            column (str): The name of the vector column to use for similarity search.
+            source (str): The name of the column to derive the vector column from.
+            text (str): The query text to find similar entries to.
+            k (int): The number of results to return.
+
+        Returns:
+            List[unify.Log]: The k nearest log entries to the query text.
+        """
+        # ToDo: convert to map function
+        results = dict()
+        for table in tables:
+            context = f"Knowledge/{table}"
+            self._ensure_table_vector(table, column, source)
+            results[table] = [
+                log.entries
+                for log in unify.get_logs(
+                    context=context,
+                    sorting={
+                        f"cosine({column}, embed('{text}', model='{EMBED_MODEL}'))": "ascending",
+                    },
+                    limit=k,
+                )
+            ]
+        return results
 
     # Search
 
