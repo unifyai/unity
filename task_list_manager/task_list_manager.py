@@ -13,6 +13,7 @@ from task_list_manager.types.repetition import RepeatPattern
 from task_list_manager.types.schedule import Schedule
 from task_list_manager.types.status import Status
 from task_list_manager.types.task import Task
+from task_list_manager.sys_msgs import ASK
 
 
 class TaskListManager(threading.Thread):
@@ -27,8 +28,37 @@ class TaskListManager(threading.Thread):
             daemon (bool): Whether the thread should be a daemon thread.
         """
         super().__init__(daemon=daemon)
-        # ToDo: implement the tools
-        self._tools = {"search_similar": self._search_similar}
+
+        self._ask_tools = {
+            # Query-only helpers – safe, read-only operations
+            self._search.__name__: self._search,
+            self._search_similar.__name__: self._search_similar,
+            self._get_task_queue.__name__: self._get_task_queue,
+            self._get_active_task.__name__: self._get_active_task,
+            self._get_paused_task.__name__: self._get_paused_task,
+        }
+
+        # Write-capable helpers – every mutating operation as well as the read-only ones.
+        self._update_tools = {
+            **self._ask_tools,
+            # Creation / deletion
+            self._create_task.__name__: self._create_task,
+            self._delete_task.__name__: self._delete_task,
+            # Status transitions
+            self._pause.__name__: self._pause,
+            self._continue.__name__: self._continue,
+            self._cancel_tasks.__name__: self._cancel_tasks,
+            # Queue manipulation
+            self._update_task_queue.__name__: self._update_task_queue,
+            # Attribute mutations
+            self._update_task_name.__name__: self._update_task_name,
+            self._update_task_description.__name__: self._update_task_description,
+            self._update_task_status.__name__: self._update_task_status,
+            self._update_task_start_at.__name__: self._update_task_start_at,
+            self._update_task_deadline.__name__: self._update_task_deadline,
+            self._update_task_repetition.__name__: self._update_task_repetition,
+            self._update_task_priority.__name__: self._update_task_priority,
+        }
 
         # Internal monotonically-increasing task-id counter.  We keep it local
         # to the manager to avoid an expensive scan across *all* logs every
@@ -37,6 +67,32 @@ class TaskListManager(threading.Thread):
 
     # Public #
     # -------#
+
+    # English-Text question
+
+    def ask(
+        self,
+        *,
+        text: str,
+        return_reasoning_steps: bool = False,
+    ) -> Dict[str, str]:
+        """
+        Handle any plain-text english question to ask something about the list of tasks.
+
+        Args:
+            text (str): The text-based question to ask about the task list.
+            return_reasoning_steps (bool): Whether to return the reasoning steps for the update request.
+
+        Returns:
+            Dict[str, str]: The answer to the question.
+        """
+
+        client = unify.Unify("o4-mini@openai", cache=True, traced=True)
+        client.set_system_message(ASK)
+        ans = tool_use_loop(client, text, self._ask_tools)
+        if return_reasoning_steps:
+            return ans, client.messages
+        return ans
 
     # English-Text update request
 
@@ -54,13 +110,13 @@ class TaskListManager(threading.Thread):
             return_reasoning_steps (bool): Whether to return the reasoning steps for the update request.
 
         Returns:
-            Dict[str, str]: Whether the task list was updated or not.
+            Dict[str, str]: Whether the task list was updated, and if so then how.
         """
         from task_list_manager.sys_msgs import UPDATE
 
         client = unify.Unify("o4-mini@openai", cache=True, traced=True)
         client.set_system_message(UPDATE)
-        ans = tool_use_loop(client, text, self._tools)
+        ans = tool_use_loop(client, text, self._update_tools)
         if return_reasoning_steps:
             return ans, client.messages
         return ans
