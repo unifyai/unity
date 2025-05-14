@@ -15,6 +15,7 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Tuple
+import logging
 
 # Add repo root to PYTHONPATH when run as standalone
 ROOT = Path(__file__).resolve().parent.parent
@@ -125,6 +126,18 @@ def main() -> None:
 
     # simple arg parsing
     silent = "--silent" in sys.argv or "-s" in sys.argv
+
+    if not silent:
+        logging.basicConfig(
+            level=logging.INFO,
+            format="%(message)s",
+            handlers=[logging.StreamHandler()],
+        )
+
+        # Ensure our library logger emits INFO
+        from constants import LOGGER as _LG
+
+        _LG.setLevel(logging.INFO)
 
     print(
         "TaskListManager sandbox – type natural language. Prefix with 'ask:' or 'update:' to specify. 'quit' to exit.\n"
