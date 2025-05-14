@@ -63,3 +63,34 @@ def test_pause():
 
     # verify there is no active task
     assert task_list_manager._get_active_task() is None
+
+    # verify there is a paused task
+    assert task_list_manager._get_paused_task()
+
+
+@_handle_project
+def test_continue():
+    task_list_manager = TaskListManager()
+    task_list_manager.start()
+
+    # create
+    task_list_manager._create_task(
+        name="Promote Jeff Smith",
+        description="Send an email to Jeff Smith, kindly congratulating him and explaining that he has been promoted from sales rep to sales manager.",
+        status="paused",
+    )
+    task_list = task_list_manager._search()
+    assert task_list[0]["name"] == "Promote Jeff Smith"
+
+    # verify the task is paused
+    paused_task = task_list_manager._get_paused_task()
+    assert paused_task["task_id"] == 0
+
+    # pause the task
+    task_list_manager._continue()
+
+    # verify there is no paused task
+    assert task_list_manager._get_paused_task() is None
+
+    # verify there is an active task
+    assert task_list_manager._get_active_task()
