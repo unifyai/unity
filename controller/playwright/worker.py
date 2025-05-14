@@ -78,6 +78,38 @@ class BrowserWorker(threading.Thread):
             page.goto(self.start_url, wait_until="domcontentloaded")
 
             self.runner = CommandRunner(ctx, log_fn=self.log)
+
+            # ────────────────── Dialog & Popup event listeners (NEW) ──────────────────
+
+            def _on_dialog(dialog):
+                # store dialog in runner and update state
+                self.runner._dialog = dialog
+                self.runner.state.dialog_open = True
+                self.runner.state.dialog_type = dialog.type
+                try:
+                    self.runner.state.dialog_msg = dialog.message
+                except Exception:
+                    self.runner.state.dialog_msg = ""
+
+            def _on_popup(popup_page):
+                # keep track of popup windows
+                self.runner._popups.append(popup_page)
+                self.runner.active = popup_page  # auto-focus newest popup
+                self.runner._update_popups_state()
+                # listen for dialogs inside popup as well
+                popup_page.on("dialog", _on_dialog)
+
+            # attach listeners to existing context & first page
+            page.on("dialog", _on_dialog)
+            page.on("popup", _on_popup)
+
+            # any new top-level page (tabs or popups) – attach handlers
+            def _on_new_page(new_pg):
+                new_pg.on("dialog", _on_dialog)
+                new_pg.on("popup", _on_popup)
+
+            ctx.on("page", _on_new_page)
+
             mirror = MirrorPage(pw, page)
             last_elements: list[dict] = []
 
@@ -172,13 +204,38 @@ class BrowserWorker(threading.Thread):
                         else:
                             self.runner.run(cmd)
 
-                    # -- 2) refresh overlay ------------------------------
+                    # -- 2) ensure active page is valid ------------------- NEW
+                    try:
+                        if self.runner.active.is_closed():
+                            # update popups list and fall back to first page
+                            self.runner._update_popups_state()
+                            if self.runner.ctx.pages:
+                                self.runner.active = self.runner.ctx.pages[0]
+                            else:
+                                # No pages left – break out of loop to avoid spin
+                                time.sleep(0.1)
+                                continue
+                    except Exception:
+                        # handle detached/None active
+                        if self.runner.ctx.pages:
+                            self.runner.active = self.runner.ctx.pages[0]
+                        else:
+                            time.sleep(0.1)
+                            continue
+
+                    # -- 3) refresh overlay ------------------------------
                     try:
                         last_elements = collect_elements(self.runner.active)
-                    except Exception as exc:  # navigation in‑flight
+                    except Exception as exc:  # navigation in-flight
                         self.log(f"collect_elements skipped: {exc}")
                         time.sleep(0.05)  # brief pause, then continue loop
                         continue
+                    # always refresh popups list (cleanup closed)
+                    if self.runner:
+                        try:
+                            self.runner._update_popups_state()
+                        except Exception:
+                            pass
                     boxes = build_boxes(last_elements)
                     # draw overlay both in the UI page and the headless mirror
                     for pg in (self.runner.active, mirror.page):
