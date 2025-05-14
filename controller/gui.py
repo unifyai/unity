@@ -184,7 +184,9 @@ class ControlPanel(tk.Tk):
                         return json.loads(data)
                     except Exception:
                         try:
-                            return ast.literal_eval(data.decode() if isinstance(data, bytes) else data)
+                            return ast.literal_eval(
+                                data.decode() if isinstance(data, bytes) else data
+                            )
                         except Exception:
                             return None
                 return None
@@ -873,7 +875,9 @@ class ControlPanel(tk.Tk):
         )
         up_btn.grid(row=0, column=0, sticky="ew")
 
-        px_entry = tk.Entry(step, textvariable=self.scroll_px_var, width=6, justify="center")
+        px_entry = tk.Entry(
+            step, textvariable=self.scroll_px_var, width=6, justify="center"
+        )
         px_entry.grid(row=1, column=0, sticky="ew", pady=2)
 
         down_btn = ttk.Button(
@@ -904,7 +908,7 @@ class ControlPanel(tk.Tk):
         self._scroll_pending_target: int | None = None
 
         self._scroll_toggle_guard = False  # re-entrancy flag
-        self._manual_stop_pending = False   # wait until worker confirms
+        self._manual_stop_pending = False  # wait until worker confirms
 
         def _on_scroll_toggle(val):
             if self._scroll_toggle_guard:
@@ -1513,8 +1517,10 @@ class ControlPanel(tk.Tk):
             except Exception as exc:
                 self._log(f"⚠ DTMF publish error: {exc}")
 
+
 # Optional: external LiveKit DTMF publisher callback
 _dtmf_publisher: "Callable[[int], None] | None" = None
+
 
 def register_dtmf_publisher(fn):
     """Register a callback that sends DTMF for the given digit (1-9).

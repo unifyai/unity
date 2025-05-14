@@ -26,7 +26,7 @@ import pytest
 import unify
 from communication.transcript_manager.transcript_manager import TranscriptManager
 from communication.types.message import Message
-from llm_helpers import _dumps
+from common.llm_helpers import _dumps
 
 # --------------------------------------------------------------------------- #
 #  CONTACTS (same as before)                                                  #
