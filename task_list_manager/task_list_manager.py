@@ -1,22 +1,34 @@
 import threading
 from datetime import datetime
-from typing import Dict, List, Any, Optional
+from typing import Dict, List, Any, Optional, Union
 
 import unify
-from llm_helpers import tool_use_loop
+
+from common.embed_utils import EMBED_MODEL, ensure_vector_column
+from common.llm_helpers import tool_use_loop
+from task_list_manager.types.status import Status
 from task_list_manager.types.priority import Priority
+from task_list_manager.types.schedule import Schedule
 from task_list_manager.types.repetition import RepeatPattern
+from task_list_manager.types.schedule import Schedule
+from task_list_manager.types.status import Status
+from task_list_manager.types.task import Task
 
 
 class TaskListManager(threading.Thread):
 
+    _VEC_TASK = "task_emb"
+
     def __init__(self, *, daemon: bool = True) -> None:
         """
         Responsible for managing the list of tasks, updating the names, descriptions, schedules, repeating pattern and status of all tasks.
+
+        Args:
+            daemon (bool): Whether the thread should be a daemon thread.
         """
         super().__init__(daemon=daemon)
         # ToDo: implement the tools
-        self._tools = {}
+        self._tools = {"search_similar": self._search_similar}
 
     # Public #
     # -------#
@@ -34,7 +46,6 @@ class TaskListManager(threading.Thread):
 
         Args:
             text (str): The text-based request to update the task list.
-
             return_reasoning_steps (bool): Whether to return the reasoning steps for the update request.
 
         Returns:
@@ -49,27 +60,31 @@ class TaskListManager(threading.Thread):
             return ans, client.messages
         return ans
 
-    def _get_log_by_task_id(
+    def _get_logs_by_task_ids(
         self,
         *,
-        task_id: int,
-    ) -> unify.Log:
+        task_ids: Union[int, List[int]],
+    ) -> List[unify.Log]:
         """
         Get the log for the specified task id.
 
         Args:
-            task_id (int): The id of the task to get the log for.
+            task_ids (Union[int, List[int]]): The id or ids of the tasks to get the logs for.
 
         Returns:
-            unify.Log: The log for the specified task id.
+            List[unify.Log]: The logs for the specified task ids.
         """
+        singular = False
+        if isinstance(task_ids, int):
+            singular = True
+            task_ids = [task_ids]
         log_ids = unify.get_logs(
             context="Tasks",
-            filter=f"task_id == {task_id}",
+            filter=f"task_id in {task_ids}",
             return_ids_only=True,
         )
-        assert len(log_ids) == 1
-        return log_ids[0]
+        assert not singular or len(log_ids) == 1
+        return log_ids
 
     # Private #
     # --------#
@@ -81,26 +96,23 @@ class TaskListManager(threading.Thread):
         *,
         name: str,
         description: str,
-        start_at: Optional[datetime] = None,
-        deadline: Optional[datetime] = None,
+        status: Status = Status.queued,
+        schedule: Optional[Schedule] = None,
+        deadline: Optional[str] = None,
         repeat: Optional[List[RepeatPattern]] = None,
-        priority: Optional[Priority] = None,
+        priority: Priority = Priority.normal,
     ) -> int:
         """
         Create a new task in the task list.
 
         Args:
             name (str): The name of the task.
-
             description (str): The description of the task.
-
-            start_at (Optional[datetime]): The start date of the task.
-
-            deadline (Optional[datetime]): The deadline of the task.
-
-            repeat (Optional[List[str]]): The repeat pattern of the task.
-
-            priority (Optional[Priority]): The priority of the task.
+            status (Status): The status of the task (default: queued).
+            schedule (Optional[Schedule]): The schedule information for the task.
+            deadline (Optional[str]): The deadline of the task in ISO-8601 format.
+            repeat (Optional[List[RepeatPattern]]): The repeat pattern of the task.
+            priority (Priority): The priority of the task (default: normal).
 
         Returns:
             int: The id of the new task.
@@ -110,7 +122,8 @@ class TaskListManager(threading.Thread):
         task_details = {
             "name": name,
             "description": description,
-            "start_at": start_at,
+            "status": status,
+            "schedule": schedule.model_dump() if schedule else None,
             "deadline": deadline,
             "repeat": [r.model_dump() for r in repeat] if repeat else None,
             "priority": priority,
@@ -167,13 +180,95 @@ class TaskListManager(threading.Thread):
             Dict[str, str]: Whether the task was deleted or not.
         """
         # ToDo: replace with single API call once this task [https://app.clickup.com/t/86c3c1awp] is done
-        log_id = self._get_log_by_task_id(task_id=task_id)
+        log_id = self._get_logs_by_task_ids(task_ids=task_id)
         unify.delete_logs(
             context="Tasks",
             logs=log_id,
         )
 
-    # Update
+    # Pause / Continue Active Task
+
+    def _get_paused_task(self) -> Optional[Task]:
+        """
+        Get the currently paused task, if any.
+
+        Returns:
+            Optional[Task]: The complete Task object of the paused task, or None if no task is paused.
+        """
+        paused_tasks = self._search(filter="status == 'paused'")
+        assert len(paused_tasks) <= 1, f"More than one paused task found {paused_tasks}"
+        if not paused_tasks:
+            return
+        return paused_tasks[0]
+
+    def _get_active_task(self) -> Optional[Task]:
+        """
+        Get the currently active task, if any.
+
+        Returns:
+            Optional[Task]: The complete Task object of the active task, or None if no task is active.
+        """
+        active_tasks = self._search(filter="status == 'active'")
+        assert len(active_tasks) <= 1, f"More than one active task found {active_tasks}"
+        if not active_tasks:
+            return
+        return active_tasks[0]
+
+    def _pause(self) -> Optional[Dict[str, str]]:
+        """
+        Pause the currently active task, if any.
+
+        Returns:
+            Optional[Dict[str, str]]: The result of updating the task status, or None if no active task.
+        """
+        active_task = self._get_active_task()
+        if not active_task:
+            return
+        return self._update_task_status(
+            task_ids=active_task["task_id"],
+            new_status="paused",
+        )
+
+    def _continue(self) -> Optional[Dict[str, str]]:
+        """
+        Continue the currently paused task, if any.
+
+        Returns:
+            Optional[Dict[str, str]]: The result of updating the task status, or None if no paused task.
+        """
+        paused_task = self._get_paused_task()
+        if not paused_task:
+            return
+        return self._update_task_status(
+            task_ids=paused_task["task_id"],
+            new_status="active",
+        )
+
+    # Cancel Task(s)
+
+    def _cancel_tasks(self, task_ids: List[int]) -> None:
+        """
+        Cancel the specified tasks.
+
+        Args:
+            task_ids (List[int]): The ids of the tasks to cancel.
+        """
+        completed_tasks = self._search(filter="status == 'completed'")
+        completed_task_ids = [lg["task_id"] for lg in completed_tasks]
+        assert not set(task_ids).intersection(
+            set(completed_task_ids),
+        ), "Cannot cancel completed tasks"
+        self._update_task_status(task_ids=task_ids, new_status="cancelled")
+
+    # Update Task Queue
+
+    def _get_task_queue():
+        pass
+
+    def _update_task_queue():
+        pass
+
+    # Update Name / Description
 
     def _update_task_name(
         self,
@@ -186,14 +281,13 @@ class TaskListManager(threading.Thread):
 
         Args:
             task_id (int): The id of the task to update.
-
             new_name (str): The new name of the task.
 
         Returns:
             Dict[str, str]: Whether the task was updated or not.
         """
         # ToDo: replace with single API call once this task [https://app.clickup.com/t/86c3c1y63] is done
-        log_id = self._get_log_by_task_id(task_id=task_id)
+        log_id = self._get_logs_by_task_ids(task_ids=task_id)
         return unify.update_logs(
             logs=log_id,
             context="Tasks",
@@ -212,18 +306,44 @@ class TaskListManager(threading.Thread):
 
         Args:
             task_id (int): The id of the task to update.
-
             new_description (str): The new description for the task.
 
         Returns:
             Dict[str, str]: Whether the task was updated or not.
         """
         # ToDo: replace with single API call once this task [https://app.clickup.com/t/86c3c1y63] is done
-        log_id = self._get_log_by_task_id(task_id=task_id)
+        log_id = self._get_logs_by_task_ids(task_ids=task_id)
         return unify.update_logs(
             logs=log_id,
             context="Tasks",
             entries={"description": new_description},
+            overwrite=True,
+        )
+
+    # Update Task(s) Status / Schedule / Deadline / Repetition / Priority
+
+    def _update_task_status(
+        self,
+        *,
+        task_ids: Union[int, List[int]],
+        new_status: str,
+    ) -> Dict[str, str]:
+        """
+        Update the status for the specified task(s).
+
+        Args:
+            task_ids (Union[int, List[int]]): The id or ids of the tasks to update.
+            new_status (str): The new status for the task(s).
+
+        Returns:
+            Dict[str, str]: Whether the task(s) were updated or not.
+        """
+        # ToDo: replace with single API call once this task [https://app.clickup.com/t/86c3c1y63] is done
+        log_ids = self._get_logs_by_task_ids(task_ids=task_ids)
+        return unify.update_logs(
+            logs=log_ids,
+            context="Tasks",
+            entries={"status": new_status},
             overwrite=True,
         )
 
@@ -235,8 +355,15 @@ class TaskListManager(threading.Thread):
     ) -> Dict[str, str]:
         """
         Update the start date for the specified task.
+
+        Args:
+            task_id (int): The id of the task to update.
+            new_start_at (datetime): The new start date for the task.
+
+        Returns:
+            Dict[str, str]: Whether the task was updated or not.
         """
-        log_id = self._get_log_by_task_id(task_id=task_id)
+        log_id = self._get_logs_by_task_ids(task_ids=task_id)
         return unify.update_logs(
             logs=log_id,
             context="Tasks",
@@ -252,8 +379,15 @@ class TaskListManager(threading.Thread):
     ) -> Dict[str, str]:
         """
         Update the deadline for the specified task.
+
+        Args:
+            task_id (int): The id of the task to update.
+            new_deadline (datetime): The new deadline for the task.
+
+        Returns:
+            Dict[str, str]: Whether the task was updated or not.
         """
-        log_id = self._get_log_by_task_id(task_id=task_id)
+        log_id = self._get_logs_by_task_ids(task_ids=task_id)
         return unify.update_logs(
             logs=log_id,
             context="Tasks",
@@ -269,8 +403,15 @@ class TaskListManager(threading.Thread):
     ) -> Dict[str, str]:
         """
         Update the repeat pattern for the specified task.
+
+        Args:
+            task_id (int): The id of the task to update.
+            new_repeat (List[RepeatPattern]): The new repeat patterns for the task.
+
+        Returns:
+            Dict[str, str]: Whether the task was updated or not.
         """
-        log_id = self._get_log_by_task_id(task_id=task_id)
+        log_id = self._get_logs_by_task_ids(task_ids=task_id)
         return unify.update_logs(
             logs=log_id,
             context="Tasks",
@@ -286,8 +427,15 @@ class TaskListManager(threading.Thread):
     ) -> Dict[str, str]:
         """
         Update the priority for the specified task.
+
+        Args:
+            task_id (int): The id of the task to update.
+            new_priority (Priority): The new priority for the task.
+
+        Returns:
+            Dict[str, str]: Whether the task was updated or not.
         """
-        log_id = self._get_log_by_task_id(task_id=task_id)
+        log_id = self._get_logs_by_task_ids(task_ids=task_id)
         return unify.update_logs(
             logs=log_id,
             context="Tasks",
@@ -295,7 +443,48 @@ class TaskListManager(threading.Thread):
             overwrite=True,
         )
 
-    # Search
+    # Search Across Tasks
+
+    def _bootstrap_embeddings(self) -> None:
+        """
+        Ensure that the vector embedding column exists for task search.
+        Creates a derived column combining name and description for embedding.
+        """
+        expr = "str({name}) + ' || ' + str({description})"
+        ensure_vector_column(
+            "Tasks",
+            self._VEC_TASK,
+            derived_column="name_plus_desc",
+            derived_expr=expr,
+        )
+
+    def _search_similar(
+        self,
+        *,
+        text: str,
+        k: int = 5,
+    ) -> List[Task]:
+        """
+        Find tasks semantically similar to the provided text.
+
+        Args:
+            text (str): The text to find similar tasks to.
+            k (int): The number of similar tasks to return.
+
+        Returns:
+            List[Task]: A list of Task objects similar to the provided text.
+        """
+        self._bootstrap_embeddings()
+        return [
+            log.entries
+            for log in unify.get_logs(
+                context="Tasks",
+                sorting={
+                    f"cosine({self._VEC_TASK}, embed('{text}', model='{EMBED_MODEL}'))": "ascending",
+                },
+                limit=k,
+            )
+        ]
 
     def _search(
         self,
@@ -303,16 +492,13 @@ class TaskListManager(threading.Thread):
         filter: Optional[str] = None,
         offset: int = 0,
         limit: int = 100,
-        tables: Optional[List[str]] = None,
-    ) -> Dict[str, List[Dict[str, Any]]]:
+    ) -> List[Dict[str, Any]]:
         """
         Apply the filter to the the list of tasks, and return the results following the filter.
 
         Args:
             filter (Optional[str]): Arbitrary Python logical expressions which evaluate to `bool`, with column names expressed as standard variables. For example, a filter expression of "'email'in description and priority == 'normal'" would be a valid. The expression just needs to be valid Python with the column names as variables.
-
             offset (int): The offset to start the search from, in the paginated result.
-
             limit (int): The number of rows to return, in the paginated result.
 
         Returns:

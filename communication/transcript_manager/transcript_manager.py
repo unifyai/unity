@@ -3,13 +3,18 @@ import threading
 from typing import List, Dict, Any, Optional, Union
 
 import unify
+from common.embed_utils import EMBED_MODEL, ensure_vector_column
 from communication.types.contact import Contact
 from communication.types.message import Message
 from communication.types.summary import Summary
-from llm_helpers import tool_use_loop
+from common.llm_helpers import tool_use_loop
 
 
 class TranscriptManager(threading.Thread):
+
+    # Vector embedding column names
+    _VEC_MSG = "content_emb"
+    _VEC_SUM = "summary_emb"
 
     def __init__(self, *, daemon: bool = True) -> None:
         """
@@ -21,6 +26,7 @@ class TranscriptManager(threading.Thread):
             self._search_contacts.__name__: self._search_contacts,
             self._search_messages.__name__: self._search_messages,
             self._search_summaries.__name__: self._search_summaries,
+            self._nearest_messages.__name__: self._nearest_messages,
         }
 
     # Public #
@@ -226,6 +232,58 @@ class TranscriptManager(threading.Thread):
 
     # Private #
     # --------#
+    def _nearest_messages(
+        self,
+        *,
+        text: str,
+        k: int = 10,
+    ) -> List[Message]:
+        """
+        Find messages semantically similar to the provided text using vector embeddings.
+
+        Args:
+            text (str): The text to find similar messages to.
+            k (int): The number of similar messages to return.
+
+        Returns:
+            List[Message]: A list of messages semantically similar to the provided text.
+        """
+        ensure_vector_column("Transcripts", self._VEC_MSG, "content")
+        logs = unify.get_logs(
+            context="Transcripts",
+            sorting={
+                f"cosine({self._VEC_MSG}, embed('{text}', model='{EMBED_MODEL}'))": "ascending",
+            },
+            limit=k,
+        )
+        return [Message(**lg.entries) for lg in logs]
+
+    def _nearest_summaries(
+        self,
+        *,
+        text: str,
+        k: int = 10,
+    ) -> List[Summary]:
+        """
+        Find summaries semantically similar to the provided text using vector embeddings.
+
+        Args:
+            text (str): The text to find similar summaries to.
+            k (int): The number of similar summaries to return.
+
+        Returns:
+            List[Summary]: A list of summaries semantically similar to the provided text.
+        """
+
+        ensure_vector_column("Transcripts", self._VEC_MSG, "content")
+        logs = unify.get_logs(
+            context="TranscriptSummaries",
+            sorting={
+                f"cosine({self._VEC_SUM}, embed('{text}', model='{EMBED_MODEL}'))": "ascending",
+            },
+            limit=k,
+        )
+        return [Summary(**lg.entries) for lg in logs]
 
     def _search_contacts(
         self,

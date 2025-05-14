@@ -1,0 +1,72 @@
+"""
+Utility functions for embedding-based vector search through the logs.
+"""
+
+import os
+
+import requests
+import unify
+
+# Model to use for text embeddings
+EMBED_MODEL = "text-embedding-3-small"
+
+
+API_KEY = os.environ["UNIFY_KEY"]
+
+
+def ensure_vector_column(
+    context: str,
+    embed_column: str,
+    source_column: str,
+    derived_expr: str | None = None,
+) -> None:
+    """
+    Ensure that a vector column exists in the given context. If it does not,
+    create a derived column using the embed() function with the defined embedding model.
+
+    Args:
+        context (str): The Unify context (e.g., "Knowledge/table_name" or "ContextName").
+        embed_column (str): The name of the vector column to ensure. (eg: "content_emb")
+        source_column (str): The name of the source column to embed. (eg: "content_plus_desc")
+        derived_expr Optional(str): An optional expression to dynamically derive the source column (in case it's not already present) (eg: "str({name}) + ' || ' + str({description})")
+    """
+    # Retrieve existing columns and their types
+    existing = unify.get_fields(context=context)
+    # If the source column is already present, do nothing
+    if source_column not in existing:
+        # Create the derived vector column
+        url = f"{os.environ['UNIFY_BASE_URL']}/logs/derived"
+        headers = {"Authorization": f"Bearer {API_KEY}"}
+        expr = derived_expr.replace("{", "{lg:")
+        json_input = {
+            "project": unify.active_project(),
+            "context": context,
+            "key": source_column,
+            "equation": expr,
+            "referenced_logs": {"lg": {"context": context}},
+        }
+        response = requests.request("POST", url, json=json_input, headers=headers)
+        assert response.status_code == 200, response.text
+
+    # If the vector column is already present, do nothing
+    if embed_column in existing:
+        return
+    # Define the embedding equation
+    embed_expr = (
+        "embed({source_column}".replace("source_column", source_column)
+        + f", model='{EMBED_MODEL}')"
+    )
+
+    url = f"{os.environ['UNIFY_BASE_URL']}/logs/derived"
+    headers = {"Authorization": f"Bearer {API_KEY}"}
+    embed_expr = embed_expr.replace("{", "{lg:")
+    json_input = {
+        "project": unify.active_project(),
+        "context": context,
+        "key": embed_column,
+        "equation": embed_expr,
+        "referenced_logs": {"lg": {"context": context}},
+    }
+    response = requests.request("POST", url, json=json_input, headers=headers)
+    assert response.status_code == 200, response.text
+    return response.json()

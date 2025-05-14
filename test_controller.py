@@ -22,12 +22,10 @@ from controller.playwright.worker import BrowserWorker
 
 def main() -> None:
 
-    # queues
-    gui_to_browser_queue: queue.Queue[str] = queue.Queue(maxsize=20)
-    browser_to_gui_queue: queue.Queue[list] = queue.Queue(maxsize=20)
-    llm_command_queue: queue.Queue[str] = queue.Queue(maxsize=100)
+    # queue for user commands only (GUI → redis)
+    gui_to_browser_queue: queue.Queue[str] = queue.Queue(maxsize=50)
 
-    # start worker thread
+    # Start BrowserWorker (publishes browser_state on redis)
     worker = BrowserWorker(
         start_url="https://www.google.com/",
         refresh_interval=0.4,
@@ -35,9 +33,20 @@ def main() -> None:
     )
     worker.start()
 
-    # launch Tk GUI
-    gui = ControlPanel(gui_to_browser_queue, browser_to_gui_queue, llm_command_queue)
-    gui.set_worker(worker)
+    # Redis publisher thread for commands
+    import redis, threading
+
+    r = redis.Redis(host="localhost", port=6379, db=0)
+
+    def _cmd_forwarder():
+        while True:
+            cmd = gui_to_browser_queue.get()
+            r.publish("browser_command", cmd)
+
+    threading.Thread(target=_cmd_forwarder, daemon=True).start()
+
+    # launch Tk GUI (pulls browser_state directly from redis)
+    gui = ControlPanel(gui_to_browser_queue)
 
     try:
         gui.mainloop()

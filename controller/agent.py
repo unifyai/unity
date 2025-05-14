@@ -54,7 +54,7 @@ def _list_valid_actions(tabs, buttons, state) -> list[str]:
     if buttons and CMD_CLICK_BUTTON in valid_actions:
         flat.extend(
             CMD_CLICK_BUTTON.replace(" *", f"_{idx}_{_slug(lbl)}")
-            for idx, lbl, on_hvr in buttons
+            for idx, lbl in buttons
         )
         flat.remove("click_button_*")
     return sorted(set([item.replace("*", "").replace(" ", "") for item in flat]))
@@ -403,6 +403,23 @@ def _create_full_response_format(tabs, buttons, state=None):
         k: v for k, v in _construct_scroll_actions().items() if include(k)
     }
 
+    # dialog actions group (only when a dialog is open)
+    dialog_actions = {}
+    if state and state.dialog_open:
+        if include(CMD_ACCEPT_DIALOG):
+            dialog_actions[CMD_ACCEPT_DIALOG] = AcceptDialog
+        if include(CMD_DISMISS_DIALOG):
+            dialog_actions[CMD_DISMISS_DIALOG] = DismissDialog
+        # prompt dialogs need text field
+        if state.dialog_type == "prompt" and include(CMD_TYPE_DIALOG.replace(" *", "_")):
+            dialog_actions[CMD_TYPE_DIALOG.replace(" *", "")] = TypeDialog
+
+    # popup actions (select/close per title)
+    popup_actions = {}
+    if state and state.popups:
+        popup_actions.update({k: v for k, v in _construct_select_popup_actions(state.popups).items() if include(k)})
+        popup_actions.update({k: v for k, v in _construct_close_popup_actions(state.popups).items() if include(k)})
+
     # text‑box actions (only when we're actually in a text input)
     textbox_actions = {}
     if state and state.in_textbox:
@@ -410,14 +427,39 @@ def _create_full_response_format(tabs, buttons, state=None):
             k: v for k, v in _construct_textbox_actions().items() if include(k)
         }
 
+    # Helper to build a Pydantic model from a mapping of field->type
+    # ensuring each field is provided as a **(annotation, default)** tuple
+    # to satisfy Pydantic v2's stricter requirements.
+    def _make_group_model(model_name: str, mapping: dict[str, type[BaseModel]]):
+        if mapping:
+            return create_model(
+                model_name,
+                **{k: (cls, ...) for k, cls in mapping.items()},
+            )
+        # Empty mapping → fall back to a blank BaseModel subclass
+        return create_model(model_name, __base__=BaseModel)
+
     fields = {
-        "tab_actions": create_model("TabActions", **tab_actions),
-        "scroll_actions": create_model("ScrollActions", **scroll_actions),
-        "button_actions": create_model("ButtonActions", **button_actions),
+        "tab_actions": (_make_group_model("TabActions", tab_actions), ...),
+        "scroll_actions": (
+            _make_group_model("ScrollActions", scroll_actions),
+            ...,
+        ),
+        "button_actions": (
+            _make_group_model("ButtonActions", button_actions),
+            ...,
+        ),
         "textbox_actions": (
-            create_model("TextboxActions", **textbox_actions)
-            if textbox_actions
-            else create_model("TextboxActions", __base__=BaseModel)
+            _make_group_model("TextboxActions", textbox_actions),
+            ...,
+        ),
+        "dialog_actions": (
+            _make_group_model("DialogActions", dialog_actions),
+            ...,
+        ),
+        "popup_actions": (
+            _make_group_model("PopupActions", popup_actions),
+            ...,
         ),
     }
 
@@ -439,6 +481,8 @@ def _extract_applied_actions(response: BaseModel) -> Tuple[Dict[str, Any], int]:
         "scroll_actions",
         "button_actions",
         "textbox_actions",
+        "dialog_actions",
+        "popup_actions",
     ):
         if not hasattr(response, group):
             continue
@@ -488,6 +532,9 @@ def _get_action_class(action_name: str) -> type[BaseModel]:
         "start_scrolling_down": StartScrollingDown,
         "stop_scrolling": StopScrolling,
         "continue_scrolling": ContinueScrolling,
+        CMD_ACCEPT_DIALOG: AcceptDialog,
+        CMD_DISMISS_DIALOG: DismissDialog,
+        CMD_TYPE_DIALOG.replace(" *", ""): TypeDialog,
         # ---------- simple key / caret actions -------------------------
         **{
             name: create_model(
@@ -533,6 +580,24 @@ def _get_action_class(action_name: str) -> type[BaseModel]:
             **_response_fields,
         )
 
+    elif action_name.startswith("select_popup_"):
+        slug = action_name[len("select_popup_") :]
+        title = slug.replace("_", " ").replace("-", " ").title()
+        return create_model(
+            f"SelectPopup{_pascal(slug)}",
+            __doc__=f"Select the popup window titled \"{title}\".",
+            **_response_fields,
+        )
+
+    elif action_name.startswith("close_popup_"):
+        slug = action_name[len("close_popup_") :]
+        title = slug.replace("_", " ").replace("-", " ").title()
+        return create_model(
+            f"ClosePopup{_pascal(slug)}",
+            __doc__=f"Close the popup window titled \"{title}\".",
+            **_response_fields,
+        )
+
     raise ValueError(f"Unknown action field: {action_name!r}")
 
 
@@ -573,7 +638,7 @@ def _build_pruned_response_format(applied: Dict[str, Any]) -> BaseModel:
             "Cannot build a pruned response‑format — no actions had apply=True.",
         )
 
-    # “ActionSelection” is the same top‑level model name used originally
+    # "ActionSelection" is the same top‑level model name used originally
     return create_model("ActionSelection", **top_level)
 
 
@@ -599,6 +664,8 @@ def list_available_actions(
         "button_actions": list(
             fmt.model_fields["button_actions"].annotation.model_fields,
         ),
+        "dialog_actions": list(fmt.model_fields["dialog_actions"].annotation.model_fields) if "dialog_actions" in fmt.model_fields else [],
+        "popup_actions": list(fmt.model_fields["popup_actions"].annotation.model_fields) if "popup_actions" in fmt.model_fields else [],
         "search_actions": [
             name for name in ["search", "open_url"] if name in fmt.model_fields
         ],
@@ -767,3 +834,63 @@ def text_to_browser_action(
             f"\n🤖 Controller: text command to browser action ✅ [⏱️ {t}] [⏩{(time.perf_counter() - t0):.3g}s]\n",
         )
         return {"rationale": reply.rationale, "action": action}
+
+# ---- Dialog / Popup Schemas (NEW) ----------------------------------
+
+
+class AcceptDialog(BaseModel):
+    """Accept / OK the currently open JavaScript dialog."""
+
+    rationale: Optional[str] = Field(
+        None,
+        description="Why you want / don't want to accept the dialog.",
+    )
+    apply: bool = Field(..., description="Accept (click OK) if true.")
+
+
+class DismissDialog(BaseModel):
+    """Dismiss / Cancel the currently open JavaScript dialog."""
+
+    rationale: Optional[str] = Field(
+        None,
+        description="Why you want / don't want to dismiss the dialog.",
+    )
+    apply: bool = Field(..., description="Dismiss (click Cancel) if true.")
+
+
+class TypeDialog(BaseModel):
+    """Type text into a JavaScript prompt dialog then accept it."""
+
+    text: str = Field(..., description="Text to send to the prompt()")
+    rationale: Optional[str] = Field(
+        None,
+        description="Why you chose this text or decided not to send it.",
+    )
+    apply: bool = Field(..., description="Type the text and accept if true.")
+
+
+# ---------------------------------------------------------------------
+def _construct_select_popup_actions(pop_titles: List[str]):
+    mapping = {}
+    for title in pop_titles:
+        slug = _slug(title)
+        action_name = f"select_popup_{slug}"
+        mapping[action_name] = create_model(
+            f"SelectPopup{_pascal(slug)}",
+            __doc__=f"Bring the popup window titled \"{title}\" to the front.",
+            **_response_fields,
+        )
+    return mapping
+
+
+def _construct_close_popup_actions(pop_titles: List[str]):
+    mapping = {}
+    for title in pop_titles:
+        slug = _slug(title)
+        action_name = f"close_popup_{slug}"
+        mapping[action_name] = create_model(
+            f"ClosePopup{_pascal(slug)}",
+            __doc__=f"Close the popup window titled \"{title}\".",
+            **_response_fields,
+        )
+    return mapping

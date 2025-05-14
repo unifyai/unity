@@ -16,12 +16,26 @@ def get_valid_actions(state: Union[BrowserState, dict], mode="both") -> set[str]
     if not isinstance(state, BrowserState):
         state = BrowserState(**state)
 
+    # ── Blocker: JavaScript dialog visible ─────────────────────────
+    if state.dialog_open:
+        dlg_cmds = {CMD_ACCEPT_DIALOG, CMD_DISMISS_DIALOG}
+        if state.dialog_type == "prompt":
+            dlg_cmds.add(CMD_TYPE_DIALOG)
+
+        if mode == "schema":
+            return {c.replace(" ", "_") for c in dlg_cmds}
+        if mode == "actions":
+            return dlg_cmds
+        if mode == "both":
+            return dlg_cmds | {c.replace(" ", "_") for c in dlg_cmds}
+
     valid: set[str] = set()
 
-    # ── text entry & key‑presses ─────────────────────────────────────────
+    # ── text entry & key-presses ─────────────────────────────────────────
     if state.in_textbox:
+        # Keep textbox-specific commands, but do NOT exit early – still allow
+        # scrolling, clicking buttons, etc. while the caret is inside a box.
         valid.update(TEXTBOX_COMMANDS)
-        return valid
 
     # ── scrolling ──────────────────────────────────────────
     if state.auto_scroll is None:
@@ -42,6 +56,10 @@ def get_valid_actions(state: Union[BrowserState, dict], mode="both") -> set[str]
 
     # ── dynamic tab & button placeholders ──────────────
     valid.update(BUTTON_PATTERNS)
+
+    # ── popup window commands ──────────────────────────
+    if state.popups:
+        valid.update({CMD_SELECT_POPUP, CMD_CLOSE_POPUP})
 
     if mode == "schema":
         ret = {v.replace(" ", "_") for v in valid}

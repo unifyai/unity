@@ -13,9 +13,11 @@ from __future__ import annotations
 import queue
 import tkinter as tk
 from tkinter import scrolledtext, ttk, Button
-from typing import Any
+from typing import Any, Callable
 import threading
 import itertools
+import asyncio
+import logging
 
 from controller.agent import (
     text_to_browser_action,
@@ -35,7 +37,7 @@ def _contrasting(color: str) -> str:
     """Return black or white depending on background luminance."""
     color = color.lstrip("#")
     r, g, b = (int(color[i : i + 2], 16) for i in (0, 2, 4))
-    # perceived luminance (ITU BT.601)
+    # perceived luminance (ITU BT.601)
     y = 0.299 * r + 0.587 * g + 0.114 * b
     return "#000000" if y > 128 else "#ffffff"
 
@@ -122,13 +124,13 @@ class ControlPanel(tk.Tk):
     def __init__(
         self,
         command_q: "queue.Queue[str]",
-        update_q: "queue.Queue[list[tuple[int, str, bool]]]",
-        text_q: queue.Queue[str],
+        update_q: "queue.Queue[dict] | None" = None,
+        text_q: queue.Queue[str] | None = None,
     ):
         super().__init__()
         self.cmd_q = command_q  # GUI → worker
-        self.up_q = update_q  # worker → GUI
-        self.text_q = text_q  # primitive → GUI
+        self.up_q = update_q  # worker → GUI (may be None when using Redis)
+        self.text_q = text_q or queue.Queue()  # primitive → GUI
         self.elements: list[tuple[int, str, bool]] = []
         self.screenshot: bytes = b""
         self.tab_titles: list[str] = []
@@ -137,6 +139,7 @@ class ControlPanel(tk.Tk):
 
         # ── async LLM helper --------------------------------------------
         self._llm_resp_q: "queue.Queue[tuple[str,Any]]" = queue.Queue()
+        self._llm_stream_q: "queue.Queue[str]" = queue.Queue()
         self._llm_busy = False
         self._llm_dots = itertools.cycle([".", "..", "..."])
         self._llm_line_idx = None
@@ -164,6 +167,40 @@ class ControlPanel(tk.Tk):
 
         # model poller
         self.after(50, self._poll_llm_resp)
+        self.after(50, self._poll_llm_stream)
+
+        # If no update queue provided, subscribe to Redis browser_state
+        if self.up_q is None:
+            import redis, ast, json
+
+            self._redis_pub = redis.Redis(host="localhost", port=6379, db=0).pubsub()
+            self._redis_pub.subscribe("browser_state")
+
+            def _get_update_from_redis():
+                msg = self._redis_pub.get_message()
+                if msg and msg["type"] == "message":
+                    data = msg["data"]
+                    try:
+                        return json.loads(data)
+                    except Exception:
+                        try:
+                            return ast.literal_eval(
+                                data.decode() if isinstance(data, bytes) else data
+                            )
+                        except Exception:
+                            return None
+                return None
+
+            self._pull_update = _get_update_from_redis
+        else:
+            # pull from queue
+            def _get_update_from_queue():
+                try:
+                    return self.up_q.get_nowait()
+                except queue.Empty:
+                    return None
+
+            self._pull_update = _get_update_from_queue
 
     # ─────────────────────────────────────────
 
@@ -191,6 +228,13 @@ class ControlPanel(tk.Tk):
         self.log.insert("end", text + "\n", tag)
         self.log.configure(state="disabled")
         self.log.yview_moveto(1.0)
+
+        # also mirror LLM-related lines into stream tab
+        if tag == "llm" and hasattr(self, "llm_stream_box"):
+            self.llm_stream_box.configure(state="normal")
+            self.llm_stream_box.insert("end", text + "\n")
+            self.llm_stream_box.configure(state="disabled")
+            self.llm_stream_box.yview_moveto(1.0)
         return idx
 
     # ─────────────────── background LLM thread ──────────────────────
@@ -203,6 +247,10 @@ class ControlPanel(tk.Tk):
             self._log("⚠ LLM still working – please wait")
             return
         self._llm_busy = True
+
+        # Disable entry & show loader icon
+        self.llm_entry.configure(state="disabled")
+        self.llm_loader.grid()
 
         # --- spawn animated log line ------------------------------------
         msg = "⏳ calling model" + next(self._llm_dots)
@@ -217,6 +265,41 @@ class ControlPanel(tk.Tk):
         state = dict(self.state)
 
         def _worker():
+            """Run the LLM call inside a thread and forward *all* log records
+            emitted by this thread into the GUI-stream queue."""
+
+            # --- queue log handler ---------------------------------
+            class _QueueHandler(logging.Handler):
+                def __init__(self, q):
+                    super().__init__()
+                    self.q = q
+
+                def emit(self, record):
+                    try:
+                        msg = self.format(record)
+                    except Exception:
+                        msg = record.getMessage()
+                    # Ensure we never block the worker – drop on full
+                    try:
+                        self.q.put_nowait(msg)
+                    except queue.Full:
+                        pass
+
+            qh = _QueueHandler(self._llm_stream_q)
+            qh.setLevel(logging.DEBUG)
+            qh.setFormatter(
+                logging.Formatter(
+                    "%(asctime)s  %(threadName)s  %(levelname)-8s  %(message)s",
+                ),
+            )
+
+            root_logger = logging.getLogger()
+            root_logger.addHandler(qh)
+
+            # Be verbose for HTTP + model calls
+            logging.getLogger("urllib3").setLevel(logging.DEBUG)
+
+            self._llm_stream_q.put(f"🛈 LLM call start › {user_text[:60]}")
             try:
                 resp = text_to_browser_action(
                     user_text,
@@ -226,16 +309,23 @@ class ControlPanel(tk.Tk):
                     history=history,
                     state=state,
                 )
+                self._llm_stream_q.put("🛈 LLM call succeeded")
                 self._llm_resp_q.put(("ok", resp))
             except Exception as exc:
+                self._llm_stream_q.put(
+                    f"❌ LLM error: {exc.__class__.__name__}: {exc}",
+                )
                 import traceback as _tb
 
                 self._llm_resp_q.put(("err", _tb.format_exc()))
+            finally:
+                # detach handler to avoid duplicate logs on next call
+                root_logger.removeHandler(qh)
 
         threading.Thread(target=_worker, daemon=True).start()
 
     def _poll_llm_resp(self):
-        """Check the response queue every 50 ms."""
+        """Check the response queue every 50 ms."""
         try:
             while True:
                 status, payload = self._llm_resp_q.get_nowait()
@@ -274,9 +364,26 @@ class ControlPanel(tk.Tk):
 
                 self._llm_busy = False
 
+                # Re-enable command entry & hide loader
+                self.llm_entry.configure(state="normal")
+                self.llm_loader.grid_remove()
+
         except queue.Empty:
             pass
         self.after(50, self._poll_llm_resp)
+
+    # -------------------- LLM stream poller -------------------------
+    def _poll_llm_stream(self):
+        try:
+            while True:
+                line = self._llm_stream_q.get_nowait()
+                self.llm_stream_box.configure(state="normal")
+                self.llm_stream_box.insert("end", line + "\n")
+                self.llm_stream_box.configure(state="disabled")
+                self.llm_stream_box.yview_moveto(1.0)
+        except queue.Empty:
+            pass
+        self.after(50, self._poll_llm_stream)
 
     # ---------- universal mouse‑wheel helper -------------------------------
     def _bind_mousewheel(self, target, canvas):
@@ -296,7 +403,7 @@ class ControlPanel(tk.Tk):
 
         # ----- main window -------------------------------------------------
         self.title("Playwright helper")
-        self.geometry("900x550")
+        self.geometry("1000x650")
 
         paned = tk.PanedWindow(self, orient=tk.HORIZONTAL, sashwidth=4)
         paned.grid(row=0, column=0, columnspan=2, sticky="nsew")
@@ -304,7 +411,7 @@ class ControlPanel(tk.Tk):
         self.columnconfigure(0, weight=1, minsize=250)
         self.columnconfigure(1, weight=2)
 
-        # ── top‑right “X” button (absolute) ─────────────────────────────────
+        # ── top‑right "X" button (absolute) ─────────────────────────────────
         close_btn = ttk.Button(
             self,
             text="×",
@@ -312,7 +419,7 @@ class ControlPanel(tk.Tk):
             style="Danger.TButton",
             command=self._on_exit,
         )
-        # place at the top‑right corner (6 px padding)
+        # place at the top‑right corner (6 px padding)
         close_btn.place(relx=1.0, rely=0.0, x=-6, y=6, anchor="ne")
 
         # after all other widgets have been laid out, raise the button
@@ -408,7 +515,7 @@ class ControlPanel(tk.Tk):
         self._reset_el_scroll = False
 
         # ── colour‑aware style for element buttons ────────────────────
-        # Decide if the window background is “dark” or “light”
+        # Decide if the window background is "dark" or "light"
         r, g, b = [c // 256 for c in self.winfo_rgb(self.cget("bg"))]  # 0‑255
         brightness = 0.299 * r + 0.587 * g + 0.114 * b  # luminance
         dark = brightness < 128
@@ -459,7 +566,7 @@ class ControlPanel(tk.Tk):
             ],
         )
 
-        # Per‑tab “×” and Go buttons
+        # Per‑tab "×" and Go buttons
         style.configure(
             "TabRow.TButton",
             font=("Helvetica", 10, "bold"),
@@ -613,10 +720,10 @@ class ControlPanel(tk.Tk):
             self._arrow_button_widgets.append(b)
 
         # ===================================================================
-        #  ROW‑6  →  LLM Command bar
+        #  ROW‑6  →  Bottom bar (Tab controls)
         # ===================================================================
-        bar = tk.Frame(self)
-        bar.grid(
+        bottom_bar = tk.Frame(self)
+        bottom_bar.grid(
             row=6,
             column=0,
             columnspan=2,
@@ -624,12 +731,96 @@ class ControlPanel(tk.Tk):
             padx=5,
             pady=(0, 8),
         )
-        bar.columnconfigure(1, weight=1)
-        tk.Label(bar, text="LLM Command:").grid(row=0, column=0, sticky="w")
+
+        bottom_bar.columnconfigure(0, weight=1)
+        bottom_bar.columnconfigure(1, weight=1)
+
+        # Ensure command-button registry exists before any buttons are created below.
+        self._cmd_buttons: dict[str, ttk.Button] = {}
+
+        def _mk_tab_btn(col: int, txt: str, cmd: str):
+            b = ttk.Button(
+                bottom_bar,
+                text=txt,
+                width=12,
+                command=lambda: self._handle_input(cmd),
+            )
+            b.grid(row=0, column=col, sticky="ew", padx=2)
+            self._cmd_buttons[cmd] = b
+
+        _mk_tab_btn(0, "New Tab", CMD_NEW_TAB)
+        _mk_tab_btn(1, "Close Tab", CMD_CLOSE_THIS_TAB)
+
+        # ===================================================================
+        #  ROW-7  →  Dialog bar (JS pop-ups)
+        # ===================================================================
+        dialog_bar = tk.Frame(self)
+        dialog_bar.grid(
+            row=7,
+            column=0,
+            columnspan=2,
+            sticky="ew",
+            padx=5,
+            pady=(0, 6),
+        )
+
+        dialog_bar.columnconfigure(1, weight=1)  # message / entry stretch
+
+        self.dialog_msg_var = tk.StringVar()
+        tk.Label(dialog_bar, textvariable=self.dialog_msg_var, anchor="w").grid(
+            row=0, column=0, sticky="w"
+        )
+
+        # Entry for prompt text (enabled only for prompt dialogs)
+        self.dialog_input_var = tk.StringVar()
+        self.dialog_entry = tk.Entry(dialog_bar, textvariable=self.dialog_input_var, width=24)
+        self.dialog_entry.grid(row=0, column=1, sticky="ew", padx=(6, 4))
+
+        self.dialog_accept_btn = ttk.Button(
+            dialog_bar,
+            text="Accept",
+            width=8,
+            command=self._accept_dialog,
+        )
+        self.dialog_accept_btn.grid(row=0, column=2, padx=(2, 2))
+
+        self.dialog_dismiss_btn = ttk.Button(
+            dialog_bar,
+            text="Dismiss",
+            width=8,
+            command=lambda: self._queue_command(CMD_DISMISS_DIALOG),
+        )
+        self.dialog_dismiss_btn.grid(row=0, column=3, padx=(2, 0))
+
+        # start disabled
+        for b in (self.dialog_accept_btn, self.dialog_dismiss_btn):
+            b.configure(state="disabled")
+        self.dialog_entry.configure(state="disabled")
+
+        # ===================================================================
+        #  ROW-8  →  LLM Command bar (shifted down)
+        # ===================================================================
+        bar = tk.Frame(self)
+        bar.grid(
+            row=8,
+            column=0,
+            columnspan=2,
+            sticky="ew",
+            padx=5,
+            pady=(0, 8),
+        )
+        bar.columnconfigure(2, weight=1)
+        tk.Label(bar, text="LLM Command:").grid(row=0, column=0, sticky="w")
+
+        # Loader icon (hourglass) – hidden until LLM busy
+        self.llm_loader = tk.Label(bar, text="⏳")
+        self.llm_loader.grid(row=0, column=1, padx=(4, 0))
+        self.llm_loader.grid_remove()
+
         self.cmd_var = tk.StringVar()
-        entry_c = tk.Entry(bar, textvariable=self.cmd_var)
-        entry_c.grid(row=0, column=1, sticky="ew")
-        entry_c.bind("<Return>", lambda _e: self._send_llm_command())
+        self.llm_entry = tk.Entry(bar, textvariable=self.cmd_var)
+        self.llm_entry.grid(row=0, column=2, sticky="ew")
+        self.llm_entry.bind("<Return>", lambda _e: self._send_llm_command())
 
         # ================================================================
         # RIGHT‑HAND PANEL →  notebook(Log/Actions) + state + buttons
@@ -647,15 +838,21 @@ class ControlPanel(tk.Tk):
         note.grid(row=0, column=0, sticky="nsew", padx=5, pady=5)
         tab_log = ttk.Frame(note)
         tab_actions = ttk.Frame(note)
+        tab_llm = ttk.Frame(note)
         note.add(tab_log, text="Log")
         note.add(tab_actions, text="Valid Actions")
+        note.add(tab_llm, text="LLM Stream")
 
         self.log = scrolledtext.ScrolledText(tab_log, state="disabled")
         self.log.pack(fill="both", expand=True)
 
         self.act_box = scrolledtext.ScrolledText(tab_actions, state="disabled")
         self.act_box.pack(fill="both", expand=True)
-        self._last_actions_txt = ""  # cache for anti‑jitter
+        self._last_actions_txt = ""  # cache for anti-jitter
+
+        # LLM streaming output box
+        self.llm_stream_box = scrolledtext.ScrolledText(tab_llm, state="disabled")
+        self.llm_stream_box.pack(fill="both", expand=True)
 
         # browser‑state read‑out
         self.state_var = tk.StringVar()
@@ -675,28 +872,130 @@ class ControlPanel(tk.Tk):
             btns.columnconfigure(i, weight=1)
 
         # ---------------------------------------------------------------
-        # Keep a handle so we can enable/disable + tooltip later
+        # _cmd_buttons already initialised above
         # ---------------------------------------------------------------
-        self._cmd_buttons: dict[str, ttk.Button] = {}
 
-        def make(r: int, c: int, txt: str, cmd: str) -> None:
-            b = ttk.Button(
-                btns,
-                text=txt,
-                width=10,
-                command=lambda: self._handle_input(cmd),
+        # ── SCROLL CONTROLS BLOCK (step scroll + auto-scroll toggle) ----
+        scroll_block = tk.Frame(btns)
+        scroll_block.grid(row=0, column=0, columnspan=2, sticky="nsew")
+
+        # ── Left half: Dial-pad ---------------------------------------
+        keypad = tk.Frame(scroll_block)
+        keypad.grid(row=0, column=0, sticky="n")
+
+        digits = ["1", "2", "3", "4", "5", "6", "7", "8", "9", "*", "0", "#"]
+        self._dtmf_buttons = []  # recreate in new parent
+        for i, d in enumerate(digits):
+            r, c = divmod(i, 3)
+            btn = ttk.Button(
+                keypad,
+                text=d,
+                width=4,
+                command=lambda digit=d: self._on_dtmf(digit),
             )
-            b.grid(row=r, column=c, sticky="ew")
-            self._cmd_buttons[cmd] = b
+            btn.grid(row=r, column=c, sticky="ew", padx=1, pady=1)
+            self._dtmf_buttons.append(btn)
 
-        make(0, 0, "▲ Scroll 100", CMD_SCROLL_UP.replace("*", "100"))
-        make(0, 1, "▼ Scroll 100", CMD_SCROLL_DOWN.replace("*", "100"))
-        make(1, 0, "Start ▲", CMD_START_SCROLL_UP)
-        make(1, 1, "Start ▼", CMD_START_SCROLL_DOWN)
-        make(2, 0, "Stop", CMD_STOP_SCROLLING)
-        make(2, 1, "Continue", CMD_CONT_SCROLLING)
-        make(3, 0, "New Tab", CMD_NEW_TAB)
-        make(3, 1, "Close Tab", CMD_CLOSE_THIS_TAB)
+        for col in range(3):
+            keypad.columnconfigure(col, weight=1)
+
+        # ── Right half: step scroll + toggle ---------------------------
+
+        self.scroll_px_var = tk.StringVar(value="100")
+
+        step = tk.Frame(scroll_block)
+        step.grid(row=0, column=1, sticky="n", padx=(8, 0))
+        step.rowconfigure(1, weight=1)
+
+        def _step_pixels() -> str:
+            val = self.scroll_px_var.get().strip()
+            return val if val.isdigit() and int(val) > 0 else "100"
+
+        up_btn = ttk.Button(
+            step,
+            text="▲",
+            width=4,
+            command=lambda: self._handle_input(
+                CMD_SCROLL_UP.replace("*", _step_pixels()),
+            ),
+        )
+        up_btn.grid(row=0, column=0, sticky="ew")
+
+        px_entry = tk.Entry(
+            step, textvariable=self.scroll_px_var, width=6, justify="center"
+        )
+        px_entry.grid(row=1, column=0, sticky="ew", pady=2)
+
+        down_btn = ttk.Button(
+            step,
+            text="▼",
+            width=4,
+            command=lambda: self._handle_input(
+                CMD_SCROLL_DOWN.replace("*", _step_pixels()),
+            ),
+        )
+        down_btn.grid(row=2, column=0, sticky="ew")
+
+        self._step_widgets = [up_btn, down_btn, px_entry]
+
+        # --- Three-position auto-scroll toggle -------------------------
+        toggle_frame = tk.Frame(scroll_block)
+        toggle_frame.grid(row=0, column=2, sticky="n", padx=(8, 0))
+
+        scroll_block.columnconfigure(0, weight=1)  # keypad
+        scroll_block.columnconfigure(1, weight=1)  # step
+        scroll_block.columnconfigure(2, weight=1)  # toggle
+
+        # IntVar: 0 = up, 1 = stop, 2 = down  (middle is default)
+        self._scroll_mode = tk.IntVar(value=1)
+        # Track last non-stop direction to flip on successive blank-clicks
+        self._last_scroll_dir: str | None = None  # 'up' or 'down'
+        # Pending slider state awaiting browser confirmation (0/1/2)
+        self._scroll_pending_target: int | None = None
+
+        self._scroll_toggle_guard = False  # re-entrancy flag
+        self._manual_stop_pending = False  # wait until worker confirms
+
+        def _on_scroll_toggle(val):
+            if self._scroll_toggle_guard:
+                return  # ignore programmatic updates
+            try:
+                mode = int(float(val))
+            except Exception:
+                return
+            if mode == 0:
+                self._queue_command(CMD_START_SCROLL_UP)
+                self._last_scroll_dir = "up"
+            elif mode == 2:
+                self._queue_command(CMD_START_SCROLL_DOWN)
+                self._last_scroll_dir = "down"
+            else:
+                self._queue_command(CMD_STOP_SCROLLING)
+                self._manual_stop_pending = True
+
+            # Disable toggle until browser confirms
+            self.scroll_toggle.configure(state="disabled")
+            self._scroll_pending_target = mode
+
+        # horizontal slider with 3 notches
+        self.scroll_toggle = tk.Scale(
+            toggle_frame,
+            from_=0,
+            to=2,
+            orient="vertical",
+            length=100,
+            showvalue=False,
+            variable=self._scroll_mode,
+            command=_on_scroll_toggle,
+        )
+        self.scroll_toggle.grid(row=0, column=0, sticky="ew")
+
+        # Label markers – placed to the right of the vertical slider
+        lbls = tk.Frame(toggle_frame)
+        lbls.grid(row=0, column=1, sticky="ns", padx=(4, 0))
+        for row_idx, txt in enumerate(["▲", "■", "▼"]):
+            tk.Label(lbls, text=txt).grid(row=row_idx, column=0, sticky="n")
+            lbls.rowconfigure(row_idx, weight=1)
 
     # dynamic key-press button wrap
     def _relayout_key_buttons(self):
@@ -840,8 +1139,8 @@ class ControlPanel(tk.Tk):
             CMD_MOVE_LINE_END: "Requires focus in a text‑box",
             CMD_MOVE_WORD_LEFT: "Requires focus in a text‑box",
             CMD_MOVE_WORD_RIGHT: "Requires focus in a text‑box",
-            CMD_STOP_SCROLLING: "Auto‑scroll isn’t running",
-            CMD_CONT_SCROLLING: "Auto‑scroll isn’t running",
+            CMD_STOP_SCROLLING: "Auto‑scroll isn't running",
+            CMD_CONT_SCROLLING: "Auto‑scroll isn't running",
             CMD_START_SCROLL_UP: "Already auto‑scrolling",
             CMD_START_SCROLL_DOWN: "Already auto‑scrolling",
             CMD_SCROLL_UP: "Already at the very top of the page",
@@ -877,7 +1176,7 @@ class ControlPanel(tk.Tk):
         if not ok:
             _Tooltip(
                 self.enter_text_box,
-                "Cannot type – there’s no active text‑box on the page",
+                "Cannot type – there's no active text‑box on the page",
             )
 
         # ----- Search / URL entry -------------------------------------
@@ -896,7 +1195,7 @@ class ControlPanel(tk.Tk):
             if not can_click_el:
                 _Tooltip(btn, "Cannot click elements while typing in a text‑box")
 
-        # ----- Per‑row “×” / Go buttons in the Tabs pane --------------
+        # ----- Per‑row "×" / Go buttons in the Tabs pane --------------
         for btn in getattr(self, "_tab_row_buttons", []):
             if btn["text"] == "×":  # close‑tab buttons
                 ok = any(name.startswith("close_tab_") for name in valid)
@@ -908,6 +1207,11 @@ class ControlPanel(tk.Tk):
             btn.configure(state="normal" if ok else "disabled")
             if not ok:
                 _Tooltip(btn, reason)
+
+        # ----- Step-scroll widgets ------------------------------------ NEW
+        auto = self.state.get("auto_scroll", None)
+        for w in getattr(self, "_step_widgets", []):
+            w.configure(state="disabled" if auto else "normal")
 
     # ──────────────────────── ACTIONS‑PANE HELPER ───────────────────────
     def _refresh_actions_list(self) -> None:
@@ -972,6 +1276,46 @@ class ControlPanel(tk.Tk):
             f"auto_scroll: {st.get('auto_scroll', None)}\n"
             f"in_textbox:  {st.get('in_textbox', False)}",
         )
+
+        # sync the auto-scroll toggle --------------------------------
+        if hasattr(self, "scroll_toggle"):
+            # If awaiting confirmation, re-enable when state matches target
+            if self._scroll_pending_target is not None:
+                mode_to_state = {0: "up", 1: None, 2: "down"}
+                expected = mode_to_state[self._scroll_pending_target]
+                if self.state.get("auto_scroll") == expected:
+                    self.scroll_toggle.configure(state="normal")
+                    self._scroll_pending_target = None
+                    if self._manual_stop_pending and expected is None:
+                        self._manual_stop_pending = False
+
+    # ────────────────────── DIALOG BAR REFRESH ──────────────────────── NEW
+    def _refresh_dialog_bar(self):
+        st = self.state or {}
+        has_dialog = st.get("dialog_open", False)
+        if has_dialog:
+            self.dialog_msg_var.set(st.get("dialog_msg", "(no message)"))
+            self.dialog_accept_btn.configure(state="normal")
+            self.dialog_dismiss_btn.configure(state="normal")
+
+            if st.get("dialog_type") == "prompt":
+                self.dialog_entry.configure(state="normal")
+            else:
+                self.dialog_entry.configure(state="disabled")
+        else:
+            self.dialog_msg_var.set("")
+            self.dialog_accept_btn.configure(state="disabled")
+            self.dialog_dismiss_btn.configure(state="disabled")
+            self.dialog_entry.configure(state="disabled")
+
+    # ────────────────────── ACCEPT DIALOG ACTION ─────────────────────── NEW
+    def _accept_dialog(self):
+        """Send the appropriate primitive based on current dialog type."""
+        if self.state.get("dialog_type") == "prompt":
+            text = self.dialog_input_var.get()
+            self._queue_command(CMD_TYPE_DIALOG.replace("*", text))
+        else:
+            self._queue_command(CMD_ACCEPT_DIALOG)
 
     # ---------- element‑button helpers ---------------------------------
     def _exec_element_click(self, idx: int, label: str) -> None:
@@ -1169,18 +1513,20 @@ class ControlPanel(tk.Tk):
     def _poll_updates(self) -> None:
         updated = False
         while True:
-            try:
-                payload = self.up_q.get_nowait()
-                self.elements = payload.get("elements", [])
-                self.tab_titles = payload.get("tabs", [])
-                self.history = payload.get("history", self.history)
-                self.state = payload.get("state", self.state)
-                img = payload.get("screenshot", b"")
-                if img:
-                    self.screenshot = img
-                updated = True
-            except queue.Empty:
+            payload = self._pull_update()
+            if payload is None:
                 break
+            # ensure dict
+            if not isinstance(payload, dict):
+                continue
+            self.elements = payload.get("elements", [])
+            self.tab_titles = payload.get("tabs", [])
+            self.history = payload.get("history", self.history)
+            self.state = payload.get("state", self.state)
+            img = payload.get("screenshot", b"")
+            if img:
+                self.screenshot = img
+            updated = True
 
         if updated:
             # Elements pane (buttons)
@@ -1197,6 +1543,7 @@ class ControlPanel(tk.Tk):
             self._refresh_enabled_controls(
                 get_valid_actions(BrowserState(**self.state)),
             )
+            self._refresh_dialog_bar()
 
         self.after(self.REFRESH_INTERVAL_MS, self._poll_updates)
 
@@ -1227,3 +1574,34 @@ class ControlPanel(tk.Tk):
             self._log(ansi.rstrip())
         except Exception:
             self._log(tb)
+
+    # ─────────────────────── number-key helper ──────────────────────── NEW
+    def _on_dtmf(self, digit: str) -> None:
+        """Handle dial-pad press – send DTMF and click numbered element when 1-9."""
+        # Skip when an Entry widget currently has focus to avoid hijacking typing
+        if isinstance(self.focus_get(), tk.Entry):
+            return
+
+        self._log(f"[dtmf] {digit}")
+
+        if _dtmf_publisher is not None:
+            try:
+                ret = _dtmf_publisher(digit)
+                if asyncio.iscoroutine(ret):
+                    asyncio.create_task(ret)
+            except Exception as exc:
+                self._log(f"⚠ DTMF publish error: {exc}")
+
+
+# Optional: external LiveKit DTMF publisher callback
+_dtmf_publisher: "Callable[[int], None] | None" = None
+
+
+def register_dtmf_publisher(fn):
+    """Register a callback that sends DTMF for the given digit (1-9).
+
+    The *fn* can be synchronous or async; if it returns a coroutine it will
+    be scheduled on the current running loop.
+    """
+    global _dtmf_publisher
+    _dtmf_publisher = fn

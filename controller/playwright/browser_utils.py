@@ -22,9 +22,19 @@ textarea:not([disabled]):visible,
 [role=textbox]:visible,
 [role=combobox]:visible,
 [role=searchbox]:visible,
+[role=option]:visible,
+[role=listitem]:visible,
 a[href]:visible,
 [onclick]:visible,
-*[tabindex]:not([tabindex="-1"]):visible
+*[tabindex]:not([tabindex="-1"]):visible,
+[role=switch]:visible,
+[role=checkbox]:visible,
+[role=radio]:visible,
+input[type=submit]:not([disabled]):visible,
+input[type=button]:not([disabled]):visible,
+input[type=image]:not([disabled]):visible,
+select:not([disabled]):visible,
+label[for]:visible
 """
 
 

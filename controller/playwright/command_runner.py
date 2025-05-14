@@ -26,6 +26,9 @@ class CommandRunner:
         self.active: Page = ctx.pages[0]
         self.state = BrowserState(url=self.active.url, title=self.active.title())
         self.hist = ActionHistory()
+        # ── Dialog & popup tracking (NEW) ────────────────────────────
+        self._dialog = None  # playwright Dialog instance when open
+        self._popups: list[Page] = []
 
     # ---------- high‑level API (called by GUI) ----------------------------
     def new_tab(self):
@@ -86,6 +89,79 @@ class CommandRunner:
         if not cmd:
             return
         self.hist.add(cmd)
+        # ───────────────────── Dialog primitives ─────────────────────
+        if cmd == CMD_ACCEPT_DIALOG:
+            if self._dialog:
+                try:
+                    self._dialog.accept()
+                except Exception as exc:
+                    self.log(f"accept dialog failed: {exc}")
+                finally:
+                    self._clear_dialog_state()
+            else:
+                self.log("No dialog open")
+            return
+
+        if cmd == CMD_DISMISS_DIALOG:
+            if self._dialog:
+                try:
+                    self._dialog.dismiss()
+                except Exception as exc:
+                    self.log(f"dismiss dialog failed: {exc}")
+                finally:
+                    self._clear_dialog_state()
+            else:
+                self.log("No dialog open")
+            return
+
+        type_prefix = CMD_TYPE_DIALOG.rstrip("*").rstrip()  # "type_dialog"
+        if low.startswith(type_prefix):
+            text = cmd[len(type_prefix) :].strip()
+            if self._dialog and getattr(self._dialog, "type", None) == "prompt":
+                try:
+                    self._dialog.accept(text)
+                except Exception as exc:
+                    self.log(f"type dialog accept failed: {exc}")
+                finally:
+                    self._clear_dialog_state()
+            else:
+                self.log("No prompt dialog open")
+            return
+
+        # ───────────────────── Popup primitives ──────────────────────
+        if cmd == CMD_CLOSE_POPUP:
+            target = self.active if self.active in self._popups else (
+                self._popups[-1] if self._popups else None
+            )
+            if target:
+                try:
+                    target.close()
+                except Exception as exc:
+                    self.log(f"close popup failed: {exc}")
+                self._update_popups_state()
+                if self.ctx.pages:
+                    self.active = self.ctx.pages[0]
+            else:
+                self.log("No popup to close")
+            return
+
+        select_prefix = CMD_SELECT_POPUP.rstrip("*").rstrip()  # "select_popup"
+        if low.startswith(select_prefix):
+            needle = cmd[len(select_prefix) :].strip().lower()
+            hit = next(
+                (pg for pg in self._popups if needle in (pg.title() or "").lower()),
+                None,
+            )
+            if hit:
+                self.active = hit
+                try:
+                    hit.bring_to_front()
+                except Exception:
+                    pass
+            else:
+                self.log("No popup matches")
+            return
+
         # open url ------------------------------------------------------
         open_prefix = CMD_OPEN_URL.rstrip("*").rstrip()  # "open_url"
         if low.startswith(open_prefix):
@@ -320,3 +396,32 @@ class CommandRunner:
         elements = collect_elements(self.active)
         paint_overlay(self.active, build_boxes(elements))
         return elements
+
+    # ---------- internal helpers -----------------------------------------
+
+    def _clear_dialog_state(self):
+        """Reset dialog tracking and BrowserState flags."""
+        self._dialog = None
+        self.state.dialog_open = False
+        self.state.dialog_type = None
+        self.state.dialog_msg = ""
+
+    def _update_popups_state(self):
+        """Refresh cached popup titles in BrowserState."""
+        try:
+            alive = [pg for pg in self._popups if not pg.is_closed()]
+        except Exception:
+            alive = []
+        self._popups = alive
+        self.state.popups = [pg.title() or "(untitled)" for pg in alive]
+
+        # If the currently active page was a popup that has since closed,
+        # fall back to the first remaining page in the context (if any)
+        try:
+            if self.active.is_closed():
+                if self.ctx.pages:
+                    self.active = self.ctx.pages[0]
+        except Exception:
+            # self.active might already be None or detached
+            if self.ctx.pages:
+                self.active = self.ctx.pages[0]
