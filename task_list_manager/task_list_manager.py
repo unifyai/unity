@@ -207,16 +207,18 @@ class TaskListManager(threading.Thread):
             new=True,
         )
 
-        # ------------------  queue insertion (if relevant)  ------------------ #
+        # ------------------  queue insertion (if relevant)  ---------- #
         if status in (Status.active, Status.queued):
             original_q = [t.task_id for t in self._get_task_queue()]
-            new_q = (
-                [next_id] + original_q
-                if status == Status.active
-                else original_q + [next_id]
-            )
-            # updates prev/next pointers for every node (incl. new one)
-            self._update_task_queue(original=original_q, new=new_q)
+
+            # Only insert if the new task isn't already in that list
+            if next_id not in original_q:
+                new_q = (
+                    [next_id] + original_q  # prepend for active
+                    if status == Status.active
+                    else original_q + [next_id]  # append for queued
+                )
+                self._update_task_queue(original=original_q, new=new_q)
 
         return next_id
 
