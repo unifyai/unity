@@ -17,6 +17,7 @@ from typing import Any, Callable
 import threading
 import itertools
 import asyncio
+import logging
 
 from controller.agent import (
     text_to_browser_action,
@@ -138,6 +139,7 @@ class ControlPanel(tk.Tk):
 
         # ── async LLM helper --------------------------------------------
         self._llm_resp_q: "queue.Queue[tuple[str,Any]]" = queue.Queue()
+        self._llm_stream_q: "queue.Queue[str]" = queue.Queue()
         self._llm_busy = False
         self._llm_dots = itertools.cycle([".", "..", "..."])
         self._llm_line_idx = None
@@ -165,6 +167,7 @@ class ControlPanel(tk.Tk):
 
         # model poller
         self.after(50, self._poll_llm_resp)
+        self.after(50, self._poll_llm_stream)
 
         # If no update queue provided, subscribe to Redis browser_state
         if self.up_q is None:
@@ -223,6 +226,13 @@ class ControlPanel(tk.Tk):
         self.log.insert("end", text + "\n", tag)
         self.log.configure(state="disabled")
         self.log.yview_moveto(1.0)
+
+        # also mirror LLM-related lines into stream tab
+        if tag == "llm" and hasattr(self, "llm_stream_box"):
+            self.llm_stream_box.configure(state="normal")
+            self.llm_stream_box.insert("end", text + "\n")
+            self.llm_stream_box.configure(state="disabled")
+            self.llm_stream_box.yview_moveto(1.0)
         return idx
 
     # ─────────────────── background LLM thread ──────────────────────
@@ -253,6 +263,41 @@ class ControlPanel(tk.Tk):
         state = dict(self.state)
 
         def _worker():
+            """Run the LLM call inside a thread and forward *all* log records
+            emitted by this thread into the GUI-stream queue."""
+
+            # --- queue log handler ---------------------------------
+            class _QueueHandler(logging.Handler):
+                def __init__(self, q):
+                    super().__init__()
+                    self.q = q
+
+                def emit(self, record):
+                    try:
+                        msg = self.format(record)
+                    except Exception:
+                        msg = record.getMessage()
+                    # Ensure we never block the worker – drop on full
+                    try:
+                        self.q.put_nowait(msg)
+                    except queue.Full:
+                        pass
+
+            qh = _QueueHandler(self._llm_stream_q)
+            qh.setLevel(logging.DEBUG)
+            qh.setFormatter(
+                logging.Formatter(
+                    "%(asctime)s  %(threadName)s  %(levelname)-8s  %(message)s",
+                ),
+            )
+
+            root_logger = logging.getLogger()
+            root_logger.addHandler(qh)
+
+            # Be verbose for HTTP + model calls
+            logging.getLogger("urllib3").setLevel(logging.DEBUG)
+
+            self._llm_stream_q.put(f"🛈 LLM call start › {user_text[:60]}")
             try:
                 resp = text_to_browser_action(
                     user_text,
@@ -262,11 +307,18 @@ class ControlPanel(tk.Tk):
                     history=history,
                     state=state,
                 )
+                self._llm_stream_q.put("🛈 LLM call succeeded")
                 self._llm_resp_q.put(("ok", resp))
             except Exception as exc:
+                self._llm_stream_q.put(
+                    f"❌ LLM error: {exc.__class__.__name__}: {exc}",
+                )
                 import traceback as _tb
 
                 self._llm_resp_q.put(("err", _tb.format_exc()))
+            finally:
+                # detach handler to avoid duplicate logs on next call
+                root_logger.removeHandler(qh)
 
         threading.Thread(target=_worker, daemon=True).start()
 
@@ -317,6 +369,19 @@ class ControlPanel(tk.Tk):
         except queue.Empty:
             pass
         self.after(50, self._poll_llm_resp)
+
+    # -------------------- LLM stream poller -------------------------
+    def _poll_llm_stream(self):
+        try:
+            while True:
+                line = self._llm_stream_q.get_nowait()
+                self.llm_stream_box.configure(state="normal")
+                self.llm_stream_box.insert("end", line + "\n")
+                self.llm_stream_box.configure(state="disabled")
+                self.llm_stream_box.yview_moveto(1.0)
+        except queue.Empty:
+            pass
+        self.after(50, self._poll_llm_stream)
 
     # ---------- universal mouse‑wheel helper -------------------------------
     def _bind_mousewheel(self, target, canvas):
@@ -725,15 +790,21 @@ class ControlPanel(tk.Tk):
         note.grid(row=0, column=0, sticky="nsew", padx=5, pady=5)
         tab_log = ttk.Frame(note)
         tab_actions = ttk.Frame(note)
+        tab_llm = ttk.Frame(note)
         note.add(tab_log, text="Log")
         note.add(tab_actions, text="Valid Actions")
+        note.add(tab_llm, text="LLM Stream")
 
         self.log = scrolledtext.ScrolledText(tab_log, state="disabled")
         self.log.pack(fill="both", expand=True)
 
         self.act_box = scrolledtext.ScrolledText(tab_actions, state="disabled")
         self.act_box.pack(fill="both", expand=True)
-        self._last_actions_txt = ""  # cache for anti‑jitter
+        self._last_actions_txt = ""  # cache for anti-jitter
+
+        # LLM streaming output box
+        self.llm_stream_box = scrolledtext.ScrolledText(tab_llm, state="disabled")
+        self.llm_stream_box.pack(fill="both", expand=True)
 
         # browser‑state read‑out
         self.state_var = tk.StringVar()
