@@ -54,7 +54,7 @@ def _list_valid_actions(tabs, buttons, state) -> list[str]:
     if buttons and CMD_CLICK_BUTTON in valid_actions:
         flat.extend(
             CMD_CLICK_BUTTON.replace(" *", f"_{idx}_{_slug(lbl)}")
-            for idx, lbl, on_hvr in buttons
+            for idx, lbl in buttons
         )
         flat.remove("click_button_*")
     return sorted(set([item.replace("*", "").replace(" ", "") for item in flat]))
