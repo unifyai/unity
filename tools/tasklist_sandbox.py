@@ -114,13 +114,13 @@ def _dispatch(
 
 
 def main() -> None:
-    unify.activate("tasklist_sandbox", overwrite=True)
+    unify.activate("tasklist_sandbox")
 
     tlm = TaskListManager()
     tlm.start()
 
     # Ensure the 'Tasks' context exists to avoid 404 errors on first queries
-    unify.set_context("Tasks")
+    unify.set_context("Tasks", overwrite=True)
 
     _seed_scenario(tlm)
 
