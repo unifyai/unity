@@ -79,7 +79,7 @@ _ID_BY_NAME: dict[str, int] = {}  # filled during seeding
 
 
 class ScenarioBuilder:
-    """Populate Unify with contacts, 6 ‘meaningful’ exchanges + filler."""
+    """Populate Unify with contacts, 6 'meaningful' exchanges + filler."""
 
     def __init__(self) -> None:
         if "test_ask" in unify.list_projects():
@@ -336,25 +336,25 @@ def tm_scenario() -> TranscriptManager:
 # --------------------------------------------------------------------------- #
 
 
-def _llm_assert_correct(question: str, expected: str, candidate: str) -> None:
+def _llm_assert_correct(
+    question: str,
+    expected: str,
+    candidate: str,
+    steps: list,  # noqa: D401 – clarity outweighs strict type accuracy
+) -> None:
+    """Assert *candidate* satisfies *expected* for *question* via an LLM judge.
+
+    Any assertion failure is augmented with the full **reasoning steps** so
+    that debugging always has a complete tool-use trace available.
     """
-    Uses an LLM to decide whether *candidate* satisfies *expected* for
-    *question*.  The assistant must reply with:
 
-        {"correct": true}
-
-    or
-
-        {"correct": false}
-    """
     judge = unify.Unify("o4-mini@openai", cache=True, traced=True)
     judge.set_system_message(
         "You are a strict unit-test judge. "
         "You will be given a question, a ground-truth answer derived "
         "directly from the data, and a candidate answer produced by the "
         "system under test. "
-        "Respond ONLY with valid JSON of the form "
-        '{"correct": true} or {"correct": false}. '
+        'Respond ONLY with valid JSON of the form {"correct": true} or {"correct": false}. '
         "Mark correct⇢true if a reasonable human would accept the candidate "
         "as answering the question fully and accurately; otherwise false.",
     )
@@ -367,11 +367,15 @@ def _llm_assert_correct(question: str, expected: str, candidate: str) -> None:
 
     # Strip anything outside first {...}
     match = re.search(r"\{.*\}", result, re.S)
-    assert match, f"LLM judge returned unexpected format: {result!r}"
+    assert match, (
+        "LLM judge returned unexpected format: "
+        f"{result!r}\nReasoning steps:\n{json.dumps(steps, indent=4)}"
+    )
     verdict = json.loads(match.group(0))
     assert verdict.get("correct") is True, (
         "LLM judge marked answer incorrect:\n"
-        f"Q: {question}\nExpected: {expected}\nGot: {candidate}"
+        f"Q: {question}\nExpected: {expected}\nGot: {candidate}\n"
+        f"Reasoning steps:\n{json.dumps(steps, indent=4)}"
     )
 
 
@@ -390,9 +394,9 @@ def test_ask_semantic_with_llm_judgement(
     times), then asks a _separate_ LLM whether the answer is acceptable.
     """
     try:
-        candidate = tm_scenario.ask(question)
+        candidate, steps = tm_scenario.ask(question, return_reasoning_steps=True)
         expected = _answer_semantic(tm_scenario, question)
-        _llm_assert_correct(question, expected, candidate)
+        _llm_assert_correct(question, expected, candidate, steps)
     except Exception as e:
         if "test_ask" in unify.list_projects():
             unify.delete_project("test_ask")

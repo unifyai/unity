@@ -107,7 +107,18 @@ QUESTIONS = [
 ]
 
 
-def _llm_assert_correct(question: str, expected: str, candidate: str) -> None:
+def _llm_assert_correct(
+    question: str,
+    expected: str,
+    candidate: str,
+    steps: list,  # noqa: D401 – clarity outweighs strict type accuracy
+) -> None:
+    """Assert *candidate* satisfies *expected* for *question* via an LLM judge.
+
+    On failure, the full reasoning *steps* are appended to the assertion
+    message to aid debugging.
+    """
+
     judge = unify.Unify("o4-mini@openai", cache=True, traced=True)
     judge.set_system_message(
         "You are a strict unit-test judge. "
@@ -124,11 +135,15 @@ def _llm_assert_correct(question: str, expected: str, candidate: str) -> None:
     result = judge.generate(payload)
 
     match = re.search(r"\{.*\}", result, re.S)
-    assert match, f"LLM judge returned unexpected format: {result!r}"
+    assert match, (
+        "LLM judge returned unexpected format: "
+        f"{result!r}\nReasoning steps:\n{json.dumps(steps, indent=4)}"
+    )
     verdict = json.loads(match.group(0))
     assert verdict.get("correct") is True, (
         "LLM judge marked answer incorrect:\n"
-        f"Q: {question}\nExpected: {expected}\nGot: {candidate}"
+        f"Q: {question}\nExpected: {expected}\nGot: {candidate}\n"
+        f"Reasoning steps:\n{json.dumps(steps, indent=4)}"
     )
 
 
@@ -144,9 +159,9 @@ def test_ask_semantic_with_llm_judgement(
     tlm_scenario: TaskListManager,
 ) -> None:
     try:
-        candidate = tlm_scenario.ask(text=question)
+        candidate, steps = tlm_scenario.ask(text=question, return_reasoning_steps=True)
         expected = _answer_semantic(tlm_scenario, question)
-        _llm_assert_correct(question, expected, candidate)
+        _llm_assert_correct(question, expected, candidate, steps)
     except Exception as exc:
         if "test_task_ask" in unify.list_projects():
             unify.delete_project("test_task_ask")
