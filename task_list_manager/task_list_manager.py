@@ -218,7 +218,10 @@ class TaskListManager(threading.Thread):
         active_task = self._get_active_task()
         if not active_task:
             return
-        return self._update_task_status(task_id=active_task, new_status="paused")
+        return self._update_task_status(
+            task_ids=active_task["task_id"],
+            new_status="paused",
+        )
 
     def _continue(self) -> Optional[Dict[str, str]]:
         """
@@ -230,7 +233,10 @@ class TaskListManager(threading.Thread):
         paused_task = self._get_paused_task()
         if not paused_task:
             return
-        return self._update_task_status(task_id=paused_task, new_status="active")
+        return self._update_task_status(
+            task_ids=paused_task["task_id"],
+            new_status="active",
+        )
 
     # Cancel Task(s)
 
@@ -253,10 +259,7 @@ class TaskListManager(threading.Thread):
     def _get_task_queue():
         pass
 
-    def _reorder_task_queue():
-        pass
-
-    def _add_task_to_queue():
+    def _update_task_queue():
         pass
 
     # Update Name / Description
