@@ -95,7 +95,7 @@ def test_update_task_start_at():
     tlm._update_task_start_at(task_id=0, new_start_at=start)
 
     task_list = tlm._search()
-    assert task_list[0]["start_at"] == start
+    assert task_list[0]["schedule"]["start_time"] == start
 
 
 @_handle_project

@@ -459,9 +459,7 @@ class TaskListManager(threading.Thread):
             # fall back to queue head: node with no prev_task and non-terminal status
             head_candidates = self._search(
                 filter=(
-                    "schedule is not None and "
-                    "status not in ('completed','cancelled','failed') and "
-                    "schedule.get('prev_task') is None"
+                    "schedule is not None and \n                    status not in ('completed','cancelled','failed', 'scheduled') and \n                    schedule.get('prev_task') is None"
                 ),
                 limit=2,
             )
@@ -494,7 +492,10 @@ class TaskListManager(threading.Thread):
         ordered: List[Task] = []
         cur = head_row
         while cur:
-            if cur["status"] not in self._TERMINAL_STATUSES:
+            if (
+                cur["status"] not in self._TERMINAL_STATUSES
+                and cur["status"] != "scheduled"
+            ):
                 ordered.append(Task(**cur))
 
             nxt_id = self._sched_next(cur["schedule"])
@@ -666,20 +667,37 @@ class TaskListManager(threading.Thread):
         new_start_at: datetime,
     ) -> Dict[str, str]:
         """
-        Update the start date for the specified task.
+        Update the scheduled **start_time** for the specified task.
 
-        Args:
-            task_id (int): The id of the task to update.
-            new_start_at (datetime): The new start date for the task.
-
-        Returns:
-            Dict[str, str]: Whether the task was updated or not.
+        This sets / overwrites the ``schedule['start_time']`` field while
+        preserving any existing ``prev_task`` / ``next_task`` linkage.
+        If the task did not have a schedule previously we create one with
+        ``prev_task`` / ``next_task`` set to ``None`` so that the task is
+        *not* implicitly inserted into the runnable queue.
         """
         log_id = self._get_logs_by_task_ids(task_ids=task_id)
+
+        # Coerce to ISO-8601 string (Unify stores plain serialisable values)
+        if isinstance(new_start_at, datetime):
+            new_start_at = new_start_at.isoformat()
+
+        # Fetch the current task row to preserve linkage information if present
+        current_rows = self._search(filter=f"task_id == {task_id}", limit=1)
+        current_sched = current_rows[0].get("schedule") if current_rows else None
+        if current_sched is None:
+            current_sched = {}
+
+        # Preserve queue linkage if it exists, otherwise default to None
+        sched_payload = {
+            "prev_task": self._sched_prev(current_sched),
+            "next_task": self._sched_next(current_sched),
+            "start_time": new_start_at,
+        }
+
         return unify.update_logs(
             logs=log_id,
             context="Tasks",
-            entries={"start_at": new_start_at},
+            entries={"schedule": sched_payload},
             overwrite=True,
         )
 

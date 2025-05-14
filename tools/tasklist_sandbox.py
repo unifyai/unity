@@ -16,7 +16,7 @@ import argparse
 import json
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Tuple
+from typing import Tuple, Dict, List
 import logging
 
 # Add repo root to PYTHONPATH when run as standalone
@@ -74,34 +74,105 @@ def _seed_fixed(tlm: TaskListManager) -> None:
     )
 
 
-def _seed_llm(tlm: TaskListManager, *, n: int = 6) -> None:
-    """Let an LLM propose a fresh set of tasks and ingest them."""
+def _seed_llm(tlm: TaskListManager) -> None:
+    """Ask an LLM to craft a *cohesive* scenario with >100 tasks.
+
+    Expected JSON schema returned by the model:
+
+        {
+          "theme": "ACME car dealership – Q4 outreach",    # optional meta
+          "tasks": [
+            {
+              "name": "Call lead – Ford Fiesta",
+              "description": "Phone Marco Rossi to discuss financing options",
+              "priority": "high",
+              "queue_group": "sales",          # tasks with same group are chained
+              "queue_position": 0,              # lower number == earlier in chain
+              "status": "queued" | "active" | "paused" | "scheduled",
+              "start_time": "2025-06-10T09:00:00Z"   # optional ISO (only for scheduled)
+            },
+            … (100-200 tasks) …
+          ]
+        }
+
+    We interpret every *queue_group* separately, ordering by *queue_position*
+    to create a linked list via the Schedule prev_task/next_task pointers.
+    """
+
+    prompt = (
+        "Generate a realistic task list for a small business. "
+        "Pick a coherent *theme* (e.g. a car dealership following up leads, "
+        "or a property agency, or a software release checklist). "
+        "Create between 110 and 140 tasks that belong to **several logical "
+        "queues** (e.g. 'sales-calls', 'paperwork', 'maintenance'). "
+        "For each task output: name, description, status, optional priority, "
+        "a queue_group label, queue_position (int, starting at 0 in each group) "
+        "and, when status=='scheduled', a start_time in ISO-8601 UTC. "
+        "Return JSON with a top-level key 'tasks' containing the list. Do NOT "
+        "include any text outside the JSON literal."
+    )
 
     client = unify.Unify("o4-mini@openai", cache=True, traced=True)
-    system = (
-        "You are a data generator for TaskListManager unit tests. "
-        "Respond ONLY with valid JSON – a list where each item is an object "
-        "containing: name (str), description (str), status (queued|active|paused|scheduled), "
-        "priority (low|normal|high|urgent, optional). Generate between 5 and 8 realistic tasks."
-    )
-    client.set_system_message(system)
-    raw = client.generate("Generate tasks").strip()
+    client.set_system_message(prompt)
+    raw = client.generate("Produce scenario").strip()
 
     try:
-        data = json.loads(raw)
+        payload = json.loads(raw)
+        tasks_data = payload["tasks"]
     except Exception:
-        print("Failed to parse LLM JSON – falling back to fixed scenario")
+        print("LLM scenario generation failed – using fixed sample instead.")
         _seed_fixed(tlm)
         return
 
-    for entry in data:
-        kwargs = {
-            "name": entry.get("name", "Untitled task"),
-            "description": entry.get("description", ""),
-            "status": entry.get("status", "queued"),
-            "priority": entry.get("priority", Priority.normal),
-        }
-        tlm._create_task(**kwargs)
+    # Sort tasks within each queue_group by queue_position to build linkage
+    groups: Dict[str, List[dict]] = {}
+    for t in tasks_data:
+        groups.setdefault(t.get("queue_group", "default"), []).append(t)
+
+    for grp in groups.values():
+        grp.sort(key=lambda d: d.get("queue_position", 0))
+
+    id_map: Dict[tuple[str, int], int] = {}
+
+    # First pass – create tasks without schedule linkage
+    for grp_name, grp in groups.items():
+        for idx, entry in enumerate(grp):
+            kwargs = {
+                "name": entry["name"],
+                "description": entry["description"],
+                "status": entry.get("status", "queued"),
+                "priority": entry.get("priority", Priority.normal),
+            }
+
+            start_time = entry.get("start_time")
+            if start_time:
+                kwargs["schedule"] = Schedule(
+                    start_time=start_time,
+                    prev_task=None,
+                    next_task=None,
+                )
+
+            new_id = tlm._create_task(**kwargs)
+            id_map[(grp_name, idx)] = new_id
+
+    # Second pass – update schedule links within each group
+    for grp_name, grp in groups.items():
+        for idx, _ in enumerate(grp):
+            cur_id = id_map[(grp_name, idx)]
+            prev_id = id_map.get((grp_name, idx - 1)) if idx > 0 else None
+            next_id = id_map.get((grp_name, idx + 1)) if idx < len(grp) - 1 else None
+
+            sched_payload = {"prev_task": prev_id, "next_task": next_id}
+            tlm._update_task_status(
+                task_ids=cur_id,
+                new_status=tlm._search(filter=f"task_id=={cur_id}")[0]["status"],
+            )  # noop to ensure log exists
+            unify.update_logs(
+                context="Tasks",
+                logs=tlm._get_logs_by_task_ids(task_ids=cur_id),
+                entries={"schedule": sched_payload},
+                overwrite=True,
+            )
 
 
 def _dispatch(
