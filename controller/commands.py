@@ -38,6 +38,11 @@ CMD_STOP_SCROLLING = "stop_scrolling"
 CMD_CLICK_BUTTON = "click_button *"
 CMD_SELECT_TAB = "select_tab *"
 CMD_CLOSE_TAB = "close_tab *"
+CMD_ACCEPT_DIALOG = "accept_dialog"
+CMD_CLOSE_POPUP = "close_popup"
+CMD_DISMISS_DIALOG = "dismiss_dialog"
+CMD_SELECT_POPUP = "select_popup *"
+CMD_TYPE_DIALOG = "type_dialog *"
 
 # ───────────────────────────────────────────────────────────────────────────
 #  WILDCARD GROUPS (sets reused by GUI / agent / filters)
@@ -75,6 +80,7 @@ BUTTON_PATTERNS: set[str] = {
     CMD_CLICK_BUTTON,
     CMD_SELECT_TAB,
     CMD_CLOSE_TAB,
+    CMD_SELECT_POPUP,
 }
 
 # 4.  Single‑step smooth scroll patterns
@@ -87,6 +93,19 @@ SCROLL_PATTERNS = {
 AUTOSCROLL_START: set[str] = {CMD_START_SCROLL_UP, CMD_START_SCROLL_DOWN}
 AUTOSCROLL_ACTIVE: set[str] = {CMD_STOP_SCROLLING, CMD_CONT_SCROLLING}
 
+# 6.  Dialog-specific primitives (shown only when a JS dialog is open)
+DIALOG_COMMANDS: set[str] = {
+    CMD_ACCEPT_DIALOG,
+    CMD_DISMISS_DIALOG,
+    CMD_TYPE_DIALOG,
+}
+
+# 7.  Popup-window primitives (shown whenever pop-ups are present)
+POPUP_COMMANDS: set[str] = {
+    CMD_CLOSE_POPUP,
+    CMD_SELECT_POPUP,
+}
+
 # Convenience export for everything (handy for schema generation etc.)
 ALL_PRIMITIVES: set[str] = (
     TEXTBOX_COMMANDS
@@ -96,4 +115,6 @@ ALL_PRIMITIVES: set[str] = (
     | AUTOSCROLL_START
     | AUTOSCROLL_ACTIVE
     | BUTTON_PATTERNS
+    | DIALOG_COMMANDS
+    | POPUP_COMMANDS
 )

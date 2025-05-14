@@ -752,11 +752,57 @@ class ControlPanel(tk.Tk):
         _mk_tab_btn(1, "Close Tab", CMD_CLOSE_THIS_TAB)
 
         # ===================================================================
-        #  ROW‑7  →  LLM Command bar (shifted down)
+        #  ROW-7  →  Dialog bar (JS pop-ups)
+        # ===================================================================
+        dialog_bar = tk.Frame(self)
+        dialog_bar.grid(
+            row=7,
+            column=0,
+            columnspan=2,
+            sticky="ew",
+            padx=5,
+            pady=(0, 6),
+        )
+
+        dialog_bar.columnconfigure(1, weight=1)  # message / entry stretch
+
+        self.dialog_msg_var = tk.StringVar()
+        tk.Label(dialog_bar, textvariable=self.dialog_msg_var, anchor="w").grid(
+            row=0, column=0, sticky="w"
+        )
+
+        # Entry for prompt text (enabled only for prompt dialogs)
+        self.dialog_input_var = tk.StringVar()
+        self.dialog_entry = tk.Entry(dialog_bar, textvariable=self.dialog_input_var, width=24)
+        self.dialog_entry.grid(row=0, column=1, sticky="ew", padx=(6, 4))
+
+        self.dialog_accept_btn = ttk.Button(
+            dialog_bar,
+            text="Accept",
+            width=8,
+            command=self._accept_dialog,
+        )
+        self.dialog_accept_btn.grid(row=0, column=2, padx=(2, 2))
+
+        self.dialog_dismiss_btn = ttk.Button(
+            dialog_bar,
+            text="Dismiss",
+            width=8,
+            command=lambda: self._queue_command(CMD_DISMISS_DIALOG),
+        )
+        self.dialog_dismiss_btn.grid(row=0, column=3, padx=(2, 0))
+
+        # start disabled
+        for b in (self.dialog_accept_btn, self.dialog_dismiss_btn):
+            b.configure(state="disabled")
+        self.dialog_entry.configure(state="disabled")
+
+        # ===================================================================
+        #  ROW-8  →  LLM Command bar (shifted down)
         # ===================================================================
         bar = tk.Frame(self)
         bar.grid(
-            row=7,
+            row=8,
             column=0,
             columnspan=2,
             sticky="ew",
@@ -1243,6 +1289,34 @@ class ControlPanel(tk.Tk):
                     if self._manual_stop_pending and expected is None:
                         self._manual_stop_pending = False
 
+    # ────────────────────── DIALOG BAR REFRESH ──────────────────────── NEW
+    def _refresh_dialog_bar(self):
+        st = self.state or {}
+        has_dialog = st.get("dialog_open", False)
+        if has_dialog:
+            self.dialog_msg_var.set(st.get("dialog_msg", "(no message)"))
+            self.dialog_accept_btn.configure(state="normal")
+            self.dialog_dismiss_btn.configure(state="normal")
+
+            if st.get("dialog_type") == "prompt":
+                self.dialog_entry.configure(state="normal")
+            else:
+                self.dialog_entry.configure(state="disabled")
+        else:
+            self.dialog_msg_var.set("")
+            self.dialog_accept_btn.configure(state="disabled")
+            self.dialog_dismiss_btn.configure(state="disabled")
+            self.dialog_entry.configure(state="disabled")
+
+    # ────────────────────── ACCEPT DIALOG ACTION ─────────────────────── NEW
+    def _accept_dialog(self):
+        """Send the appropriate primitive based on current dialog type."""
+        if self.state.get("dialog_type") == "prompt":
+            text = self.dialog_input_var.get()
+            self._queue_command(CMD_TYPE_DIALOG.replace("*", text))
+        else:
+            self._queue_command(CMD_ACCEPT_DIALOG)
+
     # ---------- element‑button helpers ---------------------------------
     def _exec_element_click(self, idx: int, label: str) -> None:
         self._log(f"> click {label}")
@@ -1469,6 +1543,7 @@ class ControlPanel(tk.Tk):
             self._refresh_enabled_controls(
                 get_valid_actions(BrowserState(**self.state)),
             )
+            self._refresh_dialog_bar()
 
         self.after(self.REFRESH_INTERVAL_MS, self._poll_updates)
 

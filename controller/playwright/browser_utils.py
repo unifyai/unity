@@ -22,6 +22,8 @@ textarea:not([disabled]):visible,
 [role=textbox]:visible,
 [role=combobox]:visible,
 [role=searchbox]:visible,
+[role=option]:visible,
+[role=listitem]:visible,
 a[href]:visible,
 [onclick]:visible,
 *[tabindex]:not([tabindex="-1"]):visible
