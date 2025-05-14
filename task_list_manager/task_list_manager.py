@@ -8,6 +8,7 @@ from task_list_manager.types.status import Status
 from task_list_manager.types.priority import Priority
 from task_list_manager.types.schedule import Schedule
 from task_list_manager.types.repetition import RepeatPattern
+from task_list_manager.types.task import Task
 
 
 class TaskListManager(threading.Thread):
@@ -181,28 +182,28 @@ class TaskListManager(threading.Thread):
 
     # Pause / Continue Active Task
 
-    def _get_paused_task(self) -> Optional[int]:
+    def _get_paused_task(self) -> Optional[Task]:
         """
         Get the currently paused task, if any.
 
         Returns:
-            Optional[int]: The task_id of the paused task, or None if no task is paused.
+            Optional[Task]: The complete Task object of the paused task, or None if no task is paused.
         """
         paused_tasks = self._search(filter="status == 'paused'")
-        assert paused_tasks <= 1, f"More than one paused task found {paused_tasks}"
+        assert len(paused_tasks) <= 1, f"More than one paused task found {paused_tasks}"
         if not paused_tasks:
             return
         return paused_tasks[0]
 
-    def _get_active_task(self) -> Optional[int]:
+    def _get_active_task(self) -> Optional[Task]:
         """
         Get the currently active task, if any.
 
         Returns:
-            Optional[int]: The task_id of the active task, or None if no task is active.
+            Optional[Task]: The complete Task object of the active task, or None if no task is active.
         """
         active_tasks = self._search(filter="status == 'active'")
-        assert active_tasks <= 1, f"More than one active task found {active_tasks}"
+        assert len(active_tasks) <= 1, f"More than one active task found {active_tasks}"
         if not active_tasks:
             return
         return active_tasks[0]
