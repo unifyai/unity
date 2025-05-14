@@ -147,7 +147,7 @@ def _install_unify_stub() -> None:  # noqa: C901 – long but linear
 
     def log(*, context: str, new: bool = False, **entries):
         lg = Log(_next(), entries)
-        _ctx_store(context).append(lg)
+        _ctx_store(context).insert(0, lg)
         return lg
 
     def create_logs(*, context: str, entries: List[Dict[str, Any]]):
