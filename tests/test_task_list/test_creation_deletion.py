@@ -1,5 +1,7 @@
 from tests.helpers import _handle_project
 from task_list_manager.task_list_manager import TaskListManager
+from task_list_manager.types.priority import Priority
+from task_list_manager.types.status import Status
 
 
 @_handle_project
@@ -15,10 +17,11 @@ def test_create_task():
         {
             "name": "Promote Jeff Smith",
             "description": "Send an email to Jeff Smith, kindly congratulating him and explaining that he has been promoted from sales rep to sales manager.",
-            "start_at": None,
+            "status": Status.queued,
+            "schedule": None,
             "deadline": None,
             "repeat": None,
-            "priority": None,
+            "priority": Priority.normal,
             "task_id": 0,
         },
     ]
