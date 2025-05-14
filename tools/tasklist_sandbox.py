@@ -139,6 +139,10 @@ def main() -> None:
 
         _LG.setLevel(logging.INFO)
 
+        # Silence noisy logs from Unify internals
+        for _name in ("unify", "unify.utils", "unify.logging"):
+            logging.getLogger(_name).setLevel(logging.WARNING)
+
     print(
         "TaskListManager sandbox – type natural language. Prefix with 'ask:' or 'update:' to specify. 'quit' to exit.\n"
         "Verbose reasoning is {} by default (add --silent to disable).\n".format(
