@@ -144,16 +144,8 @@ def main() -> None:
         if not line:
             continue
 
-        kind, result, steps = _dispatch(tlm, line, show_steps=not silent)
+        kind, result, _ = _dispatch(tlm, line, show_steps=not silent)
         print(f"[{kind}] => {result}\n")
-        if steps and not silent:
-            print("Reasoning steps:")
-            for msg in steps:
-                role = msg.get("role", "?")
-                content = msg.get("content")
-                if content is not None:
-                    print(f"  [{role}] {content}")
-            print()
 
 
 if __name__ == "__main__":

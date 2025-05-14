@@ -163,6 +163,9 @@ def tool_use_loop(
     consecutive_failures = 0
 
     while True:
+        if log_steps:
+            LOGGER.info("🔄 LLM thinking…")
+
         response = client.generate(
             return_full_completion=True,
             tools=tools_schema,
@@ -219,8 +222,12 @@ def tool_use_loop(
                     f"Conversation history:\n{json.dumps(client.messages, indent=4)}\n",
                 )
 
+            if log_steps:
+                LOGGER.info("✅ Step finished (tool calls executed)")
+
         else:
             # ── No tool call – final answer ─────────────────────────────────
             if log_steps:
-                LOGGER.info(f"\n🤖 {msg.content}\n")
+                LOGGER.info(f"\n�� {msg.content}\n")
+                LOGGER.info("✅ Step finished (final answer)")
             return msg.content
