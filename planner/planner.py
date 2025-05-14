@@ -1,9 +1,5 @@
-import asyncio
 import json
-import queue
 import threading
-from typing import List
-from asyncio import AbstractEventLoop
 
 import redis
 import unify

@@ -65,7 +65,9 @@ class TaskManager(threading.Thread):
         self._pubsub = self._redis_client.pubsub()
         self._pubsub.subscribe("transcript")
         self._task_organizer_client = unify.Unify(
-            "o4-mini@openai", cache=True, traced=True
+            "o4-mini@openai",
+            cache=True,
+            traced=True,
         )
         self._current_task = None
 

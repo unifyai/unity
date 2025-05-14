@@ -411,14 +411,28 @@ def _create_full_response_format(tabs, buttons, state=None):
         if include(CMD_DISMISS_DIALOG):
             dialog_actions[CMD_DISMISS_DIALOG] = DismissDialog
         # prompt dialogs need text field
-        if state.dialog_type == "prompt" and include(CMD_TYPE_DIALOG.replace(" *", "_")):
+        if state.dialog_type == "prompt" and include(
+            CMD_TYPE_DIALOG.replace(" *", "_"),
+        ):
             dialog_actions[CMD_TYPE_DIALOG.replace(" *", "")] = TypeDialog
 
     # popup actions (select/close per title)
     popup_actions = {}
     if state and state.popups:
-        popup_actions.update({k: v for k, v in _construct_select_popup_actions(state.popups).items() if include(k)})
-        popup_actions.update({k: v for k, v in _construct_close_popup_actions(state.popups).items() if include(k)})
+        popup_actions.update(
+            {
+                k: v
+                for k, v in _construct_select_popup_actions(state.popups).items()
+                if include(k)
+            },
+        )
+        popup_actions.update(
+            {
+                k: v
+                for k, v in _construct_close_popup_actions(state.popups).items()
+                if include(k)
+            },
+        )
 
     # text‑box actions (only when we're actually in a text input)
     textbox_actions = {}
@@ -585,7 +599,7 @@ def _get_action_class(action_name: str) -> type[BaseModel]:
         title = slug.replace("_", " ").replace("-", " ").title()
         return create_model(
             f"SelectPopup{_pascal(slug)}",
-            __doc__=f"Select the popup window titled \"{title}\".",
+            __doc__=f'Select the popup window titled "{title}".',
             **_response_fields,
         )
 
@@ -594,7 +608,7 @@ def _get_action_class(action_name: str) -> type[BaseModel]:
         title = slug.replace("_", " ").replace("-", " ").title()
         return create_model(
             f"ClosePopup{_pascal(slug)}",
-            __doc__=f"Close the popup window titled \"{title}\".",
+            __doc__=f'Close the popup window titled "{title}".',
             **_response_fields,
         )
 
@@ -664,8 +678,16 @@ def list_available_actions(
         "button_actions": list(
             fmt.model_fields["button_actions"].annotation.model_fields,
         ),
-        "dialog_actions": list(fmt.model_fields["dialog_actions"].annotation.model_fields) if "dialog_actions" in fmt.model_fields else [],
-        "popup_actions": list(fmt.model_fields["popup_actions"].annotation.model_fields) if "popup_actions" in fmt.model_fields else [],
+        "dialog_actions": (
+            list(fmt.model_fields["dialog_actions"].annotation.model_fields)
+            if "dialog_actions" in fmt.model_fields
+            else []
+        ),
+        "popup_actions": (
+            list(fmt.model_fields["popup_actions"].annotation.model_fields)
+            if "popup_actions" in fmt.model_fields
+            else []
+        ),
         "search_actions": [
             name for name in ["search", "open_url"] if name in fmt.model_fields
         ],
@@ -835,6 +857,7 @@ def text_to_browser_action(
         )
         return {"rationale": reply.rationale, "action": action}
 
+
 # ---- Dialog / Popup Schemas (NEW) ----------------------------------
 
 
@@ -877,7 +900,7 @@ def _construct_select_popup_actions(pop_titles: List[str]):
         action_name = f"select_popup_{slug}"
         mapping[action_name] = create_model(
             f"SelectPopup{_pascal(slug)}",
-            __doc__=f"Bring the popup window titled \"{title}\" to the front.",
+            __doc__=f'Bring the popup window titled "{title}" to the front.',
             **_response_fields,
         )
     return mapping
@@ -890,7 +913,7 @@ def _construct_close_popup_actions(pop_titles: List[str]):
         action_name = f"close_popup_{slug}"
         mapping[action_name] = create_model(
             f"ClosePopup{_pascal(slug)}",
-            __doc__=f"Close the popup window titled \"{title}\".",
+            __doc__=f'Close the popup window titled "{title}".',
             **_response_fields,
         )
     return mapping

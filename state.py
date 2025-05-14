@@ -6,7 +6,7 @@ persists every change to Redis and always reads the latest value back when a
 property is accessed.
 """
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 import json
 import redis
 

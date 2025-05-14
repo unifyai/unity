@@ -22,7 +22,7 @@ from livekit.agents import Agent, AgentSession, RoomInputOptions, function_tool
 from livekit.plugins import cartesia, deepgram, noise_cancellation, openai, silero
 from livekit.plugins.turn_detector.multilingual import MultilingualModel
 
-from communication.sys_msgs import NEW_AGENT, PHONE_AGENT
+from communication.sys_msgs import NEW_AGENT
 from busses.bus_manager import BusManager
 from constants import SESSION_ID
 
@@ -170,7 +170,7 @@ class VoiceAssistant(Agent):
         if self._state.task_running:
             return "I'm already working on something for you. Ask me anything else meanwhile!"
         cmd = json.dumps(
-            {"action": "create_task", "payload": self._latest_dialogue_window}
+            {"action": "create_task", "payload": self._latest_dialogue_window},
         )
         self._redis_client.publish("transcript", cmd)
         return "Alright, let me get on with that. I'll let you know how it goes!"
