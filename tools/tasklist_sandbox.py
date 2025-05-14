@@ -12,6 +12,8 @@ from __future__ import annotations
 
 import readline  # noqa: F401 – enables command history & arrow keys
 import sys
+import argparse
+import json
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Tuple
@@ -31,7 +33,7 @@ from tests.test_task_list.test_update_text_complex import (
 )  # noqa: E402 – reuse helper
 
 
-def _seed_scenario(tlm: TaskListManager) -> None:
+def _seed_fixed(tlm: TaskListManager) -> None:
     """Populate the project with a mini task list."""
 
     # Active
@@ -70,6 +72,36 @@ def _seed_scenario(tlm: TaskListManager) -> None:
         description="Roll out version 2.0 to production servers.",
         status="paused",
     )
+
+
+def _seed_llm(tlm: TaskListManager, *, n: int = 6) -> None:
+    """Let an LLM propose a fresh set of tasks and ingest them."""
+
+    client = unify.Unify("o4-mini@openai", cache=True, traced=True)
+    system = (
+        "You are a data generator for TaskListManager unit tests. "
+        "Respond ONLY with valid JSON – a list where each item is an object "
+        "containing: name (str), description (str), status (queued|active|paused|scheduled), "
+        "priority (low|normal|high|urgent, optional). Generate between 5 and 8 realistic tasks."
+    )
+    client.set_system_message(system)
+    raw = client.generate("Generate tasks").strip()
+
+    try:
+        data = json.loads(raw)
+    except Exception:
+        print("Failed to parse LLM JSON – falling back to fixed scenario")
+        _seed_fixed(tlm)
+        return
+
+    for entry in data:
+        kwargs = {
+            "name": entry.get("name", "Untitled task"),
+            "description": entry.get("description", ""),
+            "status": entry.get("status", "queued"),
+            "priority": entry.get("priority", Priority.normal),
+        }
+        tlm._create_task(**kwargs)
 
 
 def _dispatch(
@@ -122,10 +154,21 @@ def main() -> None:
     # Ensure the 'Tasks' context exists to avoid 404 errors on first queries
     unify.set_context("Tasks", overwrite=True)
 
-    _seed_scenario(tlm)
-
-    # simple arg parsing
-    silent = "--silent" in sys.argv or "-s" in sys.argv
+    parser = argparse.ArgumentParser(description="TaskListManager interactive sandbox")
+    parser.add_argument(
+        "--silent",
+        "-s",
+        action="store_true",
+        help="suppress tool logs",
+    )
+    parser.add_argument(
+        "--scenario",
+        choices=["fixed", "llm"],
+        default="fixed",
+        help="starting task set to load",
+    )
+    args = parser.parse_args()
+    silent = args.silent
 
     if not silent:
         logging.basicConfig(
@@ -142,6 +185,11 @@ def main() -> None:
         # Silence noisy logs from Unify internals
         for _name in ("unify", "unify.utils", "unify.logging"):
             logging.getLogger(_name).setLevel(logging.WARNING)
+
+    if args.scenario == "llm":
+        _seed_llm(tlm)
+    else:
+        _seed_fixed(tlm)
 
     print(
         "TaskListManager sandbox – type natural language. Prefix with 'ask:' or 'update:' to specify. 'quit' to exit.\n"
