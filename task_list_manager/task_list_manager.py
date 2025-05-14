@@ -96,29 +96,97 @@ class TaskListManager(threading.Thread):
         *,
         name: str,
         description: str,
-        status: Status = Status.queued,
+        status: Optional[Status] = None,
         schedule: Optional[Schedule] = None,
         deadline: Optional[str] = None,
         repeat: Optional[List[RepeatPattern]] = None,
         priority: Priority = Priority.normal,
     ) -> int:
         """
-        Create a new task in the task list.
+        Create a new task and – if appropriate – insert it into the
+        runnable queue.
 
-        Args:
-            name (str): The name of the task.
-            description (str): The description of the task.
-            status (Status): The status of the task (default: queued).
-            schedule (Optional[Schedule]): The schedule information for the task.
-            deadline (Optional[str]): The deadline of the task in ISO-8601 format.
-            repeat (Optional[List[RepeatPattern]]): The repeat pattern of the task.
-            priority (Priority): The priority of the task (default: normal).
+        Behaviour
+        ---------
+        • If *status* is **omitted** the method decides:
+            – **active**     when no active task exists *and* either
+                             no schedule is given or its start_time ≤ now.
+            – **queued**     when an active task already exists.
+            – **scheduled**  when a schedule.start_time > now.
 
-        Returns:
-            int: The id of the new task.
+        • If the caller supplies an explicit *status* we validate that it
+          does not conflict with the current state (e.g. no 2nd active).
+
+        • New queued / active tasks are appended (tail) or prepended (head)
+          by re-using `_update_task_queue`.
+
+        • Tasks whose `start_time` is in the future are **not** placed
+          in the active queue.
+
+        Raises
+        ------
+        ValueError for invalid combinations or duplicate name/description.
         """
+        # ----------------  helper: iso-8601 → datetime  ---------------- #
+        from datetime import datetime, timezone
 
-        # Prune None values
+        def _parse_iso(ts: str) -> datetime:
+            dt = datetime.fromisoformat(ts)
+            return dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)
+
+        # ----------------  initial validation & dedup  ---------------- #
+        if not name or not description:
+            raise ValueError("Both 'name' and 'description' are required")
+
+        # uniqueness (name / description)
+        for key, value in {"name": name, "description": description}.items():
+            clashes = unify.get_logs(
+                context="Tasks",
+                filter=f"{key} == '{value}'",
+                limit=1,
+            )
+            if clashes:
+                raise ValueError(f"A task with {key!r} = {value!r} already exists")
+
+        # ----------------------------------- #
+        #  derive status when caller omitted   #
+        # ----------------------------------- #
+        if status is not None and isinstance(status, str):
+            status = Status(status)
+
+        active_task = self._get_active_task()
+
+        # figure out if schedule is “future”
+        future_start = False
+        if schedule and schedule.start_time:
+            future_start = _parse_iso(schedule.start_time) > datetime.now(timezone.utc)
+
+        if status is None:
+            if future_start:
+                status = Status.scheduled
+            elif active_task is None:
+                status = Status.active
+            else:
+                status = Status.queued
+
+        # ------------------  conflict checks  ------------------ #
+        if status == Status.active and active_task is not None:
+            raise ValueError("An active task already exists")
+
+        if status == Status.active and future_start:
+            raise ValueError("Cannot mark task as active with a future start_time")
+
+        if status == Status.scheduled and not future_start:
+            raise ValueError("Scheduled tasks require a future start_time")
+
+        # ------------------  generate new task_id  ------------------ #
+        if "Tasks" not in unify.get_contexts():
+            next_id = 0
+        else:
+            all_ids = [lg.entries["task_id"] for lg in unify.get_logs(context="Tasks")]
+            next_id = (max(all_ids) + 1) if all_ids else 0
+
+        # ------------------  assemble payload  ------------------ #
         task_details = {
             "name": name,
             "description": description,
@@ -129,39 +197,26 @@ class TaskListManager(threading.Thread):
             "priority": priority,
         }
 
-        # If it's the fist task, create immediately
-        if "Tasks" not in unify.get_contexts():
-            return unify.log(
-                context="Tasks",
-                **task_details,
-                task_id=0,
-                new=True,
-            ).id
-
-        # Verify uniqueness
-        for key, value in task_details.items():
-            if key not in ["name", "description"]:
-                continue
-            logs = unify.get_logs(
-                context="Tasks",
-                filter=f"{key} == '{value}'",
-            )
-            assert len(logs) == 0, f"Invalid, task with {key} {value} already exists."
-
-        # ToDo: filter only for task_id once supported in the Python utility function
-        logs = unify.get_logs(
-            context="Tasks",
-        )
-        largest_id = max([lg.entries["task_id"] for lg in logs])
-        this_id = largest_id + 1
-
-        # Create the new task
-        return unify.log(
+        # ------------------  write log immediately  ------------------ #
+        unify.log(
             context="Tasks",
             **task_details,
-            task_id=this_id,
+            task_id=next_id,
             new=True,
-        ).id
+        )
+
+        # ------------------  queue insertion (if relevant)  ------------------ #
+        if status in (Status.active, Status.queued):
+            original_q = [t.task_id for t in self._get_task_queue()]
+            new_q = (
+                [next_id] + original_q
+                if status == Status.active
+                else original_q + [next_id]
+            )
+            # updates prev/next pointers for every node (incl. new one)
+            self._update_task_queue(original=original_q, new=new_q)
+
+        return next_id
 
     # Delete
 
@@ -262,11 +317,175 @@ class TaskListManager(threading.Thread):
 
     # Update Task Queue
 
-    def _get_task_queue():
-        pass
+    # --------------------  small helpers  -------------------- #
+    @staticmethod
+    def _sched_prev(sched):
+        """Return *prev_task* from a Schedule *dict* / *model* / *None*."""
+        if sched is None:
+            return None
+        if isinstance(sched, dict):
+            return sched.get("prev_task")
+        # assume pydantic Schedule
+        return getattr(sched, "prev_task", None)
 
-    def _update_task_queue():
-        pass
+    @staticmethod
+    def _sched_next(sched):
+        """Return *next_task* (mirrors _sched_prev)."""
+        if sched is None:
+            return None
+        if isinstance(sched, dict):
+            return sched.get("next_task")
+        return getattr(sched, "next_task", None)
+
+    _TERMINAL_STATUSES = {"completed", "cancelled", "failed"}
+
+    def _get_task_queue(
+        self,
+        task_id: Optional[int] = None,
+    ) -> List[Task]:
+        """
+        Return the runnable task queue (head → tail).
+
+        • If *task_id* is *None* we begin with **the single active task**
+          (falling back to the queue head if there is no active task).
+        • Tasks whose status is completed / cancelled / failed are *ignored*.
+        • Only the nodes actually traversed are loaded from storage; we never
+          materialise the entire task table in memory.
+        """
+
+        # ----------------  helpers  ---------------- #
+        def _get_task_row(tid: int) -> Optional[dict]:
+            """Fetch exactly one task row by id or return None."""
+            rows = self._search(filter=f"task_id == {tid}", limit=1)
+            return rows[0] if rows else None
+
+        # ----------------  starting node  ---------------- #
+        start_row: Optional[dict] = None
+
+        if task_id is None:
+            active = self._get_active_task()
+            if active:
+                start_row = active
+                task_id = active["task_id"]
+
+        if start_row is None and task_id is not None:
+            start_row = _get_task_row(task_id)
+
+        if start_row is None:
+            # fall back to queue head: node with no prev_task and non-terminal status
+            head_candidates = self._search(
+                filter=(
+                    "schedule is not None and "
+                    "status not in ('completed','cancelled','failed') and "
+                    "schedule.get('prev_task') is None"
+                ),
+                limit=2,
+            )
+            assert head_candidates, "Queue is malformed – no head found"
+            assert len(head_candidates) == 1, "Multiple heads detected"
+            start_row = head_candidates[0]
+
+        # ----------  not in queue yet? return empty list  ---------- #
+        if start_row is not None and start_row["schedule"] is None:
+            # Task exists but has no schedule pointers; therefore the
+            # queue is currently empty.
+            return []
+
+        # ----------------  walk backwards to head  ---------------- #
+        cur = start_row
+        while True:
+            prev_id = self._sched_prev(cur["schedule"])
+            if prev_id is None:
+                break
+            prev_row = _get_task_row(prev_id)
+            if prev_row is None:
+                break  # broken link – treat cur as head
+            cur = prev_row  # keep walking
+
+        head_row = cur
+
+        # ----------------  walk forwards collecting list  ---------------- #
+        ordered: List[Task] = []
+        cur = head_row
+        while cur:
+            if cur["status"] not in self._TERMINAL_STATUSES:
+                ordered.append(Task(**cur))
+
+            nxt_id = self._sched_next(cur["schedule"])
+            if nxt_id is None:
+                break
+
+            # fetch the next node lazily
+            cur = _get_task_row(nxt_id)
+            # guard against broken links (missing row)
+            if cur is None:
+                break
+
+        return ordered
+
+    def _update_task_queue(
+        self,
+        *,
+        original: List[int],
+        new: List[int],
+    ) -> None:
+        """
+        Re-write the queue so that its order matches the new order.
+
+        Args:
+            original (List[int]): The current queue order, used for validation.
+            new (List[int]): The new queue order, which may include extra task IDs.
+
+        * `original` must describe the *current* queue order; we use it
+          only for validation.
+        * `new` may be a pure re-ordering or may also include **extra**
+          task-ids (inserting new tasks). Removing tasks is *not*
+          allowed here – cancel them instead.
+
+        For every task we update its ``schedule`` field so that the linked
+        list stays consistent, using `None` for the head's `prev_task`
+        and the tail's `next_task`.
+        """
+        # -------  sanity checks  -------
+        assert len(set(original)) == len(original), "'original' contains duplicates"
+        assert len(set(new)) == len(new), "'new' contains duplicates"
+        assert set(original).issubset(
+            set(new),
+        ), "update cannot remove existing tasks; cancel them first"
+
+        # -------  gather existing logs  -------
+        existing_logs = {
+            t["task_id"]: t for t in self._search() if t["schedule"] is not None
+        }
+
+        updates_per_log: Dict[int, Dict[str, Any]] = {}
+        for idx, tid in enumerate(new):
+            prev_tid = None if idx == 0 else new[idx - 1]
+            next_tid = None if idx == len(new) - 1 else new[idx + 1]
+
+            # keep an existing start_time; otherwise leave it unset
+            start_ts = None
+            if tid in existing_logs and existing_logs[tid]["schedule"]:
+                start_ts = existing_logs[tid]["schedule"].get("start_time")
+
+            sched_payload = {
+                "prev_task": prev_tid,
+                "next_task": next_tid,
+            }
+            if start_ts is not None:
+                sched_payload["start_time"] = start_ts
+
+            updates_per_log[tid] = {"schedule": sched_payload}
+
+        # Persist
+        for tid, payload in updates_per_log.items():
+            log_ids = self._get_logs_by_task_ids(task_ids=tid)
+            unify.update_logs(
+                logs=log_ids,
+                context="Tasks",
+                entries=payload,
+                overwrite=True,
+            )
 
     # Update Name / Description
 
