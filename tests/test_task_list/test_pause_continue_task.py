@@ -19,3 +19,22 @@ def test_get_paused_task():
     # verify it's the same task
     paused_task = task_list_manager._get_paused_task()
     assert paused_task["task_id"] == 0
+
+
+@_handle_project
+def test_get_active_task():
+    task_list_manager = TaskListManager()
+    task_list_manager.start()
+
+    # create
+    task_list_manager._create_task(
+        name="Promote Jeff Smith",
+        description="Send an email to Jeff Smith, kindly congratulating him and explaining that he has been promoted from sales rep to sales manager.",
+        status="active",
+    )
+    task_list = task_list_manager._search()
+    assert task_list[0]["name"] == "Promote Jeff Smith"
+
+    # verify it's the same task
+    paused_task = task_list_manager._get_active_task()
+    assert paused_task["task_id"] == 0
