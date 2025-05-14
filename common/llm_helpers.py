@@ -228,6 +228,6 @@ def tool_use_loop(
         else:
             # ── No tool call – final answer ─────────────────────────────────
             if log_steps:
-                LOGGER.info(f"\n�� {msg.content}\n")
+                LOGGER.info(f"\n🤖 {msg.content}\n")
                 LOGGER.info("✅ Step finished (final answer)")
             return msg.content
