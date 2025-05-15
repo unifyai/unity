@@ -43,6 +43,9 @@ CMD_CLOSE_POPUP = "close_popup"
 CMD_DISMISS_DIALOG = "dismiss_dialog"
 CMD_SELECT_POPUP = "select_popup *"
 CMD_TYPE_DIALOG = "type_dialog *"
+CMD_BACK_NAV = "nav_back"
+CMD_FORWARD_NAV = "nav_forward"
+CMD_RELOAD_PAGE = "nav_reload"
 
 # ───────────────────────────────────────────────────────────────────────────
 #  WILDCARD GROUPS (sets reused by GUI / agent / filters)
@@ -73,6 +76,9 @@ NAV_COMMANDS: set[str] = {
     CMD_CLOSE_THIS_TAB,
     CMD_SEARCH,
     CMD_OPEN_URL,
+    CMD_BACK_NAV,
+    CMD_FORWARD_NAV,
+    CMD_RELOAD_PAGE,
 }
 
 # 3.  Wildcard placeholders for dynamic GUI elements

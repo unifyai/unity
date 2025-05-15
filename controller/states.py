@@ -27,6 +27,8 @@ class BrowserState:
     dialog_msg: str = ""  # the message text of the dialog
     popups: List[str] = field(default_factory=list)  # titles of open popup pages
     captcha_pending: bool = False  # Anti-Captcha busy flag
+    can_go_back: bool = False
+    can_go_forward: bool = False
 
 
 class ActionHistory:

@@ -58,7 +58,8 @@ def get_valid_actions(state: Union[BrowserState, dict], mode="both") -> set[str]
         raise Exception("Invalid auto_scroll state.")
 
     # ── page navigation & search ──────────────────────
-    valid.update(NAV_COMMANDS)
+    valid.update({CMD_BACK_NAV, CMD_FORWARD_NAV, CMD_RELOAD_PAGE})
+    valid.update({CMD_NEW_TAB, CMD_CLOSE_THIS_TAB, CMD_SEARCH, CMD_OPEN_URL})
 
     # ── dynamic tab & button placeholders ──────────────
     valid.update(BUTTON_PATTERNS)
