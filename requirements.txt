@@ -13,4 +13,4 @@ langchain-openai
 textual
 textual-dev
 redis
-anticaptchaofficial>=1.8
+anticaptchaofficial
