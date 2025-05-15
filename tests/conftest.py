@@ -200,6 +200,47 @@ def _install_requests_mock():
 
                 print(f"Handling /logs/fields: {url}")
 
+                # Handle POST requests to create columns for a table
+                if method == "POST" and json:
+                    project = json.get("project")
+                    context = json.get("context")
+                    fields = json.get("fields", {})
+
+                    print(f"Creating columns for context {context}: {fields}")
+
+                    if context and fields:
+                        # Find or create column metadata log
+                        column_logs = [
+                            log
+                            for log in unify.get_logs(context=context)
+                            if "__columns__" in log.entries
+                        ]
+
+                        if column_logs:
+                            # Update existing column metadata
+                            column_log = column_logs[0]
+                            existing = column_log.entries.get("__columns__", {})
+                            print(
+                                f"Updating existing columns: {existing} with {fields}",
+                            )
+                            column_log.update_entries(
+                                __columns__={**existing, **fields},
+                            )
+                        else:
+                            # Create new column metadata log
+                            print(
+                                f"Creating new column metadata for {context}: {fields}",
+                            )
+                            unify.log(
+                                context=context,
+                                __columns__=fields,
+                            )
+
+                    return MockResponse(
+                        {"success": True, "message": "Columns created successfully"},
+                    )
+
+                # Handle GET requests to retrieve column information
                 # Extract query parameters
                 import urllib.parse
 
