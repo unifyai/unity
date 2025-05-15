@@ -34,6 +34,26 @@ from tests.test_task_list.test_update_text_complex import (
     _next_weekday,
 )  # noqa: E402 – reuse helper
 
+from dotenv import load_dotenv
+
+from livekit import agents
+from livekit.agents import AgentSession, Agent, RoomInputOptions, function_tool
+from livekit.plugins import (
+    openai,
+    cartesia,
+    deepgram,
+    noise_cancellation,
+    silero,
+)
+from livekit.plugins.turn_detector.multilingual import MultilingualModel
+
+load_dotenv()
+
+
+# Initialize task list manager globally
+TLM = TaskListManager()
+TLM.start()
+
 
 def _generate_project_name(scenario_type: str, theme: str = None) -> str:
     """Generate a unique project name based on scenario and current timestamp."""
@@ -241,6 +261,56 @@ def _dispatch(
     return "update", ans, steps
 
 
+# Voice Mode
+
+
+class VoiceAssistant(Agent):
+    def __init__(self) -> None:
+        super().__init__(
+            instructions="You are a helpful voice AI assistant, responsible for listening to the user and then using the `ask` and `update` tools gain infomration about the status of the tasks in the backend, and to update the tasks in the backend. You do not have direct access to the tasks or the schema used to store them, and so the ask and request tools simply take english-language input, explaining your request as clearly and unambiguously as possible.",
+        )
+
+    @function_tool()
+    async def ask(self, question: str) -> str:
+        """Ask a question about the tasks."""
+        return TLM.ask(question)
+
+    @function_tool()
+    async def update(self, request: str) -> str:
+        """Update the tasks in some manner."""
+        return TLM.update(request)
+
+
+async def voice_entrypoint(ctx: agents.JobContext):
+    await ctx.connect()
+
+    session = AgentSession(
+        stt=deepgram.STT(model="nova-3", language="multi"),
+        llm=openai.LLM(model="gpt-4o-mini"),
+        tts=cartesia.TTS(),
+        vad=silero.VAD.load(),
+        turn_detection=MultilingualModel(),
+    )
+
+    await session.start(
+        room=ctx.room,
+        agent=VoiceAssistant(),
+        room_input_options=RoomInputOptions(
+            # LiveKit Cloud enhanced noise cancellation
+            # - If self-hosting, omit this parameter
+            # - For telephony applications, use `BVCTelephony` for best results
+            noise_cancellation=noise_cancellation.BVC(),
+        ),
+    )
+
+    await session.generate_reply(
+        instructions="Greet the user and offer your assistance.",
+    )
+
+
+# Main
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="TaskListManager interactive sandbox")
     parser.add_argument(
@@ -255,9 +325,16 @@ def main() -> None:
         default="fixed",
         help="starting task set to load",
     )
+    parser.add_argument(
+        "--voice",
+        "-v",
+        action="store_true",
+        help="use voice mode",
+    )
     args = parser.parse_args()
     silent = args.silent
     scenario_type = args.scenario
+    voice_mode = args.voice
 
     if not silent:
         logging.basicConfig(
@@ -279,24 +356,16 @@ def main() -> None:
     project_name = _generate_project_name(scenario_type)
 
     # Activate the project with dynamic name
-    LOGGER.info(f"⏳ Activating {project_name} project...")
     unify.activate(project_name)
-    LOGGER.info(f"✅ {project_name} project activated")
 
     # Create the Tasks context
-    LOGGER.info(f"⏳ Setting 'Tasks' context...")
     unify.set_context("Tasks", overwrite=True)
-    LOGGER.info(f"✅ 'Tasks' context set")
-
-    # Initialize task list manager
-    tlm = TaskListManager()
-    tlm.start()
 
     # Seed with data
     theme = None
     LOGGER.info(f"⏳ Adding data to task environment...")
     if scenario_type == "llm":
-        theme = _seed_llm(tlm)
+        theme = _seed_llm(TLM)
         if theme:
             # Update project name with the theme if it's available
             new_project_name = _generate_project_name(scenario_type, theme)
@@ -306,7 +375,7 @@ def main() -> None:
                 unify.activate(new_project_name)
                 project_name = new_project_name
     else:
-        _seed_fixed(tlm)
+        _seed_fixed(TLM)
     LOGGER.info(f"✅ Data added")
 
     print(
@@ -315,20 +384,28 @@ def main() -> None:
         f"Verbose reasoning is {('ON' if not silent else 'OFF')} by default (add --silent to disable).\n",
     )
 
-    while True:
-        try:
-            line = input("> ").strip()
-        except (EOFError, KeyboardInterrupt):
-            print()
-            break
+    if voice_mode:
+        # Save original args and clear sys.argv before calling agents CLI
+        original_argv = sys.argv.copy()
+        sys.argv = [sys.argv[0], "console"]
+        agents.cli.run_app(agents.WorkerOptions(entrypoint_fnc=voice_entrypoint))
+        # Restore original args if needed
+        sys.argv = original_argv
+    else:
+        while True:
+            try:
+                line = input("> ").strip()
+            except (EOFError, KeyboardInterrupt):
+                print()
+                break
 
-        if line.lower() in {"quit", "exit"}:
-            break
-        if not line:
-            continue
+            if line.lower() in {"quit", "exit"}:
+                break
+            if not line:
+                continue
 
-        kind, result, _ = _dispatch(tlm, line, show_steps=not silent)
-        print(f"[{kind}] => {result}\n")
+            kind, result, _ = _dispatch(tlm, line, show_steps=not silent)
+            print(f"[{kind}] => {result}\n")
 
 
 if __name__ == "__main__":
