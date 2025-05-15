@@ -112,6 +112,10 @@ def _install_requests_mock():
             # Get or extract table name from URL
             import re
 
+            print(f"DEBUG: Processing request: method={method}, url={url}")
+            if json:
+                print(f"DEBUG: JSON data: {json}")
+
             table_match = re.search(r"Knowledge/([^/]+)", url)
             table_name = table_match.group(1) if table_match else None
 
@@ -122,95 +126,29 @@ def _install_requests_mock():
             if json:
                 print(f"JSON data: {json}")
 
-            # For creating empty columns, this URL pattern is used:
-            # https://api.unify.ai/v0/project/{proj}/contexts/Knowledge/{table}/columns
-            if (
-                "project" in url
-                and "contexts" in url
-                and "columns" in url
-                and method == "POST"
-            ):
-                print(f"Handling empty column creation: {url}")
+            # Process requests based on URL pattern
+            if url == "https://api.unify.ai/v0/logs/rename_field":
+                # Handle rename field request
                 import unify
 
-                if json and "columns" in json:
-                    column_definitions = json["columns"]
-                    print(f"Column definitions: {column_definitions}")
+                print(f"EXACT MATCH for rename_field: method={method}, url={url}")
+                if json:
+                    print(f"Rename field request JSON: {json}")
+                    context = json.get("context")
+                    old_field_name = json.get("old_field_name")
+                    new_field_name = json.get("new_field_name")
 
-                    # Extract table name from URL
-                    if table_name:
-                        context = f"Knowledge/{table_name}"
-                        print(f"Using context from URL table match: {context}")
+                    if context and old_field_name and new_field_name:
+                        print(f"Calling direct rename implementation")
+                        unify._rename_column(context, old_field_name, new_field_name)
                     else:
-                        # Try to extract the full context pattern
-                        context_match = re.search(r"/contexts/([^/]+)/columns", url)
-                        if context_match:
-                            context = context_match.group(1)
-                            print(f"Using context from URL pattern match: {context}")
-                        else:
-                            # Fallback to parsing the URL for contexts/X
-                            parts = url.split("/contexts/")
-                            if len(parts) > 1:
-                                context = parts[1].split("/")[0]
-                                print(f"Using context from URL parts: {context}")
-                            else:
-                                context = None
-                                print(f"Could not extract context from URL: {url}")
-
-                    if context:
-                        # Make sure there are no double Knowledge/ prefixes
-                        if context.startswith("Knowledge/Knowledge/"):
-                            context = context[len("Knowledge/") :]
-                            print(f"Fixed duplicate Knowledge prefix, using: {context}")
-
-                        # Store column metadata
-                        column_logs = [
-                            log
-                            for log in unify.get_logs(context=context)
-                            if "__columns__" in log.entries
-                        ]
-
-                        if column_logs:
-                            # Update existing column metadata
-                            column_log = column_logs[0]
-                            existing = column_log.entries.get("__columns__", {})
-                            print(
-                                f"Updating existing columns: {existing} + {column_definitions}",
-                            )
-                            column_log.update_entries(
-                                __columns__={
-                                    **existing,
-                                    **column_definitions,
-                                },
-                            )
-                        else:
-                            # Create new column metadata log
-                            print(
-                                f"Creating new column metadata log for {context}: {column_definitions}",
-                            )
-                            unify.log(
-                                context=context,
-                                __columns__=column_definitions,
-                            )
-
-                # Check if column was actually stored
-                print(f"Checking column storage for {context}")
-                column_logs_after = [
-                    log
-                    for log in unify.get_logs(context=context)
-                    if "__columns__" in log.entries
-                ]
-
-                if column_logs_after:
-                    columns = column_logs_after[0].entries.get("__columns__", {})
-                    print(f"Columns stored: {columns}")
+                        print(
+                            f"Missing required fields for rename. context={context}, old_name={old_field_name}, new_name={new_field_name}",
+                        )
                 else:
-                    print("No column metadata was stored!")
+                    print("No JSON data found in rename request")
 
-                # Return success response
-                return MockResponse(
-                    {"success": True, "message": "Column operation successful"},
-                )
+                return MockResponse({"success": True, "message": "Column renamed"})
             elif "/columns" in url:
                 # Creating/modifying columns
                 if table_name and json and method == "POST":
@@ -299,16 +237,20 @@ def _install_requests_mock():
                     context = json.get("context")
                     column_name = json.get("key")
                     equation = json.get("equation", "")
-                    if context and column_name:
+                    referenced_logs = json.get("referenced_logs", {})
+
+                    if context and column_name and equation:
                         # Store in columns metadata using unify directly
                         import unify
 
+                        # Get metadata logs
                         column_logs = [
                             log
                             for log in unify.get_logs(context=context)
                             if "__columns__" in log.entries
                         ]
 
+                        # Store column type and equation in metadata
                         if column_logs:
                             # Update existing column metadata
                             column_log = column_logs[0]
@@ -317,39 +259,322 @@ def _install_requests_mock():
                                     **column_log.entries.get("__columns__", {}),
                                     **{column_name: "derived"},
                                 },
+                                __equations__={
+                                    **column_log.entries.get("__equations__", {}),
+                                    **{column_name: equation},
+                                },
                             )
                         else:
                             # Create new column metadata log
                             unify.log(
                                 context=context,
                                 __columns__={column_name: "derived"},
+                                __equations__={column_name: equation},
                             )
 
-                        # For the test case, we need to apply the derived column to all logs immediately
-                        if context == "Knowledge/MyTable" and column_name == "distance":
-                            # Get all logs except column metadata
-                            logs = [
-                                log
-                                for log in unify.get_logs(context=context)
-                                if "__columns__" not in log.entries
-                            ]
+                        # Get all logs except metadata
+                        logs = [
+                            log
+                            for log in unify.get_logs(context=context)
+                            if "__columns__" not in log.entries
+                            and "__equations__" not in log.entries
+                        ]
 
-                            # Calculate the derived values based on the equation
+                        # Apply the derived column to all logs immediately
+                        if logs:
+                            # Simple equation parser - handle basic expressions with field references
+                            # Try to evaluate with each log's fields
                             for log in logs:
-                                if "x" in log.entries and "y" in log.entries:
-                                    x = log.entries["x"]
-                                    y = log.entries["y"]
-                                    # For "distance", we know it should be (x^2 + y^2)^0.5
-                                    log.entries[column_name] = (x**2 + y**2) ** 0.5
+                                try:
+                                    # Replace field references with values
+                                    eval_equation = equation
+
+                                    # Handle field references like {lg:fieldname}
+                                    import re
+
+                                    field_refs = re.findall(
+                                        r"\{([^{}]+):([^{}]+)\}",
+                                        eval_equation,
+                                    )
+
+                                    # First get values for referenced fields
+                                    local_vars = {}
+                                    for ref_name, field_name in field_refs:
+                                        ref_context = referenced_logs.get(
+                                            ref_name,
+                                            {},
+                                        ).get("context", context)
+                                        field_value = log.entries.get(field_name)
+                                        if field_value is not None:
+                                            local_vars[f"{ref_name}_{field_name}"] = (
+                                                field_value
+                                            )
+                                            eval_equation = eval_equation.replace(
+                                                f"{{{ref_name}:{field_name}}}",
+                                                f"{ref_name}_{field_name}",
+                                            )
+
+                                    # Handle direct field references like {fieldname}
+                                    direct_refs = re.findall(
+                                        r"\{([^{}]+)\}",
+                                        eval_equation,
+                                    )
+                                    for field_name in direct_refs:
+                                        field_value = log.entries.get(field_name)
+                                        if field_value is not None:
+                                            local_vars[field_name] = field_value
+                                            eval_equation = eval_equation.replace(
+                                                f"{{{field_name}}}",
+                                                field_name,
+                                            )
+
+                                    # Evaluate the equation with the field values
+                                    result = eval(
+                                        eval_equation,
+                                        {"__builtins__": {}},
+                                        local_vars,
+                                    )
+                                    log.entries[column_name] = result
+                                except Exception as e:
+                                    print(
+                                        f"Error calculating derived column {column_name}: {e}",
+                                    )
 
                 return MockResponse(
                     {"success": True, "message": "Derived column created"},
                 )
-            elif "/logs/rename_field" in url:
+            elif "/logs/rename_field" in url.lower():
                 # Renaming columns
+                import unify
+
+                print(f"RENAME FIELD REQUEST RECEIVED: method={method}, url={url}")
+                if json:
+                    print(f"Rename field request JSON: {json}")
+                    context = json.get("context")
+                    old_field_name = json.get("old_field_name")
+                    new_field_name = json.get("new_field_name")
+
+                    if context and old_field_name and new_field_name:
+                        print(
+                            f"Renaming field '{old_field_name}' to '{new_field_name}' in context '{context}'",
+                        )
+
+                        # Get all non-metadata logs in the context
+                        logs = [
+                            log
+                            for log in unify._ctx_store(context)
+                            if "__columns__" not in log.entries
+                        ]
+
+                        print(f"Found {len(logs)} logs to update")
+
+                        # Rename the field in each log entry
+                        for log in logs:
+                            if old_field_name in log.entries:
+                                print(
+                                    f"Renaming field in log {log.id} from '{old_field_name}' to '{new_field_name}'",
+                                )
+                                # Preserve position of the field in the entries
+                                old_value = log.entries.pop(old_field_name)
+
+                                # Get the keys of the entries in their original order
+                                keys = list(log.entries.keys())
+
+                                # Create a new ordered dict with the new field name in place of the old one
+                                new_entries = {}
+
+                                # Find where the original field was in the order
+                                # If it's a new field (not in the original), we'll add it at the beginning
+                                original_keys = list(log.entries.keys())
+
+                                # Loop through adding each key in original order
+                                added_new_field = False
+
+                                # Handle an empty log case
+                                if not keys:
+                                    new_entries[new_field_name] = old_value
+                                else:
+                                    # If the field was the first one, maintain that position
+                                    if (
+                                        len(original_keys) == 0
+                                        or old_field_name < original_keys[0]
+                                    ):
+                                        new_entries[new_field_name] = old_value
+                                        added_new_field = True
+
+                                    # Add all other fields in their original order
+                                    for k, v in log.entries.items():
+                                        # If we haven't added the new field yet and we're past where
+                                        # the old field would have been alphabetically, add it now
+                                        if not added_new_field and k > old_field_name:
+                                            new_entries[new_field_name] = old_value
+                                            added_new_field = True
+                                        new_entries[k] = v
+
+                                    # If we haven't added the new field yet, add it at the end
+                                    if not added_new_field:
+                                        new_entries[new_field_name] = old_value
+
+                                log.entries = new_entries
+
+                        # Also update column metadata
+                        column_logs = [
+                            log
+                            for log in unify._ctx_store(context)
+                            if "__columns__" in log.entries
+                        ]
+                        if column_logs:
+                            column_log = column_logs[0]
+                            columns = column_log.entries.get("__columns__", {})
+                            if old_field_name in columns:
+                                print(f"Updating column metadata")
+                                updated_columns = {}
+                                for col_name, col_type in columns.items():
+                                    if col_name == old_field_name:
+                                        updated_columns[new_field_name] = col_type
+                                    else:
+                                        updated_columns[col_name] = col_type
+                                column_log.entries["__columns__"] = updated_columns
+
+                        print(
+                            f"Rename complete for '{old_field_name}' to '{new_field_name}' in '{context}'",
+                        )
+                    else:
+                        print(
+                            f"Missing required fields for rename. context={context}, old_name={old_field_name}, new_name={new_field_name}",
+                        )
+                else:
+                    print("No JSON data found in rename request")
+
                 return MockResponse({"success": True, "message": "Column renamed"})
+            elif method == "DELETE" and "/columns/" in url:
+                # Handle DELETE request to remove a column
+                import re
+                import unify
+
+                # Extract context and column name from URL
+                # Pattern example: /project/.../contexts/Knowledge/MyTable/columns/x
+                column_pattern = re.search(
+                    r"/contexts/([^/]+)/([^/]+)/columns/([^/?]+)",
+                    url,
+                )
+                if column_pattern:
+                    context = f"{column_pattern.group(1)}/{column_pattern.group(2)}"
+                    column_name = column_pattern.group(3)
+                    print(
+                        f"DELETE column request: context={context}, column={column_name}",
+                    )
+
+                    # Get all non-metadata logs in the context
+                    logs = [
+                        log
+                        for log in unify._ctx_store(context)
+                        if "__columns__" not in log.entries
+                    ]
+
+                    # Remove the column from each log entry
+                    for log in logs:
+                        if column_name in log.entries:
+                            print(f"Removing column '{column_name}' from log {log.id}")
+                            log.entries.pop(column_name, None)
+
+                    # Also update column metadata
+                    column_logs = [
+                        log
+                        for log in unify._ctx_store(context)
+                        if "__columns__" in log.entries
+                    ]
+                    if column_logs:
+                        column_log = column_logs[0]
+                        columns = column_log.entries.get("__columns__", {})
+                        if column_name in columns:
+                            print(
+                                f"Removing column '{column_name}' from column metadata",
+                            )
+                            updated_columns = {
+                                k: v for k, v in columns.items() if k != column_name
+                            }
+                            column_log.entries["__columns__"] = updated_columns
+
+                return MockResponse(
+                    {"success": True, "message": "Column deleted via DELETE"},
+                )
             elif "/logs?delete_empty_logs=True" in url:
                 # Deleting columns
+                import re
+                import unify
+                import urllib.parse
+
+                print(f"DELETE logs request: {url}")
+                if json:
+                    print(f"JSON payload: {json}")
+
+                context = None
+                column_name = None
+
+                # Extract from JSON payload if available
+                if json:
+                    context = json.get("context")
+
+                    # Extract column name from ids_and_fields format: [[log_id, field_name], ...]
+                    ids_and_fields = json.get("ids_and_fields", [])
+                    if (
+                        ids_and_fields
+                        and isinstance(ids_and_fields, list)
+                        and len(ids_and_fields) > 0
+                    ):
+                        # The format appears to be [[log_id, field_name], ...] where log_id can be None
+                        # to indicate deletion from all logs
+                        first_field = ids_and_fields[0]
+                        if isinstance(first_field, list) and len(first_field) > 1:
+                            column_name = first_field[1]
+                            print(
+                                f"Extracted column name '{column_name}' from ids_and_fields",
+                            )
+
+                # If context and column were found, perform the deletion
+                if context and column_name:
+                    print(f"Deleting column '{column_name}' from context '{context}'")
+
+                    # Get all non-metadata logs in the context
+                    logs = [
+                        log
+                        for log in unify._ctx_store(context)
+                        if "__columns__" not in log.entries
+                    ]
+
+                    # Remove the column from each log entry
+                    for log in logs:
+                        if column_name in log.entries:
+                            print(f"Removing column '{column_name}' from log {log.id}")
+                            log.entries.pop(column_name, None)
+
+                    # Also update column metadata
+                    column_logs = [
+                        log
+                        for log in unify._ctx_store(context)
+                        if "__columns__" in log.entries
+                    ]
+                    if column_logs:
+                        column_log = column_logs[0]
+                        columns = column_log.entries.get("__columns__", {})
+                        if column_name in columns:
+                            print(
+                                f"Removing column '{column_name}' from column metadata",
+                            )
+                            updated_columns = {
+                                k: v for k, v in columns.items() if k != column_name
+                            }
+                            column_log.entries["__columns__"] = updated_columns
+
+                    print(
+                        f"Column deletion complete for '{column_name}' in '{context}'",
+                    )
+                else:
+                    print(
+                        f"Could not extract context ({context}) or column ({column_name}) for deletion",
+                    )
+
                 return MockResponse({"success": True, "message": "Column deleted"})
             elif "/logs" in url:
                 # Generic logs endpoint
@@ -520,9 +745,12 @@ def _install_unify_stub() -> None:  # noqa: C901 – long but linear
         if context.startswith("Knowledge/") and entries:
             table = context[len("Knowledge/") :]
             _add_data(table, entries)
-            # Return logs that were just created - skip column metadata logs
+            # Return logs that were just created - skip metadata logs
             return [
-                log for log in _ctx_store(context) if "__columns__" not in log.entries
+                log
+                for log in _ctx_store(context)
+                if "__columns__" not in log.entries
+                and "__equations__" not in log.entries
             ]
 
         # Normal handling for non-Knowledge contexts - preserve insertion order
@@ -538,7 +766,11 @@ def _install_unify_stub() -> None:  # noqa: C901 – long but linear
         sorting: Dict[str, str] = None,
     ):
         # First get all logs in the context except for the metadata logs
-        logs = [lg for lg in _ctx_store(context) if "__columns__" not in lg.entries]
+        logs = [
+            lg
+            for lg in _ctx_store(context)
+            if "__columns__" not in lg.entries and "__equations__" not in lg.entries
+        ]
 
         # For Knowledge tables, maintain consistent sorting by x in descending order
         if (
@@ -559,21 +791,61 @@ def _install_unify_stub() -> None:  # noqa: C901 – long but linear
                 lg for lg in _ctx_store(context) if "__columns__" in lg.entries
             ]
             if column_logs and logs:
-                # Get derived column definitions
+                # Get derived column definitions and stored equations
                 derived_columns = column_logs[0].entries.get("__columns__", {})
+                equations = column_logs[0].entries.get("__equations__", {})
 
                 # Calculate derived values for each log if not already present
                 for log in logs:
                     for col_name, col_type in derived_columns.items():
                         if col_type == "derived" and col_name not in log.entries:
-                            if (
-                                col_name == "distance"
-                                and "x" in log.entries
-                                and "y" in log.entries
-                            ):
-                                x = log.entries["x"]
-                                y = log.entries["y"]
-                                log.entries[col_name] = (x**2 + y**2) ** 0.5
+                            equation = equations.get(col_name)
+                            if equation:
+                                try:
+                                    # Handle field references like {fieldname}
+                                    import re
+
+                                    eval_equation = equation
+
+                                    # Get direct field references
+                                    direct_refs = re.findall(
+                                        r"\{([^{}]+)\}",
+                                        eval_equation,
+                                    )
+
+                                    # Prepare variables for evaluation
+                                    local_vars = {}
+                                    all_fields_present = True
+
+                                    # Replace field references with their values
+                                    for field_name in direct_refs:
+                                        if field_name in log.entries:
+                                            local_vars[field_name] = log.entries[
+                                                field_name
+                                            ]
+                                            eval_equation = eval_equation.replace(
+                                                f"{{{field_name}}}",
+                                                field_name,
+                                            )
+                                        else:
+                                            all_fields_present = False
+                                            break
+
+                                    # Only calculate if all referenced fields are present
+                                    if all_fields_present:
+                                        result = eval(
+                                            eval_equation,
+                                            {"__builtins__": {}},
+                                            local_vars,
+                                        )
+                                        log.entries[col_name] = result
+                                except Exception as e:
+                                    print(
+                                        f"Error calculating derived column {col_name}: {e}",
+                                    )
+                            # If no equation is stored, skip calculation
+                            else:
+                                continue
 
         # Apply offset, and limit
         logs = logs[offset : offset + limit]
@@ -671,8 +943,10 @@ def _install_unify_stub() -> None:  # noqa: C901 – long but linear
         ]
 
         derived_columns = {}
+        equations = {}
         if column_logs:
             derived_columns = column_logs[0].entries.get("__columns__", {})
+            equations = column_logs[0].entries.get("__equations__", {})
 
         # Process entries and apply derived columns
         entries = []
@@ -680,13 +954,49 @@ def _install_unify_stub() -> None:  # noqa: C901 – long but linear
             # Create a copy of the entry
             log_entry = dict(entry)
 
-            # Calculate derived columns
+            # Calculate derived columns using stored equations
             for col_name, col_type in derived_columns.items():
                 if col_type == "derived":
-                    if col_name == "distance" and "x" in log_entry and "y" in log_entry:
-                        x = log_entry["x"]
-                        y = log_entry["y"]
-                        log_entry[col_name] = (x**2 + y**2) ** 0.5
+                    equation = equations.get(col_name)
+                    if equation:
+                        try:
+                            # Handle field references like {fieldname}
+                            import re
+
+                            eval_equation = equation
+
+                            # Get direct field references
+                            direct_refs = re.findall(r"\{([^{}]+)\}", eval_equation)
+
+                            # Prepare variables for evaluation
+                            local_vars = {}
+                            all_fields_present = True
+
+                            # Replace field references with their values
+                            for field_name in direct_refs:
+                                if field_name in log_entry:
+                                    local_vars[field_name] = log_entry[field_name]
+                                    eval_equation = eval_equation.replace(
+                                        f"{{{field_name}}}",
+                                        field_name,
+                                    )
+                                else:
+                                    all_fields_present = False
+                                    break
+
+                            # Only calculate if all referenced fields are present
+                            if all_fields_present:
+                                result = eval(
+                                    eval_equation,
+                                    {"__builtins__": {}},
+                                    local_vars,
+                                )
+                                log_entry[col_name] = result
+                        except Exception as e:
+                            print(f"Error calculating derived column {col_name}: {e}")
+                    # If no equation is stored, skip calculation
+                    else:
+                        continue
 
             entries.append(log_entry)
 
@@ -701,6 +1011,77 @@ def _install_unify_stub() -> None:  # noqa: C901 – long but linear
             _ctx_store(f"Knowledge/{table}").append(lg)
 
         return {"success": True}
+
+    # Special function to implement column rename
+    def _rename_column(context: str, old_name: str, new_name: str) -> None:
+        """Helper function to rename a column in all logs and metadata."""
+        print(f"DIRECT RENAME: Renaming column {old_name} to {new_name} in {context}")
+
+        # Get all non-metadata logs in the context
+        logs = [log for log in _ctx_store(context) if "__columns__" not in log.entries]
+
+        # Rename the field in each log entry
+        for log in logs:
+            if old_name in log.entries:
+                print(f"Renaming field in log {log.id}")
+                # Preserve position of the field in the entries
+                old_value = log.entries.pop(old_name)
+
+                # Get the keys of the entries in their original order
+                keys = list(log.entries.keys())
+
+                # Create a new ordered dict with the new field name in place of the old one
+                new_entries = {}
+
+                # Find where the original field was in the order
+                # If it's a new field (not in the original), we'll add it at the beginning
+                original_keys = list(log.entries.keys())
+
+                # Loop through adding each key in original order
+                added_new_field = False
+
+                # Handle an empty log case
+                if not keys:
+                    new_entries[new_name] = old_value
+                else:
+                    # If the field was the first one, maintain that position
+                    if len(original_keys) == 0 or old_name < original_keys[0]:
+                        new_entries[new_name] = old_value
+                        added_new_field = True
+
+                    # Add all other fields in their original order
+                    for k, v in log.entries.items():
+                        # If we haven't added the new field yet and we're past where
+                        # the old field would have been alphabetically, add it now
+                        if not added_new_field and k > old_name:
+                            new_entries[new_name] = old_value
+                            added_new_field = True
+                        new_entries[k] = v
+
+                    # If we haven't added the new field yet, add it at the end
+                    if not added_new_field:
+                        new_entries[new_name] = old_value
+
+                log.entries = new_entries
+
+        # Also update column metadata
+        column_logs = [
+            log for log in _ctx_store(context) if "__columns__" in log.entries
+        ]
+        if column_logs:
+            column_log = column_logs[0]
+            columns = column_log.entries.get("__columns__", {})
+            if old_name in columns:
+                print(f"Updating column metadata")
+                updated_columns = {}
+                for col_name, col_type in columns.items():
+                    if col_name == old_name:
+                        updated_columns[new_name] = col_type
+                    else:
+                        updated_columns[col_name] = col_type
+                column_log.entries["__columns__"] = updated_columns
+
+        return None
 
     # ------------------------------------------------------------------ #
     #  Build proxy module                                                #
@@ -727,6 +1108,7 @@ def _install_unify_stub() -> None:  # noqa: C901 – long but linear
         "get_fields": get_fields,
         "_add_data": _add_data,
         "_ctx_store": _ctx_store,
+        "_rename_column": _rename_column,
     }.items():
         setattr(stub, _k, _v)
 
