@@ -46,7 +46,7 @@ def _generate_project_name(scenario_type: str, theme: str = None) -> str:
         base_name = "".join(c for c in base_name if c.isalnum() or c in [" ", "-", "_"])
         base_name = base_name.replace(" ", "_")
 
-    return f"{base_name}_{timestamp}"
+    return f"{base_name}/{timestamp}"
 
 
 def _seed_fixed(tlm: TaskListManager) -> None:
