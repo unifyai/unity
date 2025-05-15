@@ -19,13 +19,13 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Tuple, Dict, List
 import logging
+import logging.config
 
 # Add repo root to PYTHONPATH when run as standalone
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
 import unify  # import after path tweak
-from constants import LOGGER
 
 from task_list_manager.task_list_manager import TaskListManager  # noqa: E402
 from task_list_manager.types.priority import Priority  # noqa: E402
@@ -48,6 +48,33 @@ from livekit.plugins import (
 from livekit.plugins.turn_detector.multilingual import MultilingualModel
 
 load_dotenv()
+
+handlers = {}
+active = []
+
+logging.config.dictConfig(
+    {
+        "version": 1,
+        "disable_existing_loggers": True,
+        "formatters": {
+            "default": {
+                "format": "%(message)s",
+                "datefmt": "%Y-%m-%d %H:%M:%S",
+            },
+        },
+        "handlers": handlers,
+        "root": {"level": "CRITICAL", "handlers": []},
+        "loggers": {
+            "unity": {
+                "level": "INFO",
+                "handlers": active,
+                "propagate": False,
+            },
+        },
+    },
+)
+
+from constants import LOGGER
 
 
 # Initialize task list manager globally
