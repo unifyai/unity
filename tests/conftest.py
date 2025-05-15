@@ -44,6 +44,203 @@ def pytest_sessionstart(session):
     use_stub = session.config.getoption("--unify-stub") or os.getenv("USE_UNIFY_STUB")
     if use_stub:
         _install_unify_stub()
+        _install_requests_mock()
+
+
+# --------------------------------------------------------------------------- #
+#  Helper: mock requests library                                              #
+# --------------------------------------------------------------------------- #
+
+
+def _install_requests_mock():
+    """Mock the requests library for unify API calls during tests."""
+    import sys
+    import types
+
+    class MockResponse:
+        def __init__(self, json_data, status_code=200):
+            self.json_data = json_data
+            self.status_code = status_code
+            self.text = str(json_data)
+
+        def json(self):
+            return self.json_data
+
+        def raise_for_status(self):
+            if self.status_code >= 400:
+                from requests.exceptions import HTTPError
+
+                raise HTTPError(f"{self.status_code} Error", response=self)
+
+    class MockRequests:
+        @staticmethod
+        def request(method, url, json=None, headers=None, **kwargs):
+            # Get or extract table name from URL
+            import re
+
+            table_match = re.search(r"Knowledge/([^/]+)", url)
+            table_name = table_match.group(1) if table_match else None
+
+            # Handle different API endpoints
+            if "/columns" in url:
+                # Creating/modifying columns
+                if table_name and json and method == "POST":
+                    # Access the unify module directly
+                    import unify
+
+                    # Extract column definitions
+                    column_definitions = {}
+                    if json and "columns" in json:
+                        for col_name, col_type in json["columns"].items():
+                            # Store the column type directly, not as a dict
+                            column_definitions[col_name] = col_type
+
+                    # Find or create a log with __columns__ entry
+                    column_logs = [
+                        log
+                        for log in unify.get_logs(context=f"Knowledge/{table_name}")
+                        if "__columns__" in log.entries
+                    ]
+
+                    if column_logs:
+                        # Update existing column metadata
+                        column_log = column_logs[0]
+                        existing = column_log.entries.get("__columns__", {})
+                        column_log.update_entries(
+                            __columns__={
+                                **existing,
+                                **column_definitions,
+                            },
+                        )
+                    else:
+                        # Create new column metadata log
+                        unify.log(
+                            context=f"Knowledge/{table_name}",
+                            __columns__=column_definitions,
+                        )
+
+                return MockResponse(
+                    {"success": True, "message": "Column operation successful"},
+                )
+            elif "/rename" in url:
+                # Renaming tables
+                return MockResponse(
+                    {"success": True, "message": "Table renamed successfully"},
+                )
+            elif "/logs/fields" in url or "/logs/fields?" in url:
+                # Getting columns for a table
+                import unify
+
+                # Extract context from URL query params
+                import urllib.parse
+
+                query = url.split("?")[-1] if "?" in url else ""
+                params = dict(urllib.parse.parse_qsl(query))
+                context = params.get("context")
+                project = params.get("project")
+
+                # Handle formats like /v0/logs/fields?project=XX&context=Knowledge/MyTable
+                if context:
+                    # Already have the context
+                    pass
+                elif table_name:
+                    # Extract from path component
+                    context = f"Knowledge/{table_name}"
+                else:
+                    # Extract the context path from the URL if not in params
+                    ctx_match = re.search(r"contexts/([^/]+)", url)
+                    if ctx_match:
+                        context = ctx_match.group(1)
+
+                if context:
+                    # Look for column metadata in the logs
+                    column_logs = [
+                        log
+                        for log in unify.get_logs(context=context)
+                        if "__columns__" in log.entries
+                    ]
+
+                    if column_logs:
+                        # Format column data to match API expected by _get_columns
+                        # This is the format returned by the real API and expected by
+                        # knowledge_manager._get_columns method
+                        column_data = column_logs[0].entries.get("__columns__", {})
+                        formatted_columns = {}
+                        for name, type_val in column_data.items():
+                            formatted_columns[name] = {"data_type": type_val}
+                        return MockResponse(formatted_columns)
+
+                # Default empty response
+                return MockResponse({})
+            elif "/logs/derived" in url:
+                # Creating derived columns
+                if json:
+                    context = json.get("context")
+                    column_name = json.get("key")
+                    if context and column_name:
+                        # Store in columns metadata using unify directly
+                        import unify
+
+                        column_logs = [
+                            log
+                            for log in unify.get_logs(context=context)
+                            if "__columns__" in log.entries
+                        ]
+
+                        if column_logs:
+                            # Update existing column metadata
+                            column_log = column_logs[0]
+                            column_log.update_entries(
+                                __columns__={
+                                    **column_log.entries.get("__columns__", {}),
+                                    **{column_name: "derived"},
+                                },
+                            )
+                        else:
+                            # Create new column metadata log
+                            unify.log(
+                                context=context,
+                                __columns__={column_name: "derived"},
+                            )
+
+                return MockResponse(
+                    {"success": True, "message": "Derived column created"},
+                )
+            elif "/logs/rename_field" in url:
+                # Renaming columns
+                return MockResponse({"success": True, "message": "Column renamed"})
+            elif "/logs?delete_empty_logs=True" in url:
+                # Deleting columns
+                return MockResponse({"success": True, "message": "Column deleted"})
+            elif "/logs" in url:
+                # Generic logs endpoint
+                return MockResponse(
+                    {"success": True, "message": "Log operation successful"},
+                )
+            else:
+                # Default response
+                return MockResponse(
+                    {"success": True, "message": "Operation successful"},
+                )
+
+    # Create a module-like object
+    mock_requests = types.ModuleType("requests")
+
+    # Copy all the original requests attributes
+    try:
+        import requests as original_requests
+
+        for attr in dir(original_requests):
+            if not attr.startswith("__"):
+                setattr(mock_requests, attr, getattr(original_requests, attr))
+    except ImportError:
+        pass  # If requests isn't available, we'll just use our mock
+
+    # Override the request method
+    mock_requests.request = MockRequests.request
+
+    # Install our mock
+    sys.modules["requests"] = mock_requests
 
 
 # --------------------------------------------------------------------------- #
@@ -174,7 +371,12 @@ def _install_unify_stub() -> None:  # noqa: C901 – long but linear
         _ctx_store(context).insert(0, lg)
         return lg
 
-    def create_logs(*, context: str, entries: List[Dict[str, Any]]):
+    def create_logs(
+        *,
+        context: str,
+        entries: List[Dict[str, Any]],
+        batched: bool = False,
+    ):
         return [log(context=context, **e) for e in entries]
 
     def get_logs(
@@ -209,8 +411,10 @@ def _install_unify_stub() -> None:  # noqa: C901 – long but linear
         prj = _active_project()
         contexts = _projects.get(prj, {}).keys()
         if prefix:
-            contexts_dict = {k: {} for k in contexts if k.startswith(prefix)}
-            return contexts_dict
+            # This is what the real API returns for Knowledge/ prefix
+            # and what knowledge_manager._list_tables expects
+            # Format: {"Knowledge/MyTable": None, ...}
+            return {k: None for k in contexts if k.startswith(prefix)}
         return list(contexts)
 
     def create_context(context_name: str, description: str = None):
@@ -218,6 +422,9 @@ def _install_unify_stub() -> None:  # noqa: C901 – long but linear
         prj = _active_project()
         if context_name not in _projects.get(prj, {}):
             _projects.setdefault(prj, {}).setdefault(context_name, [])
+            # Store the description in a special log
+            if description is not None:
+                log(context=context_name, __description__=description)
         return True
 
     def delete_context(context_name: str):
@@ -230,9 +437,21 @@ def _install_unify_stub() -> None:  # noqa: C901 – long but linear
     def get_fields(context: str):
         """Get the field names from a context."""
         fields = set()
+
+        # Check for column metadata first
+        for log in _ctx_store(context):
+            if "__columns__" in log.entries:
+                # Convert from {"column": "type"} to proper format
+                return {
+                    col: col_type
+                    for col, col_type in log.entries["__columns__"].items()
+                }
+
+        # Fall back to examining all logs
         for log in _ctx_store(context):
             fields.update(log.entries.keys())
-        return list(fields)
+
+        return {field: "string" for field in fields if field != "__columns__"}
 
     # ------------------------------------------------------------------ #
     #  Build proxy module                                                #
