@@ -18,6 +18,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Tuple, Dict, List
 import logging
+from constants import LOGGER
 
 # Add repo root to PYTHONPATH when run as standalone
 ROOT = Path(__file__).resolve().parent.parent
@@ -46,7 +47,8 @@ def _generate_project_name(scenario_type: str, theme: str = None) -> str:
         base_name = "".join(c for c in base_name if c.isalnum() or c in [" ", "-", "_"])
         base_name = base_name.replace(" ", "_")
 
-    return f"{base_name}/{timestamp}"
+    # ToDo: re-add nested timestamp once this task [{link}] is fixed
+    return f"{base_name}"  # /{timestamp}"
 
 
 def _seed_fixed(tlm: TaskListManager) -> None:
@@ -256,19 +258,6 @@ def main() -> None:
     silent = args.silent
     scenario_type = args.scenario
 
-    # Generate initial project name
-    project_name = _generate_project_name(scenario_type)
-
-    # Activate the project with dynamic name
-    unify.activate(project_name)
-
-    # Create the Tasks context
-    unify.set_context("Tasks", overwrite=True)
-
-    # Initialize task list manager
-    tlm = TaskListManager()
-    tlm.start()
-
     if not silent:
         logging.basicConfig(
             level=logging.INFO,
@@ -285,8 +274,26 @@ def main() -> None:
         for _name in ("unify", "unify.utils", "unify.logging"):
             logging.getLogger(_name).setLevel(logging.WARNING)
 
+    # Generate initial project name
+    project_name = _generate_project_name(scenario_type)
+
+    # Activate the project with dynamic name
+    LOGGER.info(f"⏳ Activating {project_name} project...")
+    unify.activate(project_name)
+    LOGGER.info(f"✅ {project_name} project activated")
+
+    # Create the Tasks context
+    LOGGER.info(f"⏳ Setting 'Tasks' context...")
+    unify.set_context("Tasks", overwrite=True)
+    LOGGER.info(f"✅ 'Tasks' context set")
+
+    # Initialize task list manager
+    tlm = TaskListManager()
+    tlm.start()
+
     # Seed with data
     theme = None
+    LOGGER.info(f"⏳ Adding data to task environment...")
     if scenario_type == "llm":
         theme = _seed_llm(tlm)
         if theme:
@@ -299,6 +306,7 @@ def main() -> None:
                 project_name = new_project_name
     else:
         _seed_fixed(tlm)
+    LOGGER.info(f"✅ Data added")
 
     print(
         f"TaskListManager sandbox using project '{project_name}' – type natural language. "
