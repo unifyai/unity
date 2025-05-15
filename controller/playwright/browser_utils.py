@@ -110,3 +110,49 @@ def launch_persistent(pw) -> BrowserContext:
         "Object.defineProperty(navigator, 'webdriver', {get: () => undefined});",
     )
     return ctx
+
+
+# ---------------------------------------------------------------------------
+# CAPTCHA detection helpers
+# ---------------------------------------------------------------------------
+
+def detect_captcha(page: Page):
+    """Detect common CAPTCHA widgets on the given Playwright *page*.
+
+    Returns a payload dict like `{"type": "recaptcha_v2", "sitekey": "..."}`
+    or None when no CAPTCHA is recognised.  The function uses only DOM inspection
+    and does not rely on network traffic, making it safe for cross-origin frames.
+    """
+
+    # 1) Google reCAPTCHA v2 (checkbox / invisible)
+    frame = page.query_selector('iframe[src*="google.com/recaptcha" i], iframe[src*="recaptcha.net" i]')
+    if frame:
+        # Try data-sitekey on parent div or iframe src param
+        sitekey_el = page.query_selector('[data-sitekey]')
+        sitekey = (
+            sitekey_el.get_attribute("data-sitekey") if sitekey_el else None
+        )
+        if not sitekey:
+            src = frame.get_attribute("src") or ""
+            if "k=" in src:
+                sitekey = src.split("k=")[1].split("&")[0]
+        if sitekey:
+            return {"type": "recaptcha_v2", "sitekey": sitekey}
+
+    # 2) hCaptcha
+    frame = page.query_selector('iframe[src*="hcaptcha.com" i]')
+    if frame:
+        sitekey = frame.get_attribute("data-sitekey") or None
+        if not sitekey:
+            src = frame.get_attribute("src") or ""
+            if "sitekey=" in src:
+                sitekey = src.split("sitekey=")[1].split("&")[0]
+        if sitekey:
+            return {"type": "hcaptcha", "sitekey": sitekey}
+
+    # 3) Fallback: image-based captcha (heuristic)
+    img = page.query_selector('img[alt*="captcha" i], img[src*="captcha" i]')
+    if img:
+        return {"type": "image", "handle": img}
+
+    return None

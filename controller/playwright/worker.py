@@ -13,6 +13,7 @@ from pathlib import Path
 from tempfile import mkdtemp
 from typing import Callable
 import json
+import queue
 
 import redis
 
@@ -21,12 +22,14 @@ from controller.playwright.browser_utils import (
     collect_elements,
     launch_persistent,
     paint_overlay,
+    detect_captcha,
 )
 from controller.playwright.command_runner import CommandRunner
 from controller.playwright.mirror import MirrorPage
 from controller.commands import *
 from playwright.sync_api import Error as PWError
 from playwright.sync_api import sync_playwright
+from controller import captcha_solver
 
 
 def _update_in_textbox_state(runner, handle):
@@ -62,6 +65,9 @@ class BrowserWorker(threading.Thread):
 
         # will be initialised inside `run`
         self.runner: CommandRunner | None = None
+        # keep reference to a single CAPTCHA-solving thread (optional)
+        self._captcha_thread: threading.Thread | None = None
+        self._captcha_q: "queue.Queue[tuple[dict,str]]" = queue.Queue()
 
     # ------------------------------------------------------------------ API
     def stop(self) -> None:
@@ -273,6 +279,32 @@ class BrowserWorker(threading.Thread):
                         # leave scroll_y unchanged (best effort)
                     # ──────────────────────────────────────────────────
 
+                    # -- 2.3) detect & solve CAPTCHA (NEW) -----------------
+                    if not self.runner.state.captcha_pending:
+                        try:
+                            cap = detect_captcha(self.runner.active)
+                        except Exception:
+                            cap = None
+                        if cap:
+                            self.log(f"CAPTCHA detected: {cap['type']}")
+                            self.runner.state.captcha_pending = True
+                            # start solver thread only one at a time
+                            t = threading.Thread(
+                                target=self._solve_captcha,
+                                args=(cap,),
+                                daemon=True,
+                            )
+                            t.start()
+                            self._captcha_thread = t
+
+                    # 2.4) process any captcha token ready -----------------
+                    while not self._captcha_q.empty():
+                        try:
+                            payload, token = self._captcha_q.get_nowait()
+                        except queue.Empty:
+                            break
+                        self._inject_captcha(payload, token)
+
                     # ---------- package GUI update --------------------
                     elements_lite = [
                         (i + 1, e["label"], e.get("hover", False))
@@ -304,3 +336,61 @@ class BrowserWorker(threading.Thread):
                 mirror.close()
                 ctx.close()
                 shutil.rmtree(profile_dir, ignore_errors=True)
+
+    # ------------------------------------------------------------------
+    # CAPTCHA solving helper
+    # ------------------------------------------------------------------
+
+    def _solve_captcha(self, payload: dict):
+        """Background thread – calls Anti-Captcha then pushes result onto queue."""
+        if not self.runner:
+            return
+
+        typ = payload.get("type")
+        tok: str | None = captcha_solver.solve(payload, self.runner.active.url)
+        # push result (or None) back to main thread
+        self._captcha_q.put((payload, tok))
+
+    def _inject_captcha(self, payload: dict, token: str | None):
+        """Execute JS injection on Playwright thread (safe)."""
+        if not self.runner:
+            return
+        if token is None:
+            self.log("CAPTCHA solve returned None")
+            self.runner.state.captcha_pending = False
+            return
+
+        page = self.runner.active
+        typ = payload.get("type")
+        try:
+            if typ == "recaptcha_v2":
+                page.evaluate(
+                    "(tk) => {\n"
+                    "  const ta = document.getElementById('g-recaptcha-response') ||\n"
+                    "        document.querySelector('textarea[name=\"g-recaptcha-response\"]');\n"
+                    "  if (ta) { ta.style.display=''; ta.value = tk; }\n"
+                    "  window.dispatchEvent(new Event('captcha-solved'));\n"
+                    "}",
+                    token,
+                )
+            elif typ == "hcaptcha":
+                page.evaluate(
+                    "(tk) => {\n"
+                    "  const ta = document.querySelector('textarea[name=\"h-captcha-response\"]');\n"
+                    "  if (ta) { ta.style.display=''; ta.value = tk; }\n"
+                    "  window.dispatchEvent(new Event('captcha-solved'));\n"
+                    "}",
+                    token,
+                )
+            elif typ == "image":
+                try:
+                    inp = page.query_selector('input[type="text"]:visible')
+                    if inp:
+                        inp.fill(token)
+                except Exception:
+                    pass
+            self.log(f"CAPTCHA token injected ({typ})")
+        except Exception as exc:
+            self.log(f"Error injecting CAPTCHA token: {exc}")
+        finally:
+            self.runner.state.captcha_pending = False
