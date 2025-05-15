@@ -127,20 +127,51 @@ def detect_captcha(page: Page):
     # 1) Google reCAPTCHA v2 (checkbox / invisible)
     frame = page.query_selector('iframe[src*="google.com/recaptcha" i], iframe[src*="recaptcha.net" i]')
     if frame:
+        # Do not trigger if already solved
+        try:
+            solved = page.evaluate(
+                "() => { try { return window.grecaptcha && window.grecaptcha.getResponse && window.grecaptcha.getResponse().length > 0 } catch(e){ return false } }",
+            )
+            if solved:
+                frame = None  # mark as solved; skip to next detection
+        except Exception:
+            pass
+
+    if frame:
         # Try data-sitekey on parent div or iframe src param
         sitekey_el = page.query_selector('[data-sitekey]')
-        sitekey = (
-            sitekey_el.get_attribute("data-sitekey") if sitekey_el else None
-        )
+        sitekey = sitekey_el.get_attribute("data-sitekey") if sitekey_el else None
+
+        # Determine if widget is invisible (size=invisible or explicit JS)
+        invisible = False
+        try:
+            if sitekey_el and sitekey_el.get_attribute("data-size") == "invisible":
+                invisible = True
+            else:
+                src = frame.get_attribute("src") or ""
+                if "invisible" in src:
+                    invisible = True
+        except Exception:
+            pass
         if not sitekey:
             src = frame.get_attribute("src") or ""
             if "k=" in src:
                 sitekey = src.split("k=")[1].split("&")[0]
         if sitekey:
-            return {"type": "recaptcha_v2", "sitekey": sitekey}
+            return {"type": "recaptcha_v2", "sitekey": sitekey, "invisible": invisible}
 
     # 2) hCaptcha
     frame = page.query_selector('iframe[src*="hcaptcha.com" i]')
+    if frame:
+        try:
+            solved = page.evaluate(
+                "() => { try { return window.hcaptcha && window.hcaptcha.getResponse && window.hcaptcha.getResponse().length > 0 } catch(e){ return false } }",
+            )
+            if solved:
+                frame = None
+        except Exception:
+            pass
+
     if frame:
         sitekey = frame.get_attribute("data-sitekey") or None
         if not sitekey:
@@ -153,6 +184,32 @@ def detect_captcha(page: Page):
     # 3) Fallback: image-based captcha (heuristic)
     img = page.query_selector('img[alt*="captcha" i], img[src*="captcha" i]')
     if img:
-        return {"type": "image", "handle": img}
+        try:
+            unanswered = page.evaluate(
+                """
+                (node) => {
+                    const nearestForm = (el) => {
+                        while (el && el.tagName.toLowerCase() !== 'form') {
+                            el = el.parentElement;
+                        }
+                        return el;
+                    };
+
+                    const qInput = (root) => root && root.querySelector && root.querySelector('input[type="text"]:not([disabled])');
+
+                    let inp = qInput(nearestForm(node));
+                    if (!inp) inp = qInput(node.parentElement || document.body);
+
+                    if (!inp) return true; // cannot locate input – treat as unsolved
+                    return (inp.value || '').trim() === '';
+                }
+                """,
+                img,
+            )
+        except Exception:
+            unanswered = True
+
+        if unanswered:
+            return {"type": "image", "handle": img}
 
     return None
