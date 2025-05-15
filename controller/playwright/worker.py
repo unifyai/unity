@@ -385,12 +385,16 @@ class BrowserWorker(threading.Thread):
                 )
             elif typ == "hcaptcha":
                 page.evaluate(
-                    "(tk) => {\n"
-                    "  const ta = document.querySelector('textarea[name=\"h-captcha-response\"]');\n"
-                    "  if (ta) { ta.style.display=''; ta.value = tk; }\n"
+                    "(p) => {\n"
+                    "  const tk = p.tk; const inv = p.inv;\n"
+                    "  const ta = document.querySelector('textarea[name=\\\"h-captcha-response\\\"]');\n"
+                    "  if (ta) { ta.style.display=''; ta.value = tk; ta.dispatchEvent(new Event('input',{bubbles:true})); }\n"
+                    "  if (inv && window.hcaptcha) {\n"
+                    "     try { window.hcaptcha.getResponse = () => tk; } catch(e){}\n"
+                    "  }\n"
                     "  window.dispatchEvent(new Event('captcha-solved'));\n"
                     "}",
-                    token,
+                    {"tk": token, "inv": payload.get("invisible", False)},
                 )
             elif typ == "image":
                 try:

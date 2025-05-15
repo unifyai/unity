@@ -87,7 +87,7 @@ def solve_recaptcha(sitekey: str, url: str, *, invisible: bool = False, timeout:
     return None
 
 
-def solve_hcaptcha(sitekey: str, url: str, *, timeout: int = 120) -> Optional[str]:
+def solve_hcaptcha(sitekey: str, url: str, *, invisible: bool = False, timeout: int = 120) -> Optional[str]:
     """Solve hCaptcha and return the token."""
     if not ANTI_CAPTCHA_KEY:
         return None
@@ -101,6 +101,7 @@ def solve_hcaptcha(sitekey: str, url: str, *, timeout: int = 120) -> Optional[st
     solver.set_key(ANTI_CAPTCHA_KEY)
     solver.set_website_url(url)
     solver.set_website_key(sitekey)
+    solver.set_is_invisible(invisible)
     # solver.set_task_timeout(timeout)
 
     try:
@@ -144,7 +145,7 @@ def solve(captcha: dict, page_url: str) -> Optional[str]:
     if typ == "recaptcha_v2":
         return solve_recaptcha(captcha["sitekey"], page_url, invisible=captcha.get("invisible", False))
     if typ == "hcaptcha":
-        return solve_hcaptcha(captcha["sitekey"], page_url)
+        return solve_hcaptcha(captcha["sitekey"], page_url, invisible=captcha.get("invisible", False))
     if typ == "image":
         handle = captcha.get("handle")
         if handle is None:
