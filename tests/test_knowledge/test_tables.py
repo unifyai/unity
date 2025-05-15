@@ -1,7 +1,9 @@
 from tests.helpers import _handle_project
 from knowledge.knowledge_manager import KnowledgeManager
+import pytest
 
 
+@pytest.mark.unit
 @_handle_project
 def test_create_table():
     knowledge_manager = KnowledgeManager()
@@ -12,6 +14,7 @@ def test_create_table():
     assert "MyTable" in tables
 
 
+@pytest.mark.unit
 @_handle_project
 def test_create_table_w_cols():
     knowledge_manager = KnowledgeManager()
@@ -24,6 +27,7 @@ def test_create_table_w_cols():
     }
 
 
+@pytest.mark.unit
 @_handle_project
 def test_create_table_w_desc():
     knowledge_manager = KnowledgeManager()
@@ -36,6 +40,7 @@ def test_create_table_w_desc():
     }
 
 
+@pytest.mark.unit
 @_handle_project
 def test_list_tables():
     knowledge_manager = KnowledgeManager()
@@ -53,6 +58,7 @@ def test_list_tables():
     }
 
 
+@pytest.mark.unit
 @_handle_project
 def test_delete_table():
     knowledge_manager = KnowledgeManager()
@@ -70,6 +76,7 @@ def test_delete_table():
     assert len(tables) == 0
 
 
+@pytest.mark.unit
 @_handle_project
 def test_rename_table():
     knowledge_manager = KnowledgeManager()

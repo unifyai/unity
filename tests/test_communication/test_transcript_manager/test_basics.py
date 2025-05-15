@@ -1,6 +1,7 @@
 import time
 import unify
 import random
+import pytest
 from datetime import datetime
 
 from communication.types.message import Message, VALID_MEDIA
@@ -42,6 +43,7 @@ def _create_contacts():
     )
 
 
+@pytest.mark.unit
 @_handle_project
 def test_create_contact():
     transcript_manager = TranscriptManager()
@@ -62,6 +64,7 @@ def test_create_contact():
     }
 
 
+@pytest.mark.unit
 @_handle_project
 def test_update_contact():
     transcript_manager = TranscriptManager()
@@ -105,6 +108,7 @@ def test_update_contact():
     }
 
 
+@pytest.mark.unit
 @_handle_project
 def test_create_contacts():
     transcript_manager = TranscriptManager()
@@ -143,6 +147,7 @@ def test_create_contacts():
     }
 
 
+@pytest.mark.unit
 @_handle_project
 def test_search_contacts():
     transcript_manager = TranscriptManager()
@@ -152,6 +157,7 @@ def test_search_contacts():
     )
 
 
+@pytest.mark.unit
 @_handle_project
 def test_log_messages():
     transcript_manager = TranscriptManager()
@@ -171,6 +177,7 @@ def test_log_messages():
     )
 
 
+@pytest.mark.unit
 @_handle_project
 def test_get_messages():
     start_time = datetime.now().isoformat()
@@ -235,6 +242,7 @@ def test_get_messages():
     assert len(messages) == 10
 
 
+@pytest.mark.unit
 @_handle_project
 def test_summarize_exchanges():
     transcript_manager = TranscriptManager()

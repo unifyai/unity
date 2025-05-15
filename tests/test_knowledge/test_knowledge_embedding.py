@@ -3,6 +3,7 @@ from tests.helpers import _handle_project
 import pytest
 
 
+@pytest.mark.unit
 @pytest.mark.requires_real_unify
 @_handle_project
 def test_knowledge_embedding():

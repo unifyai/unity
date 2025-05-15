@@ -4,6 +4,7 @@ import pytest
 
 
 @_handle_project
+@pytest.mark.unit
 def test_cancel_single_task():
     """Cancelling a single active task should set its status to 'cancelled'."""
     tlm = TaskListManager()
@@ -24,6 +25,7 @@ def test_cancel_single_task():
 
 
 @_handle_project
+@pytest.mark.unit
 def test_cancel_multiple_tasks():
     """Cancelling multiple tasks at once should update all of their statuses."""
     tlm = TaskListManager()
@@ -50,6 +52,7 @@ def test_cancel_multiple_tasks():
 
 
 @_handle_project
+@pytest.mark.unit
 def test_cancel_completed_task_raises():
     """Attempting to cancel a task that is already completed should raise an AssertionError."""
     tlm = TaskListManager()

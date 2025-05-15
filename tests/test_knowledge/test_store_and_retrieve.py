@@ -45,6 +45,7 @@ def _assertion_failed(
 # --------------------------------------------------------------------------- #
 
 
+@pytest.mark.eval
 @pytest.mark.timeout(120)
 @_handle_project
 def test_store_simple_fact():
@@ -62,6 +63,7 @@ def test_store_simple_fact():
 # --------------------------------------------------------------------------- #
 
 
+@pytest.mark.eval
 @pytest.mark.timeout(120)
 @_handle_project
 def test_retrieve_simple_fact():
@@ -83,6 +85,7 @@ def test_retrieve_simple_fact():
 # --------------------------------------------------------------------------- #
 
 
+@pytest.mark.eval
 @pytest.mark.timeout(120)
 @_handle_project
 def test_round_trip_simple_fact():
@@ -103,11 +106,12 @@ def test_round_trip_simple_fact():
 # --------------------------------------------------------------------------- #
 
 
+@pytest.mark.eval
 @pytest.mark.timeout(180)
 @_handle_project
 def test_schema_expands_and_new_field_retrievable():
     """
-    • First fact gives Bob only ‘age’.
+    • First fact gives Bob only 'age'.
     • Second fact adds two *previously unseen* attributes.
     • We can always query any of the attributes.
     """
@@ -143,6 +147,7 @@ def test_schema_expands_and_new_field_retrievable():
 # --------------------------------------------------------------------------- #
 
 
+@pytest.mark.eval
 @pytest.mark.timeout(240)
 @_handle_project
 def test_multiple_tables_and_join_like_query():
@@ -174,6 +179,7 @@ def test_multiple_tables_and_join_like_query():
 # --------------------------------------------------------------------------- #
 
 
+@pytest.mark.eval
 @pytest.mark.timeout(240)
 @_handle_project
 def test_incremental_updates_and_refactor():
@@ -208,6 +214,7 @@ def test_incremental_updates_and_refactor():
 # --------------------------------------------------------------------------- #
 
 
+@pytest.mark.eval
 @pytest.mark.timeout(240)
 @_handle_project
 def test_numeric_reasoning_after_multiple_points():

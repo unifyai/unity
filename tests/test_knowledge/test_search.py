@@ -1,9 +1,11 @@
 from tests.helpers import _handle_project
 from knowledge.knowledge_manager import KnowledgeManager
+import pytest
 
 
+@pytest.mark.unit
 @_handle_project
-def test_search():
+def test_search_basic():
     knowledge_manager = KnowledgeManager()
     knowledge_manager.start()
     knowledge_manager._create_table("MyTable")
@@ -20,6 +22,25 @@ def test_search():
     }
 
 
+@pytest.mark.unit
+@_handle_project
+def test_search_filter():
+    knowledge_manager = KnowledgeManager()
+    knowledge_manager.start()
+    knowledge_manager._create_table("MyTable")
+    knowledge_manager._add_data(
+        table="MyTable",
+        data=[{"x": 0, "y": 1}, {"x": 2, "y": 3}],
+    )
+    data = knowledge_manager._search(filter="x > 0")
+    assert data == {
+        "MyTable": [
+            {"x": 2, "y": 3},
+        ],
+    }
+
+
+@pytest.mark.unit
 @_handle_project
 def test_search_specific_tables():
     knowledge_manager = KnowledgeManager()
@@ -32,8 +53,20 @@ def test_search_specific_tables():
     knowledge_manager._create_table("MyOtherTable")
     knowledge_manager._add_data(
         table="MyOtherTable",
-        data=[{"t": 0, "v": 3}, {"t": 1, "v": 2}],
+        data=[{"a": 9, "b": 10}],
     )
+    # default
+    data = knowledge_manager._search()
+    assert data == {
+        "MyTable": [
+            {"x": 2, "y": 3},
+            {"x": 0, "y": 1},
+        ],
+        "MyOtherTable": [
+            {"a": 9, "b": 10},
+        ],
+    }
+    # specific tables
     data = knowledge_manager._search(tables=["MyTable"])
     assert data == {
         "MyTable": [
@@ -41,15 +74,9 @@ def test_search_specific_tables():
             {"x": 0, "y": 1},
         ],
     }
-    data = knowledge_manager._search(tables=["MyOtherTable"])
-    assert data == {
-        "MyOtherTable": [
-            {"t": 1, "v": 2},
-            {"t": 0, "v": 3},
-        ],
-    }
 
 
+@pytest.mark.unit
 @_handle_project
 def test_search_w_filter():
     knowledge_manager = KnowledgeManager()

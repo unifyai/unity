@@ -5,6 +5,7 @@ from communication.types.message import Message
 from tests.helpers import _handle_project
 
 
+@pytest.mark.unit
 @pytest.mark.requires_real_unify
 @_handle_project
 def test_transcript_embedding_semantic_search():

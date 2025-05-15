@@ -1,3 +1,4 @@
+import pytest
 from datetime import datetime, timezone, timedelta
 from tests.helpers import _handle_project
 from task_list_manager.types.status import Status
@@ -7,6 +8,7 @@ from task_list_manager.types.repetition import RepeatPattern, Frequency, Weekday
 
 
 @_handle_project
+@pytest.mark.unit
 def test_update_task_name():
     task_list_manager = TaskListManager()
     task_list_manager.start()
@@ -29,6 +31,7 @@ def test_update_task_name():
 
 
 @_handle_project
+@pytest.mark.unit
 def test_update_task_description():
     task_list_manager = TaskListManager()
     task_list_manager.start()
@@ -57,6 +60,7 @@ def test_update_task_description():
 
 
 @_handle_project
+@pytest.mark.unit
 def test_update_task_status():
     task_list_manager = TaskListManager()
     task_list_manager.start()
@@ -82,6 +86,7 @@ def test_update_task_status():
 
 
 @_handle_project
+@pytest.mark.unit
 def test_update_task_start_at():
     tlm = TaskListManager()
     tlm.start()
@@ -99,6 +104,7 @@ def test_update_task_start_at():
 
 
 @_handle_project
+@pytest.mark.unit
 def test_update_task_deadline():
     tlm = TaskListManager()
     tlm.start()
@@ -116,6 +122,7 @@ def test_update_task_deadline():
 
 
 @_handle_project
+@pytest.mark.unit
 def test_update_task_repetition():
     tlm = TaskListManager()
     tlm.start()
@@ -134,6 +141,7 @@ def test_update_task_repetition():
 
 
 @_handle_project
+@pytest.mark.unit
 def test_update_task_priority():
     tlm = TaskListManager()
     tlm.start()

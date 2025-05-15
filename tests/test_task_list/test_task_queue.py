@@ -1,3 +1,4 @@
+import pytest
 from tests.helpers import _handle_project
 from task_list_manager.task_list_manager import TaskListManager
 from task_list_manager.types.schedule import Schedule
@@ -15,6 +16,7 @@ def _sch(prev_, next_):
 
 
 @_handle_project
+@pytest.mark.unit
 def test_get_queue_and_reorder():
     tlm = TaskListManager()
     tlm.start()
@@ -47,6 +49,7 @@ def test_get_queue_and_reorder():
 
 
 @_handle_project
+@pytest.mark.unit
 def test_insert_into_queue():
     tlm = TaskListManager()
     tlm.start()

@@ -152,6 +152,7 @@ def tlm_scenario() -> TaskListManager:  # noqa: D401 – fixture, not function
     return ScenarioBuilder().tlm
 
 
+@pytest.mark.eval
 @pytest.mark.parametrize("question", QUESTIONS)
 @pytest.mark.timeout(180)
 def test_ask_semantic_with_llm_judgement(
