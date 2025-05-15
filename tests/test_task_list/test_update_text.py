@@ -6,7 +6,7 @@ from task_list_manager.types.priority import Priority
 
 
 @_handle_project
-@pytest.mark.unit
+@pytest.mark.eval
 def test_update_create_task_via_text():
     tlm = TaskListManager()
     tlm.start()
@@ -28,7 +28,7 @@ def test_update_create_task_via_text():
 
 
 @_handle_project
-@pytest.mark.unit
+@pytest.mark.eval
 def test_update_delete_task_via_text():
     tlm = TaskListManager()
     tlm.start()

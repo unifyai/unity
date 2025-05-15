@@ -60,6 +60,7 @@ def _seed_basic_tasks(tlm: TaskListManager) -> List[int]:
 
 
 @_handle_project
+@pytest.mark.eval
 @pytest.mark.timeout(240)
 def test_update_reorder_queue():
     tlm = TaskListManager()
@@ -81,6 +82,7 @@ def test_update_reorder_queue():
 
 
 @_handle_project
+@pytest.mark.eval
 @pytest.mark.timeout(240)
 def test_update_cancel_email_tasks():
     tlm = TaskListManager()
@@ -111,6 +113,7 @@ def _next_weekday(dt: datetime, weekday: int) -> datetime:
 
 
 @_handle_project
+@pytest.mark.eval
 @pytest.mark.timeout(240)
 def test_update_lower_priority_next_monday():
     tlm = TaskListManager()
@@ -142,6 +145,7 @@ def test_update_lower_priority_next_monday():
 
 
 @_handle_project
+@pytest.mark.eval
 @pytest.mark.timeout(240)
 def test_update_bulk_description_replace():
     tlm = TaskListManager()
