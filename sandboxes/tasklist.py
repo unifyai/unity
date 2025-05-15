@@ -10,6 +10,7 @@ A tiny interactive CLI to *vibe-check* the TaskListManager.
 
 from __future__ import annotations
 
+
 import readline  # noqa: F401 – enables command history & arrow keys
 import sys
 import argparse
@@ -18,13 +19,13 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Tuple, Dict, List
 import logging
-from constants import LOGGER
 
 # Add repo root to PYTHONPATH when run as standalone
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
 import unify  # import after path tweak
+from constants import LOGGER
 
 from task_list_manager.task_list_manager import TaskListManager  # noqa: E402
 from task_list_manager.types.priority import Priority  # noqa: E402
