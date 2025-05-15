@@ -20,10 +20,15 @@ import types
 import importlib
 from typing import Any, Dict, List, Optional
 
+import pytest
+
 
 # --------------------------------------------------------------------------- #
 #  Command-line flag                                                          #
 # --------------------------------------------------------------------------- #
+
+# Flag to track if we're using the stub version
+_using_unify_stub = False
 
 
 def pytest_addoption(parser):
@@ -41,10 +46,51 @@ def pytest_addoption(parser):
 
 
 def pytest_sessionstart(session):
-    use_stub = session.config.getoption("--unify-stub") or os.getenv("USE_UNIFY_STUB")
+    global _using_unify_stub
+    cmd_flag = session.config.getoption("--unify-stub")
+    env_var = os.getenv("USE_UNIFY_STUB")
+
+    # Only consider env_var as True if it's set to a non-zero/non-empty value
+    use_env_var = env_var and env_var.lower() not in ("0", "false", "no", "")
+
+    use_stub = cmd_flag or use_env_var
+
     if use_stub:
+        _using_unify_stub = True
         _install_unify_stub()
         _install_requests_mock()
+    else:
+        _using_unify_stub = False
+
+
+# Function to check if we're using the unify stub
+def is_using_unify_stub():
+    """Return True if tests are running with the unify stub."""
+    global _using_unify_stub
+    return _using_unify_stub
+
+
+# Define a marker for tests that require the real unify
+def pytest_configure(config):
+    config.addinivalue_line(
+        "markers",
+        "requires_real_unify: mark test as requiring the real unify implementation",
+    )
+
+
+# Skip tests marked with requires_real_unify when using the unify stub
+def pytest_runtest_setup(item):
+    if any(mark.name == "requires_real_unify" for mark in item.iter_markers()):
+        if is_using_unify_stub():
+            pytest.skip("Test requires real unify implementation")
+
+
+# Pytest fixture to skip tests that require the real unify
+@pytest.fixture
+def requires_real_unify(request):
+    """Skip tests if unify stub is being used."""
+    if is_using_unify_stub():
+        pytest.skip("Test requires real unify implementation")
 
 
 # --------------------------------------------------------------------------- #
@@ -99,12 +145,8 @@ def _install_requests_mock():
 
             # Return column definitions if found
             if column_logs:
-                print(
-                    f"Found column metadata for {context}: {column_logs[0].entries['__columns__']}",
-                )
                 return column_logs[0].entries.get("__columns__", {})
 
-            print(f"No column metadata found for {context}")
             return {}
 
         @staticmethod
@@ -112,41 +154,28 @@ def _install_requests_mock():
             # Get or extract table name from URL
             import re
 
-            print(f"DEBUG: Processing request: method={method}, url={url}")
             if json:
-                print(f"DEBUG: JSON data: {json}")
+                pass
 
             table_match = re.search(r"Knowledge/([^/]+)", url)
             table_name = table_match.group(1) if table_match else None
-
-            # Debug
-            print(
-                f"MockRequests.request: method={method}, url={url}, table_name={table_name}",
-            )
-            if json:
-                print(f"JSON data: {json}")
 
             # Process requests based on URL pattern
             if url == "https://api.unify.ai/v0/logs/rename_field":
                 # Handle rename field request
                 import unify
 
-                print(f"EXACT MATCH for rename_field: method={method}, url={url}")
                 if json:
-                    print(f"Rename field request JSON: {json}")
                     context = json.get("context")
                     old_field_name = json.get("old_field_name")
                     new_field_name = json.get("new_field_name")
 
                     if context and old_field_name and new_field_name:
-                        print(f"Calling direct rename implementation")
                         unify._rename_column(context, old_field_name, new_field_name)
                     else:
-                        print(
-                            f"Missing required fields for rename. context={context}, old_name={old_field_name}, new_name={new_field_name}",
-                        )
+                        pass
                 else:
-                    print("No JSON data found in rename request")
+                    pass
 
                 return MockResponse({"success": True, "message": "Column renamed"})
             elif "/columns" in url:
@@ -194,15 +223,8 @@ def _install_requests_mock():
                 import unify
                 import re
 
-                print(f"DEBUG RENAME: Processing rename request: {url}")
-
-                # Get the old_context and new_context from the request
-                # Example URL: https://api.unify.ai/v0/project/test_rename_table/contexts/Knowledge/MyTable/rename
-                # Extract parts for debugging
                 url_parts = url.split("/")
-                print(f"URL parts: {url_parts}")
 
-                # Extract the context manually from the URL
                 old_context = None
                 for i, part in enumerate(url_parts):
                     if part == "contexts" and i + 2 < len(url_parts):
@@ -212,14 +234,10 @@ def _install_requests_mock():
                 new_context = json.get("name")
 
                 if old_context and new_context:
-                    print(f"Renaming context: {old_context} -> {new_context}")
-
-                    # Create the new context
                     unify.create_context(new_context)
 
                     # Get the logs from the old context
                     logs = unify.get_logs(context=old_context)
-                    print(f"Found {len(logs)} logs in {old_context}")
 
                     # For each log, copy its entries to the new context
                     for log in logs:
@@ -228,15 +246,6 @@ def _install_requests_mock():
                     # Delete the old context
                     unify.delete_context(old_context)
 
-                    print(
-                        f"Successfully renamed context: {old_context} -> {new_context}",
-                    )
-                    print(f"Contexts after rename: {list(unify.get_contexts())}")
-                else:
-                    print(
-                        f"Failed to extract old context '{old_context}' or new context '{new_context}' from request",
-                    )
-
                 return MockResponse(
                     {"success": True, "message": "Table renamed successfully"},
                 )
@@ -244,15 +253,10 @@ def _install_requests_mock():
                 # This endpoint is called by knowledge_manager._get_columns
                 import unify
 
-                print(f"Handling /logs/fields: {url}")
-
-                # Handle POST requests to create columns for a table
                 if method == "POST" and json:
                     project = json.get("project")
                     context = json.get("context")
                     fields = json.get("fields", {})
-
-                    print(f"Creating columns for context {context}: {fields}")
 
                     if context and fields:
                         # Find or create column metadata log
@@ -266,17 +270,11 @@ def _install_requests_mock():
                             # Update existing column metadata
                             column_log = column_logs[0]
                             existing = column_log.entries.get("__columns__", {})
-                            print(
-                                f"Updating existing columns: {existing} with {fields}",
-                            )
                             column_log.update_entries(
                                 __columns__={**existing, **fields},
                             )
                         else:
                             # Create new column metadata log
-                            print(
-                                f"Creating new column metadata for {context}: {fields}",
-                            )
                             unify.log(
                                 context=context,
                                 __columns__=fields,
@@ -292,15 +290,11 @@ def _install_requests_mock():
 
                 query = url.split("?")[-1] if "?" in url else ""
                 params = dict(urllib.parse.parse_qsl(query))
-                print(f"Query params: {params}")
 
                 # Get context parameter - handle both direct parameter and URL pattern
                 context = params.get("context")
                 if not context and table_name:
                     context = f"Knowledge/{table_name}"
-                    print(f"Using table_name from URL: {context}")
-
-                print(f"Using context: {context}")
 
                 if context:
                     # Use unify.get_fields to retrieve the column definitions for the context.
@@ -316,7 +310,6 @@ def _install_requests_mock():
                         for name, dtype in column_data.items()
                     }
 
-                    print(f"Returning formatted column data: {formatted_columns}")
                     return MockResponse(formatted_columns)
             elif "/logs/derived" in url:
                 # Creating derived columns
@@ -423,9 +416,7 @@ def _install_requests_mock():
                                     )
                                     log.entries[column_name] = result
                                 except Exception as e:
-                                    print(
-                                        f"Error calculating derived column {column_name}: {e}",
-                                    )
+                                    pass
 
                 return MockResponse(
                     {"success": True, "message": "Derived column created"},
@@ -434,18 +425,12 @@ def _install_requests_mock():
                 # Renaming columns
                 import unify
 
-                print(f"RENAME FIELD REQUEST RECEIVED: method={method}, url={url}")
                 if json:
-                    print(f"Rename field request JSON: {json}")
                     context = json.get("context")
                     old_field_name = json.get("old_field_name")
                     new_field_name = json.get("new_field_name")
 
                     if context and old_field_name and new_field_name:
-                        print(
-                            f"Renaming field '{old_field_name}' to '{new_field_name}' in context '{context}'",
-                        )
-
                         # Get all non-metadata logs in the context
                         logs = [
                             log
@@ -453,14 +438,9 @@ def _install_requests_mock():
                             if "__columns__" not in log.entries
                         ]
 
-                        print(f"Found {len(logs)} logs to update")
-
                         # Rename the field in each log entry
                         for log in logs:
                             if old_field_name in log.entries:
-                                print(
-                                    f"Renaming field in log {log.id} from '{old_field_name}' to '{new_field_name}'",
-                                )
                                 # Preserve position of the field in the entries
                                 old_value = log.entries.pop(old_field_name)
 
@@ -514,7 +494,6 @@ def _install_requests_mock():
                             column_log = column_logs[0]
                             columns = column_log.entries.get("__columns__", {})
                             if old_field_name in columns:
-                                print(f"Updating column metadata")
                                 updated_columns = {}
                                 for col_name, col_type in columns.items():
                                     if col_name == old_field_name:
@@ -523,15 +502,8 @@ def _install_requests_mock():
                                         updated_columns[col_name] = col_type
                                 column_log.entries["__columns__"] = updated_columns
 
-                        print(
-                            f"Rename complete for '{old_field_name}' to '{new_field_name}' in '{context}'",
-                        )
                     else:
-                        print(
-                            f"Missing required fields for rename. context={context}, old_name={old_field_name}, new_name={new_field_name}",
-                        )
-                else:
-                    print("No JSON data found in rename request")
+                        pass
 
                 return MockResponse({"success": True, "message": "Column renamed"})
             elif method == "DELETE" and "/columns/" in url:
@@ -548,9 +520,6 @@ def _install_requests_mock():
                 if column_pattern:
                     context = f"{column_pattern.group(1)}/{column_pattern.group(2)}"
                     column_name = column_pattern.group(3)
-                    print(
-                        f"DELETE column request: context={context}, column={column_name}",
-                    )
 
                     # Get all non-metadata logs in the context
                     logs = [
@@ -562,7 +531,6 @@ def _install_requests_mock():
                     # Remove the column from each log entry
                     for log in logs:
                         if column_name in log.entries:
-                            print(f"Removing column '{column_name}' from log {log.id}")
                             log.entries.pop(column_name, None)
 
                     # Also update column metadata
@@ -575,9 +543,6 @@ def _install_requests_mock():
                         column_log = column_logs[0]
                         columns = column_log.entries.get("__columns__", {})
                         if column_name in columns:
-                            print(
-                                f"Removing column '{column_name}' from column metadata",
-                            )
                             updated_columns = {
                                 k: v for k, v in columns.items() if k != column_name
                             }
@@ -592,14 +557,6 @@ def _install_requests_mock():
                 import unify
                 import urllib.parse
 
-                print(f"DELETE logs request: {url}")
-                if json:
-                    print(f"JSON payload: {json}")
-
-                context = None
-                column_name = None
-
-                # Extract from JSON payload if available
                 if json:
                     context = json.get("context")
 
@@ -615,14 +572,9 @@ def _install_requests_mock():
                         first_field = ids_and_fields[0]
                         if isinstance(first_field, list) and len(first_field) > 1:
                             column_name = first_field[1]
-                            print(
-                                f"Extracted column name '{column_name}' from ids_and_fields",
-                            )
 
                 # If context and column were found, perform the deletion
                 if context and column_name:
-                    print(f"Deleting column '{column_name}' from context '{context}'")
-
                     # Get all non-metadata logs in the context
                     logs = [
                         log
@@ -633,7 +585,6 @@ def _install_requests_mock():
                     # Remove the column from each log entry
                     for log in logs:
                         if column_name in log.entries:
-                            print(f"Removing column '{column_name}' from log {log.id}")
                             log.entries.pop(column_name, None)
 
                     # Also update column metadata
@@ -646,21 +597,10 @@ def _install_requests_mock():
                         column_log = column_logs[0]
                         columns = column_log.entries.get("__columns__", {})
                         if column_name in columns:
-                            print(
-                                f"Removing column '{column_name}' from column metadata",
-                            )
                             updated_columns = {
                                 k: v for k, v in columns.items() if k != column_name
                             }
                             column_log.entries["__columns__"] = updated_columns
-
-                    print(
-                        f"Column deletion complete for '{column_name}' in '{context}'",
-                    )
-                else:
-                    print(
-                        f"Could not extract context ({context}) or column ({column_name}) for deletion",
-                    )
 
                 return MockResponse({"success": True, "message": "Column deleted"})
             elif "/logs" in url:
@@ -932,9 +872,7 @@ def _install_unify_stub() -> None:  # noqa: C901 – long but linear
                                         )
                                         log.entries[col_name] = result
                                 except Exception as e:
-                                    print(
-                                        f"Error calculating derived column {col_name}: {e}",
-                                    )
+                                    pass
                             # If no equation is stored, skip calculation
                             else:
                                 continue
@@ -965,9 +903,6 @@ def _install_unify_stub() -> None:  # noqa: C901 – long but linear
         prj = _active_project()
         contexts = _projects.get(prj, {}).keys()
 
-        print(f"get_contexts called with prefix: {prefix}, active project: {prj}")
-        print(f"Available contexts: {contexts}")
-
         # Build context results with descriptions
         context_results = {}
         for context in contexts:
@@ -990,11 +925,9 @@ def _install_unify_stub() -> None:  # noqa: C901 – long but linear
                     context_results[context] = description
 
         if prefix:
-            print(f"Returning contexts with prefix and descriptions: {context_results}")
             return context_results
 
         result = list(contexts)
-        print(f"Returning all contexts: {result}")
         return result
 
     def create_context(context_name: str, description: str = None):
@@ -1016,8 +949,6 @@ def _install_unify_stub() -> None:  # noqa: C901 – long but linear
 
     def get_fields(context: str):
         """Get the field names from a context."""
-        print(f"get_fields called for context: {context}")
-
         # Get column metadata directly from logs
         column_logs = [
             log for log in _ctx_store(context) if "__columns__" in log.entries
@@ -1025,13 +956,11 @@ def _install_unify_stub() -> None:  # noqa: C901 – long but linear
 
         if column_logs:
             columns = column_logs[0].entries.get("__columns__", {})
-            print(f"Found columns from metadata: {columns}")
             return columns
 
         # Fall back to examining all logs
         fields = set()
         all_logs = _ctx_store(context)
-        print(f"No column metadata found, examining {len(all_logs)} logs")
 
         for log in all_logs:
             if "__columns__" not in log.entries:
@@ -1039,7 +968,6 @@ def _install_unify_stub() -> None:  # noqa: C901 – long but linear
                     fields.add(key)
 
         result = {field: "string" for field in fields if field != "__columns__"}
-        print(f"Extracted fields from logs: {result}")
         return result
 
     def _add_data(table: str, data: List[Dict[str, Any]]) -> None:
@@ -1103,7 +1031,7 @@ def _install_unify_stub() -> None:  # noqa: C901 – long but linear
                                 )
                                 log_entry[col_name] = result
                         except Exception as e:
-                            print(f"Error calculating derived column {col_name}: {e}")
+                            pass
                     # If no equation is stored, skip calculation
                     else:
                         continue
@@ -1133,15 +1061,12 @@ def _install_unify_stub() -> None:  # noqa: C901 – long but linear
     # Special function to implement column rename
     def _rename_column(context: str, old_name: str, new_name: str) -> None:
         """Helper function to rename a column in all logs and metadata."""
-        print(f"DIRECT RENAME: Renaming column {old_name} to {new_name} in {context}")
-
         # Get all non-metadata logs in the context
         logs = [log for log in _ctx_store(context) if "__columns__" not in log.entries]
 
         # Rename the field in each log entry
         for log in logs:
             if old_name in log.entries:
-                print(f"Renaming field in log {log.id}")
                 # Preserve position of the field in the entries
                 old_value = log.entries.pop(old_name)
 
@@ -1190,7 +1115,6 @@ def _install_unify_stub() -> None:  # noqa: C901 – long but linear
             column_log = column_logs[0]
             columns = column_log.entries.get("__columns__", {})
             if old_name in columns:
-                print(f"Updating column metadata")
                 updated_columns = {}
                 for col_name, col_type in columns.items():
                     if col_name == old_name:
