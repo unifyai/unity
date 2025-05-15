@@ -163,12 +163,29 @@ def detect_captcha(page: Page):
     # 2) hCaptcha
     frame = page.query_selector('iframe[src*="hcaptcha.com" i]')
     if frame:
+        invisible = False
         try:
             solved = page.evaluate(
-                "() => { try { return window.hcaptcha && window.hcaptcha.getResponse && window.hcaptcha.getResponse().length > 0 } catch(e){ return false } }",
+                """
+                () => {
+                    // 1) hidden textarea value filled?
+                    const ta = document.querySelector('textarea[name="h-captcha-response"]');
+                    if (ta && ta.value && ta.value.trim().length > 0) return true;
+                    // 2) hcaptcha.getResponse()
+                    try {
+                        return window.hcaptcha && window.hcaptcha.getResponse && window.hcaptcha.getResponse().length > 0;
+                    } catch(e) {}
+                    return false;
+                }
+                """,
             )
             if solved:
                 frame = None
+            else:
+                # detect invis size only when unsolved
+                size = frame.get_attribute("data-size") or ""
+                if size == "invisible":
+                    invisible = True
         except Exception:
             pass
 
@@ -179,7 +196,7 @@ def detect_captcha(page: Page):
             if "sitekey=" in src:
                 sitekey = src.split("sitekey=")[1].split("&")[0]
         if sitekey:
-            return {"type": "hcaptcha", "sitekey": sitekey}
+            return {"type": "hcaptcha", "sitekey": sitekey, "invisible": invisible}
 
     # 3) Fallback: image-based captcha (heuristic)
     img = page.query_selector('img[alt*="captcha" i], img[src*="captcha" i]')
