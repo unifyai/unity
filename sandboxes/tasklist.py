@@ -331,10 +331,17 @@ def main() -> None:
         action="store_true",
         help="use voice mode",
     )
+    parser.add_argument(
+        "--new",
+        "-n",
+        action="store_true",
+        help="Create an new scenario, erasing the old one",
+    )
     args = parser.parse_args()
     silent = args.silent
     scenario_type = args.scenario
     voice_mode = args.voice
+    new_scenario = args.new
 
     if not silent:
         logging.basicConfig(
@@ -359,24 +366,25 @@ def main() -> None:
     unify.activate(project_name)
 
     # Create the Tasks context
-    unify.set_context("Tasks", overwrite=True)
+    unify.set_context("Tasks", overwrite=new_scenario)
 
     # Seed with data
     theme = None
-    LOGGER.info(f"⏳ Adding data to task environment...")
-    if scenario_type == "llm":
-        theme = _seed_llm(TLM)
-        if theme:
-            # Update project name with the theme if it's available
-            new_project_name = _generate_project_name(scenario_type, theme)
-            # Only switch if names are different
-            if new_project_name != project_name:
-                # Re-activate with the themed project name
-                unify.activate(new_project_name)
-                project_name = new_project_name
-    else:
-        _seed_fixed(TLM)
-    LOGGER.info(f"✅ Data added")
+    if new_scenario:
+        LOGGER.info(f"⏳ Adding data to task environment...")
+        if scenario_type == "llm":
+            theme = _seed_llm(TLM)
+            if theme:
+                # Update project name with the theme if it's available
+                new_project_name = _generate_project_name(scenario_type, theme)
+                # Only switch if names are different
+                if new_project_name != project_name:
+                    # Re-activate with the themed project name
+                    unify.activate(new_project_name)
+                    project_name = new_project_name
+        else:
+            _seed_fixed(TLM)
+        LOGGER.info(f"✅ Data added")
 
     print(
         f"TaskListManager sandbox using project '{project_name}' – type natural language. "
@@ -404,7 +412,7 @@ def main() -> None:
             if not line:
                 continue
 
-            kind, result, _ = _dispatch(tlm, line, show_steps=not silent)
+            kind, result, _ = _dispatch(TLM, line, show_steps=not silent)
             print(f"[{kind}] => {result}\n")
 
 
