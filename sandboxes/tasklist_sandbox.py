@@ -35,7 +35,7 @@ from tests.test_task_list.test_update_text_complex import (
 
 def _generate_project_name(scenario_type: str, theme: str = None) -> str:
     """Generate a unique project name based on scenario and current timestamp."""
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    timestamp = datetime.now().strftime("%H-%M-%S_%d-%m-%Y")
 
     if scenario_type == "fixed":
         base_name = "SimpleTaskList"
