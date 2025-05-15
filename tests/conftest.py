@@ -189,8 +189,54 @@ def _install_requests_mock():
                 return MockResponse(
                     {"success": True, "message": "Column operation successful"},
                 )
-            elif "/rename" in url:
+            elif "/rename" in url and "contexts" in url:
                 # Renaming tables
+                import unify
+                import re
+
+                print(f"DEBUG RENAME: Processing rename request: {url}")
+
+                # Get the old_context and new_context from the request
+                # Example URL: https://api.unify.ai/v0/project/test_rename_table/contexts/Knowledge/MyTable/rename
+                # Extract parts for debugging
+                url_parts = url.split("/")
+                print(f"URL parts: {url_parts}")
+
+                # Extract the context manually from the URL
+                old_context = None
+                for i, part in enumerate(url_parts):
+                    if part == "contexts" and i + 2 < len(url_parts):
+                        old_context = f"{url_parts[i+1]}/{url_parts[i+2]}"
+                        break
+
+                new_context = json.get("name")
+
+                if old_context and new_context:
+                    print(f"Renaming context: {old_context} -> {new_context}")
+
+                    # Create the new context
+                    unify.create_context(new_context)
+
+                    # Get the logs from the old context
+                    logs = unify.get_logs(context=old_context)
+                    print(f"Found {len(logs)} logs in {old_context}")
+
+                    # For each log, copy its entries to the new context
+                    for log in logs:
+                        unify.log(context=new_context, **log.entries)
+
+                    # Delete the old context
+                    unify.delete_context(old_context)
+
+                    print(
+                        f"Successfully renamed context: {old_context} -> {new_context}",
+                    )
+                    print(f"Contexts after rename: {list(unify.get_contexts())}")
+                else:
+                    print(
+                        f"Failed to extract old context '{old_context}' or new context '{new_context}' from request",
+                    )
+
                 return MockResponse(
                     {"success": True, "message": "Table renamed successfully"},
                 )
@@ -922,12 +968,30 @@ def _install_unify_stub() -> None:  # noqa: C901 – long but linear
         print(f"get_contexts called with prefix: {prefix}, active project: {prj}")
         print(f"Available contexts: {contexts}")
 
+        # Build context results with descriptions
+        context_results = {}
+        for context in contexts:
+            # Look for description in logs with __description__ field
+            description = None
+            desc_logs = [
+                log for log in _ctx_store(context) if "__description__" in log.entries
+            ]
+            if desc_logs:
+                description = desc_logs[0].entries["__description__"]
+
+            # Only include contexts matching the prefix
+            if prefix is None or context.startswith(prefix):
+                if context.startswith("Knowledge/"):
+                    # For knowledge tables, strip the prefix for the key
+                    table_name = context[len("Knowledge/") :]
+                    # Return just the description string, not wrapped in a dict
+                    context_results[table_name] = description
+                else:
+                    context_results[context] = description
+
         if prefix:
-            # Return a dictionary mapping context names to descriptions
-            # This is what the real API returns and what knowledge_manager._list_tables expects
-            result = {k: None for k in contexts if k.startswith(prefix)}
-            print(f"Returning contexts with prefix: {result}")
-            return result
+            print(f"Returning contexts with prefix and descriptions: {context_results}")
+            return context_results
 
         result = list(contexts)
         print(f"Returning all contexts: {result}")
