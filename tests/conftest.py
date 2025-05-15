@@ -88,11 +88,35 @@ def _install_unify_stub() -> None:  # noqa: C901 – long but linear
             """Update the entries with the provided key-value pairs."""
             self.entries.update(kwargs)
 
+        @classmethod
+        def from_json(cls, json_data):
+            """Create a Log instance from JSON data."""
+            if isinstance(json_data, dict):
+                return cls(json_data.get("id", _next()), json_data.get("entries", {}))
+            return json_data  # Return as is if not a dict, assuming it's already a Log
+
+    class Context:
+        """Context manager for unify contexts."""
+
+        def __init__(self, name: str):
+            self._name = name
+            self._prev = None
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
     def _active_project() -> str:
         nonlocal _current
         if _current is None:
             activate("default")
         return _current  # type: ignore
+
+    def active_project() -> str:
+        """Return the name of the active project."""
+        return _active_project()
 
     # ---------------- project helpers ---------------- #
     def activate(name: str) -> None:
@@ -180,10 +204,35 @@ def _install_unify_stub() -> None:  # noqa: C901 – long but linear
                     lg.entries = {**lg.entries, **entries}
         return {"updated": True}
 
-    def get_contexts():
+    def get_contexts(prefix: str = None):
         """Return a list of all context names in the current project."""
         prj = _active_project()
-        return list(_projects.get(prj, {}).keys())
+        contexts = _projects.get(prj, {}).keys()
+        if prefix:
+            contexts_dict = {k: {} for k in contexts if k.startswith(prefix)}
+            return contexts_dict
+        return list(contexts)
+
+    def create_context(context_name: str, description: str = None):
+        """Create a new context in the current project."""
+        prj = _active_project()
+        if context_name not in _projects.get(prj, {}):
+            _projects.setdefault(prj, {}).setdefault(context_name, [])
+        return True
+
+    def delete_context(context_name: str):
+        """Delete a context from the current project."""
+        prj = _active_project()
+        if context_name in _projects.get(prj, {}):
+            _projects[prj].pop(context_name, None)
+        return True
+
+    def get_fields(context: str):
+        """Get the field names from a context."""
+        fields = set()
+        for log in _ctx_store(context):
+            fields.update(log.entries.keys())
+        return list(fields)
 
     # ------------------------------------------------------------------ #
     #  Build proxy module                                                #
@@ -198,10 +247,16 @@ def _install_unify_stub() -> None:  # noqa: C901 – long but linear
         "delete_logs": delete_logs,
         "update_logs": update_logs,
         "Project": Project,
+        "Context": Context,
+        "Log": Log,
         "activate": activate,
+        "active_project": active_project,
         "list_projects": list_projects,
         "delete_project": delete_project,
         "get_contexts": get_contexts,
+        "create_context": create_context,
+        "delete_context": delete_context,
+        "get_fields": get_fields,
     }.items():
         setattr(stub, _k, _v)
 
