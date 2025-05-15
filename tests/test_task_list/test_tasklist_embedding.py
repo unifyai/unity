@@ -1,7 +1,9 @@
+import pytest
 from task_list_manager.task_list_manager import TaskListManager
 from tests.helpers import _handle_project
 
 
+@pytest.mark.requires_real_unify
 @_handle_project
 def test_tasklist_embedding_search():
     # Start the TaskListManager thread
