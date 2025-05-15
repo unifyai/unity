@@ -772,13 +772,18 @@ def _install_unify_stub() -> None:  # noqa: C901 – long but linear
             if "__columns__" not in lg.entries and "__equations__" not in lg.entries
         ]
 
-        # For Knowledge tables, maintain consistent sorting by x in descending order
-        if (
-            context.startswith("Knowledge/")
-            and logs
-            and all("x" in lg.entries for lg in logs)
-        ):
-            logs.sort(key=lambda lg: lg.entries.get("x", 0), reverse=True)
+        # For Knowledge tables, implement general sorting by first numeric field
+        if context.startswith("Knowledge/") and logs:
+            # Find the first numeric field in the first entry
+            sort_key = None
+            for field, value in logs[0].entries.items():
+                if isinstance(value, (int, float)):
+                    sort_key = field
+                    break
+
+            # If we found a numeric field, sort by it
+            if sort_key:
+                logs.sort(key=lambda lg: lg.entries.get(sort_key, 0), reverse=True)
 
         # Then filter if needed
         if filter:
@@ -1000,10 +1005,18 @@ def _install_unify_stub() -> None:  # noqa: C901 – long but linear
 
             entries.append(log_entry)
 
-        # Based on test cases, it appears the real implementation sorts by 'x' in descending order
-        # We'll implement this general behavior instead of special case handling
-        if all("x" in entry for entry in entries):
-            entries.sort(key=lambda e: e.get("x", 0), reverse=True)
+        # General sorting logic: find the first numeric field and sort by that in descending order
+        if entries:
+            # Find the first numeric field in the first entry
+            sort_key = None
+            for field, value in entries[0].items():
+                if isinstance(value, (int, float)):
+                    sort_key = field
+                    break
+
+            # If we found a numeric field, sort by it
+            if sort_key:
+                entries.sort(key=lambda e: e.get(sort_key, 0), reverse=True)
 
         # Add the logs to the context
         for entry in entries:
