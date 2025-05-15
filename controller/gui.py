@@ -202,6 +202,17 @@ class ControlPanel(tk.Tk):
 
             self._pull_update = _get_update_from_queue
 
+        # ── top-centre CAPTCHA label (hidden) ───────────────────────────── NEW
+        self.captcha_lbl = tk.Label(
+            self,
+            text="🔒 Solving CAPTCHA…",
+            fg="orange red",
+            font=("Helvetica", 10, "bold"),
+            bg=self.cget("bg"),
+        )
+        # place it off-screen initially; we'll .place(...) when active
+        self.captcha_lbl.place_forget()
+
     # ─────────────────────────────────────────
 
     def _advance_llm_dots(self):
@@ -1283,7 +1294,8 @@ class ControlPanel(tk.Tk):
             f"title:       {st.get('title', '')[:60]}\n"
             f"scroll_y:    {st.get('scroll_y', 0)}\n"
             f"auto_scroll: {st.get('auto_scroll', None)}\n"
-            f"in_textbox:  {st.get('in_textbox', False)}",
+            f"in_textbox:  {st.get('in_textbox', False)}\n"
+            f"captcha_pending: {st.get('captcha_pending', False)}",
         )
 
         # sync the auto-scroll toggle --------------------------------
@@ -1297,6 +1309,23 @@ class ControlPanel(tk.Tk):
                     self._scroll_pending_target = None
                     if self._manual_stop_pending and expected is None:
                         self._manual_stop_pending = False
+
+        # Lazy-create CAPTCHA banner so we don't depend on call order
+        if not hasattr(self, "captcha_lbl"):
+            self.captcha_lbl = tk.Label(
+                self,
+                text="🔒 Solving CAPTCHA…",
+                fg="orange red",
+                font=("Helvetica", 10, "bold"),
+                bg=self.cget("bg"),
+            )
+            self.captcha_lbl.place_forget()
+
+        # Show or hide banner based on current flag
+        if st.get("captcha_pending", False):
+            self.captcha_lbl.place(relx=0.5, rely=0.0, y=6, anchor="n")
+        else:
+            self.captcha_lbl.place_forget()
 
     # ────────────────────── DIALOG BAR REFRESH ──────────────────────── NEW
     def _refresh_dialog_bar(self):

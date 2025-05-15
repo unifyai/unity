@@ -29,6 +29,12 @@ def get_valid_actions(state: Union[BrowserState, dict], mode="both") -> set[str]
         if mode == "both":
             return dlg_cmds | {c.replace(" ", "_") for c in dlg_cmds}
 
+    # ── Blocker: CAPTCHA solving in progress ─────────────────────────
+    if state.captcha_pending:
+        # while solver runs, do not allow new actions to avoid accidental nav
+        # Users can still scroll gently if desired.
+        return {CMD_SCROLL_UP, CMD_SCROLL_DOWN, CMD_STOP_SCROLLING}
+
     valid: set[str] = set()
 
     # ── text entry & key-presses ─────────────────────────────────────────
