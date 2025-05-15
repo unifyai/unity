@@ -33,6 +33,22 @@ from tests.test_task_list.test_update_text_complex import (
 )  # noqa: E402 – reuse helper
 
 
+def _generate_project_name(scenario_type: str, theme: str = None) -> str:
+    """Generate a unique project name based on scenario and current timestamp."""
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+
+    if scenario_type == "fixed":
+        base_name = "SimpleTaskList"
+    else:  # LLM scenario
+        # Use theme from LLM if available, otherwise a generic name
+        base_name = theme if theme else "LLMGeneratedTaskList"
+        # Sanitize the base_name by removing special characters
+        base_name = "".join(c for c in base_name if c.isalnum() or c in [" ", "-", "_"])
+        base_name = base_name.replace(" ", "_")
+
+    return f"{base_name}_{timestamp}"
+
+
 def _seed_fixed(tlm: TaskListManager) -> None:
     """Populate the project with a mini task list."""
 
@@ -74,7 +90,7 @@ def _seed_fixed(tlm: TaskListManager) -> None:
     )
 
 
-def _seed_llm(tlm: TaskListManager) -> None:
+def _seed_llm(tlm: TaskListManager) -> str:
     """Ask an LLM to craft a *cohesive* scenario with >100 tasks.
 
     Expected JSON schema returned by the model:
@@ -97,6 +113,8 @@ def _seed_llm(tlm: TaskListManager) -> None:
 
     We interpret every *queue_group* separately, ordering by *queue_position*
     to create a linked list via the Schedule prev_task/next_task pointers.
+
+    Returns the theme from the LLM response if available.
     """
 
     prompt = (
@@ -116,13 +134,15 @@ def _seed_llm(tlm: TaskListManager) -> None:
     client.set_system_message(prompt)
     raw = client.generate("Produce scenario").strip()
 
+    theme = None
     try:
         payload = json.loads(raw)
         tasks_data = payload["tasks"]
+        theme = payload.get("theme")
     except Exception:
         print("LLM scenario generation failed – using fixed sample instead.")
         _seed_fixed(tlm)
-        return
+        return theme
 
     # Sort tasks within each queue_group by queue_position to build linkage
     groups: Dict[str, List[dict]] = {}
@@ -174,6 +194,8 @@ def _seed_llm(tlm: TaskListManager) -> None:
                 overwrite=True,
             )
 
+    return theme
+
 
 def _dispatch(
     tlm: TaskListManager,
@@ -217,14 +239,6 @@ def _dispatch(
 
 
 def main() -> None:
-    unify.activate("tasklist_sandbox")
-
-    tlm = TaskListManager()
-    tlm.start()
-
-    # Ensure the 'Tasks' context exists to avoid 404 errors on first queries
-    unify.set_context("Tasks", overwrite=True)
-
     parser = argparse.ArgumentParser(description="TaskListManager interactive sandbox")
     parser.add_argument(
         "--silent",
@@ -240,6 +254,20 @@ def main() -> None:
     )
     args = parser.parse_args()
     silent = args.silent
+    scenario_type = args.scenario
+
+    # Generate initial project name
+    project_name = _generate_project_name(scenario_type)
+
+    # Activate the project with dynamic name
+    unify.activate(project_name)
+
+    # Create the Tasks context
+    unify.set_context("Tasks", overwrite=True)
+
+    # Initialize task list manager
+    tlm = TaskListManager()
+    tlm.start()
 
     if not silent:
         logging.basicConfig(
@@ -257,17 +285,27 @@ def main() -> None:
         for _name in ("unify", "unify.utils", "unify.logging"):
             logging.getLogger(_name).setLevel(logging.WARNING)
 
-    if args.scenario == "llm":
-        _seed_llm(tlm)
+    # Seed with data
+    theme = None
+    if scenario_type == "llm":
+        theme = _seed_llm(tlm)
+        if theme:
+            # Update project name with the theme if it's available
+            new_project_name = _generate_project_name(scenario_type, theme)
+            # Only switch if names are different
+            if new_project_name != project_name:
+                # Re-activate with the themed project name
+                unify.activate(new_project_name)
+                project_name = new_project_name
     else:
         _seed_fixed(tlm)
 
     print(
-        "TaskListManager sandbox – type natural language. Prefix with 'ask:' or 'update:' to specify. 'quit' to exit.\n"
-        "Verbose reasoning is {} by default (add --silent to disable).\n".format(
-            "ON" if not silent else "OFF",
-        ),
+        f"TaskListManager sandbox using project '{project_name}' – type natural language. "
+        f"Prefix with 'ask:' or 'update:' to specify. 'quit' to exit.\n"
+        f"Verbose reasoning is {('ON' if not silent else 'OFF')} by default (add --silent to disable).\n",
     )
+
     while True:
         try:
             line = input("> ").strip()
