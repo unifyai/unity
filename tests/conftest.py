@@ -76,6 +76,14 @@ def pytest_configure(config):
         "markers",
         "requires_real_unify: mark test as requiring the real unify implementation",
     )
+    config.addinivalue_line(
+        "markers",
+        "unit: mark a test as a deterministic unit test",
+    )
+    config.addinivalue_line(
+        "markers",
+        "eval: mark a test as a fuzzy evaluation test for English language APIs",
+    )
 
 
 # Skip tests marked with requires_real_unify when using the unify stub

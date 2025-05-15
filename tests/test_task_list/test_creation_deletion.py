@@ -1,3 +1,4 @@
+import pytest
 from tests.helpers import _handle_project
 from task_list_manager.task_list_manager import TaskListManager
 from task_list_manager.types.priority import Priority
@@ -5,6 +6,7 @@ from task_list_manager.types.status import Status
 
 
 @_handle_project
+@pytest.mark.unit
 def test_create_task():
     task_list_manager = TaskListManager()
     task_list_manager.start()
@@ -28,6 +30,7 @@ def test_create_task():
 
 
 @_handle_project
+@pytest.mark.unit
 def test_delete_task():
     task_list_manager = TaskListManager()
     task_list_manager.start()

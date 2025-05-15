@@ -384,6 +384,7 @@ def _llm_assert_correct(
 # --------------------------------------------------------------------------- #
 
 
+@pytest.mark.eval
 @pytest.mark.parametrize("question", QUESTIONS)
 def test_ask_semantic_with_llm_judgement(
     question: str,

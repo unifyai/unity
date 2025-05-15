@@ -1,8 +1,10 @@
+import pytest
 from tests.helpers import _handle_project
 from task_list_manager.task_list_manager import TaskListManager
 
 
 @_handle_project
+@pytest.mark.unit
 def test_get_paused_task():
     task_list_manager = TaskListManager()
     task_list_manager.start()
@@ -22,6 +24,7 @@ def test_get_paused_task():
 
 
 @_handle_project
+@pytest.mark.unit
 def test_get_active_task():
     task_list_manager = TaskListManager()
     task_list_manager.start()
@@ -41,6 +44,7 @@ def test_get_active_task():
 
 
 @_handle_project
+@pytest.mark.unit
 def test_pause():
     task_list_manager = TaskListManager()
     task_list_manager.start()
@@ -69,6 +73,7 @@ def test_pause():
 
 
 @_handle_project
+@pytest.mark.unit
 def test_continue():
     task_list_manager = TaskListManager()
     task_list_manager.start()

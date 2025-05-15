@@ -25,6 +25,7 @@ from function_manager.function_manager import FunctionManager
 
 
 @_handle_project
+@pytest.mark.unit
 def test_add_single_function_success():
     src = (
         "def double(x):\n"
@@ -39,6 +40,7 @@ def test_add_single_function_success():
 
 
 @_handle_project
+@pytest.mark.unit
 def test_add_multiple_functions_with_dependency():
     add_src = "def add(a, b):\n    return a + b\n"
     twice_src = "def twice(x):\n    return add(x, x)\n"
@@ -65,6 +67,7 @@ def test_add_multiple_functions_with_dependency():
         ),
     ],
 )
+@pytest.mark.unit
 def test_validation_errors(source: str, exp_msg: str):
     fm = FunctionManager()
     with pytest.raises(ValueError, match=exp_msg):
@@ -77,6 +80,7 @@ def test_validation_errors(source: str, exp_msg: str):
 
 
 @_handle_project
+@pytest.mark.unit
 def test_list_functions_with_and_without_implementations():
     add_src = (
         "def add(a: int, b: int) -> int:\n"
@@ -105,6 +109,7 @@ def test_list_functions_with_and_without_implementations():
 
 
 @_handle_project
+@pytest.mark.unit
 def test_delete_single_function():
     fm = FunctionManager()
     fm.add_functions(implementations="def alpha():\n    return 1\n")
@@ -115,6 +120,7 @@ def test_delete_single_function():
 
 
 @_handle_project
+@pytest.mark.unit
 def test_delete_function_with_dependants_cascades():
     add_src = "def add(a, b):\n    return a + b\n"
     twin_src = "def twin(x):\n    return add(x, x)\n"
@@ -127,6 +133,7 @@ def test_delete_function_with_dependants_cascades():
 
 
 @_handle_project
+@pytest.mark.unit
 def test_delete_function_without_cascading_leaves_dependants():
     add_src = "def add(a, b):\n    return a + b\n"
     twin_src = "def twin(x):\n    return add(x, x)\n"
@@ -144,6 +151,7 @@ def test_delete_function_without_cascading_leaves_dependants():
 
 
 @_handle_project
+@pytest.mark.unit
 def test_search_functions_filtering_across_columns():
     price_src = (
         "def price_total(p, tax):\n"
