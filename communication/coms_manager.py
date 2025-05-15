@@ -46,7 +46,7 @@ class ComsManager(threading.Thread):
         }
 
         # Agent
-        self._client = unify.Unify("o4-mini@openai", cache=True, traced=True)
+        self._client = unify.Unify("gpt-4o@openai", cache=True, traced=True)
         # ToDo: implement this system message
         self._client.set_system_message(COMS_MANAGER)
 

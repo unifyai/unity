@@ -89,7 +89,7 @@ class TaskListManager(threading.Thread):
             Dict[str, str]: The answer to the question.
         """
 
-        client = unify.Unify("o4-mini@openai", cache=True, traced=True)
+        client = unify.Unify("gpt-4o@openai", cache=True, traced=True)
         client.set_system_message(ASK)
         ans = tool_use_loop(client, text, self._ask_tools, log_steps=log_tool_steps)
         if return_reasoning_steps:
@@ -118,7 +118,7 @@ class TaskListManager(threading.Thread):
         """
         from task_list_manager.sys_msgs import UPDATE
 
-        client = unify.Unify("o4-mini@openai", cache=True, traced=True)
+        client = unify.Unify("gpt-4o@openai", cache=True, traced=True)
         client.set_system_message(UPDATE)
         ans = tool_use_loop(client, text, self._update_tools, log_steps=log_tool_steps)
         if return_reasoning_steps:

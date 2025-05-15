@@ -771,7 +771,7 @@ def text_to_browser_action(
             return response_format.model_validate(ret).model_dump()
 
         # decide among the candidate actions
-        client.set_endpoint("o4-mini@openai")
+        client.set_endpoint("gpt-4o@openai")
         client.set_system_message(
             PRIMITIVE_TO_BROWSER_ACTION + history_msg + state_msg,
         )
@@ -814,7 +814,7 @@ def text_to_browser_action(
         ]
         sys_prompt = "\n".join(lines)
 
-        client.set_endpoint("o4-mini@openai")
+        client.set_endpoint("gpt-4o@openai")
         client.set_system_message(sys_prompt)
         client.set_response_format(SimpleChoice)
 
