@@ -55,7 +55,7 @@ def _extract_reg_domain(url: str) -> str:
     return host
 
 
-def solve_recaptcha(sitekey: str, url: str, *, timeout: int = 120) -> Optional[str]:
+def solve_recaptcha(sitekey: str, url: str, *, invisible: bool = False, timeout: int = 120) -> Optional[str]:
     """Solve Google reCAPTCHA v2 (checkbox or invisible).
 
     Returns the solution `g-recaptcha-response` token, or *None* if solving
@@ -74,6 +74,7 @@ def solve_recaptcha(sitekey: str, url: str, *, timeout: int = 120) -> Optional[s
     solver.set_key(ANTI_CAPTCHA_KEY)
     solver.set_website_url(url)
     solver.set_website_key(sitekey)
+    solver.set_is_invisible(True)
     solver.set_soft_id(0)  # optional affiliate id
     # solver.set_task_timeout(timeout)
 
@@ -141,7 +142,7 @@ def solve(captcha: dict, page_url: str) -> Optional[str]:
     """
     typ = captcha.get("type")
     if typ == "recaptcha_v2":
-        return solve_recaptcha(captcha["sitekey"], page_url)
+        return solve_recaptcha(captcha["sitekey"], page_url, invisible=captcha.get("invisible", False))
     if typ == "hcaptcha":
         return solve_hcaptcha(captcha["sitekey"], page_url)
     if typ == "image":

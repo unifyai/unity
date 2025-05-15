@@ -365,13 +365,23 @@ class BrowserWorker(threading.Thread):
         try:
             if typ == "recaptcha_v2":
                 page.evaluate(
-                    "(tk) => {\n"
-                    "  const ta = document.getElementById('g-recaptcha-response') ||\n"
-                    "        document.querySelector('textarea[name=\"g-recaptcha-response\"]');\n"
-                    "  if (ta) { ta.style.display=''; ta.value = tk; }\n"
+                    "(p) => {\n"
+                    "  const tk = p.tk; const inv = p.inv;\n"
+                    "  const setVal = () => {\n"
+                    "    const ta = document.getElementById('g-recaptcha-response') ||\n"
+                    "              document.querySelector('textarea[name=\\\"g-recaptcha-response\\\"]');\n"
+                    "    if (ta) { ta.style.display=''; ta.value = tk; ta.dispatchEvent(new Event('input', {bubbles:true})); }\n"
+                    "  };\n"
+                    "  setVal();\n"
+                    "  if (inv && window.grecaptcha) {\n"
+                    "     try {\n"
+                    "        window.grecaptcha.execute = () => tk;\n"
+                    "        window.grecaptcha.getResponse = () => tk;\n"
+                    "     } catch(e){}\n"
+                    "  }\n"
                     "  window.dispatchEvent(new Event('captcha-solved'));\n"
                     "}",
-                    token,
+                    {"tk": token, "inv": payload.get("invisible", False)},
                 )
             elif typ == "hcaptcha":
                 page.evaluate(
