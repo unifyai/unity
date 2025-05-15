@@ -72,8 +72,8 @@ class TaskListManager(threading.Thread):
 
     def ask(
         self,
-        *,
         text: str,
+        *,
         return_reasoning_steps: bool = False,
         log_tool_steps: bool = False,
     ) -> Dict[str, str]:
@@ -100,8 +100,8 @@ class TaskListManager(threading.Thread):
 
     def update(
         self,
-        *,
         text: str,
+        *,
         return_reasoning_steps: bool = False,
         log_tool_steps: bool = False,
     ) -> Dict[str, str]:
