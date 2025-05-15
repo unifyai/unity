@@ -393,6 +393,60 @@ class CommandRunner:
                 self.select_tab(title)
             return
 
+        # ───────────────────── Navigation (back/forward/reload) ──────── NEW
+        if cmd == CMD_BACK_NAV:
+            try:
+                ret = self.active.go_back(timeout=15000, wait_until="load")
+                if ret is None:
+                    self.log("No back history entry")
+                else:
+                    self.state.url = self.active.url
+                    self.state.title = self.active.title() or self.state.url
+                    # force reload to ensure fresh state
+                    try:
+                        self.active.reload(timeout=15000, wait_until="load")
+                    except Exception:
+                        pass
+                    # update navigation flags heuristically
+                    try:
+                        self.state.can_go_back = bool(self.active.evaluate("history.length > 1"))
+                    except Exception:
+                        self.state.can_go_back = False
+                    self.state.can_go_forward = True
+                    try:
+                        self.active.evaluate("window.__pw_forward_avail = true")
+                    except Exception:
+                        pass
+            except Exception as exc:
+                self.log(f"Back navigation failed: {exc}")
+            return
+
+        if cmd == CMD_FORWARD_NAV:
+            try:
+                ret = self.active.go_forward(timeout=15000, wait_until="load")
+                if ret is None:
+                    self.log("No forward history entry")
+                else:
+                    self.state.url = self.active.url
+                    self.state.title = self.active.title() or self.state.url
+                    self.state.can_go_forward = False
+                    try:
+                        self.active.evaluate("window.__pw_forward_avail = false")
+                    except Exception:
+                        pass
+            except Exception as exc:
+                self.log(f"Forward navigation failed: {exc}")
+            return
+
+        if cmd == CMD_RELOAD_PAGE:
+            try:
+                self.active.reload(timeout=15000, wait_until="load")
+                self.state.url = self.active.url
+                self.state.title = self.active.title() or self.state.url
+            except Exception as exc:
+                self.log(f"Reload failed: {exc}")
+            return
+
     # ---------- helper for GUI refresh ------------------------------------
     def refresh_overlay(self):
         elements = collect_elements(self.active)

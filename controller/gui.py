@@ -745,6 +745,9 @@ class ControlPanel(tk.Tk):
 
         bottom_bar.columnconfigure(0, weight=1)
         bottom_bar.columnconfigure(1, weight=1)
+        bottom_bar.columnconfigure(2, weight=1)
+        bottom_bar.columnconfigure(3, weight=1)
+        bottom_bar.columnconfigure(4, weight=1)
 
         # Ensure command-button registry exists before any buttons are created below.
         self._cmd_buttons: dict[str, ttk.Button] = {}
@@ -761,6 +764,9 @@ class ControlPanel(tk.Tk):
 
         _mk_tab_btn(0, "New Tab", CMD_NEW_TAB)
         _mk_tab_btn(1, "Close Tab", CMD_CLOSE_THIS_TAB)
+        _mk_tab_btn(2, "Back", CMD_BACK_NAV)
+        _mk_tab_btn(3, "Forward", CMD_FORWARD_NAV)
+        _mk_tab_btn(4, "Reload", CMD_RELOAD_PAGE)
 
         # ===================================================================
         #  ROW-7  →  Dialog bar (JS pop-ups)
@@ -1164,6 +1170,9 @@ class ControlPanel(tk.Tk):
             CMD_START_SCROLL_UP: "Already auto‑scrolling",
             CMD_START_SCROLL_DOWN: "Already auto‑scrolling",
             CMD_SCROLL_UP: "Already at the very top of the page",
+            CMD_BACK_NAV: "No previous page in history",
+            CMD_FORWARD_NAV: "No forward history entry",
+            CMD_RELOAD_PAGE: "",
         }
 
         def _is_ok(cmd: str) -> bool:

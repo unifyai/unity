@@ -273,6 +273,20 @@ class BrowserWorker(threading.Thread):
                         self.runner.state.title = res["title"]
                         self.runner.state.in_textbox = res["inBox"]
                         self.runner.state.scroll_y = res["sy"]
+
+                        # nav history flags (heuristic)
+                        try:
+                            hist_len = self.runner.active.evaluate("history.length")
+                            self.runner.state.can_go_back = hist_len > 1
+                            # Forward availability: we cannot query directly; keep previous flag and reset when back used
+                            # Simple heuristic: assume forward not available after normal navigation; will become true after going back
+                        except Exception:
+                            self.runner.state.can_go_back = False
+                        # forward flag relies on Playwright property 'can_go_forward'
+                        try:
+                            self.runner.state.can_go_forward = bool(self.runner.active.evaluate("window.__pw_forward_avail || false"))
+                        except Exception:
+                            self.runner.state.can_go_forward = False
                     except Exception:
                         # during navigation or cross‑origin frames
                         self.runner.state.in_textbox = False
