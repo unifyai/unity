@@ -52,6 +52,7 @@ load_dotenv()
 handlers = {}
 active = []
 
+# Configure logging to only allow our LOGGER to output
 logging.config.dictConfig(
     {
         "version": 1,
@@ -62,12 +63,24 @@ logging.config.dictConfig(
                 "datefmt": "%Y-%m-%d %H:%M:%S",
             },
         },
-        "handlers": handlers,
-        "root": {"level": "CRITICAL", "handlers": []},
+        "handlers": {
+            "console": {
+                "class": "logging.StreamHandler",
+                "stream": sys.stdout,
+                "formatter": "default",
+            },
+        },
+        "root": {"level": "CRITICAL", "handlers": []},  # Block all root logging
         "loggers": {
-            "unity": {
+            "unity": {  # Only allow our LOGGER to output
                 "level": "INFO",
-                "handlers": active,
+                "handlers": ["console"],
+                "propagate": False,
+            },
+            # Block all other loggers
+            "": {  # Catch-all for unnamed loggers
+                "level": "CRITICAL",
+                "handlers": [],
                 "propagate": False,
             },
         },
@@ -300,12 +313,12 @@ class VoiceAssistant(Agent):
     @function_tool()
     async def ask(self, question: str) -> str:
         """Ask a question about the tasks."""
-        return TLM.ask(question)
+        return TLM.ask(question, log_tool_steps=True)
 
     @function_tool()
     async def update(self, request: str) -> str:
         """Update the tasks in some manner."""
-        return TLM.update(request)
+        return TLM.update(request, log_tool_steps=True)
 
 
 async def voice_entrypoint(ctx: agents.JobContext):
