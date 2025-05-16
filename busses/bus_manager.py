@@ -8,7 +8,7 @@ from functools import wraps
 from asyncio import AbstractEventLoop
 
 from off_the_shelf import BrowserAssistant, BrowserController
-from task_managers.task_manager import TaskManager
+from task_manager.task_manager import TaskManager
 from controller.controller import Controller
 from planner.planner import Planner
 from helpers import _find_project_frame
