@@ -260,3 +260,46 @@ async def test_async_loop_mixed_sync_async_tools():
     )
 
     assert answer.strip() == "42"
+
+
+# --------------------------------------------------------------------------- #
+#  CANCEL – the tool is stopped by the calling code                           #
+# --------------------------------------------------------------------------- #
+@pytest.mark.asyncio
+async def test_async_loop_fast_cancel():
+    """Loop exits promptly (<150 ms) when `cancel_event` is set."""
+    cancel_event = asyncio.Event()
+    flagged = {"cancelled": False}
+
+    async def long_tool():
+        try:
+            await asyncio.sleep(10)
+        except asyncio.CancelledError:
+            flagged["cancelled"] = True
+            raise
+
+    model_turn = types.SimpleNamespace(
+        tool_calls=[FakeToolCall("long", {}, "1")], content=""
+    )
+    scripted = [make_response(model_turn)]
+    client = FakeAsyncClient(scripted)
+
+    task = asyncio.create_task(
+        llmh.async_tool_use_loop(
+            client,
+            message="run",
+            tools={"long": long_tool},
+            cancel_event=cancel_event,
+        )
+    )
+
+    await asyncio.sleep(0.05)          # give tool time to start
+    t0 = time.monotonic()
+    cancel_event.set()                  # trigger stop
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    dt = time.monotonic() - t0
+
+    assert dt < 0.15                   # stop was fast
+    assert flagged["cancelled"]        # tool got cancelled
+

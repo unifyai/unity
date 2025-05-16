@@ -241,129 +241,100 @@ async def async_tool_use_loop(
     message: str,
     tools: Dict[str, Callable],
     *,
-    name: Optional[str] = None,
+    cancel_event: Optional[asyncio.Event] = None,
     max_consecutive_failures: int = 3,
     log_steps: bool = False,
 ):
     """
-    Drive an LLM conversation with *concurrent* tool execution.
-
-    ── Flow ───────────────────────────────────────────────────────────────
-    1. As soon as the LLM requests N tools, launch them all as tasks.
-    2. When **any one** task finishes, send its result back and
-       *immediately* query the LLM again — even though other tasks might
-       still be running.
-    3. We stop only when:
-         • the LLM’s last turn contained **no** tool calls *and*
-         • *zero* tool tasks remain.
-    4. The failure counter is reset after every successful call; the loop
-       aborts once `max_consecutive_failures` is reached.
+    Concurrent tool execution loop that can be cancelled at any moment by
+    setting `cancel_event`.
     """
+    cancel_event = cancel_event or asyncio.Event()
 
-    # ── initial user message ────────────────────────────────────────────
-    if log_steps:
-        LOGGER.info(f"\n🧑‍💻 {message}\n")
-
+    # ── initial prompt ──────────────────────────────────────────────────
     tools_schema = [method_to_schema(v) for v in tools.values()]
-    user_msg = {"role": "user", "content": message}
-    if name is not None:
-        user_msg["name"] = name
-    client.append_messages([user_msg])
+    first = {"role": "user", "content": message}
+    client.append_messages([first])
 
     consecutive_failures = 0
-    pending_tasks: Set[asyncio.Task] = set()
-    task_info: Dict[asyncio.Task, Tuple[str, str]] = {}  # task → (tool_name, call_id)
+    pending: Set[asyncio.Task] = set()
+    task_info: Dict[asyncio.Task, Tuple[str, str]] = {}  # task → (name, call_id)
 
-    # ── main loop ───────────────────────────────────────────────────────
-    while True:
-        # ── A. If we have running tasks, wait for ONE to finish first ──
-        if pending_tasks:
-            done, _ = await asyncio.wait(
-                pending_tasks,
-                return_when=asyncio.FIRST_COMPLETED,
-            )
+    try:
+        while True:
+            # ── A.  Wait for *one* task or a cancel signal ────────────
+            if pending:
+                waiters = pending | {asyncio.create_task(cancel_event.wait())}
+                done, _ = await asyncio.wait(
+                    waiters,
+                    return_when=asyncio.FIRST_COMPLETED,
+                )
 
-            for task in done:
-                pending_tasks.remove(task)
-                tool_name, call_id = task_info.pop(task)
+                # cancellation wins immediately
+                if any(t for t in done if t not in pending):
+                    raise asyncio.CancelledError
 
-                try:
-                    raw = task.result()
-                    result = _dumps(raw, indent=4)
-                    consecutive_failures = 0
-                    if log_steps:
-                        LOGGER.info(f"\n🛠️ {tool_name} (…) = {result}\n")
-                except Exception:
-                    consecutive_failures += 1
-                    result = traceback.format_exc()
-                    if log_steps:
-                        LOGGER.error(
-                            f"\n❌ {tool_name} (…) failed "
-                            f"(attempt {consecutive_failures}/{max_consecutive_failures}):\n{result}"
+                # a tool finished; process it / them
+                for task in done:
+                    pending.remove(task)
+                    name, call_id = task_info.pop(task)
+
+                    try:
+                        raw = task.result()
+                        result = _dumps(raw, indent=4)
+                        consecutive_failures = 0
+                    except Exception:
+                        consecutive_failures += 1
+                        result = traceback.format_exc()
+
+                    client.append_messages(
+                        [{"role": "tool",
+                          "tool_call_id": call_id,
+                          "name": name,
+                          "content": result}]
+                    )
+
+                    if consecutive_failures >= max_consecutive_failures:
+                        raise RuntimeError(
+                            "Aborted after too many consecutive tool failures."
                         )
 
-                client.append_messages(
-                    [
-                        {
-                            "role": "tool",
-                            "tool_call_id": call_id,
-                            "name": tool_name,
-                            "content": result,
-                        }
-                    ]
-                )
+            # ── B.  Cancel check before calling the LLM ───────────────
+            if cancel_event.is_set():
+                raise asyncio.CancelledError
 
-                if consecutive_failures >= max_consecutive_failures:
-                    raise RuntimeError(
-                        "Aborted after too many consecutive tool failures.\n"
-                        f"Last stack trace:\n{result}"
-                    )
-            # after feeding 1-N results, we *always* ask the LLM next
+            # ── C.  Ask the LLM what to do next ───────────────────────
+            response = await client.generate(
+                return_full_completion=True,
+                tools=tools_schema,
+                tool_choice="auto",
+                stateful=True,
+            )
+            msg = response.choices[0].message
 
-        # ── B. Query the LLM for its next action ────────────────────────
-        if log_steps:
-            LOGGER.info("🔄 LLM thinking…")
+            # ── D.  Launch any new tool calls ─────────────────────────
+            if msg.tool_calls:
+                for call in msg.tool_calls:
+                    name = call.function.name
+                    args = json.loads(call.function.arguments)
+                    fn = tools[name]
+                    coro = fn(**args) if asyncio.iscoroutinefunction(fn) else asyncio.to_thread(fn, **args)
 
-        response = await client.generate(
-            return_full_completion=True,
-            tools=tools_schema,
-            tool_choice="auto",
-            stateful=True,
-        )
-        msg = response.choices[0].message
+                    t = asyncio.create_task(coro)
+                    pending.add(t)
+                    task_info[t] = (name, call.id)
+                continue  # wait for first of them
 
-        # ── C. Launch any newly requested tool calls ────────────────────
-        if msg.tool_calls:
-            for call in msg.tool_calls:
-                tool_name = call.function.name
-                args = json.loads(call.function.arguments)
-                fn = tools[tool_name]
+            # ── E.  No new tool calls  ────────────────────────────────
+            if pending:
+                # Go back to top; will wait for remaining tasks
+                continue
 
-                # Support sync *and* async callables
-                coro = fn(**args) if asyncio.iscoroutinefunction(fn) else asyncio.to_thread(fn, **args)
+            return msg.content
 
-                task = asyncio.create_task(coro)
-                pending_tasks.add(task)
-                task_info[task] = (tool_name, call.id)
-
-            if log_steps:
-                LOGGER.info(
-                    "🚀 Launched "
-                    f"{len(msg.tool_calls)} task(s) "
-                    f"({len(pending_tasks)} pending total)"
-                )
-            # Go back to start → wait for the first of those tasks
-            continue
-
-        # ── D. LLM sent *no* tool calls ─────────────────────────────────
-        #     We may still have tasks that were started earlier.
-        if pending_tasks:
-            if log_steps:
-                LOGGER.info("ℹ️  No new tools, but tasks still running; waiting…")
-            # Loop again → section A will wait for one to finish
-            continue
-
-        # No pending tasks *and* no new tool calls ⇒ we’re done
-        if log_steps:
-            LOGGER.info(f"\n🤖 {msg.content}\n✅ Final answer")
-        return msg.content
+    except asyncio.CancelledError:
+        # 🔴  Graceful shutdown: stop all tools
+        for t in pending:
+            t.cancel()
+        await asyncio.gather(*pending, return_exceptions=True)
+        raise
