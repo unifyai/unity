@@ -5,7 +5,7 @@
 ### Create venv inside this folder
 ```
 cd ~/unity (wherever you cloned it)
-uv venv .unity
+uv venv --python 3.11 .unity
 source .unity/bin/activate
 uv pip install -r requirements.txt
 ```
