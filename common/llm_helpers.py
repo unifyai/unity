@@ -246,19 +246,21 @@ async def async_tool_use_loop(
     log_steps: bool = False,
 ):
     """
-    Converse with the LLM, running its requested tools *concurrently*.
+    Drive an LLM conversation with *concurrent* tool execution.
 
-    Behaviour
-    ---------
-    • Launch every tool-call in its own asyncio.Task.
-    • After *any* task finishes, feed its result back to the LLM immediately.
-    • Keep looping until the first model turn that contains **no** tool calls.
-      At that point wait for any still-running tool tasks to finish, then
-      return the model’s content.
-    • Abort after `max_consecutive_failures` tool exceptions *in a row*.
+    ── Flow ───────────────────────────────────────────────────────────────
+    1. As soon as the LLM requests N tools, launch them all as tasks.
+    2. When **any one** task finishes, send its result back and
+       *immediately* query the LLM again — even though other tasks might
+       still be running.
+    3. We stop only when:
+         • the LLM’s last turn contained **no** tool calls *and*
+         • *zero* tool tasks remain.
+    4. The failure counter is reset after every successful call; the loop
+       aborts once `max_consecutive_failures` is reached.
     """
 
-    # ── prompt setup ────────────────────────────────────────────────────────
+    # ── initial user message ────────────────────────────────────────────
     if log_steps:
         LOGGER.info(f"\n🧑‍💻 {message}\n")
 
@@ -272,10 +274,9 @@ async def async_tool_use_loop(
     pending_tasks: Set[asyncio.Task] = set()
     task_info: Dict[asyncio.Task, Tuple[str, str]] = {}  # task → (tool_name, call_id)
 
-    # ── conversation loop ───────────────────────────────────────────────────
+    # ── main loop ───────────────────────────────────────────────────────
     while True:
-
-        # ── 1️⃣  If tasks exist, wait for *one* to finish ──────────────────
+        # ── A. If we have running tasks, wait for ONE to finish first ──
         if pending_tasks:
             done, _ = await asyncio.wait(
                 pending_tasks,
@@ -298,7 +299,7 @@ async def async_tool_use_loop(
                     if log_steps:
                         LOGGER.error(
                             f"\n❌ {tool_name} (…) failed "
-                            f"(attempt {consecutive_failures}/{max_consecutive_failures}):\n{result}",
+                            f"(attempt {consecutive_failures}/{max_consecutive_failures}):\n{result}"
                         )
 
                 client.append_messages(
@@ -308,18 +309,18 @@ async def async_tool_use_loop(
                             "tool_call_id": call_id,
                             "name": tool_name,
                             "content": result,
-                        },
-                    ],
+                        }
+                    ]
                 )
 
                 if consecutive_failures >= max_consecutive_failures:
                     raise RuntimeError(
                         "Aborted after too many consecutive tool failures.\n"
-                        f"Last stack trace:\n{result}",
+                        f"Last stack trace:\n{result}"
                     )
-            # Fall through – we’ll ask the LLM for the next move right away.
+            # after feeding 1-N results, we *always* ask the LLM next
 
-        # ── 2️⃣  Ask the LLM what to do next ───────────────────────────────
+        # ── B. Query the LLM for its next action ────────────────────────
         if log_steps:
             LOGGER.info("🔄 LLM thinking…")
 
@@ -331,17 +332,15 @@ async def async_tool_use_loop(
         )
         msg = response.choices[0].message
 
-        # ── 3️⃣  Launch any new tool calls ─────────────────────────────────
+        # ── C. Launch any newly requested tool calls ────────────────────
         if msg.tool_calls:
             for call in msg.tool_calls:
                 tool_name = call.function.name
                 args = json.loads(call.function.arguments)
                 fn = tools[tool_name]
 
-                if asyncio.iscoroutinefunction(fn):
-                    coro = fn(**args)
-                else:
-                    coro = asyncio.to_thread(fn, **args)
+                # Support sync *and* async callables
+                coro = fn(**args) if asyncio.iscoroutinefunction(fn) else asyncio.to_thread(fn, **args)
 
                 task = asyncio.create_task(coro)
                 pending_tasks.add(task)
@@ -351,16 +350,20 @@ async def async_tool_use_loop(
                 LOGGER.info(
                     "🚀 Launched "
                     f"{len(msg.tool_calls)} task(s) "
-                    f"({len(pending_tasks)} pending total)",
+                    f"({len(pending_tasks)} pending total)"
                 )
-            # Loop again (some tasks are now running)
+            # Go back to start → wait for the first of those tasks
             continue
 
-        # ── 4️⃣  Model returned *no* tool calls → final answer ─────────────
+        # ── D. LLM sent *no* tool calls ─────────────────────────────────
+        #     We may still have tasks that were started earlier.
         if pending_tasks:
-            # Wait for all still-running tasks (ignore results / exceptions)
-            await asyncio.gather(*pending_tasks, return_exceptions=True)
+            if log_steps:
+                LOGGER.info("ℹ️  No new tools, but tasks still running; waiting…")
+            # Loop again → section A will wait for one to finish
+            continue
 
+        # No pending tasks *and* no new tool calls ⇒ we’re done
         if log_steps:
             LOGGER.info(f"\n🤖 {msg.content}\n✅ Final answer")
         return msg.content

@@ -163,6 +163,7 @@ async def test_async_loop_concurrent_tools_early_generate():
     scripted = [
         make_response(first_turn),  # triggers both tools concurrently
         make_response(msg_final("done")),  # model answers after `fast` result only
+        make_response(msg_final("ok")),     # model replies after slow (no tools)
     ]
 
     class InstrumentedClient(FakeAsyncClient):
@@ -179,7 +180,7 @@ async def test_async_loop_concurrent_tools_early_generate():
         max_consecutive_failures=2,
     )
 
-    assert answer.strip() == "done"
+    assert answer.strip() == "ok"
 
     # ── Timing assertions ────────────────────────────────────────────
     generate_times = [t for e, t in events if e == "generate"]
