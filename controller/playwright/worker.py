@@ -30,6 +30,8 @@ from controller.commands import *
 from playwright.sync_api import Error as PWError
 from playwright.sync_api import sync_playwright
 from controller import captcha_solver
+from controller.playwright.overlay import _make_js_helper
+from controller.playwright.heuristics import export_for_js
 
 # Manual-solve mode: set False to disable automatic CAPTCHA sniffing
 AUTO_CAPTCHA = False  # NEW – detect only when user issues `solve_captcha`
@@ -81,7 +83,21 @@ class BrowserWorker(threading.Thread):
 
         with sync_playwright() as pw:
             ctx = launch_persistent(pw)  # context + first window
+            # ── Inject the discovery/overlay helper into **all** future pages ──
+            js_helper_src = _make_js_helper(export_for_js())
+            ctx.add_init_script(js_helper_src)
+
             page = ctx.pages[0] if ctx.pages else ctx.new_page()
+            # The first page already exists in the persistent context, so make
+            # sure the helper is immediately available before the initial
+            # navigation below.  Using evaluate() is safe because the helper
+            # is an IIFE (`(()=>{...})()`) that will attach itself only once.
+            try:
+                page.evaluate(js_helper_src)
+            except Exception:
+                # about:blank may not allow evaluation; ignore and rely on the
+                # navigation below, which will load the helper automatically.
+                pass
             page.goto(self.start_url, wait_until="domcontentloaded")
 
             self.runner = CommandRunner(ctx, log_fn=self.log)
@@ -194,9 +210,21 @@ class BrowserWorker(threading.Thread):
                         elif cmd.startswith("click "):
                             try:
                                 idx = int(cmd.split()[1])
-                                if 1 <= idx <= len(last_elements):
+                                # First try to match by helper-assigned id
+                                hit_el = next(
+                                    (e for e in last_elements if e.get("id") == idx),
+                                    None,
+                                )
+                                if hit_el:
+                                    h = hit_el["handle"]
+                                    label = hit_el["label"]
+                                elif 1 <= idx <= len(last_elements):
+                                    # fallback: legacy positional index
                                     h = last_elements[idx - 1]["handle"]
                                     label = last_elements[idx - 1]["label"]
+                                else:
+                                    h = label = None
+                                if h:
                                     self.runner.hist.add(f"click {label}")
                                     h.click()
                                     _update_in_textbox_state(self.runner, h)

@@ -308,13 +308,19 @@ def _construct_select_button_actions(
     actions: dict[str, type[BaseModel]] = {}
 
     for idx, raw_text in buttons:
-        base_slug = _slug(raw_text)  # "sign_in"
+        # Sanitize label – drop any invalid Unicode surrogates that can break
+        # class creation when used inside __doc__ strings.
+        safe_text = raw_text.encode("utf-8", "ignore").decode("utf-8", "ignore")
+
+        base_slug = _slug(safe_text)  # "sign_in" (ASCII only)
+        if not base_slug:
+            base_slug = "button"
         slug = f"{idx}_{base_slug}"  # "7_sign_in"
         pascal = _pascal(slug)  # "7SignIn"
 
         field_name = f"click_button_{slug}"
         model_name = f"ClickButton{pascal}"
-        doc = f"Click the “{raw_text}” button (element #{idx})."
+        doc = f"Click the “{safe_text}” button (element #{idx})."
 
         actions[field_name] = create_model(
             model_name,
@@ -900,7 +906,7 @@ def _construct_select_popup_actions(pop_titles: List[str]):
         action_name = f"select_popup_{slug}"
         mapping[action_name] = create_model(
             f"SelectPopup{_pascal(slug)}",
-            __doc__=f'Bring the popup window titled "{title}" to the front.',
+            __doc__=f'Select the popup window titled "{title}".',
             **_response_fields,
         )
     return mapping
