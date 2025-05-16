@@ -1,7 +1,7 @@
 import time
 import random
 import threading
-from typing import Dict, Type
+from typing import Dict
 
 import unify
 
@@ -57,7 +57,7 @@ class _DummyPlanner:
         if not self._active_task:
             return "No tasks are currently being performed, so I have nothing to steer."
         return self._steer_simulator.generate(instruction)
-    
+
     def ask(self, question: str) -> str:
         """
         Answer questions about the currently active task.
@@ -71,7 +71,7 @@ class _DummyPlanner:
         if not self._active_task:
             return "No tasks are currently being performed, so I cannot answer your question."
         return self._ask_simulator.generate(question)
-    
+
     def stop(self, reason: str) -> str:
         """
         Stops the currently active task.
@@ -83,15 +83,17 @@ class _DummyPlanner:
             str: A message indicating whether the task was stopped or if there was no active task.
         """
         if not self._active_task:
-            return "No tasks are currently being performed, so there is nothing to stop."
-        
+            return (
+                "No tasks are currently being performed, so there is nothing to stop."
+            )
+
         task = self._active_task
         self._active_task = None
         self._ask_simulator.set_messages([])
         self._ask_simulator.set_system_message("")
         self._steer_simulator.set_messages([])
         self._steer_simulator.set_system_message("")
-        
+
         return f"Stopped task '{task}' for reason: {reason}"
 
 
