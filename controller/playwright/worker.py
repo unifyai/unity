@@ -36,6 +36,7 @@ from controller.playwright.heuristics import export_for_js
 # Manual-solve mode: set False to disable automatic CAPTCHA sniffing
 AUTO_CAPTCHA = False  # NEW – detect only when user issues `solve_captcha`
 
+
 def _update_in_textbox_state(runner, handle):
     """Update BrowserState.in_textbox after a click."""
     try:
@@ -336,7 +337,11 @@ class BrowserWorker(threading.Thread):
                             self.runner.state.can_go_back = False
                         # forward flag relies on Playwright property 'can_go_forward'
                         try:
-                            self.runner.state.can_go_forward = bool(self.runner.active.evaluate("window.__pw_forward_avail || false"))
+                            self.runner.state.can_go_forward = bool(
+                                self.runner.active.evaluate(
+                                    "window.__pw_forward_avail || false",
+                                ),
+                            )
                         except Exception:
                             self.runner.state.can_go_forward = False
                     except Exception:

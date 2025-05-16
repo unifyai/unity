@@ -10,11 +10,11 @@ from typing import List, TypedDict, Dict
 
 
 class Heuristic(TypedDict, total=False):
-    name: str          # unique key
-    selector: str      # CSS selector pre‑filter
-    kind: str          # click | input | exclude | other
-    filter_js: str     # JS fn body: (el) => boolean   – optional
-    label_js: str      # JS fn body: (el) => string    – optional
+    name: str  # unique key
+    selector: str  # CSS selector pre‑filter
+    kind: str  # click | input | exclude | other
+    filter_js: str  # JS fn body: (el) => boolean   – optional
+    label_js: str  # JS fn body: (el) => string    – optional
 
 
 # ---------------------------------------------------------------------------#
@@ -34,12 +34,9 @@ HEURISTICS: List[Heuristic] = [
         "kind": "exclude",
         "filter_js": (
             "const r = el.getBoundingClientRect();"
-            "return r.width < 4 && r.height < 4;"   # <= 3 px either side
+            "return r.width < 4 && r.height < 4;"  # <= 3 px either side
         ),
     },
-
-    
-
     # ─────────────────────────────────────────────
     # 2. PROMOTE THE FIRST VISIBLE CHILD OF THOSE
     #    TINY ANCHORS  (generic card thumbnail)
@@ -59,11 +56,8 @@ HEURISTICS: List[Heuristic] = [
             "const pr = p.getBoundingClientRect();"
             "return pr.width < 4 && pr.height < 4;"
         ),
-        "label_js": (
-            "return (el.alt || el.innerText || '').trim().slice(0, 40);"
-        ),
+        "label_js": ("return (el.alt || el.innerText || '').trim().slice(0, 40);"),
     },
-
     # ─────────────────────────────────────────────
     # 3. TAG‑LEVEL CLICKABLES  (original rule)
     # ─────────────────────────────────────────────
@@ -76,13 +70,12 @@ HEURISTICS: List[Heuristic] = [
         "kind": "click",
     },
     {
-    "name": "heading-in-link",
-    # any <h1>–<h6> that sits *inside* a link
-    "selector": "a[href] h1, a[href] h2, a[href] h3, a[href] h4, a[href] h5, a[href] h6",
-    "kind": "click",
-    "label_js": "return (el.innerText || '').trim().slice(0, 80);",
-},
-
+        "name": "heading-in-link",
+        # any <h1>–<h6> that sits *inside* a link
+        "selector": "a[href] h1, a[href] h2, a[href] h3, a[href] h4, a[href] h5, a[href] h6",
+        "kind": "click",
+        "label_js": "return (el.innerText || '').trim().slice(0, 80);",
+    },
     # ─────────────────────────────────────────────
     # 4. FORM INPUTS
     # ─────────────────────────────────────────────
@@ -91,56 +84,47 @@ HEURISTICS: List[Heuristic] = [
         "selector": "input:not([type='hidden']),textarea,select",
         "kind": "input",
     },
-
     {
-    "name": "tabindex-focusable",
-    "selector": "*[tabindex]",      # any element that declares a tabindex
-    "kind": "click",
-    "filter_js": (
-        # // 1. Positive (or zero) tabindex means it’s keyboard-focusable
-        "const tab = parseInt(el.getAttribute('tabindex') || '-1', 10);"
-        "if (Number.isNaN(tab) || tab < 0) return false;"
-
-        # // 2. Skip elements that are already covered by stronger rules
-        "const tag = el.tagName.toLowerCase();"
-        "if (['a','button','input','select','textarea','label','summary','details'].includes(tag))"
-        "  return false;"
-
-        # // 3. Must be visible and occupy some area
-        "const r = el.getBoundingClientRect();"
-        "if (!r.width || !r.height) return false;"
-
-        # // 4. If it merely wraps a real control, let the child win
-        "if (el.querySelector('a[href],button,input,select,textarea,[role=\"button\"]'))"
-        "  return false;"
-
-        "return true;"
-    ),
-    "label_js": "return (el.innerText || '').trim().slice(0, 60);",
-},
-
-{
-    "name": "scrollable-container",
-    "selector": "*",
-    "kind": "scroll",
-    "filter_js": (
-        # it must create its own scroll bar
-        "const st = getComputedStyle(el);"
-        "if (!['scroll','auto'].includes(st.overflowY)) return false;"
-        # …and actually be able to scroll
-        "if (el.scrollHeight <= el.clientHeight + 4) return false;"
-        # visible & not microscopic
-        "const r = el.getBoundingClientRect();"
-        "return r.width > 60 && r.height > 60;"
-    ),
-    "label_js": (
-        "return (el.getAttribute('aria-label') || el.title || "
-        "        el.dataset.testid || '').trim().slice(0,60);"
-    ),
-},
-
-
-
+        "name": "tabindex-focusable",
+        "selector": "*[tabindex]",  # any element that declares a tabindex
+        "kind": "click",
+        "filter_js": (
+            # // 1. Positive (or zero) tabindex means it’s keyboard-focusable
+            "const tab = parseInt(el.getAttribute('tabindex') || '-1', 10);"
+            "if (Number.isNaN(tab) || tab < 0) return false;"
+            # // 2. Skip elements that are already covered by stronger rules
+            "const tag = el.tagName.toLowerCase();"
+            "if (['a','button','input','select','textarea','label','summary','details'].includes(tag))"
+            "  return false;"
+            # // 3. Must be visible and occupy some area
+            "const r = el.getBoundingClientRect();"
+            "if (!r.width || !r.height) return false;"
+            # // 4. If it merely wraps a real control, let the child win
+            "if (el.querySelector('a[href],button,input,select,textarea,[role=\"button\"]'))"
+            "  return false;"
+            "return true;"
+        ),
+        "label_js": "return (el.innerText || '').trim().slice(0, 60);",
+    },
+    {
+        "name": "scrollable-container",
+        "selector": "*",
+        "kind": "scroll",
+        "filter_js": (
+            # it must create its own scroll bar
+            "const st = getComputedStyle(el);"
+            "if (!['scroll','auto'].includes(st.overflowY)) return false;"
+            # …and actually be able to scroll
+            "if (el.scrollHeight <= el.clientHeight + 4) return false;"
+            # visible & not microscopic
+            "const r = el.getBoundingClientRect();"
+            "return r.width > 60 && r.height > 60;"
+        ),
+        "label_js": (
+            "return (el.getAttribute('aria-label') || el.title || "
+            "        el.dataset.testid || '').trim().slice(0,60);"
+        ),
+    },
     # ─────────────────────────────────────────────
     # 5. CURSOR‑BASED CANDIDATES (allow list)
     # ─────────────────────────────────────────────
@@ -160,13 +144,12 @@ HEURISTICS: List[Heuristic] = [
             "if (skip.has(el.tagName.toLowerCase())) return false;"
             "const clickableAnc = "
             "  'a[href],button,summary,"
-            "   [role=\"button\"],[role=\"option\"],[role^=\"menuitem\"],"
-            "   [role=\"tab\"],[role=\"link\"],[role=\"checkbox\"],[role=\"radio\"]';"
+            '   [role="button"],[role="option"],[role^="menuitem"],'
+            '   [role="tab"],[role="link"],[role="checkbox"],[role="radio"]\';'
             "if (el.closest(clickableAnc) && !el.matches(clickableAnc)) return false;"
             "return good.has(getComputedStyle(el).cursor);"
         ),
     },
-
     # ─────────────────────────────────────────────
     # 6. CURSOR‑BASED EXCLUDE (block list)
     # ─────────────────────────────────────────────
@@ -180,7 +163,6 @@ HEURISTICS: List[Heuristic] = [
             "]).has(getComputedStyle(el).cursor);"
         ),
     },
-
     # ─────────────────────────────────────────────
     # 7. BASIC ARIA ROLES
     # ─────────────────────────────────────────────
@@ -197,7 +179,6 @@ HEURISTICS: List[Heuristic] = [
             "return ok.has(el.getAttribute('role')||el.getAttribute('aria-role'));"
         ),
     },
-
     # ─────────────────────────────────────────────
     # 8. CONTENT‑EDITABLE FIELDS
     # ─────────────────────────────────────────────
@@ -206,7 +187,6 @@ HEURISTICS: List[Heuristic] = [
         "selector": "[contenteditable]:not([contenteditable='false'])",
         "kind": "input",
     },
-
     # ─────────────────────────────────────────────
     # 9. BOOTSTRAP / DROPDOWN HINTS
     # ─────────────────────────────────────────────
@@ -218,7 +198,6 @@ HEURISTICS: List[Heuristic] = [
         ),
         "kind": "click",
     },
-
     # ─────────────────────────────────────────────
     # 10. INLINE HANDLER ATTRIBUTES
     # ─────────────────────────────────────────────
@@ -227,7 +206,6 @@ HEURISTICS: List[Heuristic] = [
         "selector": "*[onclick],*[ondblclick],*[onmousedown],*[onmouseup]",
         "kind": "click",
     },
-
     # ─────────────────────────────────────────────
     # 11. DATA‑TEST IDS
     # ─────────────────────────────────────────────
@@ -236,7 +214,6 @@ HEURISTICS: List[Heuristic] = [
     #     "selector": "*[data-testid],*[data-cy],*[data-test]",
     #     "kind": "click",
     # },
-
     # ─────────────────────────────────────────────
     # 12. LABEL TRACKER (BLOCKER)
     # ─────────────────────────────────────────────

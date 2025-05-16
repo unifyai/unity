@@ -9,6 +9,7 @@ from common.llm_helpers import tool_use_loop
 from task_list_manager.task_list_manager import TaskListManager
 from task_manager.sys_msgs import REQUEST
 
+
 class _DummyPlanner:
     """
     A dummy planner class that simulates task execution and question answering.
@@ -47,7 +48,7 @@ class _DummyPlanner:
         """
         self._active_task = task
         self._client.set_system_message(
-            f"You should pretend you are completing the following task:\n{task}\nCome up with imaginary answers to the user questions about the task"
+            f"You should pretend you are completing the following task:\n{task}\nCome up with imaginary answers to the user questions about the task",
         )
         time.sleep(random.uniform(5, 30))
         self._client.set_messages([])
@@ -89,7 +90,7 @@ class TaskManager(threading.Thread):
     ) -> Dict[str, str]:
         """
         Handle any plain-text english task-related request, which can refer to inactive (cancelled, scheduled, failed) or active tasks in the task list, and can also involve updates to any of those tasks and/or simply answering questions about them. It can also involve changes to the currently active task, and involve multi-step reasoning which includes questions and actions for both inactive and active tasks.
-        
+
         For example: text="if this {some task description} is marked as high or lower, then mark it as urgent and start it right now (pausing any other task that might be active right now))"
 
         Args:
@@ -106,7 +107,7 @@ class TaskManager(threading.Thread):
         if return_reasoning_steps:
             return ans, client.messages
         return ans
-    
+
     # Tools #
     # ------#
 
@@ -117,7 +118,7 @@ class TaskManager(threading.Thread):
 
     def _modify_task_list(self):
         raise NotImplementedError
-    
+
     # Active Task
 
     def _start_task(self):

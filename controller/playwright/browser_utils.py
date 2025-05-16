@@ -45,7 +45,9 @@ def collect_elements(page: Page) -> list[dict]:
     # Traverse frames starting with top-level – ensures parents precede children
     for fr in sorted(page.frames, key=_depth):
         try:
-            raw = fr.evaluate("() => window.__bl ? JSON.stringify(window.__bl.scan()) : '[]'")
+            raw = fr.evaluate(
+                "() => window.__bl ? JSON.stringify(window.__bl.scan()) : '[]'",
+            )
         except Exception:
             continue  # cross-origin, detached, etc.
 
@@ -116,7 +118,9 @@ def paint_overlay(page: Page, boxes: list[dict]) -> None:
     # The modern discovery helper paints its own overlay.  Just make sure
     # it is switched on.  (Calling enableOverlay repeatedly is harmless.)
     try:
-        page.evaluate("() => window.__bl && window.__bl.enableOverlay && window.__bl.enableOverlay()")
+        page.evaluate(
+            "() => window.__bl && window.__bl.enableOverlay && window.__bl.enableOverlay()",
+        )
     except Exception:
         pass  # page might be in navigation / sandbox – ignore
 
@@ -143,6 +147,7 @@ def launch_persistent(pw) -> BrowserContext:
 # CAPTCHA detection helpers
 # ---------------------------------------------------------------------------
 
+
 def detect_captcha(page: Page):
     """Detect common CAPTCHA widgets on the given Playwright *page*.
 
@@ -152,7 +157,9 @@ def detect_captcha(page: Page):
     """
 
     # 1) Google reCAPTCHA v2 (checkbox / invisible)
-    frame = page.query_selector('iframe[src*="google.com/recaptcha" i], iframe[src*="recaptcha.net" i]')
+    frame = page.query_selector(
+        'iframe[src*="google.com/recaptcha" i], iframe[src*="recaptcha.net" i]',
+    )
     if frame:
         # Do not trigger if already solved
         try:
@@ -166,7 +173,7 @@ def detect_captcha(page: Page):
 
     if frame:
         # Try data-sitekey on parent div or iframe src param
-        sitekey_el = page.query_selector('[data-sitekey]')
+        sitekey_el = page.query_selector("[data-sitekey]")
         sitekey = sitekey_el.get_attribute("data-sitekey") if sitekey_el else None
 
         # Determine if widget is invisible (size=invisible or explicit JS)

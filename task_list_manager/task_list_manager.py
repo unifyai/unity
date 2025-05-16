@@ -90,7 +90,12 @@ class TaskListManager(threading.Thread):
         """
 
         client = unify.Unify("o4-mini@openai", cache=True, traced=True)
-        client.set_system_message(ASK.replace("{datetime}", datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S UTC')))
+        client.set_system_message(
+            ASK.replace(
+                "{datetime}",
+                datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC"),
+            ),
+        )
         ans = tool_use_loop(client, text, self._ask_tools, log_steps=log_tool_steps)
         if return_reasoning_steps:
             return ans, client.messages
@@ -119,7 +124,12 @@ class TaskListManager(threading.Thread):
         from task_list_manager.sys_msgs import UPDATE
 
         client = unify.Unify("o4-mini@openai", cache=True, traced=True)
-        client.set_system_message(UPDATE.replace("{datetime}", datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S UTC')))
+        client.set_system_message(
+            UPDATE.replace(
+                "{datetime}",
+                datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC"),
+            ),
+        )
         ans = tool_use_loop(client, text, self._update_tools, log_steps=log_tool_steps)
         if return_reasoning_steps:
             return ans, client.messages

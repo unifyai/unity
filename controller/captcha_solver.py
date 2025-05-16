@@ -21,14 +21,14 @@ try:
 except ModuleNotFoundError as exc:  # pragma: no cover – caught during tests
     raise ImportError(
         "The 'anticaptchaofficial' package is required for CAPTCHA solving. "
-        "Add it to requirements.txt and pip-install it."
+        "Add it to requirements.txt and pip-install it.",
     ) from exc
 
 LOGGER = logging.getLogger("unity.captcha")
 
 if not ANTICAPTCHA_KEY:
     LOGGER.warning(
-        "ANTICAPTCHA_KEY env-var not set; CAPTCHA solving will be disabled."
+        "ANTICAPTCHA_KEY env-var not set; CAPTCHA solving will be disabled.",
     )
 
 # ---------------------------------------------------------------------------
@@ -55,7 +55,13 @@ def _extract_reg_domain(url: str) -> str:
     return host
 
 
-def solve_recaptcha(sitekey: str, url: str, *, invisible: bool = False, timeout: int = 120) -> Optional[str]:
+def solve_recaptcha(
+    sitekey: str,
+    url: str,
+    *,
+    invisible: bool = False,
+    timeout: int = 120,
+) -> Optional[str]:
     """Solve Google reCAPTCHA v2 (checkbox or invisible).
 
     Returns the solution `g-recaptcha-response` token, or *None* if solving
@@ -87,7 +93,13 @@ def solve_recaptcha(sitekey: str, url: str, *, invisible: bool = False, timeout:
     return None
 
 
-def solve_hcaptcha(sitekey: str, url: str, *, invisible: bool = False, timeout: int = 120) -> Optional[str]:
+def solve_hcaptcha(
+    sitekey: str,
+    url: str,
+    *,
+    invisible: bool = False,
+    timeout: int = 120,
+) -> Optional[str]:
     """Solve hCaptcha and return the token."""
     if not ANTICAPTCHA_KEY:
         return None
@@ -133,6 +145,7 @@ def solve_image(base64_png: str, *, timeout: int = 120) -> Optional[str]:
 
 # Convenience wrapper --------------------------------------------------------
 
+
 def solve(captcha: dict, page_url: str) -> Optional[str]:
     """Generic dispatcher used by the worker.
 
@@ -143,9 +156,17 @@ def solve(captcha: dict, page_url: str) -> Optional[str]:
     """
     typ = captcha.get("type")
     if typ == "recaptcha_v2":
-        return solve_recaptcha(captcha["sitekey"], page_url, invisible=captcha.get("invisible", False))
+        return solve_recaptcha(
+            captcha["sitekey"],
+            page_url,
+            invisible=captcha.get("invisible", False),
+        )
     if typ == "hcaptcha":
-        return solve_hcaptcha(captcha["sitekey"], page_url, invisible=captcha.get("invisible", False))
+        return solve_hcaptcha(
+            captcha["sitekey"],
+            page_url,
+            invisible=captcha.get("invisible", False),
+        )
     if typ == "image":
         handle = captcha.get("handle")
         if handle is None:
@@ -156,4 +177,4 @@ def solve(captcha: dict, page_url: str) -> Optional[str]:
             return None
         b64 = base64.b64encode(png).decode()
         return solve_image(b64)
-    return None 
+    return None

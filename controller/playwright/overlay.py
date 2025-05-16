@@ -7,6 +7,7 @@ escaped quotes.  At runtime we just read that template, drop the current
 heuristics JSON into the `__HEURISTICS__` placeholder, and return the
 final source string for injection.
 """
+
 from __future__ import annotations
 
 import json
