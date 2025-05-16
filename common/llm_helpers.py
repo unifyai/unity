@@ -238,7 +238,7 @@ def tool_use_loop(
 
 
 async def async_tool_use_loop(
-    client: unify.Unify,
+    client: unify.AsyncUnify,
     message: str,
     tools: Dict[str, Callable],
     *,
@@ -263,7 +263,7 @@ async def async_tool_use_loop(
         wrapped in `asyncio.to_thread` so the loop stays non-blocking.
     """
 
-    # ── Initial setup ─────────────────────────────────────────────────
+    # Initial prompt ──────────────────────────────────────────────────────────
     if log_steps:
         LOGGER.info(f"\n🧑‍💻 {message}\n")
 
@@ -273,72 +273,61 @@ async def async_tool_use_loop(
         user_msg["name"] = name
     client.append_messages([user_msg])
 
-    consecutive_failures = 0          # failure counter
-    pending_tasks: Set[asyncio.Task] = set()      # all live tool tasks
+    consecutive_failures = 0                       # failure counter
+    pending_tasks: Set[asyncio.Task] = set()       # running tool calls
+    task_info: Dict[asyncio.Task, Tuple[str, str]] = {}   # task → (tool_name, call_id)
 
-    # Cache to look-up tool name & id from an asyncio.Task
-    task_info: Dict[asyncio.Task, Tuple[str, str]] = {}
-
-    # ── Main conversation loop ────────────────────────────────────────
+    # ─────────────────────────── main loop ───────────────────────────────────
     while True:
 
-        # 1️⃣  Collect next event: either a completed tool-task *or*
-        #     the LLM’s next reply (if nothing is running).
-        #
-        #     The first branch lets us stream back tool results as soon
-        #     as they are ready; the second is the usual model turn.
+        # 1️⃣  If any tool tasks are running, wait for the *first* to finish.
         if pending_tasks:
-            done, _pending_tasks = await asyncio.wait(
+            done, _ = await asyncio.wait(
                 pending_tasks,
                 return_when=asyncio.FIRST_COMPLETED,
             )
-            # Handle every finished tool (could be >1 if several ended together)
+
             for task in done:
                 pending_tasks.remove(task)
-                name, tool_call_id = task_info.pop(task)
+                tool_name, call_id = task_info.pop(task)
+
                 try:
                     raw_result = task.result()
                     result = _dumps(raw_result, indent=4)
                     consecutive_failures = 0
                     if log_steps:
-                        LOGGER.info(f"\n🛠️ {name} (…) = {result}\n")
-                except Exception as exc:
+                        LOGGER.info(f"\n🛠️ {tool_name} (…) = {result}\n")
+                except Exception:
                     consecutive_failures += 1
                     result = traceback.format_exc()
                     if log_steps:
                         LOGGER.error(
-                            f"\n❌ {name} (…) raised {exc!r} "
-                            f"(attempt {consecutive_failures}/{max_consecutive_failures})\n{result}"
+                            f"\n❌ {tool_name} (…) failed "
+                            f"(attempt {consecutive_failures}/{max_consecutive_failures}):\n{result}"
                         )
 
                 client.append_messages(
                     [
                         {
                             "role": "tool",
-                            "tool_call_id": tool_call_id,
-                            "name": name,
+                            "tool_call_id": call_id,
+                            "name": tool_name,
                             "content": result,
                         }
                     ]
                 )
 
-                # Abort if too many consecutive failures
                 if consecutive_failures >= max_consecutive_failures:
                     raise RuntimeError(
                         "Aborted after too many consecutive tool failures.\n"
                         f"Last stack trace:\n{result}"
                     )
 
-            # …after feeding 1-N tool results back we continue straight
-            #    to the **next** iteration; the LLM now has fresh info.
-            continue
-
-        # 2️⃣  No task ready – ask the LLM for the next move
+        # 2️⃣  Ask the LLM what to do next.
         if log_steps:
             LOGGER.info("🔄 LLM thinking…")
 
-        response = await asyncio.to_thread(
-            client.generate,             # `Unify.generate` is sync
+        response = await client.generate(           # ← native async call
             return_full_completion=True,
             tools=tools_schema,
             tool_choice="auto",
@@ -346,35 +335,35 @@ async def async_tool_use_loop(
         )
         msg = response.choices[0].message
 
+        # 3️⃣  Launch any new tool calls the LLM requested.
         if msg.tool_calls:
-            # Spawn tasks for every tool call
             for call in msg.tool_calls:
-                name = call.function.name
+                tool_name = call.function.name
                 args = json.loads(call.function.arguments)
-                fn = tools[name]
+                fn = tools[tool_name]
 
-                # Wrap sync callables so we can `await` them
-                if not asyncio.iscoroutinefunction(fn):
-                    coro = asyncio.to_thread(fn, **args)
-                else:
+                # Support sync *or* async tools transparently
+                if asyncio.iscoroutinefunction(fn):
                     coro = fn(**args)
+                else:
+                    coro = asyncio.to_thread(fn, **args)
 
                 task = asyncio.create_task(coro)
                 pending_tasks.add(task)
-                task_info[task] = (name, call.id)
+                task_info[task] = (tool_name, call.id)
 
             if log_steps:
-                LOGGER.info("🚀 Tool tasks launched "
-                            f"({len(msg.tool_calls)} new, "
-                            f"{len(pending_tasks)} total pending)")
-
-            # Immediately iterate; we do *not* wait for them here
+                LOGGER.info(
+                    "🚀 Launched "
+                    f"{len(msg.tool_calls)} task(s) "
+                    f"({len(pending_tasks)} pending total)"
+                )
+            # Continue loop: either a task will finish or the LLM will respond again
             continue
 
-        # ── No new tool calls and nothing pending: final answer ───────
+        # 4️⃣  No new tool calls – is everything done?
         if not pending_tasks:
             if log_steps:
                 LOGGER.info(f"\n🤖 {msg.content}\n✅ Final answer")
             return msg.content
-        # else: fall through – some tool(s) are still running;
-        #                     control will return at the top of the loop
+        # Else: still tasks running → back to top of loop
