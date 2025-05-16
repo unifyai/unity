@@ -5,50 +5,70 @@ Utilities that interact directly with Playwright.
 from math import floor
 from pathlib import Path
 from tempfile import mkdtemp
+import json
 
-from controller.playwright.js_snippets import ELEMENT_INFO_JS, UPDATE_OVERLAY_JS
+from controller.playwright.js_snippets import ELEMENT_INFO_JS
 from playwright.sync_api import BrowserContext, Page
 
 MARGIN = 100  # overscan around viewport
 
 # ---------------------------------------------------------------------------
 # Anything that can receive a click or typing focus
-CLICKABLE_CSS = """
-button:not([disabled]):visible,
-input:not([disabled]):not([type=hidden]):visible,
-textarea:not([disabled]):visible,
-[role=button]:visible,
-[role=link]:visible,
-[role=textbox]:visible,
-[role=combobox]:visible,
-[role=searchbox]:visible,
-[role=option]:visible,
-a[href]:visible,
-[onclick]:visible,
-[role=switch]:visible,
-[role=checkbox]:visible,
-[role=radio]:visible,
-input[type=submit]:not([disabled]):visible,
-input[type=button]:not([disabled]):visible,
-input[type=image]:not([disabled]):visible,
-select:not([disabled]):visible,
-label[for]:visible
-"""
+# (legacy CLICKABLE_CSS removed – element discovery now handled by __bl.scan())
 
 
 def collect_elements(page: Page) -> list[dict]:
+    """Return interactive elements using the injected __bl.scan() helper.
+
+    1.  Each Playwright frame is asked for `window.__bl.scan()` which returns
+        lightweight JSON (id, tag, kind, label, selector).
+    2.  For every hit we locate the real ElementHandle, query its geometry
+        with the old `ELEMENT_INFO_JS`, then build the same enriched dict
+        that existing code expects ( left/top/width/… , vleft/vtop, handle ).
+    """
+
     vp = page.evaluate("() => ({w:innerWidth, h:innerHeight, sx:scrollX, sy:scrollY})")
     vL, vT = -MARGIN, -MARGIN
     vR, vB = vp["w"] + MARGIN, vp["h"] + MARGIN
     sx, sy = vp["sx"], vp["sy"]
 
-    elements = []
+    elements: list[dict] = []
 
-    for frame in page.frames:
-        for h in frame.locator(CLICKABLE_CSS).element_handles():
+    # helper to compute frame depth (root first)
+    def _depth(fr):
+        d = 0
+        while fr.parent_frame:
+            fr = fr.parent_frame
+            d += 1
+        return d
+
+    # Traverse frames starting with top-level – ensures parents precede children
+    for fr in sorted(page.frames, key=_depth):
+        try:
+            raw = fr.evaluate("() => window.__bl ? JSON.stringify(window.__bl.scan()) : '[]'")
+        except Exception:
+            continue  # cross-origin, detached, etc.
+
+        try:
+            hits = json.loads(raw)
+        except Exception:
+            hits = []
+
+        for hit in hits:
+            sel = hit.get("selector")
+            if not sel:
+                continue
             try:
-                info = frame.evaluate(ELEMENT_INFO_JS, h)
-            except Exception:  # cross‑origin or stale element etc.
+                h = fr.query_selector(sel)
+            except Exception:
+                continue
+            if h is None:
+                continue
+
+            # get geometry & misc details via legacy JS snippet
+            try:
+                info = fr.evaluate(ELEMENT_INFO_JS, h)
+            except Exception:
                 continue
             if not info:
                 continue
@@ -58,12 +78,19 @@ def collect_elements(page: Page) -> list[dict]:
             w, hgt = info["width"], info["height"]
 
             if (vl + w) < vL or vl > vR or (vt + hgt) < vT or vt > vB:
-                continue
+                continue  # outside viewport (with overscan)
 
+            # augment info with fields previously added downstream
             info["vleft"] = vl
             info["vtop"] = vt
             info["hover"] = info.get("hover", False)
             info["handle"] = h
+            info["label"] = hit.get("label", info.get("label", ""))
+            info["selector"] = sel
+            info["kind"] = hit.get("kind", "other")
+            info["tag"] = hit.get("tag", info.get("tag", ""))
+            info["id"] = hit.get("id")
+
             elements.append(info)
 
     return elements
@@ -89,7 +116,12 @@ def build_boxes(elements: list[dict]) -> list[dict]:
 
 
 def paint_overlay(page: Page, boxes: list[dict]) -> None:
-    page.evaluate(UPDATE_OVERLAY_JS, boxes)
+    # The modern discovery helper paints its own overlay.  Just make sure
+    # it is switched on.  (Calling enableOverlay repeatedly is harmless.)
+    try:
+        page.evaluate("() => window.__bl && window.__bl.enableOverlay && window.__bl.enableOverlay()")
+    except Exception:
+        pass  # page might be in navigation / sandbox – ignore
 
 
 def launch_persistent(pw) -> BrowserContext:
