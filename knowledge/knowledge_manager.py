@@ -67,7 +67,7 @@ class KnowledgeManager(threading.Thread):
         """
         from knowledge.sys_msgs import STORE
 
-        client = unify.Unify("gpt-4o@openai", cache=True, traced=True)
+        client = unify.Unify("o4-mini@openai", cache=True, traced=True)
         client.set_system_message(STORE)
         ans = tool_use_loop(client, text, self._store_tools)
         if return_reasoning_steps:
@@ -88,7 +88,7 @@ class KnowledgeManager(threading.Thread):
         """
         from knowledge.sys_msgs import RETRIEVE
 
-        client = unify.Unify("gpt-4o@openai", cache=True, traced=True)
+        client = unify.Unify("o4-mini@openai", cache=True, traced=True)
         client.set_system_message(RETRIEVE)
         ans = tool_use_loop(client, text, self._retrieve_tools)
         if return_reasoning_steps:
