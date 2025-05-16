@@ -5,17 +5,16 @@ pytest tests for the *asynchronous* helper:
                                     early-return concurrency, recovery after
                                     failure, abort after N failures
 """
+
 from __future__ import annotations
 
 import asyncio
 import json
 import time
 import types
-from enum import Enum
-from typing import Any, AsyncGenerator
+from typing import Any
 
 import pytest
-from pydantic import BaseModel
 
 # --------------------------------------------------------------------------- #
 #  MODULE UNDER TEST                                                          #
@@ -71,7 +70,10 @@ class FakeAsyncClient:
 #  HELPERS TO BUILD "MODEL" MESSAGES                                          #
 # --------------------------------------------------------------------------- #
 def msg_tool_call(name: str, args: dict, call_id: str = "1"):
-    return types.SimpleNamespace(tool_calls=[FakeToolCall(name, args, call_id)], content="")
+    return types.SimpleNamespace(
+        tool_calls=[FakeToolCall(name, args, call_id)],
+        content="",
+    )
 
 
 def msg_final(content: str):
@@ -81,20 +83,20 @@ def msg_final(content: str):
 # --------------------------------------------------------------------------- #
 #  TOOL IMPLEMENTATIONS (sync + async)                                        #
 # --------------------------------------------------------------------------- #
-def add(x: int, y: int) -> int:                         # synchronous
+def add(x: int, y: int) -> int:  # synchronous
     return x + y
 
 
-def divide(a: int, b: int) -> float:                    # synchronous – may raise
+def divide(a: int, b: int) -> float:  # synchronous – may raise
     return a / b
 
 
-async def fast_tool(res: str = "fast") -> str:          # completes quickly
+async def fast_tool(res: str = "fast") -> str:  # completes quickly
     await asyncio.sleep(0.05)
     return res
 
 
-async def slow_tool(res: str = "slow") -> str:          # noticeably slower
+async def slow_tool(res: str = "slow") -> str:  # noticeably slower
     await asyncio.sleep(0.3)
     return res
 
@@ -159,8 +161,8 @@ async def test_async_loop_concurrent_tools_early_generate():
     )
 
     scripted = [
-        make_response(first_turn),          # triggers both tools concurrently
-        make_response(msg_final("done")),   # model answers after `fast` result only
+        make_response(first_turn),  # triggers both tools concurrently
+        make_response(msg_final("done")),  # model answers after `fast` result only
     ]
 
     class InstrumentedClient(FakeAsyncClient):
@@ -196,8 +198,8 @@ async def test_async_loop_concurrent_tools_early_generate():
 @pytest.mark.asyncio
 async def test_async_loop_recovers_after_failure():
     scripted = [
-        make_response(msg_tool_call("divide", {"a": 4, "b": 0})),   # raises
-        make_response(msg_tool_call("divide", {"a": 4, "b": 2})),   # succeeds
+        make_response(msg_tool_call("divide", {"a": 4, "b": 0})),  # raises
+        make_response(msg_tool_call("divide", {"a": 4, "b": 2})),  # succeeds
         make_response(msg_final("2.0")),
     ]
     client = FakeAsyncClient(scripted)

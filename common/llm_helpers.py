@@ -236,7 +236,6 @@ def tool_use_loop(
             return msg.content
 
 
-
 async def async_tool_use_loop(
     client: unify.AsyncUnify,
     message: str,
@@ -271,7 +270,7 @@ async def async_tool_use_loop(
 
     consecutive_failures = 0
     pending_tasks: Set[asyncio.Task] = set()
-    task_info: Dict[asyncio.Task, Tuple[str, str]] = {}   # task → (tool_name, call_id)
+    task_info: Dict[asyncio.Task, Tuple[str, str]] = {}  # task → (tool_name, call_id)
 
     # ── conversation loop ───────────────────────────────────────────────────
     while True:
@@ -299,7 +298,7 @@ async def async_tool_use_loop(
                     if log_steps:
                         LOGGER.error(
                             f"\n❌ {tool_name} (…) failed "
-                            f"(attempt {consecutive_failures}/{max_consecutive_failures}):\n{result}"
+                            f"(attempt {consecutive_failures}/{max_consecutive_failures}):\n{result}",
                         )
 
                 client.append_messages(
@@ -309,14 +308,14 @@ async def async_tool_use_loop(
                             "tool_call_id": call_id,
                             "name": tool_name,
                             "content": result,
-                        }
-                    ]
+                        },
+                    ],
                 )
 
                 if consecutive_failures >= max_consecutive_failures:
                     raise RuntimeError(
                         "Aborted after too many consecutive tool failures.\n"
-                        f"Last stack trace:\n{result}"
+                        f"Last stack trace:\n{result}",
                     )
             # Fall through – we’ll ask the LLM for the next move right away.
 
@@ -352,7 +351,7 @@ async def async_tool_use_loop(
                 LOGGER.info(
                     "🚀 Launched "
                     f"{len(msg.tool_calls)} task(s) "
-                    f"({len(pending_tasks)} pending total)"
+                    f"({len(pending_tasks)} pending total)",
                 )
             # Loop again (some tasks are now running)
             continue
