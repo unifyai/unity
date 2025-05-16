@@ -21,7 +21,7 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-client = AsyncUnify(endpoint="gpt-4o@openai")
+client = AsyncUnify(endpoint="o4-mini@openai")
 
 
 class Message(HorizontalGroup):

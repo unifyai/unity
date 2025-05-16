@@ -193,7 +193,7 @@ def _seed_llm(tlm: TaskListManager) -> str:
         "include any text outside the JSON literal."
     )
 
-    client = unify.Unify("gpt-4o@openai", cache=True, traced=True)
+    client = unify.Unify("o4-mini@openai", cache=True, traced=True)
     client.set_system_message(prompt)
     raw = client.generate("Produce scenario").strip()
 
