@@ -782,9 +782,9 @@ class TaskListManager(threading.Thread):
         """
         expr = "str({name}) + ' || ' + str({description})"
         ensure_vector_column(
-            "Tasks",
-            self._VEC_TASK,
-            derived_column="name_plus_desc",
+            context="Tasks",
+            embed_column=self._VEC_TASK,
+            source_column="name_plus_desc",
             derived_expr=expr,
         )
 
@@ -793,7 +793,7 @@ class TaskListManager(threading.Thread):
         *,
         text: str,
         k: int = 5,
-    ) -> List[Task]:
+    ) -> List[Dict[str, Any]]:
         """
         Find tasks semantically similar to the provided text.
 
@@ -802,7 +802,7 @@ class TaskListManager(threading.Thread):
             k (int): The number of similar tasks to return.
 
         Returns:
-            List[Task]: A list of Task objects similar to the provided text.
+            List[Dict[str, Any]]: A list where each item in the list is a dict representing a row in the table.
         """
         self._bootstrap_embeddings()
         return [
