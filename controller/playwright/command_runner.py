@@ -409,7 +409,9 @@ class CommandRunner:
                         pass
                     # update navigation flags heuristically
                     try:
-                        self.state.can_go_back = bool(self.active.evaluate("history.length > 1"))
+                        self.state.can_go_back = bool(
+                            self.active.evaluate("history.length > 1"),
+                        )
                     except Exception:
                         self.state.can_go_back = False
                     self.state.can_go_forward = True
