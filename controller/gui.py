@@ -1023,6 +1023,17 @@ class ControlPanel(tk.Tk):
             tk.Label(lbls, text=txt).grid(row=row_idx, column=0, sticky="n")
             lbls.rowconfigure(row_idx, weight=1)
 
+        # ----- Solve CAPTCHA manual trigger --------------------------- NEW
+        solve_btn = ttk.Button(
+            scroll_block,
+            text="Solve CAPTCHA",
+            command=lambda: self._handle_input(CMD_SOLVE_CAPTCHA),
+        )
+        # place below the scroll controls spanning full width
+        solve_btn.grid(row=1, column=0, columnspan=3, sticky="ew", pady=(6, 0))
+        # register for enable/disable refresh logic
+        self._cmd_buttons[CMD_SOLVE_CAPTCHA] = solve_btn
+
     # dynamic key-press button wrap
     def _relayout_key_buttons(self):
         for widget in self.keyrow.winfo_children():

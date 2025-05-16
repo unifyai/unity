@@ -31,6 +31,8 @@ from playwright.sync_api import Error as PWError
 from playwright.sync_api import sync_playwright
 from controller import captcha_solver
 
+# Manual-solve mode: set False to disable automatic CAPTCHA sniffing
+AUTO_CAPTCHA = False  # NEW – detect only when user issues `solve_captcha`
 
 def _update_in_textbox_state(runner, handle):
     """Update BrowserState.in_textbox after a click."""
@@ -206,6 +208,28 @@ class BrowserWorker(threading.Thread):
                             self.runner.close_tab()
                         elif cmd.startswith("close tab "):
                             self.runner.close_tab(cmd[len("close tab ") :])
+                        elif cmd == CMD_SOLVE_CAPTCHA:
+                            # Manual trigger for CAPTCHA detection/solve
+                            if self.runner.state.captcha_pending:
+                                self.log("CAPTCHA solving already in progress")
+                            else:
+                                try:
+                                    cap = detect_captcha(self.runner.active)
+                                except Exception:
+                                    cap = None
+                                if cap:
+                                    self.log(f"CAPTCHA detected: {cap['type']}")
+                                    self.runner.state.captcha_pending = True
+                                    t = threading.Thread(
+                                        target=self._solve_captcha,
+                                        args=(cap,),
+                                        daemon=True,
+                                    )
+                                    t.start()
+                                    self._captcha_thread = t
+                                else:
+                                    self.log("No CAPTCHA widgets detected on this page")
+                            continue  # skip further processing
                         else:
                             self.runner.run(cmd)
 
@@ -294,7 +318,7 @@ class BrowserWorker(threading.Thread):
                     # ──────────────────────────────────────────────────
 
                     # -- 2.3) detect & solve CAPTCHA (NEW) -----------------
-                    if not self.runner.state.captcha_pending:
+                    if not self.runner.state.captcha_pending and AUTO_CAPTCHA:
                         try:
                             cap = detect_captcha(self.runner.active)
                         except Exception:

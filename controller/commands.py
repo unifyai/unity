@@ -46,6 +46,7 @@ CMD_TYPE_DIALOG = "type_dialog *"
 CMD_BACK_NAV = "nav_back"
 CMD_FORWARD_NAV = "nav_forward"
 CMD_RELOAD_PAGE = "nav_reload"
+CMD_SOLVE_CAPTCHA = "solve_captcha"
 
 # ───────────────────────────────────────────────────────────────────────────
 #  WILDCARD GROUPS (sets reused by GUI / agent / filters)
