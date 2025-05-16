@@ -1,11 +1,14 @@
 import json
+import asyncio
 import inspect
 import traceback
 from enum import Enum
 from pydantic import BaseModel
 from typing import (
+    Tuple,
     List,
     Dict,
+    Set,
     Union,
     Optional,
     Any,
@@ -231,3 +234,147 @@ def tool_use_loop(
                 LOGGER.info(f"\n🤖 {msg.content}\n")
                 LOGGER.info("✅ Step finished (final answer)")
             return msg.content
+
+
+
+async def async_tool_use_loop(
+    client: unify.Unify,
+    message: str,
+    tools: Dict[str, Callable],
+    *,
+    name: Optional[str] = None,
+    max_consecutive_failures: int = 3,
+    log_steps: bool = False,
+):
+    """
+    Run a *fully-asynchronous* LLM-tool conversation.
+
+    ── Key differences from the sync version ────────────────────────────
+    1.  **Concurrent tool execution**  – every tool call in a single model
+        turn is kicked off instantly (with `asyncio.create_task`).
+    2.  **Early turn-around**          – as soon as *any* tool finishes,
+        its result is streamed back to the LLM; we *do not* wait for the
+        other tools that are still running.
+    3.  **Pending task tracking**      – unfinished tasks stay in a set
+        (`pending_tasks`) and will continue to report back as they finish.
+    4.  **Loop exit rule**             – we stop only when the LLM emits a
+        turn **without** tool calls *and* there are **no pending tasks**.
+    5.  **Sync or async tools**        – sync callables are transparently
+        wrapped in `asyncio.to_thread` so the loop stays non-blocking.
+    """
+
+    # ── Initial setup ─────────────────────────────────────────────────
+    if log_steps:
+        LOGGER.info(f"\n🧑‍💻 {message}\n")
+
+    tools_schema = [method_to_schema(v) for v in tools.values()]
+    user_msg = {"role": "user", "content": message}
+    if name is not None:
+        user_msg["name"] = name
+    client.append_messages([user_msg])
+
+    consecutive_failures = 0          # failure counter
+    pending_tasks: Set[asyncio.Task] = set()      # all live tool tasks
+
+    # Cache to look-up tool name & id from an asyncio.Task
+    task_info: Dict[asyncio.Task, Tuple[str, str]] = {}
+
+    # ── Main conversation loop ────────────────────────────────────────
+    while True:
+
+        # 1️⃣  Collect next event: either a completed tool-task *or*
+        #     the LLM’s next reply (if nothing is running).
+        #
+        #     The first branch lets us stream back tool results as soon
+        #     as they are ready; the second is the usual model turn.
+        if pending_tasks:
+            done, _pending_tasks = await asyncio.wait(
+                pending_tasks,
+                return_when=asyncio.FIRST_COMPLETED,
+            )
+            # Handle every finished tool (could be >1 if several ended together)
+            for task in done:
+                pending_tasks.remove(task)
+                name, tool_call_id = task_info.pop(task)
+                try:
+                    raw_result = task.result()
+                    result = _dumps(raw_result, indent=4)
+                    consecutive_failures = 0
+                    if log_steps:
+                        LOGGER.info(f"\n🛠️ {name} (…) = {result}\n")
+                except Exception as exc:
+                    consecutive_failures += 1
+                    result = traceback.format_exc()
+                    if log_steps:
+                        LOGGER.error(
+                            f"\n❌ {name} (…) raised {exc!r} "
+                            f"(attempt {consecutive_failures}/{max_consecutive_failures})\n{result}"
+                        )
+
+                client.append_messages(
+                    [
+                        {
+                            "role": "tool",
+                            "tool_call_id": tool_call_id,
+                            "name": name,
+                            "content": result,
+                        }
+                    ]
+                )
+
+                # Abort if too many consecutive failures
+                if consecutive_failures >= max_consecutive_failures:
+                    raise RuntimeError(
+                        "Aborted after too many consecutive tool failures.\n"
+                        f"Last stack trace:\n{result}"
+                    )
+
+            # …after feeding 1-N tool results back we continue straight
+            #    to the **next** iteration; the LLM now has fresh info.
+            continue
+
+        # 2️⃣  No task ready – ask the LLM for the next move
+        if log_steps:
+            LOGGER.info("🔄 LLM thinking…")
+
+        response = await asyncio.to_thread(
+            client.generate,             # `Unify.generate` is sync
+            return_full_completion=True,
+            tools=tools_schema,
+            tool_choice="auto",
+            stateful=True,
+        )
+        msg = response.choices[0].message
+
+        if msg.tool_calls:
+            # Spawn tasks for every tool call
+            for call in msg.tool_calls:
+                name = call.function.name
+                args = json.loads(call.function.arguments)
+                fn = tools[name]
+
+                # Wrap sync callables so we can `await` them
+                if not asyncio.iscoroutinefunction(fn):
+                    coro = asyncio.to_thread(fn, **args)
+                else:
+                    coro = fn(**args)
+
+                task = asyncio.create_task(coro)
+                pending_tasks.add(task)
+                task_info[task] = (name, call.id)
+
+            if log_steps:
+                LOGGER.info("🚀 Tool tasks launched "
+                            f"({len(msg.tool_calls)} new, "
+                            f"{len(pending_tasks)} total pending)")
+
+            # Immediately iterate; we do *not* wait for them here
+            continue
+
+        # ── No new tool calls and nothing pending: final answer ───────
+        if not pending_tasks:
+            if log_steps:
+                LOGGER.info(f"\n🤖 {msg.content}\n✅ Final answer")
+            return msg.content
+        # else: fall through – some tool(s) are still running;
+        #                     control will return at the top of the loop
