@@ -57,7 +57,17 @@ def _list_valid_actions(tabs, buttons, state) -> list[str]:
             for idx, lbl in buttons
         )
         flat.remove("click_button_*")
-    return sorted(set([item.replace("*", "").replace(" ", "") for item in flat]))
+
+    # Normalize any trailing "_*" pattern (e.g. enter_text_* → enter_text)
+    norm: list[str] = []
+    for a in flat:
+        if a.endswith("_*"):
+            a = a[:-2]
+        # also strip explicit space-star pattern used by enter_text * etc.
+        a = a.replace(" *", "").replace("*", "").replace(" ", "")
+        norm.append(a)
+
+    return sorted(set(norm))
 
 
 # Schemas #

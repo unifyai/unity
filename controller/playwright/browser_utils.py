@@ -10,7 +10,7 @@ import json
 from controller.playwright.js_snippets import ELEMENT_INFO_JS
 from playwright.sync_api import BrowserContext, Page
 
-MARGIN = 100  # overscan around viewport
+MARGIN = 500  # overscan around viewport (must match VP_PAD in JS helper)
 
 # ---------------------------------------------------------------------------
 # Anything that can receive a click or typing focus
@@ -76,9 +76,6 @@ def collect_elements(page: Page) -> list[dict]:
             vl = info["left"] - sx
             vt = info["top"] - sy
             w, hgt = info["width"], info["height"]
-
-            if (vl + w) < vL or vl > vR or (vt + hgt) < vT or vt > vB:
-                continue  # outside viewport (with overscan)
 
             # augment info with fields previously added downstream
             info["vleft"] = vl
