@@ -247,23 +247,19 @@ async def async_tool_use_loop(
     log_steps: bool = False,
 ):
     """
-    Run a *fully-asynchronous* LLM-tool conversation.
+    Converse with the LLM, running its requested tools *concurrently*.
 
-    ── Key differences from the sync version ────────────────────────────
-    1.  **Concurrent tool execution**  – every tool call in a single model
-        turn is kicked off instantly (with `asyncio.create_task`).
-    2.  **Early turn-around**          – as soon as *any* tool finishes,
-        its result is streamed back to the LLM; we *do not* wait for the
-        other tools that are still running.
-    3.  **Pending task tracking**      – unfinished tasks stay in a set
-        (`pending_tasks`) and will continue to report back as they finish.
-    4.  **Loop exit rule**             – we stop only when the LLM emits a
-        turn **without** tool calls *and* there are **no pending tasks**.
-    5.  **Sync or async tools**        – sync callables are transparently
-        wrapped in `asyncio.to_thread` so the loop stays non-blocking.
+    Behaviour
+    ---------
+    • Launch every tool-call in its own asyncio.Task.
+    • After *any* task finishes, feed its result back to the LLM immediately.
+    • Keep looping until the first model turn that contains **no** tool calls.
+      At that point wait for any still-running tool tasks to finish, then
+      return the model’s content.
+    • Abort after `max_consecutive_failures` tool exceptions *in a row*.
     """
 
-    # Initial prompt ──────────────────────────────────────────────────────────
+    # ── prompt setup ────────────────────────────────────────────────────────
     if log_steps:
         LOGGER.info(f"\n🧑‍💻 {message}\n")
 
@@ -273,14 +269,14 @@ async def async_tool_use_loop(
         user_msg["name"] = name
     client.append_messages([user_msg])
 
-    consecutive_failures = 0                       # failure counter
-    pending_tasks: Set[asyncio.Task] = set()       # running tool calls
+    consecutive_failures = 0
+    pending_tasks: Set[asyncio.Task] = set()
     task_info: Dict[asyncio.Task, Tuple[str, str]] = {}   # task → (tool_name, call_id)
 
-    # ─────────────────────────── main loop ───────────────────────────────────
+    # ── conversation loop ───────────────────────────────────────────────────
     while True:
 
-        # 1️⃣  If any tool tasks are running, wait for the *first* to finish.
+        # ── 1️⃣  If tasks exist, wait for *one* to finish ──────────────────
         if pending_tasks:
             done, _ = await asyncio.wait(
                 pending_tasks,
@@ -292,8 +288,8 @@ async def async_tool_use_loop(
                 tool_name, call_id = task_info.pop(task)
 
                 try:
-                    raw_result = task.result()
-                    result = _dumps(raw_result, indent=4)
+                    raw = task.result()
+                    result = _dumps(raw, indent=4)
                     consecutive_failures = 0
                     if log_steps:
                         LOGGER.info(f"\n🛠️ {tool_name} (…) = {result}\n")
@@ -322,12 +318,13 @@ async def async_tool_use_loop(
                         "Aborted after too many consecutive tool failures.\n"
                         f"Last stack trace:\n{result}"
                     )
+            # Fall through – we’ll ask the LLM for the next move right away.
 
-        # 2️⃣  Ask the LLM what to do next.
+        # ── 2️⃣  Ask the LLM what to do next ───────────────────────────────
         if log_steps:
             LOGGER.info("🔄 LLM thinking…")
 
-        response = await client.generate(           # ← native async call
+        response = await client.generate(
             return_full_completion=True,
             tools=tools_schema,
             tool_choice="auto",
@@ -335,14 +332,13 @@ async def async_tool_use_loop(
         )
         msg = response.choices[0].message
 
-        # 3️⃣  Launch any new tool calls the LLM requested.
+        # ── 3️⃣  Launch any new tool calls ─────────────────────────────────
         if msg.tool_calls:
             for call in msg.tool_calls:
                 tool_name = call.function.name
                 args = json.loads(call.function.arguments)
                 fn = tools[tool_name]
 
-                # Support sync *or* async tools transparently
                 if asyncio.iscoroutinefunction(fn):
                     coro = fn(**args)
                 else:
@@ -358,12 +354,14 @@ async def async_tool_use_loop(
                     f"{len(msg.tool_calls)} task(s) "
                     f"({len(pending_tasks)} pending total)"
                 )
-            # Continue loop: either a task will finish or the LLM will respond again
+            # Loop again (some tasks are now running)
             continue
 
-        # 4️⃣  No new tool calls – is everything done?
-        if not pending_tasks:
-            if log_steps:
-                LOGGER.info(f"\n🤖 {msg.content}\n✅ Final answer")
-            return msg.content
-        # Else: still tasks running → back to top of loop
+        # ── 4️⃣  Model returned *no* tool calls → final answer ─────────────
+        if pending_tasks:
+            # Wait for all still-running tasks (ignore results / exceptions)
+            await asyncio.gather(*pending_tasks, return_exceptions=True)
+
+        if log_steps:
+            LOGGER.info(f"\n🤖 {msg.content}\n✅ Final answer")
+        return msg.content
