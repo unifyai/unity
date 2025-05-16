@@ -61,56 +61,7 @@ el => {
 }
 """
 
-
-# === overlay painter ========================================================
-UPDATE_OVERLAY_JS = r"""
-(boxes) => {
-  const idPage  = "__pw_rootPage__";
-  const idFixed = "__pw_rootFixed__";
-
-  let pageRoot  = document.getElementById(idPage);
-  let fixedRoot = document.getElementById(idFixed);
-
-  if (!pageRoot) {
-    pageRoot  = Object.assign(document.createElement("div"), {
-      id: idPage,
-      style:
-        "position:absolute;left:0;top:0;pointer-events:none;z-index:2147483646",
-    });
-    fixedRoot = Object.assign(document.createElement("div"), {
-      id: idFixed,
-      style:
-        "position:fixed;inset:0;pointer-events:none;z-index:2147483647",
-    });
-    document.body.append(pageRoot, fixedRoot);
-  } else {
-    pageRoot.replaceChildren();
-    fixedRoot.replaceChildren();
-  }
-
-  boxes.forEach(({ i, fixed, x, y, px, py, w, h }, n, { length }) => {
-    const hue = (360 * n) / length;
-    const div = document.createElement("div");
-    div.style.cssText = `
-      position:${fixed ? "fixed" : "absolute"};
-      left:${fixed ? px : x}px; top:${fixed ? py : y}px;
-      width:${w}px; height:${h}px;
-      outline:2px solid hsl(${hue} 100% 50%);
-      background:hsl(${hue} 100% 50%/.12);
-      font:700 12px/1 sans-serif;
-      color:hsl(${hue} 100% 30%);
-    `;
-    const tag = document.createElement("span");
-    tag.textContent = i;
-    tag.style.cssText =
-      "position:absolute;left:0;top:0;background:#fff;padding:0 2px";
-    div.append(tag);
-    (fixed ? fixedRoot : pageRoot).append(div);
-  });
-}
-"""
-
-# === smooth one‑off scroll ===================================================
+# === smooth one-off scroll ===================================================
 HANDLE_SCROLL_JS = r"""
 ({ delta, duration }) => {
   const y0 = scrollY;
