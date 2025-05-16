@@ -35,7 +35,8 @@ def get_valid_actions(state: Union[BrowserState, dict], mode="both") -> set[str]
         # Users can still scroll gently if desired.
         return {CMD_SCROLL_UP, CMD_SCROLL_DOWN, CMD_STOP_SCROLLING}
 
-    valid: set[str] = set()
+    # Always allow manual CAPTCHA solve unless one is already running
+    valid: set[str] = {CMD_SOLVE_CAPTCHA}
 
     # ── text entry & key-presses ─────────────────────────────────────────
     if state.in_textbox:
