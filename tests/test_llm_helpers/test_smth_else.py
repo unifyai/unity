@@ -7,8 +7,6 @@ pytest tests for the helper utilities:
 
 from __future__ import annotations
 
-import json
-import types
 from enum import Enum
 
 import pytest
