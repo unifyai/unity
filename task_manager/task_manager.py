@@ -20,26 +20,10 @@ class _DummyPlanner:
         Initialize the dummy planner with no active task and a GPT-4 client.
         """
         self._active_task = None
-        self._client = unify.Unify("o4-mini@openai", stateful=True)
+        self._ask_simulator = unify.Unify("o4-mini@openai", stateful=True)
+        self._steer_simulator = unify.Unify("o4-mini@openai", stateful=True)
 
-    def ask(self, question: str, response_type: Type = str) -> str:
-        """
-        Answer questions about the currently active task.
-
-        Args:
-            question (str): The question to answer about the active task.
-            response_type (Type): The expected response type, defaults to str.
-
-        Returns:
-            str: The answer to the question, or a message indicating no active task.
-        """
-        if not self._active_task:
-            return "No tasks are currently being performed, so I cannot answer your question."
-        if response_type is not str:
-            return self._client.generate(question, response_format=response_type)
-        return self._client.generate(question)
-
-    def act(self, task: str):
+    def start(self, task: str):
         """
         Simulate executing a task by setting it as active, waiting, then clearing it.
 
@@ -47,13 +31,68 @@ class _DummyPlanner:
             task (str): The task description to simulate executing.
         """
         self._active_task = task
-        self._client.set_system_message(
+        self._ask_simulator.set_system_message(
             f"You should pretend you are completing the following task:\n{task}\nCome up with imaginary answers to the user questions about the task",
         )
+        self._steer_simulator.set_system_message(
+            f"You should pretend you are completing the following task:\n{task}\nCome up with imaginary responses to the user requests to steer the task behaviour, stating that you either can or cannot steer the ongoing task as requested.",
+        )
         time.sleep(random.uniform(5, 30))
-        self._client.set_messages([])
-        self._client.set_system_message("")
+        self._ask_simulator.set_messages([])
+        self._ask_simulator.set_system_message("")
+        self._steer_simulator.set_messages([])
+        self._steer_simulator.set_system_message("")
         self._active_task = None
+
+    def steer(self, instruction: str) -> str:
+        """
+        Steer the behaviour of the currently active task.
+
+        Args:
+            instruction (str): The instruction for the planner to follow wrt the current active task.
+
+        Returns:
+            str: The result of the attempt to steer behaviour, whether this was doable or not.
+        """
+        if not self._active_task:
+            return "No tasks are currently being performed, so I have nothing to steer."
+        return self._steer_simulator.generate(instruction)
+    
+    def ask(self, question: str) -> str:
+        """
+        Answer questions about the currently active task.
+
+        Args:
+            question (str): The question to answer about the active task.
+
+        Returns:
+            str: The answer to the question, or a message indicating no active task.
+        """
+        if not self._active_task:
+            return "No tasks are currently being performed, so I cannot answer your question."
+        return self._ask_simulator.generate(question)
+    
+    def stop(self, reason: str) -> str:
+        """
+        Stops the currently active task.
+
+        Args:
+            reason (str): The reason for stopping the task.
+
+        Returns:
+            str: A message indicating whether the task was stopped or if there was no active task.
+        """
+        if not self._active_task:
+            return "No tasks are currently being performed, so there is nothing to stop."
+        
+        task = self._active_task
+        self._active_task = None
+        self._ask_simulator.set_messages([])
+        self._ask_simulator.set_system_message("")
+        self._steer_simulator.set_messages([])
+        self._steer_simulator.set_system_message("")
+        
+        return f"Stopped task '{task}' for reason: {reason}"
 
 
 class TaskManager(threading.Thread):
@@ -135,7 +174,7 @@ class TaskManager(threading.Thread):
         Returns:
             str: The answer to the question about the task list.
         """
-        raise NotImplementedError
+        return self._tlm.ask(question)
 
     def _update_task_list(self, update: str) -> str:
         f"""
@@ -147,7 +186,7 @@ class TaskManager(threading.Thread):
         Returns:
             str: Whether the update was applied successfully or not.
         """
-        raise NotImplementedError
+        return self._tlm.update(update)
 
     # Active Task
 
@@ -162,7 +201,7 @@ class TaskManager(threading.Thread):
         Returns:
             str: A message confirming the task was started, or explaining why it couldn't be started.
         """
-        raise NotImplementedError
+        return self._planner.start(description)
 
     def _ask_about_active_task(self, question: str) -> str:
         """
@@ -174,7 +213,7 @@ class TaskManager(threading.Thread):
         Returns:
             str: The answer about the active task's current state, or a message indicating no active task.
         """
-        raise NotImplementedError
+        return self._planner.ask(question)
 
     def _steer_active_task(self, instruction: str) -> str:
         """
@@ -186,7 +225,7 @@ class TaskManager(threading.Thread):
         Returns:
             str: A message confirming the steering instruction was applied, or explaining why it couldn't be applied.
         """
-        raise NotImplementedError
+        return self._planner.steer(instruction)
 
     def _stop_active_task(self, reason: str) -> str:
         """
@@ -198,4 +237,4 @@ class TaskManager(threading.Thread):
         Returns:
             str: A message confirming the task was stopped, or explaining why it couldn't be stopped.
         """
-        raise NotImplementedError
+        self._planner.stop(reason)
