@@ -1,4 +1,3 @@
-import json
 import time
 import random
 import threading
@@ -8,7 +7,6 @@ import unify
 
 from common.llm_helpers import tool_use_loop
 from task_list_manager.task_list_manager import TaskListManager
-from task_list_manager.types.task import Task
 from task_manager.sys_msgs import REQUEST
 
 
@@ -71,11 +69,20 @@ class TaskManager(threading.Thread):
         self._tlm = TaskListManager()
         self._planner = _DummyPlanner()
 
+        self._task_list_tools = {
+            self._ask_about_task_list.__name__: self._ask_about_task_list,
+            self._update_task_list.__name__: self._update_task_list,
+        }
+        self._active_task_tools = {
+            self._start_task.__name__: self._start_task,
+            self._ask_about_active_task.__name__: self._ask_about_active_task,
+            self._steer_active_task.__name__: self._steer_active_task,
+            self._stop_active_task.__name__: self._stop_active_task,
+        }
+
         self._tools = {
-            self._tlm.ask.__name__: self._tlm.ask,
-            self._planner.ask.__name__: self._planner.ask,
-            self._tlm.update__name__: self._tlm.update,
-            self._planner.act.__name__: self._planner.act,
+            **self._task_list_tools,
+            **self._active_task_tools,
         }
 
     # Public #
@@ -118,9 +125,6 @@ class TaskManager(threading.Thread):
     def _ask_about_task_list(self, question: str) -> str:
         f"""
         Ask any question about the list of tasks (including scheduled, cancelled, failed, and the active task) based on a natural language question.
-        
-        The schema of the underlying task list table is:
-        {json.dumps(Task.model_json_schema(), indent=4)}
 
         This function *cannot* answer questions about the *live state* of the active task.
         It can answer questions about the schedule, priority, title, description, queue ordering etc.
@@ -136,9 +140,6 @@ class TaskManager(threading.Thread):
     def _update_task_list(self, update: str) -> str:
         f"""
         Update the list of tasks (including scheduled, cancelled, failed, and the active task) based on a natural language question.
-
-        The schema of the underlying task list table is:
-        {json.dumps(Task.model_json_schema(), indent=4)}
 
         Args:
             update (str): The update instruction in natural language.
