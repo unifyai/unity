@@ -1,3 +1,4 @@
+import json
 import time
 import random
 import threading
@@ -7,6 +8,7 @@ import unify
 
 from common.llm_helpers import tool_use_loop
 from task_list_manager.task_list_manager import TaskListManager
+from task_list_manager.types.task import Task
 from task_manager.sys_msgs import REQUEST
 
 
@@ -113,22 +115,86 @@ class TaskManager(threading.Thread):
 
     # Task List
 
-    def _ask_about_task_list(self):
+    def _ask_about_task_list(self, question: str) -> str:
+        f"""
+        Ask any question about the list of tasks (including scheduled, cancelled, failed, and the active task) based on a natural language question.
+        
+        The schema of the underlying task list table is:
+        {json.dumps(Task.model_json_schema(), indent=4)}
+
+        This function *cannot* answer questions about the *live state* of the active task.
+        It can answer questions about the schedule, priority, title, description, queue ordering etc.
+
+        Args:
+            question (str): The question to ask about the task list.
+
+        Returns:
+            str: The answer to the question about the task list.
+        """
         raise NotImplementedError
 
-    def _modify_task_list(self):
+    def _update_task_list(self, update: str) -> str:
+        f"""
+        Update the list of tasks (including scheduled, cancelled, failed, and the active task) based on a natural language question.
+
+        The schema of the underlying task list table is:
+        {json.dumps(Task.model_json_schema(), indent=4)}
+
+        Args:
+            update (str): The update instruction in natural language.
+
+        Returns:
+            str: Whether the update was applied successfully or not.
+        """
         raise NotImplementedError
 
     # Active Task
 
-    def _start_task(self):
+    def _start_task(self, description: str) -> str:
+        """
+        Start a new task, making it the active task. If there is already an active task,
+        it will be paused.
+
+        Args:
+            description (str): Description of the task to start.
+
+        Returns:
+            str: A message confirming the task was started, or explaining why it couldn't be started.
+        """
         raise NotImplementedError
 
-    def _ask_about_active_task(self):
+    def _ask_about_active_task(self, question: str) -> str:
+        """
+        Ask a question about the currently active task, including its live state.
+
+        Args:
+            question (str): The question to ask about the active task.
+
+        Returns:
+            str: The answer about the active task's current state, or a message indicating no active task.
+        """
         raise NotImplementedError
 
-    def _steer_active_task(self):
+    def _steer_active_task(self, instruction: str) -> str:
+        """
+        Provide steering instructions to modify the behavior of the currently active task.
+
+        Args:
+            instruction (str): The steering instruction in natural language.
+
+        Returns:
+            str: A message confirming the steering instruction was applied, or explaining why it couldn't be applied.
+        """
         raise NotImplementedError
 
-    def _stop_active_task(self):
+    def _stop_active_task(self, reason: str) -> str:
+        """
+        Stop the currently active task.
+
+        Args:
+            reason (str): The reason for stopping the task, which will be recorded.
+
+        Returns:
+            str: A message confirming the task was stopped, or explaining why it couldn't be stopped.
+        """
         raise NotImplementedError
