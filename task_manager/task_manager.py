@@ -151,7 +151,7 @@ class TaskManager(threading.Thread):
         Returns:
             Dict[str, str]: Answers to the question(s), and updates on any action(s) performed.
         """
-        client = unify.Unify("o4-mini@openai", cache=True, traced=True)
+        client = unify.Unify("o4-mini@openai", cache=True)
         client.set_system_message(REQUEST)
         ans = tool_use_loop(client, text, self._tools, log_steps=log_tool_steps)
         if return_reasoning_steps:

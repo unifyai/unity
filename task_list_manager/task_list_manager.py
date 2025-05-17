@@ -89,7 +89,7 @@ class TaskListManager(threading.Thread):
             Dict[str, str]: The answer to the question.
         """
 
-        client = unify.Unify("o4-mini@openai", cache=True, traced=True)
+        client = unify.Unify("o4-mini@openai", cache=True)
         client.set_system_message(
             ASK.replace(
                 "{datetime}",
@@ -123,7 +123,7 @@ class TaskListManager(threading.Thread):
         """
         from task_list_manager.sys_msgs import UPDATE
 
-        client = unify.Unify("o4-mini@openai", cache=True, traced=True)
+        client = unify.Unify("o4-mini@openai", cache=True)
         client.set_system_message(
             UPDATE.replace(
                 "{datetime}",

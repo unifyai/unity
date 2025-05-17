@@ -119,7 +119,7 @@ def _llm_assert_correct(
     message to aid debugging.
     """
 
-    judge = unify.Unify("o4-mini@openai", cache=True, traced=True)
+    judge = unify.Unify("o4-mini@openai", cache=True)
     judge.set_system_message(
         "You are a strict unit-test judge. "
         "You will be given a question, a ground-truth answer derived directly "
