@@ -48,6 +48,9 @@ class KnowledgeManager(threading.Thread):
             self._nearest.__name__: self._nearest,
         }
 
+        if "Knowledge" not in unify.get_contexts():
+            unify.create_context("Knowledge")
+
     # Public #
     # -------#
 
