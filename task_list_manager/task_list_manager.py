@@ -60,6 +60,9 @@ class TaskListManager(threading.Thread):
             self._update_task_priority.__name__: self._update_task_priority,
         }
 
+        if "Tasks" not in unify.get_contexts():
+            unify.create_context("Tasks")
+
         # Internal monotonically-increasing task-id counter.  We keep it local
         # to the manager to avoid an expensive scan across *all* logs every
         # time we create a task.  Initialised lazily on first use.
