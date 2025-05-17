@@ -176,7 +176,7 @@ def _dispatch(
     raw = raw.strip()
 
     class Response(BaseModel):
-        read_only: bool
+        require_update: bool
 
     if raw.lower().startswith("ask:"):
         ans, steps = tlm.ask(
@@ -193,20 +193,20 @@ def _dispatch(
         )
         return "update", ans, steps
     client = unify.Unify("gpt-4o@openai", response_format=Response)
-    res = client.generate("Does this user request require a task to be updated in any way? Or does is it a purely read-only request?")
-    if Response.model_validate_json(res).read_only:
-        ans, steps = tlm.ask(
+    res = client.generate("There is a table containing a list of tasks, and all of their properties. Does this user request require this task table to be updated in any way (ie renamed, redescribed, reordered, cancelled, started, rescheduled etc.)?")
+    if Response.model_validate_json(res).require_update:
+        ans, steps = tlm.update(
             text=raw,
             return_reasoning_steps=show_steps,
             log_tool_steps=show_steps,
         )
-        return "ask", ans, steps
-    ans, steps = tlm.update(
+        return "update", ans, steps
+    ans, steps = tlm.ask(
         text=raw,
         return_reasoning_steps=show_steps,
         log_tool_steps=show_steps,
     )
-    return "update", ans, steps
+    return "ask", ans, steps
 
 
 # ---------------------------------------------------------------------------
