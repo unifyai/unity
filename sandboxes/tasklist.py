@@ -70,6 +70,7 @@ from tests.test_task_list.test_update_text_complex import _next_weekday
 # Utility functions (project name, seeding, dispatch) – mostly unchanged
 # ---------------------------------------------------------------------------
 
+
 def _seed_fixed(tlm: TaskListManager) -> None:
     tlm._create_task(
         name="Write quarterly report",
@@ -212,17 +213,21 @@ _CHANNELS = 1
 
 ERROR_HANDLER_FUNC = CFUNCTYPE(None, c_char_p, c_int, c_char_p, c_int, c_char_p)
 
+
 def py_error_handler(filename, line, function, err, fmt):
     pass
 
+
 c_error_handler = ERROR_HANDLER_FUNC(py_error_handler)
+
 
 @contextmanager
 def noalsaerr():
-    asound = cdll.LoadLibrary('libasound.so')
+    asound = cdll.LoadLibrary("libasound.so")
     asound.snd_lib_error_set_handler(c_error_handler)
     yield
     asound.snd_lib_error_set_handler(None)
+
 
 def _record_until_enter() -> bytes:
     """Record between two ENTER presses and return WAV bytes."""
