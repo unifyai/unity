@@ -3,6 +3,9 @@ autoflake
 playwright
 python-dotenv
 openai
+aiohttp
+deepgram-sdk>=4
+pyaudio
 pygments
 livekit-agents[deepgram,openai,cartesia,silero,turn-detector]==1.0.17
 livekit-plugins-noise-cancellation~=0.2

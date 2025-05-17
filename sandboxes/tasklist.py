@@ -1,459 +1,297 @@
-"""tasklist_sandbox.py
-A tiny interactive CLI to *vibe-check* the TaskListManager.
+"""tasklist_sandbox.py  (voice mode, Deepgram SDK v4, sync)
+==============================================================
+Single‑file interactive sandbox for **TaskListManager** with a simple
+voice mode that relies *only* on Deepgram (v4) for STT and Cartesia for
+TTS.  No LiveKit Agents and no async gymnastics.
 
-• Seeds a fresh Unify project with a handful of meaningful tasks.
-• Opens a REPL where you can issue natural-language *ask* or *update* commands.
-  – Prefix with `ask:` or `update:` to force the method.
-  – Without prefix we default to *ask*.
-• Type `quit` or `exit` to leave.
+Voice‑mode flow
+---------------
+1. **Press ↵** → speak → **press ↵** to stop.  Audio captured via PortAudio
+   (`pyaudio`).
+2. WAV bytes are sent to **Deepgram SDK v4** (`listen.rest.v('1').transcribe_file`).
+   Transcript is printed as though typed.
+3. Script immediately speaks *“Working on this now…”* with **Cartesia TTS**.
+4. After TaskListManager finishes, the full answer is printed **and** read
+   aloud.
+
+Environment variables
+---------------------
+* `DEEPGRAM_API_KEY`  – required for STT
+* `CARTESIA_API_KEY`  – required for TTS (audio playback is skipped if
+  missing)
+
+Extra dependencies
+------------------
+```bash
+pip install deepgram-sdk>=4 cartesia-sdk pyaudio
+```
+(Install `portaudio` dev libs from your package manager if `pyaudio` build
+fails.)
 """
 
 from __future__ import annotations
 
-
-import readline  # noqa: F401 – enables command history & arrow keys
-import sys
 import argparse
 import json
+import logging
+import os
+import sys
+import threading
+import wave
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Tuple, Dict, List
-import logging
-import logging.config
+from typing import Dict, List, Tuple, Optional
 
-# Add repo root to PYTHONPATH when run as standalone
-ROOT = Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(ROOT))
-
-import unify  # import after path tweak
-
-from task_list_manager.task_list_manager import TaskListManager  # noqa: E402
-from task_list_manager.types.priority import Priority  # noqa: E402
-from task_list_manager.types.schedule import Schedule  # noqa: E402
-from tests.test_task_list.test_update_text_complex import (
-    _next_weekday,
-)  # noqa: E402 – reuse helper
-
+import pyaudio
+import asyncio  # cross‑platform audio I/O (links to PortAudio)
 from dotenv import load_dotenv
-
-from livekit import agents
-from livekit.agents import AgentSession, Agent, RoomInputOptions, function_tool
-from livekit.plugins import (
-    openai,
-    cartesia,
-    deepgram,
-    noise_cancellation,
-    silero,
-)
-from livekit.plugins.turn_detector.multilingual import MultilingualModel
+from livekit.plugins import cartesia  # TTS only
+from deepgram import DeepgramClient, PrerecordedOptions, FileSource  # SDK v4
 
 load_dotenv()
 
-handlers = {}
-active = []
+# ---------------------------------------------------------------------------
+# Local project imports (TaskListManager & helpers)
+# ---------------------------------------------------------------------------
+ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(ROOT))
 
-# Configure logging to only allow our LOGGER to output
-logging.config.dictConfig(
-    {
-        "version": 1,
-        "disable_existing_loggers": True,
-        "formatters": {
-            "default": {
-                "format": "%(message)s",
-                "datefmt": "%Y-%m-%d %H:%M:%S",
-            },
-        },
-        "handlers": {
-            "console": {
-                "class": "logging.StreamHandler",
-                "stream": sys.stdout,
-                "formatter": "default",
-            },
-        },
-        "root": {"level": "CRITICAL", "handlers": []},  # Block all root logging
-        "loggers": {
-            "unity": {  # Only allow our LOGGER to output
-                "level": "INFO",
-                "handlers": ["console"],
-                "propagate": False,
-            },
-            # Block all other loggers
-            "": {  # Catch-all for unnamed loggers
-                "level": "CRITICAL",
-                "handlers": [],
-                "propagate": False,
-            },
-        },
-    },
-)
+import unify
+from constants import LOGGER as _LG
+from task_list_manager.task_list_manager import TaskListManager
+from task_list_manager.types.priority import Priority
+from task_list_manager.types.schedule import Schedule
+from tests.test_task_list.test_update_text_complex import _next_weekday
 
-from constants import LOGGER
+# ---------------------------------------------------------------------------
+# Utility functions (project name, seeding, dispatch) – mostly unchanged
+# ---------------------------------------------------------------------------
 
-
-# Initialize task list manager globally
-TLM = TaskListManager()
-TLM.start()
-
-
-def _generate_project_name(scenario_type: str, theme: str = None) -> str:
-    """Generate a unique project name based on scenario and current timestamp."""
+def _generate_project_name(scenario_type: str, theme: Optional[str] = None) -> str:
     timestamp = datetime.now().strftime("%H-%M-%S_%d-%m-%Y")
-
-    if scenario_type == "fixed":
-        base_name = "SimpleTaskList"
-    else:  # LLM scenario
-        # Use theme from LLM if available, otherwise a generic name
-        base_name = theme if theme else "LLMGeneratedTaskList"
-        # Sanitize the base_name by removing special characters
-        base_name = "".join(c for c in base_name if c.isalnum() or c in [" ", "-", "_"])
-        base_name = base_name.replace(" ", "_")
-
-    # ToDo: re-add nested timestamp once this task [{link}] is fixed
-    return f"{base_name}"  # /{timestamp}"
+    base = "SimpleTaskList" if scenario_type == "fixed" else (theme or "LLMGeneratedTaskList")
+    base = "".join(c for c in base if c.isalnum() or c in [" ", "-", "_"]).replace(" ", "_")
+    return f"{base}/{timestamp}"
 
 
 def _seed_fixed(tlm: TaskListManager) -> None:
-    """Populate the project with a mini task list."""
-
-    # Active
-    tlm._create_task(
-        name="Write quarterly report",
-        description="Compile and draft the Q2 report for management.",
-        status="active",
-    )
-
-    # Queued (two)
-    tlm._create_task(
-        name="Prepare slide deck",
-        description="Create slides for the upcoming board meeting.",
-        status="queued",
-    )
-    tlm._create_task(
-        name="Client follow-up email",
-        description="Send follow-up email about the proposal.",
-        status="queued",
-    )
-
-    # Scheduled (next Monday)
+    tlm._create_task("Write quarterly report", "Compile and draft the Q2 report for management.", status="active")
+    tlm._create_task("Prepare slide deck", "Create slides for the upcoming board meeting.", status="queued")
+    tlm._create_task("Client follow‑up email", "Send follow‑up email about the proposal.", status="queued")
     base = datetime.now(timezone.utc)
     next_mon = _next_weekday(base, 0).replace(hour=9, minute=0, second=0, microsecond=0)
-    sched = Schedule(start_time=next_mon.isoformat(), prev_task=None, next_task=None)
     tlm._create_task(
-        name="Send KPI report",
-        description="Automated email of KPIs to leadership.",
-        schedule=sched,
+        "Send KPI report",
+        "Automated email of KPIs to leadership.",
+        schedule=Schedule(start_time=next_mon.isoformat(), prev_task=None, next_task=None),
         priority=Priority.high,
     )
-
-    # Paused
-    tlm._create_task(
-        name="Deploy new release",
-        description="Roll out version 2.0 to production servers.",
-        status="paused",
-    )
+    tlm._create_task("Deploy new release", "Roll out version 2.0 to production servers.", status="paused")
 
 
-def _seed_llm(tlm: TaskListManager) -> str:
-    """Ask an LLM to craft a *cohesive* scenario with >100 tasks.
-
-    Expected JSON schema returned by the model:
-
-        {
-          "theme": "ACME car dealership – Q4 outreach",    # optional meta
-          "tasks": [
-            {
-              "name": "Call lead – Ford Fiesta",
-              "description": "Phone Marco Rossi to discuss financing options",
-              "priority": "high",
-              "queue_group": "sales",          # tasks with same group are chained
-              "queue_position": 0,              # lower number == earlier in chain
-              "status": "queued" | "active" | "paused" | "scheduled",
-              "start_time": "2025-06-10T09:00:00Z"   # optional ISO (only for scheduled)
-            },
-            … (100-200 tasks) …
-          ]
-        }
-
-    We interpret every *queue_group* separately, ordering by *queue_position*
-    to create a linked list via the Schedule prev_task/next_task pointers.
-
-    Returns the theme from the LLM response if available.
-    """
-
+def _seed_llm(tlm: TaskListManager) -> Optional[str]:
     prompt = (
-        "Generate a realistic task list for a small business. "
-        "Pick a coherent *theme* (e.g. a car dealership following up leads, "
-        "or a property agency, or a software release checklist). "
-        "Create between 110 and 140 tasks that belong to **several logical "
-        "queues** (e.g. 'sales-calls', 'paperwork', 'maintenance'). "
-        "For each task output: name, description, status, optional priority, "
-        "a queue_group label, queue_position (int, starting at 0 in each group) "
-        "and, when status=='scheduled', a start_time in ISO-8601 UTC. "
-        "Return JSON with a top-level key 'tasks' containing the list. Do NOT "
-        "include any text outside the JSON literal."
+        "Generate a realistic task list for a small business. Pick a coherent theme. "
+        "Create 110‑140 tasks across queues with positions, priorities & ISO start times. "
+        "Return only JSON with top‑level 'tasks' and optional 'theme'."
     )
-
     client = unify.Unify("o4-mini@openai", cache=True, traced=True)
     client.set_system_message(prompt)
     raw = client.generate("Produce scenario").strip()
-
-    theme = None
     try:
         payload = json.loads(raw)
-        tasks_data = payload["tasks"]
-        theme = payload.get("theme")
     except Exception:
-        print("LLM scenario generation failed – using fixed sample instead.")
+        _LG.warning("LLM scenario failed – using fixed seed.")
         _seed_fixed(tlm)
-        return theme
+        return None
 
-    # Sort tasks within each queue_group by queue_position to build linkage
+    theme = payload.get("theme")
+    tasks = payload["tasks"]
     groups: Dict[str, List[dict]] = {}
-    for t in tasks_data:
+    for t in tasks:
         groups.setdefault(t.get("queue_group", "default"), []).append(t)
+    for g in groups.values():
+        g.sort(key=lambda d: d.get("queue_position", 0))
 
-    for grp in groups.values():
-        grp.sort(key=lambda d: d.get("queue_position", 0))
-
-    id_map: Dict[tuple[str, int], int] = {}
-
-    # First pass – create tasks without schedule linkage
-    for grp_name, grp in groups.items():
-        for idx, entry in enumerate(grp):
+    id_map: Dict[Tuple[str, int], int] = {}
+    for g_name, g in groups.items():
+        for idx, entry in enumerate(g):
             kwargs = {
                 "name": entry["name"],
                 "description": entry["description"],
                 "status": entry.get("status", "queued"),
                 "priority": entry.get("priority", Priority.normal),
             }
+            if start := entry.get("start_time"):
+                kwargs["schedule"] = Schedule(start_time=start, prev_task=None, next_task=None)
+            task_id = tlm._create_task(**kwargs)
+            id_map[(g_name, idx)] = task_id
 
-            start_time = entry.get("start_time")
-            if start_time:
-                kwargs["schedule"] = Schedule(
-                    start_time=start_time,
-                    prev_task=None,
-                    next_task=None,
-                )
-
-            new_id = tlm._create_task(**kwargs)
-            id_map[(grp_name, idx)] = new_id
-
-    # Second pass – update schedule links within each group
-    for grp_name, grp in groups.items():
-        for idx, _ in enumerate(grp):
-            cur_id = id_map[(grp_name, idx)]
-            prev_id = id_map.get((grp_name, idx - 1)) if idx > 0 else None
-            next_id = id_map.get((grp_name, idx + 1)) if idx < len(grp) - 1 else None
-
-            sched_payload = {"prev_task": prev_id, "next_task": next_id}
-            tlm._update_task_status(
-                task_ids=cur_id,
-                new_status=tlm._search(filter=f"task_id=={cur_id}")[0]["status"],
-            )  # noop to ensure log exists
-            unify.update_logs(
-                context="Tasks",
-                logs=tlm._get_logs_by_task_ids(task_ids=cur_id),
-                entries={"schedule": sched_payload},
-                overwrite=True,
-            )
-
+    for g_name, g in groups.items():
+        for idx, _ in enumerate(g):
+            cur = id_map[(g_name, idx)]
+            prev_ = id_map.get((g_name, idx - 1)) if idx > 0 else None
+            next_ = id_map.get((g_name, idx + 1)) if idx < len(g) - 1 else None
+            tlm._update_task_status(task_ids=cur, new_status=tlm._search(filter=f"task_id=={cur}")[0]["status"])
+            unify.update_logs(context="Tasks", logs=tlm._get_logs_by_task_ids(task_ids=cur), entries={"schedule": {"prev_task": prev_, "next_task": next_}}, overwrite=True)
     return theme
 
 
-def _dispatch(
-    tlm: TaskListManager,
-    raw: str,
-    *,
-    show_steps: bool,
-) -> Tuple[str, str, list | None]:
-    """Route user input; return (kind, answer, reasoning_steps)."""
-
+def _dispatch(tlm: TaskListManager, raw: str, *, show_steps: bool) -> Tuple[str, str, List | None]:
     raw = raw.strip()
     if raw.lower().startswith("ask:"):
-        ans, steps = tlm.ask(
-            text=raw[4:].strip(),
-            return_reasoning_steps=show_steps,
-            log_tool_steps=show_steps,
-        )
+        ans, steps = tlm.ask(text=raw[4:].strip(), return_reasoning_steps=show_steps, log_tool_steps=show_steps)
         return "ask", ans, steps
     if raw.lower().startswith("update:"):
-        ans, steps = tlm.update(
-            text=raw[7:].strip(),
-            return_reasoning_steps=show_steps,
-            log_tool_steps=show_steps,
-        )
+        ans, steps = tlm.update(text=raw[7:].strip(), return_reasoning_steps=show_steps, log_tool_steps=show_steps)
         return "update", ans, steps
-
-    # Heuristic: treat questions (?) as ask
     if raw.endswith("?"):
-        ans, steps = tlm.ask(
-            text=raw,
-            return_reasoning_steps=show_steps,
-            log_tool_steps=show_steps,
-        )
+        ans, steps = tlm.ask(text=raw, return_reasoning_steps=show_steps, log_tool_steps=show_steps)
         return "ask", ans, steps
-
-    ans, steps = tlm.update(
-        text=raw,
-        return_reasoning_steps=show_steps,
-        log_tool_steps=show_steps,
-    )
+    ans, steps = tlm.update(text=raw, return_reasoning_steps=show_steps, log_tool_steps=show_steps)
     return "update", ans, steps
 
+# ---------------------------------------------------------------------------
+# Voice‑mode helpers (audio capture, STT, TTS)
+# ---------------------------------------------------------------------------
 
-# Voice Mode
+_SAMPLE_RATE = 16000
+_CHUNK = 1024
+_FORMAT = pyaudio.paInt16
+_CHANNELS = 1
 
+def _record_until_enter() -> bytes:
+    """Record between two ENTER presses and return WAV bytes."""
+    pa = pyaudio.PyAudio()
+    frames: List[bytes] = []
+    stream = pa.open(format=_FORMAT, channels=_CHANNELS, rate=_SAMPLE_RATE, input=True, frames_per_buffer=_CHUNK)
 
-class VoiceAssistant(Agent):
-    def __init__(self) -> None:
-        super().__init__(
-            instructions="You are a helpful voice AI assistant, responsible for listening to the user and then using the `ask` and `update` tools gain infomration about the status of the tasks in the backend, and to update the tasks in the backend. You do not have direct access to the tasks or the schema used to store them, and so the ask and request tools simply take english-language input, explaining your request as clearly and unambiguously as possible.",
-        )
+    def _capture():
+        while not stop.is_set():
+            frames.append(stream.read(_CHUNK, exception_on_overflow=False))
 
-    @function_tool()
-    async def ask(self, question: str) -> str:
-        """Ask a question about the tasks."""
-        return TLM.ask(question, log_tool_steps=True)
+    stop = threading.Event()
+    thr = threading.Thread(target=_capture, daemon=True)
 
-    @function_tool()
-    async def update(self, request: str) -> str:
-        """Update the tasks in some manner."""
-        return TLM.update(request, log_tool_steps=True)
+    input("\nPress ↵ to start recording…")
+    print("🎙️  Recording… press ↵ again to stop.")
+    thr.start()
+    input()
+    stop.set()
+    thr.join()
 
+    stream.stop_stream()
+    stream.close()
+    pa.terminate()
 
-async def voice_entrypoint(ctx: agents.JobContext):
-    await ctx.connect()
-
-    session = AgentSession(
-        stt=deepgram.STT(model="nova-3", language="multi"),
-        llm=openai.LLM(model="gpt-4o-mini"),
-        tts=cartesia.TTS(),
-        vad=silero.VAD.load(),
-        turn_detection=MultilingualModel(),
-    )
-
-    await session.start(
-        room=ctx.room,
-        agent=VoiceAssistant(),
-        room_input_options=RoomInputOptions(
-            # LiveKit Cloud enhanced noise cancellation
-            # - If self-hosting, omit this parameter
-            # - For telephony applications, use `BVCTelephony` for best results
-            noise_cancellation=noise_cancellation.BVC(),
-        ),
-    )
-
-    await session.generate_reply(
-        instructions="Greet the user and offer your assistance.",
-    )
+    wav_path = "/tmp/voice_input.wav"
+    with wave.open(wav_path, "wb") as wf:
+        wf.setnchannels(_CHANNELS)
+        wf.setsampwidth(pa.get_sample_size(_FORMAT))
+        wf.setframerate(_SAMPLE_RATE)
+        wf.writeframes(b"".join(frames))
+    with open(wav_path, "rb") as f:
+        return f.read()
 
 
-# Main
+def _transcribe_deepgram(audio_bytes: bytes) -> str:
+    """Synchronously transcribe WAV bytes using Deepgram SDK v4."""
+    key = os.getenv("DEEPGRAM_API_KEY")
+    if not key:
+        print("[Voice] Deepgram key missing – falling back to CLI input.")
+        return input("> ")
 
+    dg = DeepgramClient(api_key=key)
+    payload: FileSource = {"buffer": audio_bytes}
+    opts = PrerecordedOptions(model="nova-3", smart_format=True, punctuate=True)
+
+    try:
+        response = dg.listen.rest.v("1").transcribe_file(payload, opts)
+        return response.results.channels[0].alternatives[0].transcript.strip()
+    except Exception as exc:
+        print(f"[Voice] Deepgram error ({exc}) – fallback to CLI input.")
+        return input("> ")
+
+
+def _speak(text: str):
+    """Speak *text* via Cartesia TTS – manages its own aiohttp session."""
+    key = os.getenv("CARTESIA_API_KEY")
+    if not key:
+        return  # silently skip if no key
+
+    async def _gen() -> bytes:
+        import aiohttp  # local to avoid hard dep when not in voice mode
+        async with aiohttp.ClientSession() as sess:
+            tts = cartesia.TTS(http_session=sess)  # hand‑rolled session sidesteps worker context
+            stream = tts.synthesize(text)
+            frame = await stream.collect()
+            return frame.to_wav_bytes()
+
+    wav_bytes = asyncio.run(_gen())
+
+    pa = pyaudio.PyAudio()
+    stream = pa.open(format=pyaudio.paInt16, channels=1, rate=24000, output=True)
+    stream.write(wav_bytes)
+    stream.stop_stream()
+    stream.close()
+    pa.terminate()
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="TaskListManager interactive sandbox")
-    parser.add_argument(
-        "--silent",
-        "-s",
-        action="store_true",
-        help="suppress tool logs",
-    )
-    parser.add_argument(
-        "--scenario",
-        choices=["fixed", "llm"],
-        default="fixed",
-        help="starting task set to load",
-    )
-    parser.add_argument(
-        "--voice",
-        "-v",
-        action="store_true",
-        help="use voice mode",
-    )
-    parser.add_argument(
-        "--new",
-        "-n",
-        action="store_true",
-        help="Create an new scenario, erasing the old one",
-    )
+    parser = argparse.ArgumentParser(description="TaskListManager sandbox with minimalist voice mode (Deepgram v4, Cartesia)")
+    parser.add_argument("--voice", "-v", action="store_true", help="enable voice capture/playback")
+    parser.add_argument("--scenario", choices=["fixed", "llm"], default="fixed")
+    parser.add_argument("--new", "-n", action="store_true", help="wipe & reseed data")
+    parser.add_argument("--silent", "-s", action="store_true", help="suppress tool logs")
     args = parser.parse_args()
-    silent = args.silent
-    scenario_type = args.scenario
-    voice_mode = args.voice
-    new_scenario = args.new
 
-    if not silent:
-        logging.basicConfig(
-            level=logging.INFO,
-            format="%(message)s",
-            handlers=[logging.StreamHandler()],
-        )
-
-        # Ensure our library logger emits INFO
-        from constants import LOGGER as _LG
-
+    if not args.silent:
+        logging.basicConfig(level=logging.INFO, format="%(message)s")
         _LG.setLevel(logging.INFO)
+        for noisy in ("unify", "unify.utils", "unify.logging"):
+            logging.getLogger(noisy).setLevel(logging.WARNING)
 
-        # Silence noisy logs from Unify internals
-        for _name in ("unify", "unify.utils", "unify.logging"):
-            logging.getLogger(_name).setLevel(logging.WARNING)
+    project = _generate_project_name(args.scenario)
+    unify.activate(project)
+    unify.set_context("Tasks", overwrite=args.new)
 
-    # Generate initial project name
-    project_name = _generate_project_name(scenario_type)
+    tlm = TaskListManager()
+    tlm.start()
 
-    # Activate the project with dynamic name
-    unify.activate(project_name)
-
-    # Create the Tasks context
-    unify.set_context("Tasks", overwrite=new_scenario)
-
-    # Seed with data
-    theme = None
-    if new_scenario:
-        LOGGER.info(f"⏳ Adding data to task environment...")
-        if scenario_type == "llm":
-            theme = _seed_llm(TLM)
+    if args.new:
+        if args.scenario == "llm":
+            theme = _seed_llm(tlm)
             if theme:
-                # Update project name with the theme if it's available
-                new_project_name = _generate_project_name(scenario_type, theme)
-                # Only switch if names are different
-                if new_project_name != project_name:
-                    # Re-activate with the themed project name
-                    unify.activate(new_project_name)
-                    project_name = new_project_name
+                unify.activate(_generate_project_name("llm", theme))
         else:
-            _seed_fixed(TLM)
-        LOGGER.info(f"✅ Data added")
+            _seed_fixed(tlm)
 
-    print(
-        f"TaskListManager sandbox using project '{project_name}' – type natural language. "
-        f"Prefix with 'ask:' or 'update:' to specify. 'quit' to exit.\n"
-        f"Verbose reasoning is {('ON' if not silent else 'OFF')} by default (add --silent to disable).\n",
-    )
+    print("TaskListManager sandbox – speak or type. Prefix with 'ask:'/'update:'. 'quit' to exit.\n")
 
-    if voice_mode:
-        # Save original args and clear sys.argv before calling agents CLI
-        original_argv = sys.argv.copy()
-        sys.argv = [sys.argv[0], "console"]
-        agents.cli.run_app(agents.WorkerOptions(entrypoint_fnc=voice_entrypoint))
-        # Restore original args if needed
-        sys.argv = original_argv
-    else:
+    if args.voice:
         while True:
-            try:
-                line = input("> ").strip()
-            except (EOFError, KeyboardInterrupt):
-                print()
-                break
-
-            if line.lower() in {"quit", "exit"}:
-                break
-            if not line:
+            audio_bytes = _record_until_enter()
+            user_text = _transcribe_deepgram(audio_bytes).strip()
+            if not user_text:
                 continue
-
-            kind, result, _ = _dispatch(TLM, line, show_steps=not silent)
+            print(f"▶️  {user_text}")
+            if user_text.lower() in {"quit", "exit"}:
+                break
+            _speak("Working on this now…")
+            kind, result, _ = _dispatch(tlm, user_text, show_steps=not args.silent)
             print(f"[{kind}] => {result}\n")
+            _speak(result)
+    else:
+        try:
+            while True:
+                line = input("> ").strip()
+                if line.lower() in {"quit", "exit"}:
+                    break
+                if not line:
+                    continue
+                kind, result, _ = _dispatch(tlm, line, show_steps=not args.silent)
+                print(f"[{kind}] => {result}\n")
+        except (EOFError, KeyboardInterrupt):
+            print()
 
 
 if __name__ == "__main__":
