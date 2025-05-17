@@ -82,15 +82,15 @@ def record_until_enter() -> bytes:
     thr = threading.Thread(target=_capture, daemon=True)
 
     input('\nPress ↵ to start recording…')
-    print('🎙️  Recording… press ↵ again to stop.')
     thr.start()
-    input()
+    input('🎙️  Recording… press ↵ again to stop.')
     stop.set()
     thr.join()
 
     stream.stop_stream()
     stream.close()
     pa.terminate()
+    print('✅ Recording captured.')
 
     wav_path = '/tmp/voice_input.wav'
     with wave.open(wav_path, 'wb') as wf:
