@@ -335,7 +335,7 @@ def main() -> None:
     if not args.silent:
         logging.basicConfig(level=logging.INFO, format="%(message)s")
         _LG.setLevel(logging.INFO)
-        for noisy in ("unify", "unify.utils", "unify.logging"):
+        for noisy in ("unify", "unify.utils", "unify.logging", "requests", "httpx"):
             logging.getLogger(noisy).setLevel(logging.WARNING)
 
     project = _generate_project_name(args.scenario)
