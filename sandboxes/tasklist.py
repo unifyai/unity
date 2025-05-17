@@ -70,21 +70,6 @@ from tests.test_task_list.test_update_text_complex import _next_weekday
 # Utility functions (project name, seeding, dispatch) – mostly unchanged
 # ---------------------------------------------------------------------------
 
-
-def _generate_project_name(scenario_type: str, theme: Optional[str] = None) -> str:
-    timestamp = datetime.now().strftime("%H-%M-%S_%d-%m-%Y")
-    base = (
-        "SimpleTaskList"
-        if scenario_type == "fixed"
-        else (theme or "LLMGeneratedTaskList")
-    )
-    base = "".join(c for c in base if c.isalnum() or c in [" ", "-", "_"]).replace(
-        " ",
-        "_",
-    )
-    return f"{base}/{timestamp}"
-
-
 def _seed_fixed(tlm: TaskListManager) -> None:
     tlm._create_task(
         name="Write quarterly report",
@@ -355,21 +340,17 @@ def main() -> None:
         for noisy in ("unify", "unify.utils", "unify.logging", "requests", "httpx"):
             logging.getLogger(noisy).setLevel(logging.WARNING)
 
-    project = _generate_project_name(args.scenario)
-    unify.activate(project)
+    unify.activate("TaskListSandbox")
     args.new = "Tasks" not in unify.get_contexts() or args.new
     unify.set_context("Tasks", overwrite=args.new)
 
     tlm = TaskListManager()
     tlm.start()
 
-    if args.new:
-        if args.scenario == "llm":
-            theme = _seed_llm(tlm)
-            if theme:
-                unify.activate(_generate_project_name("llm", theme))
-        else:
-            _seed_fixed(tlm)
+    if args.scenario == "llm":
+        _seed_llm(tlm)
+    else:
+        _seed_fixed(tlm)
 
     print(
         "TaskListManager sandbox – speak or type. Prefix with 'ask:'/'update:'. 'quit' to exit.\n",
