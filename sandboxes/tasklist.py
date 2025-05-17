@@ -38,6 +38,7 @@ import os
 import sys
 import threading
 import wave
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Dict, List, Tuple, Optional
@@ -84,25 +85,25 @@ def _generate_project_name(scenario_type: str, theme: Optional[str] = None) -> s
 
 def _seed_fixed(tlm: TaskListManager) -> None:
     tlm._create_task(
-        "Write quarterly report",
-        "Compile and draft the Q2 report for management.",
+        name="Write quarterly report",
+        description="Compile and draft the Q2 report for management.",
         status="active",
     )
     tlm._create_task(
-        "Prepare slide deck",
-        "Create slides for the upcoming board meeting.",
+        name="Prepare slide deck",
+        description="Create slides for the upcoming board meeting.",
         status="queued",
     )
     tlm._create_task(
-        "Client follow‑up email",
-        "Send follow‑up email about the proposal.",
+        name="Client follow‑up email",
+        description="Send follow‑up email about the proposal.",
         status="queued",
     )
     base = datetime.now(timezone.utc)
     next_mon = _next_weekday(base, 0).replace(hour=9, minute=0, second=0, microsecond=0)
     tlm._create_task(
-        "Send KPI report",
-        "Automated email of KPIs to leadership.",
+        name="Send KPI report",
+        description="Automated email of KPIs to leadership.",
         schedule=Schedule(
             start_time=next_mon.isoformat(),
             prev_task=None,
@@ -111,8 +112,8 @@ def _seed_fixed(tlm: TaskListManager) -> None:
         priority=Priority.high,
     )
     tlm._create_task(
-        "Deploy new release",
-        "Roll out version 2.0 to production servers.",
+        name="Deploy new release",
+        description="Roll out version 2.0 to production servers.",
         status="paused",
     )
 
@@ -301,10 +302,12 @@ def _speak(text: str):
 
     wav_bytes = asyncio.run(_gen())
 
+    duration = len(wav_bytes) / (24000 * 2)
     pa = pyaudio.PyAudio()
     stream = pa.open(format=pyaudio.paInt16, channels=1, rate=24000, output=True)
     stream.write(wav_bytes)
     stream.stop_stream()
+    time.sleep(max(0, duration - stream.get_output_latency()))
     stream.close()
     pa.terminate()
 
@@ -363,7 +366,7 @@ def main() -> None:
             print(f"▶️  {user_text}")
             if user_text.lower() in {"quit", "exit"}:
                 break
-            _speak("Working on this now…")
+            _speak("Working on this now")
             kind, result, _ = _dispatch(tlm, user_text, show_steps=not args.silent)
             print(f"[{kind}] => {result}\n")
             _speak(result)
