@@ -1,5 +1,5 @@
 from tests.helpers import _handle_project
-from knowledge.knowledge_manager import KnowledgeManager
+from knowledge_manager.knowledge_manager import KnowledgeManager
 import pytest
 
 
