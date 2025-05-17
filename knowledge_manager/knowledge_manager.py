@@ -9,7 +9,7 @@ import unify
 
 from common.embed_utils import EMBED_MODEL, ensure_vector_column
 from helpers import _handle_exceptions
-from knowledge.types import ColumnType
+from knowledge_manager.types import ColumnType
 from common.llm_helpers import tool_use_loop
 from helpers import _handle_exceptions
 
@@ -65,7 +65,7 @@ class KnowledgeManager(threading.Thread):
         Returns:
             bool: Whether the storage request completed successfully.
         """
-        from knowledge.sys_msgs import STORE
+        from knowledge_manager.sys_msgs import STORE
 
         client = unify.Unify("o4-mini@openai", cache=True)
         client.set_system_message(STORE)
@@ -86,7 +86,7 @@ class KnowledgeManager(threading.Thread):
         Returns:
             str: The result of the retrieval.
         """
-        from knowledge.sys_msgs import RETRIEVE
+        from knowledge_manager.sys_msgs import RETRIEVE
 
         client = unify.Unify("o4-mini@openai", cache=True)
         client.set_system_message(RETRIEVE)

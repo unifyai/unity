@@ -6,7 +6,7 @@ from communication.sys_msgs import COMS_MANAGER
 from communication.types.message import Message
 from communication.types.contact import Contact
 from communication.transcript_manager.transcript_manager import TranscriptManager
-from knowledge.knowledge_manager import KnowledgeManager
+from knowledge_manager.knowledge_manager import KnowledgeManager
 from common.llm_helpers import tool_use_loop
 
 import unify
