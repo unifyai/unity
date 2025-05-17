@@ -357,6 +357,7 @@ def main() -> None:
 
     project = _generate_project_name(args.scenario)
     unify.activate(project)
+    args.new = "Tasks" not in unify.get_contexts() or args.new
     unify.set_context("Tasks", overwrite=args.new)
 
     tlm = TaskListManager()
