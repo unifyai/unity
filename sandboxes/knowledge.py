@@ -1,4 +1,4 @@
-'''knowledge_sandbox.py  (voice mode, Deepgram SDK v4, sync)
+"""knowledge_sandbox.py  (voice mode, Deepgram SDK v4, sync)
 ================================================================
 Interactive sandbox for **KnowledgeManager** with optional voice input.
 
@@ -11,7 +11,7 @@ Features
 * Shared audio/STT/TTS helpers imported from `utils.py`.
 * Minimal dispatcher routes utterances to `KnowledgeManager.store` or
   `.retrieve` using a lightweight LLM intent/cleanup step.
-'''
+"""
 
 from __future__ import annotations
 
@@ -23,6 +23,7 @@ import sys
 from typing import List, Optional, Tuple
 
 from pathlib import Path
+
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
@@ -32,11 +33,16 @@ from knowledge_manager.knowledge_manager import KnowledgeManager
 from pydantic import BaseModel, Field
 
 # Voice helpers
-from utils import record_until_enter as _record_until_enter, transcribe_deepgram as _transcribe_deepgram, speak as _speak
+from utils import (
+    record_until_enter as _record_until_enter,
+    transcribe_deepgram as _transcribe_deepgram,
+    speak as _speak,
+)
 
 # ---------------------------------------------------------------------------
 # Scenario seeding
 # ---------------------------------------------------------------------------
+
 
 def _seed_fixed(km: KnowledgeManager) -> None:
     """Populate KnowledgeManager with a deterministic, multi‑table world."""
@@ -73,7 +79,7 @@ def _seed_llm(km: KnowledgeManager) -> Optional[str]:
         "Generate 120‑180 short factual sentences suitable for ingestion by a knowledge base. "
         "Cover diverse domains: personal bios, product pricing, purchases, geography, science facts, pets, coordinates, sports scores etc. "
         "Avoid any personally identifying sensitive data. "
-        "Return as JSON {\"statements\": [...], \"theme\": <string>} and nothing else."
+        'Return as JSON {"statements": [...], "theme": <string>} and nothing else.'
     )
     client = unify.Unify("o4-mini@openai", cache=True)
     client.set_system_message(prompt)
@@ -96,6 +102,7 @@ def _seed_llm(km: KnowledgeManager) -> Optional[str]:
 # Dispatcher – decide between store vs retrieve
 # ---------------------------------------------------------------------------
 
+
 class _IntentResp(BaseModel):
     action: str = Field(..., description="either 'store' or 'retrieve'")
     cleaned_text: str
@@ -108,11 +115,18 @@ _INTENT_PROMPT = (
 )
 
 
-def _dispatch(km: KnowledgeManager, raw: str, *, show_steps: bool) -> Tuple[str, str, List | None]:
+def _dispatch(
+    km: KnowledgeManager,
+    raw: str,
+    *,
+    show_steps: bool,
+) -> Tuple[str, str, List | None]:
     raw = raw.strip()
 
     # Quick rule: voice input often lacks punctuation – fall back to heuristic + LLM judge if ambiguous
-    heuristic_store = bool(re.match(r"^(remember|note|store|add)\b", raw, re.I)) and not raw.endswith("?")
+    heuristic_store = bool(
+        re.match(r"^(remember|note|store|add)\b", raw, re.I),
+    ) and not raw.endswith("?")
 
     if heuristic_store:
         km.store(raw)
@@ -135,13 +149,31 @@ def _dispatch(km: KnowledgeManager, raw: str, *, show_steps: bool) -> Tuple[str,
 # CLI
 # ---------------------------------------------------------------------------
 
+
 def main() -> None:
-    parser = argparse.ArgumentParser(description="KnowledgeManager sandbox with shared voice mode")
-    parser.add_argument("--voice", "-v", action="store_true", help="enable voice capture/playback")
+    parser = argparse.ArgumentParser(
+        description="KnowledgeManager sandbox with shared voice mode",
+    )
+    parser.add_argument(
+        "--voice",
+        "-v",
+        action="store_true",
+        help="enable voice capture/playback",
+    )
     parser.add_argument("--scenario", choices=["fixed", "llm"], default="fixed")
     parser.add_argument("--new", "-n", action="store_true", help="wipe & reseed data")
-    parser.add_argument("--silent", "-s", action="store_true", help="suppress tool logs")
-    parser.add_argument("--debug", "-d", action="store_true", help="verbose HTTP/LLM logs")
+    parser.add_argument(
+        "--silent",
+        "-s",
+        action="store_true",
+        help="suppress tool logs",
+    )
+    parser.add_argument(
+        "--debug",
+        "-d",
+        action="store_true",
+        help="verbose HTTP/LLM logs",
+    )
     args = parser.parse_args()
 
     # Logging

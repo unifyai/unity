@@ -243,7 +243,7 @@ def _answer_semantic(tm: TranscriptManager, question: str) -> str:
     """Compute the *correct* answer directly from stored data."""
     q = question.lower()
     messages = tm._search_messages(limit=None)
-    
+
     def cid(name: str) -> int:
         return _ID_BY_NAME[name]
 
@@ -259,7 +259,7 @@ def _answer_semantic(tm: TranscriptManager, question: str) -> str:
             key=lambda m: m.timestamp,
         )[-2:]
         return "\n".join(m.content for m in last_call)
-    
+
     if "quantity" in q and "carlos" in q:
         return "200"
 
@@ -315,9 +315,11 @@ def _answer_semantic(tm: TranscriptManager, question: str) -> str:
 
     return "N/A"
 
+
 # --------------------------------------------------------------------------- #
 #  LLM-AS-A-JUDGE SUMMARY COMPARISONS                                         #
 # --------------------------------------------------------------------------- #
+
 
 def _is_summary_q(q: str) -> bool:
     return "one-sentence summary" in q.lower() or "one sentence summary" in q.lower()
@@ -354,7 +356,13 @@ def tm_scenario() -> TranscriptManager:
 #  EVALUATION LLM                                                             #
 # --------------------------------------------------------------------------- #
 
-def _llm_assert_correct(question: str, expected: str, candidate: str, steps: list) -> None:
+
+def _llm_assert_correct(
+    question: str,
+    expected: str,
+    candidate: str,
+    steps: list,
+) -> None:
     """LLM-based validation with stricter or fuzzier rubric per question."""
     judge = unify.Unify("o4-mini@openai", cache=True)
 
@@ -363,7 +371,7 @@ def _llm_assert_correct(question: str, expected: str, candidate: str, steps: lis
             "You are an expert summary evaluator. "
             "You will be given the *source dialogue* of a short phone call "
             "and a candidate **one-sentence** summary. "
-            "Respond ONLY with JSON {\"correct\": true|false}. "
+            'Respond ONLY with JSON {"correct": true|false}. '
             "Mark correct⇢true if the summary captures the main intent and "
             "key factual details of the dialogue, even if wording differs. "
             "Ignore minor tense or stylistic variations."
@@ -377,7 +385,7 @@ def _llm_assert_correct(question: str, expected: str, candidate: str, steps: lis
             "You are a strict unit-test judge. "
             "You will be given a question, a ground-truth answer derived "
             "directly from the data, and a candidate answer. "
-            "Respond ONLY with JSON {\"correct\": true|false}. "
+            'Respond ONLY with JSON {"correct": true|false}. '
             "Mark correct⇢true if a reasonable human would accept the candidate "
             "as fully accurate; otherwise false."
         )
