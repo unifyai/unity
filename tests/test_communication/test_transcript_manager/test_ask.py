@@ -242,11 +242,23 @@ class ScenarioBuilder:
 def _answer_semantic(tm: TranscriptManager, question: str) -> str:
     """Compute the *correct* answer directly from stored data."""
     q = question.lower()
-    contacts = tm._search_contacts(limit=None)
     messages = tm._search_messages(limit=None)
-
+    
     def cid(name: str) -> int:
         return _ID_BY_NAME[name]
+
+    if _is_summary_q(question):
+        # return the *two utterances* that form the last Dan–Julia phone call.
+        last_call = sorted(
+            (
+                m
+                for m in messages
+                if m.medium == "phone_call"
+                and {m.sender_id, m.receiver_id} == {cid("dan"), cid("julia")}
+            ),
+            key=lambda m: m.timestamp,
+        )[-2:]
+        return "\n".join(m.content for m in last_call)
 
     if "carlos" in q and "buy" in q:
         msg = next(
@@ -303,6 +315,13 @@ def _answer_semantic(tm: TranscriptManager, question: str) -> str:
 
     return "N/A"
 
+# --------------------------------------------------------------------------- #
+#  LLM-AS-A-JUDGE SUMMARY COMPARISONS                                         #
+# --------------------------------------------------------------------------- #
+
+def _is_summary_q(q: str) -> bool:
+    return "one-sentence summary" in q.lower() or "one sentence summary" in q.lower()
+
 
 # --------------------------------------------------------------------------- #
 #  QUESTIONS                                                                  #
@@ -335,46 +354,50 @@ def tm_scenario() -> TranscriptManager:
 #  EVALUATION LLM                                                             #
 # --------------------------------------------------------------------------- #
 
-
-def _llm_assert_correct(
-    question: str,
-    expected: str,
-    candidate: str,
-    steps: list,  # noqa: D401 – clarity outweighs strict type accuracy
-) -> None:
-    """Assert *candidate* satisfies *expected* for *question* via an LLM judge.
-
-    Any assertion failure is augmented with the full **reasoning steps** so
-    that debugging always has a complete tool-use trace available.
-    """
-
+def _llm_assert_correct(question: str, expected: str, candidate: str, steps: list) -> None:
+    """LLM-based validation with stricter or fuzzier rubric per question."""
     judge = unify.Unify("o4-mini@openai", cache=True)
-    judge.set_system_message(
-        "You are a strict unit-test judge. "
-        "You will be given a question, a ground-truth answer derived "
-        "directly from the data, and a candidate answer produced by the "
-        "system under test. "
-        'Respond ONLY with valid JSON of the form {"correct": true} or {"correct": false}. '
-        "Mark correct⇢true if a reasonable human would accept the candidate "
-        "as answering the question fully and accurately; otherwise false.",
-    )
 
-    payload = _dumps(
-        {"question": question, "ground_truth": expected, "candidate": candidate},
-        indent=4,
-    )
+    if _is_summary_q(question):
+        system_msg = (
+            "You are an expert summary evaluator. "
+            "You will be given the *source dialogue* of a short phone call "
+            "and a candidate **one-sentence** summary. "
+            "Respond ONLY with JSON {\"correct\": true|false}. "
+            "Mark correct⇢true if the summary captures the main intent and "
+            "key factual details of the dialogue, even if wording differs. "
+            "Ignore minor tense or stylistic variations."
+        )
+        payload = _dumps(
+            {"dialogue": expected, "summary": candidate},
+            indent=4,
+        )
+    else:
+        system_msg = (
+            "You are a strict unit-test judge. "
+            "You will be given a question, a ground-truth answer derived "
+            "directly from the data, and a candidate answer. "
+            "Respond ONLY with JSON {\"correct\": true|false}. "
+            "Mark correct⇢true if a reasonable human would accept the candidate "
+            "as fully accurate; otherwise false."
+        )
+        payload = _dumps(
+            {"question": question, "ground_truth": expected, "candidate": candidate},
+            indent=4,
+        )
+
+    judge.set_system_message(system_msg)
     result = judge.generate(payload)
 
-    # Strip anything outside first {...}
     match = re.search(r"\{.*\}", result, re.S)
     assert match, (
-        "LLM judge returned unexpected format: "
-        f"{result!r}\nReasoning steps:\n{json.dumps(steps, indent=4)}"
+        f"LLM judge returned unexpected format: {result!r}\n"
+        f"Reasoning steps:\n{json.dumps(steps, indent=4)}"
     )
     verdict = json.loads(match.group(0))
     assert verdict.get("correct") is True, (
         "LLM judge marked answer incorrect:\n"
-        f"Q: {question}\nExpected: {expected}\nGot: {candidate}\n"
+        f"Q: {question}\nExpected context: {expected}\nGot: {candidate}\n"
         f"Reasoning steps:\n{json.dumps(steps, indent=4)}"
     )
 
