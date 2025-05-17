@@ -1,9 +1,9 @@
-'''tasklist_sandbox.py  (voice mode, Deepgram SDK v4, sync)
+"""tasklist_sandbox.py  (voice mode, Deepgram SDK v4, sync)
 ===========================================================
 Interactive sandbox for **TaskListManager** with optional hands‑free
 voice input. All shared audio/STT/TTS helpers are imported from
 `utils.py` to avoid duplication with other sandboxes.
-'''
+"""
 
 from __future__ import annotations
 
@@ -11,11 +11,12 @@ import argparse
 import json
 import logging
 import sys
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
 from pathlib import Path
+
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
@@ -31,11 +32,16 @@ from pydantic import BaseModel, Field
 # Shared voice‑mode helpers
 # ---------------------------------------------------------------------------
 
-from utils import record_until_enter as _record_until_enter, transcribe_deepgram as _transcribe_deepgram, speak as _speak
+from utils import (
+    record_until_enter as _record_until_enter,
+    transcribe_deepgram as _transcribe_deepgram,
+    speak as _speak,
+)
 
 # ---------------------------------------------------------------------------
 # Scenario seeding helpers (fixed + LLM)
 # ---------------------------------------------------------------------------
+
 
 def _seed_fixed(tlm: TaskListManager) -> None:
     """Populate a small but varied set of starter tasks."""
@@ -60,7 +66,11 @@ def _seed_fixed(tlm: TaskListManager) -> None:
     tlm._create_task(
         name="Send KPI report",
         description="Automated email of KPIs to leadership.",
-        schedule=Schedule(start_time=next_mon.isoformat(), prev_task=None, next_task=None),
+        schedule=Schedule(
+            start_time=next_mon.isoformat(),
+            prev_task=None,
+            next_task=None,
+        ),
         priority=Priority.high,
     )
     tlm._create_task(
@@ -108,7 +118,11 @@ def _seed_llm(tlm: TaskListManager) -> Optional[str]:
                 "priority": entry.get("priority", Priority.normal),
             }
             if start := entry.get("start_time"):
-                kwargs["schedule"] = Schedule(start_time=start, prev_task=None, next_task=None)
+                kwargs["schedule"] = Schedule(
+                    start_time=start,
+                    prev_task=None,
+                    next_task=None,
+                )
             task_id = tlm._create_task(**kwargs)
             id_map[(g_name, idx)] = task_id
 
@@ -126,9 +140,11 @@ def _seed_llm(tlm: TaskListManager) -> Optional[str]:
             )
     return theme
 
+
 # ---------------------------------------------------------------------------
 # Natural‑language dispatcher (ask vs update)
 # ---------------------------------------------------------------------------
+
 
 class _DispatchResp(BaseModel):
     require_update: bool = Field(...)
@@ -142,28 +158,55 @@ def _dispatch(tlm: TaskListManager, raw: str, *, show_steps: bool):
     llm.set_system_message(
         "There is a table containing a list of tasks, and all of their properties. "
         "The user has made a request via a speech‑to‑text process, which can introduce errors. "
-        "Using the output schema provided, output a corrected transcript and decide whether the task table must be updated."
+        "Using the output schema provided, output a corrected transcript and decide whether the task table must be updated.",
     )
     resp = _DispatchResp.model_validate_json(llm.generate(raw))
 
     if resp.require_update:
-        ans, steps = tlm.update(text=resp.fixed_text, return_reasoning_steps=show_steps, log_tool_steps=show_steps)
+        ans, steps = tlm.update(
+            text=resp.fixed_text,
+            return_reasoning_steps=show_steps,
+            log_tool_steps=show_steps,
+        )
         return "update", ans, steps
 
-    ans, steps = tlm.ask(text=resp.fixed_text, return_reasoning_steps=show_steps, log_tool_steps=show_steps)
+    ans, steps = tlm.ask(
+        text=resp.fixed_text,
+        return_reasoning_steps=show_steps,
+        log_tool_steps=show_steps,
+    )
     return "ask", ans, steps
+
 
 # ---------------------------------------------------------------------------
 # Main entry point
 # ---------------------------------------------------------------------------
 
+
 def main() -> None:
-    parser = argparse.ArgumentParser(description="TaskListManager sandbox with minimalist voice mode (Deepgram v4, Cartesia)")
-    parser.add_argument("--voice", "-v", action="store_true", help="enable voice capture/playback")
+    parser = argparse.ArgumentParser(
+        description="TaskListManager sandbox with minimalist voice mode (Deepgram v4, Cartesia)",
+    )
+    parser.add_argument(
+        "--voice",
+        "-v",
+        action="store_true",
+        help="enable voice capture/playback",
+    )
     parser.add_argument("--scenario", choices=["fixed", "llm"], default="fixed")
     parser.add_argument("--new", "-n", action="store_true", help="wipe & reseed data")
-    parser.add_argument("--silent", "-s", action="store_true", help="suppress tool logs")
-    parser.add_argument("--debug", "-d", action="store_true", help="verbose HTTP/LLM logging")
+    parser.add_argument(
+        "--silent",
+        "-s",
+        action="store_true",
+        help="suppress tool logs",
+    )
+    parser.add_argument(
+        "--debug",
+        "-d",
+        action="store_true",
+        help="verbose HTTP/LLM logging",
+    )
     args = parser.parse_args()
 
     # Logging
