@@ -340,13 +340,20 @@ def main() -> None:
         action="store_true",
         help="suppress tool logs",
     )
+    parser.add_argument(
+        "--debug",
+        "-d",
+        action="store_true",
+        help="include all logs for unify, requests and httpx",
+    )
     args = parser.parse_args()
 
     if not args.silent:
         logging.basicConfig(level=logging.INFO, format="%(message)s")
         _LG.setLevel(logging.INFO)
-        for noisy in ("unify", "unify.utils", "unify.logging", "requests", "httpx"):
-            logging.getLogger(noisy).setLevel(logging.WARNING)
+        if not args.debug:
+            for noisy in ("unify", "unify.utils", "unify.logging", "requests", "httpx"):
+                logging.getLogger(noisy).setLevel(logging.WARNING)
 
     unify.activate("TaskListSandbox")
     new = "Tasks" not in unify.get_contexts() or args.new
