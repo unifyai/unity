@@ -39,6 +39,8 @@ import sys
 import threading
 import wave
 import time
+from contextlib import contextmanager
+from ctypes import CFUNCTYPE, c_char_p, c_int, cdll
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Dict, List, Tuple, Optional
@@ -223,10 +225,24 @@ _CHUNK = 1024
 _FORMAT = pyaudio.paInt16
 _CHANNELS = 1
 
+ERROR_HANDLER_FUNC = CFUNCTYPE(None, c_char_p, c_int, c_char_p, c_int, c_char_p)
+
+def py_error_handler(filename, line, function, err, fmt):
+    pass
+
+c_error_handler = ERROR_HANDLER_FUNC(py_error_handler)
+
+@contextmanager
+def noalsaerr():
+    asound = cdll.LoadLibrary('libasound.so')
+    asound.snd_lib_error_set_handler(c_error_handler)
+    yield
+    asound.snd_lib_error_set_handler(None)
 
 def _record_until_enter() -> bytes:
     """Record between two ENTER presses and return WAV bytes."""
-    pa = pyaudio.PyAudio()
+    with noalsaerr():
+        pa = pyaudio.PyAudio()
     frames: List[bytes] = []
     stream = pa.open(
         format=_FORMAT,
@@ -303,7 +319,8 @@ def _speak(text: str):
     wav_bytes = asyncio.run(_gen())
 
     duration = len(wav_bytes) / (24000 * 2)
-    pa = pyaudio.PyAudio()
+    with noalsaerr():
+        pa = pyaudio.PyAudio()
     stream = pa.open(format=pyaudio.paInt16, channels=1, rate=24000, output=True)
     stream.write(wav_bytes)
     stream.stop_stream()
