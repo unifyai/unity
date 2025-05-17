@@ -259,12 +259,12 @@ def _answer_semantic(tm: TranscriptManager, question: str) -> str:
 
     if "when did dan last speak with julia" in q:
         last = max(
-            m
+            m.timestamp
             for m in messages
             if m.medium == "phone_call"
             and {m.sender_id, m.receiver_id} == {cid("dan"), cid("julia")}
         )
-        return last.timestamp.split("T")[0]
+        return last.split("T")[0]
 
     if "jimmy" in q and "holiday" in q:
         pattern = re.compile(r"\d{4}-\d{2}-\d{2}")
