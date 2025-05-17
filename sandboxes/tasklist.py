@@ -67,26 +67,54 @@ from tests.test_task_list.test_update_text_complex import _next_weekday
 # Utility functions (project name, seeding, dispatch) – mostly unchanged
 # ---------------------------------------------------------------------------
 
+
 def _generate_project_name(scenario_type: str, theme: Optional[str] = None) -> str:
     timestamp = datetime.now().strftime("%H-%M-%S_%d-%m-%Y")
-    base = "SimpleTaskList" if scenario_type == "fixed" else (theme or "LLMGeneratedTaskList")
-    base = "".join(c for c in base if c.isalnum() or c in [" ", "-", "_"]).replace(" ", "_")
+    base = (
+        "SimpleTaskList"
+        if scenario_type == "fixed"
+        else (theme or "LLMGeneratedTaskList")
+    )
+    base = "".join(c for c in base if c.isalnum() or c in [" ", "-", "_"]).replace(
+        " ",
+        "_",
+    )
     return f"{base}/{timestamp}"
 
 
 def _seed_fixed(tlm: TaskListManager) -> None:
-    tlm._create_task("Write quarterly report", "Compile and draft the Q2 report for management.", status="active")
-    tlm._create_task("Prepare slide deck", "Create slides for the upcoming board meeting.", status="queued")
-    tlm._create_task("Client follow‑up email", "Send follow‑up email about the proposal.", status="queued")
+    tlm._create_task(
+        "Write quarterly report",
+        "Compile and draft the Q2 report for management.",
+        status="active",
+    )
+    tlm._create_task(
+        "Prepare slide deck",
+        "Create slides for the upcoming board meeting.",
+        status="queued",
+    )
+    tlm._create_task(
+        "Client follow‑up email",
+        "Send follow‑up email about the proposal.",
+        status="queued",
+    )
     base = datetime.now(timezone.utc)
     next_mon = _next_weekday(base, 0).replace(hour=9, minute=0, second=0, microsecond=0)
     tlm._create_task(
         "Send KPI report",
         "Automated email of KPIs to leadership.",
-        schedule=Schedule(start_time=next_mon.isoformat(), prev_task=None, next_task=None),
+        schedule=Schedule(
+            start_time=next_mon.isoformat(),
+            prev_task=None,
+            next_task=None,
+        ),
         priority=Priority.high,
     )
-    tlm._create_task("Deploy new release", "Roll out version 2.0 to production servers.", status="paused")
+    tlm._create_task(
+        "Deploy new release",
+        "Roll out version 2.0 to production servers.",
+        status="paused",
+    )
 
 
 def _seed_llm(tlm: TaskListManager) -> Optional[str]:
@@ -123,7 +151,11 @@ def _seed_llm(tlm: TaskListManager) -> Optional[str]:
                 "priority": entry.get("priority", Priority.normal),
             }
             if start := entry.get("start_time"):
-                kwargs["schedule"] = Schedule(start_time=start, prev_task=None, next_task=None)
+                kwargs["schedule"] = Schedule(
+                    start_time=start,
+                    prev_task=None,
+                    next_task=None,
+                )
             task_id = tlm._create_task(**kwargs)
             id_map[(g_name, idx)] = task_id
 
@@ -132,24 +164,54 @@ def _seed_llm(tlm: TaskListManager) -> Optional[str]:
             cur = id_map[(g_name, idx)]
             prev_ = id_map.get((g_name, idx - 1)) if idx > 0 else None
             next_ = id_map.get((g_name, idx + 1)) if idx < len(g) - 1 else None
-            tlm._update_task_status(task_ids=cur, new_status=tlm._search(filter=f"task_id=={cur}")[0]["status"])
-            unify.update_logs(context="Tasks", logs=tlm._get_logs_by_task_ids(task_ids=cur), entries={"schedule": {"prev_task": prev_, "next_task": next_}}, overwrite=True)
+            tlm._update_task_status(
+                task_ids=cur,
+                new_status=tlm._search(filter=f"task_id=={cur}")[0]["status"],
+            )
+            unify.update_logs(
+                context="Tasks",
+                logs=tlm._get_logs_by_task_ids(task_ids=cur),
+                entries={"schedule": {"prev_task": prev_, "next_task": next_}},
+                overwrite=True,
+            )
     return theme
 
 
-def _dispatch(tlm: TaskListManager, raw: str, *, show_steps: bool) -> Tuple[str, str, List | None]:
+def _dispatch(
+    tlm: TaskListManager,
+    raw: str,
+    *,
+    show_steps: bool,
+) -> Tuple[str, str, List | None]:
     raw = raw.strip()
     if raw.lower().startswith("ask:"):
-        ans, steps = tlm.ask(text=raw[4:].strip(), return_reasoning_steps=show_steps, log_tool_steps=show_steps)
+        ans, steps = tlm.ask(
+            text=raw[4:].strip(),
+            return_reasoning_steps=show_steps,
+            log_tool_steps=show_steps,
+        )
         return "ask", ans, steps
     if raw.lower().startswith("update:"):
-        ans, steps = tlm.update(text=raw[7:].strip(), return_reasoning_steps=show_steps, log_tool_steps=show_steps)
+        ans, steps = tlm.update(
+            text=raw[7:].strip(),
+            return_reasoning_steps=show_steps,
+            log_tool_steps=show_steps,
+        )
         return "update", ans, steps
     if raw.endswith("?"):
-        ans, steps = tlm.ask(text=raw, return_reasoning_steps=show_steps, log_tool_steps=show_steps)
+        ans, steps = tlm.ask(
+            text=raw,
+            return_reasoning_steps=show_steps,
+            log_tool_steps=show_steps,
+        )
         return "ask", ans, steps
-    ans, steps = tlm.update(text=raw, return_reasoning_steps=show_steps, log_tool_steps=show_steps)
+    ans, steps = tlm.update(
+        text=raw,
+        return_reasoning_steps=show_steps,
+        log_tool_steps=show_steps,
+    )
     return "update", ans, steps
+
 
 # ---------------------------------------------------------------------------
 # Voice‑mode helpers (audio capture, STT, TTS)
@@ -160,11 +222,18 @@ _CHUNK = 1024
 _FORMAT = pyaudio.paInt16
 _CHANNELS = 1
 
+
 def _record_until_enter() -> bytes:
     """Record between two ENTER presses and return WAV bytes."""
     pa = pyaudio.PyAudio()
     frames: List[bytes] = []
-    stream = pa.open(format=_FORMAT, channels=_CHANNELS, rate=_SAMPLE_RATE, input=True, frames_per_buffer=_CHUNK)
+    stream = pa.open(
+        format=_FORMAT,
+        channels=_CHANNELS,
+        rate=_SAMPLE_RATE,
+        input=True,
+        frames_per_buffer=_CHUNK,
+    )
 
     def _capture():
         while not stop.is_set():
@@ -221,8 +290,11 @@ def _speak(text: str):
 
     async def _gen() -> bytes:
         import aiohttp  # local to avoid hard dep when not in voice mode
+
         async with aiohttp.ClientSession() as sess:
-            tts = cartesia.TTS(http_session=sess)  # hand‑rolled session sidesteps worker context
+            tts = cartesia.TTS(
+                http_session=sess,
+            )  # hand‑rolled session sidesteps worker context
             stream = tts.synthesize(text)
             frame = await stream.collect()
             return frame.to_wav_bytes()
@@ -236,12 +308,25 @@ def _speak(text: str):
     stream.close()
     pa.terminate()
 
+
 def main() -> None:
-    parser = argparse.ArgumentParser(description="TaskListManager sandbox with minimalist voice mode (Deepgram v4, Cartesia)")
-    parser.add_argument("--voice", "-v", action="store_true", help="enable voice capture/playback")
+    parser = argparse.ArgumentParser(
+        description="TaskListManager sandbox with minimalist voice mode (Deepgram v4, Cartesia)",
+    )
+    parser.add_argument(
+        "--voice",
+        "-v",
+        action="store_true",
+        help="enable voice capture/playback",
+    )
     parser.add_argument("--scenario", choices=["fixed", "llm"], default="fixed")
     parser.add_argument("--new", "-n", action="store_true", help="wipe & reseed data")
-    parser.add_argument("--silent", "-s", action="store_true", help="suppress tool logs")
+    parser.add_argument(
+        "--silent",
+        "-s",
+        action="store_true",
+        help="suppress tool logs",
+    )
     args = parser.parse_args()
 
     if not args.silent:
@@ -265,7 +350,9 @@ def main() -> None:
         else:
             _seed_fixed(tlm)
 
-    print("TaskListManager sandbox – speak or type. Prefix with 'ask:'/'update:'. 'quit' to exit.\n")
+    print(
+        "TaskListManager sandbox – speak or type. Prefix with 'ask:'/'update:'. 'quit' to exit.\n",
+    )
 
     if args.voice:
         while True:

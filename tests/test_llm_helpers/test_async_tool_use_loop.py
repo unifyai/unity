@@ -163,7 +163,7 @@ async def test_async_loop_concurrent_tools_early_generate():
     scripted = [
         make_response(first_turn),  # triggers both tools concurrently
         make_response(msg_final("done")),  # model answers after `fast` result only
-        make_response(msg_final("ok")),     # model replies after slow (no tools)
+        make_response(msg_final("ok")),  # model replies after slow (no tools)
     ]
 
     class InstrumentedClient(FakeAsyncClient):
@@ -279,7 +279,8 @@ async def test_async_loop_fast_cancel():
             raise
 
     model_turn = types.SimpleNamespace(
-        tool_calls=[FakeToolCall("long", {}, "1")], content=""
+        tool_calls=[FakeToolCall("long", {}, "1")],
+        content="",
     )
     scripted = [make_response(model_turn)]
     client = FakeAsyncClient(scripted)
@@ -290,16 +291,15 @@ async def test_async_loop_fast_cancel():
             message="run",
             tools={"long": long_tool},
             cancel_event=cancel_event,
-        )
+        ),
     )
 
-    await asyncio.sleep(0.05)          # give tool time to start
+    await asyncio.sleep(0.05)  # give tool time to start
     t0 = time.monotonic()
-    cancel_event.set()                  # trigger stop
+    cancel_event.set()  # trigger stop
     with pytest.raises(asyncio.CancelledError):
         await task
     dt = time.monotonic() - t0
 
-    assert dt < 0.15                   # stop was fast
-    assert flagged["cancelled"]        # tool got cancelled
-
+    assert dt < 0.15  # stop was fast
+    assert flagged["cancelled"]  # tool got cancelled

@@ -288,15 +288,19 @@ async def async_tool_use_loop(
                         result = traceback.format_exc()
 
                     client.append_messages(
-                        [{"role": "tool",
-                          "tool_call_id": call_id,
-                          "name": name,
-                          "content": result}]
+                        [
+                            {
+                                "role": "tool",
+                                "tool_call_id": call_id,
+                                "name": name,
+                                "content": result,
+                            },
+                        ],
                     )
 
                     if consecutive_failures >= max_consecutive_failures:
                         raise RuntimeError(
-                            "Aborted after too many consecutive tool failures."
+                            "Aborted after too many consecutive tool failures.",
                         )
 
             # ── B.  Cancel check before calling the LLM ───────────────
@@ -318,7 +322,11 @@ async def async_tool_use_loop(
                     name = call.function.name
                     args = json.loads(call.function.arguments)
                     fn = tools[name]
-                    coro = fn(**args) if asyncio.iscoroutinefunction(fn) else asyncio.to_thread(fn, **args)
+                    coro = (
+                        fn(**args)
+                        if asyncio.iscoroutinefunction(fn)
+                        else asyncio.to_thread(fn, **args)
+                    )
 
                     t = asyncio.create_task(coro)
                     pending.add(t)
