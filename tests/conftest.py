@@ -889,7 +889,7 @@ def _install_unify_stub() -> None:  # noqa: C901 – long but linear
         if limit is not None:
             logs = logs[offset : offset + limit]
         else:
-            logs = logs[offset :]
+            logs = logs[offset:]
 
         # Return as requested
         return [lg.id for lg in logs] if return_ids_only else logs
