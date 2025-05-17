@@ -50,7 +50,7 @@ import asyncio  # cross‑platform audio I/O (links to PortAudio)
 from dotenv import load_dotenv
 from livekit.plugins import cartesia  # TTS only
 from deepgram import DeepgramClient, PrerecordedOptions, FileSource  # SDK v4
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 load_dotenv()
 
@@ -176,33 +176,23 @@ def _dispatch(
     raw = raw.strip()
 
     class Response(BaseModel):
-        require_update: bool
+        require_update: bool = Field(description="Whether the user's request requires modifying the task table")
+        fixed_text: str = Field(description="A improved transcript, taking into account that this was extracted from audio. For example (right a report -> write a report, the queue two updates -> the Q2 updates etc.)")
 
-    if raw.lower().startswith("ask:"):
-        ans, steps = tlm.ask(
-            text=raw[4:].strip(),
-            return_reasoning_steps=show_steps,
-            log_tool_steps=show_steps,
-        )
-        return "ask", ans, steps
-    if raw.lower().startswith("update:"):
-        ans, steps = tlm.update(
-            text=raw[7:].strip(),
-            return_reasoning_steps=show_steps,
-            log_tool_steps=show_steps,
-        )
-        return "update", ans, steps
     client = unify.Unify("gpt-4o@openai", response_format=Response)
-    res = client.generate("There is a table containing a list of tasks, and all of their properties. Does this user request require this task table to be updated in any way (ie renamed, redescribed, reordered, cancelled, started, rescheduled etc.)?")
-    if Response.model_validate_json(res).require_update:
+    res_raw = client.set_system_message("There is a table containing a list of tasks, and all of their properties. The user has made a request via a speech-to-text process, which can introduce errors in the extracted text (ie right a report -> write a report, the queue two updates -> the Q2 updates etc.). Using the output schema provided, please provide an improved transcript, taking into account that this was extracted from audio, and also determine whether this user request requires the task table to be updated in any way (ie renamed, redescribed, reordered, cancelled, started, rescheduled etc.)?")
+    res_raw = client.generate(raw)
+    res = Response.model_validate_json(res_raw)
+
+    if res.require_update:
         ans, steps = tlm.update(
-            text=raw,
+            text=res.fixed_text,
             return_reasoning_steps=show_steps,
             log_tool_steps=show_steps,
         )
         return "update", ans, steps
     ans, steps = tlm.ask(
-        text=raw,
+        text=res.fixed_text,
         return_reasoning_steps=show_steps,
         log_tool_steps=show_steps,
     )
@@ -376,7 +366,7 @@ def main() -> None:
             _seed_fixed(tlm)
 
     print(
-        "TaskListManager sandbox – speak or type. Prefix with 'ask:'/'update:'. 'quit' to exit.\n",
+        "TaskListManager sandbox – speak or type. 'quit' to exit.\n",
     )
 
     if args.voice:
