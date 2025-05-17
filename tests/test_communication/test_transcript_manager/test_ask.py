@@ -259,6 +259,9 @@ def _answer_semantic(tm: TranscriptManager, question: str) -> str:
             key=lambda m: m.timestamp,
         )[-2:]
         return "\n".join(m.content for m in last_call)
+    
+    if "quantity" in q and "carlos" in q:
+        return "200"
 
     if "carlos" in q and "buy" in q:
         msg = next(
@@ -290,9 +293,6 @@ def _answer_semantic(tm: TranscriptManager, question: str) -> str:
     if "anne" in q and "why" in q:
         msg = next(m for m in messages if m.sender_id == cid("anne"))
         return "passport expired"
-
-    if "quantity" in q and "carlos" in q:
-        return "200"
 
     if "medium does julia use most" in q:
         counts = Counter(m.medium for m in messages if m.sender_id == cid("julia"))
