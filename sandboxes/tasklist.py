@@ -50,6 +50,7 @@ import asyncio  # cross‑platform audio I/O (links to PortAudio)
 from dotenv import load_dotenv
 from livekit.plugins import cartesia  # TTS only
 from deepgram import DeepgramClient, PrerecordedOptions, FileSource  # SDK v4
+from pydantic import BaseModel
 
 load_dotenv()
 
@@ -173,6 +174,10 @@ def _dispatch(
     show_steps: bool,
 ) -> Tuple[str, str, List | None]:
     raw = raw.strip()
+
+    class Response(BaseModel):
+        read_only: bool
+
     if raw.lower().startswith("ask:"):
         ans, steps = tlm.ask(
             text=raw[4:].strip(),
@@ -187,7 +192,9 @@ def _dispatch(
             log_tool_steps=show_steps,
         )
         return "update", ans, steps
-    if raw.endswith("?"):
+    client = unify.Unify("gpt-4o@openai", response_format=Response)
+    res = client.generate("Does this user request require a task to be updated in any way? Or does is it a purely read-only request?")
+    if Response.model_validate_json(res).read_only:
         ans, steps = tlm.ask(
             text=raw,
             return_reasoning_steps=show_steps,
