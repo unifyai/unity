@@ -227,9 +227,13 @@ class KnowledgeManager(threading.Thread):
         """
         proj = unify.active_project()
         ctx = f"Knowledge/{table}"
-        url = f"https://api.unify.ai/v0/project/{proj}/contexts/{ctx}/columns"
+        url = f"https://api.unify.ai/v0/logs/fields"
         headers = {"Authorization": f"Bearer {API_KEY}"}
-        json_input = {"columns": {column_name: column_type}}
+        json_input = {
+            "project": proj,
+            "context": ctx,
+            "fields": {column_name: column_type}
+        }
         response = requests.request("POST", url, json=json_input, headers=headers)
         _handle_exceptions(response)
         return response.json()
