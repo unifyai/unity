@@ -223,10 +223,13 @@ c_error_handler = ERROR_HANDLER_FUNC(py_error_handler)
 
 @contextmanager
 def noalsaerr():
-    asound = cdll.LoadLibrary("libasound.so")
-    asound.snd_lib_error_set_handler(c_error_handler)
-    yield
-    asound.snd_lib_error_set_handler(None)
+    try:
+        asound = cdll.LoadLibrary("libasound.so")
+        asound.snd_lib_error_set_handler(c_error_handler)
+        yield
+        asound.snd_lib_error_set_handler(None)
+    except:
+        yield
 
 
 def _record_until_enter() -> bytes:
@@ -346,16 +349,17 @@ def main() -> None:
             logging.getLogger(noisy).setLevel(logging.WARNING)
 
     unify.activate("TaskListSandbox")
-    args.new = "Tasks" not in unify.get_contexts() or args.new
-    unify.set_context("Tasks", overwrite=args.new)
+    new = "Tasks" not in unify.get_contexts() or args.new
+    unify.set_context("Tasks", overwrite=new)
 
     tlm = TaskListManager()
     tlm.start()
 
-    if args.scenario == "llm":
-        _seed_llm(tlm)
-    else:
-        _seed_fixed(tlm)
+    if new:
+        if args.scenario == "llm":
+            _seed_llm(tlm)
+        else:
+            _seed_fixed(tlm)
 
     print(
         "TaskListManager sandbox – speak or type. Prefix with 'ask:'/'update:'. 'quit' to exit.\n",
