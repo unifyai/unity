@@ -9,7 +9,8 @@ from __future__ import annotations
 import asyncio
 import os
 import threading
-import time
+import aiohttp
+import sys
 import wave
 from contextlib import contextmanager
 from ctypes import CFUNCTYPE, c_char_p, c_int, cdll
@@ -121,28 +122,71 @@ def transcribe_deepgram(audio_bytes: bytes) -> str:
 
 
 def speak(text: str):
-    'Speak *text* aloud using Cartesia TTS (skips gracefully if no API key).'
-    key = os.getenv('CARTESIA_API_KEY')
-    if not key:
+    """Speak *text* via Cartesia TTS – press ↵ to interrupt playback."""
+    if "CARTESIA_API_KEY" not in os.environ:
         return
+    
+    print("🗣️ Assistant speaking… press ↵ to skip.")
 
     async def _gen() -> bytes:
-        import aiohttp  # local import keeps dependency optional
-
-        async with aiohttp.ClientSession() as sess:
-            tts = cartesia.TTS(http_session=sess)
+        async with aiohttp.ClientSession() as s:
+            tts = cartesia.TTS(http_session=s)
             stream = tts.synthesize(text)
+
+            # Collect the entire synthesis into one object
             frame = await stream.collect()
-            return frame.to_wav_bytes()
 
-    wav_bytes = asyncio.run(_gen())
+            # Newest SDK exposes to_pcm_bytes()
+            if hasattr(frame, "to_pcm_bytes"):
+                return frame.to_pcm_bytes()
 
-    duration = len(wav_bytes) / (24000 * 2)  # bytes / (rate * 16‑bit)
+            # Older SDK exposes data attr
+            if hasattr(frame, "data"):
+                return bytes(frame.data)
+
+            # Fallback: to_wav_bytes() → strip 44-byte header
+            if hasattr(frame, "to_wav_bytes"):
+                wav = frame.to_wav_bytes()
+                return wav[44:]
+
+            # Last resort – try bytes() conversion
+            return bytes(frame)
+
+    pcm = asyncio.run(_gen())
+    if not pcm:
+        return
+
+    stop = threading.Event()
+
+    def _wait_enter():
+        sys.stdin.readline()
+        stop.set()
+
+    threading.Thread(target=_wait_enter, daemon=True).start()
+
     with noalsaerr():
         pa = pyaudio.PyAudio()
-    stream = pa.open(format=pyaudio.paInt16, channels=1, rate=24000, output=True)
-    stream.write(wav_bytes)
+    stream = pa.open(
+        format=pyaudio.paInt16,
+        channels=1,
+        rate=24000,
+        output=True,
+    )
+
+    chunk = 4800  # ≈0.1 s of audio
+    i = 0
+    while i < len(pcm) and not stop.is_set():
+        stream.write(pcm[i : i + chunk])
+        i += chunk
+
     stream.stop_stream()
-    time.sleep(max(0, duration - stream.get_output_latency()))
     stream.close()
     pa.terminate()
+
+    if stop.is_set():  # flush the newline the user pressed
+        try:
+            import termios
+
+            termios.tcflush(sys.stdin, termios.TCIFLUSH)
+        except Exception:
+            pass
