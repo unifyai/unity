@@ -796,7 +796,7 @@ def _install_unify_stub() -> None:  # noqa: C901 – long but linear
         context: str,
         filter: str | None = None,
         offset: int = 0,
-        limit: int = 100,
+        limit: Optional[int] = 100,
         return_ids_only: bool = False,
         sorting: Dict[str, str] = None,
     ):
@@ -886,7 +886,10 @@ def _install_unify_stub() -> None:  # noqa: C901 – long but linear
                                 continue
 
         # Apply offset, and limit
-        logs = logs[offset : offset + limit]
+        if limit is not None:
+            logs = logs[offset : offset + limit]
+        else:
+            logs = logs[offset :]
 
         # Return as requested
         return [lg.id for lg in logs] if return_ids_only else logs
