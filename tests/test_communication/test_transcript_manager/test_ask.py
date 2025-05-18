@@ -27,6 +27,7 @@ import unify
 from communication.transcript_manager.transcript_manager import TranscriptManager
 from communication.types.message import Message
 from common.llm_helpers import _dumps
+from tests.assertion_helpers import assertion_failed
 
 # --------------------------------------------------------------------------- #
 #  CONTACTS (same as before)                                                  #
@@ -398,15 +399,18 @@ def _llm_assert_correct(
     result = judge.generate(payload)
 
     match = re.search(r"\{.*\}", result, re.S)
-    assert match, (
-        f"LLM judge returned unexpected format: {result!r}\n"
-        f"Reasoning steps:\n{json.dumps(steps, indent=4)}"
+    assert match, assertion_failed(
+        "Expected JSON format from LLM judge", 
+        result, 
+        steps, 
+        "LLM judge returned unexpected format"
     )
     verdict = json.loads(match.group(0))
-    assert verdict.get("correct") is True, (
-        "LLM judge marked answer incorrect:\n"
-        f"Q: {question}\nExpected context: {expected}\nGot: {candidate}\n"
-        f"Reasoning steps:\n{json.dumps(steps, indent=4)}"
+    assert verdict.get("correct") is True, assertion_failed(
+        expected, 
+        candidate, 
+        steps,
+        f"Question: {question}"
     )
 
 
@@ -432,4 +436,4 @@ def test_ask_semantic_with_llm_judgement(
     except Exception as e:
         if "test_ask" in unify.list_projects():
             unify.delete_project("test_ask")
-        raise e
+        raise e 
