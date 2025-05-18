@@ -22,9 +22,10 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
 import unify
-from constants import LOGGER as _LG
-from communication.transcript_manager.transcript_manager import TranscriptManager
-from communication.types.message import Message
+
+from ..unity.constants import LOGGER as _LG
+from ..communication.transcript_manager.transcript_manager import TranscriptManager
+from ..communication.types.message import Message
 
 # Voice helpers (PortAudio capture, Deepgram STT, Cartesia TTS)
 

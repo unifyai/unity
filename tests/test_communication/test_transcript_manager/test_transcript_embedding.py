@@ -1,7 +1,7 @@
 import pytest
 
-from communication.transcript_manager.transcript_manager import TranscriptManager
-from communication.types.message import Message
+from unity.communication.transcript_manager.transcript_manager import TranscriptManager
+from unity.communication.types.message import Message
 from tests.helpers import _handle_project
 
 

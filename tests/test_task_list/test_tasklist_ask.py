@@ -17,10 +17,10 @@ from datetime import datetime, timezone
 import pytest
 import unify
 
-from task_list_manager.task_list_manager import TaskListManager
-from task_list_manager.types.priority import Priority
-from task_list_manager.types.schedule import Schedule
-from common.llm_helpers import _dumps
+from unity.task_list_manager.task_list_manager import TaskListManager
+from unity.task_list_manager.types.priority import Priority
+from unity.task_list_manager.types.schedule import Schedule
+from unity.common.llm_helpers import _dumps
 from tests.assertion_helpers import assertion_failed
 
 

@@ -4,8 +4,8 @@ import random
 import pytest
 from datetime import datetime
 
-from communication.types.message import Message, VALID_MEDIA
-from communication.transcript_manager.transcript_manager import TranscriptManager
+from unity.communication.types.message import Message, VALID_MEDIA
+from unity.communication.transcript_manager.transcript_manager import TranscriptManager
 from tests.helpers import _handle_project
 
 CONTACTS = [

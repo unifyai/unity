@@ -1,8 +1,8 @@
 import pytest
 from tests.helpers import _handle_project
-from task_list_manager.task_list_manager import TaskListManager
-from task_list_manager.types.status import Status
-from task_list_manager.types.priority import Priority
+from unity.task_list_manager.task_list_manager import TaskListManager
+from unity.task_list_manager.types.status import Status
+from unity.task_list_manager.types.priority import Priority
 
 
 @_handle_project

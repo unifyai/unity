@@ -1,7 +1,7 @@
 import pytest
 from tests.helpers import _handle_project
-from task_list_manager.task_list_manager import TaskListManager
-from task_list_manager.types.schedule import Schedule
+from unity.task_list_manager.task_list_manager import TaskListManager
+from unity.task_list_manager.types.schedule import Schedule
 
 
 # Convenience to make schedules quickly

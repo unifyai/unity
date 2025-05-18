@@ -9,9 +9,7 @@ state matches expectations.
 
 from __future__ import annotations
 
-import json
 import re
-import traceback
 from datetime import datetime, timedelta, timezone
 from typing import List, Dict, Any, Callable
 
@@ -19,9 +17,9 @@ import pytest
 
 from tests.helpers import _handle_project
 from tests.assertion_helpers import assertion_failed
-from task_list_manager.task_list_manager import TaskListManager
-from task_list_manager.types.priority import Priority
-from task_list_manager.types.schedule import Schedule
+from unity.task_list_manager.task_list_manager import TaskListManager
+from unity.task_list_manager.types.priority import Priority
+from unity.task_list_manager.types.schedule import Schedule
 
 
 # Monkey patch the TaskListManager's update method to capture reasoning steps
