@@ -20,6 +20,7 @@ from typing import Dict, List, Any
 
 from knowledge_manager.knowledge_manager import KnowledgeManager
 from tests.helpers import _handle_project
+from tests.assertion_helpers import assertion_failed
 
 
 # --------------------------------------------------------------------------- #
@@ -30,30 +31,6 @@ from tests.helpers import _handle_project
 def _contains(text: str, *needles: str) -> bool:
     """Return True when every needle appears (case-insensitive)."""
     return all(re.search(n, text, re.I) for n in needles)
-
-def _assertion_failed(
-    answer: str,
-    data: Dict[str, List[Dict[str, Any]]],
-    reasoning: List,
-):
-    # Pretty print the reasoning steps, handling nested content fields
-    def format_json_content(msg):
-        if "content" in msg and msg["content"]:
-            try:
-                msg["content"] = json.loads(msg["content"])
-            except (json.JSONDecodeError, TypeError):
-                pass
-        return msg
-
-    formatted_reasoning = [format_json_content(msg) for msg in reasoning]
-    formatted_reasoning = json.dumps(formatted_reasoning, indent=4)
-    formatted_reasoning = formatted_reasoning.replace("\\n", "\n")
-    
-    return (
-        f"\nAnswer:\n{answer}\n"
-        f"Data:\n{json.dumps(data, indent=4)}\n"
-        f"Reasoning:\n{formatted_reasoning}\n"
-    )
 
 
 # --------------------------------------------------------------------------- #
@@ -93,7 +70,13 @@ def test_retrieve_simple_fact():
         "When was Adrian born?",
         return_reasoning_steps=True,
     )
-    assert _contains(answer, "1994"), _assertion_failed(answer, km._search(), reasoning)
+    assert _contains(answer, "1994"), assertion_failed(
+        "Answer containing '1994'", 
+        answer, 
+        reasoning, 
+        "Answer does not contain expected birth year",
+        {"Knowledge Data": km._search()}
+    )
 
 
 # --------------------------------------------------------------------------- #
@@ -114,7 +97,13 @@ def test_round_trip_simple_fact():
         "When was Adrian born?",
         return_reasoning_steps=True,
     )
-    assert _contains(answer, "1994"), _assertion_failed(answer, km._search(), reasoning)
+    assert _contains(answer, "1994"), assertion_failed(
+        "Answer containing '1994'", 
+        answer, 
+        reasoning, 
+        "Answer does not contain expected birth year",
+        {"Knowledge Data": km._search()}
+    )
 
 
 # --------------------------------------------------------------------------- #
@@ -137,25 +126,47 @@ def test_schema_expands_and_new_field_retrievable():
     km.store("Bob is 35 years old.")
 
     answer, reasoning = km.retrieve("How old is Bob?", return_reasoning_steps=True)
-    assert _contains(answer, "35"), _assertion_failed(answer, km._search(), reasoning)
+    assert _contains(answer, "35"), assertion_failed(
+        "Answer containing '35'", 
+        answer, 
+        reasoning, 
+        "Answer does not contain expected age",
+        {"Knowledge Data": km._search()}
+    )
 
     km.store(
         "Bob's favourite colour is green and his height is 180 centimetres.",
     )
 
     answer, reasoning = km.retrieve("How tall is Bob?", return_reasoning_steps=True)
-    assert _contains(answer, "180"), _assertion_failed(answer, km._search(), reasoning)
+    assert _contains(answer, "180"), assertion_failed(
+        "Answer containing '180'", 
+        answer, 
+        reasoning, 
+        "Answer does not contain expected height",
+        {"Knowledge Data": km._search()}
+    )
+    
     answer, reasoning = km.retrieve(
         "What is Bob's favourite colour?",
         return_reasoning_steps=True,
     )
-    assert _contains(answer, "green"), _assertion_failed(
-        answer,
-        km._search(),
-        reasoning,
+    assert _contains(answer, "green"), assertion_failed(
+        "Answer containing 'green'", 
+        answer, 
+        reasoning, 
+        "Answer does not contain expected favorite color",
+        {"Knowledge Data": km._search()}
     )
+    
     answer, reasoning = km.retrieve("How old is Bob?", return_reasoning_steps=True)
-    assert _contains(answer, "35"), _assertion_failed(answer, km._search(), reasoning)
+    assert _contains(answer, "35"), assertion_failed(
+        "Answer containing '35'", 
+        answer, 
+        reasoning, 
+        "Answer does not contain expected age after schema expansion",
+        {"Knowledge Data": km._search()}
+    )
 
 
 # --------------------------------------------------------------------------- #
@@ -187,7 +198,13 @@ def test_multiple_tables_and_join_like_query():
         "How much did Daniel pay for his purchase?",
         return_reasoning_steps=True,
     )
-    assert _contains(answer, "999"), _assertion_failed(answer, km._search(), reasoning)
+    assert _contains(answer, "999"), assertion_failed(
+        "Answer containing '999'", 
+        answer, 
+        reasoning, 
+        "Answer does not contain expected price",
+        {"Knowledge Data": km._search()}
+    )
 
 
 # --------------------------------------------------------------------------- #
@@ -218,10 +235,12 @@ def test_incremental_updates_and_refactor():
         "What are the names of Carol's pets?",
         return_reasoning_steps=True,
     )
-    assert _contains(answer, "Fido", "Luna"), _assertion_failed(
-        answer,
-        km._search(),
-        reasoning,
+    assert _contains(answer, "Fido", "Luna"), assertion_failed(
+        "Answer containing both 'Fido' and 'Luna'", 
+        answer, 
+        reasoning, 
+        "Answer does not contain both expected pet names",
+        {"Knowledge Data": km._search()}
     )
 
 
@@ -252,8 +271,10 @@ def test_numeric_reasoning_after_multiple_points():
         "Which points lie in the first quadrant but have y less than 5?",
         return_reasoning_steps=True,
     )
-    assert "P" in answer and "Q" not in answer, _assertion_failed(
-        answer,
-        km._search(),
-        reasoning,
+    assert "P" in answer and "Q" not in answer, assertion_failed(
+        "Answer containing 'P' but not 'Q'", 
+        answer, 
+        reasoning, 
+        "Answer does not correctly identify only point P",
+        {"Knowledge Data": km._search()}
     )
