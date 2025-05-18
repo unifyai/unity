@@ -31,13 +31,29 @@ def _contains(text: str, *needles: str) -> bool:
     """Return True when every needle appears (case-insensitive)."""
     return all(re.search(n, text, re.I) for n in needles)
 
-
 def _assertion_failed(
     answer: str,
     data: Dict[str, List[Dict[str, Any]]],
     reasoning: List,
 ):
-    return f"\nAnswer:\n{answer}\nData:\n{json.dumps(data, indent=4)}\nReasoning:\n{json.dumps(reasoning, indent=4)}\n"
+    # Pretty print the reasoning steps, handling nested content fields
+    def format_json_content(msg):
+        if "content" in msg and msg["content"]:
+            try:
+                msg["content"] = json.loads(msg["content"])
+            except (json.JSONDecodeError, TypeError):
+                pass
+        return msg
+
+    formatted_reasoning = [format_json_content(msg) for msg in reasoning]
+    formatted_reasoning = json.dumps(formatted_reasoning, indent=4)
+    formatted_reasoning = formatted_reasoning.replace("\\n", "\n")
+    
+    return (
+        f"\nAnswer:\n{answer}\n"
+        f"Data:\n{json.dumps(data, indent=4)}\n"
+        f"Reasoning:\n{formatted_reasoning}\n"
+    )
 
 
 # --------------------------------------------------------------------------- #
