@@ -17,11 +17,13 @@ from __future__ import annotations
 import json
 import random
 import re
+import asyncio
 from collections import Counter
 from datetime import datetime, timezone, timedelta
 from typing import List
 
 import pytest
+import pytest_asyncio
 
 import unify
 from communication.transcript_manager.transcript_manager import TranscriptManager
@@ -347,8 +349,8 @@ QUESTIONS = [
 # --------------------------------------------------------------------------- #
 
 
-@pytest.fixture
-def tm_scenario() -> TranscriptManager:
+@pytest_asyncio.fixture
+async def tm_scenario() -> TranscriptManager:
     """Fresh, fully-seeded manager for every test run."""
     return ScenarioBuilder().tm
 
@@ -420,8 +422,9 @@ def _llm_assert_correct(
 
 
 @pytest.mark.eval
+@pytest.mark.asyncio
 @pytest.mark.parametrize("question", QUESTIONS)
-def test_ask_semantic_with_llm_judgement(
+async def test_ask_semantic_with_llm_judgement(
     question: str,
     tm_scenario: TranscriptManager,
 ) -> None:
@@ -430,10 +433,10 @@ def test_ask_semantic_with_llm_judgement(
     times), then asks a _separate_ LLM whether the answer is acceptable.
     """
     try:
-        candidate, steps = tm_scenario.ask(question, return_reasoning_steps=True)
+        candidate, steps = await tm_scenario.ask(question, return_reasoning_steps=True)
         expected = _answer_semantic(tm_scenario, question)
         _llm_assert_correct(question, expected, candidate, steps)
     except Exception as e:
         if "test_ask" in unify.list_projects():
             unify.delete_project("test_ask")
-        raise e 
+        raise e
