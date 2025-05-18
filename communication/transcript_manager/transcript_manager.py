@@ -7,7 +7,7 @@ from common.embed_utils import EMBED_MODEL, ensure_vector_column
 from communication.types.contact import Contact
 from communication.types.message import Message
 from communication.types.summary import Summary
-from common.llm_helpers import tool_use_loop
+from common.llm_helpers import async_tool_use_loop
 
 
 class TranscriptManager(threading.Thread):
@@ -34,7 +34,7 @@ class TranscriptManager(threading.Thread):
 
     # English-Text Question
 
-    def ask(self, text: str, *, return_reasoning_steps: bool = False) -> Any:
+    async def ask(self, text: str, *, return_reasoning_steps: bool = False) -> Any:
         """
         Ask any question as a text command, and use the tools available (the private methods of this class) to perform the action.
 
@@ -48,9 +48,9 @@ class TranscriptManager(threading.Thread):
         """
         from communication.transcript_manager.sys_msgs import ANSWER
 
-        client = unify.Unify("o4-mini@openai", cache=True)
+        client = unify.AsyncUnify("o4-mini@openai", cache=True)
         client.set_system_message(ANSWER)
-        ans = tool_use_loop(client, text, self._tools)
+        ans = await async_tool_use_loop(client, text, self._tools)
         if return_reasoning_steps:
             return ans, client.messages
         return ans
