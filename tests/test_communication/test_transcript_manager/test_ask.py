@@ -17,7 +17,6 @@ from __future__ import annotations
 import json
 import random
 import re
-import asyncio
 from collections import Counter
 from datetime import datetime, timezone, timedelta
 from typing import List
@@ -30,6 +29,7 @@ from communication.transcript_manager.transcript_manager import TranscriptManage
 from communication.types.message import Message
 from common.llm_helpers import _dumps
 from tests.assertion_helpers import assertion_failed
+from tests.helpers import _handle_project
 
 # --------------------------------------------------------------------------- #
 #  CONTACTS (same as before)                                                  #
@@ -267,7 +267,7 @@ def _answer_semantic(tm: TranscriptManager, question: str) -> str:
         return "200"
 
     if "carlos" in q and "buy" in q:
-        msg = next(
+        msg: Message = next(
             m
             for m in messages
             if m.sender_id == cid("carlos") and "buy" in m.content.lower()
@@ -276,7 +276,7 @@ def _answer_semantic(tm: TranscriptManager, question: str) -> str:
         return f"Yes – {quote}"
 
     if "when did dan last speak with julia" in q:
-        last = max(
+        last: str = max(
             m.timestamp
             for m in messages
             if m.medium == "phone_call"
@@ -420,10 +420,10 @@ def _llm_assert_correct(
 #  PARAMETRISED TEST                                                          #
 # --------------------------------------------------------------------------- #
 
-
 @pytest.mark.eval
 @pytest.mark.asyncio
 @pytest.mark.parametrize("question", QUESTIONS)
+@_handle_project
 async def test_ask_semantic_with_llm_judgement(
     question: str,
     tm_scenario: TranscriptManager,
