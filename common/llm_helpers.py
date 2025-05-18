@@ -245,10 +245,136 @@ async def async_tool_use_loop(
     max_consecutive_failures: int = 3,
     log_steps: bool = False,
 ):
+    r"""
+    Drive a structured-tool conversation with an LLM until it produces a
+    *final* textual answer, executing tool calls concurrently along the way
+    and remaining interruptible at any moment via ``cancel_event``.
+
+    ----------
+    High-level behaviour
+    --------------------
+    1. **Seed the conversation** with the user’s ``message`` and the JSON
+       schemas for every tool in ``tools``.
+    2. Enter an **event loop** that interleaves two concerns:
+
+       *Listening* – wait for **either**
+         • the first of the in-flight tool tasks to finish **or**
+         • an external cancellation signal.
+
+       *Thinking / Acting* – whenever no pending tool task completes the loop
+       checks with the LLM (`client.generate`) to learn whether it should:
+
+         • launch new tool calls (**branch D**) – they are scheduled as
+           asyncio tasks and execution jumps back to *Listening*, **or**
+
+         • emit ordinary assistant text (**branch E**) – if *no* tool calls
+           are outstanding the loop returns that text as the function result;
+           otherwise it keeps listening for the remaining tasks.
+
+    3. **Failure handling** – any exception raised by a tool counts as a
+       *failure*; after ``max_consecutive_failures`` in a row the loop aborts
+       with :class:`RuntimeError`.
+
+    4. **Graceful cancellation** – if ``cancel_event`` is set (or the caller
+       cancels the outer task) all running tools are cancelled and awaited
+       before propagating :class:`asyncio.CancelledError`.
+
+    ----------
+    Execution branches in detail
+    ----------------------------
+    **A – Listen for task completion or cancellation**
+
+        * If at least one tool task is pending the loop waits for the first
+          task **or** ``cancel_event``.  
+        * A set ``pending`` keeps track of every scheduled task and
+          ``task_info`` maps each task to the corresponding *(tool-name,
+          call-id)* pair supplied by the LLM.  
+        * If the *cancel* waiter exits first the loop raises
+          :class:`asyncio.CancelledError` immediately.  
+        * Otherwise the finished tool’s result (or traceback on error) is
+          appended to the conversation as a ``"role": "tool"`` message and
+          the consecutive-failure counter is updated.
+
+    **B – Early cancellation check**  
+        Skip the LLM step altogether if ``cancel_event`` *has already* been
+        set while no tasks were pending.
+
+    **C – Ask the LLM what to do next**  
+        ``client.generate`` is called with:
+
+        * the accumulated conversation,
+        * ``tools_schema`` describing every available function,
+        * ``tool_choice="auto"`` – the model decides whether to call a tool
+          or to speak.
+
+    **D – Launch new tool calls**  
+        For every tool call proposed in ``msg.tool_calls`` a coroutine is
+        prepared (executed in a thread if the function is synchronous),
+        wrapped in ``asyncio.create_task`` and added to ``pending``.  
+        Control returns to *Listening* immediately so tools can run
+        concurrently.
+
+    **E – No new tool calls**  
+
+        * If some tool calls are *still* running: loop back to *Listening*.  
+        * Otherwise – no tasks pending **and** the LLM produced ordinary text –
+          the function returns that text to the caller and terminates.
+
+    ----------
+    Parameters
+    ----------
+    client : :class:`unify.AsyncUnify`
+        Stateful chat-completion client that must expose
+        ``append_messages`` and an async ``generate`` method compatible with
+        the OpenAI ChatCompletion API.
+    message : str
+        The very first user message that kicks off the assistant dialogue.
+    tools : Dict[str, Callable]
+        Mapping **name → callable** for every function the assistant may
+        invoke.  Each callable must be JSON-serialisable via
+        :pyfunc:`method_to_schema`; asynchronous functions are awaited,
+        synchronous ones are wrapped in :func:`asyncio.to_thread`.
+    cancel_event : Optional[:class:`asyncio.Event`], default ``None``
+        If provided, the caller can set this event to *politely* abort the
+        loop.  A fresh, unset :class:`~asyncio.Event` is created when ``None``
+        is given so that callers may also cancel by simply cancelling the
+        outer task.
+    max_consecutive_failures : int, default ``3``
+        After this many **back-to-back** exceptions from tool calls the loop
+        aborts with :class:`RuntimeError` to avoid an infinite crash cycle.
+    log_steps : bool, default ``False``
+        Placeholder for future instrumentation; currently unused.
+
+    ----------
+    Returns
+    -------
+    str
+        The assistant’s final plain-text reply **after** all required tool
+        interactions have completed.
+
+    ----------
+    Raises
+    ------
+    asyncio.CancelledError
+        Raised as soon as cancellation is requested, *after* any running tool
+        tasks have been cancelled and awaited.
+    RuntimeError
+        When ``consecutive_failures`` reaches ``max_consecutive_failures``.
+
+    ----------
+    Examples
+    --------
+    >>> async def get_weather(city: str) -> str: ...
+    >>> loop_task = asyncio.create_task(
+    ...     async_tool_use_loop(
+    ...         client, "What’s the weather in Paris ?", {"weather": get_weather}
+    ...     )
+    ... )
+    >>> # … later …
+    >>> loop_task.result()
+    'The current temperature in Paris is 19 °C and sunny.'
     """
-    Concurrent tool execution loop that can be cancelled at any moment by
-    setting `cancel_event`.
-    """
+
     cancel_event = cancel_event or asyncio.Event()
 
     # ── initial prompt ──────────────────────────────────────────────────
