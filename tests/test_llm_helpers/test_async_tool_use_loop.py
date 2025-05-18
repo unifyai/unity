@@ -20,7 +20,7 @@ import pytest
 #  MODULE UNDER TEST                                                          #
 # --------------------------------------------------------------------------- #
 # Change import path if your helpers live elsewhere
-import common.llm_helpers as llmh
+import unity.common.llm_helpers as llmh
 
 
 # --------------------------------------------------------------------------- #

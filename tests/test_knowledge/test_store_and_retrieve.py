@@ -18,7 +18,7 @@ import json
 import pytest
 from typing import Dict, List, Any
 
-from knowledge_manager.knowledge_manager import KnowledgeManager
+from unity.knowledge_manager.knowledge_manager import KnowledgeManager
 from tests.helpers import _handle_project
 from tests.assertion_helpers import assertion_failed
 

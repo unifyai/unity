@@ -25,9 +25,9 @@ import pytest
 import pytest_asyncio
 
 import unify
-from communication.transcript_manager.transcript_manager import TranscriptManager
-from communication.types.message import Message
-from common.llm_helpers import _dumps
+from unity.communication.transcript_manager.transcript_manager import TranscriptManager
+from unity.communication.types.message import Message
+from unity.common.llm_helpers import _dumps
 from tests.assertion_helpers import assertion_failed
 from tests.helpers import _handle_project
 
