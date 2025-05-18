@@ -253,7 +253,7 @@ async def async_tool_use_loop(
     ----------
     High-level behaviour
     --------------------
-    1. **Seed the conversation** with the user’s ``message`` and the JSON
+    1. **Seed the conversation** with the user's ``message`` and the JSON
        schemas for every tool in ``tools``.
     2. Enter an **event loop** that interleaves two concerns:
 
@@ -291,7 +291,7 @@ async def async_tool_use_loop(
           call-id)* pair supplied by the LLM.  
         * If the *cancel* waiter exits first the loop raises
           :class:`asyncio.CancelledError` immediately.  
-        * Otherwise the finished tool’s result (or traceback on error) is
+        * Otherwise the finished tool's result (or traceback on error) is
           appended to the conversation as a ``"role": "tool"`` message and
           the consecutive-failure counter is updated.
 
@@ -349,7 +349,7 @@ async def async_tool_use_loop(
     Returns
     -------
     str
-        The assistant’s final plain-text reply **after** all required tool
+        The assistant's final plain-text reply **after** all required tool
         interactions have completed.
 
     ----------
@@ -367,7 +367,7 @@ async def async_tool_use_loop(
     >>> async def get_weather(city: str) -> str: ...
     >>> loop_task = asyncio.create_task(
     ...     async_tool_use_loop(
-    ...         client, "What’s the weather in Paris ?", {"weather": get_weather}
+    ...         client, "What's the weather in Paris ?", {"weather": get_weather}
     ...     )
     ... )
     >>> # … later …
@@ -376,6 +376,9 @@ async def async_tool_use_loop(
     """
 
     cancel_event = cancel_event or asyncio.Event()
+
+    if log_steps:
+        LOGGER.info(f"\n🧑‍💻 {message}\n")
 
     # ── initial prompt ──────────────────────────────────────────────────
     tools_schema = [method_to_schema(v) for v in tools.values()]
@@ -409,9 +412,16 @@ async def async_tool_use_loop(
                         raw = task.result()
                         result = _dumps(raw, indent=4)
                         consecutive_failures = 0
+                        if log_steps:
+                            LOGGER.info(f"\n🛠️ {name} = {result}\n")
                     except Exception:
                         consecutive_failures += 1
                         result = traceback.format_exc()
+                        if log_steps:
+                            LOGGER.error(
+                                f"\n❌ {name} raised an exception "
+                                f"(attempt {consecutive_failures}/{max_consecutive_failures}):\n{result}",
+                            )
 
                     client.append_messages(
                         [
@@ -425,6 +435,11 @@ async def async_tool_use_loop(
                     )
 
                     if consecutive_failures >= max_consecutive_failures:
+                        if log_steps:
+                            LOGGER.error(
+                                f"🚨 Aborting: reached "
+                                f"{max_consecutive_failures} consecutive tool failures.",
+                            )
                         raise RuntimeError(
                             "Aborted after too many consecutive tool failures.",
                         )
@@ -434,6 +449,9 @@ async def async_tool_use_loop(
                 raise asyncio.CancelledError
 
             # ── C.  Ask the LLM what to do next ───────────────────────
+            if log_steps:
+                LOGGER.info("🔄 LLM thinking…")
+
             response = await client.generate(
                 return_full_completion=True,
                 tools=tools_schema,
@@ -457,6 +475,9 @@ async def async_tool_use_loop(
                     t = asyncio.create_task(coro)
                     pending.add(t)
                     task_info[t] = (name, call.id)
+
+                if log_steps:
+                    LOGGER.info("✅ Step finished (tool calls scheduled)")
                 continue  # wait for first of them
 
             # ── E.  No new tool calls  ────────────────────────────────
@@ -464,6 +485,9 @@ async def async_tool_use_loop(
                 # Go back to top; will wait for remaining tasks
                 continue
 
+            if log_steps:
+                LOGGER.info(f"\n🤖 {msg.content}\n")
+                LOGGER.info("✅ Step finished (final answer)")
             return msg.content
 
     except asyncio.CancelledError:
