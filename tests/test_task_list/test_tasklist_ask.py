@@ -21,6 +21,7 @@ from task_list_manager.task_list_manager import TaskListManager
 from task_list_manager.types.priority import Priority
 from task_list_manager.types.schedule import Schedule
 from common.llm_helpers import _dumps
+from tests.assertion_helpers import assertion_failed
 
 
 class ScenarioBuilder:
@@ -135,15 +136,18 @@ def _llm_assert_correct(
     result = judge.generate(payload)
 
     match = re.search(r"\{.*\}", result, re.S)
-    assert match, (
-        "LLM judge returned unexpected format: "
-        f"{result!r}\nReasoning steps:\n{json.dumps(steps, indent=4)}"
+    assert match, assertion_failed(
+        "Expected JSON format from LLM judge", 
+        result, 
+        steps, 
+        "LLM judge returned unexpected format"
     )
     verdict = json.loads(match.group(0))
-    assert verdict.get("correct") is True, (
-        "LLM judge marked answer incorrect:\n"
-        f"Q: {question}\nExpected: {expected}\nGot: {candidate}\n"
-        f"Reasoning steps:\n{json.dumps(steps, indent=4)}"
+    assert verdict.get("correct") is True, assertion_failed(
+        expected, 
+        candidate, 
+        steps,
+        f"Question: {question}"
     )
 
 
