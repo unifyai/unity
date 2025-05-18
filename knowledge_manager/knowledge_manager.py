@@ -163,7 +163,7 @@ class KnowledgeManager(threading.Thread):
             List[Dict[str, Dict[str, Union[str, ColumnType]]]]: Table names and their descriptions, and optionally also column names and types.
         """
         tables = {
-            k.lstrip("Knowledge/"): {"description": v}
+            k[10:]: {"description": v}
             for k, v in unify.get_contexts(prefix="Knowledge/").items()
         }
         if not include_columns:
