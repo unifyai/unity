@@ -4,8 +4,14 @@ import traceback
 import unify
 
 
-def _handle_project(test_fn):
-    # noinspection PyBroadException
+def _handle_project(test_fn=None, delete_on_cleanup=False):
+
+    if test_fn is None:
+        return lambda f: _handle_project(
+            f,
+            delete_on_cleanup=delete_on_cleanup,
+        )
+
     @functools.wraps(test_fn)
     def wrapper(*args, **kwargs):
         project = test_fn.__name__
@@ -13,10 +19,12 @@ def _handle_project(test_fn):
             unify.delete_project(project)
         try:
             with unify.Project(project):
-                test_fn(*args, **kwargs)
-            unify.delete_project(project)
+                unify.traced(test_fn(*args, **kwargs))
+            if delete_on_cleanup:
+                unify.delete_project(project)
         except:
-            unify.delete_project(project)
+            if delete_on_cleanup:
+                unify.delete_project(project)
             exc_type, exc_value, exc_tb = sys.exc_info()
             tb_string = "".join(traceback.format_exception(exc_type, exc_value, exc_tb))
             raise Exception(f"{tb_string}")
