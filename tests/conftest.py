@@ -25,7 +25,6 @@ import pytest
 import unify
 
 unify.activate("UnityTests")
-unify.set_trace_context("Traces")
 
 
 # --------------------------------------------------------------------------- #
