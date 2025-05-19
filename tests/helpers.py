@@ -19,7 +19,7 @@ def _handle_project(test_fn=None, delete_on_cleanup=False):
             unify.delete_project(project)
         try:
             with unify.Project(project):
-                unify.traced(test_fn(*args, **kwargs))
+                unify.traced(test_fn)(*args, **kwargs)
             if delete_on_cleanup:
                 unify.delete_project(project)
         except:
