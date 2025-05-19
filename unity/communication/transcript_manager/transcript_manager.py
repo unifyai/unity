@@ -29,9 +29,10 @@ class TranscriptManager:
 
         ctxs = unify.get_context()
         read_ctx, write_ctx = ctxs["read"], ctxs["write"]
-        self._local_ctx = "Contacts"
-        self._read_ctx = f"{read_ctx}/{self._local_ctx}" if read_ctx else self._local_ctx
-        self._write_ctx = f"{write_ctx}/{self._local_ctx}" if write_ctx else self._local_ctx
+        assert read_ctx == write_ctx, "read and write contexts must be the same when instantiating a TranscriptManager."
+        self._contacts_ctx = f"{read_ctx}/Contacts" if read_ctx else "Contacts"
+        self._transcripts_ctx = f"{read_ctx}/Transcripts" if read_ctx else "Transcripts"
+        self._summaries_ctx = f"{read_ctx}/TranscriptSummaries" if read_ctx else "TranscriptSummaries"
 
         # Add tracing
         if traced:
@@ -96,7 +97,7 @@ class TranscriptManager:
         }
         summary = client.generate(json.dumps(exchanges, indent=4))
         unify.log(
-            context="TranscriptSummaries",
+            context=self._summaries_ctx,
             exchange_ids=exchange_ids,
             summary=summary,
         )
@@ -107,7 +108,7 @@ class TranscriptManager:
         Log messages onto the platform.
         """
         return unify.create_logs(
-            context="Transcripts",
+            context=self._transcripts_ctx,
             entries=[msg.model_dump() for msg in messages],
         )
 
@@ -146,9 +147,9 @@ class TranscriptManager:
         ), "At least one contact detail must be provided."
 
         # If it's the first contact, create immediately
-        if not any(ctx.endswith(self._local_ctx) for ctx in unify.get_contexts()):
+        if not self._contacts_ctx in unify.get_contexts():
             return unify.log(
-                context=self._write_ctx,
+                context=self._contacts_ctx,
                 **contact_details,
                 contact_id=0,
                 new=True,
@@ -159,7 +160,7 @@ class TranscriptManager:
             if key in ["first_name", "surname"] or value is None:
                 continue
             logs = unify.get_logs(
-                context=self._read_ctx,
+                context=self._contacts_ctx,
                 filter=f"{key} == '{value}'",
             )
             assert (
@@ -168,14 +169,14 @@ class TranscriptManager:
 
         # ToDo: filter only for contact_id once supported in the Python utility function
         logs = unify.get_logs(
-            context=self._read_ctx,
+            context=self._contacts_ctx,
         )
         largest_id = max([lg.entries["contact_id"] for lg in logs])
         this_id = largest_id + 1
 
         # Create the new contact
         return unify.log(
-            context=self._write_ctx,
+            context=self._contacts_ctx,
             **contact_details,
             contact_id=this_id,
             new=True,
@@ -222,7 +223,7 @@ class TranscriptManager:
             if key in ["first_name", "surname"] or value is None:
                 continue
             logs = unify.get_logs(
-                context=self._read_ctx,
+                context=self._contacts_ctx,
                 filter=f"{key} == '{value}'",
             )
             assert (
@@ -230,7 +231,7 @@ class TranscriptManager:
             ), f"Invalid, contact with {key} {value} already exists."
 
         # get log id
-        logs = unify.get_logs(context=self._read_ctx, filter=f"contact_id == {contact_id}")
+        logs = unify.get_logs(context=self._contacts_ctx, filter=f"contact_id == {contact_id}")
         assert len(logs) == 1
         log: unify.Log = logs[0]
         log.update_entries(
@@ -256,9 +257,9 @@ class TranscriptManager:
         Returns:
             List[Message]: A list of messages semantically similar to the provided text.
         """
-        ensure_vector_column("Transcripts", self._VEC_MSG, "content")
+        ensure_vector_column(self._transcripts_ctx, self._VEC_MSG, "content")
         logs = unify.get_logs(
-            context="Transcripts",
+            context=self._transcripts_ctx,
             sorting={
                 f"cosine({self._VEC_MSG}, embed('{text}', model='{EMBED_MODEL}'))": "ascending",
             },
@@ -283,9 +284,9 @@ class TranscriptManager:
             List[Summary]: A list of summaries semantically similar to the provided text.
         """
 
-        ensure_vector_column("Transcripts", self._VEC_MSG, "content")
+        ensure_vector_column(self._transcripts_ctx, self._VEC_MSG, "content")
         logs = unify.get_logs(
-            context="TranscriptSummaries",
+            context=self._summaries_ctx,
             sorting={
                 f"cosine({self._VEC_SUM}, embed('{text}', model='{EMBED_MODEL}'))": "ascending",
             },
@@ -312,7 +313,7 @@ class TranscriptManager:
             List[Dict[str, str]]: A list of contacts.
         """
         logs = unify.get_logs(
-            context=self._read_ctx,
+            context=self._contacts_ctx,
             filter=filter,
             offset=offset,
             limit=limit,
@@ -338,7 +339,7 @@ class TranscriptManager:
             List[Dict[str, str]]: A list of messages.
         """
         logs = unify.get_logs(
-            context="Transcripts",
+            context=self._transcripts_ctx,
             filter=filter,
             offset=offset,
             limit=limit,
@@ -364,7 +365,7 @@ class TranscriptManager:
             List[Dict[str, str]]: A list of exchange summaries.
         """
         logs = unify.get_logs(
-            context="TranscriptSummaries",
+            context=self._summaries_ctx,
             filter=filter,
             offset=offset,
             limit=limit,
