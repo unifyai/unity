@@ -104,7 +104,7 @@ class KnowledgeManager(threading.Thread):
     def _get_columns(self, *, table: str) -> Dict[str, str]:
         proj = unify.active_project()
         ctx = f"Knowledge/{table}"
-        url = f"https://api.unify.ai/v0/logs/fields?project={proj}&context={ctx}"
+        url = f"{os.environ['UNIFY_BASE_URL']}/logs/fields?project={proj}&context={ctx}"
         headers = {"Authorization": f"Bearer {API_KEY}"}
         response = requests.request("GET", url, headers=headers)
         _handle_exceptions(response)
@@ -141,7 +141,7 @@ class KnowledgeManager(threading.Thread):
         unify.create_context(ctx, description=description)
         if not columns:
             return
-        url = f"https://api.unify.ai/v0/logs/fields"
+        url = f"{os.environ['UNIFY_BASE_URL']}/logs/fields"
         headers = {"Authorization": f"Bearer {API_KEY}"}
         json_input = {"project": proj, "context": ctx, "fields": columns}
         response = requests.request("POST", url, json=json_input, headers=headers)
@@ -187,7 +187,7 @@ class KnowledgeManager(threading.Thread):
         proj = unify.active_project()
         old_name = f"Knowledge/{old_name}"
         new_name = f"Knowledge/{new_name}"
-        url = f"https://api.unify.ai/v0/project/{proj}/contexts/{old_name}/rename"
+        url = f"{os.environ['UNIFY_URL']}/project/{proj}/contexts/{old_name}/rename"
         headers = {"Authorization": f"Bearer {API_KEY}"}
         json_input = {"name": new_name}
         response = requests.request("PATCH", url, json=json_input, headers=headers)
@@ -230,12 +230,12 @@ class KnowledgeManager(threading.Thread):
         """
         proj = unify.active_project()
         ctx = f"Knowledge/{table}"
-        url = f"https://api.unify.ai/v0/logs/fields"
+        url = f"{os.environ['UNIFY_BASE_URL']}/logs/fields"
         headers = {"Authorization": f"Bearer {API_KEY}"}
         json_input = {
             "project": proj,
             "context": ctx,
-            "fields": {column_name: column_type}
+            "fields": {column_name: column_type},
         }
         response = requests.request("POST", url, json=json_input, headers=headers)
         _handle_exceptions(response)
@@ -261,7 +261,7 @@ class KnowledgeManager(threading.Thread):
         Returns:
             Dict[str, str]: Message explaining whether the column was created or not.
         """
-        url = "https://api.unify.ai/v0/logs/derived"
+        url = f"{os.environ['UNIFY_BASE_URL']}/logs/derived"
         headers = {"Authorization": f"Bearer {API_KEY}"}
         equation = equation.replace("{", "{lg:")
         json_input = {
@@ -286,7 +286,7 @@ class KnowledgeManager(threading.Thread):
         Returns:
             Dict[str, str]: Message explaining whether the column was deleted or not.
         """
-        url = "https://api.unify.ai/v0/logs?delete_empty_logs=True"
+        url = f"{os.environ['UNIFY_BASE_URL']}/logs?delete_empty_logs=True"
         headers = {"Authorization": f"Bearer {API_KEY}"}
         json_input = {
             "project": unify.active_project(),
@@ -320,7 +320,7 @@ class KnowledgeManager(threading.Thread):
         """
         proj = unify.active_project()
         ctx = f"Knowledge/{table}"
-        url = "https://api.unify.ai/v0/logs/rename_field"
+        url = f"{os.environ['UNIFY_BASE_URL']}/logs/rename_field"
         headers = {"Authorization": f"Bearer {API_KEY}"}
         json_input = {
             "project": proj,
