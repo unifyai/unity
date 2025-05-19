@@ -242,7 +242,7 @@ class ChatApp(App):
         if event.button.id == "call_button":
             if not self.call_proc:
                 self.call_proc = run_in_new_terminal(
-                            r"C:\Users\LEGION\Desktop\unity\unity\voice_user_agent\call.py",
+                            "call.py",
                             "console",                          # ← keep this
                         )
                 # not sure if we should wait until the proc fully connects and is awake
