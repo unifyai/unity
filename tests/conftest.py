@@ -22,6 +22,10 @@ from typing import Any, Dict, List, Optional
 
 import pytest
 
+import unify
+
+unify.set_trace_context("Traces")
+
 
 # --------------------------------------------------------------------------- #
 #  Command-line flag                                                          #
