@@ -124,7 +124,7 @@ class TaskListManager(threading.Thread):
         Returns:
             Dict[str, str]: Whether the task list was updated, and if so then how.
         """
-        from task_list_manager.sys_msgs import UPDATE
+        from .sys_msgs import UPDATE
 
         client = unify.Unify("o4-mini@openai", cache=True)
         client.set_system_message(
