@@ -29,13 +29,14 @@ sys.path.insert(0, str(ROOT))
 
 import unify
 
-from ..unity.constants import LOGGER as _LG
-from ..knowledge_manager.knowledge_manager import KnowledgeManager
-from .utils import (
+from unity.constants import LOGGER as _LG  # type: ignore
+from unity.knowledge_manager.knowledge_manager import KnowledgeManager  # type: ignore
+from sandboxes.utils import (
     record_until_enter as _record_until_enter,
     transcribe_deepgram as _transcribe_deepgram,
     speak as _speak,
-)
+)  # type: ignore
+
 
 # ---------------------------------------------------------------------------
 # Scenario seeding

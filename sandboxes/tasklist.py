@@ -22,16 +22,17 @@ sys.path.insert(0, str(ROOT))
 
 import unify
 
-from ..unity.constants import LOGGER as _LG
-from ..task_list_manager.task_list_manager import TaskListManager
-from ..task_list_manager.types.priority import Priority
-from ..task_list_manager.types.schedule import Schedule
-from ..tests.test_task_list.test_update_text_complex import _next_weekday
-from .utils import (
+from unity.constants import LOGGER as _LG  # type: ignore
+from unity.task_list_manager.task_list_manager import TaskListManager  # type: ignore
+from unity.task_list_manager.types.priority import Priority  # type: ignore
+from unity.task_list_manager.types.schedule import Schedule  # type: ignore
+from tests.test_task_list.test_update_text_complex import _next_weekday  # type: ignore
+from sandboxes.utils import (
     record_until_enter as _record_until_enter,
     transcribe_deepgram as _transcribe_deepgram,
     speak as _speak,
-)
+)  # type: ignore
+
 
 # ---------------------------------------------------------------------------
 # Scenario seeding helpers (fixed + LLM)
@@ -70,7 +71,7 @@ def _seed_fixed(tlm: TaskListManager) -> None:
     )
     tlm._create_task(
         name="Deploy new release",
-        description="Roll out version 2.0 to production servers.",
+        description="Roll out version 2.0 to production servers.",
         status="paused",
     )
 
@@ -180,7 +181,7 @@ def _dispatch(tlm: TaskListManager, raw: str, *, show_steps: bool):
 
 def main() -> None:
     parser = argparse.ArgumentParser(
-        description="TaskListManager sandbox with minimalist voice mode (Deepgram v4, Cartesia)",
+        description="TaskListManager sandbox with minimalist voice mode (Deepgram v4, Cartesia)",
     )
     parser.add_argument(
         "--voice",
