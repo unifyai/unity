@@ -30,6 +30,7 @@ def _handle_project(
             unify.delete_context(ctx)
         try:
             with unify.Context(ctx):
+                unify.set_trace_context("Traces")
                 unify.traced(test_fn)(*args, **kwargs)
             if delete_ctx_on_exit:
                 unify.delete_context(ctx)
