@@ -16,7 +16,7 @@ class TranscriptManager(threading.Thread):
     _VEC_MSG = "content_emb"
     _VEC_SUM = "summary_emb"
 
-    def __init__(self, *, daemon: bool = True) -> None:
+    def __init__(self, *, traced: bool = True, daemon: bool = True) -> None:
         """
         Responsible for *searching through* the full transcripts across all communcation channels exposed to the assistant.
         """
@@ -28,6 +28,10 @@ class TranscriptManager(threading.Thread):
             self._search_summaries.__name__: self._search_summaries,
             self._nearest_messages.__name__: self._nearest_messages,
         }
+
+        # Add tracing
+        if traced:
+            self = unify.traced(self)
 
     # Public #
     # -------#

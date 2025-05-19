@@ -20,7 +20,7 @@ class TaskListManager(threading.Thread):
 
     _VEC_TASK = "task_emb"
 
-    def __init__(self, *, daemon: bool = True) -> None:
+    def __init__(self, *, traced: bool = True, daemon: bool = True) -> None:
         """
         Responsible for managing the list of tasks, updating the names, descriptions, schedules, repeating pattern and status of all tasks.
 
@@ -67,6 +67,10 @@ class TaskListManager(threading.Thread):
         # to the manager to avoid an expensive scan across *all* logs every
         # time we create a task.  Initialised lazily on first use.
         self._next_id: Optional[int] = None
+
+        # Add tracing
+        if traced:
+            self = unify.traced(self)
 
     # Public #
     # -------#
