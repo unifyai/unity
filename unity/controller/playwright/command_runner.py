@@ -209,12 +209,27 @@ class CommandRunner:
             return
 
         # auto scroll ------------------------------------------------------
-        if cmd in {CMD_START_SCROLL_UP, CMD_START_SCROLL_DOWN}:
+        # match e.g. "start_scrolling_down 600" or plain command without speed
+        m = re.fullmatch(r"start_scrolling_(up|down)(?:\s+(\d+))?", low)
+        if m:
+            direction = m.group(1)  # 'up' or 'down'
+            # If speed (pixels per second) provided, convert to px/ms; else default
+            if m.group(2):
+                try:
+                    px_per_s = int(m.group(2))
+                except ValueError:
+                    px_per_s = 250  # fallback to default
+                speed = px_per_s / 1000  # JS expects pixels per millisecond
+            else:
+                speed = AUTO_SCROLL_SPEED
+                px_per_s = int(speed * 1000)
+
             self.active.evaluate(
                 AUTO_SCROLL_JS,
-                {"dir": "up" if "up" in cmd else "down", "speed": AUTO_SCROLL_SPEED},
+                {"dir": direction, "speed": speed},
             )
-            self.state.auto_scroll = "up" if "up" in cmd else "down"
+            self.state.auto_scroll = direction
+            self.state.scroll_speed = px_per_s
             return
         if cmd == CMD_STOP_SCROLLING:
             self.active.evaluate(AUTO_SCROLL_JS, {"dir": "stop", "speed": 0})
