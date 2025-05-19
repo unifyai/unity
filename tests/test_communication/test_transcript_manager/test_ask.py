@@ -22,7 +22,6 @@ from datetime import datetime, timezone, timedelta
 from typing import List
 
 import pytest
-import pytest_asyncio
 
 import unify
 from unity.communication.transcript_manager.transcript_manager import TranscriptManager
@@ -85,9 +84,6 @@ class ScenarioBuilder:
     """Populate Unify with contacts, 6 'meaningful' exchanges + filler."""
 
     def __init__(self) -> None:
-        if "test_ask" in unify.list_projects():
-            unify.delete_project("test_ask")
-        unify.activate("test_ask")
         self.tm = TranscriptManager()
         self.tm.start()
         self._seed_contacts()
@@ -345,17 +341,6 @@ QUESTIONS = [
 
 
 # --------------------------------------------------------------------------- #
-#  PYTEST FIXTURES                                                            #
-# --------------------------------------------------------------------------- #
-
-
-@pytest_asyncio.fixture
-async def tm_scenario() -> TranscriptManager:
-    """Fresh, fully-seeded manager for every test run."""
-    return ScenarioBuilder().tm
-
-
-# --------------------------------------------------------------------------- #
 #  EVALUATION LLM                                                             #
 # --------------------------------------------------------------------------- #
 
@@ -409,7 +394,10 @@ def _llm_assert_correct(
     )
     verdict = json.loads(match.group(0))
     assert verdict.get("correct") is True, assertion_failed(
-        expected, candidate, steps, f"Question: {question}"
+        expected,
+        candidate,
+        steps,
+        f"Question: {question}",
     )
 
 
@@ -424,15 +412,15 @@ def _llm_assert_correct(
 @_handle_project
 async def test_ask_semantic_with_llm_judgement(
     question: str,
-    tm_scenario: TranscriptManager,
 ) -> None:
     """
     Calls the real `.ask()` (which itself may call the LLM multiple
     times), then asks a _separate_ LLM whether the answer is acceptable.
     """
+    tm = ScenarioBuilder().tm
     try:
-        candidate, steps = await tm_scenario.ask(question, return_reasoning_steps=True)
-        expected = _answer_semantic(tm_scenario, question)
+        candidate, steps = await tm.ask(question, return_reasoning_steps=True)
+        expected = _answer_semantic(tm, question)
         _llm_assert_correct(question, expected, candidate, steps)
     except Exception as e:
         if "test_ask" in unify.list_projects():
