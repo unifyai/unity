@@ -19,7 +19,13 @@ def _handle_project(
 
     @functools.wraps(test_fn)
     def wrapper(*args, **kwargs):
-        ctx = test_fn.__name__
+        # Get the full module path and extract the test directory structure
+        module_path = test_fn.__module__
+        test_dirs = module_path.split(".")
+        # Remove 'tests' from the path and join the remaining parts
+        test_path = "/".join(test_dirs[1:])  # Skip 'tests' directory
+        ctx = f"{test_path}/{test_fn.__name__}"
+
         if not try_reuse_prev_ctx and ctx in unify.get_contexts():
             unify.delete_context(ctx)
         try:
