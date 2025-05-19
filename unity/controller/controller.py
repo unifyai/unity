@@ -1,6 +1,6 @@
 import threading
 from datetime import datetime, timezone
-from typing import Any, Type
+from typing import Any, Type, Optional
 
 import redis
 import unify
@@ -83,26 +83,43 @@ class Controller(threading.Thread):
             assert cmd is not None, f"text_command {text_action} returned empty command"
             action = cmd["action"]
 
-            if action == "open browser" and not self._browser_open:
-                # ToDo: implement this action
-                self._browser_worker.start()
-                self._browser_open = True
-            elif action == "close browser" and self._browser_open:
-                # ToDo: implement this action
-                self._browser_worker.stop()
-                self._browser_worker.join(timeout=2)
-                self._browser_open = False
-            elif not self._browser_open:
-                self._browser_worker.start()
-                self._browser_open = True
-                self._redis_client.publish("browser_state", action)
-            else:
-                self._redis_client.publish("browser_state", action)
+            self._perform_action(action)
 
-            # ToDo: only send this once we KNOW the browser action has completed successfully
-            self._redis_client.publish("action_completion", action)
-            t = datetime.now(timezone.utc).time().isoformat(timespec="milliseconds")
-            LOGGER.info(f"\n🕹️ Performed Action: {action} [⏱️ {t}]\n")
+    # ------------------------------------------------------------------
+    #  Internal helper – perform a single low-level primitive
+    # ------------------------------------------------------------------
+    def _perform_action(self, action: str) -> None:
+        """Execute *action* and publish completion events.
+
+        This consolidates the previously duplicated logic so it can be
+        reused by both the background thread (`run`) and the new public
+        `act()` method.
+        """
+
+        # ── browser life-cycle primitives ────────────────────────────
+        if action == "open browser" and not self._browser_open:
+            self._browser_worker.start()
+            self._browser_open = True
+
+        elif action == "close browser" and self._browser_open:
+            self._browser_worker.stop()
+            self._browser_worker.join(timeout=2)
+            self._browser_open = False
+
+        # other primitives ------------------------------------------------
+        elif not self._browser_open:
+            # lazily (auto) start the worker if it isn't running
+            self._browser_worker.start()
+            self._browser_open = True
+            self._redis_client.publish("browser_state", action)
+        else:
+            self._redis_client.publish("browser_state", action)
+
+        # notify listeners that the action finished (optimistic)
+        self._redis_client.publish("action_completion", action)
+
+        t = datetime.now(timezone.utc).time().isoformat(timespec="milliseconds")
+        LOGGER.info(f"\n🕹️ Performed Action: {action} [⏱️ {t}]\n")
 
     # ------------------------------------------------------------------
     #  Public helper – high-level "observe" question-answering
@@ -121,3 +138,29 @@ class Controller(threading.Thread):
             context=self._observe_ctx,
             screenshot=self._last_shot,
         )
+
+    # ------------------------------------------------------------------
+    #  Public helper – synchronous one-shot action
+    # ------------------------------------------------------------------
+    def act(self, text: str) -> Optional[str]:
+        """Convert natural-language *text* to a primitive and execute it.
+
+        Returns the low-level primitive string that was executed or
+        ``None`` when the LLM failed to pick an action.
+        """
+
+        cmd = text_to_browser_action(
+            text=text,
+            screenshot=self._last_shot,
+            tabs=self._observe_ctx.get("tabs", []),
+            buttons=self._observe_ctx.get("elements", []),
+            history=self._observe_ctx.get("history", []),
+            state=self._observe_ctx.get("state", {}),
+        )
+
+        if not cmd:
+            return None
+
+        action = cmd["action"]
+        self._perform_action(action)
+        return action
