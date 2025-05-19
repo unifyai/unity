@@ -71,11 +71,11 @@ def test_retrieve_simple_fact():
         return_reasoning_steps=True,
     )
     assert _contains(answer, "1994"), assertion_failed(
-        "Answer containing '1994'", 
-        answer, 
-        reasoning, 
+        "Answer containing '1994'",
+        answer,
+        reasoning,
         "Answer does not contain expected birth year",
-        {"Knowledge Data": km._search()}
+        {"Knowledge Data": km._search()},
     )
 
 
@@ -98,11 +98,11 @@ def test_round_trip_simple_fact():
         return_reasoning_steps=True,
     )
     assert _contains(answer, "1994"), assertion_failed(
-        "Answer containing '1994'", 
-        answer, 
-        reasoning, 
+        "Answer containing '1994'",
+        answer,
+        reasoning,
         "Answer does not contain expected birth year",
-        {"Knowledge Data": km._search()}
+        {"Knowledge Data": km._search()},
     )
 
 
@@ -127,11 +127,11 @@ def test_schema_expands_and_new_field_retrievable():
 
     answer, reasoning = km.retrieve("How old is Bob?", return_reasoning_steps=True)
     assert _contains(answer, "35"), assertion_failed(
-        "Answer containing '35'", 
-        answer, 
-        reasoning, 
+        "Answer containing '35'",
+        answer,
+        reasoning,
         "Answer does not contain expected age",
-        {"Knowledge Data": km._search()}
+        {"Knowledge Data": km._search()},
     )
 
     km.store(
@@ -140,32 +140,32 @@ def test_schema_expands_and_new_field_retrievable():
 
     answer, reasoning = km.retrieve("How tall is Bob?", return_reasoning_steps=True)
     assert _contains(answer, "180"), assertion_failed(
-        "Answer containing '180'", 
-        answer, 
-        reasoning, 
+        "Answer containing '180'",
+        answer,
+        reasoning,
         "Answer does not contain expected height",
-        {"Knowledge Data": km._search()}
+        {"Knowledge Data": km._search()},
     )
-    
+
     answer, reasoning = km.retrieve(
         "What is Bob's favourite colour?",
         return_reasoning_steps=True,
     )
     assert _contains(answer, "green"), assertion_failed(
-        "Answer containing 'green'", 
-        answer, 
-        reasoning, 
+        "Answer containing 'green'",
+        answer,
+        reasoning,
         "Answer does not contain expected favorite color",
-        {"Knowledge Data": km._search()}
+        {"Knowledge Data": km._search()},
     )
-    
+
     answer, reasoning = km.retrieve("How old is Bob?", return_reasoning_steps=True)
     assert _contains(answer, "35"), assertion_failed(
-        "Answer containing '35'", 
-        answer, 
-        reasoning, 
+        "Answer containing '35'",
+        answer,
+        reasoning,
         "Answer does not contain expected age after schema expansion",
-        {"Knowledge Data": km._search()}
+        {"Knowledge Data": km._search()},
     )
 
 
@@ -199,11 +199,11 @@ def test_multiple_tables_and_join_like_query():
         return_reasoning_steps=True,
     )
     assert _contains(answer, "999"), assertion_failed(
-        "Answer containing '999'", 
-        answer, 
-        reasoning, 
+        "Answer containing '999'",
+        answer,
+        reasoning,
         "Answer does not contain expected price",
-        {"Knowledge Data": km._search()}
+        {"Knowledge Data": km._search()},
     )
 
 
@@ -236,11 +236,11 @@ def test_incremental_updates_and_refactor():
         return_reasoning_steps=True,
     )
     assert _contains(answer, "Fido", "Luna"), assertion_failed(
-        "Answer containing both 'Fido' and 'Luna'", 
-        answer, 
-        reasoning, 
+        "Answer containing both 'Fido' and 'Luna'",
+        answer,
+        reasoning,
         "Answer does not contain both expected pet names",
-        {"Knowledge Data": km._search()}
+        {"Knowledge Data": km._search()},
     )
 
 
@@ -272,9 +272,9 @@ def test_numeric_reasoning_after_multiple_points():
         return_reasoning_steps=True,
     )
     assert "P" in answer or "3, 4" in answer, assertion_failed(
-        "Answer containing 'P' but not 'Q'", 
-        answer, 
-        reasoning, 
+        "Answer containing 'P' but not 'Q'",
+        answer,
+        reasoning,
         "Answer does not correctly identify only point P",
-        {"Knowledge Data": km._search()}
+        {"Knowledge Data": km._search()},
     )

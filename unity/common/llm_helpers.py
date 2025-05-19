@@ -285,21 +285,21 @@ async def async_tool_use_loop(
     **A – Listen for task completion or cancellation**
 
         * If at least one tool task is pending the loop waits for the first
-          task **or** ``cancel_event``.  
+          task **or** ``cancel_event``.
         * A set ``pending`` keeps track of every scheduled task and
           ``task_info`` maps each task to the corresponding *(tool-name,
-          call-id)* pair supplied by the LLM.  
+          call-id)* pair supplied by the LLM.
         * If the *cancel* waiter exits first the loop raises
-          :class:`asyncio.CancelledError` immediately.  
+          :class:`asyncio.CancelledError` immediately.
         * Otherwise the finished tool's result (or traceback on error) is
           appended to the conversation as a ``"role": "tool"`` message and
           the consecutive-failure counter is updated.
 
-    **B – Early cancellation check**  
+    **B – Early cancellation check**
         Skip the LLM step altogether if ``cancel_event`` *has already* been
         set while no tasks were pending.
 
-    **C – Ask the LLM what to do next**  
+    **C – Ask the LLM what to do next**
         ``client.generate`` is called with:
 
         * the accumulated conversation,
@@ -307,16 +307,16 @@ async def async_tool_use_loop(
         * ``tool_choice="auto"`` – the model decides whether to call a tool
           or to speak.
 
-    **D – Launch new tool calls**  
+    **D – Launch new tool calls**
         For every tool call proposed in ``msg.tool_calls`` a coroutine is
         prepared (executed in a thread if the function is synchronous),
-        wrapped in ``asyncio.create_task`` and added to ``pending``.  
+        wrapped in ``asyncio.create_task`` and added to ``pending``.
         Control returns to *Listening* immediately so tools can run
         concurrently.
 
-    **E – No new tool calls**  
+    **E – No new tool calls**
 
-        * If some tool calls are *still* running: loop back to *Listening*.  
+        * If some tool calls are *still* running: loop back to *Listening*.
         * Otherwise – no tasks pending **and** the LLM produced ordinary text –
           the function returns that text to the caller and terminates.
 
