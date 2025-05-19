@@ -24,7 +24,7 @@ def _handle_project(
         test_dirs = module_path.split(".")
         # Remove 'tests' from the path and join the remaining parts
         test_path = "/".join(test_dirs[1:])  # Skip 'tests' directory
-        ctx = f"{test_path}/{test_fn.__name__}"
+        ctx = f"{test_path}/{test_fn.__name__}" if test_path else test_fn.__name__
 
         if not try_reuse_prev_ctx and ctx in unify.get_contexts():
             unify.delete_context(ctx)
