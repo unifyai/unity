@@ -47,7 +47,6 @@ def _create_contacts():
 @_handle_project
 def test_create_contact():
     transcript_manager = TranscriptManager()
-    transcript_manager.start()
     transcript_manager.create_contact(
         first_name="Dan",
     )
@@ -68,7 +67,6 @@ def test_create_contact():
 @_handle_project
 def test_update_contact():
     transcript_manager = TranscriptManager()
-    transcript_manager.start()
 
     # create
     transcript_manager.create_contact(
@@ -112,7 +110,6 @@ def test_update_contact():
 @_handle_project
 def test_create_contacts():
     transcript_manager = TranscriptManager()
-    transcript_manager.start()
 
     # first
     transcript_manager.create_contact(
@@ -151,7 +148,6 @@ def test_create_contacts():
 @_handle_project
 def test_search_contacts():
     transcript_manager = TranscriptManager()
-    transcript_manager.start()
     transcript_manager.create_contact(
         first_name="Dan",
     )
@@ -161,7 +157,6 @@ def test_search_contacts():
 @_handle_project
 def test_log_messages():
     transcript_manager = TranscriptManager()
-    transcript_manager.start()
     transcript_manager.log_messages(
         [
             Message(
@@ -184,7 +179,7 @@ def test_get_messages():
     time.sleep(0.1)
     random.seed(0)
     transcript_manager = TranscriptManager()
-    transcript_manager.start()
+    
     # log messages
     transcript_manager.log_messages(
         [
@@ -246,7 +241,6 @@ def test_get_messages():
 @_handle_project
 def test_summarize_exchanges():
     transcript_manager = TranscriptManager()
-    transcript_manager.start()
 
     # create contacts
     _create_contacts()
