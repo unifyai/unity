@@ -1,10 +1,11 @@
 from __future__ import annotations
 
-from typing import List, Optional, Union, Tuple, Dict, Any
+from typing import List, Optional, Union, Tuple, Dict, Any, Type, get_origin
 import base64
 import time
 from datetime import datetime, timezone
 from pydantic import BaseModel, create_model, Field
+import inspect
 
 
 from .helpers import _pascal, _slug
@@ -288,7 +289,7 @@ def _construct_tab_actions(tabs: List[str], mode: str):
     actions = {
         f"{field_prefix}{_slug(title)}": create_model(
             f"{model_prefix}{_pascal(_slug(title))}",
-            __doc__=f"{mode} the “{title}” tab.",
+            __doc__=f'{mode} the "{title}" tab.',
             **_response_fields,
         )
         for title in tabs
@@ -341,7 +342,7 @@ def _construct_select_button_actions(
 
         field_name = f"click_button_{slug}"
         model_name = f"ClickButton{pascal}"
-        doc = f"Click the “{safe_text}” button (element #{idx})."
+        doc = f'Click the "{safe_text}" button (element #{idx}).'
 
         actions[field_name] = create_model(
             model_name,
@@ -598,7 +599,7 @@ def _get_action_class(action_name: str) -> type[BaseModel]:
         title = slug.replace("_", " ").replace("-", " ").title()
         return create_model(
             f"SelectTab{_pascal(slug)}",
-            __doc__=f"Select the “{title}” tab.",
+            __doc__=f'Select the "{title}" tab.',
             **_response_fields,
         )
 
@@ -607,7 +608,7 @@ def _get_action_class(action_name: str) -> type[BaseModel]:
         title = slug.replace("_", " ").replace("-", " ").title()
         return create_model(
             f"CloseTab{_pascal(slug)}",
-            __doc__=f"Close the “{title}” tab.",
+            __doc__=f'Close the "{title}" tab.',
             **_response_fields,
         )
 
@@ -617,7 +618,7 @@ def _get_action_class(action_name: str) -> type[BaseModel]:
         text = slug.replace("_", " ").replace("-", " ").title()
         return create_model(
             f"ClickButton{_pascal(slug)}",
-            __doc__=f"Click the “{text}” button.",
+            __doc__=f'Click the "{text}" button.',
             **_response_fields,
         )
 
@@ -740,7 +741,7 @@ def text_to_browser_action(
     LOGGER.info(f"\n🤖 Controller: text command to browser action... ⏳ [⏱️ {t}]\n")
     if ADVANCED_MODE:
         response_format = _create_full_response_format(tabs, buttons, state)
-        client.set_endpoint("o4-mini-mini@openai")
+        client.set_endpoint("o4-mini@openai")
         history_msg = (
             "\n\nThe low-level action history (most recent first) is as follows:\n"
             + "\n".join(f"{r['timestamp']:.0f}: {r['command']}" for r in history[-20:])
@@ -944,3 +945,86 @@ def _construct_close_popup_actions(pop_titles: List[str]):
             **_response_fields,
         )
     return mapping
+
+
+# -----------------------------------------------------------------------------
+#  Generic "observe" helper – answers questions about the *current* browser view
+# -----------------------------------------------------------------------------
+_OBSERVE_PROMPT = (
+    "You are a browsing assistant. Below is the complete browser context "
+    "(state, tab titles, visible elements, action history). Answer the user's "
+    "question solely from this information and the screenshot. Return JSON "
+    "that matches the response schema and nothing else."
+)
+
+
+def _wrap_type(tp: Type):  # type: ignore[override]
+    """Return a Pydantic model appropriate for *tp* (primitive or model)."""
+    if tp in {str, bool, int, float}:
+        # primitive → wrap in single-field model
+        return create_model("AnswerModel", answer=(tp, ...))
+
+    if inspect.isclass(tp) and issubclass(tp, BaseModel):
+        return tp  # already a model
+
+    if get_origin(tp) is not None:  # e.g. Literal, Annotated
+        return create_model("AnswerModel", answer=(tp, ...))
+
+    raise TypeError(f"Unsupported response_type: {tp!r}")
+
+
+def ask_llm(
+    question: str,
+    *,
+    response_type: Type = str,
+    context: dict[str, Any] | None = None,
+    screenshot: bytes | None = None,
+) -> Any:  # noqa: ANN401
+    """Call the underlying LLM with the given *question* and browser *context*.
+
+    Parameters
+    ----------
+    question : str
+        Natural-language question to ask.
+    response_type : Type, default str
+        Desired Python / Pydantic type for the answer.
+    context : dict | None
+        Rich browser-context payload (state, elements, tabs, history …).
+    screenshot : bytes | None
+        Base-64 JPEG screenshot of current viewport (optional).
+    """
+
+    Model = _wrap_type(response_type)
+
+    client.set_endpoint("o4-mini@openai")
+    client.set_system_message(_OBSERVE_PROMPT)
+    client.set_response_format(Model)
+
+    # 1) build user message content (text + optional image)
+    content = [{"type": "text", "text": question}]
+    if screenshot:
+        content.append(
+            {
+                "type": "image_url",
+                "image_url": {"url": f"data:image/jpeg;base64,{screenshot}"},
+            },
+        )
+
+    # 2) include browser context as separate system message (JSON string)
+    if context:
+        import json, textwrap
+
+        ctx_dump = json.dumps(context, ensure_ascii=False, indent=2)
+        ctx_txt = textwrap.indent(ctx_dump, "  ")
+        client.messages.append({
+            "role": "system",
+            "content": f"Browser-Context:\n{ctx_txt}",
+        })
+
+    raw_json = client.generate(
+        messages=client.messages + [{"role": "user", "content": content}],
+    )
+    parsed = Model.model_validate_json(raw_json)
+
+    # unwrap when we used the primitive wrapper
+    return getattr(parsed, "answer", parsed)
