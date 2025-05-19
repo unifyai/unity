@@ -18,7 +18,7 @@ API_KEY = os.environ["UNIFY_KEY"]
 
 class KnowledgeManager(threading.Thread):
 
-    def __init__(self, *, daemon: bool = True) -> None:
+    def __init__(self, *, traced: bool = True, daemon: bool = True) -> None:
         """
         Responsible for *adding to*, *updating* and *searching through* all knowledge the assistant has stored in memory.
         """
@@ -50,6 +50,10 @@ class KnowledgeManager(threading.Thread):
 
         if "Knowledge" not in unify.get_contexts():
             unify.create_context("Knowledge")
+
+        # Add tracing
+        if traced:
+            self = unify.traced(self)
 
     # Public #
     # -------#
