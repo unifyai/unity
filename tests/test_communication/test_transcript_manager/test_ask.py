@@ -402,23 +402,21 @@ def _llm_assert_correct(
 
     match = re.search(r"\{.*\}", result, re.S)
     assert match, assertion_failed(
-        "Expected JSON format from LLM judge", 
-        result, 
-        steps, 
-        "LLM judge returned unexpected format"
+        "Expected JSON format from LLM judge",
+        result,
+        steps,
+        "LLM judge returned unexpected format",
     )
     verdict = json.loads(match.group(0))
     assert verdict.get("correct") is True, assertion_failed(
-        expected, 
-        candidate, 
-        steps,
-        f"Question: {question}"
+        expected, candidate, steps, f"Question: {question}"
     )
 
 
 # --------------------------------------------------------------------------- #
 #  PARAMETRISED TEST                                                          #
 # --------------------------------------------------------------------------- #
+
 
 @pytest.mark.eval
 @pytest.mark.asyncio

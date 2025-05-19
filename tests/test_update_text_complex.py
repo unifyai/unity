@@ -25,6 +25,7 @@ from unity.task_list_manager.types.schedule import Schedule
 # Monkey patch the TaskListManager's update method to capture reasoning steps
 original_update = TaskListManager.update
 
+
 def patched_update(self, text: str, return_reasoning_steps: bool = False):
     try:
         result, steps = original_update(self, text, return_reasoning_steps=True)
@@ -33,6 +34,7 @@ def patched_update(self, text: str, return_reasoning_steps: bool = False):
     except Exception as e:
         self._last_reasoning_steps = []
         raise e
+
 
 TaskListManager.update = patched_update
 
@@ -88,13 +90,17 @@ def test_update_reorder_queue():
     tlm.update(text="Could you do Client follow-up email after Write quarterly report?")
 
     queue = [t.task_id for t in tlm._get_task_queue()]
-    expected_order = [ids[0], ids[2], ids[1]]  # 0 (report) -> 2 (follow-up) -> 1 (slides)
+    expected_order = [
+        ids[0],
+        ids[2],
+        ids[1],
+    ]  # 0 (report) -> 2 (follow-up) -> 1 (slides)
     assert queue == expected_order, assertion_failed(
-        expected_order, 
-        queue, 
+        expected_order,
+        queue,
         getattr(tlm, "_last_reasoning_steps", []),
         "Task queue order doesn't match expected order after update",
-        {"Task Data": tlm._search()}
+        {"Task Data": tlm._search()},
     )
 
 
@@ -118,19 +124,19 @@ def test_update_cancel_email_tasks():
     for t in tasks:
         if "email" in t["description"].lower():
             assert t["status"] == "cancelled", assertion_failed(
-                "cancelled", 
-                t["status"], 
+                "cancelled",
+                t["status"],
                 getattr(tlm, "_last_reasoning_steps", []),
                 f"Task '{t['name']}' with email in description should be cancelled",
-                {"Task Data": tasks}
+                {"Task Data": tasks},
             )
         else:
             assert t["status"] != "cancelled", assertion_failed(
-                "not cancelled", 
-                t["status"], 
+                "not cancelled",
+                t["status"],
                 getattr(tlm, "_last_reasoning_steps", []),
                 f"Task '{t['name']}' without email in description should not be cancelled",
-                {"Task Data": tasks}
+                {"Task Data": tasks},
             )
 
 
@@ -171,11 +177,11 @@ def test_update_lower_priority_next_monday():
 
     task = tlm._search()[0]
     assert task["priority"] == Priority.normal, assertion_failed(
-        Priority.normal, 
-        task["priority"], 
+        Priority.normal,
+        task["priority"],
         getattr(tlm, "_last_reasoning_steps", []),
         f"Task '{task['name']}' scheduled for next Monday should have normal priority",
-        {"Task Data": tlm._search()}
+        {"Task Data": tlm._search()},
     )
 
 
@@ -207,9 +213,9 @@ def test_update_bulk_description_replace():
     for t in tlm._search():
         has_mr_smith = re.search(r"Mr\.\s?Smith", t["description"]) is not None
         assert has_mr_smith, assertion_failed(
-            "Description containing 'Mr. Smith'", 
-            t["description"], 
+            "Description containing 'Mr. Smith'",
+            t["description"],
             getattr(tlm, "_last_reasoning_steps", []),
             f"Task '{t['name']}' description should contain 'Mr. Smith'",
-            {"Task Data": tlm._search()}
-        ) 
+            {"Task Data": tlm._search()},
+        )

@@ -1000,6 +1000,7 @@ class ControlPanel(tk.Tk):
                 mode = int(float(val))
             except Exception:
                 return
+
             # Helper to sanitise speed input
             def _speed_px() -> str:
                 val = self.scroll_speed_var.get().strip()
