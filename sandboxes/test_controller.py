@@ -5,6 +5,13 @@ No Playwright code touches the Tk thread.
 
 import queue
 import logging
+import sys, pathlib
+
+# Ensure repository root is on PYTHONPATH so `import unity` works when this
+# script is executed directly from inside the "sandboxes" folder.
+ROOT_DIR = pathlib.Path(__file__).resolve().parents[1]
+if str(ROOT_DIR) not in sys.path:
+    sys.path.insert(0, str(ROOT_DIR))
 
 from dotenv import load_dotenv
 
