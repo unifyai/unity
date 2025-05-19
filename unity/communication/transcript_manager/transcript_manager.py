@@ -27,6 +27,12 @@ class TranscriptManager:
             self._nearest_messages.__name__: self._nearest_messages,
         }
 
+        ctxs = unify.get_context()
+        read_ctx, write_ctx = ctxs["read"], ctxs["write"]
+        self._local_ctx = "Contacts"
+        self._read_ctx = f"{read_ctx}/{self._local_ctx}" if read_ctx else self._local_ctx
+        self._write_ctx = f"{write_ctx}/{self._local_ctx}" if write_ctx else self._local_ctx
+
         # Add tracing
         if traced:
             self = unify.traced(self)
@@ -139,10 +145,10 @@ class TranscriptManager:
             contact_details.values(),
         ), "At least one contact detail must be provided."
 
-        # If it's the fist contact, create immediately
-        if "Contacts" not in unify.get_contexts():
+        # If it's the first contact, create immediately
+        if not any(ctx.endswith(self._local_ctx) for ctx in unify.get_contexts()):
             return unify.log(
-                context="Contacts",
+                context=self._write_ctx,
                 **contact_details,
                 contact_id=0,
                 new=True,
@@ -153,7 +159,7 @@ class TranscriptManager:
             if key in ["first_name", "surname"] or value is None:
                 continue
             logs = unify.get_logs(
-                context="Contacts",
+                context=self._read_ctx,
                 filter=f"{key} == '{value}'",
             )
             assert (
@@ -162,14 +168,14 @@ class TranscriptManager:
 
         # ToDo: filter only for contact_id once supported in the Python utility function
         logs = unify.get_logs(
-            context="Contacts",
+            context=self._read_ctx,
         )
         largest_id = max([lg.entries["contact_id"] for lg in logs])
         this_id = largest_id + 1
 
         # Create the new contact
         return unify.log(
-            context="Contacts",
+            context=self._write_ctx,
             **contact_details,
             contact_id=this_id,
             new=True,
@@ -216,7 +222,7 @@ class TranscriptManager:
             if key in ["first_name", "surname"] or value is None:
                 continue
             logs = unify.get_logs(
-                context="Contacts",
+                context=self._read_ctx,
                 filter=f"{key} == '{value}'",
             )
             assert (
@@ -224,7 +230,7 @@ class TranscriptManager:
             ), f"Invalid, contact with {key} {value} already exists."
 
         # get log id
-        logs = unify.get_logs(context="Contacts", filter=f"contact_id == {contact_id}")
+        logs = unify.get_logs(context=self._read_ctx, filter=f"contact_id == {contact_id}")
         assert len(logs) == 1
         log: unify.Log = logs[0]
         log.update_entries(
@@ -306,7 +312,7 @@ class TranscriptManager:
             List[Dict[str, str]]: A list of contacts.
         """
         logs = unify.get_logs(
-            context="Contacts",
+            context=self._read_ctx,
             filter=filter,
             offset=offset,
             limit=limit,
