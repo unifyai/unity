@@ -1,11 +1,12 @@
 import threading
 from datetime import datetime, timezone
+from typing import Any, Type
 
 import redis
 import unify
 
 from .playwright.worker import BrowserWorker
-from .agent import text_to_browser_action
+from .agent import text_to_browser_action, ask_llm
 from ..constants import SESSION_ID, LOGGER
 
 
@@ -25,15 +26,48 @@ class Controller(threading.Thread):
         )
         self._browser_open = False
 
+        # Cached data for LLM observation queries
+        self._observe_ctx: dict[str, Any] = {}
+        self._last_shot: bytes = b""
+
     def run(self) -> None:
         for text_action_ in self._pubsub_text_action.listen():
             if text_action_["type"] != "message":
                 continue
             text_action = text_action_["data"]
             if self._browser_open:
-                browser_state = self._pubsub_browser_state.get_message()
+                raw_msg = self._pubsub_browser_state.get_message()
+                # Convert Redis pubsub payload (bytes / str) to dict if possible
+                if raw_msg and raw_msg.get("type") == "message":
+                    payload = raw_msg["data"]
+                    try:
+                        if isinstance(payload, (bytes, bytearray)):
+                            payload = payload.decode()
+                        import json, ast
+
+                        try:
+                            browser_state = json.loads(payload)
+                        except Exception:
+                            browser_state = ast.literal_eval(payload)
+                    except Exception:
+                        browser_state = {}
+                else:
+                    browser_state = {}
             else:
                 browser_state = {}
+
+            # ------------------------------------------------------------------
+            #  Update cached observe context and latest screenshot   (step-3)
+            # ------------------------------------------------------------------
+            if isinstance(browser_state, dict):
+                self._observe_ctx = {
+                    "state": browser_state.get("state", {}),
+                    "elements": browser_state.get("elements", []),
+                    "tabs": browser_state.get("tabs", []),
+                    "history": browser_state.get("history", []),
+                }
+                self._last_shot = browser_state.get("screenshot", b"")
+
             with unify.Context("LLM Traces"), unify.Log(
                 session_id=SESSION_ID,
                 name="text_to_browser_action",
@@ -69,3 +103,21 @@ class Controller(threading.Thread):
             self._redis_client.publish("action_completion", action)
             t = datetime.now(timezone.utc).time().isoformat(timespec="milliseconds")
             LOGGER.info(f"\n🕹️ Performed Action: {action} [⏱️ {t}]\n")
+
+    # ------------------------------------------------------------------
+    #  Public helper – high-level "observe" question-answering
+    # ------------------------------------------------------------------
+    def observe(self, question: str, response_type: Type = str) -> Any:  # noqa: ANN401
+        """Ask an LLM a question about the *current* browser session.
+
+        The answer is returned coerced to *response_type*.
+        Supported types: ``str``, ``bool``, ``int``, ``float`` or a
+        ``pydantic.BaseModel`` subclass for structured answers.
+        """
+
+        return ask_llm(
+            question,
+            response_type=response_type,
+            context=self._observe_ctx,
+            screenshot=self._last_shot,
+        )
