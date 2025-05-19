@@ -27,7 +27,7 @@ class TranscriptManager:
             self._nearest_messages.__name__: self._nearest_messages,
         }
 
-        ctxs = unify.get_context()
+        ctxs = unify.get_active_context()
         read_ctx, write_ctx = ctxs["read"], ctxs["write"]
         assert read_ctx == write_ctx, "read and write contexts must be the same when instantiating a TranscriptManager."
         self._contacts_ctx = f"{read_ctx}/Contacts" if read_ctx else "Contacts"
