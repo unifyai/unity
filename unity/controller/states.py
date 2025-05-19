@@ -21,6 +21,7 @@ class BrowserState:
     auto_scroll: str | None = None  # "up" | "down" | None
     in_textbox: bool = False
     scroll_y: int = 0
+    scroll_speed: int = 250  # auto-scroll speed in pixels per second (default)
     # ────────────────────────────── Dialog & Pop-ups (NEW) ──────────────────────────────
     dialog_open: bool = False  # any JS dialog currently shown?
     dialog_type: str | None = None  # alert | confirm | prompt | beforeunload

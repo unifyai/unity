@@ -142,6 +142,10 @@ class StartScrollingUp(BaseModel):
     Start gently scrolling upwards, until another stop action is given.
     """
 
+    speed: Optional[int] = Field(
+        None,
+        description="Pixels per second for auto-scroll (default 250 if omitted).",
+    )
     rationale: Optional[str] = Field(
         ...,
         description="Explanation for your decision whether or not to apply this action.",
@@ -154,6 +158,10 @@ class StartScrollingDown(BaseModel):
     Start gently scrolling downwards, until another stop action is given.
     """
 
+    speed: Optional[int] = Field(
+        None,
+        description="Pixels per second for auto-scroll (default 250 if omitted).",
+    )
     rationale: Optional[str] = Field(
         ...,
         description="Explanation for your decision whether or not to apply this action.",
@@ -817,9 +825,9 @@ def text_to_browser_action(
 
         def _format_action(a: str):
             ret = f"- {a}"
-            if a in ("search", "open url"):
+            if a in ("search", "open_url"):
                 ret += " (please also include the query in the `value` field)"
-            elif a in ("scroll up", "scroll down"):
+            elif a in ("scroll_up", "scroll_down"):
                 ret += (
                     " (please also include the number of pixels in the `value` field)"
                 )

@@ -972,6 +972,17 @@ class ControlPanel(tk.Tk):
         scroll_block.columnconfigure(1, weight=1)  # step
         scroll_block.columnconfigure(2, weight=1)  # toggle
 
+        # Input field for auto-scroll speed (pixels per second)
+        self.scroll_speed_var = tk.StringVar(value="250")
+
+        speed_entry = tk.Entry(
+            toggle_frame,
+            textvariable=self.scroll_speed_var,
+            width=6,
+            justify="center",
+        )
+        # place below the slider after it's created (grid later)
+
         # IntVar: 0 = up, 1 = stop, 2 = down  (middle is default)
         self._scroll_mode = tk.IntVar(value=1)
         # Track last non-stop direction to flip on successive blank-clicks
@@ -989,11 +1000,16 @@ class ControlPanel(tk.Tk):
                 mode = int(float(val))
             except Exception:
                 return
+            # Helper to sanitise speed input
+            def _speed_px() -> str:
+                val = self.scroll_speed_var.get().strip()
+                return val if val.isdigit() and int(val) > 0 else "250"
+
             if mode == 0:
-                self._queue_command(CMD_START_SCROLL_UP)
+                self._queue_command(f"{CMD_START_SCROLL_UP} {_speed_px()}")
                 self._last_scroll_dir = "up"
             elif mode == 2:
-                self._queue_command(CMD_START_SCROLL_DOWN)
+                self._queue_command(f"{CMD_START_SCROLL_DOWN} {_speed_px()}")
                 self._last_scroll_dir = "down"
             else:
                 self._queue_command(CMD_STOP_SCROLLING)
@@ -1015,6 +1031,9 @@ class ControlPanel(tk.Tk):
             command=_on_scroll_toggle,
         )
         self.scroll_toggle.grid(row=0, column=0, sticky="ew")
+
+        # grid the speed entry just below slider and labels
+        speed_entry.grid(row=1, column=0, columnspan=2, sticky="ew", pady=(4, 0))
 
         # Label markers – placed to the right of the vertical slider
         lbls = tk.Frame(toggle_frame)
@@ -1194,6 +1213,9 @@ class ControlPanel(tk.Tk):
                     prefix = v[:-1]
                     if cmd.startswith(prefix) or cmd == prefix.rstrip(" _"):
                         return True
+                # allow numeric argument after fixed patterns (e.g. start_scrolling_down 600)
+                if cmd.startswith(v + " "):
+                    return True
             return False
 
         # ---------- key‑button rows ----------------------------------
@@ -1273,6 +1295,9 @@ class ControlPanel(tk.Tk):
                     prefix = v[:-1]
                     if cmd.startswith(prefix) or cmd == prefix.rstrip(" _"):
                         return True
+                # allow numeric argument after fixed patterns (e.g. start_scrolling_down 600)
+                if cmd.startswith(v + " "):
+                    return True
             return False
 
         out_lines: list[str] = []
@@ -1314,6 +1339,7 @@ class ControlPanel(tk.Tk):
             f"title:       {st.get('title', '')[:60]}\n"
             f"scroll_y:    {st.get('scroll_y', 0)}\n"
             f"auto_scroll: {st.get('auto_scroll', None)}\n"
+            f"scroll_speed: {st.get('scroll_speed', 250)}\n"
             f"in_textbox:  {st.get('in_textbox', False)}\n"
             f"captcha_pending: {st.get('captcha_pending', False)}",
         )
@@ -1443,6 +1469,9 @@ class ControlPanel(tk.Tk):
                         return True
                     if pat.endswith("*") and cmd.startswith(pat[:-1]):
                         return True  # parameterised match
+                    # allow numeric argument after fixed patterns (e.g. start_scrolling_down 600)
+                    if cmd.startswith(pat + " "):
+                        return True
                 return False
 
             # skip the fast‑path when the text came from the LLM box
@@ -1490,8 +1519,14 @@ class ControlPanel(tk.Tk):
             px = sc["scroll_down"].get("pixels") or 300
             return CMD_SCROLL_DOWN.replace("*", str(px))
         if sc.get("start_scrolling_up", {}).get("apply"):
+            spd = sc["start_scrolling_up"].get("speed")
+            if spd:
+                return f"{CMD_START_SCROLL_UP} {int(spd)}"
             return CMD_START_SCROLL_UP
         if sc.get("start_scrolling_down", {}).get("apply"):
+            spd = sc["start_scrolling_down"].get("speed")
+            if spd:
+                return f"{CMD_START_SCROLL_DOWN} {int(spd)}"
             return CMD_START_SCROLL_DOWN
         if sc.get("stop_scrolling", {}).get("apply"):
             return CMD_STOP_SCROLLING
