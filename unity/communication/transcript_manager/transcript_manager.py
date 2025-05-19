@@ -1,5 +1,4 @@
 import json
-import threading
 from typing import List, Dict, Any, Optional, Union
 
 import unify
@@ -10,17 +9,16 @@ from ...communication.types.summary import Summary
 from ...common.llm_helpers import async_tool_use_loop
 
 
-class TranscriptManager(threading.Thread):
+class TranscriptManager:
 
     # Vector embedding column names
     _VEC_MSG = "content_emb"
     _VEC_SUM = "summary_emb"
 
-    def __init__(self, *, traced: bool = True, daemon: bool = True) -> None:
+    def __init__(self, *, traced: bool = True) -> None:
         """
         Responsible for *searching through* the full transcripts across all communcation channels exposed to the assistant.
         """
-        super().__init__(daemon=daemon)
         self._tools = {
             self.summarize.__name__: self.summarize,
             self._search_contacts.__name__: self._search_contacts,
