@@ -9,8 +9,8 @@ pyaudio
 pygments
 livekit-agents[deepgram,openai,cartesia,silero,turn-detector]==1.0.17
 livekit-plugins-noise-cancellation~=0.2
-# -e ../unify # dev mode
-git+https://github.com/unifyai/unify # deploy mode
+-e ../unify # dev mode
+# git+https://github.com/unifyai/unify # deploy mode
 browser_use
 langchain-openai
 textual
