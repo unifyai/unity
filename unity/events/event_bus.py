@@ -17,14 +17,14 @@ from .types.message_exchange_summary import MessageExchangeSummary
 __all__ = ["Event", "EventBus", "Subscription"]
 
 
-_EVENT_TYPES: Dict[str, Type[BaseModel]] = {"message": Message, "message_exchange_summary": MessageExchangeSummary}
+_EVENT_TYPES: Dict[str, Type[BaseModel]] = {"Messages": Message, "MessageExchangeSummaries": MessageExchangeSummary}
 _DEFAULT_WINDOW = 50
 
 # ───────────────────────────   Event envelope   ─────────────────────────────
 
 class Event(BaseModel):
-    type: str
-    ts: str
+    context: str
+    timestamp: str
     payload: BaseModel
 
 
@@ -77,7 +77,7 @@ class EventBus:
                 except ValidationError:
                     if isinstance(entries, model_cls):
                         ts = getattr(log, "ts", dt.datetime.now(dt.UTC)).isoformat()
-                        evt = Event(type=etype, ts=ts, payload=entries)
+                        evt = Event(context=etype, timestamp=ts, payload=entries)
                     else:
                         raise Exception("")
                 dq.append(evt)
@@ -87,10 +87,10 @@ class EventBus:
     # Public API
     # ------------------------------------------------------------------
     async def publish(self, event: Event) -> None:
-        window = self._window_sizes[event.type]
+        window = self._window_sizes[event.context]
 
         async with self._lock:
-            dq = self._deques[event.type]
+            dq = self._deques[event.context]
             dq.append(event)
             while len(dq) > window:
                 dq.popleft()
@@ -106,7 +106,7 @@ class EventBus:
         # Log to specific event table
         self._logger.log_create(
             project=unify.active_project(),
-            context=self._ctxs[event.type],
+            context=self._ctxs[event.context],
             params={},
             entries=event.payload,
         )
@@ -133,5 +133,9 @@ class EventBus:
                     bucket.extend(dq)          # each dq is already window-bounded
 
             # 2. sort newest→oldest and slice
-            bucket.sort(key=lambda e: e.ts, reverse=True)
+            bucket.sort(key=lambda e: e.timestamp, reverse=True)
             return bucket[:limit]
+        
+    @property
+    def ctxs(self):
+        return self._ctxs
