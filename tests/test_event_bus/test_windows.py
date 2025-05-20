@@ -23,8 +23,8 @@ async def test_window_eviction_at_limit():
     base_ts = dt.datetime.now(dt.UTC)
     for i in range(window + 1):
         evt = Event(
-            type="message",
-            ts=base_ts + dt.timedelta(seconds=i),
+            context="message",
+            timestamp=base_ts + dt.timedelta(seconds=i),
             payload=Message.model_construct(),
         )
         events.append(evt)
@@ -73,8 +73,8 @@ async def test_window_eviction_mixed_sizes_and_ordering():
     events = []
     for idx, (etype, payload_cls) in enumerate(publish_plan):
         evt = Event(
-            type=etype,
-            ts=base_ts + dt.timedelta(seconds=idx),
+            context=etype,
+            timestamp=base_ts + dt.timedelta(seconds=idx),
             payload=payload_cls.model_construct(),
         )
         events.append(evt)
@@ -93,8 +93,8 @@ async def test_window_eviction_mixed_sizes_and_ordering():
     # reversed() because get_latest() returns newest-first
 
     # 1️⃣ Correct counts per type
-    assert sum(e.type == "message" for e in ours) == windows["message"]
-    assert sum(e.type == "message_exchange_summary" for e in ours) == windows["message_exchange_summary"]
+    assert sum(e.context == "message" for e in ours) == windows["message"]
+    assert sum(e.context == "message_exchange_summary" for e in ours) == windows["message_exchange_summary"]
 
     # 2️⃣ Overall ordering newest-first
     assert ours == expected_survivors, "Events not in expected newest-first order"

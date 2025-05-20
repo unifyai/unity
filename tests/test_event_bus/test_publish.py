@@ -22,8 +22,8 @@ async def test_publish():
     payload = Message.model_construct()
 
     event = Event(
-        type="message",
-        ts=dt.datetime.now(dt.UTC).isoformat(),
+        context="message",
+        timestamp=dt.datetime.now(dt.UTC).isoformat(),
         payload=payload,
     )
 
@@ -61,8 +61,8 @@ async def test_concurrent_publishes_lock_integrity():
             ("message", Message) if i % 2 == 0 else ("message_exchange_summary", MessageExchangeSummary)
         )
         evt = Event(
-            type=etype,
-            ts=base_ts + dt.timedelta(microseconds=i),   # unique, strictly increasing
+            context=etype,
+            timestamp=base_ts + dt.timedelta(microseconds=i),   # unique, strictly increasing
             payload=payload_cls.model_construct(),
         )
         events.append(evt)
@@ -75,8 +75,8 @@ async def test_concurrent_publishes_lock_integrity():
     latest = await bus.get_latest(limit=window)
 
     # Keep only the events we just published (ignore any older prefilled logs)
-    our_ts = {e.ts for e in events}
-    latest_ours = [e for e in latest if e.ts in our_ts]
+    our_ts = {e.timestamp for e in events}
+    latest_ours = [e for e in latest if e.timestamp in our_ts]
 
     # Every event we published must be present
     assert len(latest_ours) == n_events

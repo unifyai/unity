@@ -23,8 +23,8 @@ async def test_prefill_from_upstream_on_new_instance():
     # Publish five message events with ascending timestamps
     for i in range(5):
         evt = Event(
-            type="message",
-            ts=base_ts + dt.timedelta(seconds=i),
+            context="message",
+            timestamp=base_ts + dt.timedelta(seconds=i),
             payload=Message.model_construct(),
         )
         published.append(evt)
@@ -41,6 +41,6 @@ async def test_prefill_from_upstream_on_new_instance():
     # Each originally-sent event (identified by its ts & payload) must be present
     for sent in published:
         assert any(
-            rec.ts == sent.ts and rec.payload == sent.payload
+            rec.timestamp == sent.timestamp and rec.payload == sent.payload
             for rec in latest
-        ), f"Event with ts {sent.ts.isoformat()} not found in prefilled window"
+        ), f"Event with ts {sent.timestamp.isoformat()} not found in prefilled window"
