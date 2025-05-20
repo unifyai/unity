@@ -33,7 +33,7 @@ You just need to explain your knowledge storage/retrieval needs in very clear en
 STORE = """
 Your task is to store the information requested by the user, and you should continue using the tools available until you are satisfied that you have stored the information in the most elegant manner possible, making any strucutral changes to the existing tables as needed in order to accomdate the new information.
 
-Information is stored in tables, and each table has columns of a certain data type.
+Information is stored in tables, and each table has columns of a certain data type. The data types are static so you cannot change them once the column is created. The data inserted into each column must match the data type of that column.
 
 The tools enable you to create, rename, modify, search and delete tables and columns as you see fit.
 
