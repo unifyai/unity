@@ -7,7 +7,6 @@ from unity.task_list_manager.task_list_manager import TaskListManager
 @pytest.mark.unit
 def test_get_paused_task():
     task_list_manager = TaskListManager()
-    task_list_manager.start()
 
     # create
     task_list_manager._create_task(
@@ -27,7 +26,6 @@ def test_get_paused_task():
 @pytest.mark.unit
 def test_get_active_task():
     task_list_manager = TaskListManager()
-    task_list_manager.start()
 
     # create
     task_list_manager._create_task(

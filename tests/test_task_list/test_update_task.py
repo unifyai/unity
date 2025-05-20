@@ -11,7 +11,6 @@ from unity.task_list_manager.types.repetition import RepeatPattern, Frequency, W
 @pytest.mark.unit
 def test_update_task_name():
     task_list_manager = TaskListManager()
-    task_list_manager.start()
 
     # create
     task_list_manager._create_task(
@@ -34,7 +33,6 @@ def test_update_task_name():
 @pytest.mark.unit
 def test_update_task_description():
     task_list_manager = TaskListManager()
-    task_list_manager.start()
 
     # create
     task_list_manager._create_task(
@@ -63,7 +61,6 @@ def test_update_task_description():
 @pytest.mark.unit
 def test_update_task_status():
     task_list_manager = TaskListManager()
-    task_list_manager.start()
 
     # create
     task_list_manager._create_task(
@@ -89,7 +86,6 @@ def test_update_task_status():
 @pytest.mark.unit
 def test_update_task_start_at():
     tlm = TaskListManager()
-    tlm.start()
 
     tlm._create_task(
         name="Send customer survey",
@@ -107,7 +103,6 @@ def test_update_task_start_at():
 @pytest.mark.unit
 def test_update_task_deadline():
     tlm = TaskListManager()
-    tlm.start()
 
     tlm._create_task(
         name="File quarterly taxes",
@@ -125,7 +120,6 @@ def test_update_task_deadline():
 @pytest.mark.unit
 def test_update_task_repetition():
     tlm = TaskListManager()
-    tlm.start()
 
     tlm._create_task(
         name="Daily stand-up",
@@ -144,7 +138,6 @@ def test_update_task_repetition():
 @pytest.mark.unit
 def test_update_task_priority():
     tlm = TaskListManager()
-    tlm.start()
 
     tlm._create_task(
         name="Patch security vulnerability",

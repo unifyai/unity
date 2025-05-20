@@ -32,7 +32,6 @@ class ScenarioBuilder:
             unify.delete_project("test_task_ask")
         unify.activate("test_task_ask")
         self.tlm = TaskListManager()
-        self.tlm.start()
         self._seed_tasks()
 
     def _seed_tasks(self) -> None:

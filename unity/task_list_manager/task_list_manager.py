@@ -1,4 +1,3 @@
-import threading
 from datetime import datetime, timezone
 from typing import Dict, List, Any, Optional, Union
 
@@ -16,18 +15,17 @@ from .types.task import Task
 from .sys_msgs import ASK
 
 
-class TaskListManager(threading.Thread):
+class TaskListManager:
 
     _VEC_TASK = "task_emb"
 
-    def __init__(self, *, traced: bool = True, daemon: bool = True) -> None:
+    def __init__(self, *, traced: bool = True) -> None:
         """
         Responsible for managing the list of tasks, updating the names, descriptions, schedules, repeating pattern and status of all tasks.
 
         Args:
             daemon (bool): Whether the thread should be a daemon thread.
         """
-        super().__init__(daemon=daemon)
 
         self._ask_tools = {
             # Query-only helpers – safe, read-only operations

@@ -1,7 +1,6 @@
 import os
 import unify
 import requests
-import threading
 from typing import Any, Dict, List, Optional, Union
 
 import requests

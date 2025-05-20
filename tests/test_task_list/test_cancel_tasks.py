@@ -8,7 +8,6 @@ import pytest
 def test_cancel_single_task():
     """Cancelling a single active task should set its status to 'cancelled'."""
     tlm = TaskListManager()
-    tlm.start()
 
     # Create an active task (id will be 0)
     tlm._create_task(
@@ -29,7 +28,6 @@ def test_cancel_single_task():
 def test_cancel_multiple_tasks():
     """Cancelling multiple tasks at once should update all of their statuses."""
     tlm = TaskListManager()
-    tlm.start()
 
     # Create two tasks (ids 0 and 1)
     tlm._create_task(
@@ -56,7 +54,6 @@ def test_cancel_multiple_tasks():
 def test_cancel_completed_task_raises():
     """Attempting to cancel a task that is already completed should raise an AssertionError."""
     tlm = TaskListManager()
-    tlm.start()
 
     # Create a task that is already completed
     tlm._create_task(

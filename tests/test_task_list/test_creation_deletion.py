@@ -9,7 +9,6 @@ from unity.task_list_manager.types.status import Status
 @pytest.mark.unit
 def test_create_task():
     task_list_manager = TaskListManager()
-    task_list_manager.start()
     task_list_manager._create_task(
         name="Promote Jeff Smith",
         description="Send an email to Jeff Smith, kindly congratulating him and explaining that he has been promoted from sales rep to sales manager.",
@@ -33,7 +32,6 @@ def test_create_task():
 @pytest.mark.unit
 def test_delete_task():
     task_list_manager = TaskListManager()
-    task_list_manager.start()
 
     # create
     task_list_manager._create_task(

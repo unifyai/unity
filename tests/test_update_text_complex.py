@@ -82,7 +82,6 @@ def _seed_basic_tasks(tlm: TaskListManager) -> List[int]:
 @pytest.mark.timeout(240)
 def test_update_reorder_queue():
     tlm = TaskListManager()
-    tlm.start()
 
     ids = _seed_basic_tasks(tlm)
     assert [t.task_id for t in tlm._get_task_queue()] == ids  # initial order
@@ -114,7 +113,6 @@ def test_update_reorder_queue():
 @pytest.mark.timeout(240)
 def test_update_cancel_email_tasks():
     tlm = TaskListManager()
-    tlm.start()
 
     _seed_basic_tasks(tlm)
 
@@ -157,7 +155,6 @@ def _next_weekday(dt: datetime, weekday: int) -> datetime:
 @pytest.mark.timeout(240)
 def test_update_lower_priority_next_monday():
     tlm = TaskListManager()
-    tlm.start()
 
     # create one scheduled next Monday with high priority
     base = datetime.now(timezone.utc)
@@ -195,7 +192,6 @@ def test_update_lower_priority_next_monday():
 @pytest.mark.timeout(240)
 def test_update_bulk_description_replace():
     tlm = TaskListManager()
-    tlm.start()
 
     tlm._create_task(
         name="Arrange viewing",
