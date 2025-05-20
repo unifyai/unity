@@ -133,11 +133,11 @@ class KnowledgeManager:
         Create a new table for storing long-term knowledge.
 
         Args:
-            name (str): The name of the table to create.
+            name (str): The name of the table to create. Eg: "MyTable".
 
             description (Optional[str]): A description of the table and the main purpose.
 
-            columns (Optional[Dict[str, ColumnType]]): A dictionary of column names and their types.
+            columns (Optional[Dict[str, ColumnType]]): A dictionary of column names and their types. ColumnType can take values: `str`, `int`, `float`, `bool`, `list`, `dict`, `datetime`, `date`, `time`.
 
         Returns:
             Dict[str, str]: Message explaining whether the table was created or not.
@@ -205,7 +205,7 @@ class KnowledgeManager:
         Delete the specified table, and all of its data from the knowledge store.
 
         Args:
-            name (str): The name of the table to delete.
+            table (str): The name of the table to delete.
 
         Returns:
             Dict[str, str]: Message explaining whether the table was deleted or not.
@@ -430,6 +430,8 @@ class KnowledgeManager:
             offset (int): The offset to start the search from, in the paginated result.
 
             limit (int): The number of rows to return, in the paginated result.
+
+            tables (Optional[List[str]]): The list of tables to search in. If not provided, all tables will be searched.
 
         Returns:
             Dict[str, List[Dict[str, Any]]]: A dictionary where keys are table names and values are lists, where each item in the list is a dict representing a row in the table.

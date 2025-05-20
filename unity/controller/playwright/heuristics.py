@@ -42,11 +42,9 @@ HEURISTICS: List[Heuristic] = [
         "name": "clickup-sso-google",
         "selector": "div#google_auth_button.login-page-new__main-form-google",
         "kind": "click",
-        "filter_js": (
-            "return location.hostname.includes('clickup.com')"
-        ),
+        "filter_js": ("return location.hostname.includes('clickup.com')"),
         "label_js": "return 'Continue with Google';",
-    }, 
+    },
     # ─────────────────────────────────────────────
     # 1. TRACKING "BEACON" ANCHORS  (exclude)
     #    Many e‑commerce grids inject a 0×0 or 1×1 <a>

@@ -4,12 +4,14 @@ from collections import deque
 from dataclasses import dataclass, field
 from typing import Callable, Deque, Iterable, List
 
+
 # ─── 1. Event model ─────────────────────────────────────────────────────────────
 @dataclass(frozen=True, slots=True)
 class Event:
     type: str
     ts: dt.datetime = field(default_factory=dt.datetime.now(dt.UTC))
     payload: dict | None = None
+
 
 # ─── 2. EventBus ────────────────────────────────────────────────────────────────
 class EventBus:
@@ -25,8 +27,8 @@ class EventBus:
 
     async def publish(self, event: Event) -> None:
         async with self._lock:
-            self._log.append(event)          # 1️⃣ record in global timeline
-            for sub in self._subs:           # 2️⃣ push to live subscribers
+            self._log.append(event)  # 1️⃣ record in global timeline
+            for sub in self._subs:  # 2️⃣ push to live subscribers
                 if sub.matches(event):
                     sub._queue.put_nowait(event)
 
@@ -49,6 +51,7 @@ class EventBus:
     def get_history(self, predicate: Callable[[Event], bool]) -> List[Event]:
         return [e for e in self._log if predicate(e)]
 
+
 # ─── 3. Subscription handle (per-manager) ───────────────────────────────────────
 class Subscription:
     def __init__(self, bus: EventBus, predicate: Callable[[Event], bool]):
@@ -70,5 +73,6 @@ class Subscription:
     def matches(self, event: Event) -> bool:
         return self._pred(event)
 
+
 # ─── 4. Helper to create a shared bus (optional) ────────────────────────────────
-bus = EventBus(maxlen=50_000)   # keep the last 50 k events
+bus = EventBus(maxlen=50_000)  # keep the last 50 k events
