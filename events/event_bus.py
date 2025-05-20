@@ -9,7 +9,7 @@ from typing import Callable, Deque, Iterable, List
 @dataclass(frozen=True, slots=True)
 class Event:
     type: str
-    ts: dt.datetime = field(default_factory=dt.datetime.now(dt.UTC))
+    ts: dt.datetime = field(default_factory=lambda: dt.datetime.now(dt.UTC))
     payload: dict | None = None
 
 
