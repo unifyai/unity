@@ -173,3 +173,4 @@ class Subscription:
 
     def matches(self, event: Event) -> bool:  # internal use
         return self._pred(event)
+
