@@ -66,6 +66,11 @@ class TaskListManager:
         # time we create a task.  Initialised lazily on first use.
         self._next_id: Optional[int] = None
 
+        ctxs = unify.get_active_context()
+        read_ctx, write_ctx = ctxs["read"], ctxs["write"]
+        assert read_ctx == write_ctx, "read and write contexts must be the same when instantiating a TaskListManager."
+        self._ctx = f"{read_ctx}/Tasks" if read_ctx else "Tasks"
+
         # Add tracing
         if traced:
             self = unify.traced(self)
@@ -159,7 +164,7 @@ class TaskListManager:
             singular = True
             task_ids = [task_ids]
         log_ids = unify.get_logs(
-            context="Tasks",
+            context=self._ctx,
             filter=f"task_id in {task_ids}",
             return_ids_only=True,
         )
@@ -223,7 +228,7 @@ class TaskListManager:
         # uniqueness (name / description)
         for key, value in {"name": name, "description": description}.items():
             clashes = unify.get_logs(
-                context="Tasks",
+                context=self._ctx,
                 filter=f"{key} == '{value}'",
                 limit=1,
             )
@@ -272,7 +277,7 @@ class TaskListManager:
             # limited query.  The stubbed SDK doesn't expose sorting, so we
             # fall back to scanning just once during initialisation which is
             # acceptable in practise.
-            existing = [lg.entries.get("task_id") for lg in unify.get_logs(context="Tasks")]  # type: ignore[arg-type]
+            existing = [lg.entries.get("task_id") for lg in unify.get_logs(context=self._ctx)]  # type: ignore[arg-type]
             existing = [i for i in existing if i is not None]
             self._next_id = (max(existing) + 1) if existing else 0
 
@@ -292,7 +297,7 @@ class TaskListManager:
 
         # ------------------  write log immediately  ------------------ #
         unify.log(
-            context="Tasks",
+            context=self._ctx,
             **task_details,
             task_id=next_id,
             new=True,
@@ -332,7 +337,7 @@ class TaskListManager:
         # ToDo: replace with single API call once this task [https://app.clickup.com/t/86c3c1awp] is done
         log_id = self._get_logs_by_task_ids(task_ids=task_id)
         unify.delete_logs(
-            context="Tasks",
+            context=self._ctx,
             logs=log_id,
         )
 
@@ -591,7 +596,7 @@ class TaskListManager:
             log_ids = self._get_logs_by_task_ids(task_ids=tid)
             unify.update_logs(
                 logs=log_ids,
-                context="Tasks",
+                context=self._ctx,
                 entries=payload,
                 overwrite=True,
             )
@@ -618,7 +623,7 @@ class TaskListManager:
         log_id = self._get_logs_by_task_ids(task_ids=task_id)
         return unify.update_logs(
             logs=log_id,
-            context="Tasks",
+            context=self._ctx,
             entries={"name": new_name},
             overwrite=True,
         )
@@ -643,7 +648,7 @@ class TaskListManager:
         log_id = self._get_logs_by_task_ids(task_ids=task_id)
         return unify.update_logs(
             logs=log_id,
-            context="Tasks",
+            context=self._ctx,
             entries={"description": new_description},
             overwrite=True,
         )
@@ -670,7 +675,7 @@ class TaskListManager:
         log_ids = self._get_logs_by_task_ids(task_ids=task_ids)
         return unify.update_logs(
             logs=log_ids,
-            context="Tasks",
+            context=self._ctx,
             entries={"status": new_status},
             overwrite=True,
         )
@@ -711,7 +716,7 @@ class TaskListManager:
 
         return unify.update_logs(
             logs=log_id,
-            context="Tasks",
+            context=self._ctx,
             entries={"schedule": sched_payload},
             overwrite=True,
         )
@@ -735,7 +740,7 @@ class TaskListManager:
         log_id = self._get_logs_by_task_ids(task_ids=task_id)
         return unify.update_logs(
             logs=log_id,
-            context="Tasks",
+            context=self._ctx,
             entries={"deadline": new_deadline},
             overwrite=True,
         )
@@ -759,7 +764,7 @@ class TaskListManager:
         log_id = self._get_logs_by_task_ids(task_ids=task_id)
         return unify.update_logs(
             logs=log_id,
-            context="Tasks",
+            context=self._ctx,
             entries={"repeat": [r.model_dump() for r in new_repeat]},
             overwrite=True,
         )
@@ -783,7 +788,7 @@ class TaskListManager:
         log_id = self._get_logs_by_task_ids(task_ids=task_id)
         return unify.update_logs(
             logs=log_id,
-            context="Tasks",
+            context=self._ctx,
             entries={"priority": new_priority},
             overwrite=True,
         )
@@ -797,7 +802,7 @@ class TaskListManager:
         """
         expr = "str({name}) + ' || ' + str({description})"
         ensure_vector_column(
-            context="Tasks",
+            context=self._ctx,
             embed_column=self._VEC_TASK,
             source_column="name_plus_desc",
             derived_expr=expr,
@@ -823,7 +828,7 @@ class TaskListManager:
         return [
             log.entries
             for log in unify.get_logs(
-                context="Tasks",
+                context=self._ctx,
                 sorting={
                     f"cosine({self._VEC_TASK}, embed('{text}', model='{EMBED_MODEL}'))": "ascending",
                 },
@@ -852,7 +857,7 @@ class TaskListManager:
         return [
             log.entries
             for log in unify.get_logs(
-                context="Tasks",
+                context=self._ctx,
                 filter=filter,
                 offset=offset,
                 limit=limit,
