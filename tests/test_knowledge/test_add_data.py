@@ -7,7 +7,6 @@ import pytest
 @_handle_project
 def test_add_data():
     knowledge_manager = KnowledgeManager()
-    knowledge_manager.start()
     knowledge_manager._create_table("MyTable")
     knowledge_manager._add_data(
         table="MyTable",
@@ -26,7 +25,6 @@ def test_add_data():
 @_handle_project
 def test_add_more_data():
     knowledge_manager = KnowledgeManager()
-    knowledge_manager.start()
     knowledge_manager._create_table("MyTable")
     knowledge_manager._add_data(
         table="MyTable",

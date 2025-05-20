@@ -43,7 +43,6 @@ def _contains(text: str, *needles: str) -> bool:
 @_handle_project
 def test_store_simple_fact():
     km = KnowledgeManager()
-    km.start()
 
     km.store("Adrian was born in 1994.")
 
@@ -61,7 +60,6 @@ def test_store_simple_fact():
 @_handle_project
 def test_retrieve_simple_fact():
     km = KnowledgeManager()
-    km.start()
 
     km._create_table("MyTable")
     km._add_data(table="MyTable", data=[{"name": "Adrian", "birth_year": "1994"}])
@@ -89,7 +87,6 @@ def test_retrieve_simple_fact():
 @_handle_project
 def test_round_trip_simple_fact():
     km = KnowledgeManager()
-    km.start()
 
     km.store("Adrian was born in 1994.")
 
@@ -121,7 +118,6 @@ def test_schema_expands_and_new_field_retrievable():
     • We can always query any of the attributes.
     """
     km = KnowledgeManager()
-    km.start()
 
     km.store("Bob is 35 years old.")
 
@@ -187,7 +183,6 @@ def test_multiple_tables_and_join_like_query():
     A retrieval question that forces the model to relate them.
     """
     km = KnowledgeManager()
-    km.start()
 
     km.store("The Apple iPhone 15 costs 999 US dollars.")
     km.store(
@@ -226,7 +221,6 @@ def test_incremental_updates_and_refactor():
     Either way, table structure had to change / be searched flexibly.
     """
     km = KnowledgeManager()
-    km.start()
 
     km.store("Carol owns a dog named Fido.")
     km.store("Carol also owns a cat named Luna.")
@@ -262,7 +256,6 @@ def test_numeric_reasoning_after_multiple_points():
       • The model was able to filter at retrieval time.
     """
     km = KnowledgeManager()
-    km.start()
 
     km.store("Point P has coordinates x = 3 and y = 4.")
     km.store("Point Q has coordinates x = 1 and y = 10.")
