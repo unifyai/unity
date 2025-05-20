@@ -334,7 +334,7 @@ class KnowledgeManager:
             "old_field_name": old_name,
             "new_field_name": new_name,
         }
-        response = requests.request("POST", url, json=json_input, headers=headers)
+        response = requests.request("PATCH", url, json=json_input, headers=headers)
         _handle_exceptions(response)
         return response.json()
 
