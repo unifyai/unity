@@ -6,6 +6,7 @@ import re
 from unity.controller.commands import *
 import urllib.parse
 from playwright.sync_api import BrowserContext, Page
+import sys
 
 from .browser_utils import (
     build_boxes,
@@ -337,7 +338,7 @@ class CommandRunner:
             CMD_CURSOR_RIGHT: ("ArrowRight",),
             CMD_CURSOR_UP: ("ArrowUp",),
             CMD_CURSOR_DOWN: ("ArrowDown",),
-            CMD_SELECT_ALL: ("Control+a",),  # Cmd/⌘ on mac handled by browser
+            CMD_SELECT_ALL: ("Meta+a",) if sys.platform == "darwin" else ("Control+a",),
             CMD_MOVE_LINE_START: ("Control+ArrowLeft",),
             CMD_MOVE_LINE_END: ("Control+ArrowRight",),
             CMD_MOVE_WORD_LEFT: ("Alt+ArrowLeft",),
