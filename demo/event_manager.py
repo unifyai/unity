@@ -1,12 +1,13 @@
 # The event manager job is to listen for events coming from GUI and call processes
 # and send llm responses to both / ui updates
-# the event manager will accumulate events and trigger an llm call when timeout happens or 
+# the event manager will accumulate events and trigger an llm call when timeout happens or
 # urgent event is sent, and cancel any running llm calls
 import asyncio
 import json
 
 import openai
 from dotenv import load_dotenv
+
 load_dotenv()
 import os
 
@@ -22,12 +23,13 @@ with open("call_sys.md") as f:
 with open("non_call_sys.md") as f:
     non_call_sys = f.read()
 
+
 class EventManager:
     def __init__(self):
         self.servers = {}
         self.readers = {}
         self.writers: dict[str, asyncio.StreamWriter] = {}
-        
+
         self.in_call = False
         self.events_queue = asyncio.Queue()
         self.past_events = []
@@ -36,14 +38,29 @@ class EventManager:
         self.running_agent = None
 
     async def serve(self):
-        self.servers["gui"] = await asyncio.start_server(self.handle_gui_client, "127.0.0.1", 8888)
-        self.servers["call"] = await asyncio.start_server(self.handle_call_client, "127.0.0.1", 8889)
+        self.servers["gui"] = await asyncio.start_server(
+            self.handle_gui_client,
+            "127.0.0.1",
+            8888,
+        )
+        self.servers["call"] = await asyncio.start_server(
+            self.handle_call_client,
+            "127.0.0.1",
+            8889,
+        )
 
         self.event_aggregator_task = asyncio.create_task(self.collect_events())
         async with self.servers["gui"], self.servers["call"]:
-            await asyncio.gather(self.servers["gui"].serve_forever(), self.servers["call"].serve_forever())
+            await asyncio.gather(
+                self.servers["gui"].serve_forever(),
+                self.servers["call"].serve_forever(),
+            )
 
-    async def handle_gui_client(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter):
+    async def handle_gui_client(
+        self,
+        reader: asyncio.StreamReader,
+        writer: asyncio.StreamWriter,
+    ):
         self.readers["gui"] = reader
         self.writers["gui"] = writer
 
@@ -67,7 +84,11 @@ class EventManager:
                 writer.close()
                 await writer.wait_closed()
 
-    async def handle_call_client(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter):
+    async def handle_call_client(
+        self,
+        reader: asyncio.StreamReader,
+        writer: asyncio.StreamWriter,
+    ):
         self.readers["call"] = reader
         self.writers["call"] = writer
 
@@ -107,10 +128,11 @@ class EventManager:
     async def collect_events(self):
         print("COLLECTING...")
         while True:
-            try:    
+            try:
                 new_event = await asyncio.wait_for(self.events_queue.get(), 3)
                 print(new_event)
-                if new_event["payload"]["transient"]: continue
+                if new_event["payload"]["transient"]:
+                    continue
                 self.pending_events.append(new_event)
                 # urgent events should re-trigger, cancel events should cancel current running only
                 if new_event["payload"]["is_urgent"]:
@@ -121,7 +143,10 @@ class EventManager:
                             # cancel gracefully
                             await self.running_agent
                         except asyncio.CancelledError:
-                            self.inflight_events = [*self.inflight_events, *self.pending_events]
+                            self.inflight_events = [
+                                *self.inflight_events,
+                                *self.pending_events,
+                            ]
                     else:
                         self.inflight_events = self.pending_events.copy()
 
@@ -129,8 +154,10 @@ class EventManager:
                     self.running_agent.add_done_callback(self.on_run_end)
                     self.pending_events.clear()
             except asyncio.TimeoutError:
-                if not self.pending_events: continue
-                if self.running_agent and not self.running_agent.done(): continue
+                if not self.pending_events:
+                    continue
+                if self.running_agent and not self.running_agent.done():
+                    continue
 
                 self.inflight_events = self.pending_events.copy()
                 self.running_agent = asyncio.create_task(self.run())
@@ -155,17 +182,26 @@ class EventManager:
                     for action in t.actions:
                         if self.writers.get("gui"):
                             print("creating tasks")
-                            asyncio.create_task(self.send_event(gui_writer, 
-                                                                {"type": "update_gui", "thread": action.type, "content": action.message}
-                                                                ))
-                            
+                            asyncio.create_task(
+                                self.send_event(
+                                    gui_writer,
+                                    {
+                                        "type": "update_gui",
+                                        "thread": action.type,
+                                        "content": action.message,
+                                    },
+                                ),
+                            )
+
                             events_map = {
                                 "whatsapp": WhatsappMessageSentEvent,
                                 "telegram": TelegramMessageSentEvent,
-                                "sms": SMSMessageSentEvent
+                                "sms": SMSMessageSentEvent,
                             }
 
-                            event = events_map[action.type](content=action.message).to_dict()
+                            event = events_map[action.type](
+                                content=action.message,
+                            ).to_dict()
                             if self.in_call:
                                 self.events_queue.put_nowait(event)
                             else:
@@ -174,7 +210,7 @@ class EventManager:
             pass
         finally:
             ...
-    
+
     async def run(self):
         if self.in_call:
             return await self.run_call_agent()
@@ -190,13 +226,13 @@ class EventManager:
 
         user_msg = self.get_user_agent_prompt()
         print(user_msg)
-        
+
         async with client.beta.chat.completions.stream(
             model="gpt-4.1",
             messages=[
                 {
                     "role": "system",
-                    "content": call_sys
+                    "content": call_sys,
                 },
                 {
                     "role": "user",
@@ -205,7 +241,7 @@ class EventManager:
             ],
             response_format=CallAssistantOutput,
         ) as stream:
-            
+
             async for event in stream:
                 # print(event)
                 if event.type == "content.delta":
@@ -225,20 +261,18 @@ class EventManager:
         user_msg = self.get_user_agent_prompt()
         print(user_msg)
         res = await client.beta.chat.completions.parse(
-             model="gpt-4.1",
+            model="gpt-4.1",
             messages=[
                 {
                     "role": "system",
-                    "content": non_call_sys
+                    "content": non_call_sys,
                 },
                 {
                     "role": "user",
                     "content": user_msg,
                 },
             ],
-
-            response_format=AssistantOutput
-
+            response_format=AssistantOutput,
         )
         message = res.choices[0].message
         print(message)
@@ -246,12 +280,17 @@ class EventManager:
         if message.parsed:
             return message.parsed
 
-    
     def get_user_agent_prompt(self):
-        past_events_str = "\n".join([str(Event.from_dict(e)) for e in self.past_events]) if self.past_events else ""
-        new_events_str = "\n".join(str(Event.from_dict(e)) for e in self.inflight_events) 
+        past_events_str = (
+            "\n".join([str(Event.from_dict(e)) for e in self.past_events])
+            if self.past_events
+            else ""
+        )
+        new_events_str = "\n".join(
+            str(Event.from_dict(e)) for e in self.inflight_events
+        )
 
-        task_status_str = "No Tasks are running" #TODO
+        task_status_str = "No Tasks are running"  # TODO
         user_msg = f"""Events Log:
 ** PAST EVENTS **
 {past_events_str.strip()}
@@ -262,12 +301,11 @@ class EventManager:
 # Tasks status:
 # {task_status_str.strip()}"""
         return user_msg
-    
+
     async def send_event(self, writer: asyncio.StreamWriter, event: dict):
         ev = json.dumps(event) + "\n"
         writer.write(ev.encode())
         await writer.drain()
-
 
 
 if __name__ == "__main__":

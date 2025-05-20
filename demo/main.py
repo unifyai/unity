@@ -4,6 +4,7 @@ T.B.D
 For now, to run make sure textual is installed, simply do python new_start_chat.py.
 To Exit the Terminal run `Ctrl + q`.
 """
+
 # STEPS:
 # 1- Get everything wroking in chat only demo
 # 2- Connect to voice demo
@@ -11,18 +12,14 @@ To Exit the Terminal run `Ctrl + q`.
 # 4- Refine abstractions and show it to people to play with
 
 
-
 import asyncio
 from datetime import datetime
 
 from textual.app import App, ComposeResult
 from textual.widgets import Header, Static, Button, Input, Tabs
-from textual.containers import VerticalScroll, HorizontalGroup, VerticalGroup, Center, Vertical
+from textual.containers import VerticalScroll, HorizontalGroup, VerticalGroup, Vertical
 from textual.reactive import reactive
-from textual import work
-from textual.worker import Worker, WorkerState
 
-from unify import AsyncUnify
 import json
 
 from dotenv import load_dotenv
@@ -37,12 +34,19 @@ import subprocess, sys
 
 
 # will build this out later
-class EmailMessage:
-    ...
+class EmailMessage: ...
+
 
 class Message(HorizontalGroup):
 
-    def __init__(self, role: str, content: str, date: datetime.date=None, *args, **kwargs):
+    def __init__(
+        self,
+        role: str,
+        content: str,
+        date: datetime.date = None,
+        *args,
+        **kwargs,
+    ):
         super().__init__(*args, **kwargs)
         self.role = role
         self.content = content
@@ -72,13 +76,14 @@ class Message(HorizontalGroup):
             msg.styles.color = "black"
             msg.styles.min_width = 20
             msg.styles.max_width = 50
-            msg.styles.border = ("round", "blue" if self.role=="user" else "red")
+            msg.styles.border = ("round", "blue" if self.role == "user" else "red")
             msg.border_title = "You" if self.role == "user" else "AI"
             msg.border_subtitle = str(self.date)
             msg.styles.max_height = "100%"
             msg.styles.height = "auto"
 
             yield msg
+
 
 class MessagesView(VerticalScroll):
     def __init__(self, messages, ai_typing=False, *args, **kwargs):
@@ -88,10 +93,20 @@ class MessagesView(VerticalScroll):
 
     def compose(self) -> ComposeResult:
         self.styles.align_horizontal = "center"
-        yield from [Message(role=msg["role"], content=msg["content"], date=msg["date"]) 
-                    for msg in self.messages] + ([Message(
-            role="typing", content=""
-        )] if self.ai_typing else [])
+        yield from [
+            Message(role=msg["role"], content=msg["content"], date=msg["date"])
+            for msg in self.messages
+        ] + (
+            [
+                Message(
+                    role="typing",
+                    content="",
+                ),
+            ]
+            if self.ai_typing
+            else []
+        )
+
 
 class PhoneView(Vertical):
     def __init__(self, *args, **kwargs):
@@ -99,46 +114,53 @@ class PhoneView(Vertical):
         self.styles.width = "100%"
         self.styles.height = "100%"
         self.styles.align = ("center", "middle")
+
     def compose(self) -> ComposeResult:
         yield Button("Call Assistant", id="call_button")
         yield Button("End Call", id="end_call_button")
+
+
 class CommsView(VerticalGroup):
-    threads = reactive({
-        "whatsapp": {
-            "messages": [],
-            "ai_typing": False
+    threads = reactive(
+        {
+            "whatsapp": {
+                "messages": [],
+                "ai_typing": False,
+            },
+            "telegram": {
+                "messages": [],
+                "ai_typing": False,
+            },
+            "sms": {
+                "messages": [],
+                "ai_typing": False,
+            },
         },
-        "telegram": {
-            "messages": [],
-            "ai_typing": False
-        },
-        "sms": {
-            "messages": [],
-            "ai_typing": False
-        },
-    }, recompose=True)
+        recompose=True,
+    )
 
     current_thread = reactive("whatsapp", recompose=True)
 
     def compose(self) -> ComposeResult:
         if self.current_thread in ["whatsapp", "telegram", "sms"]:
-            yield MessagesView(self.threads[self.current_thread]["messages"], self.threads[self.current_thread]["ai_typing"])
+            yield MessagesView(
+                self.threads[self.current_thread]["messages"],
+                self.threads[self.current_thread]["ai_typing"],
+            )
             yield Input(placeholder="Enter your Message", id="message_input")
         elif self.current_thread == "email":
             yield Static("T.B.D")
-        else: # phone view
+        else:  # phone view
             yield PhoneView()
-        
-    
+
+
 class ChatApp(App):
     def __init__(self, *args, **kwargs):
         self.call_proc = None
         self.event_manager_proc = None
-        self.writer: asyncio.StreamWriter|None = None
-        self.reader: asyncio.StreamReader|None = None
+        self.writer: asyncio.StreamWriter | None = None
+        self.reader: asyncio.StreamReader | None = None
         super().__init__(*args, **kwargs)
-
-
 
     async def on_mount(self) -> None:
         """
@@ -153,7 +175,7 @@ class ChatApp(App):
         try:
             # ── Try to connect right away ───────────────────────────────
             self.reader, self.writer = await asyncio.open_connection("127.0.0.1", 8888)
-            self.event_manager_proc = None              # we didn’t spawn it
+            self.event_manager_proc = None  # we didn’t spawn it
         except ConnectionRefusedError:
             # ── Nothing was listening: launch the daemon ourselves ─────
             self.event_manager_proc = subprocess.Popen(
@@ -166,12 +188,17 @@ class ChatApp(App):
             for _ in range(3):
                 await asyncio.sleep(0.3)
                 try:
-                    self.reader, self.writer = await asyncio.open_connection("127.0.0.1", 8888)
+                    self.reader, self.writer = await asyncio.open_connection(
+                        "127.0.0.1",
+                        8888,
+                    )
                     break
                 except ConnectionRefusedError:
                     continue
             else:
-                raise RuntimeError("Unable to connect to event-manager on 127.0.0.1:8888")
+                raise RuntimeError(
+                    "Unable to connect to event-manager on 127.0.0.1:8888",
+                )
 
             print("connected!")
 
@@ -184,7 +211,11 @@ class ChatApp(App):
                     msg = json.loads(raw.decode())
                     # handle msg, put msg in the right thread
                     if msg["type"] == "update_gui":
-                        self._add_message_to_thread(msg["thread"], role="assistant", content=msg["content"])
+                        self._add_message_to_thread(
+                            msg["thread"],
+                            role="assistant",
+                            content=msg["content"],
+                        )
                         # should probably send back an even that the gui was updated right?
                 except Exception as e:
                     print(e)
@@ -202,7 +233,7 @@ class ChatApp(App):
         yield Header()
         yield Tabs("Whatsapp", "Telegram", "SMS", "Email", "Phone")
         yield comms_view
-    
+
     async def on_input_submitted(self, event: Input.Submitted):
         if event.input.id == "message_input":
             val = event.input.value
@@ -210,24 +241,30 @@ class ChatApp(App):
             curr_thread = msg_view.current_thread
             date = datetime.now()
             self._add_message_to_thread(curr_thread, "user", val, date)
-            
+
             # TODO: fix hardcoded whatsapp here
             events_map = {
                 "whatsapp": WhatsappMessageRecievedEvent,
                 "telegram": TelegramMessageRecievedEvent,
-                "sms": SMSMessageRecievedEvent
+                "sms": SMSMessageRecievedEvent,
             }
-            await self.publish_event({"type": "user_agent_event", 
-                                      "to": "pending",
-                                      "event": events_map[curr_thread](content=val, timestamp=date, role="User").to_dict()
-                                      })
+            await self.publish_event(
+                {
+                    "type": "user_agent_event",
+                    "to": "pending",
+                    "event": events_map[curr_thread](
+                        content=val,
+                        timestamp=date,
+                        role="User",
+                    ).to_dict(),
+                },
+            )
 
             event.input.value = ""
 
     async def on_input_changed(self, event: Input.Changed):
         # just publish User typing event to manager proc
         ...
-
 
     def on_tabs_tab_activated(self, event: Tabs.TabActivated) -> None:
         """Handle TabActivated message sent by Tabs."""
@@ -236,30 +273,36 @@ class ChatApp(App):
             pass
         else:
             msg_view.current_thread = event.tab.label_text.lower()
-    
+
     async def on_button_pressed(self, event: Button.Pressed):
         # should give control to the user voice agent
         if event.button.id == "call_button":
             if not self.call_proc:
                 self.call_proc = run_in_new_terminal(
-                            "call.py",
-                            "console",                          # ← keep this
-                        )
+                    "call.py",
+                    "console",  # ← keep this
+                )
                 # not sure if we should wait until the proc fully connects and is awake
 
         if event.button.id == "end_call_button":
             if self.call_proc:
                 self.call_proc.terminate()
                 self.call_proc = None
-       
 
     def _add_message_to_thread(self, thread, role, content, date=None):
         comms_view = self.query_one(CommsView)
-        msg = {"role": role, "content": content, "date": date if date else datetime.now()}
+        msg = {
+            "role": role,
+            "content": content,
+            "date": date if date else datetime.now(),
+        }
         threads = comms_view.threads
         comms_view.threads = {
             **threads,
-            thread: {**threads[thread], "messages": [*threads[thread]["messages"], msg]},
+            thread: {
+                **threads[thread],
+                "messages": [*threads[thread]["messages"], msg],
+            },
         }
         if thread == comms_view.current_thread:
             comms_view.scroll_end(animate=False)
@@ -267,12 +310,13 @@ class ChatApp(App):
 
         # not sure why this isn't taking effect
         msg_view.scroll_end(animate=False)
-    
+
     # could be a textual worker, buts its too fast so no worries
     async def publish_event(self, ev: dict):
         ev = json.dumps(ev) + "\n"
         self.writer.write(ev.encode())
         await self.writer.drain()
+
 
 if __name__ == "__main__":
     app = ChatApp()

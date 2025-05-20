@@ -1018,10 +1018,12 @@ def ask_llm(
 
         ctx_dump = json.dumps(context, ensure_ascii=False, indent=2)
         ctx_txt = textwrap.indent(ctx_dump, "  ")
-        client.messages.append({
-            "role": "system",
-            "content": f"Browser-Context:\n{ctx_txt}",
-        })
+        client.messages.append(
+            {
+                "role": "system",
+                "content": f"Browser-Context:\n{ctx_txt}",
+            },
+        )
 
     raw_json = client.generate(
         messages=client.messages + [{"role": "user", "content": content}],

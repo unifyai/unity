@@ -16,7 +16,6 @@ No private helpers (_search, _list_tables, …) are imported or poked.
 import re
 import json
 import pytest
-from typing import Dict, List, Any
 
 from unity.knowledge_manager.knowledge_manager import KnowledgeManager
 from tests.helpers import _handle_project
@@ -125,7 +124,10 @@ async def test_schema_expands_and_new_field_retrievable():
 
     await km.store("Bob is 35 years old.")
 
-    answer, reasoning = await km.retrieve("How old is Bob?", return_reasoning_steps=True)
+    answer, reasoning = await km.retrieve(
+        "How old is Bob?",
+        return_reasoning_steps=True,
+    )
     assert _contains(answer, "35"), assertion_failed(
         "Answer containing '35'",
         answer,
@@ -138,7 +140,10 @@ async def test_schema_expands_and_new_field_retrievable():
         "Bob's favourite colour is green and his height is 180 centimetres.",
     )
 
-    answer, reasoning = await km.retrieve("How tall is Bob?", return_reasoning_steps=True)
+    answer, reasoning = await km.retrieve(
+        "How tall is Bob?",
+        return_reasoning_steps=True,
+    )
     assert _contains(answer, "180"), assertion_failed(
         "Answer containing '180'",
         answer,
@@ -159,7 +164,10 @@ async def test_schema_expands_and_new_field_retrievable():
         {"Knowledge Data": km._search()},
     )
 
-    answer, reasoning = await km.retrieve("How old is Bob?", return_reasoning_steps=True)
+    answer, reasoning = await km.retrieve(
+        "How old is Bob?",
+        return_reasoning_steps=True,
+    )
     assert _contains(answer, "35"), assertion_failed(
         "Answer containing '35'",
         answer,

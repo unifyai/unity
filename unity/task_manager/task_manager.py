@@ -153,7 +153,12 @@ class TaskManager(threading.Thread):
         """
         client = unify.AsyncUnify("o4-mini@openai", cache=True)
         client.set_system_message(REQUEST)
-        ans = await async_tool_use_loop(client, text, self._tools, log_steps=log_tool_steps)
+        ans = await async_tool_use_loop(
+            client,
+            text,
+            self._tools,
+            log_steps=log_tool_steps,
+        )
         if return_reasoning_steps:
             return ans, client.messages
         return ans

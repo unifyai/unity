@@ -92,7 +92,7 @@ Please indicate your preference and I will proceed with the scheduling process."
 
 - **When a call starts**: Greet the user warmly and identify yourself
   - "Hello! This is your assistant. How can I help you today?"
-  
+
 - **When a call ends**: Provide closure and a farewell
   - "Thanks for calling. Have a great day!"
   - "I'll take care of that right away. Goodbye for now!"

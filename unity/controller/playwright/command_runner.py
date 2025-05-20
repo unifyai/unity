@@ -343,8 +343,16 @@ class CommandRunner:
             CMD_MOVE_LINE_END: ("Control+ArrowRight",),
             CMD_MOVE_WORD_LEFT: ("Alt+ArrowLeft",),
             CMD_MOVE_WORD_RIGHT: ("Alt+ArrowRight",),
-            CMD_SELECT_WORD_LEFT: ("Alt+Shift+ArrowLeft",) if sys.platform == "darwin" else ("Control+Shift+ArrowLeft",),
-            CMD_SELECT_WORD_RIGHT: ("Alt+Shift+ArrowRight",) if sys.platform == "darwin" else ("Control+Shift+ArrowRight",),
+            CMD_SELECT_WORD_LEFT: (
+                ("Alt+Shift+ArrowLeft",)
+                if sys.platform == "darwin"
+                else ("Control+Shift+ArrowLeft",)
+            ),
+            CMD_SELECT_WORD_RIGHT: (
+                ("Alt+Shift+ArrowRight",)
+                if sys.platform == "darwin"
+                else ("Control+Shift+ArrowRight",)
+            ),
         }
         if cmd in keymap:
             self.hist.add(cmd)

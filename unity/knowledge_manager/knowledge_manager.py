@@ -48,7 +48,9 @@ class KnowledgeManager:
 
         ctxs = unify.get_active_context()
         read_ctx, write_ctx = ctxs["read"], ctxs["write"]
-        assert read_ctx == write_ctx, "read and write contexts must be the same when instantiating a KnowledgeManager."
+        assert (
+            read_ctx == write_ctx
+        ), "read and write contexts must be the same when instantiating a KnowledgeManager."
         self._ctx = f"{read_ctx}/Knowledge" if read_ctx else "Knowledge"
 
         # Add tracing
@@ -167,7 +169,7 @@ class KnowledgeManager:
             List[Dict[str, Dict[str, Union[str, ColumnType]]]]: Table names and their descriptions, and optionally also column names and types.
         """
         tables = {
-            k[len(f"{self._ctx}/"):]: {"description": v}
+            k[len(f"{self._ctx}/") :]: {"description": v}
             for k, v in unify.get_contexts(prefix=f"{self._ctx}/").items()
         }
         if not include_columns:

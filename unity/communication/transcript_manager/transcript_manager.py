@@ -29,10 +29,14 @@ class TranscriptManager:
 
         ctxs = unify.get_active_context()
         read_ctx, write_ctx = ctxs["read"], ctxs["write"]
-        assert read_ctx == write_ctx, "read and write contexts must be the same when instantiating a TranscriptManager."
+        assert (
+            read_ctx == write_ctx
+        ), "read and write contexts must be the same when instantiating a TranscriptManager."
         self._contacts_ctx = f"{read_ctx}/Contacts" if read_ctx else "Contacts"
         self._transcripts_ctx = f"{read_ctx}/Transcripts" if read_ctx else "Transcripts"
-        self._summaries_ctx = f"{read_ctx}/TranscriptSummaries" if read_ctx else "TranscriptSummaries"
+        self._summaries_ctx = (
+            f"{read_ctx}/TranscriptSummaries" if read_ctx else "TranscriptSummaries"
+        )
 
         # Add tracing
         if traced:
@@ -100,7 +104,7 @@ class TranscriptManager:
             context=self._summaries_ctx,
             exchange_ids=exchange_ids,
             summary=summary,
-            new=True
+            new=True,
         )
         return summary
 
@@ -232,7 +236,10 @@ class TranscriptManager:
             ), f"Invalid, contact with {key} {value} already exists."
 
         # get log id
-        logs = unify.get_logs(context=self._contacts_ctx, filter=f"contact_id == {contact_id}")
+        logs = unify.get_logs(
+            context=self._contacts_ctx,
+            filter=f"contact_id == {contact_id}",
+        )
         assert len(logs) == 1
         log: unify.Log = logs[0]
         log.update_entries(

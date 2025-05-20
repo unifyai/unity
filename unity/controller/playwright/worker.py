@@ -43,14 +43,16 @@ def _update_in_textbox_state(runner, handle, label):
         if "Google Docs Input" not in label:
             tag = handle.evaluate("el => el.tagName?.toLowerCase?.() || ''")
             role = handle.evaluate("el => el.getAttribute?.('role') || ''")
-            runner.state.in_textbox = (
-                tag in {"input", "textarea"} or
-                role in {"textbox", "combobox", "searchbox"}
-            )
+            runner.state.in_textbox = tag in {"input", "textarea"} or role in {
+                "textbox",
+                "combobox",
+                "searchbox",
+            }
             return
 
         # Google Docs aware logic
-        runner.state.in_textbox = handle.evaluate("""
+        runner.state.in_textbox = handle.evaluate(
+            """
             () => {
                 try {
                     const textTarget = document.querySelector('.docs-texteventtarget');
@@ -66,9 +68,11 @@ def _update_in_textbox_state(runner, handle, label):
                     return false;
                 }
             }
-        """)
+        """,
+        )
 
-        handle.evaluate("""
+        handle.evaluate(
+            """
             () => {
                 const editor = document.querySelector('.kix-appview-editor');
                 if (!editor) return;
@@ -88,7 +92,8 @@ def _update_in_textbox_state(runner, handle, label):
                     sel.addRange(range);
                 }
             }
-        """)
+        """,
+        )
         runner.log(f"in_textbox (Google Docs logic): {runner.state.in_textbox}")
     except Exception as e:
         runner.state.in_textbox = False
@@ -240,7 +245,11 @@ class BrowserWorker(threading.Thread):
                                 friendly = f"click {hit['label']}"
                                 self.runner.hist.add(friendly)
                                 hit["handle"].click()
-                                _update_in_textbox_state(self.runner, hit["handle"], hit["label"])
+                                _update_in_textbox_state(
+                                    self.runner,
+                                    hit["handle"],
+                                    hit["label"],
+                                )
                             else:
                                 self.log(f'No element matches "{tail}"')
                         elif cmd.startswith("open url "):

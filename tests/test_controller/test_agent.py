@@ -22,7 +22,7 @@ def test_text_to_browser_action():
 
     assert isinstance(result, dict)
     assert "action" in result
-    assert "rationale" in result 
+    assert "rationale" in result
     assert "open" in result["rationale"] and "browser" in result["rationale"]
     assert "new_tab" in result["action"]
 
@@ -35,7 +35,7 @@ def test_ask_llm_bool():
     except Exception as exc:
         pytest.skip(f"Skipping – Unify backend unavailable: {exc}")
 
-    assert isinstance(answer, bool) 
+    assert isinstance(answer, bool)
 
 
 @pytest.mark.timeout(30)
@@ -51,6 +51,7 @@ def test_ask_llm_str():
 
 
 from pydantic import BaseModel, Field
+
 
 class _Coords(BaseModel):
     lat: float = Field(..., description="latitude")
@@ -71,7 +72,7 @@ def test_ask_llm_custom_model():
     # Because our custom model has no 'answer' attribute, ask_llm returns the model instance
     assert isinstance(ret, _Coords)
     assert -90 <= ret.lat <= 90
-    assert -180 <= ret.lon <= 180 
+    assert -180 <= ret.lon <= 180
 
 
 @pytest.mark.timeout(30)
@@ -89,8 +90,11 @@ def test_ask_llm_int():
 def test_ask_llm_float():
     """ask_llm should return a float when response_type=float"""
     try:
-        answer = agent_mod.ask_llm("Provide 1 divided by 3 as a decimal.", response_type=float)
+        answer = agent_mod.ask_llm(
+            "Provide 1 divided by 3 as a decimal.",
+            response_type=float,
+        )
     except Exception as exc:
         pytest.skip(f"Skipping – Unify backend unavailable: {exc}")
 
-    assert isinstance(answer, float) 
+    assert isinstance(answer, float)

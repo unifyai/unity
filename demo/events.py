@@ -36,7 +36,15 @@ class Event(metaclass=_EventRegistry):
                 return datetime.strptime(ts, "%Y-%m-%d %H:%M:%S")
         raise TypeError(f"Unsupported timestamp type: {type(ts)}")
 
-    def __init__(self, *, timestamp: datetime | str | None = None, is_urgent: bool = False, transient: bool = False, content: str | None = None, role: str | None = None):
+    def __init__(
+        self,
+        *,
+        timestamp: datetime | str | None = None,
+        is_urgent: bool = False,
+        transient: bool = False,
+        content: str | None = None,
+        role: str | None = None,
+    ):
         self.timestamp = self._parse_timestamp(timestamp)
         self.fmt_timestamp = self.timestamp.strftime("%Y-%m-%d %H:%M:%S")
         self.is_urgent = is_urgent
@@ -74,11 +82,11 @@ class Event(metaclass=_EventRegistry):
         if seconds <= 5:
             return "Now"
         periods = [
-            ("year", 60*60*24*365),
-            ("month", 60*60*24*30),
-            ("week", 60*60*24*7),
-            ("day", 60*60*24),
-            ("hour", 60*60),
+            ("year", 60 * 60 * 24 * 365),
+            ("month", 60 * 60 * 24 * 30),
+            ("week", 60 * 60 * 24 * 7),
+            ("day", 60 * 60 * 24),
+            ("hour", 60 * 60),
             ("minute", 60),
         ]
         for name, length in periods:
@@ -102,7 +110,7 @@ class _Message(Event):
 
     def __str__(self):
         sender = "Assistant" if self.direction == "Sent" else "User"
-        return f"[{self.platform} Message {self.direction} @ {self.fmt_timestamp}] {sender}: \"{self.content}\""
+        return f'[{self.platform} Message {self.direction} @ {self.fmt_timestamp}] {sender}: "{self.content}"'
 
 
 class WhatsappMessageSentEvent(_Message):
@@ -155,11 +163,12 @@ class PhoneUtteranceEvent(Event):
         super().__init__(role=role, content=content, is_urgent=is_urgent, **kwargs)
 
     def __str__(self):
-        return f"[Phone Utterance @ {self.fmt_timestamp}] {self.role}: \"{self.content}\""
+        return f'[Phone Utterance @ {self.fmt_timestamp}] {self.role}: "{self.content}"'
 
 
 class InterruptEvent(Event):
     def __str__(self):
         return f"[INTERRUPT @ {self.fmt_timestamp}] User interrupted"(Event)
+
     def __str__(self):
         return f"[INTERRUPT @ {self.fmt_timestamp}] User interrupted"

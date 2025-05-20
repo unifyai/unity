@@ -24,4 +24,4 @@ def test_dialog_prompt_limits_actions():
 def test_captcha_pending_restricts_actions():
     st = BrowserState(captcha_pending=True)
     valid = af.get_valid_actions(st, mode="actions")
-    assert valid == {cmd.CMD_SCROLL_UP, cmd.CMD_SCROLL_DOWN, cmd.CMD_STOP_SCROLLING} 
+    assert valid == {cmd.CMD_SCROLL_UP, cmd.CMD_SCROLL_DOWN, cmd.CMD_STOP_SCROLLING}

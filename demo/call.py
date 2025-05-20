@@ -1,4 +1,3 @@
-import os
 import sys
 import json
 
@@ -41,6 +40,7 @@ async def publish_event(ev: dict):
     WRITER.write(ev.encode())
     await WRITER.drain()
 
+
 async def process_structured_output(
     text: AsyncIterable[str],
 ) -> AsyncIterable[str]:
@@ -50,7 +50,10 @@ async def process_structured_output(
         print("CHUNK FOR TTS", chunk)
         acc_text += chunk
         try:
-            resp: AssistantOutput = from_json(acc_text, allow_partial="trailing-strings")
+            resp: AssistantOutput = from_json(
+                acc_text,
+                allow_partial="trailing-strings",
+            )
         except ValueError:
             continue
 
@@ -73,19 +76,29 @@ class Assistant(Agent):
         super().__init__(instructions=sys, llm=openai.LLM(model="gpt-4o"))
 
     async def on_user_turn_completed(
-    self, turn_ctx: ChatContext, new_message: ChatMessage,
-) -> None:
+        self,
+        turn_ctx: ChatContext,
+        new_message: ChatMessage,
+    ) -> None:
         # events_queue.put_nowait(PhoneUtteranceEvent(role="User", content=new_message.text_content))
         # we will handle this through the events manager
-        await publish_event({"type": "user_agent_event", "to": "pending",
-                             "event": PhoneUtteranceEvent(role="User", content=new_message.text_content).to_dict()})
+        await publish_event(
+            {
+                "type": "user_agent_event",
+                "to": "pending",
+                "event": PhoneUtteranceEvent(
+                    role="User",
+                    content=new_message.text_content,
+                ).to_dict(),
+            },
+        )
         raise llm.StopResponse()
-    
+
     async def llm_node(
         self,
         chat_ctx: llm.ChatContext,
         tools: list[FunctionTool],
-        model_settings: ModelSettings
+        model_settings: ModelSettings,
     ) -> AsyncIterable[llm.ChatChunk]:
         print("running llm node...")
         while True:
@@ -96,13 +109,17 @@ class Assistant(Agent):
                 yield chunk["chunk"]
 
     async def tts_node(
-    self, text: AsyncIterable[str], model_settings: ModelSettings
-) -> AsyncIterable:
+        self,
+        text: AsyncIterable[str],
+        model_settings: ModelSettings,
+    ) -> AsyncIterable:
         return Agent.default.tts_node(
-            self, process_structured_output(text), model_settings
+            self,
+            process_structured_output(text),
+            model_settings,
         )
-    
-   
+
+
 async def entrypoint(ctx: agents.JobContext):
     await ctx.connect()
 
@@ -121,21 +138,25 @@ async def entrypoint(ctx: agents.JobContext):
             # LiveKit Cloud enhanced noise cancellation
             # - If self-hosting, omit this parameter
             # - For telephony applications, use `BVCTelephony` for best results
-            # noise_cancellation=noise_cancellation.BVC(), 
+            # noise_cancellation=noise_cancellation.BVC(),
         ),
     )
 
-
-    
     global READER, WRITER
     READER, WRITER = await asyncio.open_connection("127.0.0.1", 8889)
-    await publish_event({"type": "user_agent_event", "to": "pending", "event": PhoneCallStartedEvent().to_dict()})
+    await publish_event(
+        {
+            "type": "user_agent_event",
+            "to": "pending",
+            "event": PhoneCallStartedEvent().to_dict(),
+        },
+    )
 
     async def response_task():
         nonlocal session
         handle = await session.generate_reply()
         return handle.chat_message.text_content, handle.interrupted
-    
+
     def on_response_end(t: asyncio.Task):
         print("FIRED!!!")
         try:
@@ -143,30 +164,43 @@ async def entrypoint(ctx: agents.JobContext):
             if result:
                 print("RESULT", result)
                 try:
-                    assistant_res = from_json(result[0], allow_partial="trailing-strings")
+                    assistant_res = from_json(
+                        result[0],
+                        allow_partial="trailing-strings",
+                    )
                 except:
                     assistant_res = {}
                 if assistant_res.get("phone_utterance"):
                     # send assistant response as an event to be added in past events
-                    asyncio.create_task(publish_event({
-                        "to": "past",
-                        "type": "user_agent_event",
-                        "event": PhoneUtteranceEvent(role="Assistant", content=assistant_res.get("phone_utterance")).to_dict()
-                    }))
+                    asyncio.create_task(
+                        publish_event(
+                            {
+                                "to": "past",
+                                "type": "user_agent_event",
+                                "event": PhoneUtteranceEvent(
+                                    role="Assistant",
+                                    content=assistant_res.get("phone_utterance"),
+                                ).to_dict(),
+                            },
+                        ),
+                    )
                     # send interupt as an event to be added to pending events (?)
                     # this might confuse things a bit actually, maybe it should be sent to past events instead
                     # to prevent re-triggering events if nothing happens
                     # another way would be to signal the event manager that the user is talking now and prevent any
                     # agent response until the user finishes talking
                     if result[1]:
-                        asyncio.create_task(publish_event({
-                            "to": "past",
-                            "type": "user_agent_event",
-                            "event": InterruptEvent().to_dict()
-                        }))
+                        asyncio.create_task(
+                            publish_event(
+                                {
+                                    "to": "past",
+                                    "type": "user_agent_event",
+                                    "event": InterruptEvent().to_dict(),
+                                },
+                            ),
+                        )
         except asyncio.CancelledError:
             pass
-
 
     async def collect_events():
         global chunk_queue
@@ -191,7 +225,6 @@ async def entrypoint(ctx: agents.JobContext):
                 await WRITER.wait_closed()
 
     asyncio.create_task(collect_events())
-    
 
 
 if __name__ == "__main__":

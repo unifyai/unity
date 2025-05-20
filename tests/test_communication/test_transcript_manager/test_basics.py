@@ -179,7 +179,7 @@ def test_get_messages():
     time.sleep(0.1)
     random.seed(0)
     transcript_manager = TranscriptManager()
-    
+
     # log messages
     transcript_manager.log_messages(
         [
