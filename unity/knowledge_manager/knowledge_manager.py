@@ -9,7 +9,7 @@ import unify
 from ..common.embed_utils import EMBED_MODEL, ensure_vector_column
 from ..helpers import _handle_exceptions
 from .types import ColumnType
-from ..common.llm_helpers import tool_use_loop
+from ..common.llm_helpers import async_tool_use_loop
 from ..helpers import _handle_exceptions
 
 API_KEY = os.environ["UNIFY_KEY"]
@@ -60,7 +60,7 @@ class KnowledgeManager:
 
     # English-Text Command
 
-    def store(self, text: str, *, return_reasoning_steps: bool = False) -> Any:
+    async def store(self, text: str, *, return_reasoning_steps: bool = False) -> Any:
         """
         Take in any storage text command, and use the tools available (the *non-skipped* private methods of this class) to store the information, refactoring the table and column schema along the way if needed.
 
@@ -74,14 +74,14 @@ class KnowledgeManager:
         """
         from unity.knowledge_manager.sys_msgs import STORE
 
-        client = unify.Unify("o4-mini@openai", cache=True)
+        client = unify.AsyncUnify("o4-mini@openai", cache=True)
         client.set_system_message(STORE)
-        ans = tool_use_loop(client, text, self._store_tools)
+        ans = await async_tool_use_loop(client, text, self._store_tools)
         if return_reasoning_steps:
             return ans, client.messages
         return ans
 
-    def retrieve(self, text: str, *, return_reasoning_steps: bool = False) -> str:
+    async def retrieve(self, text: str, *, return_reasoning_steps: bool = False) -> str:
         """
         Take in any retrieval text command, and use the tools available (the *non-skipped* private methods of this class) to retireve the information, refactoring the table and column schema along the way if needed.
 
@@ -95,9 +95,9 @@ class KnowledgeManager:
         """
         from unity.knowledge_manager.sys_msgs import RETRIEVE
 
-        client = unify.Unify("o4-mini@openai", cache=True)
+        client = unify.AsyncUnify("o4-mini@openai", cache=True)
         client.set_system_message(RETRIEVE)
-        ans = tool_use_loop(client, text, self._retrieve_tools)
+        ans = await async_tool_use_loop(client, text, self._retrieve_tools)
         if return_reasoning_steps:
             return ans, client.messages
         return ans

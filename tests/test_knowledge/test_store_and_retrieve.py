@@ -39,12 +39,13 @@ def _contains(text: str, *needles: str) -> bool:
 
 
 @pytest.mark.eval
+@pytest.mark.asyncio
 @pytest.mark.timeout(120)
 @_handle_project
-def test_store_simple_fact():
+async def test_store_simple_fact():
     km = KnowledgeManager()
 
-    km.store("Adrian was born in 1994.")
+    await km.store("Adrian was born in 1994.")
 
     all_data = km._search()
     assert _contains(json.dumps(all_data), "1994"), all_data
@@ -56,15 +57,16 @@ def test_store_simple_fact():
 
 
 @pytest.mark.eval
+@pytest.mark.asyncio
 @pytest.mark.timeout(120)
 @_handle_project
-def test_retrieve_simple_fact():
+async def test_retrieve_simple_fact():
     km = KnowledgeManager()
 
     km._create_table("MyTable")
     km._add_data(table="MyTable", data=[{"name": "Adrian", "birth_year": "1994"}])
 
-    answer, reasoning = km.retrieve(
+    answer, reasoning = await km.retrieve(
         "When was Adrian born?",
         return_reasoning_steps=True,
     )
@@ -83,14 +85,15 @@ def test_retrieve_simple_fact():
 
 
 @pytest.mark.eval
+@pytest.mark.asyncio
 @pytest.mark.timeout(120)
 @_handle_project
-def test_round_trip_simple_fact():
+async def test_round_trip_simple_fact():
     km = KnowledgeManager()
 
-    km.store("Adrian was born in 1994.")
+    await km.store("Adrian was born in 1994.")
 
-    answer, reasoning = km.retrieve(
+    answer, reasoning = await km.retrieve(
         "When was Adrian born?",
         return_reasoning_steps=True,
     )
@@ -109,9 +112,10 @@ def test_round_trip_simple_fact():
 
 
 @pytest.mark.eval
+@pytest.mark.asyncio
 @pytest.mark.timeout(180)
 @_handle_project
-def test_schema_expands_and_new_field_retrievable():
+async def test_schema_expands_and_new_field_retrievable():
     """
     • First fact gives Bob only 'age'.
     • Second fact adds two *previously unseen* attributes.
@@ -119,9 +123,9 @@ def test_schema_expands_and_new_field_retrievable():
     """
     km = KnowledgeManager()
 
-    km.store("Bob is 35 years old.")
+    await km.store("Bob is 35 years old.")
 
-    answer, reasoning = km.retrieve("How old is Bob?", return_reasoning_steps=True)
+    answer, reasoning = await km.retrieve("How old is Bob?", return_reasoning_steps=True)
     assert _contains(answer, "35"), assertion_failed(
         "Answer containing '35'",
         answer,
@@ -130,11 +134,11 @@ def test_schema_expands_and_new_field_retrievable():
         {"Knowledge Data": km._search()},
     )
 
-    km.store(
+    await km.store(
         "Bob's favourite colour is green and his height is 180 centimetres.",
     )
 
-    answer, reasoning = km.retrieve("How tall is Bob?", return_reasoning_steps=True)
+    answer, reasoning = await km.retrieve("How tall is Bob?", return_reasoning_steps=True)
     assert _contains(answer, "180"), assertion_failed(
         "Answer containing '180'",
         answer,
@@ -143,7 +147,7 @@ def test_schema_expands_and_new_field_retrievable():
         {"Knowledge Data": km._search()},
     )
 
-    answer, reasoning = km.retrieve(
+    answer, reasoning = await km.retrieve(
         "What is Bob's favourite colour?",
         return_reasoning_steps=True,
     )
@@ -155,7 +159,7 @@ def test_schema_expands_and_new_field_retrievable():
         {"Knowledge Data": km._search()},
     )
 
-    answer, reasoning = km.retrieve("How old is Bob?", return_reasoning_steps=True)
+    answer, reasoning = await km.retrieve("How old is Bob?", return_reasoning_steps=True)
     assert _contains(answer, "35"), assertion_failed(
         "Answer containing '35'",
         answer,
@@ -171,9 +175,10 @@ def test_schema_expands_and_new_field_retrievable():
 
 
 @pytest.mark.eval
+@pytest.mark.asyncio
 @pytest.mark.timeout(240)
 @_handle_project
-def test_multiple_tables_and_join_like_query():
+async def test_multiple_tables_and_join_like_query():
     """
     Two conceptually different tables:
 
@@ -184,12 +189,12 @@ def test_multiple_tables_and_join_like_query():
     """
     km = KnowledgeManager()
 
-    km.store("The Apple iPhone 15 costs 999 US dollars.")
-    km.store(
+    await km.store("The Apple iPhone 15 costs 999 US dollars.")
+    await km.store(
         "Daniel bought an iPhone 15 on 3 May 2025 using his credit card.",
     )
 
-    answer, reasoning = km.retrieve(
+    answer, reasoning = await km.retrieve(
         "How much did Daniel pay for his purchase?",
         return_reasoning_steps=True,
     )
@@ -208,9 +213,10 @@ def test_multiple_tables_and_join_like_query():
 
 
 @pytest.mark.eval
+@pytest.mark.asyncio
 @pytest.mark.timeout(240)
 @_handle_project
-def test_incremental_updates_and_refactor():
+async def test_incremental_updates_and_refactor():
     """
     Carol first has one pet → later gains another.
     Retrieval must mention *both* pets, proving that:
@@ -222,10 +228,10 @@ def test_incremental_updates_and_refactor():
     """
     km = KnowledgeManager()
 
-    km.store("Carol owns a dog named Fido.")
-    km.store("Carol also owns a cat named Luna.")
+    await km.store("Carol owns a dog named Fido.")
+    await km.store("Carol also owns a cat named Luna.")
 
-    answer, reasoning = km.retrieve(
+    answer, reasoning = await km.retrieve(
         "What are the names of Carol's pets?",
         return_reasoning_steps=True,
     )
@@ -244,9 +250,10 @@ def test_incremental_updates_and_refactor():
 
 
 @pytest.mark.eval
+@pytest.mark.asyncio
 @pytest.mark.timeout(240)
 @_handle_project
-def test_numeric_reasoning_after_multiple_points():
+async def test_numeric_reasoning_after_multiple_points():
     """
     Store two 2-D points; ask a qualitative question whose
     correct answer involves *only one* of them.
@@ -257,10 +264,10 @@ def test_numeric_reasoning_after_multiple_points():
     """
     km = KnowledgeManager()
 
-    km.store("Point P has coordinates x = 3 and y = 4.")
-    km.store("Point Q has coordinates x = 1 and y = 10.")
+    await km.store("Point P has coordinates x = 3 and y = 4.")
+    await km.store("Point Q has coordinates x = 1 and y = 10.")
 
-    answer, reasoning = km.retrieve(
+    answer, reasoning = await km.retrieve(
         "Which points lie in the first quadrant but have y less than 5?",
         return_reasoning_steps=True,
     )
