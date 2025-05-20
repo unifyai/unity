@@ -36,18 +36,63 @@ from .heuristics import export_for_js
 AUTO_CAPTCHA = False  # NEW – detect only when user issues `solve_captcha`
 
 
-def _update_in_textbox_state(runner, handle):
+def _update_in_textbox_state(runner, handle, label):
     """Update BrowserState.in_textbox after a click."""
     try:
-        tag = handle.evaluate("el => el.tagName.toLowerCase()")
-        role = handle.evaluate("el => el.getAttribute('role')")
-        runner.state.in_textbox = tag in {"input", "textarea"} or role in {
-            "textbox",
-            "combobox",
-            "searchbox",
-        }
-    except Exception:
+        # If not Google Docs input label, fall back to standard detection
+        if "Google Docs Input" not in label:
+            tag = handle.evaluate("el => el.tagName?.toLowerCase?.() || ''")
+            role = handle.evaluate("el => el.getAttribute?.('role') || ''")
+            runner.state.in_textbox = (
+                tag in {"input", "textarea"} or
+                role in {"textbox", "combobox", "searchbox"}
+            )
+            return
+
+        # Google Docs aware logic
+        runner.state.in_textbox = handle.evaluate("""
+            () => {
+                try {
+                    const textTarget = document.querySelector('.docs-texteventtarget');
+                    const editor = document.querySelector('.kix-appview-editor');
+                    const sel = window.getSelection();
+
+                    const selValid = sel && sel.rangeCount > 0 && editor?.contains(sel.focusNode);
+                    const hiddenFocused = document.activeElement === textTarget;
+                    const caretVisible = !!document.querySelector('.kix-cursor');
+
+                    return selValid || hiddenFocused || caretVisible;
+                } catch (e) {
+                    return false;
+                }
+            }
+        """)
+
+        handle.evaluate("""
+            () => {
+                const editor = document.querySelector('.kix-appview-editor');
+                if (!editor) return;
+
+                const sel = window.getSelection();
+                const range = document.createRange();
+
+                let node = editor;
+                while (node && node.firstChild) {
+                    node = node.firstChild;
+                }
+
+                if (node) {
+                    range.setStart(node, node.textContent?.length || 0);
+                    range.collapse(true);
+                    sel.removeAllRanges();
+                    sel.addRange(range);
+                }
+            }
+        """)
+        runner.log(f"in_textbox (Google Docs logic): {runner.state.in_textbox}")
+    except Exception as e:
         runner.state.in_textbox = False
+        runner.log(f"Failed to update in_textbox: {e}")
 
 
 class BrowserWorker(threading.Thread):
@@ -195,7 +240,7 @@ class BrowserWorker(threading.Thread):
                                 friendly = f"click {hit['label']}"
                                 self.runner.hist.add(friendly)
                                 hit["handle"].click()
-                                _update_in_textbox_state(self.runner, hit["handle"])
+                                _update_in_textbox_state(self.runner, hit["handle"], hit["label"])
                             else:
                                 self.log(f'No element matches "{tail}"')
                         elif cmd.startswith("open url "):
@@ -227,7 +272,7 @@ class BrowserWorker(threading.Thread):
                                 if h:
                                     self.runner.hist.add(f"click {label}")
                                     h.click()
-                                    _update_in_textbox_state(self.runner, h)
+                                    _update_in_textbox_state(self.runner, h, label)
                                 else:
                                     self.log("Click index out of range")
                             except (ValueError, PWError) as exc:
@@ -306,19 +351,45 @@ class BrowserWorker(threading.Thread):
                     # ── update dynamic browser‑state fields ────────────────
                     try:  # NEW
                         js = """
-                            () => ({
-                                url   : location.href,
-                                title : document.title || "",
-                                inBox : (() => {
-                                    const el = document.activeElement;
-                                    if (!el) return false;
-                                    const tag  = el.tagName.toLowerCase();
-                                    const role = el.getAttribute('role');
-                                    return ['input','textarea'].includes(tag) ||
-                                           ['textbox','combobox','searchbox'].includes(role);
-                                })(),
-                                sy : Math.round(scrollY)
-                            })
+                            () => {
+                                const url = location.href;
+                                const isGDocs = url.includes("docs.google.com");
+                                const el = document.activeElement;
+                                const tag = el?.tagName?.toLowerCase?.() || '';
+                                const role = el?.getAttribute?.('role') || '';
+                                const inStandardBox = ['input','textarea'].includes(tag) ||
+                                                        ['textbox','combobox','searchbox'].includes(role);
+
+                                let inGDocsBox = false;
+
+                                if (isGDocs) {
+                                    try {
+                                    const textTarget = document.querySelector('.docs-texteventtarget');
+                                    const editor = document.querySelector('.kix-appview-editor');
+                                    const sel = window.getSelection();
+
+                                    // Condition 1: editor exists, and there's a selection range inside it
+                                    const selValid = sel && sel.rangeCount > 0 && editor?.contains(sel.focusNode);
+
+                                    // Condition 2: texteventtarget is focused and visible
+                                    const hiddenFocused = document.activeElement === textTarget;
+
+                                    // Condition 3: selection range exists with caret shown
+                                    const caretVisible = !!document.querySelector('.kix-cursor');
+
+                                    inGDocsBox = (selValid || hiddenFocused || caretVisible);
+                                    } catch (e) {
+                                    inGDocsBox = false;
+                                    }
+                                }
+
+                                return {
+                                    url: url,
+                                    title: document.title || '',
+                                    inBox: inStandardBox || inGDocsBox,
+                                    sy: Math.round(scrollY)
+                                };
+                            }
                         """
                         res = self.runner.active.evaluate(js)
                         self.runner.state.url = res["url"]

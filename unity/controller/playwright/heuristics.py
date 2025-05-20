@@ -23,10 +23,24 @@ class Heuristic(TypedDict, total=False):
 
 HEURISTICS: List[Heuristic] = [
     # ─────────────────────────────────────────────
-    # 1. TRACKING “BEACON” ANCHORS  (exclude)
-    #    Many e‑commerce grids inject a 0×0 or 1×1 <a>
+    # Google Docs rich-text editor surface (site-specific)
+    # ─────────────────────────────────────────────
+    {
+        "name": "gdocs-editor-surface",
+        "selector": ".kix-appview-editor, .kix-canvas-tile-content, .docs-texteventtarget",
+        "kind": "input",
+        "filter_js": (
+            "return location.hostname.includes('docs.google.com') && "
+            "el.offsetWidth > 0 && el.offsetHeight > 0;"
+        ),
+        "label_js": "return 'Google Docs Input';",
+    },
+        
+    # ─────────────────────────────────────────────
+    # 1. TRACKING "BEACON" ANCHORS  (exclude)
+    #    Many e‑commerce grids inject a 0×0 or 1×1 <a>
     #    solely for click analytics.  Skip them so they
-    #    don’t steal the ID.
+    #    don't steal the ID.
     # ─────────────────────────────────────────────
     {
         "name": "tiny-beacon",
@@ -34,11 +48,11 @@ HEURISTICS: List[Heuristic] = [
         "kind": "exclude",
         "filter_js": (
             "const r = el.getBoundingClientRect();"
-            "return r.width < 4 && r.height < 4;"  # <= 3 px either side
+            "return r.width < 4 && r.height < 4;"  # <= 3 px either side
         ),
     },
     # ─────────────────────────────────────────────
-    # 2. PROMOTE THE FIRST VISIBLE CHILD OF THOSE
+    # 2. PROMOTE THE FIRST VISIBLE CHILD OF THOSE
     #    TINY ANCHORS  (generic card thumbnail)
     # ─────────────────────────────────────────────
     {
@@ -89,7 +103,7 @@ HEURISTICS: List[Heuristic] = [
         "selector": "*[tabindex]",  # any element that declares a tabindex
         "kind": "click",
         "filter_js": (
-            # // 1. Positive (or zero) tabindex means it’s keyboard-focusable
+            # // 1. Positive (or zero) tabindex means it's keyboard-focusable
             "const tab = parseInt(el.getAttribute('tabindex') || '-1', 10);"
             "if (Number.isNaN(tab) || tab < 0) return false;"
             # // 2. Skip elements that are already covered by stronger rules
