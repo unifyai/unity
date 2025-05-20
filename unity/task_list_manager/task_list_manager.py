@@ -58,9 +58,6 @@ class TaskListManager:
             self._update_task_priority.__name__: self._update_task_priority,
         }
 
-        if "Tasks" not in unify.get_contexts():
-            unify.create_context("Tasks")
-
         # Internal monotonically-increasing task-id counter.  We keep it local
         # to the manager to avoid an expensive scan across *all* logs every
         # time we create a task.  Initialised lazily on first use.
@@ -73,6 +70,8 @@ class TaskListManager:
         ), "read and write contexts must be the same when instantiating a TaskListManager."
         self._ctx = f"{read_ctx}/Tasks" if read_ctx else "Tasks"
 
+        if self._ctx not in unify.get_contexts():
+            unify.create_context(self._ctx)
         # Add tracing
         if traced:
             self = unify.traced(self)
