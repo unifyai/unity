@@ -45,7 +45,6 @@ def test_get_active_task():
 @pytest.mark.unit
 def test_pause():
     task_list_manager = TaskListManager()
-    task_list_manager.start()
 
     # create
     task_list_manager._create_task(
@@ -74,7 +73,6 @@ def test_pause():
 @pytest.mark.unit
 def test_continue():
     task_list_manager = TaskListManager()
-    task_list_manager.start()
 
     # create
     task_list_manager._create_task(
