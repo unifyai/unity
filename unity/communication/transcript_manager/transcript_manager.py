@@ -100,6 +100,7 @@ class TranscriptManager:
             context=self._summaries_ctx,
             exchange_ids=exchange_ids,
             summary=summary,
+            new=True
         )
         return summary
 
