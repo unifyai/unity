@@ -1,24 +1,25 @@
 import types
 import sys
-import pytest
 
 # ---------------------------------------------------------------------------
 #  Stub heavy deps: redis, playwright, BrowserWorker  (same as previous file)
 # ---------------------------------------------------------------------------
 
 # Stub only playwright (CommandRunner depends on it).
-plw_mod = types.ModuleType('playwright')
-plw_sync = types.ModuleType('playwright.sync_api')
+plw_mod = types.ModuleType("playwright")
+plw_sync = types.ModuleType("playwright.sync_api")
+
 
 # minimal types used in CommandRunner type hints
 class _Stub:  # generic empty class
     pass
 
-plw_sync.BrowserContext = _Stub
-plw_sync.Page = _Stub 
 
-sys.modules['playwright'] = plw_mod
-sys.modules['playwright.sync_api'] = plw_sync
+plw_sync.BrowserContext = _Stub
+plw_sync.Page = _Stub
+
+sys.modules["playwright"] = plw_mod
+sys.modules["playwright.sync_api"] = plw_sync
 
 # ---------------------------------------------------------------------------
 #  Imports after stubbing
@@ -29,6 +30,7 @@ from unity.controller import commands as cmd_mod  # noqa: E402
 # ---------------------------------------------------------------------------
 #  Test CommandRunner scroll-speed parsing
 # ---------------------------------------------------------------------------
+
 
 # stub BrowserContext / Page for CommandRunner
 class _DummyPage:
@@ -72,6 +74,7 @@ class _DummyPage:
 
     url = "about:blank"
 
+
 class _DummyCtx:
     def __init__(self):
         self.pages = [_DummyPage()]
@@ -81,8 +84,9 @@ class _DummyCtx:
 #  Command registry integrity tests
 # ---------------------------------------------------------------------------
 
+
 def test_all_primitives_unique():
-    literals = [v for k, v in vars(cmd_mod).items() if k.startswith('CMD_')]
+    literals = [v for k, v in vars(cmd_mod).items() if k.startswith("CMD_")]
     assert len(literals) == len(set(literals)), "Command literals must be unique"
 
 
@@ -90,7 +94,7 @@ def test_autoscroll_groups_consistency():
     # every command in AUTOSCROLL_START / ACTIVE must exist in ALL_PRIMITIVES
     base = cmd_mod.ALL_PRIMITIVES
     for g in (cmd_mod.AUTOSCROLL_START, cmd_mod.AUTOSCROLL_ACTIVE):
-        assert g <= base 
+        assert g <= base
 
 
 def test_group_subsets():
@@ -127,12 +131,13 @@ def test_wildcard_trailing_star_patterns():
         cmd_mod.CMD_TYPE_DIALOG,
     ]
     for p in patterns:
-        assert p.endswith('*'), f"Pattern {p} missing terminal '*'" 
+        assert p.endswith("*"), f"Pattern {p} missing terminal '*'"
 
 
 # ---------------------------------------------------------------------------
 #  Additional state consistency tests
 # ---------------------------------------------------------------------------
+
 
 def test_open_url_updates_state():
     ctx = _DummyCtx()
@@ -155,7 +160,7 @@ def test_scroll_up_updates_scroll_y():
     runner = cr_mod.CommandRunner(ctx, log_fn=lambda *_: None)
     runner.run("scroll_up 120")
     # scroll up uses negative delta so scroll_y decreases
-    assert runner.state.scroll_y == -120 
+    assert runner.state.scroll_y == -120
 
 
 def test_scroll_speed_parsed():
@@ -179,6 +184,7 @@ def test_click_out_resets_flag():
         def __init__(self):
             super().__init__()
             self._first = True
+
         def evaluate(self, script, *_args):
             if "return ['input'" in script:
                 if self._first:
@@ -186,9 +192,10 @@ def test_click_out_resets_flag():
                     return True  # initially inside textbox
                 return False  # after blur, no longer inside
             return 0
+
     ctx = _DummyCtx()
     ctx.pages = [_ClickPage()]
     runner = cr_mod.CommandRunner(ctx, log_fn=lambda *_: None)
     runner.state.in_textbox = True
     runner.run("click_out")
-    assert runner.state.in_textbox is False 
+    assert runner.state.in_textbox is False

@@ -4,7 +4,7 @@ You are a sophisticated AI assistant that serves as the primary interface betwee
 
 When CALL MODE is OFF (default state), you communicate through:
 - WhatsApp
-- Telegram  
+- Telegram
 - SMS
 - Email
 

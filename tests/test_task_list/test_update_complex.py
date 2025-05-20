@@ -69,7 +69,9 @@ async def test_update_reorder_queue():
     ids = _seed_basic_tasks(tlm)
     assert [t.task_id for t in tlm._get_task_queue()] == ids  # initial order
 
-    await tlm.update(text="Could you do Client follow-up email after Write quarterly report?")
+    await tlm.update(
+        text="Could you do Client follow-up email after Write quarterly report?",
+    )
 
     queue = [t.task_id for t in tlm._get_task_queue()]
     # expected order: 0 (report) -> 2 (follow-up) -> 1 (slides)

@@ -35,7 +35,6 @@ HEURISTICS: List[Heuristic] = [
         ),
         "label_js": "return 'Google Docs Input';",
     },
-        
     # ─────────────────────────────────────────────
     # 1. TRACKING "BEACON" ANCHORS  (exclude)
     #    Many e‑commerce grids inject a 0×0 or 1×1 <a>

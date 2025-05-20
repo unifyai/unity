@@ -7,7 +7,7 @@ with detailed context including reasoning steps from LLM tool usage.
 """
 
 import json
-from typing import Any, List, Dict, Optional, Union
+from typing import Any, List, Dict, Optional
 
 
 def format_reasoning_steps(reasoning: List[Dict[str, Any]]) -> str:

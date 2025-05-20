@@ -15,17 +15,28 @@ from __future__ import annotations
 import os, sys, shutil, shlex, subprocess, signal
 from pathlib import Path
 
+
 def _find_unix_terminal() -> str | None:
     for term in (
-        "gnome-terminal", "konsole", "xfce4-terminal", "xterm",
-        "lxterminal", "mate-terminal", "tilix", "alacritty", "kitty"
+        "gnome-terminal",
+        "konsole",
+        "xfce4-terminal",
+        "xterm",
+        "lxterminal",
+        "mate-terminal",
+        "tilix",
+        "alacritty",
+        "kitty",
     ):
         if shutil.which(term):
             return term
     return None
 
 
-def run_in_new_terminal(script: str | os.PathLike, *script_args: str) -> subprocess.Popen:
+def run_in_new_terminal(
+    script: str | os.PathLike,
+    *script_args: str,
+) -> subprocess.Popen:
     """
     Launch *script* in a brand-new terminal/console window and **return**
     the `subprocess.Popen` instance representing the *Python process*
@@ -43,8 +54,8 @@ def run_in_new_terminal(script: str | os.PathLike, *script_args: str) -> subproc
     if sys.platform.startswith("win"):
         # ─ Windows: run the script in a *new* console and create its own process-group
         creationflags = (
-            subprocess.CREATE_NEW_CONSOLE |
-            subprocess.CREATE_NEW_PROCESS_GROUP  # lets us send CTRL_BREAK_EVENT
+            subprocess.CREATE_NEW_CONSOLE
+            | subprocess.CREATE_NEW_PROCESS_GROUP  # lets us send CTRL_BREAK_EVENT
         )
         return subprocess.Popen(
             py_cmd,
@@ -56,9 +67,9 @@ def run_in_new_terminal(script: str | os.PathLike, *script_args: str) -> subproc
         #          but start the *python* process directly so we still get its PID.
         osa = (
             'tell application "Terminal"\n'
-            '    activate\n'
+            "    activate\n"
             f'    do script "{shlex.join(py_cmd)}"\n'
-            'end tell'
+            "end tell"
         )
         # Start python in the background (new process-group) so we have its handle
         proc = subprocess.Popen(py_cmd, start_new_session=True)
@@ -72,7 +83,9 @@ def run_in_new_terminal(script: str | os.PathLike, *script_args: str) -> subproc
             raise RuntimeError("No terminal emulator found (gnome-terminal, xterm …)")
         # Start python first so we know its PID, then point the terminal at it
         proc = subprocess.Popen(py_cmd, start_new_session=True)
-        subprocess.Popen([term, "--", "bash", "-c", f"exec {' '.join(map(shlex.quote, py_cmd))}"])
+        subprocess.Popen(
+            [term, "--", "bash", "-c", f"exec {' '.join(map(shlex.quote, py_cmd))}"],
+        )
         return proc
 
 

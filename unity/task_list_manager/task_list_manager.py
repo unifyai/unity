@@ -68,7 +68,9 @@ class TaskListManager:
 
         ctxs = unify.get_active_context()
         read_ctx, write_ctx = ctxs["read"], ctxs["write"]
-        assert read_ctx == write_ctx, "read and write contexts must be the same when instantiating a TaskListManager."
+        assert (
+            read_ctx == write_ctx
+        ), "read and write contexts must be the same when instantiating a TaskListManager."
         self._ctx = f"{read_ctx}/Tasks" if read_ctx else "Tasks"
 
         # Add tracing
@@ -106,7 +108,12 @@ class TaskListManager:
                 datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC"),
             ),
         )
-        ans = await async_tool_use_loop(client, text, self._ask_tools, log_steps=log_tool_steps)
+        ans = await async_tool_use_loop(
+            client,
+            text,
+            self._ask_tools,
+            log_steps=log_tool_steps,
+        )
         if return_reasoning_steps:
             return ans, client.messages
         return ans
@@ -140,7 +147,12 @@ class TaskListManager:
                 datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC"),
             ),
         )
-        ans = await async_tool_use_loop(client, text, self._update_tools, log_steps=log_tool_steps)
+        ans = await async_tool_use_loop(
+            client,
+            text,
+            self._update_tools,
+            log_steps=log_tool_steps,
+        )
         if return_reasoning_steps:
             return ans, client.messages
         return ans

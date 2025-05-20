@@ -143,7 +143,10 @@ def _llm_assert_correct(
     )
     verdict = json.loads(match.group(0))
     assert verdict.get("correct") is True, assertion_failed(
-        expected, candidate, steps, f"Question: {question}"
+        expected,
+        candidate,
+        steps,
+        f"Question: {question}",
     )
 
 
@@ -161,7 +164,10 @@ async def test_ask_semantic_with_llm_judgement(
     tlm_scenario: TaskListManager,
 ) -> None:
     try:
-        candidate, steps = await tlm_scenario.ask(text=question, return_reasoning_steps=True)
+        candidate, steps = await tlm_scenario.ask(
+            text=question,
+            return_reasoning_steps=True,
+        )
         expected = _answer_semantic(tlm_scenario, question)
         _llm_assert_correct(question, expected, candidate, steps)
     except Exception as exc:
