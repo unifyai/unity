@@ -4,7 +4,7 @@ from typing import Dict, List, Any, Optional, Union
 import unify
 
 from ..common.embed_utils import EMBED_MODEL, ensure_vector_column
-from ..common.llm_helpers import tool_use_loop
+from ..common.llm_helpers import async_tool_use_loop
 from .types.status import Status
 from .types.priority import Priority
 from .types.schedule import Schedule
@@ -80,7 +80,7 @@ class TaskListManager:
 
     # English-Text question
 
-    def ask(
+    async def ask(
         self,
         text: str,
         *,
@@ -99,21 +99,21 @@ class TaskListManager:
             Dict[str, str]: The answer to the question.
         """
 
-        client = unify.Unify("o4-mini@openai", cache=True)
+        client = unify.AsyncUnify("o4-mini@openai", cache=True)
         client.set_system_message(
             ASK.replace(
                 "{datetime}",
                 datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC"),
             ),
         )
-        ans = tool_use_loop(client, text, self._ask_tools, log_steps=log_tool_steps)
+        ans = await async_tool_use_loop(client, text, self._ask_tools, log_steps=log_tool_steps)
         if return_reasoning_steps:
             return ans, client.messages
         return ans
 
     # English-Text update request
 
-    def update(
+    async def update(
         self,
         text: str,
         *,
@@ -133,14 +133,14 @@ class TaskListManager:
         """
         from .sys_msgs import UPDATE
 
-        client = unify.Unify("o4-mini@openai", cache=True)
+        client = unify.AsyncUnify("o4-mini@openai", cache=True)
         client.set_system_message(
             UPDATE.replace(
                 "{datetime}",
                 datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC"),
             ),
         )
-        ans = tool_use_loop(client, text, self._update_tools, log_steps=log_tool_steps)
+        ans = await async_tool_use_loop(client, text, self._update_tools, log_steps=log_tool_steps)
         if return_reasoning_steps:
             return ans, client.messages
         return ans

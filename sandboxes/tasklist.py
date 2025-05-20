@@ -26,7 +26,7 @@ from unity.constants import LOGGER as _LG  # type: ignore
 from unity.task_list_manager.task_list_manager import TaskListManager  # type: ignore
 from unity.task_list_manager.types.priority import Priority  # type: ignore
 from unity.task_list_manager.types.schedule import Schedule  # type: ignore
-from tests.test_task_list.test_update_text_complex import _next_weekday  # type: ignore
+from tests.test_task_list.test_update_complex import _next_weekday  # type: ignore
 from sandboxes.utils import (
     record_until_enter as _record_until_enter,
     transcribe_deepgram as _transcribe_deepgram,

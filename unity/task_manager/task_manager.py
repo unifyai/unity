@@ -5,7 +5,7 @@ from typing import Dict
 
 import unify
 
-from ..common.llm_helpers import tool_use_loop
+from ..common.llm_helpers import async_tool_use_loop
 from ..task_list_manager.task_list_manager import TaskListManager
 from .sys_msgs import REQUEST
 
@@ -131,7 +131,7 @@ class TaskManager(threading.Thread):
 
     # English-Text requests
 
-    def request(
+    async def request(
         self,
         text: str,
         *,
@@ -151,9 +151,9 @@ class TaskManager(threading.Thread):
         Returns:
             Dict[str, str]: Answers to the question(s), and updates on any action(s) performed.
         """
-        client = unify.Unify("o4-mini@openai", cache=True)
+        client = unify.AsyncUnify("o4-mini@openai", cache=True)
         client.set_system_message(REQUEST)
-        ans = tool_use_loop(client, text, self._tools, log_steps=log_tool_steps)
+        ans = await async_tool_use_loop(client, text, self._tools, log_steps=log_tool_steps)
         if return_reasoning_steps:
             return ans, client.messages
         return ans
