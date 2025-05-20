@@ -35,11 +35,7 @@ from unity.events.types.message_exchange_summary import (  # noqa: E402
 @pytest.fixture()
 def bus() -> EventBus:
     EventBus._instance = None  # type: ignore[attr-defined]
-    return EventBus()
-
-
-async def _publish(bus: EventBus, evt: Event):
-    await bus.publish(evt)
+    return EventBus()    
 
 
 # ─── Tests ─────────────────────────────────────────────────────────────────
@@ -57,7 +53,7 @@ async def test_publish_message(bus: EventBus):
         exchange_id=42,
     )
     evt = Event(type="message", payload=msg)
-    await _publish(bus, evt)
+    await bus.publish(evt)
 
     got = await asyncio.wait_for(sub._queue.get(), 0.1)  # type: ignore[attr-defined]
     assert got.payload == msg
@@ -68,7 +64,7 @@ async def test_publish_summary(bus: EventBus):
     sub = bus.subscribe(event_types={"message_exchange_summary"})
     summary = MessageExchangeSummary(exchange_ids=[1, 2], summary="All good")
     evt = Event(type="message_exchange_summary", payload=summary)
-    await _publish(bus, evt)
+    await bus.publish(evt)
     got = await sub._queue.get()  # type: ignore[attr-defined]
     assert got.payload == summary
 
@@ -85,7 +81,7 @@ async def test_window_trim(bus: EventBus):
             content=str(i),
             exchange_id=i,
         )
-        await _publish(bus, Event(type="message", payload=msg))
+        await bus.publish(Event(type="message", payload=msg))
 
     # Only the last 3 should remain
     history = bus.get_history(lambda e: e.type == "message")
