@@ -47,8 +47,10 @@ class KnowledgeManager:
             self._nearest.__name__: self._nearest,
         }
 
-        if "Knowledge" not in unify.get_contexts():
-            unify.create_context("Knowledge")
+        ctxs = unify.get_active_context()
+        read_ctx, write_ctx = ctxs["read"], ctxs["write"]
+        assert read_ctx == write_ctx, "read and write contexts must be the same when instantiating a KnowledgeManager."
+        self._ctx = f"{read_ctx}/Knowledge" if read_ctx else "Knowledge"
 
         # Add tracing
         if traced:
@@ -106,7 +108,7 @@ class KnowledgeManager:
 
     def _get_columns(self, *, table: str) -> Dict[str, str]:
         proj = unify.active_project()
-        ctx = f"Knowledge/{table}"
+        ctx = f"{self._ctx}/{table}"
         url = f"{os.environ['UNIFY_BASE_URL']}/logs/fields?project={proj}&context={ctx}"
         headers = {"Authorization": f"Bearer {API_KEY}"}
         response = requests.request("GET", url, headers=headers)
@@ -140,7 +142,7 @@ class KnowledgeManager:
             Dict[str, str]: Message explaining whether the table was created or not.
         """
         proj = unify.active_project()
-        ctx = f"Knowledge/{name}"
+        ctx = f"{self._ctx}/{name}"
         unify.create_context(ctx, description=description)
         if not columns:
             return
@@ -166,8 +168,8 @@ class KnowledgeManager:
             List[Dict[str, Dict[str, Union[str, ColumnType]]]]: Table names and their descriptions, and optionally also column names and types.
         """
         tables = {
-            k[10:]: {"description": v}
-            for k, v in unify.get_contexts(prefix="Knowledge/").items()
+            k[len(f"{self._ctx}/"):]: {"description": v}
+            for k, v in unify.get_contexts(prefix=f"{self._ctx}/").items()
         }
         if not include_columns:
             return tables
@@ -188,8 +190,8 @@ class KnowledgeManager:
             Dict[str, str]: Message explaining whether the table was renamed or not.
         """
         proj = unify.active_project()
-        old_name = f"Knowledge/{old_name}"
-        new_name = f"Knowledge/{new_name}"
+        old_name = f"{self._ctx}/{old_name}"
+        new_name = f"{self._ctx}/{new_name}"
         url = f"{os.environ['UNIFY_URL']}/project/{proj}/contexts/{old_name}/rename"
         headers = {"Authorization": f"Bearer {API_KEY}"}
         json_input = {"name": new_name}
@@ -207,7 +209,7 @@ class KnowledgeManager:
         Returns:
             Dict[str, str]: Message explaining whether the table was deleted or not.
         """
-        return unify.delete_context(f"Knowledge/{table}")
+        return unify.delete_context(f"{self._ctx}/{table}")
 
     # Columns
 
@@ -232,7 +234,7 @@ class KnowledgeManager:
             Dict[str, str]: Message explaining whether the column was created or not.
         """
         proj = unify.active_project()
-        ctx = f"Knowledge/{table}"
+        ctx = f"{self._ctx}/{table}"
         url = f"{os.environ['UNIFY_BASE_URL']}/logs/fields"
         headers = {"Authorization": f"Bearer {API_KEY}"}
         json_input = {
@@ -269,10 +271,10 @@ class KnowledgeManager:
         equation = equation.replace("{", "{lg:")
         json_input = {
             "project": unify.active_project(),
-            "context": f"Knowledge/{table}",
+            "context": f"{self._ctx}/{table}",
             "key": column_name,
             "equation": equation,
-            "referenced_logs": {"lg": {"context": f"Knowledge/{table}"}},
+            "referenced_logs": {"lg": {"context": f"{self._ctx}/{table}"}},
         }
         response = requests.request("POST", url, json=json_input, headers=headers)
         return response.json()
@@ -293,7 +295,7 @@ class KnowledgeManager:
         headers = {"Authorization": f"Bearer {API_KEY}"}
         json_input = {
             "project": unify.active_project(),
-            "context": f"Knowledge/{table}",
+            "context": f"{self._ctx}/{table}",
             "ids_and_fields": [[None, column_name]],
             "source_type": "all",
         }
@@ -322,7 +324,7 @@ class KnowledgeManager:
             Dict[str, str]: Message explaining whether the column was renamed or not.
         """
         proj = unify.active_project()
-        ctx = f"Knowledge/{table}"
+        ctx = f"{self._ctx}/{table}"
         url = f"{os.environ['UNIFY_BASE_URL']}/logs/rename_field"
         headers = {"Authorization": f"Bearer {API_KEY}"}
         json_input = {
@@ -350,7 +352,7 @@ class KnowledgeManager:
             Dict[str, str]: Message explaining whether the data was added or not.
         """
         return unify.create_logs(
-            context=f"Knowledge/{table}",
+            context=f"{self._ctx}/{table}",
             entries=data,
             batched=True,  # NOTE: async logger can mess with the order of the data
         )
@@ -366,7 +368,7 @@ class KnowledgeManager:
             column (str): The name of the vector column to ensure.
             source (str): The name of the column to derive the vector column from.
         """
-        context = f"Knowledge/{table}"
+        context = f"{self._ctx}/{table}"
         ensure_vector_column(context, embed_column=column, source_column=source)
 
     def _nearest(
@@ -394,7 +396,7 @@ class KnowledgeManager:
         # ToDo: convert to map function
         results = dict()
         for table in tables:
-            context = f"Knowledge/{table}"
+            context = f"{self._ctx}/{table}"
             self._ensure_table_vector(table, column, source)
             results[table] = [
                 log.entries
@@ -439,7 +441,7 @@ class KnowledgeManager:
             results[table] = [
                 log.entries
                 for log in unify.get_logs(
-                    context=f"Knowledge/{table}",
+                    context=f"{self._ctx}/{table}",
                     filter=filter,
                     offset=offset,
                     limit=limit,
