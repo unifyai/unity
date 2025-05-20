@@ -19,7 +19,6 @@ def _sch(prev_, next_):
 @pytest.mark.unit
 def test_get_queue_and_reorder():
     tlm = TaskListManager()
-    tlm.start()
 
     # -----  create three queued tasks with an explicit chain  -----
     t0 = tlm._create_task(
@@ -52,7 +51,6 @@ def test_get_queue_and_reorder():
 @pytest.mark.unit
 def test_insert_into_queue():
     tlm = TaskListManager()
-    tlm.start()
 
     # base queue with one task
     tlm._create_task(name="base", description="x", schedule=_sch(-1, -1))

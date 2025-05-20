@@ -9,7 +9,6 @@ from unity.task_list_manager.types.priority import Priority
 @pytest.mark.eval
 def test_update_create_task_via_text():
     tlm = TaskListManager()
-    tlm.start()
 
     cmd = (
         "Please add a new task called 'Promote Jeff Smith' with the "
@@ -31,7 +30,6 @@ def test_update_create_task_via_text():
 @pytest.mark.eval
 def test_update_delete_task_via_text():
     tlm = TaskListManager()
-    tlm.start()
 
     # create a task directly (bypassing LLM) so we know the ID is 0
     tlm._create_task(

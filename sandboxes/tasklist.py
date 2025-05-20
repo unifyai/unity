@@ -220,7 +220,6 @@ def main() -> None:
 
     # Manager
     tlm = TaskListManager()
-    tlm.start()
 
     if fresh:
         if args.scenario == "llm":
