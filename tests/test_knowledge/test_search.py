@@ -7,7 +7,6 @@ import pytest
 @_handle_project
 def test_search_basic():
     knowledge_manager = KnowledgeManager()
-    knowledge_manager.start()
     knowledge_manager._create_table("MyTable")
     knowledge_manager._add_data(
         table="MyTable",
@@ -26,7 +25,6 @@ def test_search_basic():
 @_handle_project
 def test_search_filter():
     knowledge_manager = KnowledgeManager()
-    knowledge_manager.start()
     knowledge_manager._create_table("MyTable")
     knowledge_manager._add_data(
         table="MyTable",
@@ -44,7 +42,6 @@ def test_search_filter():
 @_handle_project
 def test_search_specific_tables():
     knowledge_manager = KnowledgeManager()
-    knowledge_manager.start()
     knowledge_manager._create_table("MyTable")
     knowledge_manager._add_data(
         table="MyTable",
@@ -80,7 +77,6 @@ def test_search_specific_tables():
 @_handle_project
 def test_search_w_filter():
     knowledge_manager = KnowledgeManager()
-    knowledge_manager.start()
     knowledge_manager._create_table("MyTable")
     knowledge_manager._add_data(
         table="MyTable",

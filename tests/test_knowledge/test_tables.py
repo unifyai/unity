@@ -7,7 +7,6 @@ import pytest
 @_handle_project
 def test_create_table():
     knowledge_manager = KnowledgeManager()
-    knowledge_manager.start()
     knowledge_manager._create_table("MyTable")
     tables = knowledge_manager._list_tables()
     assert len(tables) == 1
@@ -18,7 +17,6 @@ def test_create_table():
 @_handle_project
 def test_create_table_w_cols():
     knowledge_manager = KnowledgeManager()
-    knowledge_manager.start()
     knowledge_manager._create_table("MyTable", columns={"ColA": "int", "ColB": "str"})
     tables = knowledge_manager._list_tables(include_columns=True)
     assert len(tables) == 1
@@ -31,7 +29,6 @@ def test_create_table_w_cols():
 @_handle_project
 def test_create_table_w_desc():
     knowledge_manager = KnowledgeManager()
-    knowledge_manager.start()
     knowledge_manager._create_table("MyTable", description="For storing my data.")
     tables = knowledge_manager._list_tables()
     assert len(tables) == 1
@@ -44,7 +41,6 @@ def test_create_table_w_desc():
 @_handle_project
 def test_list_tables():
     knowledge_manager = KnowledgeManager()
-    knowledge_manager.start()
     knowledge_manager._create_table("MyFirstTable")
     tables = knowledge_manager._list_tables()
     assert len(tables) == 1
@@ -62,7 +58,6 @@ def test_list_tables():
 @_handle_project
 def test_delete_table():
     knowledge_manager = KnowledgeManager()
-    knowledge_manager.start()
 
     # create
     knowledge_manager._create_table("MyTable")
@@ -80,7 +75,6 @@ def test_delete_table():
 @_handle_project
 def test_rename_table():
     knowledge_manager = KnowledgeManager()
-    knowledge_manager.start()
 
     # create
     knowledge_manager._create_table("MyTable")

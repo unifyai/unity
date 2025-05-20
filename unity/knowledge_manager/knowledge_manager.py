@@ -16,13 +16,12 @@ from ..helpers import _handle_exceptions
 API_KEY = os.environ["UNIFY_KEY"]
 
 
-class KnowledgeManager(threading.Thread):
+class KnowledgeManager:
 
-    def __init__(self, *, traced: bool = True, daemon: bool = True) -> None:
+    def __init__(self, *, traced: bool = True) -> None:
         """
         Responsible for *adding to*, *updating* and *searching through* all knowledge the assistant has stored in memory.
         """
-        super().__init__(daemon=daemon)
 
         refactor_tools = {
             # Tables

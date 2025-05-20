@@ -190,7 +190,6 @@ def main() -> None:
 
     # Manager
     km = KnowledgeManager()
-    km.start()
 
     if fresh:
         if args.scenario == "llm":
