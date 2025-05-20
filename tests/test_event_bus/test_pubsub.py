@@ -35,7 +35,7 @@ async def test_publish():
 @_handle_project
 async def test_publish_and_get_latest_roundtrip():
     """A single publish should be retrievable via get_latest()."""
-    bus = EventBus(windows_sizes={})
+    bus = EventBus()
 
     payload = Message.model_construct()
     event = Event(type="message", ts=dt.datetime.now(dt.UTC), payload=payload)
