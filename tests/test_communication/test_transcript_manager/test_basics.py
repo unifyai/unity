@@ -2,10 +2,11 @@ import time
 import unify
 import random
 import pytest
-from datetime import datetime
+from datetime import datetime, UTC
 
 from unity.communication.types.message import Message, VALID_MEDIA
 from unity.communication.transcript_manager.transcript_manager import TranscriptManager
+from unity.events.event_bus import EventBus, Event
 from tests.helpers import _handle_project
 
 CONTACTS = [
@@ -156,20 +157,24 @@ def test_search_contacts():
 @pytest.mark.unit
 @_handle_project
 def test_log_messages():
-    transcript_manager = TranscriptManager()
-    transcript_manager.log_messages(
-        [
-            Message(
-                medium=random.choice(VALID_MEDIA),
-                sender_id=random.randint(0, 2),
-                receiver_id=random.randint(0, 2),
-                timestamp=datetime.now().isoformat(),
-                content=random.choice(MESSAGES),
-                exchange_id=i,
+    event_bus = EventBus()
+    [
+        event_bus.publish(
+            Event(
+                type="message",
+                ts=datetime.now(UTC).isoformat(),
+                payload=Message(
+                    medium=random.choice(VALID_MEDIA),
+                    sender_id=random.randint(0, 2),
+                    receiver_id=random.randint(0, 2),
+                    timestamp=datetime.now().isoformat(),
+                    content=random.choice(MESSAGES),
+                    exchange_id=i,
+                )
             )
-            for i in range(10)
-        ],
-    )
+        )
+        for i in range(10)
+    ]
 
 
 @pytest.mark.unit
