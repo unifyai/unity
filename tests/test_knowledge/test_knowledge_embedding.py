@@ -9,7 +9,6 @@ import pytest
 def test_knowledge_embedding():
     # Initialize and start the KnowledgeManager thread
     manager = KnowledgeManager()
-    manager.start()
 
     # Define table name and schema
     table_name = "ContactPrefs"
