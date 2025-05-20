@@ -25,7 +25,7 @@ _DEFAULT_WINDOW = 50
 
 class Event(BaseModel):
     type: str
-    ts: dt.datetime = field(default_factory=dt.datetime.now(dt.UTC))
+    ts: str
     payload: BaseModel
 
 
@@ -33,7 +33,7 @@ class Event(BaseModel):
 
 class EventBus:
 
-    def __init__(self, windows_sizes: Optional[Dict[str, int]] = None):
+    def __init__(self, windows_sizes: Dict[str, int] = {}):
 
         # private attributes
         self._deques: Dict[str, Deque[Event]] = {}
@@ -43,11 +43,17 @@ class EventBus:
         # ── Unify setup ────────────────────────────────────────────────
         unify.initialize_async_logger()
         active_ctx = unify.get_active_context()
-        base_ctx = active_ctx["write"] or "Events"
+        base_ctx = active_ctx["write"]
         self._global_ctx = f"{base_ctx}/Events" if base_ctx else "Events"
+        upstream_ctxs = unify.get_contexts()
+        if self._global_ctx not in upstream_ctxs:
+            unify.create_context(self._global_ctx)
         self._ctxs = {
             etype: f"{self._global_ctx}/{etype}" for etype in _EVENT_TYPES
         }
+        for ctx in self._ctxs.values():
+            if ctx not in upstream_ctxs:
+                unify.create_context(ctx)
         self._logger = unify.AsyncLoggerManager()
 
         # ── Hydrate in‑memory windows from persisted logs ─────────────
@@ -71,7 +77,7 @@ class EventBus:
                         continue
                 except ValidationError:
                     if isinstance(entries, model_cls):
-                        ts = getattr(log, "ts", dt.datetime.now(dt.UTC))
+                        ts = getattr(log, "ts", dt.datetime.now(dt.UTC)).isoformat()
                         evt = Event(type=etype, ts=ts, payload=entries)
                     else:
                         raise Exception("")
