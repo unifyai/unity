@@ -4,73 +4,48 @@ restricted to Pydantic payload types declared in *events/types/*.
 
 from __future__ import annotations
 
+import unify
 import asyncio
 import datetime as dt
-import importlib
-import pkgutil
 from collections import deque
-from dataclasses import dataclass, field
-from typing import Callable, Deque, Dict, Iterable, List, Optional, Type
+from dataclasses import field
+from typing import Deque, Dict, Iterable, Optional, Type
+from pydantic import BaseModel, ValidationError
 
-import unify
-from pydantic import BaseModel
+from .types.message import Message
+from .types.message_exchange_summary import MessageExchangeSummary
 
 __all__ = ["Event", "EventBus", "Subscription"]
 
 
-# ───────────────────────────   Dynamic type registry   ───────────────────────
-
-def _discover_event_types() -> Dict[str, Type[BaseModel]]:
-    """Return mapping *event_type → BaseModel subclass* discovered in package."""
-    types_pkg = importlib.import_module("unity.events.types")
-    registry: Dict[str, Type[BaseModel]] = {}
-    for _finder, mod_name, ispkg in pkgutil.iter_modules(types_pkg.__path__):  # type: ignore[arg-type]
-        if ispkg:
-            continue
-        module = importlib.import_module(f"{types_pkg.__name__}.{mod_name}")
-        for attr in module.__dict__.values():
-            if isinstance(attr, type) and issubclass(attr, BaseModel) and attr is not BaseModel:
-                registry[mod_name] = attr
-                break
-    return registry
-
-
-_EVENT_TYPES: Dict[str, Type[BaseModel]] = _discover_event_types()
+_EVENT_TYPES: Dict[str, Type[BaseModel]] = {"message": Message, "message_exchange_summary": MessageExchangeSummary}
+_DEFAULT_WINDOW = 50
 
 # ───────────────────────────   Event envelope   ─────────────────────────────
 
-@dataclass(frozen=True, slots=True)
-class Event:
+class Event(BaseModel):
     type: str
-    ts: dt.datetime = field(default_factory=dt.datetime.utcnow)
-    payload: Optional[BaseModel] = None
+    ts: dt.datetime = field(default_factory=dt.datetime.now(dt.UTC))
+    payload: BaseModel
 
 
 # ───────────────────────────   EventBus singleton   ─────────────────────────
 
 class EventBus:
-    _instance: "EventBus | None" = None
-    _DEFAULT_WINDOW = 50
 
-    def __new__(cls):
-        if cls._instance is None:
-            cls._instance = super().__new__(cls)
-            cls._instance._init_internal_state()
-        return cls._instance
+    def __init__(self, windows_sizes: Optional[Dict[str, int]] = None):
 
-    # ------------------------------------------------------------------
-    def _init_internal_state(self) -> None:
-        self._log_by_type: Dict[str, Deque[Event]] = {}
-        self._window_sizes: Dict[str, int] = {}
-        self._subs: List["Subscription"] = []
+        # private attributes
+        self._deques: Dict[str, Deque[Event]] = {}
+        self._window_sizes: Dict[str, int] = {k: windows_sizes.get(k, _DEFAULT_WINDOW) for k in _EVENT_TYPES.keys()}
         self._lock = asyncio.Lock()
 
         # ── Unify setup ────────────────────────────────────────────────
         unify.initialize_async_logger()
-        ctx_info = unify.get_active_context()
-        base_ctx = ctx_info["read"] or "Events"
+        active_ctx = unify.get_active_context()
+        base_ctx = active_ctx["write"] or "Events"
         self._global_ctx = f"{base_ctx}/Events" if base_ctx else "Events"
-        self._ctx_by_type = {
+        self._ctxs = {
             etype: f"{self._global_ctx}/{etype}" for etype in _EVENT_TYPES
         }
         self._logger = unify.AsyncLoggerManager()
@@ -82,124 +57,76 @@ class EventBus:
     def _prefill_from_unify(self):
         """Populate each per‑type deque with newest logs from Unify."""
         for etype, model_cls in _EVENT_TYPES.items():
-            window = self._DEFAULT_WINDOW
-            try:
-                raw_logs = unify.get_logs(context=self._ctx_by_type[etype], limit=window)
-            except Exception:  # pragma: no cover – network issues, etc.
-                raw_logs = []
+            window_size = self._window_sizes[etype]
+            raw_logs = unify.get_logs(context=self._ctxs[etype], limit=window_size)
             # unify returns most‑recent‑first – reverse for chronological order
-            dq: Deque[Event] = deque(maxlen=window)
+            dq: Deque[Event] = deque(maxlen=window_size)
             for log in reversed(raw_logs):
-                entry = getattr(log, "entries", None)
-                if entry is None:
+                entries = log.entries
+                if entries is None:
                     continue
-                if isinstance(entry, Event):
-                    evt = entry
-                elif isinstance(entry, model_cls):
-                    ts = getattr(log, "ts", dt.datetime.utcnow())
-                    evt = Event(type=etype, ts=ts, payload=entry)
-                else:  # ignore malformed rows
-                    continue
+                try:
+                    evt = Event.model_validate(entries)
+                    if not isinstance(evt.payload, model_cls):
+                        continue
+                except ValidationError:
+                    if isinstance(entries, model_cls):
+                        ts = getattr(log, "ts", dt.datetime.now(dt.UTC))
+                        evt = Event(type=etype, ts=ts, payload=entries)
+                    else:
+                        raise Exception("")
                 dq.append(evt)
-            if dq:
-                self._log_by_type[etype] = dq
+            self._deques[etype] = dq
 
     # ------------------------------------------------------------------
     # Public API
     # ------------------------------------------------------------------
     async def publish(self, event: Event) -> None:
-        self._validate(event)
+        window = self._window_sizes[event.type]
 
         async with self._lock:
-            dq = self._log_by_type.setdefault(event.type, deque())
+            dq = self._deques[event.type]
             dq.append(event)
-            window = self._window_sizes.get(event.type, self._DEFAULT_WINDOW)
             while len(dq) > window:
                 dq.popleft()
-            for sub in self._subs:
-                if sub.matches(event):
-                    sub._queue.put_nowait(event)  # type: ignore[attr-defined]
 
-        # Non‑blocking telemetry (outside lock)
+        # Log to global event table
         self._logger.log_create(
             project=unify.active_project(),
             context=self._global_ctx,
             params={},
             entries=event,
         )
-        if event.payload is not None:
-            self._logger.log_create(
-                project=unify.active_project(),
-                context=self._ctx_by_type[event.type],
-                params={},
-                entries=event.payload,
-            )
 
-    def subscribe(
+        # Log to specific event table
+        self._logger.log_create(
+            project=unify.active_project(),
+            context=self._ctxs[event.type],
+            params={},
+            entries=event.payload,
+        )
+
+    async def get_latest(
         self,
-        *,
-        match: Callable[[Event], bool] | None = None,
-        event_types: Iterable[str] | None = None,
-    ) -> "Subscription":
-        predicate: Callable[[Event], bool]
-        if event_types is not None:
-            wanted = set(event_types)
-            predicate = lambda e, w=wanted: e.type in w  # noqa: E731
-        else:
-            predicate = match or (lambda _e: True)
-        sub = Subscription(self, predicate)
-        self._subs.append(sub)
-        return sub
+        types: Iterable[str] | None = None,
+        limit: int = 100,
+    ) -> list[Event]:
+        """
+        Return up to *limit* events drawn from the specified *types*
+        (or from *all* types if None), ordered **newest-first**.
 
-    def get_history(self, predicate: Callable[[Event], bool]) -> List[Event]:
-        events: List[Event] = []
-        for dq in self._log_by_type.values():
-            events.extend(dq)
-        return sorted((e for e in events if predicate(e)), key=lambda e: e.ts)
+        Always works with the in-memory deques; does not mutate them.
+        """
+        async with self._lock:
+            wanted = set(types) if types is not None else self._deques.keys()
 
-    def set_window(self, event_type: str, size: int) -> None:
-        if event_type not in _EVENT_TYPES:
-            raise ValueError(f"Unknown event type '{event_type}'")
-        if size <= 0:
-            raise ValueError("Window size must be positive")
-        self._window_sizes[event_type] = size
-        dq = self._log_by_type.get(event_type)
-        if dq is not None:
-            while len(dq) > size:
-                dq.popleft()
+            # 1. collect (usually small) piles of events
+            bucket: list[Event] = []
+            for t in wanted:
+                dq = self._deques.get(t)
+                if dq:
+                    bucket.extend(dq)          # each dq is already window-bounded
 
-    def get_window(self, event_type: str) -> int:
-        return self._window_sizes.get(event_type, self._DEFAULT_WINDOW)
-
-    # ------------------------------------------------------------------
-    def _validate(self, event: Event) -> None:
-        if event.type not in _EVENT_TYPES:
-            raise ValueError(f"Event type '{event.type}' is not registered")
-        model_cls = _EVENT_TYPES[event.type]
-        if event.payload is not None and not isinstance(event.payload, model_cls):
-            raise TypeError(
-                f"Payload must be {model_cls.__name__} for event type '{event.type}'"
-            )
-
-
-# ───────────────────────────   Subscription   ───────────────────────────────
-
-class Subscription:
-    def __init__(self, bus: EventBus, predicate: Callable[[Event], bool]):
-        self._bus = bus
-        self._pred = predicate
-        self._queue: "asyncio.Queue[Event]" = asyncio.Queue()
-
-    async def __aiter__(self):
-        while True:
-            yield await self._queue.get()
-
-    def replay(self) -> List[Event]:
-        return self._bus.get_history(self._pred)
-
-    def set_types(self, *types: str):
-        wanted = set(types)
-        self._pred = lambda e, w=wanted: e.type in w  # noqa: E731
-
-    def matches(self, event: Event) -> bool:
-        return self._pred(event)
+            # 2. sort newest→oldest and slice
+            bucket.sort(key=lambda e: e.ts, reverse=True)
+            return bucket[:limit]
