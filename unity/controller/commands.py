@@ -47,6 +47,8 @@ CMD_BACK_NAV = "nav_back"
 CMD_FORWARD_NAV = "nav_forward"
 CMD_RELOAD_PAGE = "nav_reload"
 CMD_SOLVE_CAPTCHA = "solve_captcha"
+CMD_SELECT_WORD_LEFT = "select_word_left"
+CMD_SELECT_WORD_RIGHT = "select_word_right"
 
 # ───────────────────────────────────────────────────────────────────────────
 #  WILDCARD GROUPS (sets reused by GUI / agent / filters)
@@ -69,6 +71,8 @@ TEXTBOX_COMMANDS: set[str] = {
     CMD_MOVE_WORD_RIGHT,
     CMD_HOLD_SHIFT,
     CMD_RELEASE_SHIFT,
+    CMD_SELECT_WORD_LEFT,
+    CMD_SELECT_WORD_RIGHT,
 }
 
 # 2.  Page navigation / search (always valid)

@@ -253,6 +253,8 @@ _SIMPLE_KEY_ACTIONS = {
     CMD_MOVE_LINE_END: "Move caret to the end of the line.",
     CMD_MOVE_WORD_LEFT: "Move caret one word to the left.",
     CMD_MOVE_WORD_RIGHT: "Move caret one word to the right.",
+    CMD_SELECT_WORD_LEFT: "Select one word to the left.",
+    CMD_SELECT_WORD_RIGHT: "Select one word to the right.",
     CMD_HOLD_SHIFT: "Hold the Shift key down.",
     CMD_RELEASE_SHIFT: "Release the Shift key.",
     CMD_CLICK_OUT: "Click outside the text‑box to blur focus.",

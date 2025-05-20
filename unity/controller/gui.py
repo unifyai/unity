@@ -414,7 +414,7 @@ class ControlPanel(tk.Tk):
 
         # ----- main window -------------------------------------------------
         self.title("Playwright helper")
-        self.geometry("1000x650")
+        self.geometry("1100x700")
 
         paned = tk.PanedWindow(self, orient=tk.HORIZONTAL, sashwidth=4)
         paned.grid(row=0, column=0, columnspan=2, sticky="nsew")
@@ -680,6 +680,8 @@ class ControlPanel(tk.Tk):
             ("Backspace", CMD_PRESS_BACKSPACE),
             ("Delete", CMD_PRESS_DELETE),
             (CMD_SELECT_ALL, CMD_SELECT_ALL),
+            (CMD_SELECT_WORD_LEFT, CMD_SELECT_WORD_LEFT),
+            (CMD_SELECT_WORD_RIGHT, CMD_SELECT_WORD_RIGHT),
             ("Shift ⬇", CMD_HOLD_SHIFT),
             ("Shift ⬆", CMD_RELEASE_SHIFT),
             (CMD_CLICK_OUT, CMD_CLICK_OUT),
@@ -1065,7 +1067,7 @@ class ControlPanel(tk.Tk):
             return
 
         # Approximate button width + padding
-        min_button_px = 120
+        min_button_px = 150
         num_cols = max(2, width // min_button_px)
 
         for i, b in enumerate(self._key_button_widgets):
@@ -1204,6 +1206,8 @@ class ControlPanel(tk.Tk):
             CMD_BACK_NAV: "No previous page in history",
             CMD_FORWARD_NAV: "No forward history entry",
             CMD_RELOAD_PAGE: "",
+            CMD_SELECT_WORD_LEFT: "Requires focus in a text-box",
+            CMD_SELECT_WORD_RIGHT: "Requires focus in a text-box",
         }
 
         def _is_ok(cmd: str) -> bool:
@@ -1578,6 +1582,8 @@ class ControlPanel(tk.Tk):
                 CMD_MOVE_LINE_END,
                 CMD_MOVE_WORD_LEFT,
                 CMD_MOVE_WORD_RIGHT,
+                CMD_SELECT_WORD_LEFT,
+                CMD_SELECT_WORD_RIGHT,
                 CMD_HOLD_SHIFT,
                 CMD_RELEASE_SHIFT,
                 CMD_CLICK_OUT,
