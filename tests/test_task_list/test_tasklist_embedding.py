@@ -9,7 +9,6 @@ from tests.helpers import _handle_project
 def test_tasklist_embedding_search():
     # Start the TaskListManager thread
     manager = TaskListManager()
-    manager.start()
 
     # Create two tasks semantically related to "searching LinkedIn for contacts"
     id1 = manager._create_task(
