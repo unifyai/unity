@@ -7,7 +7,8 @@ from unity.task_list_manager.types.priority import Priority
 
 @_handle_project
 @pytest.mark.eval
-def test_update_create_task_via_text():
+@pytest.mark.asyncio
+async def test_update_create_task_via_text():
     tlm = TaskListManager()
 
     cmd = (
@@ -15,7 +16,7 @@ def test_update_create_task_via_text():
         "description 'Send an email to Jeff Smith, kindly congratulating him and "
         "explaining that he has been promoted from sales rep to sales manager.'"
     )
-    tlm.update(text=cmd)
+    await tlm.update(text=cmd)
 
     tasks = tlm._search()
     assert len(tasks) == 1
@@ -28,7 +29,8 @@ def test_update_create_task_via_text():
 
 @_handle_project
 @pytest.mark.eval
-def test_update_delete_task_via_text():
+@pytest.mark.asyncio
+async def test_update_delete_task_via_text():
     tlm = TaskListManager()
 
     # create a task directly (bypassing LLM) so we know the ID is 0
@@ -39,6 +41,6 @@ def test_update_delete_task_via_text():
     assert len(tlm._search()) == 1
 
     # delete via plain-English update
-    tlm.update(text="Delete the task with id 0.")
+    await tlm.update(text="Delete the task with id 0.")
 
     assert tlm._search() == []

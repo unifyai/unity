@@ -153,14 +153,15 @@ def tlm_scenario() -> TaskListManager:  # noqa: D401 – fixture, not function
 
 
 @pytest.mark.eval
+@pytest.mark.asyncio
 @pytest.mark.parametrize("question", QUESTIONS)
 @pytest.mark.timeout(180)
-def test_ask_semantic_with_llm_judgement(
+async def test_ask_semantic_with_llm_judgement(
     question: str,
     tlm_scenario: TaskListManager,
 ) -> None:
     try:
-        candidate, steps = tlm_scenario.ask(text=question, return_reasoning_steps=True)
+        candidate, steps = await tlm_scenario.ask(text=question, return_reasoning_steps=True)
         expected = _answer_semantic(tlm_scenario, question)
         _llm_assert_correct(question, expected, candidate, steps)
     except Exception as exc:

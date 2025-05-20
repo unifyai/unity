@@ -61,14 +61,15 @@ def _seed_basic_tasks(tlm: TaskListManager) -> List[int]:
 
 @_handle_project
 @pytest.mark.eval
+@pytest.mark.asyncio
 @pytest.mark.timeout(240)
-def test_update_reorder_queue():
+async def test_update_reorder_queue():
     tlm = TaskListManager()
 
     ids = _seed_basic_tasks(tlm)
     assert [t.task_id for t in tlm._get_task_queue()] == ids  # initial order
 
-    tlm.update(text="Could you do Client follow-up email after Write quarterly report?")
+    await tlm.update(text="Could you do Client follow-up email after Write quarterly report?")
 
     queue = [t.task_id for t in tlm._get_task_queue()]
     # expected order: 0 (report) -> 2 (follow-up) -> 1 (slides)
@@ -82,13 +83,14 @@ def test_update_reorder_queue():
 
 @_handle_project
 @pytest.mark.eval
+@pytest.mark.asyncio
 @pytest.mark.timeout(240)
-def test_update_cancel_email_tasks():
+async def test_update_cancel_email_tasks():
     tlm = TaskListManager()
 
     _seed_basic_tasks(tlm)
 
-    tlm.update(text="Please cancel all tasks related to sending emails.")
+    await tlm.update(text="Please cancel all tasks related to sending emails.")
 
     tasks = tlm._search()
     for t in tasks:
@@ -112,8 +114,9 @@ def _next_weekday(dt: datetime, weekday: int) -> datetime:
 
 @_handle_project
 @pytest.mark.eval
+@pytest.mark.asyncio
 @pytest.mark.timeout(240)
-def test_update_lower_priority_next_monday():
+async def test_update_lower_priority_next_monday():
     tlm = TaskListManager()
 
     # create one scheduled next Monday with high priority
@@ -128,7 +131,7 @@ def test_update_lower_priority_next_monday():
         priority=Priority.high,
     )
 
-    tlm.update(
+    await tlm.update(
         text="Please lower the priority of all tasks which are scheduled for next Monday.",
     )
 
@@ -143,8 +146,9 @@ def test_update_lower_priority_next_monday():
 
 @_handle_project
 @pytest.mark.eval
+@pytest.mark.asyncio
 @pytest.mark.timeout(240)
-def test_update_bulk_description_replace():
+async def test_update_bulk_description_replace():
     tlm = TaskListManager()
 
     tlm._create_task(
@@ -156,7 +160,7 @@ def test_update_bulk_description_replace():
         description="Email the estate agent the sales brochure.",
     )
 
-    tlm.update(
+    await tlm.update(
         text="Please update all task descriptions to refer to Mr. Smith instead of 'the estate agent'.",
     )
 
