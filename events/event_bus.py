@@ -25,6 +25,7 @@ __all__ = ["Event", "EventBus", "Subscription"]
 
 # ───────────────────────────   Event model   ────────────────────────────────
 
+
 @dataclass(frozen=True, slots=True)
 class Event:
     """Immutable message shared across all managers."""
@@ -35,6 +36,7 @@ class Event:
 
 
 # ───────────────────────────   EventBus   ───────────────────────────────────
+
 
 class EventBus:
     """Singleton that stores & dispatches events with per‑type sliding windows."""
@@ -144,6 +146,7 @@ class EventBus:
 
 
 # ───────────────────────   Subscription helpers   ───────────────────────────
+
 
 class Subscription:
     """Handle returned by :py:meth:`EventBus.subscribe`. Async‑iterable."""

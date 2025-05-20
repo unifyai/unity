@@ -25,6 +25,7 @@ from events.event_bus import Event, EventBus  # noqa: E402
 
 # ─── Fixtures & helpers ──────────────────────────────────────────────────────
 
+
 @pytest.fixture()
 def bus() -> EventBus:
     """Return a *fresh* EventBus instance for every test (reset singleton)."""
