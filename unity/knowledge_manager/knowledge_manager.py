@@ -191,7 +191,7 @@ class KnowledgeManager:
         proj = unify.active_project()
         old_name = f"{self._ctx}/{old_name}"
         new_name = f"{self._ctx}/{new_name}"
-        url = f"{os.environ['UNIFY_URL']}/project/{proj}/contexts/{old_name}/rename"
+        url = f"{unify.BASE_URL}/project/{proj}/contexts/{old_name}/rename"
         headers = {"Authorization": f"Bearer {API_KEY}"}
         json_input = {"name": new_name}
         response = requests.request("PATCH", url, json=json_input, headers=headers)
