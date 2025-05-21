@@ -5,7 +5,7 @@ from typing import Dict
 
 import unify
 
-from ..common.llm_helpers import async_tool_use_loop
+from ..common.llm_helpers import start_async_tool_use_loop
 from ..task_list_manager.task_list_manager import TaskListManager
 from .sys_msgs import REQUEST
 
@@ -153,12 +153,12 @@ class TaskManager(threading.Thread):
         """
         client = unify.AsyncUnify("o4-mini@openai", cache=True)
         client.set_system_message(REQUEST)
-        ans = await async_tool_use_loop(
+        ans = await start_async_tool_use_loop(
             client,
             text,
             self._tools,
             log_steps=log_tool_steps,
-        )
+        ).result()
         if return_reasoning_steps:
             return ans, client.messages
         return ans

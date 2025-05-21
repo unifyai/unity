@@ -9,7 +9,7 @@ import unify
 from ..common.embed_utils import EMBED_MODEL, ensure_vector_column
 from ..helpers import _handle_exceptions
 from .types import ColumnType
-from ..common.llm_helpers import async_tool_use_loop
+from ..common.llm_helpers import start_async_tool_use_loop
 from ..helpers import _handle_exceptions
 
 API_KEY = os.environ["UNIFY_KEY"]
@@ -78,7 +78,7 @@ class KnowledgeManager:
 
         client = unify.AsyncUnify("o4-mini@openai", cache=True)
         client.set_system_message(STORE)
-        ans = await async_tool_use_loop(client, text, self._store_tools)
+        ans = await start_async_tool_use_loop(client, text, self._store_tools).result()
         if return_reasoning_steps:
             return ans, client.messages
         return ans
@@ -99,7 +99,7 @@ class KnowledgeManager:
 
         client = unify.AsyncUnify("o4-mini@openai", cache=True)
         client.set_system_message(RETRIEVE)
-        ans = await async_tool_use_loop(client, text, self._retrieve_tools)
+        ans = await start_async_tool_use_loop(client, text, self._retrieve_tools).result()
         if return_reasoning_steps:
             return ans, client.messages
         return ans
