@@ -39,6 +39,7 @@ from sandboxes.utils import (
     record_until_enter as _record_until_enter,
     transcribe_deepgram as _transcribe_deepgram,
     speak as _speak,
+    run_in_loop
 )  # type: ignore
 
 
@@ -183,8 +184,10 @@ async def _handle_interruptions(
                 user_input = _poll_for_input(0.1)
                 if user_input is not None:
                     print("⚠️ Interruption detected. Recording new input...")
-                    audio_bytes = _record_until_enter()
-                    user_text = _transcribe_deepgram(audio_bytes).strip()
+                    audio_bytes = await asyncio.to_thread(_record_until_enter)
+                    user_text = await asyncio.to_thread(
+                        _transcribe_deepgram, audio_bytes
+                    )
                     if user_text:
                         print(f"▶️  New input: {user_text}")
                         if user_text.lower() in {"stop", "cancel"}:
@@ -192,7 +195,7 @@ async def _handle_interruptions(
                             handle.stop()
                         else:
                             print("⚡ Interjecting new information...")
-                            await handle.interject(user_text)
+                            run_in_loop(handle.interject(user_text))
             else:
                 # In text mode, we check for any input
                 user_input = _poll_for_input(0.1)
@@ -202,7 +205,7 @@ async def _handle_interruptions(
                         handle.stop()
                     else:
                         print(f"⚡ Interjecting: {user_input}")
-                        await handle.interject(user_input)
+                        run_in_loop(handle.interject(user_text))
 
             # Small sleep to prevent CPU spinning
             await asyncio.sleep(0.1)
@@ -274,7 +277,7 @@ async def _main_async(args) -> None:
             answer_task = asyncio.create_task(handle.result())
 
             # Handle interruptions while waiting for the result
-            kind, result = await _handle_interruptions(
+            result = await _handle_interruptions(
                 handle,
                 answer_task,
                 voice_mode=True,
