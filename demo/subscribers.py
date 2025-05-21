@@ -7,7 +7,7 @@ import os
 import threading
 import queue
 import time
-from demo.events import Event, SMSMessageRecievedEvent, WhatsappMessageRecievedEvent
+from events import Event, SMSMessageRecievedEvent, WhatsappMessageRecievedEvent
 
 # Subscription IDs
 project_id = "responsive-city-458413-a2"
@@ -26,7 +26,7 @@ events_map: dict[str, Event] = {
 }
 
 # Global connection to event manager
-reader, writer = asyncio.open_connection("127.0.0.1", 8888)
+reader, writer = None, None
 
 
 async def publish_event(ev: dict) -> None:
@@ -37,7 +37,7 @@ async def publish_event(ev: dict) -> None:
         ev (dict): The event dictionary to publish.
 
     The event is serialized to JSON and sent to the event manager
-    running on localhost:8888.
+    running on localhost:8080.
     """
     ev = json.dumps(ev) + "\n"
     writer.write(ev.encode())
@@ -58,6 +58,7 @@ def callback(message: pubsub_v1.types.PubsubMessage, subscription_id: str):
     3. Acknowledges the message to PubSub
     """
     try:
+        print("Received message from subscription: ", subscription_id, message)
         if subscription_id in events_map:
             asyncio.create_task(
                 publish_event(
@@ -136,7 +137,7 @@ def process_messages():
         time.sleep(0.1)
 
 
-def main():
+async def main():
     """
     Main entry point for the subscriber application.
 
@@ -146,10 +147,13 @@ def main():
     3. Keeps the main thread alive until interrupted
     4. Handles graceful shutdown on keyboard interrupt
     """
+    global reader, writer
+    reader, writer = await asyncio.open_connection("127.0.0.1", 8888)
+
     # Create threads for each subscription
     subscriptions = [
         call_subscription_id,
-        email_subscription_id,
+        # email_subscription_id,
         msg_subscription_id,
         whatsapp_subscription_id,
     ]
@@ -179,4 +183,4 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    asyncio.run(main())
