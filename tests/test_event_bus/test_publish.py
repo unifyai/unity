@@ -43,9 +43,8 @@ async def test_concurrent_publishes_lock_integrity():
     protects the critical section.
     """
     window = 200
-    bus = EventBus(
-        windows_sizes={"message": window, "message_exchange_summary": window},
-    )
+    bus = EventBus()
+    bus.set_default_window(200)
 
     # Clear any pre-existing state for determinism
     for typ in ("message", "message_exchange_summary"):
