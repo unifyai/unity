@@ -44,7 +44,9 @@ async def test_get_latest_mixed_types_ordering():
     # Publish 6 events: message, summary, message, …
     for idx in range(6):
         etype, payload_cls = (
-            ("Messages", Message) if idx % 2 == 0 else ("MessageExchangeSummary", MessageExchangeSummary)
+            ("Messages", Message)
+            if idx % 2 == 0
+            else ("MessageExchangeSummary", MessageExchangeSummary)
         )
 
         evt = Event(
@@ -98,23 +100,23 @@ async def test_concurrent_get_latest_lock_integrity():
         await bus.publish(evt)
 
     # Pre-compute expected slices (newest-first order)
-    all_newest      = list(reversed(events))
+    all_newest = list(reversed(events))
     messages_newest = [e for e in all_newest if e.type == "Messages"]
     summaries_newest = [e for e in all_newest if e.type == "MessageExchangeSummary"]
 
     expected_r1 = messages_newest[:5]
     expected_r2 = summaries_newest[:7]
-    expected_r3 = []                          # empty filter → empty result
+    expected_r3 = []  # empty filter → empty result
     expected_r4 = all_newest[:15]
 
     # ── Concurrent read tasks ──────────────────────────────────────
     tasks = [
-        asyncio.create_task(bus.get_latest(types=["Messages"], limit=5)),              # r1
+        asyncio.create_task(bus.get_latest(types=["Messages"], limit=5)),  # r1
         asyncio.create_task(
             bus.get_latest(types=["MessageExchangeSummary"], limit=7)
-        ),                                                                             # r2
-        asyncio.create_task(bus.get_latest(types=[], limit=10)),                      # r3 (no types)
-        asyncio.create_task(bus.get_latest(types=None, limit=15)),                    # r4 (both types)
+        ),  # r2
+        asyncio.create_task(bus.get_latest(types=[], limit=10)),  # r3 (no types)
+        asyncio.create_task(bus.get_latest(types=None, limit=15)),  # r4 (both types)
     ]
 
     r1, r2, r3, r4 = await asyncio.gather(*tasks)

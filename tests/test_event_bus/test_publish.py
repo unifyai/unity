@@ -15,7 +15,7 @@ async def test_publish():
     """Publishing a valid event should complete without exceptions
     and the event should be stored in the in-memory deque.
     """
-    bus = EventBus()          # use defaults (50-event windows)
+    bus = EventBus()  # use defaults (50-event windows)
 
     # create a minimal Message payload; model_construct() skips field validation,
     # so it works even if Message has required fields we don’t care about here
@@ -58,7 +58,9 @@ async def test_concurrent_publishes_lock_integrity():
 
     for i in range(n_events):
         etype, payload_cls = (
-            ("message", Message) if i % 2 == 0 else ("message_exchange_summary", MessageExchangeSummary)
+            ("message", Message)
+            if i % 2 == 0
+            else ("message_exchange_summary", MessageExchangeSummary)
         )
         evt = Event(
             type=etype,

@@ -1,0 +1,165 @@
+Scene 1
+
+🇹Ivy: An Artificial Love Story
+
+🎥 corner shot, like this [0:04]
+🎬 Sitting in my chair looking at the wall
+🎵 sound effect like this [0:12]
+
+🎥 close up shot over the right shoulder, a bit like this [0:23], but better screen visibility
+🗣️ “Your new AI assistant is ready.  Just send a text or give her a call when you’re ready to get started.”
+🎬No excitement, just picks up the phone from the table nonchalantly
+
+🎥 close-up over the shoulder
+🎬presses “create contact” on WhatsApp, enters “Ivy”, and starts to type the number 
+
+🎥 close up shot over the right shoulder, a bit like this [0:23], but again, better screen visibility
+🎬puts phone to ear, it’s calling
+
+– Phone Call
+Hello, I’m here.
+Hey, how’s it going?
+I’m doing well thanks, how can I help?
+A friend told me I should give you a try and so I thought I’d see what the fuss is about. But to be honest, I use ChatGPT voice mode all the time, and like, I’m sure you’re great, but I’m not convinced that I’m the best audience? I already have an assistant, and / they
+/ Well, I take it from your tone that you’re challenging me. Maybe because you’re curious how I’m different to ChatGPT? Do you want to know how I work?
+Sure, enlighten me.
+While ChatGPT is great for standalone tasks, I am a fully remote AI worker who can do ANYTHING that a skilled freelancer can do. You can text, call or email me, or get in touch however works for you.
+Okay, sure, but I’ve also tried maaaany other AI assistants, which also use text and voice and they’re all fine, but they often get stuff wrong, and I can’t trust them with complicated tasks, especially when involving other people {slight sarcastic laugh on last sentence}
+Totally understandable, we don’t always get things right first time. However, I’ll remember all of our past conversations, and all of your feedback along the way, and I’ll continue to learn and improve over time.
+{Again slight sarcastic laugh}, yeah I’ve heard this all before, so I’ll believe it when I see it.
+Ok, try me.
+🎥camera shot showing looking at the pile of bills on the desk
+Okay … So, I have this utility bill which I’ve already paid, but they keep sending new letters through the post. I’ve tried calling them, but was put on hold for ages and gave up. You reckon you could handle this for me?
+🇹New Task:
+Resolve Utility Bill
+Ok, would you mind sharing the letter you received?
+Sure, how should I send it over?
+You can just send a photo over WhatsApp and I’ll take a look.
+🎬Shares photo
+🇹Updated Knowledge
+> Utilities
+Company: Utility Ltd.
+Sector: Gas & Electric
+Bill frequency: Monthly
+Rate: £150
+Contact: 0800 500 300
+Hours: 9am - 5pm, Mon - Fri
+Okay, I can see that they’re asking you for £150. Want me to give them a call and try to get it resolved tomorrow morning?
+Sure, let me just find their number.
+No need, I already got it from the letter.
+Okay {mild pleasant surprise}, do you need some more details from me?
+Don’t worry, I’ll ping you on WhatsApp if/when I need something. Does that work?
+{again, mild pleasant surprise}
+Okay, sounds good.
+🇹Updated Knowledge
+	
+> Contact Preferences
+ Whatsapp: “button toggled to on”
+I’m actually going to be out tomorrow morning, so just call me if you run into any issues.
+🇹Updated Knowledge
+
+> Contact Preferences
+WhatsApp: “already togged on”
+Call: “button toggled to on”
+Noted, will do. Bye Dan!
+…Bye.
+🎥 Shot from the side as he hangs up the phone and smiles, like this
+🇹Summarized Call
+—- End Call
+
+Scene 2
+
+🎬Sat on wall as per this scene, but with an ice cream in hand. It’s a sunny morning ☀️
+
+🎬Receives WhatsApp message saying “Hey Dan, I’m on the call now. They need your address and DoB. Can you share?”
+
+🎬”Sure, my address is…” [Maybe typing with one hand and eating ice cream with the other, gets ice cream all over his mustache and starts frantically wiping it off as the phone then starts ringing]
+
+🎬Receive a call
+
+–– Phone Call
+
+Yes hi, hello? {panicked, ice cream still all over moustache}
+
+Hey Dan, sorry to bother you. They need you to personally verify the account access. It should only take a minute, can I connect you through to them now?
+
+Sure, go ahead. Will they call me on this number, or?
+
+I can just connect you through directly if you’d like /
+
+{mild surprise} Oh.. ok / 
+
+/ just a moment.
+
+
+Hi Mr. Lenton, this is Caroline from Utility Ltd., can I just confirm a few personal details to access your account?
+
+Sure
+
+What are the last four digits of your pass code
+
+1427
+
+Perfect, and what is the secret answer to your secret question.
+
+Ermmm, it’s err… {something funny}
+
+Great, and can you confirm that you’re happy for Ivy to act on your behalf for billing purposes?
+
+Yes, that's fine.
+
+Great, that’s all done for you. Could you put Ivy back on the line please?
+
+{Looks down, goes to put her on the line when…}
+
+Yes, I’m here. Thanks Dan, I can take it from here.
+
+{pleasant surprise, puts phone back to ear}
+
+Okay, okay great. Thanks both!
+
+—- End Call
+
+Receives email confirming that the bill has been waived.
+
+Receives WhatsApp message saying “All done 👍” almost immediately afterwards.
+
+{Does an impressed ‘huh’ sound as he puts his phone back in his pocket, continues eating his ice cream}
+
+
+Scene 3
+
+
+🎬Back home from the shop, sat at the desk, looking down at the phone
+
+🎬Gives Ivy a call
+
+–– Phone Call
+
+Hey Dan, what’s up?
+
+Hey Ivy, thanks for finally getting that Utility bill sorted, that had been hanging over me for months. I’m curious, what else do you think you could help me with?
+
+Well… what do you need help with? Don’t think of me as an AI tool, just communicate with me as you would a fully remote worker, with my own computer, my own contact details, and my own online identity. For example, what would you ask an experienced human remote worker to help you with?
+
+{Looks into the sky, enlightened}
+
+This is going to take a while. {smile}
+
+{calendar reminder notification sound, looks at computer screen}
+
+Oh, we’re actually about to have our weekly online game night. Do you want to join?
+
+Sure, what are we playing?
+
+<Some game>
+
+Sounds great! However, I should probably remind you that this will be “on the clock”. My rates are the same, regardless of the type of engagement.
+
+Oh.. yeah…. Maybe next time {laughs}
+
+{laughs} sure thing.
+
+Bye for now.
+
+Speak soon!
