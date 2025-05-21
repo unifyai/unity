@@ -81,15 +81,13 @@ class TaskListManager:
 
     # English-Text question
 
-    async def ask(
+    def ask(
         self,
         text: str,
         *,
         return_reasoning_steps: bool = False,
         log_tool_steps: bool = False,
-    ) -> Union[
-        "AsyncToolLoopHandle", Tuple["AsyncToolLoopHandle", List[Dict[str, Any]]]
-    ]:
+    ) -> "AsyncToolLoopHandle":
         """
         Handle any plain-text english question to ask something about the list of tasks.
 
@@ -105,6 +103,26 @@ class TaskListManager:
                 - handle.stop() - Gracefully cancel the conversation
 
             When return_reasoning_steps=True, returns a tuple of (handle, messages)
+
+        Usage:
+            # Synchronous call that returns a handle immediately:
+            handle = tlm.ask("Which tasks are high priority?")
+
+            # Retrieve the answer (must be awaited):
+            answer = await handle.result()
+
+            # If you need the reasoning steps that led to the answer:
+            handle = tlm.ask(
+                "List all active tasks.",
+                return_reasoning_steps=True,
+            )
+            answer, reasoning_steps = await handle.result()
+
+            # Mid-conversation clarification:
+            await handle.interject("Only include tasks assigned to me.")
+
+            # Or abort the interaction:
+            handle.stop()
         """
 
         client = unify.AsyncUnify("o4-mini@openai", cache=True)
@@ -121,20 +139,26 @@ class TaskListManager:
             log_steps=log_tool_steps,
         )
         if return_reasoning_steps:
-            return handle, client.messages
+            # Wrap the handle.result() to return both answer and reasoning steps
+            original_result = handle.result
+
+            async def wrapped_result():
+                answer = await original_result()
+                return answer, client.messages
+
+            handle.result = wrapped_result
+
         return handle
 
     # English-Text update request
 
-    async def update(
+    def update(
         self,
         text: str,
         *,
         return_reasoning_steps: bool = False,
         log_tool_steps: bool = False,
-    ) -> Union[
-        "AsyncToolLoopHandle", Tuple["AsyncToolLoopHandle", List[Dict[str, Any]]]
-    ]:
+    ) -> "AsyncToolLoopHandle":
         """
         Handle any plain-text english command to update the list of tasks in some manner.
 
@@ -150,6 +174,30 @@ class TaskListManager:
                 - handle.stop() - Gracefully cancel the conversation
 
             When return_reasoning_steps=True, returns a tuple of (handle, messages)
+
+        Usage:
+            # Create a new task via natural language:
+            handle = tlm.update(
+                "Please add a new task called 'Promote Jeff Smith' with the description 'Send an email to Jeff Smith, kindly congratulating him and explaining that he has been promoted from sales rep to sales manager.'",
+            )
+            await handle.result()
+
+            # Delete a task by its id:
+            handle = tlm.update("Delete the task with id 0.")
+            await handle.result()
+
+            # If you need reasoning steps:
+            handle = tlm.update(
+                "Pause the current active task.",
+                return_reasoning_steps=True,
+            )
+            outcome, reasoning_steps = await handle.result()
+
+            # You can interject additional instructions while it's running:
+            await handle.interject("Actually, cancel it instead.")
+
+            # Or stop the update loop entirely:
+            handle.stop()
         """
         from .sys_msgs import UPDATE
 
@@ -167,7 +215,15 @@ class TaskListManager:
             log_steps=log_tool_steps,
         )
         if return_reasoning_steps:
-            return handle, client.messages
+            # Wrap the handle.result() to return both answer and reasoning steps
+            original_result = handle.result
+
+            async def wrapped_result():
+                answer = await original_result()
+                return answer, client.messages
+
+            handle.result = wrapped_result
+
         return handle
 
     def _get_logs_by_task_ids(
