@@ -8,9 +8,13 @@ voice input. All shared audio/STT/TTS helpers are imported from
 from __future__ import annotations
 
 import argparse
+import asyncio
+import select
 import json
 import logging
 import sys
+import threading
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
@@ -23,6 +27,7 @@ sys.path.insert(0, str(ROOT))
 import unify
 
 from unity.constants import LOGGER as _LG  # type: ignore
+from unity.common import AsyncToolLoopHandle  # type: ignore
 from unity.task_list_manager.task_list_manager import TaskListManager  # type: ignore
 from unity.task_list_manager.types.priority import Priority  # type: ignore
 from unity.task_list_manager.types.schedule import Schedule  # type: ignore
@@ -159,19 +164,49 @@ def _dispatch(tlm: TaskListManager, raw: str, *, show_steps: bool):
     resp = _DispatchResp.model_validate_json(llm.generate(raw))
 
     if resp.require_update:
-        ans, steps = tlm.update(
+        handle = tlm.update(
             text=resp.fixed_text,
             return_reasoning_steps=show_steps,
             log_tool_steps=show_steps,
         )
-        return "update", ans, steps
+        return "update", handle
 
-    ans, steps = tlm.ask(
+    handle = tlm.ask(
         text=resp.fixed_text,
         return_reasoning_steps=show_steps,
         log_tool_steps=show_steps,
     )
-    return "ask", ans, steps
+    return "ask", handle
+
+
+# ---------------------------------------------------------------------------
+# Input helpers for interruption detection
+# ---------------------------------------------------------------------------
+
+
+def _non_blocking_input(prompt: str = "", timeout: float = 0.1) -> Optional[str]:
+    """Check for user input without blocking, with a small timeout."""
+    ready_to_read = select.select([sys.stdin], [], [], timeout)[0]
+    if ready_to_read:
+        return sys.stdin.readline().strip()
+    return None
+
+
+def _poll_for_interruption(handle: AsyncToolLoopHandle) -> None:
+    """Poll for user input to interrupt or stop the current operation."""
+    print("⏳ Processing... Type anything to interrupt, or 'stop'/'cancel' to abort.")
+
+    while not handle.done():
+        user_input = _non_blocking_input(timeout=0.1)
+        if user_input:
+            if user_input.lower() in ("stop", "cancel"):
+                print("🛑 Stopping operation...")
+                handle.stop()
+                return
+            else:
+                print(f"💬 Interjecting: {user_input}")
+                asyncio.create_task(handle.interject(user_input))
+        time.sleep(0.1)
 
 
 # ---------------------------------------------------------------------------
@@ -179,7 +214,55 @@ def _dispatch(tlm: TaskListManager, raw: str, *, show_steps: bool):
 # ---------------------------------------------------------------------------
 
 
-def main() -> None:
+async def _process_voice_input(
+    tlm: TaskListManager, audio_bytes: bytes, show_steps: bool
+):
+    """Process voice input with interruption support."""
+    user_text = _transcribe_deepgram(audio_bytes).strip()
+    if not user_text:
+        return
+
+    print(f"▶️  {user_text}")
+    if user_text.lower() in {"quit", "exit"}:
+        return "quit"
+
+    _speak("Working on this now…")
+    kind, handle = _dispatch(tlm, user_text, show_steps=show_steps)
+
+    # Start a background thread to poll for interruptions
+    threading.Thread(target=_poll_for_interruption, args=(handle,), daemon=True).start()
+
+    # Wait for the result
+    try:
+        result = await handle.result()
+        print(f"[{kind}] => {result}\n")
+        _speak(result)
+    except asyncio.CancelledError:
+        print("Operation was cancelled.")
+
+
+async def _process_text_input(tlm: TaskListManager, text: str, show_steps: bool):
+    """Process text input with interruption support."""
+    if text.lower() in {"quit", "exit"}:
+        return "quit"
+
+    if not text:
+        return
+
+    kind, handle = _dispatch(tlm, text, show_steps=show_steps)
+
+    # Start a background thread to poll for interruptions
+    threading.Thread(target=_poll_for_interruption, args=(handle,), daemon=True).start()
+
+    # Wait for the result
+    try:
+        result = await handle.result()
+        print(f"[{kind}] => {result}\n")
+    except asyncio.CancelledError:
+        print("Operation was cancelled.")
+
+
+async def _async_main():
     parser = argparse.ArgumentParser(
         description="TaskListManager sandbox with minimalist voice mode (Deepgram v4, Cartesia)",
     )
@@ -233,28 +316,29 @@ def main() -> None:
     if args.voice:
         while True:
             audio_bytes = _record_until_enter()
-            user_text = _transcribe_deepgram(audio_bytes).strip()
-            if not user_text:
-                continue
-            print(f"▶️  {user_text}")
-            if user_text.lower() in {"quit", "exit"}:
+            result = await _process_voice_input(
+                tlm, audio_bytes, show_steps=not args.silent
+            )
+            if result == "quit":
                 break
-            _speak("Working on this now…")
-            kind, result, _ = _dispatch(tlm, user_text, show_steps=not args.silent)
-            print(f"[{kind}] => {result}\n")
-            _speak(result)
     else:
         try:
             while True:
                 line = input("> ").strip()
-                if line.lower() in {"quit", "exit"}:
+                result = await _process_text_input(
+                    tlm, line, show_steps=not args.silent
+                )
+                if result == "quit":
                     break
-                if not line:
-                    continue
-                kind, result, _ = _dispatch(tlm, line, show_steps=not args.silent)
-                print(f"[{kind}] => {result}\n")
         except (EOFError, KeyboardInterrupt):
             print()
+
+
+def main() -> None:
+    """Entry point that runs the async main function."""
+    import select  # Import here to avoid issues on Windows
+
+    asyncio.run(_async_main())
 
 
 if __name__ == "__main__":
