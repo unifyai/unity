@@ -368,7 +368,17 @@ async def _async_tool_use_loop_inner(
                     
             # ── B: wait for remaining tools before asking the LLM again
             if pending:
-                continue
+                continue            # still waiting for other tool tasks
+
+            #  (no pending tool calls → safe to inject new user input)
+            while True:
+                try:
+                    extra = interject_queue.get_nowait()
+                except asyncio.QueueEmpty:
+                    break
+                if log_steps:
+                    LOGGER.info(f"\n⚡ Interjection → {extra!r}\n")
+                client.append_messages([{"role": "user", "content": extra}])
 
             # ── C.  Cancel check before calling the LLM  ────────────────────
             if cancel_event.is_set():
