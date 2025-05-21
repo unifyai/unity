@@ -336,13 +336,15 @@ async def _dispatch(
     stop_event = threading.Event()
 
     def check_input():
+        from sandboxes.utils import run_in_loop
+
         try:
             user_input = input("Press Enter to interrupt or type 'stop' to cancel...\n")
             if user_input.lower().strip() == "stop":
                 handle.stop()
                 print("Stopping the current operation...")
             elif user_input.strip():
-                asyncio.run(handle.interject(user_input))
+                run_in_loop(handle.interject(user_input))
                 print(f"Added interjection: {user_input}")
             stop_event.set()
         except Exception as e:
