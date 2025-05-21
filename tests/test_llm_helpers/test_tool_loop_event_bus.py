@@ -1,0 +1,108 @@
+# tests/test_tool_loop_event_bus.py
+#
+# These tests assume the project already contains
+# ─  async_tool_use_loop.py   (with _async_tool_use_loop_inner / start_async_tool_use_loop)
+# ─  event_bus.py            (with EventBus / Event)
+#
+# No stubs for “unify” are provided – the real library is expected to be
+# importable in the test environment.
+
+from __future__ import annotations
+
+import unify
+import asyncio
+from types import SimpleNamespace
+from typing import Any, Dict, List
+
+import pytest
+
+from unity.common.llm_helpers import _async_tool_use_loop_inner, start_async_tool_use_loop
+from unity.events.event_bus import EventBus
+from tests.helpers import _handle_project
+
+
+async def echo(text: str) -> str:          # noqa: D401 – simple echo tool
+    await asyncio.sleep(0.01)              # prove we can yield control
+    return text.upper()
+
+
+# --------------------------------------------------------------------------- #
+#                         Integration-level expectations                       #
+# --------------------------------------------------------------------------- #
+@pytest.mark.asyncio
+@_handle_project
+async def test_basic_event_flow() -> None:
+    """
+    End-to-end check:
+
+        user/msg → assistant/tool-call → tool/result → assistant/final-text
+    """
+    bus = EventBus()
+    bus.register_event_types("TEST")
+
+    result = await _async_tool_use_loop_inner(
+        client=unify.AsyncUnify("gpt-4o@openai", cache=True),
+        message="world",
+        tools={"echo": echo},
+        event_type="TEST",
+        event_bus=bus,
+        interject_queue=asyncio.Queue(),
+        cancel_event=asyncio.Event(),
+        log_steps=False,
+    )
+
+    # 1. The assistant should ultimately echo back “WORLD”.
+    assert result == "WORLD"
+
+    # 2. Exactly four events should have been published for the run
+    #    (newest-first order → reverse for readability).
+    events = list(reversed(await bus.get_latest(types=["TEST"], limit=10)))
+    assert len(events) == 4
+
+    roles = [evt.payload["message"]["role"] for evt in events]
+    assert roles == ["user", "assistant", "tool", "assistant"]
+
+    assert events[0].payload["message"]["content"] == "world"      # original user question
+    assert events[2].payload["message"]["content"] == "WORLD"      # tool result
+    assert events[3].payload["message"]["content"] == "WORLD"      # final assistant reply
+
+
+# --------------------------------------------------------------------------- #
+#               Publishing still works while the loop is running              #
+# --------------------------------------------------------------------------- #
+
+@pytest.mark.asyncio
+@_handle_project
+async def test_interjection_publishes_user_event() -> None:
+    """
+    Run the *wrapper* helper so that we can inject an extra user turn while the
+    loop is still thinking, then confirm that the event bus recorded it.
+    """
+    bus = EventBus()
+    bus.register_event_types("CHAT")
+
+    client = unify.AsyncUnify("gpt-4o@openai", cache=True)
+    client.set_system_message("Please always respond with 'You said: {my_latest_message}', with the placeholder containing whatever I said, and do not include the quoation marks in your response.")
+
+    handle = start_async_tool_use_loop(
+        client=client,
+        message="first",
+        tools={},                                # no tools needed
+        max_consecutive_failures=1,
+    )
+    # The wrapper does *not* forward event_bus; we attach it manually so the
+    # inner loop sees it.  (This avoids modifying production code.)
+    handle._task.get_coro().cr_frame.f_locals["event_bus"] = bus
+    handle._task.get_coro().cr_frame.f_locals["event_type"] = "CHAT"
+
+    # Wait a tick so the loop reaches its first generate, then interject.
+    await asyncio.sleep(0.05)
+    await handle.interject("second")
+
+    final = await handle.result()
+    assert final == "You said: second"
+
+    events = await bus.get_latest(types=["CHAT"], limit=10)
+    roles = [evt.payload["message"]["role"] for evt in events]
+    assert "user" in roles                      # initial user
+    assert roles.count("user") == 2             # + the interjection
