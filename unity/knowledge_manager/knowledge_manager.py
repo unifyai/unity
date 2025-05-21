@@ -62,7 +62,7 @@ class KnowledgeManager:
 
     # English-Text Command
 
-    async def store(
+    def store(
         self, text: str, *, return_reasoning_steps: bool = False
     ) -> "AsyncToolLoopHandle":
         """
@@ -79,16 +79,25 @@ class KnowledgeManager:
                 - `await handle.interject(message)` to add a user message mid-conversation
                 - `handle.stop()` to gracefully cancel the conversation
 
-        Example:
-            ```python
-            handle = await knowledge_manager.store("Store John's email as john@example.com")
-            # To get the final result:
-            result = await handle.result()
-            # To interject with additional information:
-            await handle.interject("Also add his phone number: 555-1234")
-            # To stop the conversation:
+        Usage:
+            # Synchronous call that returns a handle immediately:
+            handle = km.store("Adrian was born in 1994.")
+
+            # Wait until the operation completes (must be awaited):
+            await handle.result()
+
+            # If you also want the LLM reasoning steps:
+            handle = km.store(
+                "Adrian moved to London in 2020.",
+                return_reasoning_steps=True,
+            )
+            confirmation, reasoning_steps = await handle.result()
+
+            # You can interject while the assistant is still processing:
+            await handle.interject("Actually, Adrian moved in 2021.")
+
+            # Or stop the interaction early:
             handle.stop()
-            ```
         """
         from unity.knowledge_manager.sys_msgs import STORE
 
@@ -108,7 +117,7 @@ class KnowledgeManager:
 
         return handle
 
-    async def retrieve(
+    def retrieve(
         self, text: str, *, return_reasoning_steps: bool = False
     ) -> "AsyncToolLoopHandle":
         """
@@ -125,16 +134,25 @@ class KnowledgeManager:
                 - `await handle.interject(message)` to add a user message mid-conversation
                 - `handle.stop()` to gracefully cancel the conversation
 
-        Example:
-            ```python
-            handle = await knowledge_manager.retrieve("What is John's email?")
-            # To get the final result:
-            result = await handle.result()
-            # To interject with additional information:
-            await handle.interject("Only look in the Contacts table")
-            # To stop the conversation:
+        Usage:
+            # Synchronous call that returns a handle immediately:
+            handle = km.retrieve("When was Adrian born?")
+
+            # Retrieve the answer (must be awaited):
+            answer = await handle.result()
+
+            # If you also want the LLM reasoning steps:
+            handle = km.retrieve(
+                "When was Adrian born?",
+                return_reasoning_steps=True,
+            )
+            answer, reasoning_steps = await handle.result()
+
+            # You can refine your query while it's running:
+            await handle.interject("I mean Adrian Smith, not Adrian Li.")
+
+            # Or cancel the query altogether:
             handle.stop()
-            ```
         """
         from unity.knowledge_manager.sys_msgs import RETRIEVE
 
