@@ -47,7 +47,7 @@ Your task is to retrieve the information requested by the user, and you should c
 
 Information is stored in tables, and each table has columns of a certain data type.
 
-The tools enable you to create, rename, modify, search and delete tables and columns as you see fit.
+The tools enable you to create, rename, modify, search and delete tables and columns as you see fit. In situations where you think a direct search will not reveal the required information, you can use the `nearest` tool to retrieve the data that is most semantically similar to the input query.
 
 You are strongly encouraged to refactor the table and column designs.
 

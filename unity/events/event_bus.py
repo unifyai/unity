@@ -9,7 +9,8 @@ import asyncio
 import datetime as dt
 from collections import deque
 from typing import List, Deque, Dict, Iterable, Union
-from pydantic import BaseModel, Field, ValidationError, field_validator
+from importlib import import_module
+from pydantic import BaseModel, Field, SerializeAsAny, ValidationError, field_validator, model_validator
 from uuid import uuid4
 
 __all__ = ["Event", "EventBus", "Subscription"]
@@ -25,13 +26,26 @@ class Event(BaseModel):
     timestamp: str = Field(
         default_factory=lambda: dt.datetime.now(dt.UTC).isoformat()
     )
-    payload: BaseModel
+    payload: SerializeAsAny[BaseModel]
+    # dotted Python path to the payload model – filled in automatically
+    payload_cls: str = ""
 
     @field_validator("timestamp", mode="before")
     def _ensure_iso(cls, v):
         if isinstance(v, dt.datetime):
             return v.isoformat()
         return v
+    
+    @model_validator(mode="after")
+    def _auto_payload_cls(self):
+        if not self.payload_cls and isinstance(self.payload, BaseModel):
+            object.__setattr__(
+                self,
+                "payload_cls",
+                f"{self.payload.__class__.__module__}."
+                f"{self.payload.__class__.__name__}",
+            )
+        return self
 
 
 # ───────────────────────────   EventBus singleton   ─────────────────────────
@@ -53,11 +67,11 @@ class EventBus:
         upstream_ctxs = unify.get_contexts()
         if self._global_ctx not in upstream_ctxs:
             unify.create_context(self._global_ctx)
-        ctxs = unify.get_contexts(prefix=self._global_ctx)
+        ctxs = unify.get_contexts(prefix=f"{self._global_ctx}/")
         self._window_sizes: Dict[str, int] = {
             ctx.split("/")[-1]: self._default_window for ctx in ctxs
         }
-        self._ctxs = {ctx.split("/")[-1]: ctx for ctx in ctxs}
+        self._specific_ctxs = {ctx.split("/")[-1]: ctx for ctx in ctxs}
         self._logger = unify.AsyncLoggerManager()
 
         # ── Hydrate in‑memory windows from persisted logs ─────────────
@@ -66,7 +80,7 @@ class EventBus:
     # ------------------------------------------------------------------
     def _prefill_from_unify(self):
         """Populate each per‑type deque with newest logs from Unify."""
-        for etype, context in self._ctxs.items():
+        for etype, context in self._specific_ctxs.items():
             window_size = self._window_sizes.setdefault(etype, self._default_window)
             raw_logs = unify.get_logs(context=context, limit=window_size)
             # unify returns most‑recent‑first – reverse for chronological order
@@ -75,13 +89,40 @@ class EventBus:
                 entries = log.entries
                 if entries is None:
                     continue
+
+                # Extract the event metadata fields
+                event_id = entries.pop("event_id")
+                calling_id = entries.pop("calling_id") 
+                timestamp = entries.pop("event_timestamp")
+                cls_path = entries.pop("payload_cls")
+                
+                # ── 1. recover the payload class (if recorded) ──────────
+                Model: type[BaseModel] | None = None
+                if cls_path:
+                    try:
+                        mod, name = cls_path.rsplit(".", 1)
+                        Model = getattr(import_module(mod), name)
+                    except (ModuleNotFoundError, AttributeError, ValueError):
+                        Model = None
+
+                # ── 2. rebuild the payload instance (fallback: dict) ────
+                if Model is not None:
+                    try:
+                        payload_obj = Model.model_validate(entries)
+                    except ValidationError:      # corrupted row → keep dict
+                        payload_obj = entries
+                else:
+                    payload_obj = entries
+
                 evt = Event(
-                    event_id=entries["event_id"],
-                    calling_id=entries["calling_id"],
+                    event_id=event_id,
+                    calling_id=calling_id,
                     type=etype,
-                    timestamp=entries["timestamp"],
-                    payload=entries,
+                    timestamp=timestamp,
+                    payload=payload_obj,
+                    payload_cls=cls_path or "",
                 )
+
                 dq.append(evt)
             self._deques[etype] = dq
 
@@ -92,9 +133,9 @@ class EventBus:
         if isinstance(event_types, str):
             event_types = [event_types]
         for event_type in event_types:
-            if event_type not in self._ctxs:
+            if event_type not in self._specific_ctxs:
                 full_ctx = f"{self._global_ctx}/{event_type}"
-                self._ctxs[event_type] = full_ctx
+                self._specific_ctxs[event_type] = full_ctx
                 if full_ctx not in unify.get_contexts():
                     unify.create_context(full_ctx)
             if event_type not in self._window_sizes:
@@ -103,7 +144,7 @@ class EventBus:
     async def publish(self, event: Event) -> None:
         self.register_event_types(event.type)
         window = self._window_sizes[event.type]
-        if event.type not in self._ctxs:
+        if event.type not in self._specific_ctxs:
             if event.type not in unify.get_contexts():
                 unify.create_context()
 
@@ -118,15 +159,28 @@ class EventBus:
             project=unify.active_project(),
             context=self._global_ctx,
             params={},
-            entries=event,
+            entries=event.model_dump(),
         )
 
         # Log to specific event table
+        if isinstance(event.payload, BaseModel):
+            payload_dict = event.payload.model_dump(mode="python")
+        else:
+            payload_dict = dict(event.payload)
+
         self._logger.log_create(
             project=unify.active_project(),
-            context=self._ctxs[event.type],
+            context=self._specific_ctxs[event.type],
             params={},
-            entries=event.payload,
+            entries={
+                **{
+                    "event_id": event.event_id,
+                    "calling_id": event.calling_id,
+                    "event_timestamp": event.timestamp,
+                    "payload_cls": event.payload_cls,
+                },
+                **payload_dict
+            },
         )
 
     def join_published(self):
@@ -136,28 +190,24 @@ class EventBus:
     async def get_latest(
         self,
         types: Iterable[str] | None = None,
-        limit: int = 100,
+        limits: Union[int, Dict[str, int]] = 100,
     ) -> list[Event]:
         """
         Return up to *limit* events drawn from the specified *types*
-        (or from *all* types if None), ordered **newest-first**.
+        (or from *all* types if None).
 
         Always works with the in-memory deques; does not mutate them.
         """
+        ret: Dict[str, List[Event]] = {}
         async with self._lock:
             wanted = set(types) if types is not None else self._deques.keys()
-
-            # 1. collect (usually small) piles of events
-            bucket: list[Event] = []
+            limits = limits if isinstance(limits, dict) else {w: limits for w in wanted}
             for t in wanted:
                 dq = self._deques.get(t)
                 if dq:
-                    bucket.extend(dq)  # each dq is already window-bounded
-
-            # 2. sort newest→oldest and slice
-            bucket.sort(key=lambda e: e.timestamp, reverse=True)
-            return bucket[:limit]
-
+                    ret[t] = list(dq)[-limits[t]:]
+        return ret
+    
     def set_window(self, event_type: str, new_size: int) -> None:
         """
         Change the *in-memory* history window for ``event_type`` to
@@ -173,7 +223,7 @@ class EventBus:
             raise ValueError("new_size must be a positive integer")
 
         # Ensure bookkeeping structures exist
-        if event_type not in self._ctxs:
+        if event_type not in self._specific_ctxs:
             self.register_event_types(event_type)
 
         self._window_sizes[event_type] = new_size
@@ -279,4 +329,4 @@ class EventBus:
 
     @property
     def ctxs(self):
-        return self._ctxs
+        return self._specific_ctxs

@@ -450,28 +450,49 @@ class KnowledgeManager:
         self,
         *,
         tables: List[str],
-        column: str,
         source: str,
         text: str,
         k: int = 5,
     ) -> List[unify.Log]:
         """
-        Find the k nearest entries in the table to the given text using vector embeddings.
+        Find data semantically similar to the provided text.
 
         Args:
-            table (str): The name of the table to search in.
-            column (str): The name of the vector column to use for similarity search.
-            source (str): The name of the column to derive the vector column from.
+            tables (List[str]): The list of tables to search in.
+            source (str): The name of the column to perform the nearest search on.
             text (str): The query text to find similar entries to.
             k (int): The number of results to return.
 
         Returns:
-            List[unify.Log]: The k nearest log entries to the query text.
+            List[Dict[str, Any]]: The k nearest entries from the given table  to the query text.
+
+        Usage:
+            # Suppose you have a table called "Articles" with a text column named "content",
+            # and you want to find the rows whose content is semantically closest to a query.
+            # For example, if the table has the following data:
+            # [
+            #     {"content": "The capital of France is Paris."},
+            #     {"content": "Berlin is the capital of Germany."},
+            #     {"content": "Paris is famous for the Eiffel Tower."},
+            # ]
+            # Then you can perform the nearest-neighbour search:
+            results = km._nearest(
+                tables=["Articles"],       # tables to search in
+                source="content",          # existing column to embed
+                text="What is the capital city of Germany?",
+                k=3,                         # number of similar rows to return
+            )
+
+            # The method returns a dictionary keyed by table name. Each value is a
+            # list of the `k` closest rows (ordered by similarity):
+            # >>> results["Articles"][0]
+            # {'content': 'Berlin is the capital of Germany.'}
         """
         # ToDo: convert to map function
         results = dict()
         for table in tables:
             context = f"{self._ctx}/{table}"
+            column = f"{source}_vec"
             self._ensure_table_vector(table, column, source)
             results[table] = [
                 log.entries
