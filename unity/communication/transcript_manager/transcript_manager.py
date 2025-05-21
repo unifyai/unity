@@ -35,7 +35,9 @@ class TranscriptManager:
         assert (
             read_ctx == write_ctx
         ), "read and write contexts must be the same when instantiating a TranscriptManager."
-        event_bus.register_event_types(["Contacts", "Messages", "MessageExchangeSummaries"])
+        event_bus.register_event_types(
+            ["Contacts", "Messages", "MessageExchangeSummaries"],
+        )
         self._contacts_ctx = event_bus.ctxs["Contacts"]
         self._transcripts_ctx = event_bus.ctxs["Messages"]
         self._summaries_ctx = event_bus.ctxs["MessageExchangeSummaries"]
@@ -141,7 +143,7 @@ class TranscriptManager:
                 timestamp=latest_timestamp,
                 payload=MessageExchangeSummary(
                     summary=summary,
-                    exchange_ids=exchange_ids
+                    exchange_ids=exchange_ids,
                 ),
             ),
         )
