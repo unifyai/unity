@@ -180,7 +180,7 @@ async def test_log_messages():
                     content=random.choice(MESSAGES),
                     exchange_id=i,
                 ),
-            ),
+            )
         )
         for i in range(10)
     ]
@@ -211,7 +211,7 @@ async def test_get_messages():
                     content=random.choice(MESSAGES),
                     exchange_id=i,
                 ),
-            ),
+            )
         )
         for i in range(10)
     ]
@@ -283,7 +283,7 @@ async def test_summarize_exchanges():
                     content=msg,
                     exchange_id=0,
                 ),
-            ),
+            )
         )
         for i, msg in enumerate(
             [
@@ -310,7 +310,7 @@ async def test_summarize_exchanges():
                     content=msg,
                     exchange_id=1,
                 ),
-            ),
+            )
         )
         for i, msg in enumerate(
             [
@@ -335,7 +335,7 @@ async def test_summarize_exchanges():
                     content=msg,
                     exchange_id=2,
                 ),
-            ),
+            )
         )
         for i, msg in enumerate(
             [
