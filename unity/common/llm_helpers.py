@@ -20,6 +20,7 @@ from typing import (
 
 import unify
 from ..constants import LOGGER
+from ..events.event_bus import EventBus, Event
 
 
 TYPE_MAP = {str: "string", int: "integer", float: "number", bool: "boolean"}
@@ -134,9 +135,11 @@ def method_to_schema(bound_method):
 
 
 async def _async_tool_use_loop_inner(
-    client: "unify.AsyncUnify",
+    client: unify.AsyncUnify,
     message: str,
     tools: Dict[str, Callable],
+    event_type: Optional[str] = None,
+    event_bus: Optional[EventBus] = None,
     *,
     interject_queue: asyncio.Queue[str],
     cancel_event: asyncio.Event,
@@ -302,12 +305,18 @@ async def _async_tool_use_loop_inner(
     'Task XYZ is both high-priority and due this week.'
     """
 
+    assert (event_bus and event_type) or (not event_bus and not event_type), \
+        "event_bus and event_type must either both be specified or both be unspecified"
+
     if log_steps:
         LOGGER.info(f"\n🧑‍💻 {message}\n")
 
     # ── initial prompt ───────────────────────────────────────────────────────
     tools_schema = [method_to_schema(v) for v in tools.values()]
-    client.append_messages([{"role": "user", "content": message}])
+    msg = {"role": "user", "content": message}
+    if event_bus:
+        await event_bus.publish(Event(type=event_type, payload={"message": msg}))
+    client.append_messages([msg])
 
     consecutive_failures = 0
     pending: Set[asyncio.Task] = set()
@@ -327,7 +336,10 @@ async def _async_tool_use_loop_inner(
                         break
                     if log_steps:
                         LOGGER.info(f"\n⚡ Interjection → {extra!r}\n")
-                    client.append_messages([{"role": "user", "content": extra}])
+                    msg = {"role": "user", "content": extra}
+                    if event_bus:
+                        await event_bus.publish(Event(type=event_type, payload={"message": msg}))
+                    client.append_messages([msg])
 
             # ── A.  Wait for tool completion OR cancellation  ───────────────
             if pending:
@@ -356,10 +368,11 @@ async def _async_tool_use_loop_inner(
                                 f"(attempt {consecutive_failures}/{max_consecutive_failures}):\n{result}",
                             )
 
-                    client.append_messages(
-                        [{"role": "tool", "tool_call_id": call_id,
-                          "name": name, "content": result}],
-                    )
+                    msg = {"role": "tool", "tool_call_id": call_id,
+                          "name": name, "content": result}
+                    if event_bus:
+                        await event_bus.publish(Event(type=event_type, payload={"message": msg}))
+                    client.append_messages([msg])
 
                     if consecutive_failures >= max_consecutive_failures:
                         if log_steps:
@@ -378,7 +391,10 @@ async def _async_tool_use_loop_inner(
                     break
                 if log_steps:
                     LOGGER.info(f"\n⚡ Interjection → {extra!r}\n")
-                client.append_messages([{"role": "user", "content": extra}])
+                msg = {"role": "user", "content": extra}
+                if event_bus:
+                    await event_bus.publish(Event(type=event_type, payload={"message": msg}))
+                client.append_messages([msg])
 
             # ── C.  Cancel check before calling the LLM  ────────────────────
             if cancel_event.is_set():
@@ -388,6 +404,7 @@ async def _async_tool_use_loop_inner(
             if log_steps:
                 LOGGER.info("🔄 LLM thinking…")
 
+            
             response = await client.generate(
                 return_full_completion=True,
                 tools=tools_schema,
@@ -395,6 +412,8 @@ async def _async_tool_use_loop_inner(
                 stateful=True,
             )
             msg = response.choices[0].message
+            if event_bus:
+                await event_bus.publish(Event(type=event_type, payload={"message": msg}))
 
             # ── E.  Launch any new tool calls  ──────────────────────────────
             if msg.tool_calls:

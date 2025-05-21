@@ -20,7 +20,7 @@ _DEFAULT_WINDOW = 50
 
 class Event(BaseModel):
     type: str
-    timestamp: str
+    timestamp: str = dt.datetime.now(dt.UTC).isoformat()
     payload: BaseModel
 
 
