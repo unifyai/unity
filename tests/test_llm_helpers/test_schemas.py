@@ -12,11 +12,6 @@ from enum import Enum
 import pytest
 from pydantic import BaseModel
 
-# --------------------------------------------------------------------------- #
-#  MODULE UNDER TEST                                                          #
-# --------------------------------------------------------------------------- #
-# Change "tool_helpers" to the filename that contains annotation_to_schema,
-# method_to_schema, and tool_use_loop.
 import unity.common.llm_helpers as llmh
 
 
