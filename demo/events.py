@@ -168,7 +168,7 @@ class PhoneUtteranceEvent(Event):
 
 class InterruptEvent(Event):
     def __str__(self):
-        return f"[INTERRUPT @ {self.fmt_timestamp}] User interrupted"(Event)
+        return f"[INTERRUPT @ {self.fmt_timestamp}] User interrupted"
 
     def __str__(self):
         return f"[INTERRUPT @ {self.fmt_timestamp}] User interrupted"
