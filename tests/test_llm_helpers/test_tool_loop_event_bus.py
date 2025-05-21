@@ -89,21 +89,19 @@ async def test_interjection_publishes_user_event() -> None:
         client=client,
         message="first",
         tools={},  # no tools needed
+        event_type="CHAT",
+        event_bus=bus,
         max_consecutive_failures=1,
     )
-    # The wrapper does *not* forward event_bus; we attach it manually so the
-    # inner loop sees it.  (This avoids modifying production code.)
-    handle._task.get_coro().cr_frame.f_locals["event_bus"] = bus
-    handle._task.get_coro().cr_frame.f_locals["event_type"] = "CHAT"
 
-    # Wait a tick so the loop reaches its first generate, then interject.
-    await asyncio.sleep(0.05)
+    # Interject with second.
     await handle.interject("second")
+
 
     final = await handle.result()
     assert final == "You said: second"
 
-    events = await bus.get_latest(types=["CHAT"], limits=10)
+    events = (await bus.get_latest(types=["CHAT"], limits=10))["CHAT"]
     roles = [evt.payload["message"]["role"] for evt in events]
     assert "user" in roles  # initial user
     assert roles.count("user") == 2  # + the interjection
