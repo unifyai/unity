@@ -19,6 +19,7 @@ import random
 import re
 from collections import Counter
 from datetime import datetime, timezone, timedelta
+from unity.events.event_bus import EventBus, Event
 from typing import List
 
 import pytest
@@ -83,27 +84,28 @@ _ID_BY_NAME: dict[str, int] = {}  # filled during seeding
 class ScenarioBuilder:
     """Populate Unify with contacts, 6 'meaningful' exchanges + filler."""
 
-    def __init__(self) -> None:
+    async def __init__(self) -> None:
+        self._event_bus = EventBus()
         self.tm = TranscriptManager()
-        self.tm.start()
-        self._seed_contacts()
-        self._seed_key_exchanges()
-        self._seed_filler()
+        await self._seed_contacts()
+        await self._seed_key_exchanges()
+        await self._seed_filler()
         # One stored summary just so summaries exist
         self.tm.summarize(exchange_ids=[0, 1])
+        self._event_bus.join_published()
 
     # --------------------------------------------------------------------- #
-    def _seed_contacts(self) -> None:
+    async def _seed_contacts(self) -> None:
         for idx, c in enumerate(_CONTACTS):
             self.tm.create_contact(**c)
             _ID_BY_NAME[c["first_name"].lower()] = idx
 
     # --------------------------------------------------------------------- #
-    def _seed_key_exchanges(self) -> None:
+    async def _seed_key_exchanges(self) -> None:
         now = datetime(2025, 4, 20, 15, 0, tzinfo=timezone.utc)
 
         # E0: first Dan–Julia phone call
-        self._log(
+        await self._log(
             0,
             "phone_call",
             [
@@ -114,7 +116,7 @@ class ScenarioBuilder:
 
         # E1: *last* Dan–Julia phone call (later date)
         later = datetime(2025, 4, 26, 9, 30, tzinfo=timezone.utc)
-        self._log(
+        await self._log(
             1,
             "phone_call",
             [
@@ -135,7 +137,7 @@ class ScenarioBuilder:
 
         # E2: Carlos interest e-mail
         t_email = datetime(2025, 4, 21, 12, 0, tzinfo=timezone.utc)
-        self._log(
+        await self._log(
             2,
             "email",
             [
@@ -158,7 +160,7 @@ class ScenarioBuilder:
 
         # E3: Jimmy holiday WhatsApp
         t_holiday = datetime(2025, 4, 22, 18, 10, tzinfo=timezone.utc)
-        self._log(
+        await self._log(
             3,
             "whatsapp_message",
             [
@@ -174,7 +176,7 @@ class ScenarioBuilder:
 
         # E4: Anne passport excuse (WhatsApp)
         t_excuse = datetime(2025, 4, 23, 9, 0, tzinfo=timezone.utc)
-        self._log(
+        await self._log(
             4,
             "whatsapp_message",
             [
@@ -189,7 +191,7 @@ class ScenarioBuilder:
         )
 
     # --------------------------------------------------------------------- #
-    def _seed_filler(self, exchanges: int = 20, msgs_per: int = 15) -> None:
+    async def _seed_filler(self, exchanges: int = 20, msgs_per: int = 15) -> None:
         """Adds irrelevant chatter so filtering matters."""
         random.seed(12345)
         media = ["email", "phone_call", "sms_message", "whatsapp_message"]
@@ -209,28 +211,32 @@ class ScenarioBuilder:
                         f"Filler {ex_id}-{i} {mtype} random text.",
                     ),
                 )
-            self._log(ex_id, mtype, batch)
+            await self._log(ex_id, mtype, batch)
 
     # --------------------------------------------------------------------- #
-    def _log(
+    async def _log(
         self,
         ex_id: int,
         medium: str,
         msgs: List[tuple[int, int, datetime, str]],
     ) -> None:
-        self.tm.log_messages(
-            [
-                Message(
-                    medium=medium,
-                    sender_id=s,
-                    receiver_id=r,
-                    timestamp=ts.isoformat(),
-                    content=txt,
-                    exchange_id=ex_id,
+        [
+            await self._event_bus.publish(
+                Event(
+                    context="Messages",
+                    timestamp=None,
+                    paylod=Message(
+                        medium=medium,
+                        sender_id=s,
+                        receiver_id=r,
+                        timestamp=ts.isoformat(),
+                        content=txt,
+                        exchange_id=ex_id,
+                    )
                 )
-                for s, r, ts, txt in msgs
-            ],
-        )
+            )
+            for s, r, ts, txt in msgs
+        ]
 
 
 # --------------------------------------------------------------------------- #
@@ -417,12 +423,7 @@ async def test_ask_semantic_with_llm_judgement(
     Calls the real `.ask()` (which itself may call the LLM multiple
     times), then asks a _separate_ LLM whether the answer is acceptable.
     """
-    tm = ScenarioBuilder().tm
-    try:
-        candidate, steps = await tm.ask(question, return_reasoning_steps=True)
-        expected = _answer_semantic(tm, question)
-        _llm_assert_correct(question, expected, candidate, steps)
-    except Exception as e:
-        if "test_ask" in unify.list_projects():
-            unify.delete_project("test_ask")
-        raise e
+    tm = await ScenarioBuilder().tm
+    candidate, steps = await tm.ask(question, return_reasoning_steps=True)
+    expected = _answer_semantic(tm, question)
+    _llm_assert_correct(question, expected, candidate, steps)
