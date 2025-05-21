@@ -50,7 +50,7 @@ class TranscriptManager:
 
     # English-Text Question
 
-    async def ask(
+    def ask(
         self, text: str, *, return_reasoning_steps: bool = False
     ) -> "AsyncToolLoopHandle":
         """
@@ -58,8 +58,7 @@ class TranscriptManager:
 
         Args:
             text (str): The text-based question to answer.
-
-            return_reasoning_steps (bool): Whether to return the reasoning steps for the question.
+            return_reasoning_steps (bool): Whether to return the reasoning steps along with the answer.
 
         Returns:
             AsyncToolLoopHandle: A handle to the running conversation that supports:
@@ -68,11 +67,19 @@ class TranscriptManager:
                 - handle.stop(): Gracefully terminate the conversation
 
         Usage:
-            handle = await transcript_manager.ask("Find recent emails from John")
-            # To get the final answer:
+            # Synchronous call that returns a handle immediately:
+            handle = transcript_manager.ask("Find recent emails from John")
+
+            # To get the final answer (must be awaited):
             answer = await handle.result()
+
+            # If return_reasoning_steps=True:
+            handle = transcript_manager.ask("Find emails from John", return_reasoning_steps=True)
+            answer, reasoning_steps = await handle.result()
+
             # To add clarification mid-conversation:
             await handle.interject("I meant John Smith specifically")
+
             # To stop the conversation early:
             handle.stop()
         """
@@ -82,9 +89,14 @@ class TranscriptManager:
         client.set_system_message(ANSWER)
         handle = start_async_tool_use_loop(client, text, self._tools)
         if return_reasoning_steps:
-            # We need to await the result to get the messages
-            ans = await handle.result()
-            return ans, client.messages
+            # Wrap the handle.result() to return both answer and reasoning steps
+            original_result = handle.result
+
+            async def wrapped_result():
+                answer = await original_result()
+                return answer, client.messages
+
+            handle.result = wrapped_result
 
         return handle
 
