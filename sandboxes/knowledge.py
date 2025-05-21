@@ -11,16 +11,20 @@ Features
 * Shared audio/STT/TTS helpers imported from `utils.py`.
 * Minimal dispatcher routes utterances to `KnowledgeManager.store` or
   `.retrieve` using a lightweight LLM intent/cleanup step.
+* Supports interruptions during LLM processing via AsyncToolLoopHandle.
 """
 
 from __future__ import annotations
 
 import argparse
+import asyncio
 import json
 import logging
 import re
 import sys
-from typing import List, Optional, Tuple
+import select
+import time
+from typing import List, Optional, Tuple, Any
 from pydantic import BaseModel, Field
 from pathlib import Path
 
@@ -31,6 +35,7 @@ import unify
 
 from unity.constants import LOGGER as _LG  # type: ignore
 from unity.knowledge_manager.knowledge_manager import KnowledgeManager  # type: ignore
+from unity.common.llm_helpers import AsyncToolLoopHandle  # type: ignore
 from sandboxes.utils import (
     record_until_enter as _record_until_enter,
     transcribe_deepgram as _transcribe_deepgram,
@@ -114,12 +119,12 @@ _INTENT_PROMPT = (
 )
 
 
-def _dispatch(
+async def _dispatch(
     km: KnowledgeManager,
     raw: str,
     *,
     show_steps: bool,
-) -> Tuple[str, str, List | None]:
+) -> Tuple[str, AsyncToolLoopHandle, List | None]:
     raw = raw.strip()
 
     # Quick rule: voice input often lacks punctuation – fall back to heuristic + LLM judge if ambiguous
@@ -128,25 +133,175 @@ def _dispatch(
     ) and not raw.endswith("?")
 
     if heuristic_store:
-        km.store(raw)
-        return "store", "Got it – I've stored that.", None
+        handle = km.store(raw, return_reasoning_steps=show_steps)
+        return "store", handle, None
 
     llm = unify.Unify("gpt-4o@openai", response_format=_IntentResp)
     intent_json = llm.set_system_message(_INTENT_PROMPT).generate(raw)
     intent = _IntentResp.model_validate_json(intent_json)
 
     if intent.action == "store":
-        km.store(intent.cleaned_text)
-        return "store", "Noted.", None
+        handle = km.store(intent.cleaned_text, return_reasoning_steps=show_steps)
+        return "store", handle, None
 
     # Retrieval path
-    answer, steps = km.retrieve(intent.cleaned_text, return_reasoning_steps=show_steps)
-    return "retrieve", answer, steps
+    handle = km.retrieve(intent.cleaned_text, return_reasoning_steps=show_steps)
+    return "retrieve", handle, None
+
+
+# ---------------------------------------------------------------------------
+# Input polling helpers
+# ---------------------------------------------------------------------------
+
+
+def _poll_for_input(timeout: float = 0.1) -> Optional[str]:
+    """Non-blocking check for user input from stdin."""
+    if not select.select([sys.stdin], [], [], timeout)[0]:
+        return None
+
+    line = sys.stdin.readline().strip()
+    return line if line else None
+
+
+async def _handle_interruptions(
+    handle: AsyncToolLoopHandle,
+    answer_task: asyncio.Task,
+    *,
+    voice_mode: bool = False,
+) -> Tuple[str, str]:
+    """
+    Poll for user interruptions while waiting for the answer task to complete.
+    Returns the kind of operation and the final result.
+    """
+    kind = "unknown"
+    result = ""
+
+    try:
+        # Loop until the answer task is done
+        while not answer_task.done():
+            # Check for user input
+            if voice_mode:
+                # In voice mode, we just check if the user pressed Enter
+                user_input = _poll_for_input(0.1)
+                if user_input is not None:
+                    print("⚠️ Interruption detected. Recording new input...")
+                    audio_bytes = _record_until_enter()
+                    user_text = _transcribe_deepgram(audio_bytes).strip()
+                    if user_text:
+                        print(f"▶️  New input: {user_text}")
+                        if user_text.lower() in {"stop", "cancel"}:
+                            print("🛑 Stopping current operation...")
+                            handle.stop()
+                        else:
+                            print("⚡ Interjecting new information...")
+                            await handle.interject(user_text)
+            else:
+                # In text mode, we check for any input
+                user_input = _poll_for_input(0.1)
+                if user_input is not None:
+                    if user_input.lower() in {"stop", "cancel"}:
+                        print("🛑 Stopping current operation...")
+                        handle.stop()
+                    else:
+                        print(f"⚡ Interjecting: {user_input}")
+                        await handle.interject(user_input)
+
+            # Small sleep to prevent CPU spinning
+            await asyncio.sleep(0.1)
+
+        # Get the result from the completed task
+        result = answer_task.result()
+
+        # If we have a tuple (for return_reasoning_steps=True), extract just the answer
+        if isinstance(result, tuple) and len(result) >= 1:
+            result = result[0]
+
+        return kind, result
+    except asyncio.CancelledError:
+        return kind, "Operation was cancelled."
 
 
 # ---------------------------------------------------------------------------
 # CLI
 # ---------------------------------------------------------------------------
+
+
+async def _main_async(args) -> None:
+    # Logging
+    if not args.silent:
+        logging.basicConfig(level=logging.INFO, format="%(message)s")
+        _LG.setLevel(logging.INFO)
+        if not args.debug:
+            for noisy in ("unify", "unify.utils", "unify.logging", "requests", "httpx"):
+                logging.getLogger(noisy).setLevel(logging.WARNING)
+
+    # Unify project context
+    unify.activate("KnowledgeSandbox")
+    fresh = "Knowledge" not in unify.get_contexts() or args.new
+    unify.set_context("Knowledge", overwrite=fresh)
+
+    # Manager
+    km = KnowledgeManager()
+
+    if fresh:
+        if args.scenario == "llm":
+            theme = _seed_llm(km)
+            if theme:
+                _LG.info(f"[Seed] LLM scenario theme: {theme}")
+        else:
+            _seed_fixed(km)
+
+    print("KnowledgeManager sandbox – speak or type. 'quit' to exit.")
+    print("Press Enter during processing to interject or type 'stop' to cancel.\n")
+
+    # Interaction loop
+    if args.voice:
+        while True:
+            audio_bytes = _record_until_enter()
+            user_text = _transcribe_deepgram(audio_bytes).strip()
+            if not user_text:
+                continue
+            print(f"▶️  {user_text}")
+            if user_text.lower() in {"quit", "exit"}:
+                break
+
+            _speak("Working on this now…")
+
+            # Get the handle and create a task for the result
+            kind, handle, steps = await _dispatch(
+                km, user_text, show_steps=not args.silent
+            )
+            answer_task = asyncio.create_task(handle.result())
+
+            # Handle interruptions while waiting for the result
+            kind, result = await _handle_interruptions(
+                handle, answer_task, voice_mode=True
+            )
+
+            print(f"[{kind}] => {result}\n")
+            if kind == "retrieve":
+                _speak(result)
+    else:
+        try:
+            while True:
+                line = input("> ").strip()
+                if line.lower() in {"quit", "exit"}:
+                    break
+                if not line:
+                    continue
+
+                # Get the handle and create a task for the result
+                kind, handle, steps = await _dispatch(
+                    km, line, show_steps=not args.silent
+                )
+                answer_task = asyncio.create_task(handle.result())
+
+                # Handle interruptions while waiting for the result
+                kind, result = await _handle_interruptions(handle, answer_task)
+
+                print(f"[{kind}] => {result}\n")
+        except (EOFError, KeyboardInterrupt):
+            print()
 
 
 def main() -> None:
@@ -175,59 +330,8 @@ def main() -> None:
     )
     args = parser.parse_args()
 
-    # Logging
-    if not args.silent:
-        logging.basicConfig(level=logging.INFO, format="%(message)s")
-        _LG.setLevel(logging.INFO)
-        if not args.debug:
-            for noisy in ("unify", "unify.utils", "unify.logging", "requests", "httpx"):
-                logging.getLogger(noisy).setLevel(logging.WARNING)
-
-    # Unify project context
-    unify.activate("KnowledgeSandbox")
-    fresh = "Knowledge" not in unify.get_contexts() or args.new
-    unify.set_context("Knowledge", overwrite=fresh)
-
-    # Manager
-    km = KnowledgeManager()
-
-    if fresh:
-        if args.scenario == "llm":
-            theme = _seed_llm(km)
-            if theme:
-                _LG.info(f"[Seed] LLM scenario theme: {theme}")
-        else:
-            _seed_fixed(km)
-
-    print("KnowledgeManager sandbox – speak or type. 'quit' to exit.\n")
-
-    # Interaction loop
-    if args.voice:
-        while True:
-            audio_bytes = _record_until_enter()
-            user_text = _transcribe_deepgram(audio_bytes).strip()
-            if not user_text:
-                continue
-            print(f"▶️  {user_text}")
-            if user_text.lower() in {"quit", "exit"}:
-                break
-            _speak("Working on this now…")
-            kind, result, _ = _dispatch(km, user_text, show_steps=not args.silent)
-            print(f"[{kind}] => {result}\n")
-            if kind == "retrieve":
-                _speak(result)
-    else:
-        try:
-            while True:
-                line = input("> ").strip()
-                if line.lower() in {"quit", "exit"}:
-                    break
-                if not line:
-                    continue
-                kind, result, _ = _dispatch(km, line, show_steps=not args.silent)
-                print(f"[{kind}] => {result}\n")
-        except (EOFError, KeyboardInterrupt):
-            print()
+    # Run the async main function
+    asyncio.run(_main_async(args))
 
 
 if __name__ == "__main__":
