@@ -47,7 +47,6 @@ async def test_event_ids_are_populated_and_unique() -> None:
     latest = (await bus.get_latest(types=["numbers"], limits=2))["numbers"]
     assert len(latest) == 2
 
-    # newest-first → reverse for creation order
     e1, e2 = latest
 
     # 1. Both fields must be non-empty UUID strings
