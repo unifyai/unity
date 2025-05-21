@@ -9,7 +9,7 @@ import unify
 from ..common.embed_utils import EMBED_MODEL, ensure_vector_column
 from ..helpers import _handle_exceptions
 from .types import ColumnType
-from ..common.llm_helpers import start_async_tool_use_loop
+from ..common.llm_helpers import start_async_tool_use_loop, AsyncToolLoopHandle
 from ..helpers import _handle_exceptions
 
 API_KEY = os.environ["UNIFY_KEY"]
@@ -62,7 +62,9 @@ class KnowledgeManager:
 
     # English-Text Command
 
-    async def store(self, text: str, *, return_reasoning_steps: bool = False) -> Any:
+    async def store(
+        self, text: str, *, return_reasoning_steps: bool = False
+    ) -> "AsyncToolLoopHandle":
         """
         Take in any storage text command, and use the tools available (the *non-skipped* private methods of this class) to store the information, refactoring the table and column schema along the way if needed.
 
@@ -72,20 +74,45 @@ class KnowledgeManager:
             return_reasoning_steps (bool): Whether to return the reasoning steps for the storage request.
 
         Returns:
-            bool: Whether the storage request completed successfully.
+            AsyncToolLoopHandle: A handle to the running conversation that allows:
+                - `await handle.result()` to get the final result
+                - `await handle.interject(message)` to add a user message mid-conversation
+                - `handle.stop()` to gracefully cancel the conversation
+
+        Example:
+            ```python
+            handle = await knowledge_manager.store("Store John's email as john@example.com")
+            # To get the final result:
+            result = await handle.result()
+            # To interject with additional information:
+            await handle.interject("Also add his phone number: 555-1234")
+            # To stop the conversation:
+            handle.stop()
+            ```
         """
         from unity.knowledge_manager.sys_msgs import STORE
 
         client = unify.AsyncUnify("o4-mini@openai", cache=True)
         client.set_system_message(STORE)
-        ans = await start_async_tool_use_loop(client, text, self._store_tools).result()
-        if return_reasoning_steps:
-            return ans, client.messages
-        return ans
+        handle = start_async_tool_use_loop(client, text, self._store_tools)
 
-    async def retrieve(self, text: str, *, return_reasoning_steps: bool = False) -> str:
+        # If we need to return reasoning steps, we need to wrap the handle
+        if return_reasoning_steps:
+            original_result = handle.result
+
+            async def wrapped_result():
+                ans = await original_result()
+                return ans, client.messages
+
+            handle.result = wrapped_result
+
+        return handle
+
+    async def retrieve(
+        self, text: str, *, return_reasoning_steps: bool = False
+    ) -> "AsyncToolLoopHandle":
         """
-        Take in any retrieval text command, and use the tools available (the *non-skipped* private methods of this class) to retireve the information, refactoring the table and column schema along the way if needed.
+        Take in any retrieval text command, and use the tools available (the *non-skipped* private methods of this class) to retrieve the information, refactoring the table and column schema along the way if needed.
 
         Args:
             text (str): The information retrieval request, as a plain-text command.
@@ -93,20 +120,39 @@ class KnowledgeManager:
             return_reasoning_steps (bool): Whether to return the reasoning steps for the retrieval request.
 
         Returns:
-            str: The result of the retrieval.
+            AsyncToolLoopHandle: A handle to the running conversation that allows:
+                - `await handle.result()` to get the final result
+                - `await handle.interject(message)` to add a user message mid-conversation
+                - `handle.stop()` to gracefully cancel the conversation
+
+        Example:
+            ```python
+            handle = await knowledge_manager.retrieve("What is John's email?")
+            # To get the final result:
+            result = await handle.result()
+            # To interject with additional information:
+            await handle.interject("Only look in the Contacts table")
+            # To stop the conversation:
+            handle.stop()
+            ```
         """
         from unity.knowledge_manager.sys_msgs import RETRIEVE
 
         client = unify.AsyncUnify("o4-mini@openai", cache=True)
         client.set_system_message(RETRIEVE)
-        ans = await start_async_tool_use_loop(
-            client,
-            text,
-            self._retrieve_tools,
-        ).result()
+        handle = start_async_tool_use_loop(client, text, self._retrieve_tools)
+
+        # If we need to return reasoning steps, we need to wrap the handle
         if return_reasoning_steps:
-            return ans, client.messages
-        return ans
+            original_result = handle.result
+
+            async def wrapped_result():
+                ans = await original_result()
+                return ans, client.messages
+
+            handle.result = wrapped_result
+
+        return handle
 
     # Helpers #
     # --------#
