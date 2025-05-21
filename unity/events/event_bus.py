@@ -8,9 +8,9 @@ import unify
 import asyncio
 import datetime as dt
 from collections import deque
-from typing import List, Deque, Dict, Iterable, Union
+from typing import List, Deque, Dict, Iterable, Union, Mapping, Any
 from importlib import import_module
-from pydantic import BaseModel, Field, SerializeAsAny, ValidationError, field_validator, model_validator
+from pydantic import BaseModel, Field, SerializeAsAny, ValidationError, field_validator, model_validator, field_serializer, ConfigDict
 from uuid import uuid4
 
 __all__ = ["Event", "EventBus", "Subscription"]
@@ -23,29 +23,73 @@ class Event(BaseModel):
     event_id: str = Field(default_factory=lambda: str(uuid4()))
     calling_id: str = ""
     type: str
-    timestamp: str = Field(
-        default_factory=lambda: dt.datetime.now(dt.UTC).isoformat()
-    )
-    payload: SerializeAsAny[BaseModel]
+    timestamp: str = Field(default_factory=lambda: dt.datetime.now(dt.UTC).isoformat())
+
+    # Accept *anything* here; we'll convert it on the way out.
+    payload: SerializeAsAny[Any]
+
     # dotted Python path to the payload model – filled in automatically
     payload_cls: str = ""
 
+    # -------------------------------------------------
+    #  validators
+    # -------------------------------------------------
     @field_validator("timestamp", mode="before")
     def _ensure_iso(cls, v):
         if isinstance(v, dt.datetime):
             return v.isoformat()
         return v
-    
+
     @model_validator(mode="after")
     def _auto_payload_cls(self):
         if not self.payload_cls and isinstance(self.payload, BaseModel):
             object.__setattr__(
                 self,
                 "payload_cls",
-                f"{self.payload.__class__.__module__}."
-                f"{self.payload.__class__.__name__}",
+                f"{self.payload.__class__.__module__}.{self.payload.__class__.__name__}",
             )
         return self
+
+    # -------------------------------------------------
+    #  serializer
+    # -------------------------------------------------
+    @field_serializer("payload", when_used="json")
+    def _serialise_payload(self, value: Any, _info):
+        """
+        Convert every nested BaseModel inside `payload` to plain Python objects
+        so that `event.model_dump()` never hits Pydantic’s functional serializer
+        pathway again.
+        """
+        return self._to_python(value)
+
+    # -------------------------------------------------
+    #  model config
+    # -------------------------------------------------
+    model_config = ConfigDict(
+        arbitrary_types_allowed=True,  # let `payload` contain anything
+        extra="forbid",
+    )
+
+    # -------------------------------------------------
+    #  helpers
+    # -------------------------------------------------
+    @classmethod
+    def _to_python(cls, v: Any) -> Any:
+        """
+        Recursively turn BaseModels → dicts, leaving primitive types unchanged.
+        """
+        if isinstance(v, BaseModel):
+            return v.model_dump(mode="python")
+
+        if isinstance(v, Mapping):
+            # Reuse the classmethod to walk nested structures
+            return {k: cls._to_python(sub) for k, sub in v.items()}
+
+        if isinstance(v, (list, tuple, set)):
+            it: Iterable[Any] = [_ for _ in v]  # satisfy mypy/pyright
+            return [cls._to_python(sub) for sub in it]
+
+        return v
 
 
 # ───────────────────────────   EventBus singleton   ─────────────────────────
