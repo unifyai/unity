@@ -164,11 +164,11 @@ async def test_ask_semantic_with_llm_judgement(
     tlm_scenario: TaskListManager,
 ) -> None:
     try:
-        handle, steps = tlm_scenario.ask(
+        handle = tlm_scenario.ask(
             text=question,
             return_reasoning_steps=True,
         )
-        candidate = await handle.result()
+        candidate, steps = await handle.result()
         expected = _answer_semantic(tlm_scenario, question)
         _llm_assert_correct(question, expected, candidate, steps)
     except Exception as exc:
