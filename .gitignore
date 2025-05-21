@@ -7,7 +7,4 @@ implementations.py
 log.txt
 .logs.txt
 logs.txt
-unity-venv/
-api-reference/
-.unify/
-unity-venv
+test.py

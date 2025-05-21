@@ -18,7 +18,6 @@ _DEFAULT_WINDOW = 50
 
 # ───────────────────────────   Event envelope   ─────────────────────────────
 
-
 class Event(BaseModel):
     type: str
     timestamp: str
@@ -26,7 +25,6 @@ class Event(BaseModel):
 
 
 # ───────────────────────────   EventBus singleton   ─────────────────────────
-
 
 class EventBus:
 
@@ -131,12 +129,12 @@ class EventBus:
             for t in wanted:
                 dq = self._deques.get(t)
                 if dq:
-                    bucket.extend(dq)  # each dq is already window-bounded
+                    bucket.extend(dq)          # each dq is already window-bounded
 
             # 2. sort newest→oldest and slice
             bucket.sort(key=lambda e: e.timestamp, reverse=True)
             return bucket[:limit]
-
+        
     @property
     def ctxs(self):
         return self._ctxs
