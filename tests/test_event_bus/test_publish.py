@@ -4,8 +4,8 @@ import datetime as dt
 from collections import deque
 
 from unity.events.event_bus import EventBus, Event
-from unity.events.types.message import Message
-from unity.events.types.message_exchange_summary import MessageExchangeSummary
+from unity.communication.types.message import Message
+from unity.communication.types.message_exchange_summary import MessageExchangeSummary
 from tests.helpers import _handle_project
 
 
@@ -22,7 +22,7 @@ async def test_publish():
     payload = Message.model_construct()
 
     event = Event(
-        context="message",
+        type="message",
         timestamp=dt.datetime.now(dt.UTC).isoformat(),
         payload=payload,
     )
@@ -61,7 +61,7 @@ async def test_concurrent_publishes_lock_integrity():
             ("message", Message) if i % 2 == 0 else ("message_exchange_summary", MessageExchangeSummary)
         )
         evt = Event(
-            context=etype,
+            type=etype,
             timestamp=base_ts + dt.timedelta(microseconds=i),   # unique, strictly increasing
             payload=payload_cls.model_construct(),
         )

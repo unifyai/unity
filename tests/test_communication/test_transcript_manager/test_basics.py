@@ -47,7 +47,9 @@ def _create_contacts():
 @pytest.mark.unit
 @_handle_project
 def test_create_contact():
-    transcript_manager = TranscriptManager(EventBus())
+    eb = EventBus()
+    eb.register_event_types(["Messages", "MessageExchangeSummaries"])
+    transcript_manager = TranscriptManager(eb)
     transcript_manager.create_contact(
         first_name="Dan",
     )
@@ -67,7 +69,9 @@ def test_create_contact():
 @pytest.mark.unit
 @_handle_project
 def test_update_contact():
-    transcript_manager = TranscriptManager(EventBus())
+    eb = EventBus()
+    eb.register_event_types(["Messages", "MessageExchangeSummaries"])
+    transcript_manager = TranscriptManager(eb)
 
     # create
     transcript_manager.create_contact(
@@ -110,7 +114,9 @@ def test_update_contact():
 @pytest.mark.unit
 @_handle_project
 def test_create_contacts():
-    transcript_manager = TranscriptManager(EventBus())
+    eb = EventBus()
+    eb.register_event_types(["Messages", "MessageExchangeSummaries"])
+    transcript_manager = TranscriptManager(eb)
 
     # first
     transcript_manager.create_contact(
@@ -148,7 +154,9 @@ def test_create_contacts():
 @pytest.mark.unit
 @_handle_project
 def test_search_contacts():
-    transcript_manager = TranscriptManager(EventBus())
+    eb = EventBus()
+    eb.register_event_types(["Messages", "MessageExchangeSummaries"])
+    transcript_manager = TranscriptManager(eb)
     transcript_manager.create_contact(
         first_name="Dan",
     )
@@ -162,7 +170,7 @@ async def test_log_messages():
     [
         await event_bus.publish(
             Event(
-                context="message",
+                type="message",
                 timestamp=datetime.now(UTC).isoformat(),
                 payload=Message(
                     medium=random.choice(VALID_MEDIA),
@@ -193,7 +201,7 @@ async def test_get_messages():
     [
         await event_bus.publish(
             Event(
-                context="Messages",
+                type="Messages",
                 timestamp=datetime.now(UTC).isoformat(),
                 payload=Message(
                     medium=random.choice(VALID_MEDIA),
@@ -265,7 +273,7 @@ async def test_summarize_exchanges():
     [
         await event_bus.publish(
             Event(
-                context="message",
+                type="message",
                 timestamp=datetime.now(UTC).isoformat(),
                 payload=Message(
                     medium="phone_call",
@@ -292,7 +300,7 @@ async def test_summarize_exchanges():
     [
         await event_bus.publish(
             Event(
-                context="message",
+                type="message",
                 timestamp=datetime.now(UTC).isoformat(),
                 payload=Message(
                     medium="email",
@@ -317,7 +325,7 @@ async def test_summarize_exchanges():
     [
         await event_bus.publish(
             Event(
-                context="message",
+                type="message",
                 timestamp=datetime.now(UTC).isoformat(),
                 payload=Message(
                     medium="whatsapp_message",

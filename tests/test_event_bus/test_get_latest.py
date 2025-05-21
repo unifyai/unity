@@ -4,8 +4,8 @@ import datetime as dt
 from collections import deque
 
 from unity.events.event_bus import EventBus, Event
-from unity.events.types.message import Message
-from unity.events.types.message_exchange_summary import MessageExchangeSummary
+from unity.communication.types.message import Message
+from unity.communication.types.message_exchange_summary import MessageExchangeSummary
 from tests.helpers import _handle_project
 
 
@@ -16,7 +16,7 @@ async def test_get_latest():
     bus = EventBus()
 
     payload = Message.model_construct()
-    event = Event(context="Messages", timestamp=dt.datetime.now(dt.UTC), payload=payload)
+    event = Event(type="Messages", timestamp=dt.datetime.now(dt.UTC), payload=payload)
 
     await bus.publish(event)
 
@@ -48,7 +48,7 @@ async def test_get_latest_mixed_types_ordering():
         )
 
         evt = Event(
-            context=etype,
+            type=etype,
             timestamp=base_ts + dt.timedelta(seconds=idx),   # strictly ascending timestamps
             payload=payload_cls.model_construct(),
         )
@@ -90,7 +90,7 @@ async def test_concurrent_get_latest_lock_integrity():
             else ("MessageExchangeSummary", MessageExchangeSummary)
         )
         evt = Event(
-            context=etype,
+            type=etype,
             timestamp=base_ts + dt.timedelta(microseconds=i),
             payload=payload_cls.model_construct(),
         )

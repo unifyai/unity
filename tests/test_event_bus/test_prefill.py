@@ -3,7 +3,7 @@ import asyncio
 import datetime as dt
 
 from unity.events.event_bus import EventBus, Event
-from unity.events.types.message import Message
+from unity.communication.types.message import Message
 from tests.helpers import _handle_project
 
 
@@ -23,7 +23,7 @@ async def test_prefill_from_upstream_on_new_instance():
     # Publish five message events with ascending timestamps
     for i in range(5):
         evt = Event(
-            context="message",
+            type="message",
             timestamp=base_ts + dt.timedelta(seconds=i),
             payload=Message.model_construct(),
         )
