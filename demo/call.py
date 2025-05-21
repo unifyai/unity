@@ -73,7 +73,7 @@ class Assistant(Agent):
         self.new_events = [PhoneCallStartedEvent()]
         # self.client = client
         self.current_tasks_status = None
-        super().__init__(instructions=sys, llm=openai.LLM(model="gpt-4o"))
+        super().__init__(instructions="", llm=openai.LLM(model="gpt-4o"))
 
     async def on_user_turn_completed(
         self,
