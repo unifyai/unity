@@ -15,8 +15,6 @@ from uuid import uuid4
 __all__ = ["Event", "EventBus", "Subscription"]
 
 
-_DEFAULT_WINDOW = 50
-
 # ───────────────────────────   Event envelope   ─────────────────────────────
 
 
@@ -46,6 +44,7 @@ class EventBus:
         # private attributes
         self._deques: Dict[str, Deque[Event]] = {}
         self._lock = asyncio.Lock()
+        self._default_window = 50
 
         # ── Unify setup ────────────────────────────────────────────────
         active_ctx = unify.get_active_context()
@@ -56,7 +55,7 @@ class EventBus:
             unify.create_context(self._global_ctx)
         ctxs = unify.get_contexts(prefix=self._global_ctx)
         self._window_sizes: Dict[str, int] = {
-            ctx.split("/")[-1]: _DEFAULT_WINDOW for ctx in ctxs
+            ctx.split("/")[-1]: self._default_window for ctx in ctxs
         }
         self._ctxs = {ctx.split("/")[-1]: ctx for ctx in ctxs}
         self._logger = unify.AsyncLoggerManager()
@@ -68,7 +67,7 @@ class EventBus:
     def _prefill_from_unify(self):
         """Populate each per‑type deque with newest logs from Unify."""
         for etype, context in self._ctxs.items():
-            window_size = self._window_sizes.setdefault(etype, _DEFAULT_WINDOW)
+            window_size = self._window_sizes.setdefault(etype, self._default_window)
             raw_logs = unify.get_logs(context=context, limit=window_size)
             # unify returns most‑recent‑first – reverse for chronological order
             dq: Deque[Event] = deque(maxlen=window_size)
@@ -99,7 +98,7 @@ class EventBus:
                 if full_ctx not in unify.get_contexts():
                     unify.create_context(full_ctx)
             if event_type not in self._window_sizes:
-                self._window_sizes[event_type] = _DEFAULT_WINDOW
+                self._window_sizes[event_type] = self._default_window
 
     async def publish(self, event: Event) -> None:
         self.register_event_types(event.type)
@@ -159,7 +158,7 @@ class EventBus:
             bucket.sort(key=lambda e: e.timestamp, reverse=True)
             return bucket[:limit]
 
-    def update_window_size(self, event_type: str, new_size: int) -> None:
+    def set_window(self, event_type: str, new_size: int) -> None:
         """
         Change the *in-memory* history window for ``event_type`` to
         ``new_size`` events.
@@ -183,6 +182,19 @@ class EventBus:
         # Re-hydrate deque with new maxlen (keeps newest → oldest order intact)
         new_dq: Deque[Event] = deque(old_dq, maxlen=new_size)
         self._deques[event_type] = new_dq
+
+    def set_default_window(self, new_size: int) -> None:
+        """
+        Change the *in-memory* history window for ``event_type`` to
+        ``new_size`` events.
+
+        • Creates the event-type on-the-fly if not registered yet
+          (mirrors :pymeth:`register_event_types` behaviour).
+        • Rebuilds the internal :class:`collections.deque` so the new
+          ``maxlen`` takes effect immediately, keeping **the most recent**
+          messages up to *new_size*.
+        """
+        self._default_window = new_size
 
     async def get_event_call_stack(self, event_id: str | int) -> list[Event]:
         """
@@ -255,7 +267,7 @@ class EventBus:
                     break  # gap – abort traversal
 
                 # Cache it inside the appropriate deque for future calls
-                self._deques.setdefault(evt.type, deque(maxlen=_DEFAULT_WINDOW)).append(
+                self._deques.setdefault(evt.type, deque(maxlen=self._default_window)).append(
                     evt,
                 )
 
