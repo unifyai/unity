@@ -35,20 +35,20 @@ class DummyPayload(BaseModel):
 async def test_event_ids_are_populated_and_unique() -> None:
     """
     • EventBus.publish must *not* leave `event_id` blank.
-    • Every call produces a **new** event_id, even when the caller supplies none.
+    • Every call produces a **new** event_id.
     """
     bus = EventBus()
-    bus.register_event_types("IDS")
+    bus.register_event_types("numbers")
 
     # Publish two events without specifying event_id nor calling_id
     for txt in ("one", "two"):
-        await bus.publish(Event(type="IDS", payload=DummyPayload(msg=txt)))
+        await bus.publish(Event(type="numbers", payload=DummyPayload(msg=txt)))
 
-    latest = await bus.get_latest(types=["IDS"], limits=2)
+    latest = (await bus.get_latest(types=["numbers"], limits=2))["numbers"]
     assert len(latest) == 2
 
     # newest-first → reverse for creation order
-    e1, e2 = reversed(latest)
+    e1, e2 = latest
 
     # 1. Both fields must be non-empty UUID strings
     for evt in (e1, e2):
