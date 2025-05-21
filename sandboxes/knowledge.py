@@ -172,7 +172,6 @@ async def _handle_interruptions(
     Poll for user interruptions while waiting for the answer task to complete.
     Returns the kind of operation and the final result.
     """
-    kind = "unknown"
     result = ""
 
     try:
@@ -215,9 +214,9 @@ async def _handle_interruptions(
         if isinstance(result, tuple) and len(result) >= 1:
             result = result[0]
 
-        return kind, result
+        return result
     except asyncio.CancelledError:
-        return kind, "Operation was cancelled."
+        return "Operation was cancelled."
 
 
 # ---------------------------------------------------------------------------
@@ -302,7 +301,7 @@ async def _main_async(args) -> None:
                 answer_task = asyncio.create_task(handle.result())
 
                 # Handle interruptions while waiting for the result
-                kind, result = await _handle_interruptions(handle, answer_task)
+                result = await _handle_interruptions(handle, answer_task)
 
                 print(f"[{kind}] => {result}\n")
         except (EOFError, KeyboardInterrupt):
