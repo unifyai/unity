@@ -515,6 +515,8 @@ def start_async_tool_use_loop(
     message: str,
     tools: Dict[str, Callable],
     *,
+    event_type: Optional[str] = None,
+    event_bus: Optional[EventBus] = None,
     max_consecutive_failures: int = 3,
     log_steps: bool = False,
 ) -> AsyncToolLoopHandle:
@@ -530,6 +532,8 @@ def start_async_tool_use_loop(
             client,
             message,
             tools,
+            event_type=event_type,
+            event_bus=event_bus,
             interject_queue=interject_queue,
             cancel_event=cancel_event,
             max_consecutive_failures=max_consecutive_failures,
