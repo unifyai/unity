@@ -17,8 +17,7 @@ import time
 import wave
 from contextlib import contextmanager
 from ctypes import CFUNCTYPE, c_char_p, c_int, cdll
-from typing import List
-
+from typing import List, Optional, Tuple, Any, Coroutine
 import pyaudio
 from deepgram import DeepgramClient, FileSource, PrerecordedOptions
 from livekit.plugins import cartesia
@@ -258,3 +257,48 @@ def input_with_timeout(timeout: float = 0.1) -> Tuple[bool, Optional[str]]:
         if rlist:
             return True, sys.stdin.readline().strip()
         return False, None
+
+
+# ---------------------------------------------------------------------------
+# Thread-safe helper to schedule coroutines from background threads
+# ---------------------------------------------------------------------------
+
+_MAIN_LOOP: Optional[asyncio.AbstractEventLoop] = None
+
+
+def _get_main_loop() -> asyncio.AbstractEventLoop:
+    """
+    Return the main asyncio loop.  If called from a background thread
+    where ``asyncio.get_running_loop()`` fails, fall back to the loop that
+    was running when this module was first imported.
+    """
+    global _MAIN_LOOP
+    try:
+        # We are already inside the loop’s thread
+        return asyncio.get_running_loop()
+    except RuntimeError:
+        # Background thread – re-use cached loop
+        if _MAIN_LOOP is None or _MAIN_LOOP.is_closed():
+            _MAIN_LOOP = asyncio.get_event_loop_policy().get_event_loop()
+        return _MAIN_LOOP
+
+
+def run_in_loop(coro: Coroutine[Any, Any, Any]):
+    """
+    Schedule *coro* on the main event-loop from **any** thread.
+
+    * If we are on the loop thread → just ``asyncio.create_task``.
+    * Otherwise → ``asyncio.run_coroutine_threadsafe``.
+    """
+    loop = _get_main_loop()
+
+    try:
+        running = asyncio.get_running_loop()
+    except RuntimeError:
+        running = None
+
+    if running is loop:  # same thread
+        return asyncio.create_task(coro)
+
+    # another thread
+    return asyncio.run_coroutine_threadsafe(coro, loop)
