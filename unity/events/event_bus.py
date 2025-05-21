@@ -147,6 +147,85 @@ class EventBus:
             bucket.sort(key=lambda e: e.timestamp, reverse=True)
             return bucket[:limit]
 
+    async def get_event_call_stack(self, event_id: str | int) -> list[Event]:
+        """
+        Return all parent-events of *event_id* **top-down**.
+
+        The first element is the *root* event whose ``calling_id`` is an empty
+        string, the last element is the event that matches the supplied
+        *event_id*.  If any link in the chain cannot be found the traversal
+        stops and the partial stack is returned.
+
+        Lookup strategy
+        ----------------
+        1. Search the in-memory deques (cheap).
+        2. If a required event is missing, query Unify's *global* Events
+           context with ``filter_expr='event_id == "<id>"'`` to hydrate it.
+        """
+
+        def _find_local(eid: str) -> Event | None:
+            """Scan all in-memory windows for *eid* (non-blocking)."""
+            for dq in self._deques.values():
+                for ev in dq:
+                    if ev.event_id == eid:
+                        return ev
+            return None
+
+        def _fetch_from_unify(eid: str) -> Event | None:
+            """Slow path – pull single row from the persisted global log."""
+            try:
+                logs = unify.get_logs(
+                    context=self._global_ctx,
+                    limit=1,
+                    filter_expr=f"'event_id == \"{eid}\"'",
+                )
+            except Exception:
+                return None
+
+            if not logs:
+                return None
+
+            row = logs[0]
+            entries = getattr(row, "entries", None)
+            if not entries:
+                return None
+
+            try:
+                # Entries might already be a full Event-like dict
+                return Event(**entries)
+            except ValidationError:
+                # Fall back to a best-effort reconstruction
+                ts = getattr(row, "ts", dt.datetime.now(dt.UTC)).isoformat()
+                return Event(
+                    event_id=str(eid),
+                    calling_id=entries.get("calling_id", ""),
+                    type=entries.get("type", "Unknown"),
+                    timestamp=entries.get("timestamp", ts),
+                    payload=entries,
+                )
+
+        eid = str(event_id)
+        stack_rev: list[Event] = []
+        seen: set[str] = set()
+
+        while eid and eid not in seen:
+            seen.add(eid)
+
+            evt = _find_local(eid)
+            if evt is None:                       # not in cache → ask Unify
+                evt = _fetch_from_unify(eid)
+                if evt is None:
+                    break                         # gap – abort traversal
+
+                # Cache it inside the appropriate deque for future calls
+                self._deques.setdefault(evt.type, deque(maxlen=_DEFAULT_WINDOW)).append(evt)
+
+            stack_rev.append(evt)
+            eid = evt.calling_id
+
+        # Return *root → leaf*
+        return list(reversed(stack_rev))
+
     @property
     def ctxs(self):
         return self._ctxs
