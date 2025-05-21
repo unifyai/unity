@@ -273,7 +273,7 @@ async def test_summarize_exchanges():
     [
         await event_bus.publish(
             Event(
-                type="message",
+                type="Messages",
                 timestamp=datetime.now(UTC).isoformat(),
                 payload=Message(
                     medium="phone_call",
@@ -300,7 +300,7 @@ async def test_summarize_exchanges():
     [
         await event_bus.publish(
             Event(
-                type="message",
+                type="Messages",
                 timestamp=datetime.now(UTC).isoformat(),
                 payload=Message(
                     medium="email",
@@ -325,7 +325,7 @@ async def test_summarize_exchanges():
     [
         await event_bus.publish(
             Event(
-                type="message",
+                type="Messages",
                 timestamp=datetime.now(UTC).isoformat(),
                 payload=Message(
                     medium="whatsapp_message",
@@ -347,7 +347,8 @@ async def test_summarize_exchanges():
     event_bus.join_published()
 
     # summarize
-    summary = transcript_manager.summarize(exchange_ids=[0, 1, 2])
+    summary = await transcript_manager.summarize(exchange_ids=[0, 1, 2])
+    event_bus.join_published()
 
     # retrieve summary
     summaries = transcript_manager._search_summaries()
