@@ -74,7 +74,8 @@ async def test_concurrent_publishes_lock_integrity():
     await asyncio.gather(*publish_tasks)
 
     # Fetch back everything; limit well above what we sent
-    latest = await bus.get_latest(limit=window)
+    latest = await bus.get_latest(limits=window)
+    latest = latest["message"] + latest["message_exchange_summary"]
 
     # Keep only the events we just published (ignore any older prefilled logs)
     our_ts = {e.timestamp for e in events}

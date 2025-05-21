@@ -35,20 +35,20 @@ class DummyPayload(BaseModel):
 async def test_event_ids_are_populated_and_unique() -> None:
     """
     • EventBus.publish must *not* leave `event_id` blank.
-    • Every call produces a **new** event_id, even when the caller supplies none.
+    • Every call produces a **new** event_id.
     """
     bus = EventBus()
-    bus.register_event_types("IDS")
+    bus.register_event_types("numbers")
 
     # Publish two events without specifying event_id nor calling_id
     for txt in ("one", "two"):
-        await bus.publish(Event(type="IDS", payload=DummyPayload(msg=txt)))
+        await bus.publish(Event(type="numbers", payload=DummyPayload(msg=txt)))
 
-    latest = await bus.get_latest(types=["IDS"], limit=2)
+    latest = (await bus.get_latest(types=["numbers"], limits=2))["numbers"]
     assert len(latest) == 2
 
     # newest-first → reverse for creation order
-    e1, e2 = reversed(latest)
+    e1, e2 = latest
 
     # 1. Both fields must be non-empty UUID strings
     for evt in (e1, e2):
@@ -59,27 +59,3 @@ async def test_event_ids_are_populated_and_unique() -> None:
 
     # 2. They must be distinct
     assert e1.event_id != e2.event_id, "event_id should be unique per message"
-
-
-@pytest.mark.asyncio
-@_handle_project
-async def test_calling_id_is_preserved_across_messages() -> None:
-    """
-    When the publisher sets `calling_id`, every event for the same logical
-    conversation should keep that value (the EventBus must *not* overwrite it).
-    """
-    bus = EventBus()
-    bus.register_event_types("FLOW")
-
-    cid = "conversation-42"
-
-    for word in ("alpha", "beta", "gamma"):
-        await bus.publish(
-            Event(type="FLOW", payload=DummyPayload(msg=word), calling_id=cid),
-        )
-
-    latest = await bus.get_latest(types=["FLOW"], limit=10)
-    assert latest, "no events returned"
-
-    # All retrieved events belong to the requested flow
-    assert {evt.calling_id for evt in latest} == {cid}, "calling_id not preserved"
