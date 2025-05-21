@@ -30,6 +30,7 @@ from unity.common.llm_helpers import start_async_tool_use_loop
 # Helpers                                                                    #
 # ---------------------------------------------------------------------------#
 
+
 class GenerateScript:
     """
     Tiny state machine that produces a *sequence* of synthetic assistant
@@ -43,7 +44,7 @@ class GenerateScript:
         """Return an object that mimics the OpenAI message structure."""
         return types.SimpleNamespace(tool_calls=tool_calls, content=content)
 
-    def __call__(self, client) -> Any:          # used as patched `generate`
+    def __call__(self, client) -> Any:  # used as patched `generate`
         # pylint: disable=unused-argument
         if self.turn == 0:
             # → Ask for one tool call so the loop spins up a background task.
@@ -54,7 +55,9 @@ class GenerateScript:
                     "function": {"name": "echo", "arguments": json.dumps({"txt": "A"})},
                 }
             ]
-            return types.SimpleNamespace(choices=[types.SimpleNamespace(message=self._msg(tool_calls=tc))])
+            return types.SimpleNamespace(
+                choices=[types.SimpleNamespace(message=self._msg(tool_calls=tc))]
+            )
 
         if self.turn == 1:
             # → After the first tool result is returned the model notices the
@@ -94,6 +97,7 @@ async def echo(txt: str) -> str:  # noqa: D401 – simple mock tool
 # Fixtures                                                                   #
 # ---------------------------------------------------------------------------#
 
+
 @pytest.fixture()
 def client():
     return unify.AsyncUnify("gpt-4o@openai")
@@ -126,24 +130,32 @@ async def test_interject_and_result_work_together(client):
     await handle.result()
 
     # --- Assertions --------------------------------------------------------
-    assert client.messages[0] == {'role': 'user', 'content': 'Echo A please'}
+    assert client.messages[0] == {"role": "user", "content": "Echo A please"}
     assert client.messages[1]["tool_calls"][0]["function"]["name"] == "echo"
-    assert json.loads(client.messages[1]["tool_calls"][0]["function"]["arguments"]) == {"txt": "A"}
+    assert json.loads(client.messages[1]["tool_calls"][0]["function"]["arguments"]) == {
+        "txt": "A"
+    }
     assert client.messages[2]["role"] == "tool"
     assert client.messages[2]["name"] == "echo"
     assert "A" in client.messages[2]["content"]
-    assert client.messages[3] == {'role': 'user', 'content': 'And echo B please'}
+    assert client.messages[3] == {"role": "user", "content": "And echo B please"}
     assert client.messages[4]["tool_calls"][0]["function"]["name"] == "echo"
-    assert json.loads(client.messages[4]["tool_calls"][0]["function"]["arguments"]) == {"txt": "B"}
+    assert json.loads(client.messages[4]["tool_calls"][0]["function"]["arguments"]) == {
+        "txt": "B"
+    }
     assert client.messages[5]["role"] == "tool"
     assert client.messages[5]["name"] == "echo"
     assert "B" in client.messages[5]["content"]
 
     # The conversation must contain our extra user message in order.
-    assert any(m for m in client.messages if m["role"] == "user" and "echo B" in m["content"])
+    assert any(
+        m for m in client.messages if m["role"] == "user" and "echo B" in m["content"]
+    )
 
     # The assistant must have produced *two* distinct tool calls (A and B).
-    assistant_turns = [m for m in client.messages if m["role"] == "assistant" and m.get("tool_calls")]
+    assistant_turns = [
+        m for m in client.messages if m["role"] == "assistant" and m.get("tool_calls")
+    ]
     assert len(assistant_turns) == 2
 
 
@@ -162,7 +174,7 @@ async def test_stop_cancels_gracefully(client):
         {"echo": echo},
     )
 
-    handle.stop()                      # request cancellation right away
+    handle.stop()  # request cancellation right away
 
     with pytest.raises(asyncio.CancelledError):
         await handle.result()
@@ -196,7 +208,9 @@ async def test_multiple_interjects_then_normal_completion(client):
     assert seen == ["Echo A please", "B please", "C please"]
 
     # Assistant should have ended up calling the tool at least 3×.
-    assistant_turns = [m for m in client.messages if m["role"] == "assistant" and m.get("tool_calls")]
+    assistant_turns = [
+        m for m in client.messages if m["role"] == "assistant" and m.get("tool_calls")
+    ]
     assert len(assistant_turns) == 2
 
     total_tool_calls = sum(len(t["tool_calls"]) for t in assistant_turns)
