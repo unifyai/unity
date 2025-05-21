@@ -75,11 +75,16 @@ class EventBus:
                 entries = log.entries
                 if entries is None:
                     continue
+                # Extract the event metadata fields
+                event_id = entries.pop("event_id")
+                calling_id = entries.pop("calling_id") 
+                timestamp = entries.pop("timestamp")
+                
                 evt = Event(
-                    event_id=entries["event_id"],
-                    calling_id=entries["calling_id"],
+                    event_id=event_id,
+                    calling_id=calling_id,
                     type=etype,
-                    timestamp=entries["timestamp"],
+                    timestamp=timestamp,
                     payload=entries,
                 )
                 dq.append(evt)
@@ -126,7 +131,12 @@ class EventBus:
             project=unify.active_project(),
             context=self._ctxs[event.type],
             params={},
-            entries=event.payload,
+            entries={
+                "event_id": event.event_id,
+                "calling_id": event.calling_id,
+                "timestamp": event.timestamp,
+                **event.payload
+            },
         )
 
     def join_published(self):
