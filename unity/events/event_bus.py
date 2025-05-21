@@ -40,7 +40,6 @@ class EventBus:
         self._lock = asyncio.Lock()
 
         # ── Unify setup ────────────────────────────────────────────────
-        unify.initialize_async_logger()
         active_ctx = unify.get_active_context()
         base_ctx = active_ctx["write"]
         self._global_ctx = f"{base_ctx}/Events" if base_ctx else "Events"
