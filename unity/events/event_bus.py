@@ -18,6 +18,7 @@ _DEFAULT_WINDOW = 50
 
 # ───────────────────────────   Event envelope   ─────────────────────────────
 
+
 class Event(BaseModel):
     type: str
     timestamp: str
@@ -25,6 +26,7 @@ class Event(BaseModel):
 
 
 # ───────────────────────────   EventBus singleton   ─────────────────────────
+
 
 class EventBus:
 
@@ -42,7 +44,9 @@ class EventBus:
         if self._global_ctx not in upstream_ctxs:
             unify.create_context(self._global_ctx)
         ctxs = unify.get_contexts(prefix=self._global_ctx)
-        self._window_sizes: Dict[str, int] = {ctx.split("/")[-1]: _DEFAULT_WINDOW for ctx in ctxs}
+        self._window_sizes: Dict[str, int] = {
+            ctx.split("/")[-1]: _DEFAULT_WINDOW for ctx in ctxs
+        }
         self._ctxs = {ctx.split("/")[-1]: ctx for ctx in ctxs}
         self._logger = unify.AsyncLoggerManager()
 
@@ -129,12 +133,12 @@ class EventBus:
             for t in wanted:
                 dq = self._deques.get(t)
                 if dq:
-                    bucket.extend(dq)          # each dq is already window-bounded
+                    bucket.extend(dq)  # each dq is already window-bounded
 
             # 2. sort newest→oldest and slice
             bucket.sort(key=lambda e: e.timestamp, reverse=True)
             return bucket[:limit]
-        
+
     @property
     def ctxs(self):
         return self._ctxs

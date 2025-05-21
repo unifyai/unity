@@ -17,7 +17,7 @@ import time
 import wave
 from contextlib import contextmanager
 from ctypes import CFUNCTYPE, c_char_p, c_int, cdll
-from typing import List
+from typing import Coroutine, List, Optional, Tuple, Any
 
 import pyaudio
 from deepgram import DeepgramClient, FileSource, PrerecordedOptions
@@ -30,6 +30,23 @@ if platform.system() == "Windows":
     import msvcrt
 
 load_dotenv()
+
+
+_MAIN_LOOP: asyncio.AbstractEventLoop | None = None
+
+
+def run_in_loop(coro: Coroutine[Any, Any, Any]) -> None:
+    """
+    Schedule *coro* in the *main* event-loop from any thread.
+    The very first call **must** happen inside that loop.
+    """
+    global _MAIN_LOOP
+    try:  # first call from the main thread
+        _MAIN_LOOP = asyncio.get_running_loop()
+    except RuntimeError:
+        if _MAIN_LOOP is None:
+            raise RuntimeError("run_in_loop: main loop not initialised") from None
+    _MAIN_LOOP.call_soon_threadsafe(asyncio.create_task, coro)
 
 
 # ---------------------------------------------------------------------------

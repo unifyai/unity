@@ -437,4 +437,3 @@ async def test_ask_semantic_with_llm_judgement(
 async def test_ask_with_interjection() -> None:
     tm = await ScenarioBuilder().tm
     await tm.ask(QUESTIONS[0], return_reasoning_steps=True)
-    
