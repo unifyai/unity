@@ -9,7 +9,8 @@ import asyncio
 import datetime as dt
 from collections import deque
 from typing import List, Deque, Dict, Iterable, Union
-from pydantic import BaseModel, Field, ValidationError, field_validator
+from importlib import import_module
+from pydantic import BaseModel, Field, ValidationError, field_validator, model_validator
 from uuid import uuid4
 
 __all__ = ["Event", "EventBus", "Subscription"]
@@ -26,12 +27,25 @@ class Event(BaseModel):
         default_factory=lambda: dt.datetime.now(dt.UTC).isoformat()
     )
     payload: BaseModel
+    # dotted Python path to the payload model – filled in automatically
+    payload_cls: str = ""
 
     @field_validator("timestamp", mode="before")
     def _ensure_iso(cls, v):
         if isinstance(v, dt.datetime):
             return v.isoformat()
         return v
+    
+    @model_validator(mode="after")
+    def _auto_payload_cls(self):
+        if not self.payload_cls and isinstance(self.payload, BaseModel):
+            object.__setattr__(
+                self,
+                "payload_cls",
+                f"{self.payload.__class__.__module__}."
+                f"{self.payload.__class__.__name__}",
+            )
+        return self
 
 
 # ───────────────────────────   EventBus singleton   ─────────────────────────
@@ -75,18 +89,40 @@ class EventBus:
                 entries = log.entries
                 if entries is None:
                     continue
+
                 # Extract the event metadata fields
                 event_id = entries.pop("event_id")
                 calling_id = entries.pop("calling_id") 
                 timestamp = entries.pop("timestamp")
+                cls_path = entries.pop("payload_cls")
                 
+                # ── 1. recover the payload class (if recorded) ──────────
+                Model: type[BaseModel] | None = None
+                if cls_path:
+                    try:
+                        mod, name = cls_path.rsplit(".", 1)
+                        Model = getattr(import_module(mod), name)
+                    except (ModuleNotFoundError, AttributeError, ValueError):
+                        Model = None
+
+                # ── 2. rebuild the payload instance (fallback: dict) ────
+                if Model is not None:
+                    try:
+                        payload_obj = Model.model_validate(entries)
+                    except ValidationError:      # corrupted row → keep dict
+                        payload_obj = entries
+                else:
+                    payload_obj = entries
+
                 evt = Event(
                     event_id=event_id,
                     calling_id=calling_id,
                     type=etype,
                     timestamp=timestamp,
-                    payload=entries,
+                    payload=payload_obj,
+                    payload_cls=cls_path or "",
                 )
+
                 dq.append(evt)
             self._deques[etype] = dq
 
@@ -127,6 +163,12 @@ class EventBus:
         )
 
         # Log to specific event table
+        if isinstance(event.payload, BaseModel):
+            payload_dict = event.payload.model_dump(mode="python")
+        else:
+            payload_dict = dict(event.payload)
+        payload_dict["__payload_cls__"] = event.payload_cls
+
         self._logger.log_create(
             project=unify.active_project(),
             context=self._ctxs[event.type],
@@ -136,8 +178,9 @@ class EventBus:
                     "event_id": event.event_id,
                     "calling_id": event.calling_id,
                     "timestamp": event.timestamp,
+                    "payload_cls": event.payload_cls,
                 },
-                **event.payload.model_dump()
+                **payload_dict
             },
         )
 
