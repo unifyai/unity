@@ -9,7 +9,7 @@ import asyncio
 import datetime as dt
 from collections import deque
 from typing import List, Deque, Dict, Iterable, Union
-from pydantic import BaseModel, Field, ValidationError
+from pydantic import BaseModel, Field, ValidationError, field_validator
 from uuid import uuid4
 
 __all__ = ["Event", "EventBus", "Subscription"]
@@ -24,8 +24,16 @@ class Event(BaseModel):
     event_id: str = Field(default_factory=lambda: str(uuid4()))
     calling_id: str = ""
     type: str
-    timestamp: str = dt.datetime.now(dt.UTC).isoformat()
+    timestamp: str = Field(
+        default_factory=lambda: dt.datetime.now(dt.UTC).isoformat()
+    )
     payload: BaseModel
+
+    @field_validator("timestamp", mode="before")
+    def _ensure_iso(cls, v):
+        if isinstance(v, dt.datetime):
+            return v.isoformat()
+        return v
 
 
 # ───────────────────────────   EventBus singleton   ─────────────────────────
