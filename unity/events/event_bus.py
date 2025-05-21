@@ -202,7 +202,6 @@ class EventBus:
         async with self._lock:
             wanted = set(types) if types is not None else self._deques.keys()
             limits = limits if isinstance(limits, dict) else {w: limits for w in wanted}
-            # 1. collect (usually small) piles of events
             for t in wanted:
                 dq = self._deques.get(t)
                 if dq:
