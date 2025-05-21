@@ -21,7 +21,7 @@ async def test_get_latest():
     await bus.publish(event)
 
     # Read back through the public API
-    latest = await bus.get_latest(types=["Messages"], limits=1)
+    latest = (await bus.get_latest(types=["Messages"], limits=1))["Messages"]
 
     # There should be at least one event, and it should be the one we just published
     assert latest and latest[0] == event
