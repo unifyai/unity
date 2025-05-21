@@ -7,6 +7,7 @@ from ...communication.types.contact import Contact
 from ...communication.types.message import Message
 from ...communication.types.summary import Summary
 from ...common.llm_helpers import async_tool_use_loop
+from ...events.event_bus import EventBus, Event
 
 
 class TranscriptManager:
@@ -15,10 +16,12 @@ class TranscriptManager:
     _VEC_MSG = "content_emb"
     _VEC_SUM = "summary_emb"
 
-    def __init__(self, *, traced: bool = True) -> None:
+    def __init__(self, event_bus: EventBus, *, traced: bool = True) -> None:
         """
         Responsible for *searching through* the full transcripts across all communcation channels exposed to the assistant.
         """
+        self._event_bus = event_bus
+
         self._tools = {
             self.summarize.__name__: self.summarize,
             self._search_contacts.__name__: self._search_contacts,
@@ -33,10 +36,10 @@ class TranscriptManager:
             read_ctx == write_ctx
         ), "read and write contexts must be the same when instantiating a TranscriptManager."
         self._contacts_ctx = f"{read_ctx}/Contacts" if read_ctx else "Contacts"
-        self._transcripts_ctx = f"{read_ctx}/Transcripts" if read_ctx else "Transcripts"
-        self._summaries_ctx = (
-            f"{read_ctx}/TranscriptSummaries" if read_ctx else "TranscriptSummaries"
-        )
+        self._transcripts_ctx = self._event_bus.ctxs["Messages"]
+        self._summaries_ctx = self._event_bus.ctxs["MessageExchangeSummaries"]
+        if self._contacts_ctx not in unify.get_contexts():
+            unify.create_context(self._contacts_ctx)
 
         # Add tracing
         if traced:
@@ -99,23 +102,16 @@ class TranscriptManager:
             id: [msg.content for msg in msgs if msg.exchange_id == id]
             for id in exchange_ids
         }
+        latest_timestamp = max([msg.timestamp for msg in msgs]).isoformat()
         summary = client.generate(json.dumps(exchanges, indent=4))
-        unify.log(
-            context=self._summaries_ctx,
-            exchange_ids=exchange_ids,
-            summary=summary,
-            new=True,
+        self._event_bus.publish(
+            Event(
+                context="message_exchange_summary",
+                timestamp=latest_timestamp,
+                payload=summary
+            )
         )
         return summary
-
-    def log_messages(self, messages: List[Message]):
-        """
-        Log messages onto the platform.
-        """
-        return unify.create_logs(
-            context=self._transcripts_ctx,
-            entries=[msg.model_dump() for msg in messages],
-        )
 
     def create_contact(
         self,
@@ -152,7 +148,7 @@ class TranscriptManager:
         ), "At least one contact detail must be provided."
 
         # If it's the first contact, create immediately
-        if not self._contacts_ctx in unify.get_contexts():
+        if not unify.get_logs(context=self._contacts_ctx):
             return unify.log(
                 context=self._contacts_ctx,
                 **contact_details,

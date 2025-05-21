@@ -110,6 +110,10 @@ class EventBus:
             entries=event.payload,
         )
 
+    def join_published(self):
+        """Ensures all published events have been uploaded"""
+        self._logger.join()
+
     async def get_latest(
         self,
         types: Iterable[str] | None = None,
