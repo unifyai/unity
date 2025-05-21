@@ -13,7 +13,8 @@ from tests.helpers import _handle_project
 async def test_window_eviction_at_limit():
     """When more than *window* events are published, the oldest should fall off."""
     window = 3
-    bus = EventBus(windows_sizes={"message": window})
+    bus = EventBus()
+    bus.set_window("messages", window)
 
     # Start from a known clean state for this type (harmless use of a private attr)
     bus._deques.setdefault(
@@ -54,7 +55,8 @@ async def test_window_eviction_mixed_sizes_and_ordering():
     """
     # Different windows: 2 for Message, 3 for MessageExchangeSummary
     windows = {"message": 2, "message_exchange_summary": 3}
-    bus = EventBus(windows_sizes=windows)
+    bus = EventBus()
+    [bus.set_window(k, v) for k, v in windows.items()]
 
     # Clear any prefilled data so we know exactly what's in memory
     for t, w in windows.items():
