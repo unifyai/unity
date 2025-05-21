@@ -1,9 +1,10 @@
 import pytest
+import random
 import asyncio
 import datetime as dt
 
 from unity.events.event_bus import EventBus, Event
-from unity.communication.types.message import Message
+from unity.communication.types.message import Message, Medium
 from tests.helpers import _handle_project
 
 
@@ -26,7 +27,14 @@ async def test_prefill_from_upstream_on_new_instance():
         evt = Event(
             type="message",
             timestamp=base_ts + dt.timedelta(seconds=i),
-            payload=Message.model_construct(),
+            payload=Message(
+                medium=random.choice(list(Medium)),
+                sender_id=random.randint(0, 10),
+                receiver_id=random.randint(0, 10),
+                timestamp=dt.datetime.now(dt.UTC).isoformat(),
+                content="hello",
+                exchange_id=0
+            ),
         )
         published.append(evt)
         await bus1.publish(evt)
@@ -45,4 +53,4 @@ async def test_prefill_from_upstream_on_new_instance():
         assert any(
             rec.timestamp == sent.timestamp and rec.payload == sent.payload
             for rec in latest
-        ), f"Event with ts {sent.timestamp.isoformat()} not found in prefilled window"
+        ), f"Event with ts {sent.timestamp} not found in prefilled window"
