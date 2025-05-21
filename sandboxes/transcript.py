@@ -28,6 +28,7 @@ import unify
 from unity.constants import LOGGER as _LG  # type: ignore
 from unity.communication.transcript_manager.transcript_manager import TranscriptManager  # type: ignore
 from unity.communication.types.message import Message  # type: ignore
+from sandboxes.utils import run_in_loop
 
 # Voice helpers (PortAudio capture, Deepgram STT, Cartesia TTS)
 
@@ -336,7 +337,6 @@ async def _dispatch(
     stop_event = threading.Event()
 
     def check_input():
-        from sandboxes.utils import run_in_loop
 
         try:
             user_input = input("Press Enter to interrupt or type 'stop' to cancel...\n")
