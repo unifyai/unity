@@ -190,28 +190,25 @@ class EventBus:
     async def get_latest(
         self,
         types: Iterable[str] | None = None,
-        limit: int = 100,
+        limits: Union[int, Dict[str, int]] = 100,
     ) -> list[Event]:
         """
         Return up to *limit* events drawn from the specified *types*
-        (or from *all* types if None), ordered **newest-first**.
+        (or from *all* types if None).
 
         Always works with the in-memory deques; does not mutate them.
         """
+        ret: Dict[str, List[Event]] = {}
         async with self._lock:
             wanted = set(types) if types is not None else self._deques.keys()
-
+            limits = limits if isinstance(limits, dict) else {w: limits for w in wanted}
             # 1. collect (usually small) piles of events
-            bucket: list[Event] = []
             for t in wanted:
                 dq = self._deques.get(t)
                 if dq:
-                    bucket.extend(dq)  # each dq is already window-bounded
-
-            # 2. sort newest→oldest and slice
-            bucket.sort(key=lambda e: e.timestamp, reverse=True)
-            return bucket[:limit]
-
+                    ret[t] = list(dq)[:limits[t]]
+        return ret
+    
     def set_window(self, event_type: str, new_size: int) -> None:
         """
         Change the *in-memory* history window for ``event_type`` to
