@@ -6,7 +6,7 @@ from ...common.embed_utils import EMBED_MODEL, ensure_vector_column
 from ...communication.types.contact import Contact
 from ...communication.types.message import Message
 from ..types.message_exchange_summary import MessageExchangeSummary
-from ...common.llm_helpers import start_async_tool_use_loop
+from ...common.llm_helpers import start_async_tool_use_loop, AsyncToolLoopHandle
 from ...events.event_bus import EventBus, Event
 
 
@@ -50,7 +50,9 @@ class TranscriptManager:
 
     # English-Text Question
 
-    async def ask(self, text: str, *, return_reasoning_steps: bool = False) -> Any:
+    async def ask(
+        self, text: str, *, return_reasoning_steps: bool = False
+    ) -> "AsyncToolLoopHandle":
         """
         Ask any question as a text command, and use the tools available (the private methods of this class) to perform the action.
 
@@ -60,17 +62,31 @@ class TranscriptManager:
             return_reasoning_steps (bool): Whether to return the reasoning steps for the question.
 
         Returns:
-            Any: The answer to the question.
+            AsyncToolLoopHandle: A handle to the running conversation that supports:
+                - await handle.result(): Get the final answer when ready
+                - await handle.interject(message): Add a new user message mid-conversation
+                - handle.stop(): Gracefully terminate the conversation
+
+        Usage:
+            handle = await transcript_manager.ask("Find recent emails from John")
+            # To get the final answer:
+            answer = await handle.result()
+            # To add clarification mid-conversation:
+            await handle.interject("I meant John Smith specifically")
+            # To stop the conversation early:
+            handle.stop()
         """
         from unity.communication.transcript_manager.sys_msgs import ANSWER
 
         client = unify.AsyncUnify("o4-mini@openai", cache=True)
         client.set_system_message(ANSWER)
         handle = start_async_tool_use_loop(client, text, self._tools)
-        ans = await handle.result()
         if return_reasoning_steps:
+            # We need to await the result to get the messages
+            ans = await handle.result()
             return ans, client.messages
-        return ans
+
+        return handle
 
     # Summarize Exchange(s)
 
