@@ -67,11 +67,11 @@ class EventBus:
         upstream_ctxs = unify.get_contexts()
         if self._global_ctx not in upstream_ctxs:
             unify.create_context(self._global_ctx)
-        ctxs = unify.get_contexts(prefix=self._global_ctx)
+        ctxs = unify.get_contexts(prefix=f"{self._global_ctx}/")
         self._window_sizes: Dict[str, int] = {
             ctx.split("/")[-1]: self._default_window for ctx in ctxs
         }
-        self._ctxs = {ctx.split("/")[-1]: ctx for ctx in ctxs}
+        self._specific_ctxs = {ctx.split("/")[-1]: ctx for ctx in ctxs}
         self._logger = unify.AsyncLoggerManager()
 
         # ── Hydrate in‑memory windows from persisted logs ─────────────
@@ -80,7 +80,7 @@ class EventBus:
     # ------------------------------------------------------------------
     def _prefill_from_unify(self):
         """Populate each per‑type deque with newest logs from Unify."""
-        for etype, context in self._ctxs.items():
+        for etype, context in self._specific_ctxs.items():
             window_size = self._window_sizes.setdefault(etype, self._default_window)
             raw_logs = unify.get_logs(context=context, limit=window_size)
             # unify returns most‑recent‑first – reverse for chronological order
@@ -93,7 +93,7 @@ class EventBus:
                 # Extract the event metadata fields
                 event_id = entries.pop("event_id")
                 calling_id = entries.pop("calling_id") 
-                timestamp = entries.pop("timestamp")
+                timestamp = entries.pop("event_timestamp")
                 cls_path = entries.pop("payload_cls")
                 
                 # ── 1. recover the payload class (if recorded) ──────────
@@ -133,9 +133,9 @@ class EventBus:
         if isinstance(event_types, str):
             event_types = [event_types]
         for event_type in event_types:
-            if event_type not in self._ctxs:
+            if event_type not in self._specific_ctxs:
                 full_ctx = f"{self._global_ctx}/{event_type}"
-                self._ctxs[event_type] = full_ctx
+                self._specific_ctxs[event_type] = full_ctx
                 if full_ctx not in unify.get_contexts():
                     unify.create_context(full_ctx)
             if event_type not in self._window_sizes:
@@ -144,7 +144,7 @@ class EventBus:
     async def publish(self, event: Event) -> None:
         self.register_event_types(event.type)
         window = self._window_sizes[event.type]
-        if event.type not in self._ctxs:
+        if event.type not in self._specific_ctxs:
             if event.type not in unify.get_contexts():
                 unify.create_context()
 
@@ -170,13 +170,13 @@ class EventBus:
 
         self._logger.log_create(
             project=unify.active_project(),
-            context=self._ctxs[event.type],
+            context=self._specific_ctxs[event.type],
             params={},
             entries={
                 **{
                     "event_id": event.event_id,
                     "calling_id": event.calling_id,
-                    "timestamp": event.timestamp,
+                    "event_timestamp": event.timestamp,
                     "payload_cls": event.payload_cls,
                 },
                 **payload_dict
@@ -227,7 +227,7 @@ class EventBus:
             raise ValueError("new_size must be a positive integer")
 
         # Ensure bookkeeping structures exist
-        if event_type not in self._ctxs:
+        if event_type not in self._specific_ctxs:
             self.register_event_types(event_type)
 
         self._window_sizes[event_type] = new_size
@@ -333,4 +333,4 @@ class EventBus:
 
     @property
     def ctxs(self):
-        return self._ctxs
+        return self._specific_ctxs
