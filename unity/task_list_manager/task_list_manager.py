@@ -1,10 +1,10 @@
 from datetime import datetime, timezone
-from typing import Dict, List, Any, Optional, Union
+from typing import Dict, List, Any, Optional, Union, Tuple
 
 import unify
 
 from ..common.embed_utils import EMBED_MODEL, ensure_vector_column
-from ..common.llm_helpers import start_async_tool_use_loop
+from ..common.llm_helpers import start_async_tool_use_loop, AsyncToolLoopHandle
 from .types.status import Status
 from .types.priority import Priority
 from .types.schedule import Schedule
@@ -87,7 +87,9 @@ class TaskListManager:
         *,
         return_reasoning_steps: bool = False,
         log_tool_steps: bool = False,
-    ) -> Dict[str, str]:
+    ) -> Union[
+        "AsyncToolLoopHandle", Tuple["AsyncToolLoopHandle", List[Dict[str, Any]]]
+    ]:
         """
         Handle any plain-text english question to ask something about the list of tasks.
 
@@ -97,7 +99,12 @@ class TaskListManager:
             log_tool_steps (bool): Whether to log the steps taken by the tool.
 
         Returns:
-            Dict[str, str]: The answer to the question.
+            AsyncToolLoopHandle: A handle to the running conversation that supports:
+                - await handle.result() - Get the final answer
+                - await handle.interject(message) - Add a user message mid-conversation
+                - handle.stop() - Gracefully cancel the conversation
+
+            When return_reasoning_steps=True, returns a tuple of (handle, messages)
         """
 
         client = unify.AsyncUnify("o4-mini@openai", cache=True)
@@ -107,15 +114,15 @@ class TaskListManager:
                 datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC"),
             ),
         )
-        ans = await start_async_tool_use_loop(
+        handle = start_async_tool_use_loop(
             client,
             text,
             self._ask_tools,
             log_steps=log_tool_steps,
-        ).result()
+        )
         if return_reasoning_steps:
-            return ans, client.messages
-        return ans
+            return handle, client.messages
+        return handle
 
     # English-Text update request
 
@@ -125,7 +132,9 @@ class TaskListManager:
         *,
         return_reasoning_steps: bool = False,
         log_tool_steps: bool = False,
-    ) -> Dict[str, str]:
+    ) -> Union[
+        "AsyncToolLoopHandle", Tuple["AsyncToolLoopHandle", List[Dict[str, Any]]]
+    ]:
         """
         Handle any plain-text english command to update the list of tasks in some manner.
 
@@ -135,7 +144,12 @@ class TaskListManager:
             log_tool_steps (bool): Whether to log the steps taken by the tool.
 
         Returns:
-            Dict[str, str]: Whether the task list was updated, and if so then how.
+            AsyncToolLoopHandle: A handle to the running conversation that supports:
+                - await handle.result() - Get the final answer
+                - await handle.interject(message) - Add a user message mid-conversation
+                - handle.stop() - Gracefully cancel the conversation
+
+            When return_reasoning_steps=True, returns a tuple of (handle, messages)
         """
         from .sys_msgs import UPDATE
 
@@ -146,15 +160,15 @@ class TaskListManager:
                 datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC"),
             ),
         )
-        ans = await start_async_tool_use_loop(
+        handle = start_async_tool_use_loop(
             client,
             text,
             self._update_tools,
             log_steps=log_tool_steps,
-        ).result()
+        )
         if return_reasoning_steps:
-            return ans, client.messages
-        return ans
+            return handle, client.messages
+        return handle
 
     def _get_logs_by_task_ids(
         self,
