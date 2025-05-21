@@ -109,8 +109,8 @@ class TranscriptManager:
             Event(
                 type="message_exchange_summary",
                 timestamp=latest_timestamp,
-                payload=summary
-            )
+                payload=summary,
+            ),
         )
         return summary
 

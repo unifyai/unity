@@ -99,7 +99,11 @@ class KnowledgeManager:
 
         client = unify.AsyncUnify("o4-mini@openai", cache=True)
         client.set_system_message(RETRIEVE)
-        ans = await start_async_tool_use_loop(client, text, self._retrieve_tools).result()
+        ans = await start_async_tool_use_loop(
+            client,
+            text,
+            self._retrieve_tools,
+        ).result()
         if return_reasoning_steps:
             return ans, client.messages
         return ans
