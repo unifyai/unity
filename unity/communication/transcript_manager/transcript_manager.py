@@ -35,11 +35,10 @@ class TranscriptManager:
         assert (
             read_ctx == write_ctx
         ), "read and write contexts must be the same when instantiating a TranscriptManager."
-        self._contacts_ctx = f"{read_ctx}/Contacts" if read_ctx else "Contacts"
-        self._transcripts_ctx = f"{self._event_bus._global_ctx}/Messages"
-        self._summaries_ctx = f"{self._event_bus._global_ctx}/MessageExchangeSummaries"
-        if self._contacts_ctx not in unify.get_contexts():
-            unify.create_context(self._contacts_ctx)
+        event_bus.register_event_types(["Contacts", "Messages", "MessageExchangeSummaries"])
+        self._contacts_ctx = event_bus.ctxs["Contacts"]
+        self._transcripts_ctx = event_bus.ctxs["Messages"]
+        self._summaries_ctx = event_bus.ctxs["MessageExchangeSummaries"]
 
         # Add tracing
         if traced:
@@ -105,7 +104,7 @@ class TranscriptManager:
 
     # Summarize Exchange(s)
 
-    def summarize(
+    async def summarize(
         self,
         *,
         exchange_ids: Union[int, List[int]],
@@ -125,7 +124,7 @@ class TranscriptManager:
 
         if not isinstance(exchange_ids, list):
             exchange_ids = [exchange_ids]
-        client = unify.Unify("o4-mini@openai", cache=True)
+        client = unify.AsyncUnify("o4-mini@openai", cache=True)
         client.set_system_message(
             SUMMARIZE.replace("{guidance}", f"\n{guidance}\n" if guidance else ""),
         )
@@ -134,13 +133,16 @@ class TranscriptManager:
             id: [msg.content for msg in msgs if msg.exchange_id == id]
             for id in exchange_ids
         }
-        latest_timestamp = max([msg.timestamp for msg in msgs]).isoformat()
-        summary = client.generate(json.dumps(exchanges, indent=4))
-        self._event_bus.publish(
+        latest_timestamp = max([msg.timestamp for msg in msgs])
+        summary = await client.generate(json.dumps(exchanges, indent=4))
+        await self._event_bus.publish(
             Event(
-                type="message_exchange_summary",
+                type="MessageExchangeSummaries",
                 timestamp=latest_timestamp,
-                payload=summary,
+                payload=MessageExchangeSummary(
+                    summary=summary,
+                    exchange_ids=exchange_ids
+                ),
             ),
         )
         return summary
