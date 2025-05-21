@@ -3,7 +3,7 @@ import json
 from ...communication.transcript_manager.transcript_manager import TranscriptManager
 from ...communication.types.contact import Contact
 from ...communication.types.message import Message
-from ...communication.types.summary import Summary
+from ..types.message_exchange_summary import MessageExchangeSummary
 from ...communication.transcript_manager.transcript_manager import TranscriptManager
 
 SUMMARIZE = """
@@ -21,13 +21,13 @@ As a recap, the schemas for contacts, messages and summaries are as follows:
 
 {json.dumps(Message.model_json_schema(), indent=4)}
 
-{json.dumps(Summary.model_json_schema(), indent=4)}
+{json.dumps(MessageExchangeSummary.model_json_schema(), indent=4)}
 
 Available tools:
 • {TranscriptManager.summarize.__name__}(exchange_ids, guidance?): summarise one or more exchanges.
 • {TranscriptManager._search_contacts.__name__.lstrip("_")}(filter?, offset=0, limit=100) → List[Contact] – flexible boolean filtering.
 • {TranscriptManager._search_messages.__name__.lstrip("_")}(filter?, offset=0, limit=100) → List[Message] – flexible boolean filtering.
-• {TranscriptManager._search_summaries.__name__.lstrip("_")}(filter?, offset=0, limit=100) → List[Summary] – flexible boolean filtering.
+• {TranscriptManager._search_summaries.__name__.lstrip("_")}(filter?, offset=0, limit=100) → List[MessageExchangeSummary] – flexible boolean filtering.
 • {TranscriptManager._nearest_messages.__name__.lstrip("_")}(text: str, k: int = 10) → List[Message] – returns the top-k messages semantically similar to the given text.
 
 Example usage:

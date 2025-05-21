@@ -3,8 +3,8 @@ import pytest
 from collections import deque
 
 from unity.events.event_bus import EventBus, Event
-from unity.events.types.message import Message
-from unity.events.types.message_exchange_summary import MessageExchangeSummary
+from unity.communication.types.message import Message
+from unity.communication.types.message_exchange_summary import MessageExchangeSummary
 from tests.helpers import _handle_project
 
 
@@ -16,14 +16,17 @@ async def test_window_eviction_at_limit():
     bus = EventBus(windows_sizes={"message": window})
 
     # Start from a known clean state for this type (harmless use of a private attr)
-    bus._deques.setdefault("message", bus._deques.get("message", deque(maxlen=window))).clear()
+    bus._deques.setdefault(
+        "message",
+        bus._deques.get("message", deque(maxlen=window)),
+    ).clear()
 
     # Publish window + 1 events with ascending timestamps
     events = []
     base_ts = dt.datetime.now(dt.UTC)
     for i in range(window + 1):
         evt = Event(
-            context="message",
+            type="message",
             timestamp=base_ts + dt.timedelta(seconds=i),
             payload=Message.model_construct(),
         )
@@ -38,8 +41,8 @@ async def test_window_eviction_at_limit():
 
     # We expect only *window* of our events (the newest three) to remain
     assert len(latest_ours) == window
-    assert events[0] not in latest_ours            # the earliest one was evicted
-    assert latest_ours[0] == events[-1]            # newest appears first (newest-first order)
+    assert events[0] not in latest_ours  # the earliest one was evicted
+    assert latest_ours[0] == events[-1]  # newest appears first (newest-first order)
 
 
 @pytest.mark.asyncio
@@ -73,7 +76,7 @@ async def test_window_eviction_mixed_sizes_and_ordering():
     events = []
     for idx, (etype, payload_cls) in enumerate(publish_plan):
         evt = Event(
-            context=etype,
+            type=etype,
             timestamp=base_ts + dt.timedelta(seconds=idx),
             payload=payload_cls.model_construct(),
         )
@@ -87,14 +90,17 @@ async def test_window_eviction_mixed_sizes_and_ordering():
     ours = [e for e in latest if e in events]
 
     # Expected survivors by window:
-    expected_messages = events[2:5:2]           # idx 2 and 4 → 2 newest messages
-    expected_summaries = events[3:]             # idx 3,5,6 → 3 newest summaries
+    expected_messages = events[2:5:2]  # idx 2 and 4 → 2 newest messages
+    expected_summaries = events[3:]  # idx 3,5,6 → 3 newest summaries
     expected_survivors = list(reversed(expected_summaries + expected_messages))
     # reversed() because get_latest() returns newest-first
 
     # 1️⃣ Correct counts per type
-    assert sum(e.context == "message" for e in ours) == windows["message"]
-    assert sum(e.context == "message_exchange_summary" for e in ours) == windows["message_exchange_summary"]
+    assert sum(e.type == "message" for e in ours) == windows["message"]
+    assert (
+        sum(e.type == "message_exchange_summary" for e in ours)
+        == windows["message_exchange_summary"]
+    )
 
     # 2️⃣ Overall ordering newest-first
     assert ours == expected_survivors, "Events not in expected newest-first order"

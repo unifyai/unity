@@ -36,16 +36,6 @@ HEURISTICS: List[Heuristic] = [
         "label_js": "return 'Google Docs Input';",
     },
     # ─────────────────────────────────────────────
-    # ClickUp SSO Google button (site-specific)
-    # ─────────────────────────────────────────────
-    {
-        "name": "clickup-sso-google",
-        "selector": "div#google_auth_button.login-page-new__main-form-google",
-        "kind": "click",
-        "filter_js": ("return location.hostname.includes('clickup.com')"),
-        "label_js": "return 'Continue with Google';",
-    },
-    # ─────────────────────────────────────────────
     # 1. TRACKING "BEACON" ANCHORS  (exclude)
     #    Many e‑commerce grids inject a 0×0 or 1×1 <a>
     #    solely for click analytics.  Skip them so they
@@ -244,6 +234,16 @@ HEURISTICS: List[Heuristic] = [
         "name": "label-tracker",
         "selector": ".label-tracker",
         "kind": "exclude",
+    },
+    # ─────────────────────────────────────────────
+    # 13. Google Sign-In iframe button
+    # ─────────────────────────────────────────────
+    {
+        "name": "google-signin-iframe",
+        "selector": "iframe[src*='accounts.google.com/gsi/button' i]",
+        "kind": "click",
+        # use title attribute as label fallback
+        "label_js": "return el.getAttribute('title') || 'Sign in with Google';",
     },
 ]
 

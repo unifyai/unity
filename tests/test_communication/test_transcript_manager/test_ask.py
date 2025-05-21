@@ -223,7 +223,7 @@ class ScenarioBuilder:
         [
             await self._event_bus.publish(
                 Event(
-                    context="Messages",
+                    type="Messages",
                     timestamp=None,
                     paylod=Message(
                         medium=medium,
@@ -232,8 +232,8 @@ class ScenarioBuilder:
                         timestamp=ts.isoformat(),
                         content=txt,
                         exchange_id=ex_id,
-                    )
-                )
+                    ),
+                ),
             )
             for s, r, ts, txt in msgs
         ]
@@ -427,3 +427,11 @@ async def test_ask_semantic_with_llm_judgement(
     candidate, steps = await tm.ask(question, return_reasoning_steps=True)
     expected = _answer_semantic(tm, question)
     _llm_assert_correct(question, expected, candidate, steps)
+
+
+@pytest.mark.eval
+@pytest.mark.asyncio
+@_handle_project
+async def test_ask_with_interjection() -> None:
+    tm = await ScenarioBuilder().tm
+    await tm.ask(QUESTIONS[0], return_reasoning_steps=True)

@@ -44,14 +44,14 @@ async def test_transcript_embedding_semantic_search():
             timestamp="2025-05-19 12:00:02",
             content="I'm interested in learning about Python programming, especially data science applications.",
             exchange_id=1,
-        )
+        ),
     ]
 
     event_bus = EventBus()
     [
         await event_bus.publish(
             Event(
-                context="message",
+                type="message",
                 timestamp=datetime.now(UTC).isoformat(),
                 payload=Message(
                     medium=random.choice(VALID_MEDIA),
@@ -60,8 +60,8 @@ async def test_transcript_embedding_semantic_search():
                     timestamp=datetime.now(UTC).isoformat(),
                     content=msg,
                     exchange_id=i,
-                )
-            )
+                ),
+            ),
         )
         for i, msg in enumerate(msgs)
     ]
