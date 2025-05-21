@@ -61,7 +61,7 @@ async def test_transcript_embedding_semantic_search():
                     content=msg,
                     exchange_id=i,
                 ),
-            ),
+            )
         )
         for i, msg in enumerate(msgs)
     ]

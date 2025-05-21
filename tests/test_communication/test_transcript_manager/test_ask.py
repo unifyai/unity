@@ -28,6 +28,7 @@ import unify
 from unity.communication.transcript_manager.transcript_manager import TranscriptManager
 from unity.communication.types.message import Message
 from unity.common.llm_helpers import _dumps
+from unity.common import AsyncToolLoopHandle
 from tests.assertion_helpers import assertion_failed
 from tests.helpers import _handle_project
 
@@ -233,7 +234,7 @@ class ScenarioBuilder:
                         content=txt,
                         exchange_id=ex_id,
                     ),
-                ),
+                )
             )
             for s, r, ts, txt in msgs
         ]
@@ -424,7 +425,8 @@ async def test_ask_semantic_with_llm_judgement(
     times), then asks a _separate_ LLM whether the answer is acceptable.
     """
     tm = await ScenarioBuilder().tm
-    candidate, steps = await tm.ask(question, return_reasoning_steps=True)
+    handle = tm.ask(question, return_reasoning_steps=True)
+    candidate, steps = await handle.result()
     expected = _answer_semantic(tm, question)
     _llm_assert_correct(question, expected, candidate, steps)
 
