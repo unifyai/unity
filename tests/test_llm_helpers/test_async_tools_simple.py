@@ -122,14 +122,17 @@ async def test_async_loop_happy_path_single_sync_tool():
 
 
 # --------------------------------------------------------------------------- #
-#  MIXED sync/async tools and *early* return to the LLM                       #
+#  CONCURRENT sync/async tools – waits for *all* results before next LLM turn #
 # --------------------------------------------------------------------------- #
 @pytest.mark.asyncio
-async def test_async_loop_concurrent_tools_early_generate():
+async def test_async_loop_concurrent_tools_waits_for_all_results():
     """
-    One LLM turn triggers *both* `fast` and `slow`.
-    The loop must return to the model after `fast` completes
-    while `slow` is still running.
+    The loop launches `fast` and `slow` concurrently but must *not* call the
+    model again until *both* have finished.  It should therefore:
+
+      • make exactly two `generate()` calls
+      • return the content of the second call
+      • still run the tools truly concurrently
     """
     events: list[tuple[str, float]] = []
 
@@ -141,14 +144,14 @@ async def test_async_loop_concurrent_tools_early_generate():
 
     async def slow():
         events.append(("slow_start", time.monotonic()))
-        await asyncio.sleep(0.3)
+        await asyncio.sleep(0.30)
         events.append(("slow_end", time.monotonic()))
         return "slow"
 
     def record_generate():
         events.append(("generate", time.monotonic()))
 
-    # SINGLE model message with *two* tool calls
+    # assistant first asks for two tools, then replies once with "ok"
     first_turn = types.SimpleNamespace(
         tool_calls=[
             FakeToolCall("fast", {}, "1"),
@@ -158,9 +161,8 @@ async def test_async_loop_concurrent_tools_early_generate():
     )
 
     scripted = [
-        make_response(first_turn),  # triggers both tools concurrently
-        make_response(msg_final("done")),  # model answers after `fast` result only
-        make_response(msg_final("ok")),  # model replies after slow (no tools)
+        make_response(first_turn),
+        make_response(msg_final("ok")),   # produced after *both* results
     ]
 
     class InstrumentedClient(FakeAsyncClient):
@@ -174,20 +176,24 @@ async def test_async_loop_concurrent_tools_early_generate():
         client,
         message="Run fast & slow",
         tools={"fast": fast, "slow": slow},
-        max_consecutive_failures=2,
     ).result()
 
+    # 1. loop must return the assistant’s second reply
     assert answer.strip() == "ok"
 
-    # ── Timing assertions ────────────────────────────────────────────
+    # 2. exactly two model calls (before tools, after all tools)
     generate_times = [t for e, t in events if e == "generate"]
-    fast_end = next(t for e, t in events if e == "fast_end")
-    slow_end = next(t for e, t in events if e == "slow_end")
+    assert len(generate_times) == 2
 
-    # 0-th generate: initial model request (before any tool starts)
-    # 1-st generate: after `fast` finishes but *before* `slow` ends
-    assert generate_times[0] < fast_end
-    assert generate_times[1] < slow_end
+    # 3. the second generate happens *after* the slow tool finishes
+    slow_end = next(t for e, t in events if e == "slow_end")
+    assert generate_times[1] > slow_end
+
+    # 4. tools really overlapped
+    fast_start = next(t for e, t in events if e == "fast_start")
+    fast_end   = next(t for e, t in events if e == "fast_end")
+    slow_start = next(t for e, t in events if e == "slow_start")
+    assert fast_start < slow_start < fast_end    # overlap window
 
 
 # --------------------------------------------------------------------------- #
