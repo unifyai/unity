@@ -8,35 +8,32 @@ import unify
 import asyncio
 import datetime as dt
 from collections import deque
-from typing import Deque, Dict, Iterable, Optional, Type
-from pydantic import BaseModel, ValidationError
-
-from .types.message import Message
-from .types.message_exchange_summary import MessageExchangeSummary
+from typing import List, Deque, Dict, Iterable, Union
+from pydantic import BaseModel
 
 __all__ = ["Event", "EventBus", "Subscription"]
 
 
-_EVENT_TYPES: Dict[str, Type[BaseModel]] = {"Messages": Message, "MessageExchangeSummaries": MessageExchangeSummary}
 _DEFAULT_WINDOW = 50
 
 # ───────────────────────────   Event envelope   ─────────────────────────────
 
+
 class Event(BaseModel):
-    context: str
-    timestamp: str
+    type: str
+    timestamp: str = dt.datetime.now(dt.UTC).isoformat()
     payload: BaseModel
 
 
 # ───────────────────────────   EventBus singleton   ─────────────────────────
 
+
 class EventBus:
 
-    def __init__(self, windows_sizes: Dict[str, int] = {}):
+    def __init__(self):
 
         # private attributes
         self._deques: Dict[str, Deque[Event]] = {}
-        self._window_sizes: Dict[str, int] = {k: windows_sizes.get(k, _DEFAULT_WINDOW) for k in _EVENT_TYPES.keys()}
         self._lock = asyncio.Lock()
 
         # ── Unify setup ────────────────────────────────────────────────
@@ -46,12 +43,11 @@ class EventBus:
         upstream_ctxs = unify.get_contexts()
         if self._global_ctx not in upstream_ctxs:
             unify.create_context(self._global_ctx)
-        self._ctxs = {
-            etype: f"{self._global_ctx}/{etype}" for etype in _EVENT_TYPES
+        ctxs = unify.get_contexts(prefix=self._global_ctx)
+        self._window_sizes: Dict[str, int] = {
+            ctx.split("/")[-1]: _DEFAULT_WINDOW for ctx in ctxs
         }
-        for ctx in self._ctxs.values():
-            if ctx not in upstream_ctxs:
-                unify.create_context(ctx)
+        self._ctxs = {ctx.split("/")[-1]: ctx for ctx in ctxs}
         self._logger = unify.AsyncLoggerManager()
 
         # ── Hydrate in‑memory windows from persisted logs ─────────────
@@ -60,36 +56,40 @@ class EventBus:
     # ------------------------------------------------------------------
     def _prefill_from_unify(self):
         """Populate each per‑type deque with newest logs from Unify."""
-        for etype, model_cls in _EVENT_TYPES.items():
-            window_size = self._window_sizes[etype]
-            raw_logs = unify.get_logs(context=self._ctxs[etype], limit=window_size)
+        for etype, context in self._ctxs.items():
+            window_size = self._window_sizes.setdefault(etype, _DEFAULT_WINDOW)
+            raw_logs = unify.get_logs(context=context, limit=window_size)
             # unify returns most‑recent‑first – reverse for chronological order
             dq: Deque[Event] = deque(maxlen=window_size)
             for log in reversed(raw_logs):
                 entries = log.entries
                 if entries is None:
                     continue
-                try:
-                    evt = Event.model_validate(entries)
-                    if not isinstance(evt.payload, model_cls):
-                        continue
-                except ValidationError:
-                    if isinstance(entries, model_cls):
-                        ts = getattr(log, "ts", dt.datetime.now(dt.UTC)).isoformat()
-                        evt = Event(context=etype, timestamp=ts, payload=entries)
-                    else:
-                        raise Exception("")
+                ts = getattr(log, "ts", dt.datetime.now(dt.UTC)).isoformat()
+                evt = Event(type=etype, timestamp=ts, payload=entries)
                 dq.append(evt)
             self._deques[etype] = dq
 
     # ------------------------------------------------------------------
     # Public API
     # ------------------------------------------------------------------
+    def register_event_types(self, event_types: Union[str, List[str]]) -> None:
+        if isinstance(event_types, str):
+            event_types = [event_types]
+        for event_type in event_types:
+            if event_type not in self._ctxs:
+                full_ctx = f"{self._global_ctx}/{event_type}"
+                self._ctxs[event_type] = full_ctx
+                if full_ctx not in unify.get_contexts():
+                    unify.create_context(full_ctx)
+            if event_type not in self._window_sizes:
+                self._window_sizes[event_type] = _DEFAULT_WINDOW
+
     async def publish(self, event: Event) -> None:
-        window = self._window_sizes[event.context]
+        window = self._window_sizes[event.type]
 
         async with self._lock:
-            dq = self._deques[event.context]
+            dq = self._deques[event.type]
             dq.append(event)
             while len(dq) > window:
                 dq.popleft()
@@ -105,7 +105,7 @@ class EventBus:
         # Log to specific event table
         self._logger.log_create(
             project=unify.active_project(),
-            context=self._ctxs[event.context],
+            context=self._ctxs[event.type],
             params={},
             entries=event.payload,
         )
@@ -133,12 +133,12 @@ class EventBus:
             for t in wanted:
                 dq = self._deques.get(t)
                 if dq:
-                    bucket.extend(dq)          # each dq is already window-bounded
+                    bucket.extend(dq)  # each dq is already window-bounded
 
             # 2. sort newest→oldest and slice
             bucket.sort(key=lambda e: e.timestamp, reverse=True)
             return bucket[:limit]
-        
+
     @property
     def ctxs(self):
         return self._ctxs

@@ -4,8 +4,8 @@ import datetime as dt
 from collections import deque
 
 from unity.events.event_bus import EventBus, Event
-from unity.events.types.message import Message
-from unity.events.types.message_exchange_summary import MessageExchangeSummary
+from unity.communication.types.message import Message
+from unity.communication.types.message_exchange_summary import MessageExchangeSummary
 from tests.helpers import _handle_project
 
 
@@ -16,7 +16,7 @@ async def test_get_latest():
     bus = EventBus()
 
     payload = Message.model_construct()
-    event = Event(context="Messages", timestamp=dt.datetime.now(dt.UTC), payload=payload)
+    event = Event(type="Messages", timestamp=dt.datetime.now(dt.UTC), payload=payload)
 
     await bus.publish(event)
 
@@ -44,12 +44,15 @@ async def test_get_latest_mixed_types_ordering():
     # Publish 6 events: message, summary, message, …
     for idx in range(6):
         etype, payload_cls = (
-            ("Messages", Message) if idx % 2 == 0 else ("MessageExchangeSummary", MessageExchangeSummary)
+            ("Messages", Message)
+            if idx % 2 == 0
+            else ("MessageExchangeSummary", MessageExchangeSummary)
         )
 
         evt = Event(
-            context=etype,
-            timestamp=base_ts + dt.timedelta(seconds=idx),   # strictly ascending timestamps
+            type=etype,
+            timestamp=base_ts
+            + dt.timedelta(seconds=idx),  # strictly ascending timestamps
             payload=payload_cls.model_construct(),
         )
         events.append(evt)
@@ -90,7 +93,7 @@ async def test_concurrent_get_latest_lock_integrity():
             else ("MessageExchangeSummary", MessageExchangeSummary)
         )
         evt = Event(
-            context=etype,
+            type=etype,
             timestamp=base_ts + dt.timedelta(microseconds=i),
             payload=payload_cls.model_construct(),
         )
@@ -98,23 +101,23 @@ async def test_concurrent_get_latest_lock_integrity():
         await bus.publish(evt)
 
     # Pre-compute expected slices (newest-first order)
-    all_newest      = list(reversed(events))
+    all_newest = list(reversed(events))
     messages_newest = [e for e in all_newest if e.type == "Messages"]
     summaries_newest = [e for e in all_newest if e.type == "MessageExchangeSummary"]
 
     expected_r1 = messages_newest[:5]
     expected_r2 = summaries_newest[:7]
-    expected_r3 = []                          # empty filter → empty result
+    expected_r3 = []  # empty filter → empty result
     expected_r4 = all_newest[:15]
 
     # ── Concurrent read tasks ──────────────────────────────────────
     tasks = [
-        asyncio.create_task(bus.get_latest(types=["Messages"], limit=5)),              # r1
+        asyncio.create_task(bus.get_latest(types=["Messages"], limit=5)),  # r1
         asyncio.create_task(
-            bus.get_latest(types=["MessageExchangeSummary"], limit=7)
-        ),                                                                             # r2
-        asyncio.create_task(bus.get_latest(types=[], limit=10)),                      # r3 (no types)
-        asyncio.create_task(bus.get_latest(types=None, limit=15)),                    # r4 (both types)
+            bus.get_latest(types=["MessageExchangeSummary"], limit=7),
+        ),  # r2
+        asyncio.create_task(bus.get_latest(types=[], limit=10)),  # r3 (no types)
+        asyncio.create_task(bus.get_latest(types=None, limit=15)),  # r4 (both types)
     ]
 
     r1, r2, r3, r4 = await asyncio.gather(*tasks)

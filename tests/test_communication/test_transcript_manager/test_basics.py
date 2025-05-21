@@ -47,7 +47,9 @@ def _create_contacts():
 @pytest.mark.unit
 @_handle_project
 def test_create_contact():
-    transcript_manager = TranscriptManager(EventBus())
+    eb = EventBus()
+    eb.register_event_types(["Messages", "MessageExchangeSummaries"])
+    transcript_manager = TranscriptManager(eb)
     transcript_manager.create_contact(
         first_name="Dan",
     )
@@ -67,7 +69,9 @@ def test_create_contact():
 @pytest.mark.unit
 @_handle_project
 def test_update_contact():
-    transcript_manager = TranscriptManager(EventBus())
+    eb = EventBus()
+    eb.register_event_types(["Messages", "MessageExchangeSummaries"])
+    transcript_manager = TranscriptManager(eb)
 
     # create
     transcript_manager.create_contact(
@@ -110,7 +114,9 @@ def test_update_contact():
 @pytest.mark.unit
 @_handle_project
 def test_create_contacts():
-    transcript_manager = TranscriptManager(EventBus())
+    eb = EventBus()
+    eb.register_event_types(["Messages", "MessageExchangeSummaries"])
+    transcript_manager = TranscriptManager(eb)
 
     # first
     transcript_manager.create_contact(
@@ -148,7 +154,9 @@ def test_create_contacts():
 @pytest.mark.unit
 @_handle_project
 def test_search_contacts():
-    transcript_manager = TranscriptManager(EventBus())
+    eb = EventBus()
+    eb.register_event_types(["Messages", "MessageExchangeSummaries"])
+    transcript_manager = TranscriptManager(eb)
     transcript_manager.create_contact(
         first_name="Dan",
     )
@@ -162,7 +170,7 @@ async def test_log_messages():
     [
         await event_bus.publish(
             Event(
-                context="message",
+                type="message",
                 timestamp=datetime.now(UTC).isoformat(),
                 payload=Message(
                     medium=random.choice(VALID_MEDIA),
@@ -171,8 +179,8 @@ async def test_log_messages():
                     timestamp=datetime.now(UTC).isoformat(),
                     content=random.choice(MESSAGES),
                     exchange_id=i,
-                )
-            )
+                ),
+            ),
         )
         for i in range(10)
     ]
@@ -193,7 +201,7 @@ async def test_get_messages():
     [
         await event_bus.publish(
             Event(
-                context="Messages",
+                type="Messages",
                 timestamp=datetime.now(UTC).isoformat(),
                 payload=Message(
                     medium=random.choice(VALID_MEDIA),
@@ -202,8 +210,8 @@ async def test_get_messages():
                     timestamp=datetime.now(UTC).isoformat(),
                     content=random.choice(MESSAGES),
                     exchange_id=i,
-                )
-            )
+                ),
+            ),
         )
         for i in range(10)
     ]
@@ -265,7 +273,7 @@ async def test_summarize_exchanges():
     [
         await event_bus.publish(
             Event(
-                context="message",
+                type="message",
                 timestamp=datetime.now(UTC).isoformat(),
                 payload=Message(
                     medium="phone_call",
@@ -274,8 +282,8 @@ async def test_summarize_exchanges():
                     timestamp=datetime.now(UTC).isoformat(),
                     content=msg,
                     exchange_id=0,
-                )
-            )
+                ),
+            ),
         )
         for i, msg in enumerate(
             [
@@ -284,7 +292,7 @@ async def test_summarize_exchanges():
                 "How are your office staplers doing? Are they underperforming?",
                 "Actually yeah, they're a bit rusty, but I can't make any buying decisions. My manager can.",
                 "Okay, no worries. Let's catch up again soon.",
-            ]
+            ],
         )
     ]
 
@@ -292,7 +300,7 @@ async def test_summarize_exchanges():
     [
         await event_bus.publish(
             Event(
-                context="message",
+                type="message",
                 timestamp=datetime.now(UTC).isoformat(),
                 payload=Message(
                     medium="email",
@@ -301,15 +309,15 @@ async def test_summarize_exchanges():
                     timestamp=datetime.now(UTC).isoformat(),
                     content=msg,
                     exchange_id=1,
-                )
-            )
+                ),
+            ),
         )
         for i, msg in enumerate(
             [
                 "Great catching up the other day, did you manage to talk to your manager?",
                 "Hey, yeah I did actually. I'll reach out soon.",
                 "Okay great, thanks!",
-            ]
+            ],
         )
     ]
 
@@ -317,7 +325,7 @@ async def test_summarize_exchanges():
     [
         await event_bus.publish(
             Event(
-                context="message",
+                type="message",
                 timestamp=datetime.now(UTC).isoformat(),
                 payload=Message(
                     medium="whatsapp_message",
@@ -326,14 +334,14 @@ async def test_summarize_exchanges():
                     timestamp=datetime.now(UTC).isoformat(),
                     content=msg,
                     exchange_id=2,
-                )
-            )
+                ),
+            ),
         )
         for i, msg in enumerate(
             [
                 "Hey, yeah we'd love to buy your staplers!",
                 "Great! Excited to hear :)",
-            ]
+            ],
         )
     ]
     event_bus.join_published()
