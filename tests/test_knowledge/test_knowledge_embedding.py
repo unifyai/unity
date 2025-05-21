@@ -35,7 +35,6 @@ def test_knowledge_embedding():
     query = "favorite means of communication"
     emb_results_k1 = manager._nearest(
         tables=[table_name],
-        column="content_emb",
         source="content",
         text=query,
         k=1,
@@ -46,7 +45,6 @@ def test_knowledge_embedding():
     # Embedding-based nearest search for k=2 should respect ordering and limit
     emb_results_k2 = manager._nearest(
         tables=[table_name],
-        column="content_emb",
         source="content",
         text=query,
         k=2,
