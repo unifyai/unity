@@ -1,9 +1,10 @@
 import datetime as dt
 import pytest
+import random
 from collections import deque
 
 from unity.events.event_bus import EventBus, Event
-from unity.communication.types.message import Message
+from unity.communication.types.message import Message, Medium
 from unity.communication.types.message_exchange_summary import MessageExchangeSummary
 from tests.helpers import _handle_project
 
@@ -29,13 +30,20 @@ async def test_window_eviction_at_limit():
         evt = Event(
             type="message",
             timestamp=base_ts + dt.timedelta(seconds=i),
-            payload=Message.model_construct(),
+            payload=Message(
+                medium=random.choice(list(Medium)),
+                sender_id=random.randint(0, 10),
+                receiver_id=random.randint(0, 10),
+                timestamp=dt.datetime.now(dt.UTC).isoformat(),
+                content=f"{i}",
+                exchange_id=0
+            ),
         )
         events.append(evt)
         await bus.publish(evt)
 
     # Fetch everything currently buffered for "message"
-    latest = await bus.get_latest(types=["message"], limits=10)
+    latest = (await bus.get_latest(types=["message"], limits=10))["message"]
 
     # Filter to the events we just published (there may be pre-existing logs)
     latest_ours = [e for e in latest if e in events]
@@ -43,4 +51,4 @@ async def test_window_eviction_at_limit():
     # We expect only *window* of our events (the newest three) to remain
     assert len(latest_ours) == window
     assert events[0] not in latest_ours  # the earliest one was evicted
-    assert latest_ours[0] == events[-1]  # newest appears first (newest-first order)
+    assert latest_ours == events[1:]  # oldest appears first (oldest-first order)
