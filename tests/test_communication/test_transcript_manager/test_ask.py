@@ -18,7 +18,7 @@ import json
 import random
 import re
 from collections import Counter
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timezone, timedelta, UTC
 from unity.events.event_bus import EventBus, Event
 from typing import List
 
@@ -84,16 +84,25 @@ _ID_BY_NAME: dict[str, int] = {}  # filled during seeding
 class ScenarioBuilder:
     """Populate Unify with contacts, 6 'meaningful' exchanges + filler."""
 
-    async def __init__(self) -> None:
+    def __init__(self) -> None:
         self._event_bus = EventBus()
-        self.tm = TranscriptManager()
+        self.tm = TranscriptManager(self._event_bus)
+
+    @classmethod
+    async def create(cls) -> "ScenarioBuilder":
+        """Build an instance and run all async seeding steps."""
+        self = cls()
+
         await self._seed_contacts()
         await self._seed_key_exchanges()
         await self._seed_filler()
-        # One stored summary just so summaries exist
-        self.tm.summarize(exchange_ids=[0, 1])
         self._event_bus.join_published()
 
+        # Store an initial summary so that summaries exist
+        await self.tm.summarize(exchange_ids=[0, 1])
+        self._event_bus.join_published()
+
+        return self
     # --------------------------------------------------------------------- #
     async def _seed_contacts(self) -> None:
         for idx, c in enumerate(_CONTACTS):
@@ -224,8 +233,8 @@ class ScenarioBuilder:
             await self._event_bus.publish(
                 Event(
                     type="Messages",
-                    timestamp=None,
-                    paylod=Message(
+                    timestamp=datetime.now(UTC),
+                    payload=Message(
                         medium=medium,
                         sender_id=s,
                         receiver_id=r,
@@ -423,7 +432,8 @@ async def test_ask_semantic_with_llm_judgement(
     Calls the real `.ask()` (which itself may call the LLM multiple
     times), then asks a _separate_ LLM whether the answer is acceptable.
     """
-    tm = await ScenarioBuilder().tm
+    builder = await ScenarioBuilder.create()
+    tm = builder.tm
     handle = tm.ask(question, return_reasoning_steps=True)
     candidate, steps = await handle.result()
     expected = _answer_semantic(tm, question)
