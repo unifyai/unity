@@ -9,7 +9,8 @@ import asyncio
 import datetime as dt
 from collections import deque
 from typing import List, Deque, Dict, Iterable, Union
-from pydantic import BaseModel
+from pydantic import BaseModel, Field, ValidationError
+from uuid import uuid4
 
 __all__ = ["Event", "EventBus", "Subscription"]
 
@@ -20,6 +21,8 @@ _DEFAULT_WINDOW = 50
 
 
 class Event(BaseModel):
+    event_id: str = Field(default_factory=lambda: str(uuid4()))
+    calling_id: str = ""
     type: str
     timestamp: str = dt.datetime.now(dt.UTC).isoformat()
     payload: BaseModel
@@ -65,8 +68,13 @@ class EventBus:
                 entries = log.entries
                 if entries is None:
                     continue
-                ts = getattr(log, "ts", dt.datetime.now(dt.UTC)).isoformat()
-                evt = Event(type=etype, timestamp=ts, payload=entries)
+                evt = Event(
+                    event_id=entries["event_id"],
+                    calling_id=entries["calling_id"],
+                    type=etype,
+                    timestamp=entries["timestamp"],
+                    payload=entries,
+                )
                 dq.append(evt)
             self._deques[etype] = dq
 
