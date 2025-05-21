@@ -315,15 +315,19 @@ async def _async_tool_use_loop_inner(
 
     try:
         while True:
-            # ── 0.  Drain any *new* user interjections up-front ────────────
-            while True:
-                try:
-                    extra = interject_queue.get_nowait()
-                except asyncio.QueueEmpty:
-                    break
-                if log_steps:
-                    LOGGER.info(f"\n⚡ Interjection → {extra!r}\n")
-                client.append_messages([{"role": "user", "content": extra}])
+            # ── 0.  Drain queued *user* interjections (but **only** if all
+            #        previous tool calls have been satisfied).  Injecting a
+            #        user turn while the API still expects tool-role messages
+            #        would violate the OpenAI protocol and trigger a 400.
+            if not pending:
+                while True:
+                    try:
+                        extra = interject_queue.get_nowait()
+                    except asyncio.QueueEmpty:
+                        break
+                    if log_steps:
+                        LOGGER.info(f"\n⚡ Interjection → {extra!r}\n")
+                    client.append_messages([{"role": "user", "content": extra}])
 
             # ── A.  Wait for tool completion OR cancellation  ───────────────
             if pending:
@@ -361,12 +365,16 @@ async def _async_tool_use_loop_inner(
                         if log_steps:
                             LOGGER.error("🚨 Aborting: too many tool failures.")
                         raise RuntimeError("Aborted after too many consecutive tool failures.")
+                    
+            # ── B: wait for remaining tools before asking the LLM again
+            if pending:
+                continue
 
-            # ── B.  Cancel check before calling the LLM  ────────────────────
+            # ── C.  Cancel check before calling the LLM  ────────────────────
             if cancel_event.is_set():
                 raise asyncio.CancelledError
 
-            # ── C.  Ask the LLM what to do next  ────────────────────────────
+            # ── D.  Ask the LLM what to do next  ────────────────────────────
             if log_steps:
                 LOGGER.info("🔄 LLM thinking…")
 
@@ -378,7 +386,7 @@ async def _async_tool_use_loop_inner(
             )
             msg = response.choices[0].message
 
-            # ── D.  Launch any new tool calls  ──────────────────────────────
+            # ── E.  Launch any new tool calls  ──────────────────────────────
             if msg.tool_calls:
                 for call in msg.tool_calls:
                     name = call.function.name
@@ -398,7 +406,7 @@ async def _async_tool_use_loop_inner(
                     LOGGER.info("✅ Step finished (tool calls scheduled)")
                 continue                         # back to the top
 
-            # ── E.  No new tool calls  ──────────────────────────────────────
+            # ── F.  No new tool calls  ──────────────────────────────────────
             if pending:                         # still waiting for others
                 continue
 
