@@ -26,7 +26,7 @@ async def test_transcript_embedding_semantic_search():
             sender_id=1,
             receiver_id=2,
             timestamp="2025-05-19 12:00:00",
-            content="Can you help me with my banking questions? I'm looking to set up a new account.",
+            content="Worry",
             exchange_id=1,
         ),
         Message(
@@ -34,7 +34,7 @@ async def test_transcript_embedding_semantic_search():
             sender_id=2,
             receiver_id=1,
             timestamp="2025-05-19 12:00:01",
-            content="I'd be happy to help with your banking needs! What type of account would you like to set up? Checking, savings, or investment?",
+            content="Hesitance",
             exchange_id=1,
         ),
         Message(
@@ -42,7 +42,7 @@ async def test_transcript_embedding_semantic_search():
             sender_id=1,
             receiver_id=2,
             timestamp="2025-05-19 12:00:02",
-            content="I'm interested in learning about Python programming, especially data science applications.",
+            content="House",
             exchange_id=1,
         ),
     ]
@@ -61,20 +61,20 @@ async def test_transcript_embedding_semantic_search():
     event_bus.join_published()
 
     # Ensure that a lexical search for the word 'budgeting' returns no results
-    lexical_results = tm._search_messages(filter="'budgeting' in content")
+    lexical_results = tm._search_messages(filter="'Concern' in content")
     assert lexical_results == []
 
     # Use semantic search to find the nearest messages to the query
-    nearest = tm._nearest_messages(text="banking and budgeting", k=2)
+    nearest = tm._nearest_messages(text="Concern", k=2)
 
     # Verify the result length and type
     assert len(nearest) == 2
     assert all(isinstance(msg, Message) for msg in nearest)
 
     # Verify that the messages are returned in ascending order of distance
-    assert nearest[0].content == msgs[-1].content
-    assert nearest[1].content == msgs[-2].content
+    assert nearest[0].content == msgs[0].content
+    assert nearest[1].content == msgs[1].content
 
     # Test k-limit behavior
-    all_nearest = tm._nearest_messages(text="banking and budgeting", k=10)
+    all_nearest = tm._nearest_messages(text="Concern", k=10)
     assert len(all_nearest) == 3  # Should return all 3 messages we inserted
