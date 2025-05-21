@@ -132,10 +132,12 @@ class EventBus:
             context=self._ctxs[event.type],
             params={},
             entries={
-                "event_id": event.event_id,
-                "calling_id": event.calling_id,
-                "timestamp": event.timestamp,
-                **event.payload
+                **{
+                    "event_id": event.event_id,
+                    "calling_id": event.calling_id,
+                    "timestamp": event.timestamp,
+                },
+                **event.payload.model_dump()
             },
         )
 
