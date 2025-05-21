@@ -36,8 +36,8 @@ class TranscriptManager:
             read_ctx == write_ctx
         ), "read and write contexts must be the same when instantiating a TranscriptManager."
         self._contacts_ctx = f"{read_ctx}/Contacts" if read_ctx else "Contacts"
-        self._transcripts_ctx = self._event_bus.ctxs["Messages"]
-        self._summaries_ctx = self._event_bus.ctxs["MessageExchangeSummaries"]
+        self._transcripts_ctx = f"{self._event_bus._global_ctx}/Messages"
+        self._summaries_ctx = f"{self._event_bus._global_ctx}/MessageExchangeSummaries"
         if self._contacts_ctx not in unify.get_contexts():
             unify.create_context(self._contacts_ctx)
 
