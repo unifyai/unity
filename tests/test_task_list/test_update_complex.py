@@ -69,9 +69,10 @@ async def test_update_reorder_queue():
     ids = _seed_basic_tasks(tlm)
     assert [t.task_id for t in tlm._get_task_queue()] == ids  # initial order
 
-    await tlm.update(
+    handle = await tlm.update(
         text="Could you do Client follow-up email after Write quarterly report?",
     )
+    await handle.result()
 
     queue = [t.task_id for t in tlm._get_task_queue()]
     # expected order: 0 (report) -> 2 (follow-up) -> 1 (slides)
@@ -92,7 +93,8 @@ async def test_update_cancel_email_tasks():
 
     _seed_basic_tasks(tlm)
 
-    await tlm.update(text="Please cancel all tasks related to sending emails.")
+    handle = await tlm.update(text="Please cancel all tasks related to sending emails.")
+    await handle.result()
 
     tasks = tlm._search()
     for t in tasks:
@@ -133,9 +135,10 @@ async def test_update_lower_priority_next_monday():
         priority=Priority.high,
     )
 
-    await tlm.update(
+    handle = await tlm.update(
         text="Please lower the priority of all tasks which are scheduled for next Monday.",
     )
+    await handle.result()
 
     task = tlm._search()[0]
     assert task["priority"] == Priority.normal
@@ -162,9 +165,10 @@ async def test_update_bulk_description_replace():
         description="Email the estate agent the sales brochure.",
     )
 
-    await tlm.update(
+    handle = await tlm.update(
         text="Please update all task descriptions to refer to Mr. Smith instead of 'the estate agent'.",
     )
+    await handle.result()
 
     for t in tlm._search():
         assert re.search(r"Mr\.\s?Smith", t["description"]) is not None
