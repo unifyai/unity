@@ -162,7 +162,7 @@ async def test_async_loop_concurrent_tools_waits_for_all_results():
 
     scripted = [
         make_response(first_turn),
-        make_response(msg_final("ok")),   # produced after *both* results
+        make_response(msg_final("ok")),  # produced after *both* results
     ]
 
     class InstrumentedClient(FakeAsyncClient):
@@ -191,9 +191,9 @@ async def test_async_loop_concurrent_tools_waits_for_all_results():
 
     # 4. tools really overlapped
     fast_start = next(t for e, t in events if e == "fast_start")
-    fast_end   = next(t for e, t in events if e == "fast_end")
+    fast_end = next(t for e, t in events if e == "fast_end")
     slow_start = next(t for e, t in events if e == "slow_start")
-    assert fast_start < slow_start < fast_end    # overlap window
+    assert fast_start < slow_start < fast_end  # overlap window
 
 
 # --------------------------------------------------------------------------- #

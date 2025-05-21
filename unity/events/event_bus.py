@@ -10,7 +10,16 @@ import datetime as dt
 from collections import deque
 from typing import List, Deque, Dict, Iterable, Union, Mapping, Any
 from importlib import import_module
-from pydantic import BaseModel, Field, SerializeAsAny, ValidationError, field_validator, model_validator, field_serializer, ConfigDict
+from pydantic import (
+    BaseModel,
+    Field,
+    SerializeAsAny,
+    ValidationError,
+    field_validator,
+    model_validator,
+    field_serializer,
+    ConfigDict,
+)
 from uuid import uuid4
 
 __all__ = ["Event", "EventBus", "Subscription"]
@@ -136,10 +145,10 @@ class EventBus:
 
                 # Extract the event metadata fields
                 event_id = entries.pop("event_id")
-                calling_id = entries.pop("calling_id") 
+                calling_id = entries.pop("calling_id")
                 timestamp = entries.pop("event_timestamp")
                 cls_path = entries.pop("payload_cls")
-                
+
                 # ── 1. recover the payload class (if recorded) ──────────
                 Model: type[BaseModel] | None = None
                 if cls_path:
@@ -153,7 +162,7 @@ class EventBus:
                 if Model is not None:
                     try:
                         payload_obj = Model.model_validate(entries)
-                    except ValidationError:      # corrupted row → keep dict
+                    except ValidationError:  # corrupted row → keep dict
                         payload_obj = entries
                 else:
                     payload_obj = entries
@@ -223,7 +232,7 @@ class EventBus:
                     "event_timestamp": event.timestamp,
                     "payload_cls": event.payload_cls,
                 },
-                **payload_dict
+                **payload_dict,
             },
         )
 
@@ -249,9 +258,9 @@ class EventBus:
             for t in wanted:
                 dq = self._deques.get(t)
                 if dq:
-                    ret[t] = list(dq)[-limits[t]:]
+                    ret[t] = list(dq)[-limits[t] :]
         return ret
-    
+
     def set_window(self, event_type: str, new_size: int) -> None:
         """
         Change the *in-memory* history window for ``event_type`` to
@@ -361,7 +370,10 @@ class EventBus:
                     break  # gap – abort traversal
 
                 # Cache it inside the appropriate deque for future calls
-                self._deques.setdefault(evt.type, deque(maxlen=self._default_window)).append(
+                self._deques.setdefault(
+                    evt.type,
+                    deque(maxlen=self._default_window),
+                ).append(
                     evt,
                 )
 

@@ -42,7 +42,9 @@ async def test_basic_event_flow() -> None:
     bus.register_event_types("TEST")
 
     result = await _async_tool_use_loop_inner(
-        client=unify.AsyncUnify("gpt-4o@openai", cache=True).set_system_message("please echo whatever the user says"),
+        client=unify.AsyncUnify("gpt-4o@openai", cache=True).set_system_message(
+            "please echo whatever the user says",
+        ),
         message="world",
         tools={"echo": echo},
         event_type="TEST",
@@ -61,8 +63,12 @@ async def test_basic_event_flow() -> None:
     assert roles == ["user", "assistant", "tool", "assistant"]
 
     assert events[0].payload["message"]["content"] == "world"  # original user question
-    assert events[2].payload["message"]["content"].strip("'").strip('"') == "WORLD"  # tool result
-    assert events[3].payload["message"]["content"].strip("'").strip('"') == "WORLD"  # final assistant reply
+    assert (
+        events[2].payload["message"]["content"].strip("'").strip('"') == "WORLD"
+    )  # tool result
+    assert (
+        events[3].payload["message"]["content"].strip("'").strip('"') == "WORLD"
+    )  # final assistant reply
 
 
 # --------------------------------------------------------------------------- #
@@ -96,7 +102,6 @@ async def test_interjection_publishes_user_event() -> None:
 
     # Interject with second.
     await handle.interject("second")
-
 
     final = await handle.result()
     assert final == "You said: second"

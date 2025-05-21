@@ -5,13 +5,14 @@ import sys
 import traceback
 from typing import Any, Callable
 
+
 def _handle_project(
     test_fn: Callable | None = None,
     *,
     try_reuse_prev_ctx: bool = False,
     delete_ctx_on_exit: bool = False,
 ):
-    if test_fn is None:          # called with parameters → return real decorator
+    if test_fn is None:  # called with parameters → return real decorator
         return lambda f: _handle_project(
             f,
             try_reuse_prev_ctx=try_reuse_prev_ctx,

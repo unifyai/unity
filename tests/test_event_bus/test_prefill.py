@@ -33,7 +33,7 @@ async def test_prefill_from_upstream_on_new_instance():
                 receiver_id=random.randint(0, 10),
                 timestamp=dt.datetime.now(dt.UTC).isoformat(),
                 content="hello",
-                exchange_id=0
+                exchange_id=0,
             ),
         )
         published.append(evt)

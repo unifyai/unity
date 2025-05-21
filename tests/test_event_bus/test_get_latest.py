@@ -68,7 +68,10 @@ async def test_concurrent_get_latest_lock_integrity():
     expected_r1 = {"Messages": messages_newest[-5:]}
     expected_r2 = {"MessageExchangeSummary": summaries_newest[-7:]}
     expected_r3 = {}  # empty filter → empty result
-    expected_r4 = {"Messages": messages_newest[-5:], "MessageExchangeSummary": summaries_newest[-7:]}
+    expected_r4 = {
+        "Messages": messages_newest[-5:],
+        "MessageExchangeSummary": summaries_newest[-7:],
+    }
 
     # ── Concurrent read tasks ──────────────────────────────────────
     tasks = [
@@ -77,7 +80,12 @@ async def test_concurrent_get_latest_lock_integrity():
             bus.get_latest(types=["MessageExchangeSummary"], limits=7),
         ),  # r2
         asyncio.create_task(bus.get_latest(types=[], limits=10)),  # r3 (no types)
-        asyncio.create_task(bus.get_latest(types=None, limits={"Messages": 5, "MessageExchangeSummary": 7})),  # r4 (both types)
+        asyncio.create_task(
+            bus.get_latest(
+                types=None,
+                limits={"Messages": 5, "MessageExchangeSummary": 7},
+            ),
+        ),  # r4 (both types)
     ]
 
     r1, r2, r3, r4 = await asyncio.gather(*tasks)

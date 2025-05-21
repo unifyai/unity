@@ -5,7 +5,6 @@ from collections import deque
 
 from unity.events.event_bus import EventBus, Event
 from unity.communication.types.message import Message, Medium
-from unity.communication.types.message_exchange_summary import MessageExchangeSummary
 from tests.helpers import _handle_project
 
 
@@ -36,7 +35,7 @@ async def test_window_eviction_at_limit():
                 receiver_id=random.randint(0, 10),
                 timestamp=dt.datetime.now(dt.UTC).isoformat(),
                 content=f"{i}",
-                exchange_id=0
+                exchange_id=0,
             ),
         )
         events.append(evt)
