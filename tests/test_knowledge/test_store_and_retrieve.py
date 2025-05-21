@@ -44,7 +44,8 @@ def _contains(text: str, *needles: str) -> bool:
 async def test_store_simple_fact():
     km = KnowledgeManager()
 
-    await km.store("Adrian was born in 1994.")
+    handle = await km.store("Adrian was born in 1994.")
+    await handle.result()
 
     all_data = km._search()
     assert _contains(json.dumps(all_data), "1994"), all_data
@@ -65,10 +66,11 @@ async def test_retrieve_simple_fact():
     km._create_table("MyTable")
     km._add_data(table="MyTable", data=[{"name": "Adrian", "birth_year": "1994"}])
 
-    answer, reasoning = await km.retrieve(
+    handle = await km.retrieve(
         "When was Adrian born?",
         return_reasoning_steps=True,
     )
+    answer, reasoning = await handle.result()
     assert _contains(answer, "1994"), assertion_failed(
         "Answer containing '1994'",
         answer,
@@ -90,12 +92,14 @@ async def test_retrieve_simple_fact():
 async def test_round_trip_simple_fact():
     km = KnowledgeManager()
 
-    await km.store("Adrian was born in 1994.")
+    handle = await km.store("Adrian was born in 1994.")
+    await handle.result()
 
-    answer, reasoning = await km.retrieve(
+    handle = await km.retrieve(
         "When was Adrian born?",
         return_reasoning_steps=True,
     )
+    answer, reasoning = await handle.result()
     assert _contains(answer, "1994"), assertion_failed(
         "Answer containing '1994'",
         answer,
@@ -122,12 +126,14 @@ async def test_schema_expands_and_new_field_retrievable():
     """
     km = KnowledgeManager()
 
-    await km.store("Bob is 35 years old.")
+    handle = await km.store("Bob is 35 years old.")
+    await handle.result()
 
-    answer, reasoning = await km.retrieve(
+    handle = await km.retrieve(
         "How old is Bob?",
         return_reasoning_steps=True,
     )
+    answer, reasoning = await handle.result()
     assert _contains(answer, "35"), assertion_failed(
         "Answer containing '35'",
         answer,
@@ -136,14 +142,16 @@ async def test_schema_expands_and_new_field_retrievable():
         {"Knowledge Data": km._search()},
     )
 
-    await km.store(
+    handle = await km.store(
         "Bob's favourite colour is green and his height is 180 centimetres.",
     )
+    await handle.result()
 
-    answer, reasoning = await km.retrieve(
+    handle = await km.retrieve(
         "How tall is Bob?",
         return_reasoning_steps=True,
     )
+    answer, reasoning = await handle.result()
     assert _contains(answer, "180"), assertion_failed(
         "Answer containing '180'",
         answer,
@@ -152,10 +160,11 @@ async def test_schema_expands_and_new_field_retrievable():
         {"Knowledge Data": km._search()},
     )
 
-    answer, reasoning = await km.retrieve(
+    handle = await km.retrieve(
         "What is Bob's favourite colour?",
         return_reasoning_steps=True,
     )
+    answer, reasoning = await handle.result()
     assert _contains(answer, "green"), assertion_failed(
         "Answer containing 'green'",
         answer,
@@ -164,10 +173,11 @@ async def test_schema_expands_and_new_field_retrievable():
         {"Knowledge Data": km._search()},
     )
 
-    answer, reasoning = await km.retrieve(
+    handle = await km.retrieve(
         "How old is Bob?",
         return_reasoning_steps=True,
     )
+    answer, reasoning = await handle.result()
     assert _contains(answer, "35"), assertion_failed(
         "Answer containing '35'",
         answer,
@@ -197,15 +207,19 @@ async def test_multiple_tables_and_join_like_query():
     """
     km = KnowledgeManager()
 
-    await km.store("The Apple iPhone 15 costs 999 US dollars.")
-    await km.store(
+    handle = await km.store("The Apple iPhone 15 costs 999 US dollars.")
+    await handle.result()
+
+    handle = await km.store(
         "Daniel bought an iPhone 15 on 3 May 2025 using his credit card.",
     )
+    await handle.result()
 
-    answer, reasoning = await km.retrieve(
+    handle = await km.retrieve(
         "How much did Daniel pay for his purchase?",
         return_reasoning_steps=True,
     )
+    answer, reasoning = await handle.result()
     assert _contains(answer, "999"), assertion_failed(
         "Answer containing '999'",
         answer,
@@ -236,13 +250,17 @@ async def test_incremental_updates_and_refactor():
     """
     km = KnowledgeManager()
 
-    await km.store("Carol owns a dog named Fido.")
-    await km.store("Carol also owns a cat named Luna.")
+    handle = await km.store("Carol owns a dog named Fido.")
+    await handle.result()
 
-    answer, reasoning = await km.retrieve(
+    handle = await km.store("Carol also owns a cat named Luna.")
+    await handle.result()
+
+    handle = await km.retrieve(
         "What are the names of Carol's pets?",
         return_reasoning_steps=True,
     )
+    answer, reasoning = await handle.result()
     assert _contains(answer, "Fido", "Luna"), assertion_failed(
         "Answer containing both 'Fido' and 'Luna'",
         answer,
@@ -272,13 +290,17 @@ async def test_numeric_reasoning_after_multiple_points():
     """
     km = KnowledgeManager()
 
-    await km.store("Point P has coordinates x = 3 and y = 4.")
-    await km.store("Point Q has coordinates x = 1 and y = 10.")
+    handle = await km.store("Point P has coordinates x = 3 and y = 4.")
+    await handle.result()
 
-    answer, reasoning = await km.retrieve(
+    handle = await km.store("Point Q has coordinates x = 1 and y = 10.")
+    await handle.result()
+
+    handle = await km.retrieve(
         "Which points lie in the first quadrant but have y less than 5?",
         return_reasoning_steps=True,
     )
+    answer, reasoning = await handle.result()
     assert "P" in answer or "3, 4" in answer, assertion_failed(
         "Answer containing 'P' but not 'Q'",
         answer,

@@ -16,7 +16,8 @@ async def test_update_create_task_via_text():
         "description 'Send an email to Jeff Smith, kindly congratulating him and "
         "explaining that he has been promoted from sales rep to sales manager.'"
     )
-    await tlm.update(text=cmd)
+    handle = tlm.update(text=cmd)
+    await handle.result()
 
     tasks = tlm._search()
     assert len(tasks) == 1
@@ -41,6 +42,7 @@ async def test_update_delete_task_via_text():
     assert len(tlm._search()) == 1
 
     # delete via plain-English update
-    await tlm.update(text="Delete the task with id 0.")
+    handle = tlm.update(text="Delete the task with id 0.")
+    await handle.result()
 
     assert tlm._search() == []
