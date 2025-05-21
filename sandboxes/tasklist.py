@@ -216,7 +216,9 @@ def _poll_for_interruption(handle: AsyncToolLoopHandle) -> None:
 
 
 async def _process_voice_input(
-    tlm: TaskListManager, audio_bytes: bytes, show_steps: bool
+    tlm: TaskListManager,
+    audio_bytes: bytes,
+    show_steps: bool,
 ):
     """Process voice input with interruption support."""
     user_text = _transcribe_deepgram(audio_bytes).strip()
@@ -318,7 +320,9 @@ async def _async_main():
         while True:
             audio_bytes = _record_until_enter()
             result = await _process_voice_input(
-                tlm, audio_bytes, show_steps=not args.silent
+                tlm,
+                audio_bytes,
+                show_steps=not args.silent,
             )
             if result == "quit":
                 break
@@ -327,7 +331,9 @@ async def _async_main():
             while True:
                 line = input("> ").strip()
                 result = await _process_text_input(
-                    tlm, line, show_steps=not args.silent
+                    tlm,
+                    line,
+                    show_steps=not args.silent,
                 )
                 if result == "quit":
                     break

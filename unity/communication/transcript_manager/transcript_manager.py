@@ -1,5 +1,5 @@
 import json
-from typing import List, Dict, Any, Optional, Union
+from typing import List, Dict, Optional, Union
 
 import unify
 from ...common.embed_utils import EMBED_MODEL, ensure_vector_column
@@ -51,7 +51,10 @@ class TranscriptManager:
     # English-Text Question
 
     def ask(
-        self, text: str, *, return_reasoning_steps: bool = False
+        self,
+        text: str,
+        *,
+        return_reasoning_steps: bool = False,
     ) -> "AsyncToolLoopHandle":
         """
         Ask any question as a text command, and use the tools available (the private methods of this class) to perform the action.

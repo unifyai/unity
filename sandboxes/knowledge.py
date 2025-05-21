@@ -23,8 +23,7 @@ import logging
 import re
 import sys
 import select
-import time
-from typing import List, Optional, Tuple, Any
+from typing import List, Optional, Tuple
 from pydantic import BaseModel, Field
 from pathlib import Path
 
@@ -269,13 +268,17 @@ async def _main_async(args) -> None:
 
             # Get the handle and create a task for the result
             kind, handle, steps = await _dispatch(
-                km, user_text, show_steps=not args.silent
+                km,
+                user_text,
+                show_steps=not args.silent,
             )
             answer_task = asyncio.create_task(handle.result())
 
             # Handle interruptions while waiting for the result
             kind, result = await _handle_interruptions(
-                handle, answer_task, voice_mode=True
+                handle,
+                answer_task,
+                voice_mode=True,
             )
 
             print(f"[{kind}] => {result}\n")
@@ -292,7 +295,9 @@ async def _main_async(args) -> None:
 
                 # Get the handle and create a task for the result
                 kind, handle, steps = await _dispatch(
-                    km, line, show_steps=not args.silent
+                    km,
+                    line,
+                    show_steps=not args.silent,
                 )
                 answer_task = asyncio.create_task(handle.result())
 

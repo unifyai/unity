@@ -63,7 +63,10 @@ class KnowledgeManager:
     # English-Text Command
 
     def store(
-        self, text: str, *, return_reasoning_steps: bool = False
+        self,
+        text: str,
+        *,
+        return_reasoning_steps: bool = False,
     ) -> "AsyncToolLoopHandle":
         """
         Take in any storage text command, and use the tools available (the *non-skipped* private methods of this class) to store the information, refactoring the table and column schema along the way if needed.
@@ -118,7 +121,10 @@ class KnowledgeManager:
         return handle
 
     def retrieve(
-        self, text: str, *, return_reasoning_steps: bool = False
+        self,
+        text: str,
+        *,
+        return_reasoning_steps: bool = False,
     ) -> "AsyncToolLoopHandle":
         """
         Take in any retrieval text command, and use the tools available (the *non-skipped* private methods of this class) to retrieve the information, refactoring the table and column schema along the way if needed.

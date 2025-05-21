@@ -13,7 +13,6 @@
 from __future__ import annotations
 
 import uuid
-from typing import Any
 
 import pytest
 from pydantic import BaseModel
@@ -76,7 +75,7 @@ async def test_calling_id_is_preserved_across_messages() -> None:
 
     for word in ("alpha", "beta", "gamma"):
         await bus.publish(
-            Event(type="FLOW", payload=DummyPayload(msg=word), calling_id=cid)
+            Event(type="FLOW", payload=DummyPayload(msg=word), calling_id=cid),
         )
 
     latest = await bus.get_latest(types=["FLOW"], limit=10)

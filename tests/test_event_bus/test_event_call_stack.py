@@ -8,7 +8,6 @@
 
 from __future__ import annotations
 
-import asyncio
 import pytest
 from pydantic import BaseModel
 
@@ -38,8 +37,16 @@ async def test_get_event_call_stack_local() -> None:
 
     # ── construct chain ──────────────────────────────────────────────────
     root_evt = Event(type="STACK", payload=Payload(txt="root"))
-    mid_evt  = Event(type="STACK", payload=Payload(txt="mid"),  calling_id=root_evt.event_id)
-    leaf_evt = Event(type="STACK", payload=Payload(txt="leaf"), calling_id=mid_evt.event_id)
+    mid_evt = Event(
+        type="STACK",
+        payload=Payload(txt="mid"),
+        calling_id=root_evt.event_id,
+    )
+    leaf_evt = Event(
+        type="STACK",
+        payload=Payload(txt="leaf"),
+        calling_id=mid_evt.event_id,
+    )
 
     # publish -> now all three live inside the relevant deque
     for e in (root_evt, mid_evt, leaf_evt):
