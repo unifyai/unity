@@ -10,7 +10,7 @@ import datetime as dt
 from collections import deque
 from typing import List, Deque, Dict, Iterable, Union
 from importlib import import_module
-from pydantic import BaseModel, Field, ValidationError, field_validator, model_validator
+from pydantic import BaseModel, Field, SerializeAsAny, ValidationError, field_validator, model_validator
 from uuid import uuid4
 
 __all__ = ["Event", "EventBus", "Subscription"]
@@ -26,7 +26,7 @@ class Event(BaseModel):
     timestamp: str = Field(
         default_factory=lambda: dt.datetime.now(dt.UTC).isoformat()
     )
-    payload: BaseModel
+    payload: SerializeAsAny[BaseModel]
     # dotted Python path to the payload model – filled in automatically
     payload_cls: str = ""
 
@@ -159,7 +159,7 @@ class EventBus:
             project=unify.active_project(),
             context=self._global_ctx,
             params={},
-            entries=event,
+            entries=event.model_dump(),
         )
 
         # Log to specific event table
@@ -167,7 +167,6 @@ class EventBus:
             payload_dict = event.payload.model_dump(mode="python")
         else:
             payload_dict = dict(event.payload)
-        payload_dict["__payload_cls__"] = event.payload_cls
 
         self._logger.log_create(
             project=unify.active_project(),
