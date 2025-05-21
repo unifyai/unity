@@ -15,7 +15,8 @@ async def test_prefill_from_upstream_on_new_instance():
     should hydrate those same events from Unify logs into its in-memory window.
     """
     window = 10
-    bus1 = EventBus(windows_sizes={"message": window})
+    bus1 = EventBus()
+    bus1.set_default_window(window)
 
     base_ts = dt.datetime.now(dt.UTC)
     published: list[Event] = []
@@ -34,7 +35,8 @@ async def test_prefill_from_upstream_on_new_instance():
     await asyncio.sleep(0.05)
 
     # Create a *new* EventBus that should preload from persisted logs
-    bus2 = EventBus(windows_sizes={"message": window})
+    bus2 = EventBus()
+    bus2.set_window("messages", window)
 
     latest = await bus2.get_latest(types=["message"], limit=window)
 

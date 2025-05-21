@@ -32,7 +32,8 @@ async def test_get_latest():
 async def test_get_latest_mixed_types_ordering():
     """Interwoven publishing of two event types should come back newest-first."""
     window_sizes = {"Messages": 10, "MessageExchangeSummary": 10}
-    bus = EventBus(windows_sizes=window_sizes)
+    bus = EventBus()
+    [bus.set_window(k, v) for k, v in window_sizes.items()]
 
     # Start from a clean slate for deterministic assertions
     for t in ("Messages", "MessageExchangeSummary"):
@@ -77,7 +78,8 @@ async def test_concurrent_get_latest_lock_integrity():
     correct (newest-first) slices, proving the read-side lock holds up.
     """
     windows = {"Messages": 100, "MessageExchangeSummary": 100}
-    bus = EventBus(windows_sizes=windows)
+    bus = EventBus()
+    [bus.set_window(k, v) for k, v in windows.items()]
 
     # Ensure a clean slate so results are deterministic
     for t, w in windows.items():
