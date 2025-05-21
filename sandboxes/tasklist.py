@@ -36,6 +36,7 @@ from sandboxes.utils import (
     record_until_enter as _record_until_enter,
     transcribe_deepgram as _transcribe_deepgram,
     speak as _speak,
+    run_in_loop,
 )  # type: ignore
 
 
@@ -205,7 +206,7 @@ def _poll_for_interruption(handle: AsyncToolLoopHandle) -> None:
                 return
             else:
                 print(f"💬 Interjecting: {user_input}")
-                asyncio.create_task(handle.interject(user_input))
+                run_in_loop(handle.interject(user_input))
         time.sleep(0.1)
 
 
