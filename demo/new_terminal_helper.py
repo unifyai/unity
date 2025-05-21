@@ -14,6 +14,8 @@ proc.kill()            # force-kill
 from __future__ import annotations
 import os, sys, shutil, shlex, subprocess, signal
 from pathlib import Path
+import time
+import psutil
 
 
 def _find_unix_terminal() -> str | None:
@@ -63,19 +65,29 @@ def run_in_new_terminal(
         )
 
     elif sys.platform == "darwin":
-        # ─ macOS: wrap the python command in AppleScript so it runs in Terminal.app,
-        #          but start the *python* process directly so we still get its PID.
-        osa = (
-            'tell application "Terminal"\n'
-            "    activate\n"
-            f'    do script "{shlex.join(py_cmd)}"\n'
-            "end tell"
-        )
-        # Start python in the background (new process-group) so we have its handle
-        proc = subprocess.Popen(py_cmd, start_new_session=True)
-        # Open Terminal and attach to that process
+        # shell line run inside Terminal
+        shell = f"echo $$ > /tmp/{script_path.stem}.pid; exec {shlex.join(py_cmd)}"
+
+        osa = f"""
+            tell application "Terminal"
+                activate
+                do script "{shell}"
+            end tell
+        """
+
         subprocess.Popen(["osascript", "-e", osa])
-        return proc
+
+        # wait a moment for the PID file to appear
+        pid_file = Path(f"/tmp/{script_path.stem}.pid")
+        for _ in range(50):
+            if pid_file.exists():
+                pid = int(pid_file.read_text())
+                break
+            time.sleep(0.1)
+        else:
+            raise RuntimeError("couldn’t obtain PID from Terminal")
+
+        return psutil.Process(pid)
 
     else:  # Linux / BSD / WSL
         term = _find_unix_terminal()
