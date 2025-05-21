@@ -429,7 +429,7 @@ async def _async_tool_use_loop_inner(
             msg = response.choices[0].message
             if event_bus:
                 await event_bus.publish(
-                    Event(type=event_type, payload={"message": msg}),
+                    Event(type=event_type, payload={"message": msg.model_dump()}),
                 )
 
             # ── E.  Launch any new tool calls  ──────────────────────────────
