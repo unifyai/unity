@@ -94,10 +94,14 @@ class EventBus:
                 self._window_sizes[event_type] = _DEFAULT_WINDOW
 
     async def publish(self, event: Event) -> None:
+        self.register_event_types(event.type)
         window = self._window_sizes[event.type]
+        if event.type not in self._ctxs:
+            if event.type not in unify.get_contexts():
+                unify.create_context()
 
         async with self._lock:
-            dq = self._deques[event.type]
+            dq = self._deques.setdefault(event.type, deque())
             dq.append(event)
             while len(dq) > window:
                 dq.popleft()
