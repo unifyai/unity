@@ -179,8 +179,8 @@ async def test_log_messages():
                     timestamp=datetime.now(UTC).isoformat(),
                     content=random.choice(MESSAGES),
                     exchange_id=i,
-                )
-            )
+                ),
+            ),
         )
         for i in range(10)
     ]
@@ -210,8 +210,8 @@ async def test_get_messages():
                     timestamp=datetime.now(UTC).isoformat(),
                     content=random.choice(MESSAGES),
                     exchange_id=i,
-                )
-            )
+                ),
+            ),
         )
         for i in range(10)
     ]
@@ -282,8 +282,8 @@ async def test_summarize_exchanges():
                     timestamp=datetime.now(UTC).isoformat(),
                     content=msg,
                     exchange_id=0,
-                )
-            )
+                ),
+            ),
         )
         for i, msg in enumerate(
             [
@@ -292,7 +292,7 @@ async def test_summarize_exchanges():
                 "How are your office staplers doing? Are they underperforming?",
                 "Actually yeah, they're a bit rusty, but I can't make any buying decisions. My manager can.",
                 "Okay, no worries. Let's catch up again soon.",
-            ]
+            ],
         )
     ]
 
@@ -309,15 +309,15 @@ async def test_summarize_exchanges():
                     timestamp=datetime.now(UTC).isoformat(),
                     content=msg,
                     exchange_id=1,
-                )
-            )
+                ),
+            ),
         )
         for i, msg in enumerate(
             [
                 "Great catching up the other day, did you manage to talk to your manager?",
                 "Hey, yeah I did actually. I'll reach out soon.",
                 "Okay great, thanks!",
-            ]
+            ],
         )
     ]
 
@@ -334,14 +334,14 @@ async def test_summarize_exchanges():
                     timestamp=datetime.now(UTC).isoformat(),
                     content=msg,
                     exchange_id=2,
-                )
-            )
+                ),
+            ),
         )
         for i, msg in enumerate(
             [
                 "Hey, yeah we'd love to buy your staplers!",
                 "Great! Excited to hear :)",
-            ]
+            ],
         )
     ]
     event_bus.join_published()

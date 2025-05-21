@@ -11,18 +11,19 @@ from __future__ import annotations
 
 import unify
 import asyncio
-from types import SimpleNamespace
-from typing import Any, Dict, List
 
 import pytest
 
-from unity.common.llm_helpers import _async_tool_use_loop_inner, start_async_tool_use_loop
+from unity.common.llm_helpers import (
+    _async_tool_use_loop_inner,
+    start_async_tool_use_loop,
+)
 from unity.events.event_bus import EventBus
 from tests.helpers import _handle_project
 
 
-async def echo(text: str) -> str:          # noqa: D401 – simple echo tool
-    await asyncio.sleep(0.01)              # prove we can yield control
+async def echo(text: str) -> str:  # noqa: D401 – simple echo tool
+    await asyncio.sleep(0.01)  # prove we can yield control
     return text.upper()
 
 
@@ -62,14 +63,15 @@ async def test_basic_event_flow() -> None:
     roles = [evt.payload["message"]["role"] for evt in events]
     assert roles == ["user", "assistant", "tool", "assistant"]
 
-    assert events[0].payload["message"]["content"] == "world"      # original user question
-    assert events[2].payload["message"]["content"] == "WORLD"      # tool result
-    assert events[3].payload["message"]["content"] == "WORLD"      # final assistant reply
+    assert events[0].payload["message"]["content"] == "world"  # original user question
+    assert events[2].payload["message"]["content"] == "WORLD"  # tool result
+    assert events[3].payload["message"]["content"] == "WORLD"  # final assistant reply
 
 
 # --------------------------------------------------------------------------- #
 #               Publishing still works while the loop is running              #
 # --------------------------------------------------------------------------- #
+
 
 @pytest.mark.asyncio
 @_handle_project
@@ -82,12 +84,14 @@ async def test_interjection_publishes_user_event() -> None:
     bus.register_event_types("CHAT")
 
     client = unify.AsyncUnify("gpt-4o@openai", cache=True)
-    client.set_system_message("Please always respond with 'You said: {my_latest_message}', with the placeholder containing whatever I said, and do not include the quoation marks in your response.")
+    client.set_system_message(
+        "Please always respond with 'You said: {my_latest_message}', with the placeholder containing whatever I said, and do not include the quoation marks in your response.",
+    )
 
     handle = start_async_tool_use_loop(
         client=client,
         message="first",
-        tools={},                                # no tools needed
+        tools={},  # no tools needed
         max_consecutive_failures=1,
     )
     # The wrapper does *not* forward event_bus; we attach it manually so the
@@ -104,5 +108,5 @@ async def test_interjection_publishes_user_event() -> None:
 
     events = await bus.get_latest(types=["CHAT"], limit=10)
     roles = [evt.payload["message"]["role"] for evt in events]
-    assert "user" in roles                      # initial user
-    assert roles.count("user") == 2             # + the interjection
+    assert "user" in roles  # initial user
+    assert roles.count("user") == 2  # + the interjection
