@@ -28,7 +28,6 @@ import unify
 from unity.communication.transcript_manager.transcript_manager import TranscriptManager
 from unity.communication.types.message import Message
 from unity.common.llm_helpers import _dumps
-from unity.common import AsyncToolLoopHandle
 from tests.assertion_helpers import assertion_failed
 from tests.helpers import _handle_project
 
@@ -234,7 +233,7 @@ class ScenarioBuilder:
                         content=txt,
                         exchange_id=ex_id,
                     ),
-                )
+                ),
             )
             for s, r, ts, txt in msgs
         ]

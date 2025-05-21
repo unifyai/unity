@@ -69,8 +69,8 @@ def callback(message: pubsub_v1.types.PubsubMessage, subscription_id: str):
                             timestamp=datetime.now(),
                             role="User",
                         ).to_dict(),
-                    }
-                )
+                    },
+                ),
             )
             message.ack()
         else:
@@ -159,7 +159,9 @@ def main():
     # Start subscription threads
     for sub_id in subscriptions:
         thread = threading.Thread(
-            target=subscribe_to_topic, args=(sub_id,), daemon=True
+            target=subscribe_to_topic,
+            args=(sub_id,),
+            daemon=True,
         )
         threads.append(thread)
         thread.start()

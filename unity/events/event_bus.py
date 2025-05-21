@@ -212,13 +212,15 @@ class EventBus:
             seen.add(eid)
 
             evt = _find_local(eid)
-            if evt is None:                       # not in cache → ask Unify
+            if evt is None:  # not in cache → ask Unify
                 evt = _fetch_from_unify(eid)
                 if evt is None:
-                    break                         # gap – abort traversal
+                    break  # gap – abort traversal
 
                 # Cache it inside the appropriate deque for future calls
-                self._deques.setdefault(evt.type, deque(maxlen=_DEFAULT_WINDOW)).append(evt)
+                self._deques.setdefault(evt.type, deque(maxlen=_DEFAULT_WINDOW)).append(
+                    evt,
+                )
 
             stack_rev.append(evt)
             eid = evt.calling_id
