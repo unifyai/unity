@@ -8,9 +8,12 @@ from __future__ import annotations
 
 import asyncio
 import os
+import platform
+import select
 import threading
 import aiohttp
 import sys
+import time
 import wave
 from contextlib import contextmanager
 from ctypes import CFUNCTYPE, c_char_p, c_int, cdll
@@ -21,6 +24,10 @@ from deepgram import DeepgramClient, FileSource, PrerecordedOptions
 from livekit.plugins import cartesia
 
 from dotenv import load_dotenv
+
+# Import platform-specific modules for non-blocking input
+if platform.system() == "Windows":
+    import msvcrt
 
 load_dotenv()
 
@@ -197,3 +204,57 @@ def speak(text: str):
             termios.tcflush(sys.stdin, termios.TCIFLUSH)
         except Exception:
             pass
+
+
+def input_with_timeout(timeout: float = 0.1) -> Tuple[bool, Optional[str]]:
+    """Check for user input with a timeout, without blocking execution.
+
+    This function allows sandboxes to poll for user input while waiting for
+    async operations to complete, enabling interruption of long-running tasks.
+
+    Args:
+        timeout: Maximum time to wait for input in seconds (default: 0.1)
+
+    Returns:
+        Tuple of (has_input, input_value):
+            - has_input: True if user provided input, False if timeout occurred
+            - input_value: The string input if has_input is True, None otherwise
+
+    Example usage in sandboxes:
+        # Create and start the async operation
+        handle = manager.ask(question)
+        result_task = asyncio.create_task(handle.result())
+
+        # Poll for user input while waiting for result
+        while not result_task.done():
+            has_input, text = input_with_timeout(0.1)
+            if has_input:
+                # User wants to interrupt
+                await handle.interject(text)
+            await asyncio.sleep(0.1)
+
+        # Get the final result
+        final_answer = await result_task
+    """
+    if platform.system() == "Windows":
+        # Windows implementation using msvcrt
+        start_time = time.time()
+        input_chars = []
+
+        while time.time() - start_time < timeout:
+            if msvcrt.kbhit():
+                char = msvcrt.getche().decode("utf-8")
+                if char == "\r":  # Enter key
+                    print()  # Move to next line after Enter
+                    return True, "".join(input_chars)
+                input_chars.append(char)
+
+            time.sleep(0.01)  # Small sleep to prevent CPU hogging
+
+        return False, None
+    else:
+        # Unix implementation using select
+        rlist, _, _ = select.select([sys.stdin], [], [], timeout)
+        if rlist:
+            return True, sys.stdin.readline().strip()
+        return False, None

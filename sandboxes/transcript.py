@@ -9,6 +9,8 @@ with the task‑list sandbox.
 from __future__ import annotations
 
 import argparse
+import asyncio
+import threading
 import json
 import logging
 import random
@@ -319,14 +321,53 @@ def _seed_llm(tm: TranscriptManager) -> Optional[str]:
 # ---------------------------------------------------------------------------
 
 
-def _dispatch(
+async def _dispatch(
     tm: TranscriptManager,
     raw: str,
     *,
     show_steps: bool,
 ) -> Tuple[str, str, List | None]:
-    ans, steps = tm.ask(raw.strip(), return_reasoning_steps=show_steps)
-    return "ask", ans, steps
+    handle = tm.ask(raw.strip(), return_reasoning_steps=show_steps)
+
+    # Create a task for the result
+    answer_task = asyncio.create_task(handle.result())
+
+    # Set up a way to check for user input
+    stop_event = threading.Event()
+
+    def check_input():
+        try:
+            user_input = input("Press Enter to interrupt or type 'stop' to cancel...\n")
+            if user_input.lower().strip() == "stop":
+                handle.stop()
+                print("Stopping the current operation...")
+            elif user_input.strip():
+                asyncio.run(handle.interject(user_input))
+                print(f"Added interjection: {user_input}")
+            stop_event.set()
+        except Exception as e:
+            print(f"Error in input thread: {e}")
+            stop_event.set()
+
+    # Start a thread to check for user input
+    input_thread = threading.Thread(target=check_input, daemon=True)
+    input_thread.start()
+
+    try:
+        # Wait for either the answer or user interruption
+        result = await answer_task
+        steps = None
+        if show_steps and isinstance(result, tuple):
+            result, steps = result
+        return "ask", result, steps
+    except asyncio.CancelledError:
+        return "ask", "Operation was cancelled.", None
+    finally:
+        # Clean up
+        if not stop_event.is_set():
+            stop_event.set()
+        if input_thread.is_alive():
+            input_thread.join(timeout=1.0)
 
 
 # ---------------------------------------------------------------------------
@@ -334,7 +375,7 @@ def _dispatch(
 # ---------------------------------------------------------------------------
 
 
-def main() -> None:
+async def async_main() -> None:
     parser = argparse.ArgumentParser(
         description="TranscriptManager sandbox with Deepgram voice mode",
     )
@@ -365,4 +406,79 @@ def main() -> None:
         _LG.setLevel(logging.INFO)
         if not args.debug:
             for noisy in ("unify", "unify.utils", "unify.logging", "requests", "httpx"):
-                logging.get
+                logging.getLogger(noisy).setLevel(logging.WARNING)
+
+    # Create a TranscriptManager
+    from unity.events.event_bus import EventBus
+
+    eb = EventBus()
+    tm = TranscriptManager(eb)
+
+    # Seed with data
+    if args.new or not unify.get_logs(context=tm._contacts_ctx):
+        print("Seeding with fresh data…")
+        if args.scenario == "llm":
+            theme = _seed_llm(tm)
+            if theme:
+                print(f"Scenario theme: {theme}")
+        else:
+            _seed_fixed(tm)
+
+    # Import voice helpers only if needed
+    if args.voice:
+        from sandboxes.utils import record_until_enter, transcribe_deepgram, speak
+
+    # Main loop
+    print("\n=== TranscriptManager Sandbox ===")
+    print("Type 'exit' or Ctrl+C to quit.")
+    print("Type 'help' for available commands.")
+    print("During processing: press Enter to interrupt or type 'stop' to cancel.")
+
+    while True:
+        try:
+            if args.voice:
+                print("\nListening for voice input…")
+                audio = record_until_enter()
+                raw = transcribe_deepgram(audio)
+                print(f"You said: {raw}")
+            else:
+                raw = input("\n> ")
+
+            if not raw or raw.lower() in ("exit", "quit"):
+                break
+
+            if raw.lower() == "help":
+                print("\nAvailable commands:")
+                print("  help - Show this help message")
+                print("  exit, quit - Exit the sandbox")
+                continue
+
+            # Dispatch to the appropriate handler
+            try:
+                cmd, result, steps = await _dispatch(tm, raw, show_steps=args.debug)
+                print(f"\n{result}")
+
+                if args.voice:
+                    speak(result)
+
+                if steps and args.debug:
+                    print("\nReasoning steps:")
+                    for i, step in enumerate(steps):
+                        print(f"{i+1}. {step['role']}: {step['content']}")
+            except Exception as e:
+                print(f"Error: {e}")
+
+        except KeyboardInterrupt:
+            print("\nExiting…")
+            break
+        except Exception as e:
+            print(f"Unexpected error: {e}")
+
+
+def main():
+    """Entry point that runs the async main function."""
+    asyncio.run(async_main())
+
+
+if __name__ == "__main__":
+    main()
