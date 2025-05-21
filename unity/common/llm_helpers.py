@@ -133,15 +133,16 @@ def method_to_schema(bound_method):
     }
 
 
-async def async_tool_use_loop(
-    client: unify.AsyncUnify,
+async def _async_tool_use_loop_inner(
+    client: "unify.AsyncUnify",
     message: str,
     tools: Dict[str, Callable],
     *,
-    cancel_event: Optional[asyncio.Event] = None,
+    interject_queue: asyncio.Queue[str],
+    cancel_event: asyncio.Event,
     max_consecutive_failures: int = 3,
     log_steps: bool = False,
-):
+) -> str:
     r"""
     Drive a structured-tool conversation with an LLM until it produces a
     *final* textual answer, executing tool calls concurrently along the way
@@ -176,6 +177,24 @@ async def async_tool_use_loop(
        cancels the outer task) all running tools are cancelled and awaited
        before propagating :class:`asyncio.CancelledError`.
 
+   5. **On-the-fly user interjections** – a small wrapper
+      :func:`start_async_tool_use_loop` now launches the loop in its own task
+      and returns a *handle* object that lets a caller **modify** the
+      conversation while it is still in flight:
+
+        • ``await handle.interject(text)`` queues an additional *user* turn
+          which is merged into the dialogue just before the next LLM step,
+          so already-running tool calls are not disturbed.
+
+        • ``handle.stop()`` triggers the same graceful-shutdown path as
+          manually setting ``cancel_event`` – useful when the wrapper is
+          nested inside another loop that wants to cancel it from “above”.
+
+      Because the handle is an ordinary Python object these two methods can
+      themselves be exposed as *tools* to a parent loop, giving you **nested
+      conversations** whose inner loops can be steered or halted by the
+      outer assistant.
+
     ----------
     Execution branches in detail
     ----------------------------
@@ -196,7 +215,15 @@ async def async_tool_use_loop(
         Skip the LLM step altogether if ``cancel_event`` *has already* been
         set while no tasks were pending.
 
-    **C – Ask the LLM what to do next**
+    **C – Drain queued interjections**
+
+        * At the very start of each iteration the loop empties an internal
+          ``asyncio.Queue`` fed by ``handle.interject`` and appends every
+          payload as a ``"role": "user"`` message.  This guarantees any new
+          clarifications reach the model before it decides on the next tool
+          calls.
+
+    **D – Ask the LLM what to do next**
         ``client.generate`` is called with:
 
         * the accumulated conversation,
@@ -204,14 +231,14 @@ async def async_tool_use_loop(
         * ``tool_choice="auto"`` – the model decides whether to call a tool
           or to speak.
 
-    **D – Launch new tool calls**
+    **E – Launch new tool calls**
         For every tool call proposed in ``msg.tool_calls`` a coroutine is
         prepared (executed in a thread if the function is synchronous),
         wrapped in ``asyncio.create_task`` and added to ``pending``.
         Control returns to *Listening* immediately so tools can run
         concurrently.
 
-    **E – No new tool calls**
+    **F – No new tool calls**
 
         * If some tool calls are *still* running: loop back to *Listening*.
         * Otherwise – no tasks pending **and** the LLM produced ordinary text –
@@ -248,6 +275,9 @@ async def async_tool_use_loop(
     str
         The assistant's final plain-text reply **after** all required tool
         interactions have completed.
+        When ``return_history=True`` the function instead yields
+        ``Tuple[str, List[Dict[str, Any]]]`` – the assistant reply **and** the
+        complete chat transcript up to that point.
 
     ----------
     Raises
@@ -258,50 +288,52 @@ async def async_tool_use_loop(
     RuntimeError
         When ``consecutive_failures`` reaches ``max_consecutive_failures``.
 
-    ----------
-    Examples
-    --------
-    >>> async def get_weather(city: str) -> str: ...
-    >>> loop_task = asyncio.create_task(
-    ...     async_tool_use_loop(
-    ...         client, "What's the weather in Paris ?", {"weather": get_weather}
-    ...     )
+    Using the live handle for interjections
+    --------------------------------------
+    >>> handle = start_async_tool_use_loop(
+    ...     client,
+    ...     "Which task is most important?",
+    ...     task_tools,
     ... )
-    >>> # … later …
-    >>> loop_task.result()
-    'The current temperature in Paris is 19 °C and sunny.'
+    >>> # 500 ms later we realise we forgot a constraint
+    >>> await handle.interject("Which is also scheduled for this week?")
+    >>> answer = await handle.result()
+    >>> print(answer)
+    'Task XYZ is both high-priority and due this week.'
     """
-
-    cancel_event = cancel_event or asyncio.Event()
 
     if log_steps:
         LOGGER.info(f"\n🧑‍💻 {message}\n")
 
-    # ── initial prompt ──────────────────────────────────────────────────
+    # ── initial prompt ───────────────────────────────────────────────────────
     tools_schema = [method_to_schema(v) for v in tools.values()]
-    first = {"role": "user", "content": message}
-    client.append_messages([first])
+    client.append_messages([{"role": "user", "content": message}])
 
     consecutive_failures = 0
     pending: Set[asyncio.Task] = set()
-    task_info: Dict[asyncio.Task, Tuple[str, str]] = {}  # task → (name, call_id)
+    task_info: Dict[asyncio.Task, Tuple[str, str]] = {}
 
     try:
         while True:
-            # ── A.  Wait for *one* task or a cancel signal ────────────
+            # ── 0.  Drain any *new* user interjections up-front ────────────
+            while True:
+                try:
+                    extra = interject_queue.get_nowait()
+                except asyncio.QueueEmpty:
+                    break
+                if log_steps:
+                    LOGGER.info(f"\n⚡ Interjection → {extra!r}\n")
+                client.append_messages([{"role": "user", "content": extra}])
+
+            # ── A.  Wait for tool completion OR cancellation  ───────────────
             if pending:
                 waiters = pending | {asyncio.create_task(cancel_event.wait())}
-                done, _ = await asyncio.wait(
-                    waiters,
-                    return_when=asyncio.FIRST_COMPLETED,
-                )
+                done, _ = await asyncio.wait(waiters, return_when=asyncio.FIRST_COMPLETED)
 
-                # cancellation wins immediately
                 if any(t for t in done if t not in pending):
-                    raise asyncio.CancelledError
+                    raise asyncio.CancelledError      # cancellation wins
 
-                # a tool finished; process it / them
-                for task in done:
+                for task in done:                     # finished tool(s)
                     pending.remove(task)
                     name, call_id = task_info.pop(task)
 
@@ -316,36 +348,25 @@ async def async_tool_use_loop(
                         result = traceback.format_exc()
                         if log_steps:
                             LOGGER.error(
-                                f"\n❌ {name} raised an exception "
+                                f"\n❌ {name} failed "
                                 f"(attempt {consecutive_failures}/{max_consecutive_failures}):\n{result}",
                             )
 
                     client.append_messages(
-                        [
-                            {
-                                "role": "tool",
-                                "tool_call_id": call_id,
-                                "name": name,
-                                "content": result,
-                            },
-                        ],
+                        [{"role": "tool", "tool_call_id": call_id,
+                          "name": name, "content": result}],
                     )
 
                     if consecutive_failures >= max_consecutive_failures:
                         if log_steps:
-                            LOGGER.error(
-                                f"🚨 Aborting: reached "
-                                f"{max_consecutive_failures} consecutive tool failures.",
-                            )
-                        raise RuntimeError(
-                            "Aborted after too many consecutive tool failures.",
-                        )
+                            LOGGER.error("🚨 Aborting: too many tool failures.")
+                        raise RuntimeError("Aborted after too many consecutive tool failures.")
 
-            # ── B.  Cancel check before calling the LLM ───────────────
+            # ── B.  Cancel check before calling the LLM  ────────────────────
             if cancel_event.is_set():
                 raise asyncio.CancelledError
 
-            # ── C.  Ask the LLM what to do next ───────────────────────
+            # ── C.  Ask the LLM what to do next  ────────────────────────────
             if log_steps:
                 LOGGER.info("🔄 LLM thinking…")
 
@@ -357,7 +378,7 @@ async def async_tool_use_loop(
             )
             msg = response.choices[0].message
 
-            # ── D.  Launch any new tool calls ─────────────────────────
+            # ── D.  Launch any new tool calls  ──────────────────────────────
             if msg.tool_calls:
                 for call in msg.tool_calls:
                     name = call.function.name
@@ -375,21 +396,94 @@ async def async_tool_use_loop(
 
                 if log_steps:
                     LOGGER.info("✅ Step finished (tool calls scheduled)")
-                continue  # wait for first of them
+                continue                         # back to the top
 
-            # ── E.  No new tool calls  ────────────────────────────────
-            if pending:
-                # Go back to top; will wait for remaining tasks
+            # ── E.  No new tool calls  ──────────────────────────────────────
+            if pending:                         # still waiting for others
                 continue
 
             if log_steps:
                 LOGGER.info(f"\n🤖 {msg.content}\n")
                 LOGGER.info("✅ Step finished (final answer)")
-            return msg.content
+            return msg.content                  # DONE!
 
-    except asyncio.CancelledError:
-        # 🔴  Graceful shutdown: stop all tools
+    except asyncio.CancelledError:              # graceful shutdown
         for t in pending:
             t.cancel()
         await asyncio.gather(*pending, return_exceptions=True)
         raise
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 2.  A tiny handle object exposed to callers
+# ─────────────────────────────────────────────────────────────────────────────
+class AsyncToolLoopHandle:
+    """
+    Returned by `start_async_tool_use_loop`.  Lets you
+      • queue extra user messages while the loop runs and
+      • stop the loop at any time.
+    """
+    def __init__(
+        self,
+        *,
+        task: asyncio.Task,
+        interject_queue: asyncio.Queue[str],
+        cancel_event: asyncio.Event,
+    ):
+        self._task = task
+        self._queue = interject_queue
+        self._cancel_event = cancel_event
+
+    # -- public API -----------------------------------------------------------
+    async def interject(self, message: str) -> None:
+        """Inject an additional *user* turn into the running conversation."""
+        await self._queue.put(message)
+
+    def stop(self) -> None:
+        """Politely ask the loop to shut down (gracefully)."""
+        self._cancel_event.set()
+
+    # Optional helpers --------------------------------------------------------
+    def done(self) -> bool:
+        return self._task.done()
+
+    async def result(self) -> str:
+        """Wait for the assistant’s *final* reply."""
+        return await self._task
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 3.  A convenience wrapper that *starts* the loop and returns the handle
+# ─────────────────────────────────────────────────────────────────────────────
+def start_async_tool_use_loop(
+    client: unify.AsyncUnify,
+    message: str,
+    tools: Dict[str, Callable],
+    *,
+    max_consecutive_failures: int = 3,
+    log_steps: bool = False,
+) -> AsyncToolLoopHandle:
+    """
+    Kick off `_async_tool_use_loop_inner` in its own task and give the caller
+    a handle for live interaction.
+    """
+    interject_queue: asyncio.Queue[str] = asyncio.Queue()
+    cancel_event = asyncio.Event()
+
+    task = asyncio.create_task(
+        _async_tool_use_loop_inner(
+            client,
+            message,
+            tools,
+            interject_queue=interject_queue,
+            cancel_event=cancel_event,
+            max_consecutive_failures=max_consecutive_failures,
+            log_steps=log_steps,
+        )
+    )
+
+    return AsyncToolLoopHandle(
+        task=task,
+        interject_queue=interject_queue,
+        cancel_event=cancel_event,
+    )

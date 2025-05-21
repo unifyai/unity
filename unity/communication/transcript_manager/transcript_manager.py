@@ -6,7 +6,7 @@ from ...common.embed_utils import EMBED_MODEL, ensure_vector_column
 from ...communication.types.contact import Contact
 from ...communication.types.message import Message
 from ...communication.types.summary import Summary
-from ...common.llm_helpers import async_tool_use_loop
+from ...common.llm_helpers import start_async_tool_use_loop
 from ...events.event_bus import EventBus, Event
 
 
@@ -66,7 +66,7 @@ class TranscriptManager:
 
         client = unify.AsyncUnify("o4-mini@openai", cache=True)
         client.set_system_message(ANSWER)
-        ans = await async_tool_use_loop(client, text, self._tools)
+        ans = await start_async_tool_use_loop(client, text, self._tools).result()
         if return_reasoning_steps:
             return ans, client.messages
         return ans

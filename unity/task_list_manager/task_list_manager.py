@@ -4,7 +4,7 @@ from typing import Dict, List, Any, Optional, Union
 import unify
 
 from ..common.embed_utils import EMBED_MODEL, ensure_vector_column
-from ..common.llm_helpers import async_tool_use_loop
+from ..common.llm_helpers import start_async_tool_use_loop
 from .types.status import Status
 from .types.priority import Priority
 from .types.schedule import Schedule
@@ -107,12 +107,12 @@ class TaskListManager:
                 datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC"),
             ),
         )
-        ans = await async_tool_use_loop(
+        ans = await start_async_tool_use_loop(
             client,
             text,
             self._ask_tools,
             log_steps=log_tool_steps,
-        )
+        ).result()
         if return_reasoning_steps:
             return ans, client.messages
         return ans
@@ -146,12 +146,12 @@ class TaskListManager:
                 datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC"),
             ),
         )
-        ans = await async_tool_use_loop(
+        ans = await start_async_tool_use_loop(
             client,
             text,
             self._update_tools,
             log_steps=log_tool_steps,
-        )
+        ).result()
         if return_reasoning_steps:
             return ans, client.messages
         return ans
