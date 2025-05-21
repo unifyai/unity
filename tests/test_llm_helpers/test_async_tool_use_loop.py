@@ -8,6 +8,7 @@ pytest tests for the *asynchronous* helper:
 
 from __future__ import annotations
 
+import unify
 import asyncio
 import json
 import time
@@ -303,3 +304,28 @@ async def test_async_loop_fast_cancel():
 
     assert dt < 0.15  # stop was fast
     assert flagged["cancelled"]  # tool got cancelled
+
+
+def square(x: int) -> int:
+    return x * x
+
+
+@pytest.mark.asyncio
+async def test_parallel_tool_calls():
+
+    client = unify.AsyncUnify("gpt-4o@openai")
+
+    # Run the loop – ask it to give back the history as well
+    await llmh.async_tool_use_loop(
+        client,
+        "Square 2 and 3 please",
+        {"square": square},
+    )
+
+    # Find the first assistant turn that *requested* tool calls
+    first_llm_turn = next(
+        m for m in client.messages if m["role"] == "assistant" and m.get("tool_calls")
+    )
+
+    # Ensure it actually asked for >1 tools – i.e. parallel tool calls
+    assert len(first_llm_turn["tool_calls"]) == 2
