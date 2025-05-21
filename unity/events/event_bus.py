@@ -147,6 +147,31 @@ class EventBus:
             bucket.sort(key=lambda e: e.timestamp, reverse=True)
             return bucket[:limit]
 
+    def update_window_size(self, event_type: str, new_size: int) -> None:
+        """
+        Change the *in-memory* history window for ``event_type`` to
+        ``new_size`` events.
+
+        • Creates the event-type on-the-fly if not registered yet
+          (mirrors :pymeth:`register_event_types` behaviour).
+        • Rebuilds the internal :class:`collections.deque` so the new
+          ``maxlen`` takes effect immediately, keeping **the most recent**
+          messages up to *new_size*.
+        """
+        if new_size <= 0:
+            raise ValueError("new_size must be a positive integer")
+
+        # Ensure bookkeeping structures exist
+        if event_type not in self._ctxs:
+            self.register_event_types(event_type)
+
+        self._window_sizes[event_type] = new_size
+
+        old_dq: Deque[Event] = self._deques.get(event_type, deque())
+        # Re-hydrate deque with new maxlen (keeps newest → oldest order intact)
+        new_dq: Deque[Event] = deque(old_dq, maxlen=new_size)
+        self._deques[event_type] = new_dq
+
     async def get_event_call_stack(self, event_id: str | int) -> list[Event]:
         """
         Return all parent-events of *event_id* **top-down**.
