@@ -17,9 +17,9 @@ def test_knowledge_embedding():
 
     # Semantically related entries without substring overlap
     entries = [
-        {"content": "I prefer email over phone."},
-        {"content": "Text messaging works best for me."},
-        {"content": "My favorite method is postal mail."},
+        {"content": "I email and phone sometimes."},
+        {"content": "Text messaging is my go-to communication method."},
+        {"content": "I love taking the train to work."},
     ]
     manager._add_data(table=table_name, data=entries)
 
@@ -32,7 +32,7 @@ def test_knowledge_embedding():
     assert len(keyword_results) == 0
 
     # Embedding-based nearest search for k=1 should return the most relevant entry
-    query = "preferred mediums of communication"
+    query = "favorite means of communication"
     emb_results_k1 = manager._nearest(
         tables=[table_name],
         column="content_emb",
