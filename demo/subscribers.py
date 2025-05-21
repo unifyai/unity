@@ -59,15 +59,19 @@ def callback(message: pubsub_v1.types.PubsubMessage, subscription_id: str):
     """
     try:
         if subscription_id in events_map:
-            asyncio.create_task(publish_event({
-                "type": "user_agent_event",
-                "to": "pending",
-                "event": events_map[subscription_id](
-                    content=message.data.decode("utf-8"),
-                    timestamp=datetime.now(),
-                    role="User",
-                ).to_dict(),
-            }))
+            asyncio.create_task(
+                publish_event(
+                    {
+                        "type": "user_agent_event",
+                        "to": "pending",
+                        "event": events_map[subscription_id](
+                            content=message.data.decode("utf-8"),
+                            timestamp=datetime.now(),
+                            role="User",
+                        ).to_dict(),
+                    }
+                )
+            )
             message.ack()
         else:
             print(f"Unknown event type: {subscription_id}")
@@ -93,22 +97,22 @@ def subscribe_to_topic(subscription_id: str):
         creds_json = json.loads(os.getenv("GCP_SA_KEY"))
         creds = Credentials.from_service_account_info(creds_json)
         subscriber = pubsub_v1.SubscriberClient(credentials=creds)
-        
+
         subscription_path = subscriber.subscription_path(project_id, subscription_id)
-        
+
         print(f"Starting subscription to {subscription_id}")
         streaming_pull_future = subscriber.subscribe(
             subscription_path,
-            callback=lambda message: callback(message, subscription_id)
+            callback=lambda message: callback(message, subscription_id),
         )
-        
+
         # Keep the subscription running
         try:
             streaming_pull_future.result()
         except Exception as e:
             streaming_pull_future.cancel()
             print(f"Subscription {subscription_id} failed: {e}")
-            
+
     except Exception as e:
         print(f"Error setting up subscription {subscription_id}: {e}")
 
@@ -147,28 +151,23 @@ def main():
         call_subscription_id,
         email_subscription_id,
         msg_subscription_id,
-        whatsapp_subscription_id
+        whatsapp_subscription_id,
     ]
-    
+
     threads = []
-    
+
     # Start subscription threads
     for sub_id in subscriptions:
         thread = threading.Thread(
-            target=subscribe_to_topic,
-            args=(sub_id,),
-            daemon=True
+            target=subscribe_to_topic, args=(sub_id,), daemon=True
         )
         threads.append(thread)
         thread.start()
-    
+
     # Start message processing thread
-    processor_thread = threading.Thread(
-        target=process_messages,
-        daemon=True
-    )
+    processor_thread = threading.Thread(target=process_messages, daemon=True)
     processor_thread.start()
-    
+
     # Keep main thread alive
     try:
         while True:
