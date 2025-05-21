@@ -44,7 +44,7 @@ async def test_event_ids_are_populated_and_unique() -> None:
     for txt in ("one", "two"):
         await bus.publish(Event(type="IDS", payload=DummyPayload(msg=txt)))
 
-    latest = await bus.get_latest(types=["IDS"], limit=2)
+    latest = await bus.get_latest(types=["IDS"], limits=2)
     assert len(latest) == 2
 
     # newest-first → reverse for creation order
@@ -78,7 +78,7 @@ async def test_calling_id_is_preserved_across_messages() -> None:
             Event(type="FLOW", payload=DummyPayload(msg=word), calling_id=cid),
         )
 
-    latest = await bus.get_latest(types=["FLOW"], limit=10)
+    latest = await bus.get_latest(types=["FLOW"], limits=10)
     assert latest, "no events returned"
 
     # All retrieved events belong to the requested flow

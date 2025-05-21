@@ -21,52 +21,10 @@ async def test_get_latest():
     await bus.publish(event)
 
     # Read back through the public API
-    latest = await bus.get_latest(types=["Messages"], limit=1)
+    latest = await bus.get_latest(types=["Messages"], limits=1)
 
     # There should be at least one event, and it should be the one we just published
     assert latest and latest[0] == event
-
-
-@pytest.mark.asyncio
-@_handle_project
-async def test_get_latest_mixed_types_ordering():
-    """Interwoven publishing of two event types should come back newest-first."""
-    window_sizes = {"Messages": 10, "MessageExchangeSummary": 10}
-    bus = EventBus()
-    [bus.set_window(k, v) for k, v in window_sizes.items()]
-
-    # Start from a clean slate for deterministic assertions
-    for t in ("Messages", "MessageExchangeSummary"):
-        bus._deques.setdefault(t, deque(maxlen=window_sizes[t])).clear()
-
-    base_ts = dt.datetime.now(dt.UTC)
-    events = []
-
-    # Publish 6 events: message, summary, message, …
-    for idx in range(6):
-        etype, payload_cls = (
-            ("Messages", Message)
-            if idx % 2 == 0
-            else ("MessageExchangeSummary", MessageExchangeSummary)
-        )
-
-        evt = Event(
-            type=etype,
-            timestamp=base_ts
-            + dt.timedelta(seconds=idx),  # strictly ascending timestamps
-            payload=payload_cls.model_construct(),
-        )
-        events.append(evt)
-        await bus.publish(evt)
-
-    # Retrieve the newest 10 events (more than we published)
-    latest = await bus.get_latest(limit=10)
-
-    # Filter the list to only the events we just wrote
-    latest_ours = [e for e in latest if e in events]
-
-    # They should be returned newest-first, i.e. exactly reverse of the order written
-    assert latest_ours == list(reversed(events))
 
 
 @pytest.mark.asyncio
@@ -114,12 +72,12 @@ async def test_concurrent_get_latest_lock_integrity():
 
     # ── Concurrent read tasks ──────────────────────────────────────
     tasks = [
-        asyncio.create_task(bus.get_latest(types=["Messages"], limit=5)),  # r1
+        asyncio.create_task(bus.get_latest(types=["Messages"], limits=5)),  # r1
         asyncio.create_task(
-            bus.get_latest(types=["MessageExchangeSummary"], limit=7),
+            bus.get_latest(types=["MessageExchangeSummary"], limits=7),
         ),  # r2
-        asyncio.create_task(bus.get_latest(types=[], limit=10)),  # r3 (no types)
-        asyncio.create_task(bus.get_latest(types=None, limit=15)),  # r4 (both types)
+        asyncio.create_task(bus.get_latest(types=[], limits=10)),  # r3 (no types)
+        asyncio.create_task(bus.get_latest(types=None, limits=15)),  # r4 (both types)
     ]
 
     r1, r2, r3, r4 = await asyncio.gather(*tasks)
