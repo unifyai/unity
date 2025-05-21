@@ -47,7 +47,7 @@ def _create_contacts():
 @pytest.mark.unit
 @_handle_project
 def test_create_contact():
-    transcript_manager = TranscriptManager()
+    transcript_manager = TranscriptManager(EventBus())
     transcript_manager.create_contact(
         first_name="Dan",
     )
@@ -67,7 +67,7 @@ def test_create_contact():
 @pytest.mark.unit
 @_handle_project
 def test_update_contact():
-    transcript_manager = TranscriptManager()
+    transcript_manager = TranscriptManager(EventBus())
 
     # create
     transcript_manager.create_contact(
@@ -110,7 +110,7 @@ def test_update_contact():
 @pytest.mark.unit
 @_handle_project
 def test_create_contacts():
-    transcript_manager = TranscriptManager()
+    transcript_manager = TranscriptManager(EventBus())
 
     # first
     transcript_manager.create_contact(
@@ -148,26 +148,27 @@ def test_create_contacts():
 @pytest.mark.unit
 @_handle_project
 def test_search_contacts():
-    transcript_manager = TranscriptManager()
+    transcript_manager = TranscriptManager(EventBus())
     transcript_manager.create_contact(
         first_name="Dan",
     )
 
 
 @pytest.mark.unit
+@pytest.mark.asyncio
 @_handle_project
-def test_log_messages():
+async def test_log_messages():
     event_bus = EventBus()
     [
-        event_bus.publish(
+        await event_bus.publish(
             Event(
-                type="message",
-                ts=datetime.now(UTC).isoformat(),
+                context="message",
+                timestamp=datetime.now(UTC).isoformat(),
                 payload=Message(
                     medium=random.choice(VALID_MEDIA),
                     sender_id=random.randint(0, 2),
                     receiver_id=random.randint(0, 2),
-                    timestamp=datetime.now().isoformat(),
+                    timestamp=datetime.now(UTC).isoformat(),
                     content=random.choice(MESSAGES),
                     exchange_id=i,
                 )
@@ -175,30 +176,38 @@ def test_log_messages():
         )
         for i in range(10)
     ]
+    event_bus.join_published()
 
 
 @pytest.mark.unit
+@pytest.mark.asyncio
 @_handle_project
-def test_get_messages():
-    start_time = datetime.now().isoformat()
+async def test_get_messages():
+    start_time = datetime.now(UTC).isoformat()
     time.sleep(0.1)
     random.seed(0)
-    transcript_manager = TranscriptManager()
+    event_bus = EventBus()
+    transcript_manager = TranscriptManager(event_bus)
 
     # log messages
-    transcript_manager.log_messages(
-        [
-            Message(
-                medium=random.choice(VALID_MEDIA),
-                sender_id=random.randint(0, 2),
-                receiver_id=random.randint(0, 2),
-                timestamp=datetime.now().isoformat(),
-                content=random.choice(MESSAGES),
-                exchange_id=i,
+    [
+        await event_bus.publish(
+            Event(
+                context="Messages",
+                timestamp=datetime.now(UTC).isoformat(),
+                payload=Message(
+                    medium=random.choice(VALID_MEDIA),
+                    sender_id=random.randint(0, 2),
+                    receiver_id=random.randint(0, 2),
+                    timestamp=datetime.now(UTC).isoformat(),
+                    content=random.choice(MESSAGES),
+                    exchange_id=i,
+                )
             )
-            for i in range(10)
-        ],
-    )
+        )
+        for i in range(10)
+    ]
+    event_bus.join_published()
 
     ## get all
 
@@ -243,76 +252,91 @@ def test_get_messages():
 
 
 @pytest.mark.unit
+@pytest.mark.asyncio
 @_handle_project
-def test_summarize_exchanges():
-    transcript_manager = TranscriptManager()
+async def test_summarize_exchanges():
+    event_bus = EventBus()
+    transcript_manager = TranscriptManager(event_bus)
 
     # create contacts
     _create_contacts()
 
     # phone call
-    transcript_manager.log_messages(
-        [
-            Message(
-                medium="phone_call",
-                sender_id=i % 2,
-                receiver_id=(i + 1) % 2,
-                timestamp=datetime.now().isoformat(),
-                content=msg,
-                exchange_id=0,
+    [
+        await event_bus.publish(
+            Event(
+                context="message",
+                timestamp=datetime.now(UTC).isoformat(),
+                payload=Message(
+                    medium="phone_call",
+                    sender_id=i % 2,
+                    receiver_id=(i + 1) % 2,
+                    timestamp=datetime.now(UTC).isoformat(),
+                    content=msg,
+                    exchange_id=0,
+                )
             )
-            for i, msg in enumerate(
-                [
-                    "Hey, how's it going?",
-                    "Yeah good thanks, how can I help you?",
-                    "How are your office staplers doing? Are they underperforming?",
-                    "Actually yeah, they're a bit rusty, but I can't make any buying decisions. My manager can.",
-                    "Okay, no worries. Let's catch up again soon.",
-                ],
-            )
-        ],
-    )
+        )
+        for i, msg in enumerate(
+            [
+                "Hey, how's it going?",
+                "Yeah good thanks, how can I help you?",
+                "How are your office staplers doing? Are they underperforming?",
+                "Actually yeah, they're a bit rusty, but I can't make any buying decisions. My manager can.",
+                "Okay, no worries. Let's catch up again soon.",
+            ]
+        )
+    ]
 
     # email exchange
-    transcript_manager.log_messages(
-        [
-            Message(
-                medium="email",
-                sender_id=i % 2,
-                receiver_id=(i + 1) % 2,
-                timestamp=datetime.now().isoformat(),
-                content=msg,
-                exchange_id=1,
+    [
+        await event_bus.publish(
+            Event(
+                context="message",
+                timestamp=datetime.now(UTC).isoformat(),
+                payload=Message(
+                    medium="email",
+                    sender_id=i % 2,
+                    receiver_id=(i + 1) % 2,
+                    timestamp=datetime.now(UTC).isoformat(),
+                    content=msg,
+                    exchange_id=1,
+                )
             )
-            for i, msg in enumerate(
-                [
-                    "Great catching up the other day, did you manage to talk to your manager?",
-                    "Hey, yeah I did actually. I'll reach out soon.",
-                    "Okay great, thanks!",
-                ],
-            )
-        ],
-    )
+        )
+        for i, msg in enumerate(
+            [
+                "Great catching up the other day, did you manage to talk to your manager?",
+                "Hey, yeah I did actually. I'll reach out soon.",
+                "Okay great, thanks!",
+            ]
+        )
+    ]
 
     # whatsapp exchange
-    transcript_manager.log_messages(
-        [
-            Message(
-                medium="whatsapp_message",
-                sender_id=(i + 1) % 2,
-                receiver_id=i % 2,
-                timestamp=datetime.now().isoformat(),
-                content=msg,
-                exchange_id=2,
+    [
+        await event_bus.publish(
+            Event(
+                context="message",
+                timestamp=datetime.now(UTC).isoformat(),
+                payload=Message(
+                    medium="whatsapp_message",
+                    sender_id=(i + 1) % 2,
+                    receiver_id=i % 2,
+                    timestamp=datetime.now(UTC).isoformat(),
+                    content=msg,
+                    exchange_id=2,
+                )
             )
-            for i, msg in enumerate(
-                [
-                    "Hey, yeah we'd love to buy your staplers!",
-                    "Great! Excited to hear :)",
-                ],
-            )
-        ],
-    )
+        )
+        for i, msg in enumerate(
+            [
+                "Hey, yeah we'd love to buy your staplers!",
+                "Great! Excited to hear :)",
+            ]
+        )
+    ]
+    event_bus.join_published()
 
     # summarize
     summary = transcript_manager.summarize(exchange_ids=[0, 1, 2])
