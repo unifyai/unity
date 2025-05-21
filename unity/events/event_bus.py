@@ -206,7 +206,7 @@ class EventBus:
             for t in wanted:
                 dq = self._deques.get(t)
                 if dq:
-                    ret[t] = list(dq)[:limits[t]]
+                    ret[t] = list(dq)[-limits[t]:]
         return ret
     
     def set_window(self, event_type: str, new_size: int) -> None:
