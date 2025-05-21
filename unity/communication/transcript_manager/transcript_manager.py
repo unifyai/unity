@@ -5,7 +5,7 @@ import unify
 from ...common.embed_utils import EMBED_MODEL, ensure_vector_column
 from ...communication.types.contact import Contact
 from ...communication.types.message import Message
-from ...communication.types.summary import Summary
+from ..types.message_exchange_summary import MessageExchangeSummary
 from ...common.llm_helpers import start_async_tool_use_loop
 from ...events.event_bus import EventBus, Event
 
@@ -66,7 +66,8 @@ class TranscriptManager:
 
         client = unify.AsyncUnify("o4-mini@openai", cache=True)
         client.set_system_message(ANSWER)
-        ans = await start_async_tool_use_loop(client, text, self._tools).result()
+        handle = start_async_tool_use_loop(client, text, self._tools)
+        ans = await handle.result()
         if return_reasoning_steps:
             return ans, client.messages
         return ans
@@ -106,7 +107,7 @@ class TranscriptManager:
         summary = client.generate(json.dumps(exchanges, indent=4))
         self._event_bus.publish(
             Event(
-                context="message_exchange_summary",
+                type="message_exchange_summary",
                 timestamp=latest_timestamp,
                 payload=summary
             )
@@ -276,7 +277,7 @@ class TranscriptManager:
         *,
         text: str,
         k: int = 10,
-    ) -> List[Summary]:
+    ) -> List[MessageExchangeSummary]:
         """
         Find summaries semantically similar to the provided text using vector embeddings.
 
@@ -285,7 +286,7 @@ class TranscriptManager:
             k (int): The number of similar summaries to return.
 
         Returns:
-            List[Summary]: A list of summaries semantically similar to the provided text.
+            List[MessageExchangeSummary]: A list of summaries semantically similar to the provided text.
         """
 
         ensure_vector_column(self._transcripts_ctx, self._VEC_MSG, "content")
@@ -296,7 +297,7 @@ class TranscriptManager:
             },
             limit=k,
         )
-        return [Summary(**lg.entries) for lg in logs]
+        return [MessageExchangeSummary(**lg.entries) for lg in logs]
 
     def _search_contacts(
         self,
@@ -374,4 +375,4 @@ class TranscriptManager:
             offset=offset,
             limit=limit,
         )
-        return [Summary(**lg.entries) for lg in logs]
+        return [MessageExchangeSummary(**lg.entries) for lg in logs]

@@ -3,8 +3,8 @@ import pytest
 from collections import deque
 
 from unity.events.event_bus import EventBus, Event
-from unity.events.types.message import Message
-from unity.events.types.message_exchange_summary import MessageExchangeSummary
+from unity.communication.types.message import Message
+from unity.communication.types.message_exchange_summary import MessageExchangeSummary
 from tests.helpers import _handle_project
 
 
@@ -23,7 +23,7 @@ async def test_window_eviction_at_limit():
     base_ts = dt.datetime.now(dt.UTC)
     for i in range(window + 1):
         evt = Event(
-            context="message",
+            type="message",
             timestamp=base_ts + dt.timedelta(seconds=i),
             payload=Message.model_construct(),
         )
@@ -73,7 +73,7 @@ async def test_window_eviction_mixed_sizes_and_ordering():
     events = []
     for idx, (etype, payload_cls) in enumerate(publish_plan):
         evt = Event(
-            context=etype,
+            type=etype,
             timestamp=base_ts + dt.timedelta(seconds=idx),
             payload=payload_cls.model_construct(),
         )
@@ -93,8 +93,8 @@ async def test_window_eviction_mixed_sizes_and_ordering():
     # reversed() because get_latest() returns newest-first
 
     # 1️⃣ Correct counts per type
-    assert sum(e.context == "message" for e in ours) == windows["message"]
-    assert sum(e.context == "message_exchange_summary" for e in ours) == windows["message_exchange_summary"]
+    assert sum(e.type == "message" for e in ours) == windows["message"]
+    assert sum(e.type == "message_exchange_summary" for e in ours) == windows["message_exchange_summary"]
 
     # 2️⃣ Overall ordering newest-first
     assert ours == expected_survivors, "Events not in expected newest-first order"
