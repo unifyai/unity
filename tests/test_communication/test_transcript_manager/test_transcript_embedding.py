@@ -51,16 +51,9 @@ async def test_transcript_embedding_semantic_search():
     [
         await event_bus.publish(
             Event(
-                type="message",
+                type="Messages",
                 timestamp=datetime.now(UTC).isoformat(),
-                payload=Message(
-                    medium=random.choice(VALID_MEDIA),
-                    sender_id=random.randint(0, 2),
-                    receiver_id=random.randint(0, 2),
-                    timestamp=datetime.now(UTC).isoformat(),
-                    content=msg,
-                    exchange_id=i,
-                ),
+                payload=msg,
             ),
         )
         for i, msg in enumerate(msgs)
