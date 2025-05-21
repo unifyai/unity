@@ -69,7 +69,7 @@ async def test_update_reorder_queue():
     ids = _seed_basic_tasks(tlm)
     assert [t.task_id for t in tlm._get_task_queue()] == ids  # initial order
 
-    handle = await tlm.update(
+    handle = tlm.update(
         text="Could you do Client follow-up email after Write quarterly report?",
     )
     await handle.result()
@@ -93,7 +93,7 @@ async def test_update_cancel_email_tasks():
 
     _seed_basic_tasks(tlm)
 
-    handle = await tlm.update(text="Please cancel all tasks related to sending emails.")
+    handle = tlm.update(text="Please cancel all tasks related to sending emails.")
     await handle.result()
 
     tasks = tlm._search()
@@ -135,7 +135,7 @@ async def test_update_lower_priority_next_monday():
         priority=Priority.high,
     )
 
-    handle = await tlm.update(
+    handle = tlm.update(
         text="Please lower the priority of all tasks which are scheduled for next Monday.",
     )
     await handle.result()
@@ -165,7 +165,7 @@ async def test_update_bulk_description_replace():
         description="Email the estate agent the sales brochure.",
     )
 
-    handle = await tlm.update(
+    handle = tlm.update(
         text="Please update all task descriptions to refer to Mr. Smith instead of 'the estate agent'.",
     )
     await handle.result()
