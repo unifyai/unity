@@ -47,6 +47,7 @@ CMD_BACK_NAV = "nav_back"
 CMD_FORWARD_NAV = "nav_forward"
 CMD_RELOAD_PAGE = "nav_reload"
 CMD_SOLVE_CAPTCHA = "solve_captcha"
+CMD_PRESS_KEY = "press_key *"
 
 # ───────────────────────────────────────────────────────────────────────────
 #  WILDCARD GROUPS (sets reused by GUI / agent / filters)
@@ -63,6 +64,7 @@ TEXTBOX_COMMANDS: set[str] = {
     CMD_CURSOR_UP,
     CMD_CURSOR_DOWN,
     CMD_SELECT_ALL,
+    CMD_PRESS_KEY,
     CMD_HOLD_SHIFT,
     CMD_HOLD_CTRL,
     CMD_HOLD_ALT,
