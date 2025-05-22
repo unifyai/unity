@@ -24,6 +24,8 @@ from typing import List
 
 import pytest
 
+import pytest
+import asyncio
 import unify
 from unity.communication.transcript_manager.transcript_manager import TranscriptManager
 from unity.communication.types.message import Message
@@ -336,6 +338,8 @@ def _answer_semantic(tm: TranscriptManager, question: str) -> str:
 
 
 def _is_summary_q(q: str) -> bool:
+    if isinstance(q, list):
+        return all(_is_summary_q(q) for q in q)
     return "one-sentence summary" in q.lower() or "one sentence summary" in q.lower()
 
 
@@ -361,10 +365,11 @@ QUESTIONS = [
 
 
 def _llm_assert_correct(
-    question: str,
-    expected: str,
+    question: str | List[str],
+    expected: str | List[str],
     candidate: str,
     steps: list,
+    multiple_answers: bool = False,
 ) -> None:
     """LLM-based validation with stricter or fuzzier rubric per question."""
     judge = unify.Unify("o4-mini@openai", cache=True)
@@ -384,10 +389,22 @@ def _llm_assert_correct(
             indent=4,
         )
     else:
+        if multiple_answers:
+            scenario_str = (
+                "You will be given multiple questions, and ground-truth answers derived "
+                "directly from the data, and candidate answers corresponding to each question respectively."
+            )
+        else:
+            scenario_str = (
+                "You will be given a question, a ground-truth answer derived "
+                "directly from the data, and a candidate answer."
+            )
+
         system_msg = (
             "You are a strict unit-test judge. "
-            "You will be given a question, a ground-truth answer derived "
-            "directly from the data, and a candidate answer. "
+            + scenario_str
+            + "Your task is to determine if the candidate answer is correct by comparing it to "
+            "the ground-truth answer. "
             'Respond ONLY with JSON {"correct": true|false}. '
             "Mark correct⇢true if a reasonable human would accept the candidate "
             "as fully accurate; otherwise false."
@@ -440,10 +457,46 @@ async def test_ask_semantic_with_llm_judgement(
     _llm_assert_correct(question, expected, candidate, steps)
 
 
-@pytest.mark.eval
 @pytest.mark.asyncio
+@pytest.mark.eval
 @_handle_project
-async def test_ask_with_interjection() -> None:
-    tm = await ScenarioBuilder().tm
-    handle = tm.ask(QUESTIONS[0], return_reasoning_steps=True)
-    await handle.result()
+async def test_ask_allows_interjection():
+    """Ask one semantic question, then interject with a second, and verify both answers appear."""
+    builder = await ScenarioBuilder.create()
+    tm = builder.tm
+    # 1) Initial semantic query – last Dan ⇢ Julia phone call date
+    q_initial = QUESTIONS[1]  # "When did Dan last speak with Julia on the phone?"
+    handle = tm.ask(q_initial, return_reasoning_steps=True)
+
+    # 2) Interject with a *different* question (Jimmy holiday date)
+    q_follow_up = QUESTIONS[2]  # "Did Jimmy ever tell us when he's on holiday...?"
+    await handle.interject(q_follow_up)
+
+    # 3) Await combined answer
+    answer, steps = await handle.result()
+    expected_date_call = _answer_semantic(tm, q_initial)
+    expected_date_holiday = _answer_semantic(tm, q_follow_up)
+
+    # 4) Assertions
+    _llm_assert_correct(
+        [q_initial, q_follow_up],
+        [expected_date_call, expected_date_holiday],
+        answer,
+        steps,
+        multiple_answers=True,
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.eval
+@_handle_project
+async def test_ask_honors_stop():
+    event_bus = EventBus()
+    tm = TranscriptManager(event_bus)
+    handle = tm.ask(
+        "List every message received from Carlos, then provide a detailed summary of each one in chronological order."
+    )
+    handle.stop()
+    with pytest.raises(asyncio.CancelledError):
+        await handle.result()
+    assert handle.done()
