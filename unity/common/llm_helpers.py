@@ -1,4 +1,5 @@
 import json
+import inspect
 import asyncio
 import inspect
 import traceback
@@ -133,6 +134,12 @@ def method_to_schema(bound_method):
         },
     }
 
+async def _maybe_await(obj):
+    """Return *obj* if it is a value, or `await` and return its result if it is
+    an awaitable."""
+    if inspect.isawaitable(obj):
+        return await obj
+    return obj
 
 async def _async_tool_use_loop_inner(
     client: unify.AsyncUnify,
@@ -322,42 +329,54 @@ async def _async_tool_use_loop_inner(
     consecutive_failures = 0
     pending: Set[asyncio.Task] = set()
     task_info: Dict[asyncio.Task, Tuple[str, str]] = {}
+    assistant_meta: Dict[int, Dict[str, Any]] = {}
 
     try:
         while True:
-            # ── 0.  Drain queued *user* interjections (but **only** if all
-            #        previous tool calls have been satisfied).  Injecting a
-            #        user turn while the API still expects tool-role messages
-            #        would violate the OpenAI protocol and trigger a 400.
-            if not pending:
-                while True:
-                    try:
-                        extra = interject_queue.get_nowait()
-                    except asyncio.QueueEmpty:
-                        break
-                    if log_steps:
-                        LOGGER.info(f"\n⚡ Interjection → {extra!r}\n")
-                    msg = {"role": "user", "content": extra}
-                    if event_bus:
-                        await event_bus.publish(
-                            Event(type=event_type, payload={"message": msg}),
-                        )
-                    client.append_messages([msg])
+            # ── 0. Drain *all* queued interjections, allowed at any time ──
+            had_interjection = False
+            while True:
+                try:
+                    extra = interject_queue.get_nowait()
+                except asyncio.QueueEmpty:
+                    break
+
+                # hide unresolved calls in the *previous* assistant turn
+                for info in task_info.values():
+                    if info["assistant_msg"].get("tool_calls"):
+                        info["assistant_msg"]["tool_calls"] = []
+
+                had_interjection = True
+                msg = {"role": "user", "content": extra}
+                if event_bus:
+                    await event_bus.publish(Event(type=event_type,
+                                                  payload={"message": msg}))
+                client.append_messages([msg])
 
             # ── A.  Wait for tool completion OR cancellation  ───────────────
-            if pending:
-                waiters = pending | {asyncio.create_task(cancel_event.wait())}
+            if pending and not had_interjection:
+                interject_w = asyncio.create_task(interject_queue.get())
+                waiters = (
+                    pending
+                    | {asyncio.create_task(cancel_event.wait()), interject_w}
+                )
                 done, _ = await asyncio.wait(
                     waiters,
                     return_when=asyncio.FIRST_COMPLETED,
                 )
+
+                if interject_w in done:
+                    await interject_queue.put(interject_w.result())
+                    continue            # → loop, will be processed in 0.
 
                 if any(t for t in done if t not in pending):
                     raise asyncio.CancelledError  # cancellation wins
 
                 for task in done:  # finished tool(s)
                     pending.remove(task)
-                    name, call_id = task_info.pop(task)
+                    info = task_info.pop(task)
+                    name = info["name"]
+                    call_id = info["call_id"]
 
                     try:
                         raw = task.result()
@@ -374,17 +393,38 @@ async def _async_tool_use_loop_inner(
                                 f"(attempt {consecutive_failures}/{max_consecutive_failures}):\n{result}",
                             )
 
-                    msg = {
+                    # --- retro-patch + ordered insertion --------------------
+                    asst_msg = info["assistant_msg"]
+                    meta = assistant_meta[id(asst_msg)]
+
+                    # 1. restore full tool_calls list exactly once
+                    asst_msg["tool_calls"] = meta["original_tool_calls"]
+
+                    # 2. build the tool-result message
+                    tool_msg = {
                         "role": "tool",
                         "tool_call_id": call_id,
                         "name": name,
                         "content": result,
                     }
+                    # 3a. let AsyncUnify know about the new message
+                    client.append_messages([tool_msg])
+
+                    # 3b. move it to sit right after the other results that
+                    #     belong to this assistant turn
+                    insert_pos = (
+                        client.messages.index(asst_msg)
+                        + 1
+                        + meta["results_count"]
+                    )
+                    moved = client.messages.pop()                # last element
+                    client.messages.insert(insert_pos, moved)
+                    meta["results_count"] += 1
+
                     if event_bus:
                         await event_bus.publish(
-                            Event(type=event_type, payload={"message": msg}),
+                            Event(type=event_type, payload={"message": tool_msg}),
                         )
-                    client.append_messages([msg])
 
                     if consecutive_failures >= max_consecutive_failures:
                         if log_steps:
@@ -420,23 +460,28 @@ async def _async_tool_use_loop_inner(
             if log_steps:
                 LOGGER.info("🔄 LLM thinking…")
 
-            response = await client.generate(
-                return_full_completion=True,
-                tools=tools_schema,
-                tool_choice="auto",
-                stateful=True,
+            response = await _maybe_await(
+                client.generate(
+                    return_full_completion=True,
+                    tools=tools_schema,
+                    tool_choice="auto",
+                    stateful=True,
+                )
             )
-            msg = response.choices[0].message
+            response = response.model_dump()
+            msg = response["choices"][0]["message"]
             if event_bus:
                 await event_bus.publish(
-                    Event(type=event_type, payload={"message": msg.model_dump()}),
+                    Event(type=event_type, payload={"message": msg}),
                 )
 
             # ── E.  Launch any new tool calls  ──────────────────────────────
-            if msg.tool_calls:
-                for call in msg.tool_calls:
-                    name = call.function.name
-                    args = json.loads(call.function.arguments)
+            if msg["tool_calls"]:
+
+                original_tool_calls: list = []
+                for call in msg["tool_calls"]:
+                    name = call["function"]["name"]
+                    args = json.loads(call["function"]["arguments"])
                     fn = tools[name]
                     coro = (
                         fn(**args)
@@ -444,9 +489,30 @@ async def _async_tool_use_loop_inner(
                         else asyncio.to_thread(fn, **args)
                     )
 
+                    call_dict = {
+                        "id": call["id"],
+                        "type": "function",
+                        "function": {
+                            "name": name,
+                            "arguments": call["function"]["arguments"],
+                        },
+                    }
+                    original_tool_calls.append(call_dict)
+
                     t = asyncio.create_task(coro)
                     pending.add(t)
-                    task_info[t] = (name, call.id)
+                    task_info[t] = {
+                        "name": name,
+                        "call_id": call["id"],
+                        "assistant_msg": msg,
+                        "call_dict": call_dict,
+                    }
+
+                # metadata for orderly insertion of results
+                assistant_meta[id(msg)] = {
+                    "original_tool_calls": original_tool_calls,
+                    "results_count": 0,
+                }
 
                 if log_steps:
                     LOGGER.info("✅ Step finished (tool calls scheduled)")
@@ -457,9 +523,9 @@ async def _async_tool_use_loop_inner(
                 continue
 
             if log_steps:
-                LOGGER.info(f"\n🤖 {msg.content}\n")
+                LOGGER.info(f"\n🤖 {msg["content"]}\n")
                 LOGGER.info("✅ Step finished (final answer)")
-            return msg.content  # DONE!
+            return msg["content"]  # DONE!
 
     except asyncio.CancelledError:  # graceful shutdown
         for t in pending:

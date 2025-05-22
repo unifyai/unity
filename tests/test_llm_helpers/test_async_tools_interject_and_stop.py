@@ -1,217 +1,269 @@
 """
-End-to-end behavioural tests for the new *live-handle* features
-(`interject`, `stop`, `result`) added to the async-tool loop.
+Behaviour-driven tests for the **live-handle** async-tool loop – now executed
+against a *real* ``unify.AsyncUnify`` client instead of a monkey-patched stub.
 
-The tests assume that
+What’s covered
+--------------
 
-* `unify.AsyncUnify` exists in the import path,
-* `start_async_tool_use_loop` is the public helper that starts the loop and
-  returns the handle object, and
-* the original `async_tool_use_loop` implementation lives in the same module
-  (so we can reuse a couple of internals such as `_dumps` if needed).
+* Injecting extra user messages that trigger additional tool calls.
+* Graceful cancellation with ``stop()``.
+* Preservation of the order of multiple interjections.
+* Handling of an interjection that arrives while a tool call is still running.
 
-We **do not** stub or re-implement `unify`; instead we monkey-patch a few of
-its methods on the fly so that the loop sees *plausible* LLM behaviour while
-remaining entirely deterministic and fast.
+To run the suite you need:
+
+* a valid API key in your environment,
+* internet connectivity, and
+* the ``unity.common.llm_helpers`` implementation in your import path.
 """
+
+from __future__ import annotations
 
 import asyncio
 import json
-import types
-from typing import Any
+import os
+from typing import Any, List
 
 import pytest
-
 import unify
 from unity.common.llm_helpers import start_async_tool_use_loop
 
 
-# ---------------------------------------------------------------------------#
-# Helpers                                                                    #
-# ---------------------------------------------------------------------------#
+# --------------------------------------------------------------------------- #
+#  GLOBALS                                                                    #
+# --------------------------------------------------------------------------- #
+
+MODEL_NAME = os.getenv("UNIFY_MODEL", "gpt-4o@openai")
 
 
-class GenerateScript:
-    """
-    Tiny state machine that produces a *sequence* of synthetic assistant
-    responses so we can control the loop deterministically.
-    """
-
-    def __init__(self) -> None:
-        self.turn = 0
-
-    def _msg(self, *, tool_calls=None, content=None):
-        """Return an object that mimics the OpenAI message structure."""
-        return types.SimpleNamespace(tool_calls=tool_calls, content=content)
-
-    def __call__(self, client) -> Any:  # used as patched `generate`
-        # pylint: disable=unused-argument
-        if self.turn == 0:
-            # → Ask for one tool call so the loop spins up a background task.
-            self.turn += 1
-            tc = [
-                {
-                    "id": "call_1",
-                    "function": {"name": "echo", "arguments": json.dumps({"txt": "A"})},
-                },
-            ]
-            return types.SimpleNamespace(
-                choices=[types.SimpleNamespace(message=self._msg(tool_calls=tc))],
-            )
-
-        if self.turn == 1:
-            # → After the first tool result is returned the model notices the
-            #   *interjection* (if any) and may request a second tool call.
-            self.turn += 1
-            want_b = any(
-                m["role"] == "user" and "B please" in m["content"]
-                for m in client.messages
-            )
-            if want_b:
-                tc = [
-                    {
-                        "id": "call_2",
-                        "function": {
-                            "name": "echo",
-                            "arguments": json.dumps({"txt": "B"}),
-                        },
-                    },
-                ]
-                return types.SimpleNamespace(
-                    choices=[types.SimpleNamespace(message=self._msg(tool_calls=tc))],
-                )
-
-        # → Final assistant answer (turn 2 or 1 depending on path)
-        self.turn += 1
-        return types.SimpleNamespace(
-            choices=[types.SimpleNamespace(message=self._msg(content="done"))],
-        )
-
-
-async def echo(txt: str) -> str:  # noqa: D401 – simple mock tool
+# --------------------------------------------------------------------------- #
+#  TOOL IMPLEMENTATIONS                                                       #
+# --------------------------------------------------------------------------- #
+async def echo(txt: str) -> str:  # noqa: D401 – simple async tool
     await asyncio.sleep(0.05)
     return txt
 
 
-# ---------------------------------------------------------------------------#
-# Fixtures                                                                   #
-# ---------------------------------------------------------------------------#
+async def slow(txt: str = "Z", delay: float = 0.25) -> str:
+    await asyncio.sleep(delay)
+    return txt
 
 
+async def fast() -> str:          # ~100 ms
+    await asyncio.sleep(0.10)
+    return "fast"
+
+
+
+# ---------------------------------------------------------------------------#
+#  Utility                                                                    #
+# ---------------------------------------------------------------------------#
+def _first_with_tool_calls(msgs: List[dict]) -> int:
+    return next(i for i, m in enumerate(msgs) if m.get("tool_calls"))
+
+
+def _user_index(msgs: List[dict], snippet: str) -> int:
+    return next(i for i, m in enumerate(msgs)
+                if m["role"] == "user" and snippet in m["content"])
+
+
+def _tool_indices(msgs: List[dict]) -> List[int]:
+    return [i for i, m in enumerate(msgs) if m["role"] == "tool"]
+
+
+def _are_contiguous(indices: List[int]) -> bool:
+    return sorted(indices) == list(range(min(indices), max(indices) + 1))
+
+def _assistant_tool_turns(msgs: List[dict[str, Any]]):
+    """Yield assistant turns that contain tool_calls."""
+    return [m for m in msgs if m["role"] == "assistant" and m.get("tool_calls")]
+
+
+# --------------------------------------------------------------------------- #
+#  FIXTURES                                                                   #
+# --------------------------------------------------------------------------- #
 @pytest.fixture()
 def client():
-    return unify.AsyncUnify("gpt-4o@openai")
+    """Provide a new client for every test function."""
+    return unify.AsyncUnify(MODEL_NAME)
 
 
-# ---------------------------------------------------------------------------#
-# Tests                                                                       #
-# ---------------------------------------------------------------------------#
-
-
+# --------------------------------------------------------------------------- #
+#  TESTS                                                                      #
+# --------------------------------------------------------------------------- #
 @pytest.mark.asyncio
-async def test_interject_and_result_work_together(client):
+async def test_interject_leads_to_second_tool_and_final_result(client):
     """
-    Start the loop, interject a clarification, ensure:
-      • the loop *incorporates* the extra user message,
-      • the model reacts by asking for an additional tool,
-      • we eventually get the expected final answer from `result()`.
+    We start the loop asking the model to echo “A”.  Then we interject, asking
+    it to echo “B” too.  We expect two separate tool calls and a final “done”.
     """
-
     handle = start_async_tool_use_loop(
         client,
-        "Echo A please",
-        {"echo": echo},
+        message=(
+            "Use the `echo` tool to output the text 'A'. "
+            "If the user later asks for another echo, call the tool again with "
+            "that text and finally reply exactly 'done'."
+        ),
+        tools={"echo": echo},
     )
 
-    # - Wait a moment, then inject a follow-up user turn --------------------
-    await asyncio.sleep(0.01)
-    await handle.interject("And echo B please")  # ← the clarification
+    # --- inject clarification ------------------------------------------------
+    await asyncio.sleep(0.02)
+    await handle.interject("And echo B please")
 
-    await handle.result()
+    final = await handle.result()
+    assert final.strip().lower().startswith("done")
 
-    # --- Assertions --------------------------------------------------------
-    assert client.messages[0] == {"role": "user", "content": "Echo A please"}
-    assert client.messages[1]["tool_calls"][0]["function"]["name"] == "echo"
-    assert json.loads(client.messages[1]["tool_calls"][0]["function"]["arguments"]) == {
-        "txt": "A",
-    }
-    assert client.messages[2]["role"] == "tool"
-    assert client.messages[2]["name"] == "echo"
-    assert "A" in client.messages[2]["content"]
-    assert client.messages[3] == {"role": "user", "content": "And echo B please"}
-    assert client.messages[4]["tool_calls"][0]["function"]["name"] == "echo"
-    assert json.loads(client.messages[4]["tool_calls"][0]["function"]["arguments"]) == {
-        "txt": "B",
-    }
-    assert client.messages[5]["role"] == "tool"
-    assert client.messages[5]["name"] == "echo"
-    assert "B" in client.messages[5]["content"]
+    # --- assertions ----------------------------------------------------------
+    msgs = client.messages
 
-    # The conversation must contain our extra user message in order.
-    assert any(
-        m for m in client.messages if m["role"] == "user" and "echo B" in m["content"]
-    )
+    # 1. we saw two *assistant* turns requesting tool calls
+    assistant_tool_turns = _assistant_tool_turns(msgs)
+    assert len(assistant_tool_turns) >= 2
 
-    # The assistant must have produced *two* distinct tool calls (A and B).
-    assistant_turns = [
-        m for m in client.messages if m["role"] == "assistant" and m.get("tool_calls")
-    ]
-    assert len(assistant_turns) == 2
+    # 2. first assistant turn calls echo("A"), second calls echo("B")
+    first_args = json.loads(assistant_tool_turns[0]["tool_calls"][0]["function"]["arguments"])
+    second_args = json.loads(assistant_tool_turns[1]["tool_calls"][0]["function"]["arguments"])
+    assert first_args == {"txt": "A"}
+    assert second_args == {"txt": "B"}
+
+    # 3. the order is correct: initial assistant → user interjection → 2nd assistant
+    idx_first_asst = msgs.index(assistant_tool_turns[0])
+    idx_user_B = next(i for i, m in enumerate(msgs) if m["role"] == "user" and "echo B" in m["content"])
+    idx_second_asst = msgs.index(assistant_tool_turns[1])
+    assert idx_first_asst < idx_user_B < idx_second_asst
+
+    # 4. there are matching tool *results* for A and B
+    tool_msgs = [m for m in msgs if m["role"] == "tool" and m["name"] == "echo"]
+    assert any("A" in m["content"] for m in tool_msgs)
+    assert any("B" in m["content"] for m in tool_msgs)
 
 
 @pytest.mark.asyncio
 async def test_stop_cancels_gracefully(client):
     """
-    Start the loop and *immediately* request a graceful stop.
-    Verify that:
-      • `handle.result()` raises `asyncio.CancelledError`,
-      • no tool tasks are left running afterwards.
+    Calling ``stop()`` should cancel the loop: ``result()`` raises
+    ``CancelledError`` and the underlying task is done.
     """
-
     handle = start_async_tool_use_loop(
         client,
-        "Echo something",
+        "Echo something then say 'ok'.",
         {"echo": echo},
     )
 
-    handle.stop()  # request cancellation right away
+    handle.stop()
 
     with pytest.raises(asyncio.CancelledError):
         await handle.result()
 
-    # The underlying task should be done and cancelled.
     assert handle.done()
 
 
 @pytest.mark.asyncio
-async def test_multiple_interjects_then_normal_completion(client):
+async def test_interjections_are_processed_and_loop_completes(client):
     """
-    Fire *two* interjections while the loop is running; ensure each is
-    delivered in order and the final result still resolves normally.
-    """
+    Launch the async-tool loop, fire two interjections, then wait for normal
+    completion.  Verify
 
+      • the loop ends without error,
+      • the *user* messages are preserved in FIFO order,
+      • at least three tool invocations happened (A, B, C).
+    """
     handle = start_async_tool_use_loop(
         client,
-        "Echo A please",
+        "Echo A please, then say 'done' when finished.",
         {"echo": echo},
     )
 
+    # Two quick interjections while the first tool is still running
     await asyncio.sleep(0.01)
     await handle.interject("B please")
     await asyncio.sleep(0.01)
     await handle.interject("C please")
 
+    # Wait for the final assistant answer (we don't assert its exact content)
+    final = await handle.result()
+    assert isinstance(final, str) and final.strip()
+
+    # 1. User-message order must be exactly the order we sent them
+    seen_users = [m["content"] for m in client.messages if m["role"] == "user"]
+    assert seen_users[:3] == [
+        "Echo A please, then say 'done' when finished.",
+        "B please",
+        "C please",
+    ]
+
+    # 2. There must be at least three tool-result messages overall
+    tool_msgs = [m for m in client.messages if m["role"] == "tool"]
+    assert len(tool_msgs) >= 3
+
+
+@pytest.mark.asyncio
+async def test_single_tool_result_is_inserted_before_interjection(client):
+    """
+    * Assistant is instructed to run `slow` once and then reply "ack".
+    * We interject while `slow` is still running.
+    * Expect: assistant → tool result → user interjection (contiguous order).
+    """
+    handle = start_async_tool_use_loop(
+        client,
+        (
+            "Run the tool `slow` exactly once, "
+            "then reply with the word ACK (nothing else)."
+        ),
+        {"slow": slow},
+    )
+
+    await asyncio.sleep(0.05)        # tool should still be running
+    await handle.interject("thanks!")
+
+    await handle.result()            # wait for completion
+
+    msgs = client.messages
+    i_asst = _first_with_tool_calls(msgs)
+    i_tool = _tool_indices(msgs)[0]          # only one result
+    i_user = _user_index(msgs, "thanks!")
+
+    # assistant → tool → user, contiguous
+    assert (i_asst + 1 == i_tool) and (i_tool + 1 == i_user)
+
+    # assistant turn’s tool_calls restored exactly once
+    assert len(msgs[i_asst]["tool_calls"]) == 1
+
+
+@pytest.mark.asyncio
+async def test_parallel_tool_results_shift_interjection_down(client):
+    """
+    * Assistant is instructed to run BOTH `fast` and `slow` before replying "done".
+    * We interject while the tools are running.
+    * Expect both tool results to sit immediately after the assistant turn
+      (in any order) and the user message to follow them.
+    """
+    handle = start_async_tool_use_loop(
+        client,
+        (
+            "Call the tools `fast` and `slow`, each exactly once, "
+            "then respond with ONLY the word DONE."
+        ),
+        {"fast": fast, "slow": slow},
+    )
+
+    await asyncio.sleep(0.15)       # `fast` likely done, `slow` still running
+    await handle.interject("cheers!")
+
     await handle.result()
 
-    # All three user utterances (initial + 2 extras) must be in the history.
-    seen = [m["content"] for m in client.messages if m["role"] == "user"]
-    assert seen == ["Echo A please", "B please", "C please"]
+    msgs = client.messages
+    i_asst = _first_with_tool_calls(msgs)
+    tool_idxs = _tool_indices(msgs)[:2]      # we only care about the first two
+    i_user   = _user_index(msgs, "cheers!")
 
-    # Assistant should have ended up calling the tool at least 3×.
-    assistant_turns = [
-        m for m in client.messages if m["role"] == "assistant" and m.get("tool_calls")
-    ]
-    assert len(assistant_turns) == 2
+    # Tool results are contiguous right after the assistant message
+    assert _are_contiguous(tool_idxs)
+    assert tool_idxs[0] == i_asst + 1
 
-    total_tool_calls = sum(len(t["tool_calls"]) for t in assistant_turns)
-    assert total_tool_calls >= 3
+    # User interjection sits immediately after the last tool result
+    assert i_user == max(tool_idxs) + 1
+
+    # Tool_calls restored once, no duplicates
+    assert len(msgs[i_asst]["tool_calls"]) >= 2
