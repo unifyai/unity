@@ -56,10 +56,26 @@ async def send_sms(from_number: str, to_number: str, message: str) -> bool:
         bool: True if message was sent successfully, False otherwise
     """
     try:
-        # TODO: Implement actual SMS API call
-        # This is a placeholder for the actual implementation
         print(f"Sending SMS from {from_number} to {to_number}: {message}")
-        return True
+        async with aiohttp.ClientSession() as session:
+            async with session.post(
+                f"{os.getenv('UNITY_COMMS_URL')}/phone/send-text",
+                json={
+                    "From": from_number,
+                    "To": to_number,
+                    "Body": message,
+                },
+            ) as response:
+                if response.status != 200:
+                    print(f"Failed to send SMS. Status: {response.status}")
+                    return False
+
+                response_text = await response.text()
+                print(f"Response: {response_text}")
+                return True
+    except aiohttp.ClientError as e:
+        print(f"Network error while sending SMS: {e}")
+        return False
     except Exception as e:
         print(f"Error sending SMS: {e}")
         return False

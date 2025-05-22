@@ -61,17 +61,17 @@ class CommsManager:
                         try:
                             message_data = json.loads(msg["content"])
                             success = await handle_message_action(
-                                "whatsapp",
+                                msg["thread"],
                                 from_number=message_data.get("to_number", "").replace("whatsapp:", ""),
                                 to_number=message_data.get("from_number", "").replace("whatsapp:", ""),
                                 message=message_data.get("message", "")
                             )
                             if not success:
-                                print("Failed to send WhatsApp message")
+                                print(f"Failed to send {msg['thread']} message")
                         except json.JSONDecodeError:
-                            print("Invalid message format for WhatsApp send")
+                            print(f"Invalid message format for {msg['thread']} send")
                         except Exception as e:
-                            print(f"Error processing WhatsApp send event: {e}")
+                            print(f"Error processing {msg['thread']} send event: {e}")
                             
             except Exception as e:
                 print(f"Error handling event manager event: {e}")
