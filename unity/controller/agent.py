@@ -251,15 +251,14 @@ _SIMPLE_KEY_ACTIONS = {
     CMD_CURSOR_UP: "Move caret up one line.",
     CMD_CURSOR_DOWN: "Move caret down one line.",
     CMD_SELECT_ALL: "Select the entire text.",
-    CMD_MOVE_LINE_START: "Move caret to the start of the line.",
-    CMD_MOVE_LINE_END: "Move caret to the end of the line.",
-    CMD_MOVE_WORD_LEFT: "Move caret one word to the left.",
-    CMD_MOVE_WORD_RIGHT: "Move caret one word to the right.",
-    CMD_SELECT_WORD_LEFT: "Select one word to the left.",
-    CMD_SELECT_WORD_RIGHT: "Select one word to the right.",
+    CMD_PRESS_KEY: "Press the specified key (e.g. '1', 'a', 'Escape').",
     CMD_HOLD_SHIFT: "Hold the Shift key down.",
+    CMD_HOLD_CTRL:  "Hold the Control key down.",
+    CMD_HOLD_ALT:   "Hold the Alt key down.",
     CMD_RELEASE_SHIFT: "Release the Shift key.",
-    CMD_CLICK_OUT: "Click outside the text‑box to blur focus.",
+    CMD_RELEASE_CTRL: "Release the Control key.",
+    CMD_RELEASE_ALT:  "Release the Alt key.",
+    CMD_CLICK_OUT: "Click outside the text-box to blur focus.",
 }
 
 
