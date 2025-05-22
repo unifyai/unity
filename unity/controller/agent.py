@@ -250,14 +250,15 @@ _SIMPLE_KEY_ACTIONS = {
     CMD_CURSOR_RIGHT: "Move caret one character to the right.",
     CMD_CURSOR_UP: "Move caret up one line.",
     CMD_CURSOR_DOWN: "Move caret down one line.",
-    CMD_SELECT_ALL: "Select the entire text.",
     CMD_PRESS_KEY: "Press the specified key (e.g. '1', 'a', 'Escape').",
     CMD_HOLD_SHIFT: "Hold the Shift key down.",
     CMD_HOLD_CTRL:  "Hold the Control key down.",
     CMD_HOLD_ALT:   "Hold the Alt key down.",
+    CMD_HOLD_CMD:   "Hold the Command (⌘) key down.",
     CMD_RELEASE_SHIFT: "Release the Shift key.",
     CMD_RELEASE_CTRL: "Release the Control key.",
     CMD_RELEASE_ALT:  "Release the Alt key.",
+    CMD_RELEASE_CMD:  "Release the Command (⌘) key.",
     CMD_CLICK_OUT: "Click outside the text-box to blur focus.",
 }
 
