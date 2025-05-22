@@ -5,7 +5,7 @@ from google.oauth2.service_account import Credentials
 import json
 import os
 from events import Event, SMSMessageRecievedEvent, WhatsappMessageRecievedEvent
-from concurrent.futures import ThreadPoolExecutor
+from demo.actions import handle_message_action
 
 # Subscription IDs
 project_id = "responsive-city-458413-a2"
@@ -21,7 +21,7 @@ events_map: dict[str, Event] = {
 }
 
 
-class SubscriberManager:
+class CommsManager:
     def __init__(self):
         self.reader = None
         self.writer = None
@@ -40,6 +40,44 @@ class SubscriberManager:
         ev = json.dumps(ev) + "\n"
         self.writer.write(ev.encode())
         await self.writer.drain()
+
+    async def handle_event_manager_events(self):
+        """Handle events coming from the event manager."""
+        while True:
+            try:
+                raw = await self.reader.readline()
+                if not raw:
+                    break
+                msg = json.loads(raw.decode())
+                if msg["type"] == "update_gui":
+                    print(f"Received GUI update for thread {msg['thread']}: {msg['content']}")
+                    
+                    # Handle WhatsApp send events
+                    if msg["thread"] == "whatsapp":
+                        # Extract phone numbers from the message content
+                        # This assumes the message content contains the necessary information
+                        # You might need to adjust this based on your actual message format
+                        try:
+                            message_data = json.loads(msg["content"])
+                            success = await handle_message_action(
+                                "whatsapp",
+                                from_number=message_data.get("to_number", "").replace("whatsapp:", ""),
+                                to_number=message_data.get("from_number", "").replace("whatsapp:", ""),
+                                message=message_data.get("message", "")
+                            )
+                            if not success:
+                                print("Failed to send WhatsApp message")
+                        except json.JSONDecodeError:
+                            print("Invalid message format for WhatsApp send")
+                        except Exception as e:
+                            print(f"Error processing WhatsApp send event: {e}")
+                            
+            except Exception as e:
+                print(f"Error handling event manager event: {e}")
+                if self.writer:
+                    self.writer.close()
+                    await self.writer.wait_closed()
+                break
 
     def handle_message(
         self, message: pubsub_v1.types.PubsubMessage, subscription_id: str
@@ -119,8 +157,9 @@ class SubscriberManager:
         """Start all subscriptions and maintain connection to event manager."""
         await self.connect_to_event_manager()
 
-        # Start message processor
+        # Start message processor and event manager event handler
         processor_task = asyncio.create_task(self.process_messages())
+        event_handler_task = asyncio.create_task(self.handle_event_manager_events())
 
         # Start all subscriptions
         subscriptions = [
@@ -142,14 +181,15 @@ class SubscriberManager:
             for future in self.subscribers.values():
                 future.cancel()
             processor_task.cancel()
+            event_handler_task.cancel()
             if self.writer:
                 self.writer.close()
                 await self.writer.wait_closed()
 
 
 async def main():
-    """Main entry point for the subscriber application."""
-    manager = SubscriberManager()
+    """Main entry point for the communication manager application."""
+    manager = CommsManager()
     await manager.start()
 
 

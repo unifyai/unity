@@ -211,10 +211,14 @@ class ChatApp(App):
                     msg = json.loads(raw.decode())
                     # handle msg, put msg in the right thread
                     if msg["type"] == "update_gui":
+                        if msg["thread"] == "whatsapp":
+                            content = json.loads(msg["content"])["message"]
+                        else:
+                            content = msg["content"]
                         self._add_message_to_thread(
                             msg["thread"],
                             role="assistant",
-                            content=msg["content"],
+                            content=content,
                         )
                         # should probably send back an even that the gui was updated right?
                 except Exception as e:
