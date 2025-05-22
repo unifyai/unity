@@ -10,6 +10,7 @@ TranscriptManager tests.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import re
 from datetime import datetime, timezone
@@ -171,6 +172,69 @@ async def test_ask_semantic_with_llm_judgement(
         candidate, steps = await handle.result()
         expected = _answer_semantic(tlm_scenario, question)
         _llm_assert_correct(question, expected, candidate, steps)
+    except Exception as exc:
+        if "test_task_ask" in unify.list_projects():
+            unify.delete_project("test_task_ask")
+        raise exc
+
+
+@pytest.mark.eval
+@pytest.mark.asyncio
+@pytest.mark.timeout(180)
+async def test_ask_with_interjection(tlm_scenario: TaskListManager) -> None:
+    """Ask a question, interject with a follow-up, and ensure the final answer covers both."""
+    try:
+        # 1) Initial question ⇢ active task name
+        handle = tlm_scenario.ask(
+            text="Which task is currently active?",
+            return_reasoning_steps=True,
+        )
+
+        # 2) Mid-conversation interjection ⇢ queued-task count
+        await handle.interject("Also, how many tasks are queued?")
+
+        # 3) Await combined answer
+        answer, steps = await handle.result()
+        active_task = _answer_semantic(tlm_scenario, QUESTIONS[0])  # "Write quarterly report"
+        queued_cnt = _answer_semantic(tlm_scenario, QUESTIONS[1])   # e.g. "2"
+
+        # 4) Assert presence of both pieces of information
+        assert active_task.lower() in answer.lower(), assertion_failed(
+            f"Answer containing active task '{active_task}'",
+            answer,
+            steps,
+            "Active task not mentioned in combined answer",
+        )
+        assert queued_cnt in answer, assertion_failed(
+            f"Answer containing queued count '{queued_cnt}'",
+            answer,
+            steps,
+            "Queued count not mentioned in combined answer",
+        )
+    except Exception as exc:
+        if "test_task_ask" in unify.list_projects():
+            unify.delete_project("test_task_ask")
+        raise exc
+
+
+@pytest.mark.eval
+@pytest.mark.asyncio
+@pytest.mark.timeout(180)
+async def test_ask_stop(tlm_scenario: TaskListManager) -> None:
+    """Test that we can stop the conversation mid-way."""
+    try:
+        # Start with a request that would take some time to complete
+        handle = tlm_scenario.ask(
+            text="List all tasks, then summarize each one in detail.",
+        )
+        
+        # Give the LLM a moment to start processing, then stop it
+        await asyncio.sleep(0.05)
+        handle.stop()
+        
+        with pytest.raises(asyncio.CancelledError):
+            await handle.result()
+        assert handle.done()
     except Exception as exc:
         if "test_task_ask" in unify.list_projects():
             unify.delete_project("test_task_ask")
