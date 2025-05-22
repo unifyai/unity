@@ -326,7 +326,7 @@ async def _async_tool_use_loop_inner(
             if pending and not had_interjection:
                 continue  # still waiting for other tool tasks
 
-            #  (no pending tool calls → safe to inject new user input)
+            #  An interjection to handle, or no pending tool calls
             while True:
                 try:
                     extra = interject_queue.get_nowait()
