@@ -71,7 +71,6 @@ def run_in_new_terminal(
 
         # shell line run inside Terminal with better error handling
         shell = f"""
-            set -a && source ../.env && set +a;
             echo $$ > {pid_file};
             trap 'rm -f {pid_file}' EXIT;
             exec {shlex.join(py_cmd)}

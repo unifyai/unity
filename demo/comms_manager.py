@@ -51,8 +51,10 @@ class CommsManager:
                     break
                 msg = json.loads(raw.decode())
                 if msg["type"] == "update_gui":
-                    print(f"Received GUI update for thread {msg['thread']}: {msg['content']}")
-                    
+                    print(
+                        f"Received GUI update for thread {msg['thread']}: {msg['content']}"
+                    )
+
                     # Handle WhatsApp send events
                     if msg["thread"] in ["whatsapp", "sms"]:
                         # Extract phone numbers from the message content
@@ -62,9 +64,13 @@ class CommsManager:
                             message_data = json.loads(msg["content"])
                             success = await handle_message_action(
                                 msg["thread"],
-                                from_number=message_data.get("to_number", "").replace("whatsapp:", ""),
-                                to_number=message_data.get("from_number", "").replace("whatsapp:", ""),
-                                message=message_data.get("message", "")
+                                from_number=message_data.get("to_number", "").replace(
+                                    "whatsapp:", ""
+                                ),
+                                to_number=message_data.get("from_number", "").replace(
+                                    "whatsapp:", ""
+                                ),
+                                message=message_data.get("message", ""),
                             )
                             if not success:
                                 print(f"Failed to send {msg['thread']} message")
@@ -72,7 +78,7 @@ class CommsManager:
                             print(f"Invalid message format for {msg['thread']} send")
                         except Exception as e:
                             print(f"Error processing {msg['thread']} send event: {e}")
-                            
+
             except Exception as e:
                 print(f"Error handling event manager event: {e}")
                 if self.writer:
@@ -106,11 +112,27 @@ class CommsManager:
                 )
                 message.ack()
             elif subscription_id == "call-sub":
-                self.call_proc = run_in_new_terminal(
-                    "call.py",
-                    "dev" # "console" if a local call is needed
-                )
-                message.ack()
+                try:
+                    # Extract phone numbers from the message data
+                    message_data = json.loads(message.data.decode("utf-8"))
+                    from_number = message_data.get("caller_number", "")
+                    to_number = "+" + message_data.get("conference_name", "").replace(
+                        "Unity_", ""
+                    )
+
+                    self.call_proc = run_in_new_terminal(
+                        "call.py",
+                        "dev",  # "console" if a local call is needed
+                        from_number,
+                        to_number,
+                    )
+                    message.ack()
+                except json.JSONDecodeError:
+                    print("Invalid message format for call event")
+                    message.nack()
+                except Exception as e:
+                    print(f"Error processing call event: {e}")
+                    message.nack()
             else:
                 print(f"Unknown event type: {subscription_id}")
         except Exception as e:
