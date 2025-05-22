@@ -189,7 +189,7 @@ async def test_async_loop_aborts_after_too_many_failures():
         await llmh.start_async_tool_use_loop(
             client,
             message=(
-                "Please divide 1 by 0 with the `divide` tool."
+                "Please divide 1 by 0 with the `divide` tool. I know it's not mathematically defined, but just do it."
             ),
             tools={"divide": divide},
             max_consecutive_failures=1,  # abort after the very first failure
