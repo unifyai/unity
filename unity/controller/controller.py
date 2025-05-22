@@ -86,40 +86,36 @@ class Controller(threading.Thread):
             self._perform_action(action)
 
     # ------------------------------------------------------------------
-    #  Internal helper – perform a single low-level primitive
+    # Internal helper – perform one or more low-level primitives (in order)
     # ------------------------------------------------------------------
-    def _perform_action(self, action: str) -> None:
-        """Execute *action* and publish completion events.
+    def _perform_action(self, actions: str | list[str]) -> None:
+        # if given a list of commands, execute each in sequence
+        for action in actions:
+            # action is a single string
+            # ── browser life-cycle primitives ────────────────────────────
+            if action == "open browser" and not self._browser_open:
+                self._browser_worker.start()
+                self._browser_open = True
 
-        This consolidates the previously duplicated logic so it can be
-        reused by both the background thread (`run`) and the new public
-        `act()` method.
-        """
+            elif action == "close browser" and self._browser_open:
+                self._browser_worker.stop()
+                self._browser_worker.join(timeout=2)
+                self._browser_open = False
 
-        # ── browser life-cycle primitives ────────────────────────────
-        if action == "open browser" and not self._browser_open:
-            self._browser_worker.start()
-            self._browser_open = True
+            # other primitives ------------------------------------------------
+            elif not self._browser_open:
+                # lazily (auto) start the worker if it isn't running
+                self._browser_worker.start()
+                self._browser_open = True
+                self._redis_client.publish("browser_state", action)
+            else:
+                self._redis_client.publish("browser_state", action)
 
-        elif action == "close browser" and self._browser_open:
-            self._browser_worker.stop()
-            self._browser_worker.join(timeout=2)
-            self._browser_open = False
+            # notify listeners that the action finished (optimistic)
+            self._redis_client.publish("action_completion", action)
 
-        # other primitives ------------------------------------------------
-        elif not self._browser_open:
-            # lazily (auto) start the worker if it isn't running
-            self._browser_worker.start()
-            self._browser_open = True
-            self._redis_client.publish("browser_state", action)
-        else:
-            self._redis_client.publish("browser_state", action)
-
-        # notify listeners that the action finished (optimistic)
-        self._redis_client.publish("action_completion", action)
-
-        t = datetime.now(timezone.utc).time().isoformat(timespec="milliseconds")
-        LOGGER.info(f"\n🕹️ Performed Action: {action} [⏱️ {t}]\n")
+            t = datetime.now(timezone.utc).time().isoformat(timespec="milliseconds")
+            LOGGER.info(f"\n🕹️ Performed Action: {action} [⏱️ {t}]\n")
 
     # ------------------------------------------------------------------
     #  Public helper – high-level "observe" question-answering
@@ -158,9 +154,8 @@ class Controller(threading.Thread):
             state=self._observe_ctx.get("state", {}),
         )
 
-        if not cmd:
-            return None
-
-        action = cmd["action"]
-        self._perform_action(action)
-        return action
+        assert cmd is not None, f"text_command {text} returned empty command"
+        # handle either a sequence of commands
+        actions = cmd.get("actions")
+        self._perform_action(actions)
+        return actions

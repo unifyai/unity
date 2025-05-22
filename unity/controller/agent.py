@@ -15,6 +15,8 @@ from .action_filter import get_valid_actions
 from .sys_msgs import (
     PRIMITIVE_TO_BROWSER_ACTION_CANDIDATES,
     PRIMITIVE_TO_BROWSER_ACTION,
+    PRIMITIVE_TO_BROWSER_MULTI_STEP,
+    PRIMITIVE_TO_BROWSER_ACTION_SIMPLE,
 )
 from ..constants import LOGGER
 
@@ -384,6 +386,14 @@ class SimpleChoice(BaseModel):
     )
 
 
+class CommandSequence(BaseModel):
+    """
+    A sequence of low-level browser commands in execution order.
+    """
+    rationale: str = Field(..., description="Why you chose this action.")
+    actions: List[str] = Field(..., description="The sequence of actions to take.")
+
+
 def _create_full_response_format(tabs, buttons, state=None):
     # ensure we always work with a BrowserState object
     if state and not isinstance(state, BrowserState):
@@ -657,8 +667,9 @@ def _build_pruned_response_format(applied: Dict[str, Any]) -> BaseModel:
 
     # ---- nested groups (tab / scroll / button / textbox) -----------------
     for group, sub in applied.items():
-        if group == "search":
-            continue  # handled separately
+        # Skip search & open_url here; they'll be handled explicitly below
+        if group in ("search", "open_url"):
+            continue
 
         # Rebuild each kept leaf with the correct BaseModel subclass
         fields = {
@@ -737,6 +748,7 @@ def text_to_browser_action(
     buttons: Optional[List[Tuple[int, str]]] = None,
     history: ActionHistory = None,
     state: BrowserState = None,
+    multi_step_mode: bool = False,
 ) -> Optional[BaseModel]:
     t0 = time.perf_counter()
     t = datetime.now(timezone.utc).time().isoformat(timespec="milliseconds")
@@ -818,35 +830,27 @@ def text_to_browser_action(
         )
         return response_format.model_validate(ret).model_dump()
     else:
+        multi_step_mode = multi_step_mode or state["in_textbox"] # if in textbox, use multi-step mode for enabling key combinations
         valid_actions = _list_valid_actions(tabs, buttons, state)
-        lines = [
-            "You control the browser with ONE low‑level action.",
-            "Choose the best action‑prototype.",
-            "",
-            "Available prototypes:",
-        ]
+        lines = [PRIMITIVE_TO_BROWSER_MULTI_STEP] if multi_step_mode else [PRIMITIVE_TO_BROWSER_ACTION_SIMPLE]
+        response_format = CommandSequence if multi_step_mode else SimpleChoice
 
         def _format_action(a: str):
             ret = f"- {a}"
             if a in ("search", "open_url"):
-                ret += " (please also include the query in the `value` field)"
+                ret += " (please also include the query such that '<search/open_url> <query>')"
             elif a in ("scroll_up", "scroll_down"):
-                ret += (
-                    " (please also include the number of pixels in the `value` field)"
-                )
+                ret += " (please also include the *non-negative* number of pixels such that '<scroll_up/scroll_down> <pixels>')" 
+            elif a in ("start_scrolling_up", "start_scrolling_down"):
+                ret += " (please also include the *non-negative* speed (pixels/second) such that '<start_scrolling_up/start_scrolling_down> <speed>')" 
             return ret
 
         lines += [_format_action(a) for a in valid_actions]
-        lines += [
-            "",
-            "Respond ONLY with valid JSON matching:",
-            '{"rationale": "...", "action": "<prototype>", "value": <value|null>}',
-        ]
         sys_prompt = "\n".join(lines)
 
         client.set_endpoint("o4-mini@openai")
         client.set_system_message(sys_prompt)
-        client.set_response_format(SimpleChoice)
+        client.set_response_format(response_format)
 
         content = [
             {
@@ -872,20 +876,21 @@ def text_to_browser_action(
                 },
             ],
         )
-        reply = SimpleChoice.model_validate_json(raw)
 
-        action = reply.action
-        assert (
-            action in valid_actions
-        ), f"selected action {action} not in valid actions {valid_actions}"
+        reply = response_format.model_validate_json(raw)
+        actions = reply.actions if multi_step_mode else [reply.action]
 
-        if reply.value:
-            action = f"{action} {str(reply.value)}"
+        assert(
+            all(action.split(" ")[0] in valid_actions for action in actions)
+        ), f"Invalid action is present: {actions}"
+
+        if not multi_step_mode and reply.value:
+            actions = [f"{actions[0]} {str(reply.value)}"]
         t = datetime.now(timezone.utc).time().isoformat(timespec="milliseconds")
         LOGGER.info(
-            f"\n🤖 Controller: text command to browser action ✅ [⏱️ {t}] [⏩{(time.perf_counter() - t0):.3g}s]\n",
+            f"\n🤖 Controller: text command to browser action ✅ [⏱️ {t}] [⏩{(time.perf_counter() - t0):.3g}s]\n {actions}",
         )
-        return {"rationale": reply.rationale, "action": action}
+        return {"rationale": reply.rationale, "action": actions}
 
 
 # ---- Dialog / Popup Schemas (NEW) ----------------------------------

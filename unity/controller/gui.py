@@ -342,40 +342,49 @@ class ControlPanel(tk.Tk):
                 status, payload = self._llm_resp_q.get_nowait()
 
                 if status == "ok":
-                    if payload:
+                    # Determine command list: supports direct list or dict with 'action'
+                    if isinstance(payload, list):
+                        cmds = payload
+                    elif isinstance(payload, dict) and "action" in payload:
+                        cmds = payload["action"]
+                    else:
+                        # Legacy single-command path
                         cmd = (
                             payload["action"]
                             if (not ADVANCED_MODE and isinstance(payload, dict))
                             else self._llm_resp_to_cmd(payload)
                         )
+                        cmds = [cmd] if cmd else []
+                    # Clear animated line once
+                    if self._llm_line_idx is not None:
+                        self.log.configure(state="normal")
+                        self.log.delete(self._llm_line_idx, f"{self._llm_line_idx} lineend")
+                        self.log.configure(state="disabled")
+                        self._llm_line_idx = None
+                    # Process each command in sequence
+                    for cmd in cmds:
                         if cmd and cmd.startswith("click_button_"):
-                            # keep only the numeric id in front of the slug
                             idx = cmd[len("click_button_") :].split("_", 1)[0]
                             cmd = f"click {idx}"
-
-                        repl = f"↳ {cmd}" if cmd else "❗ No action selected"
-                    else:
-                        repl = "❗ Could not interpret instruction"
+                        line = f"↳ {cmd}" if cmd else "❗ No action selected"
+                        # log and queue
+                        self.log.configure(state="normal")
+                        self.log.insert("end", line + "\n")
+                        self.log.configure(state="disabled")
+                        self.log.yview_moveto(1.0)
+                        if cmd:
+                            self._queue_command(cmd)
                 else:  # "err"
-                    repl = "❗ LLM error – see traceback"
                     self._log_trace(payload)
-
-                # --- replace the animated line ---------------------------
-                if self._llm_line_idx:
-                    self.log.configure(state="normal")
-                    self.log.delete(self._llm_line_idx, f"{self._llm_line_idx} lineend")
-                    self.log.insert(self._llm_line_idx, repl + "\n")
-                    self.log.configure(state="disabled")
-                    self.log.yview_moveto(1.0)
-                    self._llm_line_idx = None
-
-                # if we produced a real command, queue it
-                if repl.startswith("↳ "):
-                    self._queue_command(repl[2:].strip())
-
+                    # Replace animated line with error
+                    if self._llm_line_idx is not None:
+                        self.log.configure(state="normal")
+                        self.log.delete(self._llm_line_idx, f"{self._llm_line_idx} lineend")
+                        self.log.insert(self._llm_line_idx, "❗ LLM error – see traceback\n")
+                        self.log.configure(state="disabled")
+                        self._llm_line_idx = None
+                # Mark LLM as done and reset UI
                 self._llm_busy = False
-
-                # Re-enable command entry & hide loader
                 self.llm_entry.configure(state="normal")
                 self.llm_loader.grid_remove()
 
