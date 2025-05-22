@@ -23,3 +23,27 @@ One of these actions is *known* to complete the task correctly, you just need to
 
 Please respond `True` in the `apply` field only to the *single* action which you would like to select.
 """
+
+PRIMITIVE_TO_BROWSER_MULTI_STEP = """
+Your task is to take a plain English requests provided by the user, and then select the most appropriate *one* or *more* of action(s) to take along with your reasoning for why the actions should be taken, and why the other actions should not be taken.
+
+You should populate the `rationale` field with your reasoning behind the decision for all listed actions.
+
+One or several actions are *known* to complete the task correctly, you need to select the correct action(s) among the options.
+
+List them in the exact order they should be executed.
+
+Respond ONLY with valid JSON matching: {"rationale": "...", "action": "<prototype>", "value": <value|null>}
+
+Available prototypes:
+"""
+
+PRIMITIVE_TO_BROWSER_ACTION_SIMPLE = """
+You control the browser with ONE low‑level action.
+
+Choose the best action‑prototype.
+
+Respond ONLY with valid JSON matching: {"rationale": "...", "actions": ["<prototype>", ...]
+
+Available prototypes:
+"""
