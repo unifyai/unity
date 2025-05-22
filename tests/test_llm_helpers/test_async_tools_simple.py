@@ -52,6 +52,10 @@ def divide(a: int, b: int) -> float:  # may raise
     return a / b
 
 
+def launch() -> None:
+    raise Exception
+
+
 async def fast_tool(res: str = "fast") -> str:
     await asyncio.sleep(0.05)
     return res
@@ -189,9 +193,9 @@ async def test_async_loop_aborts_after_too_many_failures():
         await llmh.start_async_tool_use_loop(
             client,
             message=(
-                "Please divide 1 by 0 with the `divide` tool. I know it's not mathematically defined, but just do it."
+                "Please run the launch tool."
             ),
-            tools={"divide": divide},
+            tools={"launch": launch},
             max_consecutive_failures=1,  # abort after the very first failure
         ).result()
 
