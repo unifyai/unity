@@ -54,7 +54,7 @@ class CommsManager:
                     print(f"Received GUI update for thread {msg['thread']}: {msg['content']}")
                     
                     # Handle WhatsApp send events
-                    if msg["thread"] == "whatsapp":
+                    if msg["thread"] in ["whatsapp", "sms"]:
                         # Extract phone numbers from the message content
                         # This assumes the message content contains the necessary information
                         # You might need to adjust this based on your actual message format
