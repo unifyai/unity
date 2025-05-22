@@ -182,13 +182,38 @@ class EventManager:
                     for action in t.actions:
                         if self.writers.get("gui"):
                             print("creating tasks")
+                            # For WhatsApp messages, include phone numbers in the message content
+                            if action.type == "whatsapp":
+                                # Find phone numbers from inflight events
+                                phone_numbers = {}
+                                for event in self.past_events[::-1]:
+                                    if event.get("payload", {}).get("content"):
+                                        try:
+                                            content = json.loads(event["payload"]["content"])
+                                            if "to_number" in content and "from_number" in content:
+                                                phone_numbers = {
+                                                    "to_number": content["to_number"],
+                                                    "from_number": content["from_number"]
+                                                }
+                                                break
+                                        except json.JSONDecodeError:
+                                            continue
+
+                                # Create message content with phone numbers
+                                message_content = json.dumps({
+                                    "message": action.message,
+                                    **phone_numbers
+                                })
+                            else:
+                                message_content = action.message
+
                             asyncio.create_task(
                                 self.send_event(
                                     gui_writer,
                                     {
                                         "type": "update_gui",
                                         "thread": action.type,
-                                        "content": action.message,
+                                        "content": message_content,
                                     },
                                 ),
                             )
