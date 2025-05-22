@@ -15,6 +15,7 @@ No private helpers (_search, _list_tables, …) are imported or poked.
 
 import re
 import json
+import asyncio
 import pytest
 
 from unity.knowledge_manager.knowledge_manager import KnowledgeManager
@@ -308,3 +309,120 @@ async def test_numeric_reasoning_after_multiple_points():
         "Answer does not correctly identify only point P",
         {"Knowledge Data": km._search()},
     )
+
+
+# --------------------------------------------------------------------------- #
+# 8.  Store with interjection                                                 #
+# --------------------------------------------------------------------------- #
+
+
+@pytest.mark.eval
+@pytest.mark.asyncio
+@pytest.mark.timeout(120)
+@_handle_project
+async def test_store_interjection():
+    """
+    Test that we can interject during a store operation and
+    the interjection is incorporated into the final result.
+    """
+    km = KnowledgeManager()
+
+    # store some informatiion
+    handle = km.store("Bob lives in Bangkok, Thailand.")
+    # Mid-operation, add another detail that should also get stored.
+    await handle.interject("He was born in 1990.")
+
+    handle = km.retrieve("Which city does Bob live in and what is his age?")
+    out = await handle.result()
+
+    # The confirmation text returned by `store()` should include both pieces of information.
+    assert _contains(out, "Bangkok", "1990"), assertion_failed(
+        "Output containing both 'Bangkok' and '1990'",
+        out,
+        "Output does not contain both expected details about Bob",
+        {"Knowledge Data": km._search()},
+    )
+
+
+# --------------------------------------------------------------------------- #
+# 9.  Store with stop                                                         #
+# --------------------------------------------------------------------------- #
+
+
+@pytest.mark.eval
+@pytest.mark.asyncio
+@pytest.mark.timeout(120)
+@_handle_project
+async def test_store_stop():
+    km = KnowledgeManager()
+
+    # Provide multiple facts in one go so that cancelling halfway through still yields a partial, meaningful result.
+    handle = km.store(
+        "Bob lives in Bangkok. Alice is 30 years old. Carl is 25 years old."
+    )
+    await asyncio.sleep(0.05)
+    handle.stop()
+    with pytest.raises(asyncio.CancelledError):
+        await handle.result()
+    assert handle.done()
+
+
+# --------------------------------------------------------------------------- #
+# 10. Retrieve with interjection                                              #
+# --------------------------------------------------------------------------- #
+
+
+@pytest.mark.eval
+@pytest.mark.asyncio
+@pytest.mark.timeout(120)
+@_handle_project
+async def test_retrieve_interjection():
+    """
+    Test that we can interject during a retrieve operation and
+    the interjection is incorporated into the final result.
+    """
+    km = KnowledgeManager()
+
+    # Store some data first
+    handle = km.store("Alice is 30 years old.")
+    handle = km.store("Alice lives in New York.")
+    await handle.result()
+    
+    # Now retrieve with interjection
+    handle = km.retrieve("How old is Alice?")
+    await handle.interject("Also, where does she live?")
+    out = await handle.result()
+    
+    assert _contains(out, "30", "New York"), assertion_failed(
+        "Output containing both '30' and 'New York'",
+        out,
+        "Output does not contain both expected details about Alice",
+    )
+
+
+# --------------------------------------------------------------------------- #
+# 11. Retrieve with stop                                                      #
+# --------------------------------------------------------------------------- #
+
+
+@pytest.mark.eval
+@pytest.mark.asyncio
+@pytest.mark.timeout(120)
+@_handle_project
+async def test_retrieve_stop():
+    """
+    Test that we can stop a retrieve operation mid-execution
+    """
+    km = KnowledgeManager()
+
+    # Store some data first
+    handle = km.store("The capital of France is Paris. The capital of Germany is Berlin. The capital of Italy is Rome.")
+    await handle.result()
+    
+    # Now retrieve with stop
+    handle = km.retrieve("List the capitals of European countries.")
+    await asyncio.sleep(0.05)
+    handle.stop()
+    with pytest.raises(asyncio.CancelledError):
+        await handle.result()
+    assert handle.done()
