@@ -359,7 +359,7 @@ async def _async_tool_use_loop_inner(
             # `_maybe_await` shields us from the fact that some back-ends
             # expose `generate` as a coroutine and others as a normal def.
 
-            response = await _maybe_await(
+            await _maybe_await(
                 client.generate(
                     return_full_completion=True,
                     tools=base_tools_schema,
@@ -367,8 +367,7 @@ async def _async_tool_use_loop_inner(
                     stateful=True,
                 )
             )
-            response = response.model_dump()
-            msg = response["choices"][0]["message"]
+            msg = client.messages[-1]
             if event_bus:
                 await event_bus.publish(
                     Event(type=event_type, payload={"message": msg}),
