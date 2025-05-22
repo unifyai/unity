@@ -689,10 +689,6 @@ class ControlPanel(tk.Tk):
             ("Backspace", CMD_PRESS_BACKSPACE),
             ("Delete", CMD_PRESS_DELETE),
             (CMD_SELECT_ALL, CMD_SELECT_ALL),
-            (CMD_SELECT_WORD_LEFT, CMD_SELECT_WORD_LEFT),
-            (CMD_SELECT_WORD_RIGHT, CMD_SELECT_WORD_RIGHT),
-            ("Shift ⬇", CMD_HOLD_SHIFT),
-            ("Shift ⬆", CMD_RELEASE_SHIFT),
             (CMD_CLICK_OUT, CMD_CLICK_OUT),
         ]
 
@@ -725,10 +721,13 @@ class ControlPanel(tk.Tk):
             ("→", CMD_CURSOR_RIGHT),
             ("↑", CMD_CURSOR_UP),
             ("↓", CMD_CURSOR_DOWN),
-            ("⌃←", CMD_MOVE_LINE_START),
-            ("⌃→", CMD_MOVE_LINE_END),
-            ("⌥←", CMD_MOVE_WORD_LEFT),
-            ("⌥→", CMD_MOVE_WORD_RIGHT),
+            ("Shift ⬇", CMD_HOLD_SHIFT),
+            ("Shift ⬆", CMD_RELEASE_SHIFT),
+            ("Ctrl ⬇", CMD_HOLD_CTRL),
+            ("Ctrl ⬆", CMD_RELEASE_CTRL),
+            ("Alt ⬇",  CMD_HOLD_ALT),
+            ("Alt ⬆",  CMD_RELEASE_ALT),
+
         ]
 
         for label, cmd in arrow_cmds:
@@ -1067,20 +1066,13 @@ class ControlPanel(tk.Tk):
 
     # dynamic key-press button wrap
     def _relayout_key_buttons(self):
+        # Evenly distribute key buttons in a single row
         for widget in self.keyrow.winfo_children():
             widget.grid_forget()
-
-        width = self.keyrow.winfo_width()
-        if width == 0:
-            self.after(100, self._relayout_key_buttons)
-            return
-
-        # Approximate button width + padding
-        min_button_px = 150
-        num_cols = max(2, width // min_button_px)
-
+        num_cols = len(self._key_button_widgets) or 1
         for i, b in enumerate(self._key_button_widgets):
-            b.grid(row=i // num_cols, column=i % num_cols, sticky="ew", padx=1, pady=1)
+            # one row: row 0, column i
+            b.grid(row=0, column=i, sticky="ew", padx=1, pady=1)
 
         for c in range(num_cols):
             self.keyrow.columnconfigure(c, weight=1)
@@ -1203,10 +1195,6 @@ class ControlPanel(tk.Tk):
             CMD_CURSOR_UP: "Requires focus in a text‑box",
             CMD_CURSOR_DOWN: "Requires focus in a text‑box",
             CMD_SELECT_ALL: "Requires focus in a text‑box",
-            CMD_MOVE_LINE_START: "Requires focus in a text‑box",
-            CMD_MOVE_LINE_END: "Requires focus in a text‑box",
-            CMD_MOVE_WORD_LEFT: "Requires focus in a text‑box",
-            CMD_MOVE_WORD_RIGHT: "Requires focus in a text‑box",
             CMD_STOP_SCROLLING: "Auto‑scroll isn't running",
             CMD_CONT_SCROLLING: "Auto‑scroll isn't running",
             CMD_START_SCROLL_UP: "Already auto‑scrolling",
@@ -1215,8 +1203,10 @@ class ControlPanel(tk.Tk):
             CMD_BACK_NAV: "No previous page in history",
             CMD_FORWARD_NAV: "No forward history entry",
             CMD_RELOAD_PAGE: "",
-            CMD_SELECT_WORD_LEFT: "Requires focus in a text-box",
-            CMD_SELECT_WORD_RIGHT: "Requires focus in a text-box",
+            CMD_HOLD_CTRL: "Requires focus in a text-box",
+            CMD_HOLD_ALT: "Requires focus in a text-box",
+            CMD_RELEASE_CTRL: "Requires focus in a text-box",
+            CMD_RELEASE_ALT: "Requires focus in a text-box",
         }
 
         def _is_ok(cmd: str) -> bool:
@@ -1587,12 +1577,6 @@ class ControlPanel(tk.Tk):
                 CMD_CURSOR_UP,
                 CMD_CURSOR_DOWN,
                 CMD_SELECT_ALL,
-                CMD_MOVE_LINE_START,
-                CMD_MOVE_LINE_END,
-                CMD_MOVE_WORD_LEFT,
-                CMD_MOVE_WORD_RIGHT,
-                CMD_SELECT_WORD_LEFT,
-                CMD_SELECT_WORD_RIGHT,
                 CMD_HOLD_SHIFT,
                 CMD_RELEASE_SHIFT,
                 CMD_CLICK_OUT,

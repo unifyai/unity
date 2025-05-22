@@ -339,20 +339,6 @@ class CommandRunner:
             CMD_CURSOR_UP: ("ArrowUp",),
             CMD_CURSOR_DOWN: ("ArrowDown",),
             CMD_SELECT_ALL: ("Meta+a",) if sys.platform == "darwin" else ("Control+a",),
-            CMD_MOVE_LINE_START: ("Control+ArrowLeft",),
-            CMD_MOVE_LINE_END: ("Control+ArrowRight",),
-            CMD_MOVE_WORD_LEFT: ("Alt+ArrowLeft",),
-            CMD_MOVE_WORD_RIGHT: ("Alt+ArrowRight",),
-            CMD_SELECT_WORD_LEFT: (
-                ("Alt+Shift+ArrowLeft",)
-                if sys.platform == "darwin"
-                else ("Control+Shift+ArrowLeft",)
-            ),
-            CMD_SELECT_WORD_RIGHT: (
-                ("Alt+Shift+ArrowRight",)
-                if sys.platform == "darwin"
-                else ("Control+Shift+ArrowRight",)
-            ),
         }
         if cmd in keymap:
             self.hist.add(cmd)
@@ -365,9 +351,29 @@ class CommandRunner:
             self.active.keyboard.down("Shift")
             return
 
+        if cmd == CMD_HOLD_CTRL:
+            self.hist.add(cmd)
+            self.active.keyboard.down("Control")
+            return
+
+        if cmd == CMD_HOLD_ALT:
+            self.hist.add(cmd)
+            self.active.keyboard.down("Alt")
+            return
+
         if cmd == CMD_RELEASE_SHIFT:
             self.hist.add(cmd)
             self.active.keyboard.up("Shift")
+            return
+
+        if cmd == CMD_RELEASE_CTRL:
+            self.hist.add(cmd)
+            self.active.keyboard.up("Control")
+            return
+
+        if cmd == CMD_RELEASE_ALT:
+            self.hist.add(cmd)
+            self.active.keyboard.up("Alt")
             return
 
         # press enter -------------------------------------------------------
