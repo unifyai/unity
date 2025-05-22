@@ -251,6 +251,7 @@ _SIMPLE_KEY_ACTIONS = {
     CMD_CURSOR_UP: "Move caret up one line.",
     CMD_CURSOR_DOWN: "Move caret down one line.",
     CMD_SELECT_ALL: "Select the entire text.",
+    CMD_PRESS_KEY: "Press the specified key (e.g. '1', 'a', 'Escape').",
     CMD_HOLD_SHIFT: "Hold the Shift key down.",
     CMD_HOLD_CTRL:  "Hold the Control key down.",
     CMD_HOLD_ALT:   "Hold the Alt key down.",

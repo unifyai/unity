@@ -912,25 +912,29 @@ class ControlPanel(tk.Tk):
         scroll_block = tk.Frame(btns)
         scroll_block.grid(row=0, column=0, columnspan=2, sticky="nsew")
 
-        # ── Left half: Dial-pad ---------------------------------------
-        keypad = tk.Frame(scroll_block)
-        keypad.grid(row=0, column=0, sticky="n")
-
-        digits = ["1", "2", "3", "4", "5", "6", "7", "8", "9", "*", "0", "#"]
-        self._dtmf_buttons = []  # recreate in new parent
-        for i, d in enumerate(digits):
-            r, c = divmod(i, 3)
-            btn = ttk.Button(
-                keypad,
-                text=d,
-                width=4,
-                command=lambda digit=d: self._on_dtmf(digit),
-            )
-            btn.grid(row=r, column=c, sticky="ew", padx=1, pady=1)
-            self._dtmf_buttons.append(btn)
-
-        for col in range(3):
-            keypad.columnconfigure(col, weight=1)
+        # ── Left half: Press-Key control --------------------------------
+        pk_frame = tk.Frame(scroll_block)
+        pk_frame.grid(row=0, column=0, sticky="n")
+        # Entry for key character/code
+        self.press_key_var = tk.StringVar(value="")
+        # Button to execute press_key command
+        press_key_btn = ttk.Button(
+            pk_frame,
+            text="Press Key",
+            width=10,
+            command=lambda: self._handle_input(f"press_key {self.press_key_var.get()}")
+        )
+        press_key_btn.grid(row=0, column=0, sticky="w")
+        # Entry placed to the right of the button
+        press_key_entry = tk.Entry(
+            pk_frame,
+            textvariable=self.press_key_var,
+            width=6,
+            justify="center",
+        )
+        press_key_entry.grid(row=0, column=1, sticky="w", padx=(4, 0))
+        # register for enable/disable logic
+        self._cmd_buttons[CMD_PRESS_KEY] = press_key_btn
 
         # ── Right half: step scroll + toggle ---------------------------
 
@@ -991,7 +995,8 @@ class ControlPanel(tk.Tk):
             width=6,
             justify="center",
         )
-        # place below the slider after it's created (grid later)
+        # place speed entry to the right of scroll toggle and labels
+        speed_entry.grid(row=0, column=2, sticky="w", padx=(4, 0))
 
         # IntVar: 0 = up, 1 = stop, 2 = down  (middle is default)
         self._scroll_mode = tk.IntVar(value=1)
@@ -1044,7 +1049,7 @@ class ControlPanel(tk.Tk):
         self.scroll_toggle.grid(row=0, column=0, sticky="ew")
 
         # grid the speed entry just below slider and labels
-        speed_entry.grid(row=1, column=0, columnspan=2, sticky="ew", pady=(4, 0))
+        speed_entry.grid(row=0, column=2, sticky="w", padx=(4, 0))
 
         # Label markers – placed to the right of the vertical slider
         lbls = tk.Frame(toggle_frame)
@@ -1055,12 +1060,12 @@ class ControlPanel(tk.Tk):
 
         # ----- Solve CAPTCHA manual trigger --------------------------- NEW
         solve_btn = ttk.Button(
-            scroll_block,
+            pk_frame,
             text="Solve CAPTCHA",
             command=lambda: self._handle_input(CMD_SOLVE_CAPTCHA),
         )
-        # place below the scroll controls spanning full width
-        solve_btn.grid(row=1, column=0, columnspan=3, sticky="ew", pady=(6, 0))
+        # place below the press_key controls inside Press-Key frame
+        solve_btn.grid(row=1, column=0, columnspan=2, sticky="ew", pady=(6, 0))
         # register for enable/disable refresh logic
         self._cmd_buttons[CMD_SOLVE_CAPTCHA] = solve_btn
 
@@ -1195,6 +1200,13 @@ class ControlPanel(tk.Tk):
             CMD_CURSOR_UP: "Requires focus in a text‑box",
             CMD_CURSOR_DOWN: "Requires focus in a text‑box",
             CMD_SELECT_ALL: "Requires focus in a text‑box",
+            CMD_PRESS_KEY: "Requires focus in a text-box",
+            CMD_HOLD_SHIFT: "Requires focus in a text-box",
+            CMD_RELEASE_SHIFT: "Requires focus in a text-box",
+            CMD_HOLD_CTRL: "Requires focus in a text-box",
+            CMD_HOLD_ALT: "Requires focus in a text-box",
+            CMD_RELEASE_CTRL: "Requires focus in a text-box",
+            CMD_RELEASE_ALT: "Requires focus in a text-box",
             CMD_STOP_SCROLLING: "Auto‑scroll isn't running",
             CMD_CONT_SCROLLING: "Auto‑scroll isn't running",
             CMD_START_SCROLL_UP: "Already auto‑scrolling",
@@ -1203,10 +1215,6 @@ class ControlPanel(tk.Tk):
             CMD_BACK_NAV: "No previous page in history",
             CMD_FORWARD_NAV: "No forward history entry",
             CMD_RELOAD_PAGE: "",
-            CMD_HOLD_CTRL: "Requires focus in a text-box",
-            CMD_HOLD_ALT: "Requires focus in a text-box",
-            CMD_RELEASE_CTRL: "Requires focus in a text-box",
-            CMD_RELEASE_ALT: "Requires focus in a text-box",
         }
 
         def _is_ok(cmd: str) -> bool:

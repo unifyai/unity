@@ -481,6 +481,22 @@ class CommandRunner:
                 self.log(f"Reload failed: {exc}")
             return
 
+        # Generic key press: e.g. "press_key a"
+        if cmd.startswith("press_key "):
+            key = cmd[len("press_key "):].strip()
+            self.hist.add(f"press_key {key}")
+            try:
+                self.active.keyboard.press(key)
+            except Exception as exc:
+                self.log(f"press_key failed: {exc}")
+            return
+
+        if cmd == CMD_SOLVE_CAPTCHA:
+            # Manual trigger for CAPTCHA detection/solve
+            if self.state.captcha_pending:
+                # Implementation of solve_captcha method
+                pass
+
     # ---------- helper for GUI refresh ------------------------------------
     def refresh_overlay(self):
         elements = collect_elements(self.active)
