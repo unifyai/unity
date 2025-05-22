@@ -4,8 +4,9 @@ from google.cloud import pubsub_v1
 from google.oauth2.service_account import Credentials
 import json
 import os
+from actions import handle_message_action
 from events import Event, SMSMessageRecievedEvent, WhatsappMessageRecievedEvent
-from demo.actions import handle_message_action
+from new_terminal_helper import run_in_new_terminal
 
 # Subscription IDs
 project_id = "responsive-city-458413-a2"
@@ -102,6 +103,12 @@ class CommsManager:
                             role="User",
                         ).to_dict(),
                     },
+                )
+                message.ack()
+            elif subscription_id == "call-sub":
+                self.call_proc = run_in_new_terminal(
+                    "call.py",
+                    "dev" # "console" if a local call is needed
                 )
                 message.ack()
             else:
