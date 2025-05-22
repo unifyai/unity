@@ -152,7 +152,7 @@ async def entrypoint(ctx: agents.JobContext):
     )
 
     global READER, WRITER
-    READER, WRITER = await asyncio.open_connection("127.0.0.1", 8889)
+    READER, WRITER = await asyncio.open_connection("127.0.0.1", 8090)
     await publish_event(
         {
             "type": "user_agent_event",
