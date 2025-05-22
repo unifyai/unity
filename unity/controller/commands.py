@@ -19,6 +19,7 @@ CMD_ENTER_TEXT = "enter_text *"
 CMD_HOLD_SHIFT = "hold_shift"
 CMD_HOLD_CTRL = "hold_ctrl"
 CMD_HOLD_ALT = "hold_alt"
+CMD_HOLD_CMD = "hold_cmd"
 CMD_NEW_TAB = "new_tab"
 CMD_CLOSE_THIS_TAB = "close_this_tab"
 CMD_PRESS_BACKSPACE = "press_backspace"
@@ -27,11 +28,11 @@ CMD_PRESS_ENTER = "press_enter"
 CMD_RELEASE_SHIFT = "release_shift"
 CMD_RELEASE_CTRL = "release_ctrl"
 CMD_RELEASE_ALT = "release_alt"
+CMD_RELEASE_CMD = "release_cmd"
 CMD_SCROLL_DOWN = "scroll_down *"
 CMD_SCROLL_UP = "scroll_up *"
 CMD_SEARCH = "search *"
 CMD_OPEN_URL = "open_url *"
-CMD_SELECT_ALL = "select_all"
 CMD_START_SCROLL_DOWN = "start_scrolling_down"
 CMD_START_SCROLL_UP = "start_scrolling_up"
 CMD_STOP_SCROLLING = "stop_scrolling"
@@ -63,14 +64,15 @@ TEXTBOX_COMMANDS: set[str] = {
     CMD_CURSOR_RIGHT,
     CMD_CURSOR_UP,
     CMD_CURSOR_DOWN,
-    CMD_SELECT_ALL,
     CMD_PRESS_KEY,
     CMD_HOLD_SHIFT,
     CMD_HOLD_CTRL,
     CMD_HOLD_ALT,
+    CMD_HOLD_CMD,
     CMD_RELEASE_SHIFT,
     CMD_RELEASE_CTRL,
     CMD_RELEASE_ALT,
+    CMD_RELEASE_CMD,
 }
 
 # 2.  Page navigation / search (always valid)

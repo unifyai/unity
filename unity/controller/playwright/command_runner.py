@@ -338,7 +338,6 @@ class CommandRunner:
             CMD_CURSOR_RIGHT: ("ArrowRight",),
             CMD_CURSOR_UP: ("ArrowUp",),
             CMD_CURSOR_DOWN: ("ArrowDown",),
-            CMD_SELECT_ALL: ("Meta+a",) if sys.platform == "darwin" else ("Control+a",),
         }
         if cmd in keymap:
             self.hist.add(cmd)
@@ -361,6 +360,11 @@ class CommandRunner:
             self.active.keyboard.down("Alt")
             return
 
+        if cmd == CMD_HOLD_CMD:
+            self.hist.add(cmd)
+            self.active.keyboard.down("Meta")
+            return
+
         if cmd == CMD_RELEASE_SHIFT:
             self.hist.add(cmd)
             self.active.keyboard.up("Shift")
@@ -374,6 +378,11 @@ class CommandRunner:
         if cmd == CMD_RELEASE_ALT:
             self.hist.add(cmd)
             self.active.keyboard.up("Alt")
+            return
+
+        if cmd == CMD_RELEASE_CMD:
+            self.hist.add(cmd)
+            self.active.keyboard.up("Meta")
             return
 
         # press enter -------------------------------------------------------
