@@ -51,7 +51,7 @@ def run_in_new_terminal(
     if not script_path.exists():
         raise FileNotFoundError(script_path)
 
-    py_cmd = [sys.executable, str(script_path), *script_args]
+    py_cmd = [sys.executable, "-i", str(script_path), *script_args]
 
     if sys.platform.startswith("win"):
         # ─ Windows: run the script in a *new* console and create its own process-group

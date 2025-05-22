@@ -13,9 +13,11 @@ from livekit.plugins import (
     openai,
     cartesia,
     deepgram,
-    noise_cancellation,
+    # noise_cancellation,
     silero,
 )
+if sys.platform == "darwin":
+    from livekit.plugins import noise_cancellation
 from livekit.plugins.turn_detector.multilingual import MultilingualModel
 from livekit.agents import ChatContext, ChatMessage
 
@@ -147,12 +149,12 @@ async def entrypoint(ctx: agents.JobContext):
             # LiveKit Cloud enhanced noise cancellation
             # - If self-hosting, omit this parameter
             # - For telephony applications, use `BVCTelephony` for best results
-            noise_cancellation=noise_cancellation.BVC(),
+            noise_cancellation=noise_cancellation.BVC() if sys.platform=="darwin" else None,
         ),
     )
 
     global READER, WRITER
-    READER, WRITER = await asyncio.open_connection("127.0.0.1", 8889)
+    READER, WRITER = await asyncio.open_connection("127.0.0.1", 8090)
     await publish_event(
         {
             "type": "user_agent_event",
