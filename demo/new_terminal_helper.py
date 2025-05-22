@@ -65,27 +65,40 @@ def run_in_new_terminal(
         )
 
     elif sys.platform == "darwin":
-        # shell line run inside Terminal
-        shell = f"echo $$ > /tmp/{script_path.stem}.pid; exec {shlex.join(py_cmd)}"
+        # Create a unique identifier for this process
+        process_id = f"{script_path.stem}_{int(time.time())}"
+        pid_file = Path(f"/tmp/{process_id}.pid")
 
+        # shell line run inside Terminal with better error handling
+        shell = f"""
+            set -a && source ../.env && set +a;
+            echo $$ > {pid_file};
+            trap 'rm -f {pid_file}' EXIT;
+            exec {shlex.join(py_cmd)}
+        """
+
+        # Use osascript to create the terminal and run the command
         osa = f"""
             tell application "Terminal"
-                activate
-                do script "{shell}"
+                do script "{shell}" in selected tab of front window
             end tell
         """
 
-        subprocess.Popen(["osascript", "-e", osa])
+        # Run osascript and wait for it to complete
+        subprocess.run(["osascript", "-e", osa], check=True)
 
-        # wait a moment for the PID file to appear
-        pid_file = Path(f"/tmp/{script_path.stem}.pid")
-        for _ in range(50):
+        # Wait for the PID file with better timeout and error handling
+        start_time = time.time()
+        while time.time() - start_time < 5:  # 5 second timeout
             if pid_file.exists():
-                pid = int(pid_file.read_text())
-                break
+                try:
+                    pid = int(pid_file.read_text().strip())
+                    # Verify the process is actually running
+                    if psutil.pid_exists(pid):
+                        return psutil.Process(pid)
+                except (ValueError, psutil.NoSuchProcess):
+                    pass
             time.sleep(0.1)
-        else:
-            raise RuntimeError("couldn’t obtain PID from Terminal")
 
         return psutil.Process(pid)
 
