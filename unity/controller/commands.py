@@ -17,16 +17,16 @@ CMD_CURSOR_RIGHT = "cursor_right"
 CMD_CURSOR_UP = "cursor_up"
 CMD_ENTER_TEXT = "enter_text *"
 CMD_HOLD_SHIFT = "hold_shift"
-CMD_MOVE_LINE_END = "move_line_end"
-CMD_MOVE_LINE_START = "move_line_start"
-CMD_MOVE_WORD_LEFT = "move_word_left"
-CMD_MOVE_WORD_RIGHT = "move_word_right"
+CMD_HOLD_CTRL = "hold_ctrl"
+CMD_HOLD_ALT = "hold_alt"
 CMD_NEW_TAB = "new_tab"
 CMD_CLOSE_THIS_TAB = "close_this_tab"
 CMD_PRESS_BACKSPACE = "press_backspace"
 CMD_PRESS_DELETE = "press_delete"
 CMD_PRESS_ENTER = "press_enter"
 CMD_RELEASE_SHIFT = "release_shift"
+CMD_RELEASE_CTRL = "release_ctrl"
+CMD_RELEASE_ALT = "release_alt"
 CMD_SCROLL_DOWN = "scroll_down *"
 CMD_SCROLL_UP = "scroll_up *"
 CMD_SEARCH = "search *"
@@ -47,8 +47,7 @@ CMD_BACK_NAV = "nav_back"
 CMD_FORWARD_NAV = "nav_forward"
 CMD_RELOAD_PAGE = "nav_reload"
 CMD_SOLVE_CAPTCHA = "solve_captcha"
-CMD_SELECT_WORD_LEFT = "select_word_left"
-CMD_SELECT_WORD_RIGHT = "select_word_right"
+CMD_PRESS_KEY = "press_key *"
 
 # ───────────────────────────────────────────────────────────────────────────
 #  WILDCARD GROUPS (sets reused by GUI / agent / filters)
@@ -65,14 +64,13 @@ TEXTBOX_COMMANDS: set[str] = {
     CMD_CURSOR_UP,
     CMD_CURSOR_DOWN,
     CMD_SELECT_ALL,
-    CMD_MOVE_LINE_START,
-    CMD_MOVE_LINE_END,
-    CMD_MOVE_WORD_LEFT,
-    CMD_MOVE_WORD_RIGHT,
+    CMD_PRESS_KEY,
     CMD_HOLD_SHIFT,
+    CMD_HOLD_CTRL,
+    CMD_HOLD_ALT,
     CMD_RELEASE_SHIFT,
-    CMD_SELECT_WORD_LEFT,
-    CMD_SELECT_WORD_RIGHT,
+    CMD_RELEASE_CTRL,
+    CMD_RELEASE_ALT,
 }
 
 # 2.  Page navigation / search (always valid)
