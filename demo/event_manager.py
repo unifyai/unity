@@ -183,7 +183,7 @@ class EventManager:
                         if self.writers.get("gui"):
                             print("creating tasks")
                             # For WhatsApp messages, include phone numbers in the message content
-                            if action.type == "whatsapp":
+                            if action.type in ["whatsapp", "sms"]:
                                 # Find phone numbers from inflight events
                                 phone_numbers = {}
                                 for event in self.past_events[::-1]:
