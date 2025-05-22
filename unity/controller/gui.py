@@ -688,7 +688,6 @@ class ControlPanel(tk.Tk):
             ("Enter", CMD_PRESS_ENTER),
             ("Backspace", CMD_PRESS_BACKSPACE),
             ("Delete", CMD_PRESS_DELETE),
-            (CMD_SELECT_ALL, CMD_SELECT_ALL),
             (CMD_CLICK_OUT, CMD_CLICK_OUT),
         ]
 
@@ -716,18 +715,12 @@ class ControlPanel(tk.Tk):
 
         self._arrow_button_widgets = []
 
+        # Arrow navigation only
         arrow_cmds = [
             ("←", CMD_CURSOR_LEFT),
             ("→", CMD_CURSOR_RIGHT),
             ("↑", CMD_CURSOR_UP),
             ("↓", CMD_CURSOR_DOWN),
-            ("Shift ⬇", CMD_HOLD_SHIFT),
-            ("Shift ⬆", CMD_RELEASE_SHIFT),
-            ("Ctrl ⬇", CMD_HOLD_CTRL),
-            ("Ctrl ⬆", CMD_RELEASE_CTRL),
-            ("Alt ⬇",  CMD_HOLD_ALT),
-            ("Alt ⬆",  CMD_RELEASE_ALT),
-
         ]
 
         for label, cmd in arrow_cmds:
@@ -739,6 +732,28 @@ class ControlPanel(tk.Tk):
             )
             self._key_buttons[cmd] = b
             self._arrow_button_widgets.append(b)
+
+        # ── Third row: Modifier hold/release keys ----------------
+        self._modifier_button_widgets = []
+        modifier_cmds = [
+            ("Shift ⬇", CMD_HOLD_SHIFT),
+            ("Shift ⬆", CMD_RELEASE_SHIFT),
+            ("Ctrl ⬇", CMD_HOLD_CTRL),
+            ("Ctrl ⬆", CMD_RELEASE_CTRL),
+            ("Alt ⬇", CMD_HOLD_ALT),
+            ("Alt ⬆", CMD_RELEASE_ALT),
+            ("Cmd ⬇", CMD_HOLD_CMD),
+            ("Cmd ⬆", CMD_RELEASE_CMD),
+        ]
+        for label, cmd in modifier_cmds:
+            b = ttk.Button(
+                self.keyrow2,
+                text=label,
+                width=12,
+                command=lambda c=cmd: self._handle_input(c),
+            )
+            self._key_buttons[cmd] = b
+            self._modifier_button_widgets.append(b)
 
         # ===================================================================
         #  ROW‑6  →  Bottom bar (Tab controls)
@@ -1100,6 +1115,15 @@ class ControlPanel(tk.Tk):
         for c in range(num_cols):
             self.keyrow2.columnconfigure(c, weight=1)
 
+        # layout modifier buttons evenly on row 1
+        mod_count = len(self._modifier_button_widgets) or 1
+        for b in self._modifier_button_widgets:
+            b.grid_forget()
+        for c in range(mod_count):
+            self.keyrow2.columnconfigure(c, weight=1)
+        for i, b in enumerate(self._modifier_button_widgets):
+            b.grid(row=1, column=i, sticky="ew", padx=1, pady=1)
+
     def _send_llm_command(self) -> None:
         text = self.cmd_var.get().strip()
         self.cmd_var.set("")
@@ -1199,7 +1223,6 @@ class ControlPanel(tk.Tk):
             CMD_CURSOR_RIGHT: "Requires focus in a text‑box",
             CMD_CURSOR_UP: "Requires focus in a text‑box",
             CMD_CURSOR_DOWN: "Requires focus in a text‑box",
-            CMD_SELECT_ALL: "Requires focus in a text‑box",
             CMD_PRESS_KEY: "Requires focus in a text-box",
             CMD_HOLD_SHIFT: "Requires focus in a text-box",
             CMD_RELEASE_SHIFT: "Requires focus in a text-box",
@@ -1207,10 +1230,12 @@ class ControlPanel(tk.Tk):
             CMD_HOLD_ALT: "Requires focus in a text-box",
             CMD_RELEASE_CTRL: "Requires focus in a text-box",
             CMD_RELEASE_ALT: "Requires focus in a text-box",
-            CMD_STOP_SCROLLING: "Auto‑scroll isn't running",
-            CMD_CONT_SCROLLING: "Auto‑scroll isn't running",
-            CMD_START_SCROLL_UP: "Already auto‑scrolling",
-            CMD_START_SCROLL_DOWN: "Already auto‑scrolling",
+            CMD_HOLD_CMD: "Requires focus in a text-box",
+            CMD_RELEASE_CMD: "Requires focus in a text-box",
+            CMD_STOP_SCROLLING: "Auto-scroll isn't running",
+            CMD_CONT_SCROLLING: "Auto-scroll isn't running",
+            CMD_START_SCROLL_UP: "Already auto-scrolling",
+            CMD_START_SCROLL_DOWN: "Already auto-scrolling",
             CMD_SCROLL_UP: "Already at the very top of the page",
             CMD_BACK_NAV: "No previous page in history",
             CMD_FORWARD_NAV: "No forward history entry",
@@ -1250,7 +1275,7 @@ class ControlPanel(tk.Tk):
         if not ok:
             _Tooltip(
                 self.enter_text_box,
-                "Cannot type – there's no active text‑box on the page",
+                "Cannot type – there's no active text-box on the page",
             )
 
         # ----- Search / URL entry -------------------------------------
@@ -1259,7 +1284,7 @@ class ControlPanel(tk.Tk):
         if not ok_search:
             _Tooltip(
                 self.search_entry,
-                "Disabled while typing in a page text‑box",
+                "Disabled while typing in a page text-box",
             )
 
         # ----- Numbered element buttons ---------------------------------
@@ -1267,11 +1292,11 @@ class ControlPanel(tk.Tk):
         for btn in getattr(self, "_element_buttons", []):
             btn.configure(state="normal" if can_click_el else "disabled")
             if not can_click_el:
-                _Tooltip(btn, "Cannot click elements while typing in a text‑box")
+                _Tooltip(btn, "Cannot click elements while typing in a text-box")
 
         # ----- Per‑row "×" / Go buttons in the Tabs pane --------------
         for btn in getattr(self, "_tab_row_buttons", []):
-            if btn["text"] == "×":  # close‑tab buttons
+            if btn["text"] == "×":  # close-tab buttons
                 ok = any(name.startswith("close_tab_") for name in valid)
                 reason = "Tab actions disabled while typing"
             else:  # Go buttons
@@ -1289,7 +1314,7 @@ class ControlPanel(tk.Tk):
 
     # ──────────────────────── ACTIONS‑PANE HELPER ───────────────────────
     def _refresh_actions_list(self) -> None:
-        """Update the Actions tab (anti‑jitter, preserves scroll)."""
+        """Update the Actions tab (anti-jitter, preserves scroll)."""
         groups = list_available_actions(
             self.tab_titles,
             [(idx, label) for idx, label, _ in self.elements],
@@ -1325,7 +1350,7 @@ class ControlPanel(tk.Tk):
 
         new_txt = "\n".join(out_lines)
 
-        if new_txt == self._last_actions_txt:  # anti‑jitter cache
+        if new_txt == self._last_actions_txt:  # anti-jitter cache
             return
         self._last_actions_txt = new_txt
 
@@ -1486,12 +1511,12 @@ class ControlPanel(tk.Tk):
                         return True
                 return False
 
-            # skip the fast‑path when the text came from the LLM box
+            # skip the fast-path when the text came from the LLM box
             if (not from_llm_box) and _is_valid_primitive(text):
                 self._queue_command(text)
                 return
 
-            # hand off to background thread (non‑blocking)
+            # hand off to background thread (non-blocking)
             self._start_llm_thread(text)
         except Exception:
             import traceback as _tb
@@ -1559,7 +1584,7 @@ class ControlPanel(tk.Tk):
                 return CMD_CLICK_BUTTON.replace("*", slug_text)
             return CMD_CLICK_BUTTON.replace("*", slug_text.replace("_", " "))
 
-        # ----- search / open‑url ------------------------------------------
+        # ----- search / open-url ------------------------------------------
         sa = resp.get("search")
         if sa and sa.get("apply"):
             return CMD_SEARCH.replace("*", sa.get("query", ""))
@@ -1575,7 +1600,7 @@ class ControlPanel(tk.Tk):
             if et and et.get("apply"):
                 return CMD_ENTER_TEXT.replace("*", et.get("text", ""))
 
-            # 2. single‑key / caret actions
+            # 2. single-key / caret actions
             for cmd in (
                 CMD_PRESS_ENTER,
                 CMD_PRESS_BACKSPACE,
@@ -1584,7 +1609,6 @@ class ControlPanel(tk.Tk):
                 CMD_CURSOR_RIGHT,
                 CMD_CURSOR_UP,
                 CMD_CURSOR_DOWN,
-                CMD_SELECT_ALL,
                 CMD_HOLD_SHIFT,
                 CMD_RELEASE_SHIFT,
                 CMD_CLICK_OUT,

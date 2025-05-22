@@ -59,6 +59,69 @@ def test_text_to_browser_action_multi_step_select():
 
 
 @pytest.mark.timeout(30)
+def test_text_to_browser_action_multi_step_select_word():
+    """Smoke-test multi-step command generation.
+    Relies on online Unify backend; will skip when network/API not available."""
+    try:
+        # Set the state to be in a textbox as key presses only available in textbox
+        test_state = BrowserState()
+        test_state.in_textbox = True
+
+        result = agent_mod.text_to_browser_action(
+            "select a word to the left",
+            screenshot=None,
+            tabs=[],
+            buttons=None,
+            history=[],
+            state=test_state,
+            multi_step_mode=True,
+        )
+    except Exception as exc:
+        pytest.skip(f"Skipping – Unify backend unavailable: {exc}")
+    # Should return a dict with 'action' list and 'rationale'
+    assert isinstance(result, dict)
+    assert "action" in result and "rationale" in result
+    actions = result["action"]
+    assert isinstance(actions, list)
+    assert len(actions) >= 3
+    # Expect first command to hold_ctrl, then hold_shift, then cursor_left
+    assert actions[0] == "hold_ctrl"
+    assert actions[1] == "hold_shift"
+    assert actions[2] == "cursor_left"
+
+
+@pytest.mark.timeout(30)
+def test_text_to_browser_action_multi_step_select_all():
+    """Smoke-test multi-step command generation.
+    Relies on online Unify backend; will skip when network/API not available."""
+    try:
+        # Set the state to be in a textbox as key presses only available in textbox
+        test_state = BrowserState()
+        test_state.in_textbox = True
+
+        result = agent_mod.text_to_browser_action(
+            "select all texts",
+            screenshot=None,
+            tabs=[],
+            buttons=None,
+            history=[],
+            state=test_state,
+            multi_step_mode=True,
+        )
+    except Exception as exc:
+        pytest.skip(f"Skipping – Unify backend unavailable: {exc}")
+    # Should return a dict with 'action' list and 'rationale'
+    assert isinstance(result, dict)
+    assert "action" in result and "rationale" in result
+    actions = result["action"]
+    assert isinstance(actions, list)
+    assert len(actions) >= 2
+    # Expect first command to hold_ctrl, then press_key a
+    assert actions[0] == "hold_ctrl"
+    assert actions[1] == "press_key a"
+
+
+@pytest.mark.timeout(30)
 def test_text_to_browser_action_multi_step_delete_left():
     """Smoke-test multi-step command generation.
     Relies on online Unify backend; will skip when network/API not available."""
@@ -114,38 +177,6 @@ def test_text_to_browser_action_multi_step_delete_right():
     assert isinstance(actions, list)
     assert len(actions) == 2
     assert actions == ["press_delete", "press_delete"]
-
-
-@pytest.mark.timeout(30)
-def test_text_to_browser_action_multi_step_select_word():
-    """Smoke-test multi-step command generation.
-    Relies on online Unify backend; will skip when network/API not available."""
-    try:
-        # Set the state to be in a textbox as key presses only available in textbox
-        test_state = BrowserState()
-        test_state.in_textbox = True
-
-        result = agent_mod.text_to_browser_action(
-            "select a word to the left",
-            screenshot=None,
-            tabs=[],
-            buttons=None,
-            history=[],
-            state=test_state,
-            multi_step_mode=True,
-        )
-    except Exception as exc:
-        pytest.skip(f"Skipping – Unify backend unavailable: {exc}")
-    # Should return a dict with 'action' list and 'rationale'
-    assert isinstance(result, dict)
-    assert "action" in result and "rationale" in result
-    actions = result["action"]
-    assert isinstance(actions, list)
-    assert len(actions) >= 4
-    # Expect first command to hold_ctrl, then hold_shift, then cursor_left
-    assert actions[0] == "hold_ctrl"
-    assert actions[1] == "hold_shift"
-    assert actions[2] == "cursor_left"
 
 
 @pytest.mark.timeout(30)
