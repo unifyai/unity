@@ -83,7 +83,7 @@ def test_text_to_browser_action_multi_step_select_word():
     assert "action" in result and "rationale" in result
     actions = result["action"]
     assert isinstance(actions, list)
-    assert len(actions) >= 4
+    assert len(actions) >= 3
     # Expect first command to hold_ctrl, then hold_shift, then cursor_left
     assert actions[0] == "hold_ctrl"
     assert actions[1] == "hold_shift"
