@@ -41,12 +41,12 @@ class EventManager:
         self.servers["gui"] = await asyncio.start_server(
             self.handle_gui_client,
             "127.0.0.1",
-            8888,
+            8080,
         )
         self.servers["call"] = await asyncio.start_server(
             self.handle_call_client,
             "127.0.0.1",
-            8889,
+            8090,
         )
 
         self.event_aggregator_task = asyncio.create_task(self.collect_events())
@@ -189,21 +189,27 @@ class EventManager:
                                 for event in self.past_events[::-1]:
                                     if event.get("payload", {}).get("content"):
                                         try:
-                                            content = json.loads(event["payload"]["content"])
-                                            if "to_number" in content and "from_number" in content:
+                                            content = json.loads(
+                                                event["payload"]["content"]
+                                            )
+                                            if (
+                                                "to_number" in content
+                                                and "from_number" in content
+                                            ):
                                                 phone_numbers = {
                                                     "to_number": content["to_number"],
-                                                    "from_number": content["from_number"]
+                                                    "from_number": content[
+                                                        "from_number"
+                                                    ],
                                                 }
                                                 break
                                         except json.JSONDecodeError:
                                             continue
 
                                 # Create message content with phone numbers
-                                message_content = json.dumps({
-                                    "message": action.message,
-                                    **phone_numbers
-                                })
+                                message_content = json.dumps(
+                                    {"message": action.message, **phone_numbers}
+                                )
                             else:
                                 message_content = action.message
 

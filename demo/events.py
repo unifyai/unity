@@ -144,6 +144,10 @@ class SMSMessageRecievedEvent(_Message):
 
 
 class PhoneCallStartedEvent(Event):
+    def __init__(self, content: str, **kwargs):
+        kwargs.pop("content", None)
+        super().__init__(content=content, **kwargs)
+
     def __str__(self):
         return f"[Phone Call Started @ {self.fmt_timestamp}]"
 

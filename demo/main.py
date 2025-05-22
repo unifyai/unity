@@ -167,14 +167,14 @@ class ChatApp(App):
         Ensure an event-manager is running and end up with a live
         (reader, writer) pair in `self.reader` / `self.writer`.
 
-        • If something is already listening on 127.0.0.1:8888 we reuse that
+        • If something is already listening on 127.0.0.1:8080 we reuse that
         very connection.
         • Otherwise we start our own copy of `python -m event_manager`
         and keep retrying until it is ready.
         """
         try:
             # ── Try to connect right away ───────────────────────────────
-            self.reader, self.writer = await asyncio.open_connection("127.0.0.1", 8888)
+            self.reader, self.writer = await asyncio.open_connection("127.0.0.1", 8080)
             self.event_manager_proc = None  # we didn’t spawn it
         except ConnectionRefusedError:
             # ── Nothing was listening: launch the daemon ourselves ─────
@@ -190,14 +190,14 @@ class ChatApp(App):
                 try:
                     self.reader, self.writer = await asyncio.open_connection(
                         "127.0.0.1",
-                        8888,
+                        8080,
                     )
                     break
                 except ConnectionRefusedError:
                     continue
             else:
                 raise RuntimeError(
-                    "Unable to connect to event-manager on 127.0.0.1:8888",
+                    "Unable to connect to event-manager on 127.0.0.1:8080",
                 )
 
             print("connected!")
