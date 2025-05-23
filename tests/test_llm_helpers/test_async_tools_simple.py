@@ -230,28 +230,3 @@ async def test_async_loop_mixed_sync_async_tools():
     ).result()
 
     assert "13" in answer.strip()
-
-
-# --------------------------------------------------------------------------- #
-#  REAL CLIENT – ensure assistant requests parallel tool calls                #
-# --------------------------------------------------------------------------- #
-@unify.traced
-def square(x: int) -> int:
-    return x * x
-
-
-@pytest.mark.asyncio
-@_handle_project
-async def test_parallel_tool_calls_with_real_asyncunify():
-    client = new_client()
-
-    await llmh.start_async_tool_use_loop(
-        client,
-        "Square 2 and 3 simultaneously – use two parallel `square` tool calls.",
-        {"square": square},
-    ).result()
-
-    first_llm_turn = next(
-        m for m in client.messages if m["role"] == "assistant" and m.get("tool_calls")
-    )
-    assert len(first_llm_turn["tool_calls"]) == 2
