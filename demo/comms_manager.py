@@ -56,22 +56,30 @@ class CommsManager:
                     )
 
                     # Handle WhatsApp send events
-                    if msg["thread"] in ["whatsapp", "sms"]:
+                    if msg["thread"] in ["whatsapp", "sms", "call"]:
                         # Extract phone numbers from the message content
                         # This assumes the message content contains the necessary information
                         # You might need to adjust this based on your actual message format
                         try:
                             message_data = json.loads(msg["content"])
-                            success = await handle_message_action(
-                                msg["thread"],
-                                from_number=message_data.get("to_number", "").replace(
+                            kwargs = {
+                                "from_number": message_data.get("from_number", "").replace(
                                     "whatsapp:", ""
                                 ),
-                                to_number=message_data.get("from_number", "").replace(
+                                "to_number": message_data.get("to_number", "").replace(
                                     "whatsapp:", ""
                                 ),
-                                message=message_data.get("message", ""),
-                            )
+                            }
+                            if msg["thread"] != "call":
+                                kwargs["message"] = message_data.get("message", "")
+                            else:
+                                self.call_proc = run_in_new_terminal(
+                                    "call.py",
+                                    "dev",  # "console" if a local call is needed
+                                    kwargs["from_number"],
+                                    kwargs["to_number"],
+                                )
+                            success = await handle_message_action(msg["thread"], **kwargs)
                             if not success:
                                 print(f"Failed to send {msg['thread']} message")
                         except json.JSONDecodeError:
