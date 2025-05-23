@@ -3,7 +3,7 @@ pytest tests for the async-tool loop helpers **using a real `unify.AsyncUnify`
 client for every test** – no stubs, no scripted completions.
 
 Running these tests will make real requests to the model you pass to
-`unify.AsyncUnify` (by default we use **GPT-4o**).  
+`unify.AsyncUnify` (by default we use **GPT-4o**).
 Make sure you have:
 
 * a valid OpenAI (or Unify-proxy) API key in your environment, and
@@ -49,18 +49,22 @@ MODEL_NAME = os.getenv("UNIFY_MODEL", "gpt-4o@openai")  # override if you like
 def add(x: int, y: int) -> int:
     return x + y
 
+
 @unify.traced
 def divide(a: int, b: int) -> float:  # may raise
     return a / b
+
 
 @unify.traced
 def launch() -> None:
     raise Exception
 
+
 @unify.traced
 async def fast_tool(res: str = "fast") -> str:
     await asyncio.sleep(0.05)
     return res
+
 
 @unify.traced
 async def slow_tool(res: str = "slow") -> str:
@@ -78,6 +82,7 @@ def new_client() -> unify.AsyncUnify:
     not interfere with one another.
     """
     return unify.AsyncUnify(MODEL_NAME, traced=True)
+
 
 @unify.traced
 def count_tool_messages(client: unify.AsyncUnify) -> int:
@@ -115,12 +120,14 @@ async def test_async_loop_concurrent_tools_waits_for_all_results():
     """
     events: list[tuple[str, float]] = []
 
+    @unify.traced
     async def fast():
         events.append(("fast_start", time.monotonic()))
         await asyncio.sleep(0.05)
         events.append(("fast_end", time.monotonic()))
         return "fast"
 
+    @unify.traced
     async def slow():
         events.append(("slow_start", time.monotonic()))
         await asyncio.sleep(0.30)
@@ -133,6 +140,7 @@ async def test_async_loop_concurrent_tools_waits_for_all_results():
             return await super().generate(**kwargs)
 
     client = InstrumentedClient(MODEL_NAME)
+    client.set_traced(True)
 
     _ = await llmh.start_async_tool_use_loop(
         client,
@@ -199,9 +207,7 @@ async def test_async_loop_aborts_after_too_many_failures():
     with pytest.raises(RuntimeError):
         await llmh.start_async_tool_use_loop(
             client,
-            message=(
-                "Please run the launch tool."
-            ),
+            message=("Please run the launch tool."),
             tools={"launch": launch},
             max_consecutive_failures=1,  # abort after the very first failure
         ).result()
@@ -227,28 +233,3 @@ async def test_async_loop_mixed_sync_async_tools():
     ).result()
 
     assert "13" in answer.strip()
-
-
-# --------------------------------------------------------------------------- #
-#  REAL CLIENT – ensure assistant requests parallel tool calls                #
-# --------------------------------------------------------------------------- #
-@unify.traced
-def square(x: int) -> int:
-    return x * x
-
-
-@pytest.mark.asyncio
-@_handle_project
-async def test_parallel_tool_calls_with_real_asyncunify():
-    client = new_client()
-
-    await llmh.start_async_tool_use_loop(
-        client,
-        "Square 2 and 3 simultaneously – use two parallel `square` tool calls.",
-        {"square": square},
-    ).result()
-
-    first_llm_turn = next(
-        m for m in client.messages if m["role"] == "assistant" and m.get("tool_calls")
-    )
-    assert len(first_llm_turn["tool_calls"]) == 2

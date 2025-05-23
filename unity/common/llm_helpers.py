@@ -135,12 +135,14 @@ def method_to_schema(bound_method):
         },
     }
 
+
 async def _maybe_await(obj):
     """Return *obj* if it is a value, or `await` and return its result if it is
     an awaitable."""
     if inspect.isawaitable(obj):
         return await obj
     return obj
+
 
 async def _async_tool_use_loop_inner(
     client: unify.AsyncUnify,
@@ -241,15 +243,16 @@ async def _async_tool_use_loop_inner(
 
                     pruned = [tc for i, tc in enumerate(tool_calls) if i in keep_idx]
                     if pruned:
-                        asst_msg["tool_calls"] = pruned # keep unresolved ones
+                        asst_msg["tool_calls"] = pruned  # keep unresolved ones
                     else:
-                        asst_msg.pop("tool_calls", None) # drop field when empty
+                        asst_msg.pop("tool_calls", None)  # drop field when empty
 
                 had_interjection = True
                 msg = {"role": "user", "content": extra}
                 if event_bus:
-                    await event_bus.publish(Event(type=event_type,
-                                                  payload={"message": msg}))
+                    await event_bus.publish(
+                        Event(type=event_type, payload={"message": msg})
+                    )
                 client.append_messages([msg])
 
             # ── A.  Wait for tool completion OR cancellation  ───────────────
@@ -259,10 +262,10 @@ async def _async_tool_use_loop_inner(
             #       • a *new* interjection appears
             if pending and not had_interjection:
                 interject_w = asyncio.create_task(interject_queue.get())
-                waiters = (
-                    pending
-                    | {asyncio.create_task(cancel_event.wait()), interject_w}
-                )
+                waiters = pending | {
+                    asyncio.create_task(cancel_event.wait()),
+                    interject_w,
+                }
                 done, _ = await asyncio.wait(
                     waiters,
                     return_when=asyncio.FIRST_COMPLETED,
@@ -270,7 +273,7 @@ async def _async_tool_use_loop_inner(
 
                 if interject_w in done:
                     await interject_queue.put(interject_w.result())
-                    continue            # → loop, will be processed in 0.
+                    continue  # → loop, will be processed in 0.
 
                 if any(t for t in done if t not in pending):
                     raise asyncio.CancelledError  # cancellation wins
@@ -323,11 +326,9 @@ async def _async_tool_use_loop_inner(
                     # 3b. move it to sit right after the other results that
                     #     belong to this assistant turn
                     insert_pos = (
-                        client.messages.index(asst_msg)
-                        + 1
-                        + meta["results_count"]
+                        client.messages.index(asst_msg) + 1 + meta["results_count"]
                     )
-                    moved = client.messages.pop()                # last element
+                    moved = client.messages.pop()  # last element
                     client.messages.insert(insert_pos, moved)
                     meta["results_count"] += 1
 
@@ -344,7 +345,7 @@ async def _async_tool_use_loop_inner(
                         )
 
             # ── B: wait for remaining tools before asking the LLM again
-            if pending and not had_interjection:
+            if pending:
                 continue  # still waiting for other tool tasks
 
             #  An interjection to handle, or no pending tool calls
@@ -412,7 +413,7 @@ async def _async_tool_use_loop_inner(
             if msg["tool_calls"]:
 
                 original_tool_calls: list = []
-                for idx, call in enumerate(msg["tool_calls"]): # capture index
+                for idx, call in enumerate(msg["tool_calls"]):  # capture index
                     name = call["function"]["name"]
                     args = json.loads(call["function"]["arguments"])
                     fn = tools[name]

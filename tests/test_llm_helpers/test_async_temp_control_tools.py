@@ -56,8 +56,7 @@ def _assistant_calls(msgs: List[dict], tool_name: str) -> int:
         for m in msgs
         if m["role"] == "assistant"
         and any(
-            tc["function"]["name"] == tool_name
-            for tc in (m.get("tool_calls") or [])
+            tc["function"]["name"] == tool_name for tc in (m.get("tool_calls") or [])
         )
     )
 
@@ -105,9 +104,7 @@ async def test_continue_does_not_duplicate_tool(client):
 
     # Interject after ~50 ms – tool still running
     await asyncio.sleep(0.05)
-    await handle.interject(
-        "Make sure you're running the `slow` tool"
-    )
+    await handle.interject("Make sure you're running the `slow` tool")
 
     final = await handle.result()
     assert final.strip().upper().startswith("OK")
@@ -133,13 +130,11 @@ async def test_cancel_removes_tool_and_yields_no_result(client):
     """
     handle = start_async_tool_use_loop(
         client,
-        message=(
-            "Run the tool `slow` then reply ACK (nothing else)."
-        ),
+        message=("Run the tool `slow` then reply ACK (nothing else)."),
         tools={"slow": slow},
     )
 
-    await asyncio.sleep(0.05) # tool in-flight
+    await asyncio.sleep(0.05)  # tool in-flight
     await handle.interject("Please cancel that run right away.")
 
     final = await handle.result()

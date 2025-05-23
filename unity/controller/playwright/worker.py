@@ -107,6 +107,7 @@ class BrowserWorker(threading.Thread):
         start_url: str,
         refresh_interval: float = 0.5,
         log: Callable[[str], None] | None = None,
+        session_connect_url: str | None = None,
     ):
         super().__init__(daemon=True)
         self._redis_client = redis.Redis(host="localhost", port=6379, db=0)
@@ -116,7 +117,7 @@ class BrowserWorker(threading.Thread):
         self.refresh_interval = refresh_interval
         self.log = log or (lambda *_: None)
         self._stop_event = threading.Event()
-
+        self.session_connect_url = session_connect_url
         # will be initialised inside `run`
         self.runner: CommandRunner | None = None
         # keep reference to a single CAPTCHA-solving thread (optional)
@@ -132,7 +133,11 @@ class BrowserWorker(threading.Thread):
         profile_dir = Path(mkdtemp(prefix="pw_profile_"))
 
         with sync_playwright() as pw:
-            ctx = launch_persistent(pw)  # context + first window
+            if self.session_connect_url:
+                bb_browser = pw.chromium.connect_over_cdp(self.session_connect_url)
+                ctx = bb_browser.contexts[0]
+            else:
+                ctx = launch_persistent(pw)  # context + first window
             # ── Inject the discovery/overlay helper into **all** future pages ──
             js_helper_src = _make_js_helper(export_for_js())
             ctx.add_init_script(js_helper_src)

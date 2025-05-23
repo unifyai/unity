@@ -105,6 +105,7 @@ class ScenarioBuilder:
         self._event_bus.join_published()
 
         return self
+
     # --------------------------------------------------------------------- #
     async def _seed_contacts(self) -> None:
         for idx, c in enumerate(_CONTACTS):
@@ -436,21 +437,53 @@ def _llm_assert_correct(
 # --------------------------------------------------------------------------- #
 #  PARAMETRISED TEST                                                          #
 # --------------------------------------------------------------------------- #
+@pytest.fixture(scope="session")
+def event_loop():
+    """
+    Create a session-scoped asyncio event loop.
+    """
+    loop = asyncio.get_event_loop_policy().new_event_loop()
+    yield loop
+    loop.close()
+
+
+@pytest.fixture(scope="session", autouse=True)
+def setup_session_context():
+    """Set up a session-wide context for all tests in this module."""
+    file_path = __file__
+    ctx = "/".join(file_path.split("/tests/")[1].split("/"))[:-3]
+    if unify.get_contexts(prefix=ctx):
+        unify.delete_context(ctx)
+    with unify.Context(ctx):
+        unify.set_trace_context("Traces")
+        yield
+
+    unify.delete_context(ctx)
+
+
+@pytest.fixture(scope="session")
+def tm_scenario(
+    setup_session_context, event_loop: asyncio.AbstractEventLoop
+) -> TranscriptManager:
+    """
+    Fixture to create a TranscriptManager with a populated scenario.
+    """
+    builder = event_loop.run_until_complete(ScenarioBuilder.create())
+    return builder.tm
 
 
 @pytest.mark.eval
 @pytest.mark.asyncio
 @pytest.mark.parametrize("question", QUESTIONS)
-@_handle_project
 async def test_ask_semantic_with_llm_judgement(
     question: str,
+    tm_scenario: TranscriptManager,
 ) -> None:
     """
     Calls the real `.ask()` (which itself may call the LLM multiple
     times), then asks a _separate_ LLM whether the answer is acceptable.
     """
-    builder = await ScenarioBuilder.create()
-    tm = builder.tm
+    tm = tm_scenario
     handle = tm.ask(question, return_reasoning_steps=True)
     candidate, steps = await handle.result()
     expected = _answer_semantic(tm, question)
@@ -459,11 +492,9 @@ async def test_ask_semantic_with_llm_judgement(
 
 @pytest.mark.asyncio
 @pytest.mark.eval
-@_handle_project
-async def test_ask_allows_interjection():
+async def test_ask_allows_interjection(tm_scenario: TranscriptManager):
     """Ask one semantic question, then interject with a second, and verify both answers appear."""
-    builder = await ScenarioBuilder.create()
-    tm = builder.tm
+    tm = tm_scenario
     # 1) Initial semantic query – last Dan ⇢ Julia phone call date
     q_initial = QUESTIONS[1]  # "When did Dan last speak with Julia on the phone?"
     handle = tm.ask(q_initial, return_reasoning_steps=True)
@@ -489,7 +520,6 @@ async def test_ask_allows_interjection():
 
 @pytest.mark.asyncio
 @pytest.mark.eval
-@_handle_project
 async def test_ask_honors_stop():
     event_bus = EventBus()
     tm = TranscriptManager(event_bus)

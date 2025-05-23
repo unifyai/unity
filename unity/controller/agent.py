@@ -252,13 +252,13 @@ _SIMPLE_KEY_ACTIONS = {
     CMD_CURSOR_DOWN: "Move caret down one line.",
     CMD_PRESS_KEY: "Press the specified key (e.g. '1', 'a', 'Escape').",
     CMD_HOLD_SHIFT: "Hold the Shift key down.",
-    CMD_HOLD_CTRL:  "Hold the Control key down.",
-    CMD_HOLD_ALT:   "Hold the Alt key down.",
-    CMD_HOLD_CMD:   "Hold the Command (⌘) key down.",
+    CMD_HOLD_CTRL: "Hold the Control key down.",
+    CMD_HOLD_ALT: "Hold the Alt key down.",
+    CMD_HOLD_CMD: "Hold the Command (⌘) key down.",
     CMD_RELEASE_SHIFT: "Release the Shift key.",
     CMD_RELEASE_CTRL: "Release the Control key.",
-    CMD_RELEASE_ALT:  "Release the Alt key.",
-    CMD_RELEASE_CMD:  "Release the Command (⌘) key.",
+    CMD_RELEASE_ALT: "Release the Alt key.",
+    CMD_RELEASE_CMD: "Release the Command (⌘) key.",
     CMD_CLICK_OUT: "Click outside the text-box to blur focus.",
 }
 
@@ -390,6 +390,7 @@ class CommandSequence(BaseModel):
     """
     A sequence of low-level browser commands in execution order.
     """
+
     rationale: str = Field(..., description="Why you chose this action.")
     actions: List[str] = Field(..., description="The sequence of actions to take.")
 
@@ -830,9 +831,15 @@ def text_to_browser_action(
         )
         return response_format.model_validate(ret).model_dump()
     else:
-        multi_step_mode = multi_step_mode or state["in_textbox"] # if in textbox, use multi-step mode for enabling key combinations
+        multi_step_mode = (
+            multi_step_mode or state["in_textbox"]
+        )  # if in textbox, use multi-step mode for enabling key combinations
         valid_actions = _list_valid_actions(tabs, buttons, state)
-        lines = [PRIMITIVE_TO_BROWSER_MULTI_STEP] if multi_step_mode else [PRIMITIVE_TO_BROWSER_ACTION_SIMPLE]
+        lines = (
+            [PRIMITIVE_TO_BROWSER_MULTI_STEP]
+            if multi_step_mode
+            else [PRIMITIVE_TO_BROWSER_ACTION_SIMPLE]
+        )
         response_format = CommandSequence if multi_step_mode else SimpleChoice
 
         def _format_action(a: str):
@@ -840,9 +847,9 @@ def text_to_browser_action(
             if a in ("search", "open_url"):
                 ret += " (please also include the query such that '<search/open_url> <query>')"
             elif a in ("scroll_up", "scroll_down"):
-                ret += " (please also include the *non-negative* number of pixels such that '<scroll_up/scroll_down> <pixels>')" 
+                ret += " (please also include the *non-negative* number of pixels such that '<scroll_up/scroll_down> <pixels>')"
             elif a in ("start_scrolling_up", "start_scrolling_down"):
-                ret += " (please also include the *non-negative* speed (pixels/second) such that '<start_scrolling_up/start_scrolling_down> <speed>')" 
+                ret += " (please also include the *non-negative* speed (pixels/second) such that '<start_scrolling_up/start_scrolling_down> <speed>')"
             elif a in ("press_key"):
                 ret += " (please also include a *single* character or digit to press such that '<press_key> <char/digit>')"
             return ret
@@ -882,8 +889,8 @@ def text_to_browser_action(
         reply = response_format.model_validate_json(raw)
         actions = reply.actions if multi_step_mode else [reply.action]
 
-        assert(
-            all(action.split(" ")[0] in valid_actions for action in actions)
+        assert all(
+            action.split(" ")[0] in valid_actions for action in actions
         ), f"Invalid action is present: {actions}"
 
         if not multi_step_mode and reply.value:

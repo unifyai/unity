@@ -72,7 +72,7 @@ async def test_transcript_embedding_semantic_search():
     assert all(isinstance(msg, Message) for msg in nearest)
 
     # the last message is totally unrelated to the query so should not be in the results
-    assert msgs[-1].content not in set([n.content for n in nearest]) 
+    assert msgs[-1].content not in set([n.content for n in nearest])
 
     # Test k-limit behavior
     all_nearest = tm._nearest_messages(text="banking and budgeting", k=10)
