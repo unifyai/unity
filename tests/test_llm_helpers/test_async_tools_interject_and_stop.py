@@ -27,6 +27,7 @@ from typing import Any, List
 import pytest
 import unify
 from unity.common.llm_helpers import start_async_tool_use_loop
+from tests.helpers import _handle_project
 
 
 # --------------------------------------------------------------------------- #
@@ -39,16 +40,19 @@ MODEL_NAME = os.getenv("UNIFY_MODEL", "gpt-4o@openai")
 # --------------------------------------------------------------------------- #
 #  TOOL IMPLEMENTATIONS                                                       #
 # --------------------------------------------------------------------------- #
+@unify.traced
 async def echo(txt: str) -> str:  # noqa: D401 – simple async tool
     await asyncio.sleep(0.05)
     return txt
 
 
+@unify.traced
 async def slow(txt: str = "Z", delay: float = 0.25) -> str:
     await asyncio.sleep(delay)
     return txt
 
 
+@unify.traced
 async def fast() -> str:          # ~100 ms
     await asyncio.sleep(0.10)
     return "fast"
@@ -58,22 +62,24 @@ async def fast() -> str:          # ~100 ms
 # ---------------------------------------------------------------------------#
 #  Utility                                                                    #
 # ---------------------------------------------------------------------------#
+@unify.traced
 def _first_with_tool_calls(msgs: List[dict]) -> int:
     return next(i for i, m in enumerate(msgs) if m.get("tool_calls"))
 
-
+@unify.traced
 def _user_index(msgs: List[dict], snippet: str) -> int:
     return next(i for i, m in enumerate(msgs)
                 if m["role"] == "user" and snippet in m["content"])
 
-
+@unify.traced
 def _tool_indices(msgs: List[dict]) -> List[int]:
     return [i for i, m in enumerate(msgs) if m["role"] == "tool"]
 
-
+@unify.traced
 def _are_contiguous(indices: List[int]) -> bool:
     return sorted(indices) == list(range(min(indices), max(indices) + 1))
 
+@unify.traced
 def _assistant_tool_turns(msgs: List[dict[str, Any]]):
     """Yield assistant turns that contain tool_calls."""
     return [m for m in msgs if m["role"] == "assistant" and m.get("tool_calls")]
@@ -85,13 +91,14 @@ def _assistant_tool_turns(msgs: List[dict[str, Any]]):
 @pytest.fixture()
 def client():
     """Provide a new client for every test function."""
-    return unify.AsyncUnify(MODEL_NAME)
+    return unify.AsyncUnify(MODEL_NAME, traced=True)
 
 
 # --------------------------------------------------------------------------- #
 #  TESTS                                                                      #
 # --------------------------------------------------------------------------- #
 @pytest.mark.asyncio
+@_handle_project
 async def test_interject_leads_to_second_tool_and_final_result(client):
     """
     We start the loop asking the model to echo “A”.  Then we interject, asking
@@ -140,6 +147,7 @@ async def test_interject_leads_to_second_tool_and_final_result(client):
 
 
 @pytest.mark.asyncio
+@_handle_project
 async def test_stop_cancels_gracefully(client):
     """
     Calling ``stop()`` should cancel the loop: ``result()`` raises
@@ -160,6 +168,7 @@ async def test_stop_cancels_gracefully(client):
 
 
 @pytest.mark.asyncio
+@_handle_project
 async def test_interjections_are_processed_and_loop_completes(client):
     """
     Launch the async-tool loop, fire two interjections, then wait for normal
@@ -199,6 +208,7 @@ async def test_interjections_are_processed_and_loop_completes(client):
 
 
 @pytest.mark.asyncio
+@_handle_project
 async def test_single_tool_result_is_inserted_before_interjection(client):
     """
     * Assistant is instructed to run `slow` once and then reply "ack".
@@ -232,6 +242,7 @@ async def test_single_tool_result_is_inserted_before_interjection(client):
 
 
 @pytest.mark.asyncio
+@_handle_project
 async def test_parallel_tool_results_shift_interjection_down(client):
     """
     * Assistant is instructed to run BOTH `fast` and `slow` before replying "done".

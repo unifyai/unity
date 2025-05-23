@@ -22,6 +22,7 @@ from unity.events.event_bus import EventBus
 from tests.helpers import _handle_project
 
 
+@unify.traced
 async def echo(text: str) -> str:  # noqa: D401 – simple echo tool
     await asyncio.sleep(0.01)  # prove we can yield control
     return text.upper()
@@ -42,7 +43,7 @@ async def test_basic_event_flow() -> None:
     bus.register_event_types("TEST")
 
     result = await _async_tool_use_loop_inner(
-        client=unify.AsyncUnify("gpt-4o@openai", cache=True).set_system_message(
+        client=unify.AsyncUnify("gpt-4o@openai", traced=True).set_system_message(
             "please echo whatever the user says",
         ),
         message="world",
@@ -86,7 +87,7 @@ async def test_interjection_publishes_user_event() -> None:
     bus = EventBus()
     bus.register_event_types("CHAT")
 
-    client = unify.AsyncUnify("gpt-4o@openai", cache=True)
+    client = unify.AsyncUnify("gpt-4o@openai", traced=True)
     client.set_system_message(
         "Please always respond with 'You said: {my_latest_message}', with the placeholder containing whatever I said, and do not include the quoation marks in your response.",
     )

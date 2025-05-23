@@ -28,6 +28,7 @@ import asyncio
 import os
 import time
 from typing import Any, Callable, List
+from tests.helpers import _handle_project
 
 import pytest
 import unify
@@ -44,23 +45,24 @@ MODEL_NAME = os.getenv("UNIFY_MODEL", "gpt-4o@openai")  # override if you like
 # --------------------------------------------------------------------------- #
 #  TOOL IMPLEMENTATIONS (sync + async)                                        #
 # --------------------------------------------------------------------------- #
+@unify.traced
 def add(x: int, y: int) -> int:
     return x + y
 
-
+@unify.traced
 def divide(a: int, b: int) -> float:  # may raise
     return a / b
 
-
+@unify.traced
 def launch() -> None:
     raise Exception
 
-
+@unify.traced
 async def fast_tool(res: str = "fast") -> str:
     await asyncio.sleep(0.05)
     return res
 
-
+@unify.traced
 async def slow_tool(res: str = "slow") -> str:
     await asyncio.sleep(0.3)
     return res
@@ -69,14 +71,15 @@ async def slow_tool(res: str = "slow") -> str:
 # --------------------------------------------------------------------------- #
 #  HELPERS                                                                    #
 # --------------------------------------------------------------------------- #
+@unify.traced
 def new_client() -> unify.AsyncUnify:
     """
     Return a fresh client *with its own conversation state* so that tests do
     not interfere with one another.
     """
-    return unify.AsyncUnify(MODEL_NAME)
+    return unify.AsyncUnify(MODEL_NAME, traced=True)
 
-
+@unify.traced
 def count_tool_messages(client: unify.AsyncUnify) -> int:
     return sum(1 for m in client.messages if m["role"] == "tool")
 
@@ -85,6 +88,7 @@ def count_tool_messages(client: unify.AsyncUnify) -> int:
 #  HAPPY PATH – single synchronous tool                                       #
 # --------------------------------------------------------------------------- #
 @pytest.mark.asyncio
+@_handle_project
 async def test_async_loop_happy_path_single_sync_tool():
     client = new_client()
 
@@ -103,6 +107,7 @@ async def test_async_loop_happy_path_single_sync_tool():
 #  CONCURRENT sync/async tools                                                #
 # --------------------------------------------------------------------------- #
 @pytest.mark.asyncio
+@_handle_project
 async def test_async_loop_concurrent_tools_waits_for_all_results():
     """
     The loop launches `fast` and `slow` concurrently but must *not* call the
@@ -163,6 +168,7 @@ async def test_async_loop_concurrent_tools_waits_for_all_results():
 #  RECOVERY AFTER A FAILURE & COUNTER RESET                                   #
 # --------------------------------------------------------------------------- #
 @pytest.mark.asyncio
+@_handle_project
 async def test_async_loop_recovers_after_failure():
     client = new_client()
 
@@ -186,6 +192,7 @@ async def test_async_loop_recovers_after_failure():
 #  ABORT AFTER MAX CONSECUTIVE FAILURES                                       #
 # --------------------------------------------------------------------------- #
 @pytest.mark.asyncio
+@_handle_project
 async def test_async_loop_aborts_after_too_many_failures():
     client = new_client()
 
@@ -204,6 +211,7 @@ async def test_async_loop_aborts_after_too_many_failures():
 #  REALISTIC MIX – first async, then sync                                     #
 # --------------------------------------------------------------------------- #
 @pytest.mark.asyncio
+@_handle_project
 async def test_async_loop_mixed_sync_async_tools():
     client = new_client()
 
@@ -224,11 +232,13 @@ async def test_async_loop_mixed_sync_async_tools():
 # --------------------------------------------------------------------------- #
 #  REAL CLIENT – ensure assistant requests parallel tool calls                #
 # --------------------------------------------------------------------------- #
+@unify.traced
 def square(x: int) -> int:
     return x * x
 
 
 @pytest.mark.asyncio
+@_handle_project
 async def test_parallel_tool_calls_with_real_asyncunify():
     client = new_client()
 
