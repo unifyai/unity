@@ -39,9 +39,9 @@ MODEL_NAME = os.getenv("UNIFY_MODEL", "gpt-4o@openai")
 #  TOOLS                                                                      #
 # --------------------------------------------------------------------------- #
 @unify.traced
-async def slow(delay: float = 0.50) -> str:
+async def slow() -> str:
     """A slow-poke async tool – sleeps `delay` seconds then returns 'done'."""
-    await asyncio.sleep(delay)
+    await asyncio.sleep(5000)
     return "done"
 
 
@@ -72,7 +72,7 @@ def _tool_results(msgs: List[dict], tool_name: str) -> int:
 # --------------------------------------------------------------------------- #
 @pytest.fixture()
 def client():
-    return unify.AsyncUnify(MODEL_NAME, traced=True)
+    return unify.AsyncUnify(MODEL_NAME, cache=True, traced=True)
 
 
 # --------------------------------------------------------------------------- #
@@ -104,7 +104,9 @@ async def test_continue_does_not_duplicate_tool(client):
 
     # Interject after ~50 ms – tool still running
     await asyncio.sleep(0.05)
-    await handle.interject("Make sure you're running the `slow` tool")
+    await handle.interject(
+        "Make sure you're still running the `slow` tool"
+    )
 
     final = await handle.result()
     assert final.strip().upper().startswith("OK")

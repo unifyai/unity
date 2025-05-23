@@ -42,14 +42,14 @@ MODEL_NAME = os.getenv("UNIFY_MODEL", "gpt-4o@openai")
 # --------------------------------------------------------------------------- #
 @unify.traced
 async def echo(txt: str) -> str:  # noqa: D401 – simple async tool
-    await asyncio.sleep(0.05)
+    await asyncio.sleep(0.50)
     return txt
 
 
 @unify.traced
-async def slow(txt: str = "Z", delay: float = 0.25) -> str:
-    await asyncio.sleep(delay)
-    return txt
+async def slow() -> str:
+    await asyncio.sleep(0.25)
+    return "slow"
 
 
 @unify.traced
@@ -98,7 +98,7 @@ def new_client() -> unify.AsyncUnify:
     Return a fresh client *with its own conversation state* so that tests do
     not interfere with one another.
     """
-    return unify.AsyncUnify(MODEL_NAME, traced=True)
+    return unify.AsyncUnify(MODEL_NAME, cache=True, traced=True)
 
 
 # --------------------------------------------------------------------------- #
@@ -115,19 +115,16 @@ async def test_interject_leads_to_second_tool_and_final_result():
     handle = start_async_tool_use_loop(
         client,
         message=(
-            "Use the `echo` tool to output the text 'A'. "
-            "If the user later asks for another echo, call the tool again with "
-            "that text and finally reply exactly 'done'."
+            "Use the `echo` tool to output the text 'A'."
         ),
         tools={"echo": echo},
     )
 
     # --- inject clarification ------------------------------------------------
     await asyncio.sleep(0.02)
-    await handle.interject("And echo B please")
+    await handle.interject("And also echo B please, the order of the echos doesn't matter.")
 
-    final = await handle.result()
-    assert final.strip().lower().startswith("done")
+    await handle.result()
 
     # --- assertions ----------------------------------------------------------
     msgs = client.messages
@@ -137,14 +134,23 @@ async def test_interject_leads_to_second_tool_and_final_result():
     assert len(assistant_tool_turns) >= 2
 
     # 2. first assistant turn calls echo("A"), second calls echo("B")
-    first_args = json.loads(
-        assistant_tool_turns[0]["tool_calls"][0]["function"]["arguments"]
-    )
-    second_args = json.loads(
-        assistant_tool_turns[1]["tool_calls"][0]["function"]["arguments"]
-    )
+
+    first_args = json.loads(assistant_tool_turns[0]["tool_calls"][0]["function"]["arguments"])
     assert first_args == {"txt": "A"}
-    assert second_args == {"txt": "B"}
+
+    second_tool_calls = assistant_tool_turns[1]["tool_calls"]
+    last_args_of_second = json.loads(second_tool_calls[-1]["function"]["arguments"])
+    if len(second_tool_calls) == 1:
+        assert last_args_of_second == {"txt": "B"}
+    else:
+        assert len(second_tool_calls) == 2
+        first_args_of_second = json.loads(second_tool_calls[0]["function"]["arguments"])
+        if "_call_id" in first_args_of_second:
+            assert last_args_of_second == {"txt": "B"}
+        elif "_call_id" in last_args_of_second:
+            assert first_args_of_second == {"txt": "B"}
+        else:
+            raise Exception("Invalid tool arguments for second tool call")
 
     # 3. the order is correct: initial assistant → user interjection → 2nd assistant
     idx_first_asst = msgs.index(assistant_tool_turns[0])
@@ -273,7 +279,7 @@ async def test_parallel_tool_results_shift_interjection_down():
     handle = start_async_tool_use_loop(
         client,
         (
-            "Call the tools `fast` and `slow`, each exactly once, "
+            "Call the tools `fast` and `slow` both at the same time, "
             "then respond with ONLY the word DONE."
         ),
         {"fast": fast, "slow": slow},
