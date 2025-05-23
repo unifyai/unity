@@ -29,9 +29,6 @@ class ScenarioBuilder:
     """Populate Unify with a small, meaningful task list."""
 
     def __init__(self) -> None:
-        if "test_task_ask" in unify.list_projects():
-            unify.delete_project("test_task_ask")
-        unify.activate("test_task_ask")
         self.tlm = TaskListManager()
         self._seed_tasks()
 
@@ -151,8 +148,24 @@ def _llm_assert_correct(
     )
 
 
-@pytest.fixture
-def tlm_scenario() -> TaskListManager:  # noqa: D401 – fixture, not function
+@pytest.fixture(scope="session", autouse=True)
+def setup_session_context():
+    """Set up a session-wide context for all tests in this module."""
+    file_path = __file__
+    ctx = "/".join(file_path.split("/tests/")[1].split("/"))[:-3]
+    if unify.get_contexts(prefix=ctx):
+        unify.delete_context(ctx)
+    with unify.Context(ctx):
+        unify.set_trace_context("Traces")
+        yield
+
+    unify.delete_context(ctx)
+
+
+@pytest.fixture(scope="session")
+def tlm_scenario(
+    setup_session_context,
+) -> TaskListManager:  # noqa: D401 – fixture, not function
     return ScenarioBuilder().tlm
 
 
@@ -173,8 +186,6 @@ async def test_ask_semantic_with_llm_judgement(
         expected = _answer_semantic(tlm_scenario, question)
         _llm_assert_correct(question, expected, candidate, steps)
     except Exception as exc:
-        if "test_task_ask" in unify.list_projects():
-            unify.delete_project("test_task_ask")
         raise exc
 
 
@@ -195,8 +206,10 @@ async def test_ask_with_interjection(tlm_scenario: TaskListManager) -> None:
 
         # 3) Await combined answer
         answer, steps = await handle.result()
-        active_task = _answer_semantic(tlm_scenario, QUESTIONS[0])  # "Write quarterly report"
-        queued_cnt = _answer_semantic(tlm_scenario, QUESTIONS[1])   # e.g. "2"
+        active_task = _answer_semantic(
+            tlm_scenario, QUESTIONS[0]
+        )  # "Write quarterly report"
+        queued_cnt = _answer_semantic(tlm_scenario, QUESTIONS[1])  # e.g. "2"
 
         # 4) Assert presence of both pieces of information
         assert active_task.lower() in answer.lower(), assertion_failed(
@@ -212,8 +225,6 @@ async def test_ask_with_interjection(tlm_scenario: TaskListManager) -> None:
             "Queued count not mentioned in combined answer",
         )
     except Exception as exc:
-        if "test_task_ask" in unify.list_projects():
-            unify.delete_project("test_task_ask")
         raise exc
 
 
@@ -227,15 +238,13 @@ async def test_ask_stop(tlm_scenario: TaskListManager) -> None:
         handle = tlm_scenario.ask(
             text="List all tasks, then summarize each one in detail.",
         )
-        
+
         # Give the LLM a moment to start processing, then stop it
         await asyncio.sleep(0.05)
         handle.stop()
-        
+
         with pytest.raises(asyncio.CancelledError):
             await handle.result()
         assert handle.done()
     except Exception as exc:
-        if "test_task_ask" in unify.list_projects():
-            unify.delete_project("test_task_ask")
         raise exc
