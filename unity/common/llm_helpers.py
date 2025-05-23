@@ -4,6 +4,7 @@ import asyncio
 import inspect
 import traceback
 from enum import Enum
+from collections import defaultdict
 from pydantic import BaseModel
 from typing import (
     Tuple,
@@ -220,9 +221,29 @@ async def _async_tool_use_loop_inner(
                     break
 
                 # hide unresolved calls in the *previous* assistant turn
+                # ------------------------------------------------------------------
+                # Each assistant message may own **several** tool calls.  We build a
+                # map  msg → {indices still pending}  and prune by position, removing
+                # the whole key only when the very last call has finished.
+                pending_idx_by_msg: Dict[int, Set[int]] = defaultdict(set)
+                msg_by_id: Dict[int, dict] = {}
                 for info in task_info.values():
-                    if info["assistant_msg"].get("tool_calls"):
-                        info["assistant_msg"]["tool_calls"] = []
+                    asst_msg = info["assistant_msg"]
+                    mid = id(asst_msg)
+                    pending_idx_by_msg[mid].add(info["call_idx"])
+                    msg_by_id[mid] = asst_msg
+
+                for mid, keep_idx in pending_idx_by_msg.items():
+                    asst_msg = msg_by_id[mid]
+                    tool_calls = asst_msg.get("tool_calls")
+                    if tool_calls is None:
+                        continue
+
+                    pruned = [tc for i, tc in enumerate(tool_calls) if i in keep_idx]
+                    if pruned:
+                        asst_msg["tool_calls"] = pruned # keep unresolved ones
+                    else:
+                        asst_msg.pop("tool_calls", None) # drop field when empty
 
                 had_interjection = True
                 msg = {"role": "user", "content": extra}
@@ -391,7 +412,7 @@ async def _async_tool_use_loop_inner(
             if msg["tool_calls"]:
 
                 original_tool_calls: list = []
-                for call in msg["tool_calls"]:
+                for idx, call in enumerate(msg["tool_calls"]): # capture index
                     name = call["function"]["name"]
                     args = json.loads(call["function"]["arguments"])
                     fn = tools[name]
@@ -418,6 +439,7 @@ async def _async_tool_use_loop_inner(
                         "call_id": call["id"],
                         "assistant_msg": msg,
                         "call_dict": call_dict,
+                        "call_idx": idx,
                     }
 
                 # metadata for orderly insertion of results
