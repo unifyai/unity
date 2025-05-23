@@ -26,6 +26,7 @@ from typing import List
 import pytest
 import unify
 from unity.common.llm_helpers import start_async_tool_use_loop
+from tests.helpers import _handle_project
 
 
 # --------------------------------------------------------------------------- #
@@ -37,6 +38,7 @@ MODEL_NAME = os.getenv("UNIFY_MODEL", "gpt-4o@openai")
 # --------------------------------------------------------------------------- #
 #  TOOLS                                                                      #
 # --------------------------------------------------------------------------- #
+@unify.traced
 async def slow(delay: float = 0.50) -> str:
     """A slow-poke async tool – sleeps `delay` seconds then returns 'done'."""
     await asyncio.sleep(delay)
@@ -46,6 +48,7 @@ async def slow(delay: float = 0.50) -> str:
 # --------------------------------------------------------------------------- #
 #  HELPERS                                                                    #
 # --------------------------------------------------------------------------- #
+@unify.traced
 def _assistant_calls(msgs: List[dict], tool_name: str) -> int:
     """Count assistant turns whose *visible* `tool_calls` reference `tool_name`."""
     return sum(
@@ -59,6 +62,7 @@ def _assistant_calls(msgs: List[dict], tool_name: str) -> int:
     )
 
 
+@unify.traced
 def _tool_results(msgs: List[dict], tool_name: str) -> int:
     """Count tool-result messages for `tool_name`."""
     return sum(1 for m in msgs if m["role"] == "tool" and m["name"] == tool_name)
@@ -69,13 +73,14 @@ def _tool_results(msgs: List[dict], tool_name: str) -> int:
 # --------------------------------------------------------------------------- #
 @pytest.fixture()
 def client():
-    return unify.AsyncUnify(MODEL_NAME)
+    return unify.AsyncUnify(MODEL_NAME, traced=True)
 
 
 # --------------------------------------------------------------------------- #
 #  TESTS                                                                      #
 # --------------------------------------------------------------------------- #
 @pytest.mark.asyncio
+@_handle_project
 async def test_continue_does_not_duplicate_tool(client):
     """
     Scenario
@@ -113,6 +118,7 @@ async def test_continue_does_not_duplicate_tool(client):
 
 
 @pytest.mark.asyncio
+@_handle_project
 async def test_cancel_removes_tool_and_yields_no_result(client):
     """
     Scenario

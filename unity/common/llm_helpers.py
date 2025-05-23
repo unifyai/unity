@@ -478,18 +478,22 @@ class AsyncToolLoopHandle:
         self._cancel_event = cancel_event
 
     # -- public API -----------------------------------------------------------
+    @unify.traced
     async def interject(self, message: str) -> None:
         """Inject an additional *user* turn into the running conversation."""
         await self._queue.put(message)
 
+    @unify.traced
     def stop(self) -> None:
         """Politely ask the loop to shut down (gracefully)."""
         self._cancel_event.set()
 
     # Optional helpers --------------------------------------------------------
+    @unify.traced
     def done(self) -> bool:
         return self._task.done()
 
+    @unify.traced
     async def result(self) -> str:
         """Wait for the assistant’s *final* reply."""
         return await self._task
