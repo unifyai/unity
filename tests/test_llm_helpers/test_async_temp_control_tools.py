@@ -41,7 +41,7 @@ MODEL_NAME = os.getenv("UNIFY_MODEL", "gpt-4o@openai")
 @unify.traced
 async def slow() -> str:
     """A slow-poke async tool – sleeps `delay` seconds then returns 'done'."""
-    await asyncio.sleep(5000)
+    await asyncio.sleep(0.50)
     return "done"
 
 
@@ -105,7 +105,7 @@ async def test_continue_does_not_duplicate_tool(client):
     # Interject after ~50 ms – tool still running
     await asyncio.sleep(0.05)
     await handle.interject(
-        "Make sure you're still running the `slow` tool"
+        "Make sure you're still continuing to run the `slow` tool"
     )
 
     final = await handle.result()
