@@ -322,24 +322,10 @@ async def _async_tool_use_loop_inner(
                             "Aborted after too many consecutive tool failures.",
                         )
 
-            # ── B: wait for remaining tools before asking the LLM again
+            # ── B: wait for remaining tools before asking the LLM again, 
+            # unless there was an interjection
             if pending and not had_interjection:
                 continue  # still waiting for other tool tasks
-
-            #  An interjection to handle, or no pending tool calls
-            while True:
-                try:
-                    extra = interject_queue.get_nowait()
-                except asyncio.QueueEmpty:
-                    break
-                if log_steps:
-                    LOGGER.info(f"\n⚡ Interjection → {extra!r}\n")
-                msg = {"role": "user", "content": extra}
-                if event_bus:
-                    await event_bus.publish(
-                        Event(type=event_type, payload={"message": msg}),
-                    )
-                client.append_messages([msg])
 
             # ── C.  Cancel check before calling the LLM  ────────────────────
             # NOTE: Light-weight early-exit guard – we do **not** want to pay
