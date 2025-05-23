@@ -17,3 +17,4 @@ textual
 textual-dev
 redis
 anticaptchaofficial
+browserbase

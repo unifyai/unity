@@ -387,12 +387,12 @@ async def test_retrieve_interjection():
     handle = km.store("Alice is 30 years old.")
     handle = km.store("Alice lives in New York.")
     await handle.result()
-    
+
     # Now retrieve with interjection
     handle = km.retrieve("How old is Alice?")
     await handle.interject("Also, where does she live?")
     out = await handle.result()
-    
+
     assert _contains(out, "30", "New York"), assertion_failed(
         "Output containing both '30' and 'New York'",
         out,
@@ -416,9 +416,11 @@ async def test_retrieve_stop():
     km = KnowledgeManager()
 
     # Store some data first
-    handle = km.store("The capital of France is Paris. The capital of Germany is Berlin. The capital of Italy is Rome.")
+    handle = km.store(
+        "The capital of France is Paris. The capital of Germany is Berlin. The capital of Italy is Rome."
+    )
     await handle.result()
-    
+
     # Now retrieve with stop
     handle = km.retrieve("List the capitals of European countries.")
     await asyncio.sleep(0.05)

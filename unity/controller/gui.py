@@ -358,7 +358,9 @@ class ControlPanel(tk.Tk):
                     # Clear animated line once
                     if self._llm_line_idx is not None:
                         self.log.configure(state="normal")
-                        self.log.delete(self._llm_line_idx, f"{self._llm_line_idx} lineend")
+                        self.log.delete(
+                            self._llm_line_idx, f"{self._llm_line_idx} lineend"
+                        )
                         self.log.configure(state="disabled")
                         self._llm_line_idx = None
                     # Process each command in sequence
@@ -379,8 +381,12 @@ class ControlPanel(tk.Tk):
                     # Replace animated line with error
                     if self._llm_line_idx is not None:
                         self.log.configure(state="normal")
-                        self.log.delete(self._llm_line_idx, f"{self._llm_line_idx} lineend")
-                        self.log.insert(self._llm_line_idx, "❗ LLM error – see traceback\n")
+                        self.log.delete(
+                            self._llm_line_idx, f"{self._llm_line_idx} lineend"
+                        )
+                        self.log.insert(
+                            self._llm_line_idx, "❗ LLM error – see traceback\n"
+                        )
                         self.log.configure(state="disabled")
                         self._llm_line_idx = None
                 # Mark LLM as done and reset UI
@@ -937,7 +943,7 @@ class ControlPanel(tk.Tk):
             pk_frame,
             text="Press Key",
             width=10,
-            command=lambda: self._handle_input(f"press_key {self.press_key_var.get()}")
+            command=lambda: self._handle_input(f"press_key {self.press_key_var.get()}"),
         )
         press_key_btn.grid(row=0, column=0, sticky="w")
         # Entry placed to the right of the button

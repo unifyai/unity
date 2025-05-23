@@ -53,10 +53,9 @@ async def slow(txt: str = "Z", delay: float = 0.25) -> str:
 
 
 @unify.traced
-async def fast() -> str:          # ~100 ms
+async def fast() -> str:  # ~100 ms
     await asyncio.sleep(0.10)
     return "fast"
-
 
 
 # ---------------------------------------------------------------------------#
@@ -66,18 +65,23 @@ async def fast() -> str:          # ~100 ms
 def _first_with_tool_calls(msgs: List[dict]) -> int:
     return next(i for i, m in enumerate(msgs) if m.get("tool_calls"))
 
+
 @unify.traced
 def _user_index(msgs: List[dict], snippet: str) -> int:
-    return next(i for i, m in enumerate(msgs)
-                if m["role"] == "user" and snippet in m["content"])
+    return next(
+        i for i, m in enumerate(msgs) if m["role"] == "user" and snippet in m["content"]
+    )
+
 
 @unify.traced
 def _tool_indices(msgs: List[dict]) -> List[int]:
     return [i for i, m in enumerate(msgs) if m["role"] == "tool"]
 
+
 @unify.traced
 def _are_contiguous(indices: List[int]) -> bool:
     return sorted(indices) == list(range(min(indices), max(indices) + 1))
+
 
 @unify.traced
 def _assistant_tool_turns(msgs: List[dict[str, Any]]):
@@ -86,11 +90,14 @@ def _assistant_tool_turns(msgs: List[dict[str, Any]]):
 
 
 # --------------------------------------------------------------------------- #
-#  FIXTURES                                                                   #
+#  HELPERS                                                                    #
 # --------------------------------------------------------------------------- #
-@pytest.fixture()
-def client():
-    """Provide a new client for every test function."""
+@unify.traced
+def new_client() -> unify.AsyncUnify:
+    """
+    Return a fresh client *with its own conversation state* so that tests do
+    not interfere with one another.
+    """
     return unify.AsyncUnify(MODEL_NAME, traced=True)
 
 
@@ -99,11 +106,12 @@ def client():
 # --------------------------------------------------------------------------- #
 @pytest.mark.asyncio
 @_handle_project
-async def test_interject_leads_to_second_tool_and_final_result(client):
+async def test_interject_leads_to_second_tool_and_final_result():
     """
     We start the loop asking the model to echo “A”.  Then we interject, asking
     it to echo “B” too.  We expect two separate tool calls and a final “done”.
     """
+    client = new_client()
     handle = start_async_tool_use_loop(
         client,
         message=(
@@ -129,14 +137,22 @@ async def test_interject_leads_to_second_tool_and_final_result(client):
     assert len(assistant_tool_turns) >= 2
 
     # 2. first assistant turn calls echo("A"), second calls echo("B")
-    first_args = json.loads(assistant_tool_turns[0]["tool_calls"][0]["function"]["arguments"])
-    second_args = json.loads(assistant_tool_turns[1]["tool_calls"][0]["function"]["arguments"])
+    first_args = json.loads(
+        assistant_tool_turns[0]["tool_calls"][0]["function"]["arguments"]
+    )
+    second_args = json.loads(
+        assistant_tool_turns[1]["tool_calls"][0]["function"]["arguments"]
+    )
     assert first_args == {"txt": "A"}
     assert second_args == {"txt": "B"}
 
     # 3. the order is correct: initial assistant → user interjection → 2nd assistant
     idx_first_asst = msgs.index(assistant_tool_turns[0])
-    idx_user_B = next(i for i, m in enumerate(msgs) if m["role"] == "user" and "echo B" in m["content"])
+    idx_user_B = next(
+        i
+        for i, m in enumerate(msgs)
+        if m["role"] == "user" and "echo B" in m["content"]
+    )
     idx_second_asst = msgs.index(assistant_tool_turns[1])
     assert idx_first_asst < idx_user_B < idx_second_asst
 
@@ -148,11 +164,12 @@ async def test_interject_leads_to_second_tool_and_final_result(client):
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_stop_cancels_gracefully(client):
+async def test_stop_cancels_gracefully():
     """
     Calling ``stop()`` should cancel the loop: ``result()`` raises
     ``CancelledError`` and the underlying task is done.
     """
+    client = new_client()
     handle = start_async_tool_use_loop(
         client,
         "Echo something then say 'ok'.",
@@ -169,7 +186,7 @@ async def test_stop_cancels_gracefully(client):
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_interjections_are_processed_and_loop_completes(client):
+async def test_interjections_are_processed_and_loop_completes():
     """
     Launch the async-tool loop, fire two interjections, then wait for normal
     completion.  Verify
@@ -178,6 +195,7 @@ async def test_interjections_are_processed_and_loop_completes(client):
       • the *user* messages are preserved in FIFO order,
       • at least three tool invocations happened (A, B, C).
     """
+    client = new_client()
     handle = start_async_tool_use_loop(
         client,
         "Echo A please, then say 'done' when finished.",
@@ -209,12 +227,13 @@ async def test_interjections_are_processed_and_loop_completes(client):
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_single_tool_result_is_inserted_before_interjection(client):
+async def test_single_tool_result_is_inserted_before_interjection():
     """
     * Assistant is instructed to run `slow` once and then reply "ack".
     * We interject while `slow` is still running.
     * Expect: assistant → tool result → user interjection (contiguous order).
     """
+    client = new_client()
     handle = start_async_tool_use_loop(
         client,
         (
@@ -224,14 +243,14 @@ async def test_single_tool_result_is_inserted_before_interjection(client):
         {"slow": slow},
     )
 
-    await asyncio.sleep(0.05)        # tool should still be running
+    await asyncio.sleep(0.05)  # tool should still be running
     await handle.interject("thanks!")
 
-    await handle.result()            # wait for completion
+    await handle.result()  # wait for completion
 
     msgs = client.messages
     i_asst = _first_with_tool_calls(msgs)
-    i_tool = _tool_indices(msgs)[0]          # only one result
+    i_tool = _tool_indices(msgs)[0]  # only one result
     i_user = _user_index(msgs, "thanks!")
 
     # assistant → tool → user, contiguous
@@ -243,13 +262,14 @@ async def test_single_tool_result_is_inserted_before_interjection(client):
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_parallel_tool_results_shift_interjection_down(client):
+async def test_parallel_tool_results_shift_interjection_down():
     """
     * Assistant is instructed to run BOTH `fast` and `slow` before replying "done".
     * We interject while the tools are running.
     * Expect both tool results to sit immediately after the assistant turn
       (in any order) and the user message to follow them.
     """
+    client = new_client()
     handle = start_async_tool_use_loop(
         client,
         (
@@ -259,15 +279,15 @@ async def test_parallel_tool_results_shift_interjection_down(client):
         {"fast": fast, "slow": slow},
     )
 
-    await asyncio.sleep(0.15)       # `fast` likely done, `slow` still running
+    await asyncio.sleep(0.15)  # `fast` likely done, `slow` still running
     await handle.interject("cheers!")
 
     await handle.result()
 
     msgs = client.messages
     i_asst = _first_with_tool_calls(msgs)
-    tool_idxs = _tool_indices(msgs)[:2]      # we only care about the first two
-    i_user   = _user_index(msgs, "cheers!")
+    tool_idxs = _tool_indices(msgs)[:2]  # we only care about the first two
+    i_user = _user_index(msgs, "cheers!")
 
     # Tool results are contiguous right after the assistant message
     assert _are_contiguous(tool_idxs)
