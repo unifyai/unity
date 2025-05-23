@@ -30,6 +30,7 @@ from unity.controller.session import create_session
 
 bb_session = create_session()
 
+
 def main() -> None:
 
     # queue for user commands only (GUI → redis)

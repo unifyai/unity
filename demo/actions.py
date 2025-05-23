@@ -97,11 +97,7 @@ async def send_call(from_number: str, to_number: str) -> bool:
         async with aiohttp.ClientSession() as session:
             async with session.post(
                 f"{os.getenv('UNITY_COMMS_URL')}/phone/send-call",
-                json={
-                    "From": from_number,
-                    "To": to_number,
-                    "NewCall": "true"
-                },
+                json={"From": from_number, "To": to_number, "NewCall": "true"},
             ) as response:
                 if response.status != 200:
                     print(f"Failed to send call. Status: {response.status}")

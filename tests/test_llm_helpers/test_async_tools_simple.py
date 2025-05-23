@@ -3,7 +3,7 @@ pytest tests for the async-tool loop helpers **using a real `unify.AsyncUnify`
 client for every test** – no stubs, no scripted completions.
 
 Running these tests will make real requests to the model you pass to
-`unify.AsyncUnify` (by default we use **GPT-4o**).  
+`unify.AsyncUnify` (by default we use **GPT-4o**).
 Make sure you have:
 
 * a valid OpenAI (or Unify-proxy) API key in your environment, and
@@ -49,18 +49,22 @@ MODEL_NAME = os.getenv("UNIFY_MODEL", "gpt-4o@openai")  # override if you like
 def add(x: int, y: int) -> int:
     return x + y
 
+
 @unify.traced
 def divide(a: int, b: int) -> float:  # may raise
     return a / b
+
 
 @unify.traced
 def launch() -> None:
     raise Exception
 
+
 @unify.traced
 async def fast_tool(res: str = "fast") -> str:
     await asyncio.sleep(0.05)
     return res
+
 
 @unify.traced
 async def slow_tool(res: str = "slow") -> str:
@@ -78,6 +82,7 @@ def new_client() -> unify.AsyncUnify:
     not interfere with one another.
     """
     return unify.AsyncUnify(MODEL_NAME, traced=True)
+
 
 @unify.traced
 def count_tool_messages(client: unify.AsyncUnify) -> int:
@@ -202,9 +207,7 @@ async def test_async_loop_aborts_after_too_many_failures():
     with pytest.raises(RuntimeError):
         await llmh.start_async_tool_use_loop(
             client,
-            message=(
-                "Please run the launch tool."
-            ),
+            message=("Please run the launch tool."),
             tools={"launch": launch},
             max_consecutive_failures=1,  # abort after the very first failure
         ).result()
