@@ -492,7 +492,7 @@ class CommandRunner:
 
         # Generic key press: e.g. "press_key a"
         if cmd.startswith("press_key "):
-            key = cmd[len("press_key "):].strip()
+            key = cmd[len("press_key ") :].strip()
             self.hist.add(f"press_key {key}")
             try:
                 self.active.keyboard.press(key)

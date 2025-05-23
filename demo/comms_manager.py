@@ -63,9 +63,9 @@ class CommsManager:
                         try:
                             message_data = json.loads(msg["content"])
                             kwargs = {
-                                "from_number": message_data.get("from_number", "").replace(
-                                    "whatsapp:", ""
-                                ),
+                                "from_number": message_data.get(
+                                    "from_number", ""
+                                ).replace("whatsapp:", ""),
                                 "to_number": message_data.get("to_number", "").replace(
                                     "whatsapp:", ""
                                 ),
@@ -79,7 +79,9 @@ class CommsManager:
                                     kwargs["from_number"],
                                     kwargs["to_number"],
                                 )
-                            success = await handle_message_action(msg["thread"], **kwargs)
+                            success = await handle_message_action(
+                                msg["thread"], **kwargs
+                            )
                             if not success:
                                 print(f"Failed to send {msg['thread']} message")
                         except json.JSONDecodeError:

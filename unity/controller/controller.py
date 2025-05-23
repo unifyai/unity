@@ -12,7 +12,9 @@ from ..constants import SESSION_ID, LOGGER
 
 class Controller(threading.Thread):
 
-    def __init__(self, *, daemon: bool = True, session_connect_url: str | None = None) -> None:
+    def __init__(
+        self, *, daemon: bool = True, session_connect_url: str | None = None
+    ) -> None:
         super().__init__(daemon=daemon)
         self._redis_client = redis.Redis(host="localhost", port=6379, db=0)
         self._pubsub_text_action = self._redis_client.pubsub()
