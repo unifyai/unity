@@ -28,7 +28,7 @@ import unify
 from unity.constants import LOGGER as _LG  # type: ignore
 from unity.communication.transcript_manager.transcript_manager import TranscriptManager  # type: ignore
 from unity.communication.types.message import Message  # type: ignore
-from sandboxes.utils import run_in_loop
+from sandboxes.utils import run_in_loop, get_custom_scenario
 
 # Voice helpers (PortAudio capture, Deepgram STT, Cartesia TTS)
 
@@ -272,12 +272,15 @@ def _seed_fixed(tm: TranscriptManager) -> None:
     tm.summarize(exchange_ids=[0, 1])
 
 
-def _seed_llm(tm: TranscriptManager) -> Optional[str]:
-    prompt = (
-        "Create a realistic communication history for a European event agency with 8‑12 contacts interacting via email, phone_call, sms_message and whatsapp_message. "
-        "Include 60‑90 exchanges with 3‑8 messages each, timestamps between 2025‑04‑01 and 2025‑05‑10 (UTC). "
-        "Return JSON with keys: contacts, exchanges, theme."
-    )
+def _seed_llm(tm: TranscriptManager, custom_scenario=None) -> Optional[str]:
+    if custom_scenario:
+        prompt = f"User-provided scenario:\n{custom_scenario}\n\nGenerate transcript scenario."
+    else:
+        prompt = (
+            "Create a realistic communication history for a European event agency with 8‑12 contacts interacting via email, phone_call, sms_message and whatsapp_message. "
+            "Include 60‑90 exchanges with 3‑8 messages each, timestamps between 2025‑04‑01 and 2025‑05‑10 (UTC). "
+            "Return JSON with keys: contacts, exchanges, theme."
+        )
 
     client = unify.Unify("o4-mini@openai", cache=True)
     client.set_system_message(prompt)
@@ -387,7 +390,19 @@ async def async_main() -> None:
         action="store_true",
         help="enable voice capture/playback",
     )
-    parser.add_argument("--scenario", choices=["fixed", "llm"], default="fixed")
+    parser.add_argument(
+        "--scenario",
+        choices=["fixed", "llm"],
+        default="fixed",
+        help="scenario type (overridden by custom scenario flags)",
+    )
+    group = parser.add_mutually_exclusive_group()
+    group.add_argument("--custom-scenario", type=str, help="Provide a custom scenario")
+    group.add_argument(
+        "--custom-scenario-voice",
+        action="store_true",
+        help="Describe custom scenario via voice",
+    )
     parser.add_argument("--new", "-n", action="store_true", help="wipe & reseed data")
     parser.add_argument(
         "--silent",
@@ -402,6 +417,8 @@ async def async_main() -> None:
         help="verbose HTTP/LLM logging",
     )
     args = parser.parse_args()
+
+    scenario_text = get_custom_scenario(args, silent=args.silent)
 
     if not args.silent:
         logging.basicConfig(level=logging.INFO, format="%(message)s")
@@ -419,7 +436,11 @@ async def async_main() -> None:
     # Seed with data
     if args.new or not unify.get_logs(context=tm._contacts_ctx):
         print("Seeding with fresh data…")
-        if args.scenario == "llm":
+        if scenario_text is not None:
+            theme = _seed_llm(tm, custom_scenario=scenario_text)
+            if theme:
+                print(f"Scenario theme: {theme}")
+        elif args.scenario == "llm":
             theme = _seed_llm(tm)
             if theme:
                 print(f"Scenario theme: {theme}")
