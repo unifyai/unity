@@ -37,6 +37,7 @@ from sandboxes.utils import (
     transcribe_deepgram as _transcribe_deepgram,
     speak as _speak,
     run_in_loop,
+    get_custom_scenario,
 )  # type: ignore
 
 
@@ -82,13 +83,18 @@ def _seed_fixed(tlm: TaskListManager) -> None:
     )
 
 
-def _seed_llm(tlm: TaskListManager) -> Optional[str]:
+def _seed_llm(
+    tlm: TaskListManager, custom_scenario: Optional[str] = None
+) -> Optional[str]:
     """Generate a large realistic task backlog via LLM."""
-    prompt = (
-        "Generate a realistic task list for a small business. Pick a coherent theme. "
-        "Create 110‑140 tasks across queues with positions, priorities & ISO start times. "
-        "Return only JSON with top‑level 'tasks' and optional 'theme'."
-    )
+    if custom_scenario:
+        prompt = f"User-provided scenario:\n{custom_scenario}\n\nGenerate realistic tasks based on this scenario. Create 110‑140 tasks across queues with positions, priorities & ISO start times. Return only JSON with top‑level 'tasks' and optional 'theme'."
+    else:
+        prompt = (
+            "Generate a realistic task list for a small business. Pick a coherent theme. "
+            "Create 110‑140 tasks across queues with positions, priorities & ISO start times. "
+            "Return only JSON with top‑level 'tasks' and optional 'theme'."
+        )
     client = unify.Unify("o4-mini@openai", cache=True)
     client.set_system_message(prompt)
     raw = client.generate("Produce scenario").strip()
@@ -275,7 +281,12 @@ async def _async_main():
         action="store_true",
         help="enable voice capture/playback",
     )
-    parser.add_argument("--scenario", choices=["fixed", "llm"], default="fixed")
+    parser.add_argument(
+        "--scenario",
+        choices=["fixed", "llm"],
+        default="fixed",
+        help="seeding strategy (overridden by --custom-scenario or --custom-scenario-voice)",
+    )
     parser.add_argument("--new", "-n", action="store_true", help="wipe & reseed data")
     parser.add_argument(
         "--silent",
@@ -289,7 +300,18 @@ async def _async_main():
         action="store_true",
         help="verbose HTTP/LLM logging",
     )
+
+    group = parser.add_mutually_exclusive_group()
+    group.add_argument("--custom-scenario", type=str, help="Provide a custom scenario")
+    group.add_argument(
+        "--custom-scenario-voice",
+        action="store_true",
+        help="Describe custom scenario via voice",
+    )
+
     args = parser.parse_args()
+
+    scenario_text = get_custom_scenario(args, silent=args.silent)
 
     # Logging
     if not args.silent:
@@ -308,7 +330,9 @@ async def _async_main():
     tlm = TaskListManager()
 
     if fresh:
-        if args.scenario == "llm":
+        if scenario_text is not None:
+            _seed_llm(tlm, custom_scenario=scenario_text)
+        elif args.scenario == "llm":
             _seed_llm(tlm)
         else:
             _seed_fixed(tlm)
