@@ -344,7 +344,7 @@ async def _async_tool_use_loop_inner(
                         )
 
             # ── B: wait for remaining tools before asking the LLM again
-            if pending and not had_interjection:
+            if pending:
                 continue  # still waiting for other tool tasks
 
             #  An interjection to handle, or no pending tool calls
