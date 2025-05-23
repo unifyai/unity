@@ -6,7 +6,8 @@ import json
 import os
 from actions import handle_message_action
 from events import Event, SMSMessageRecievedEvent, WhatsappMessageRecievedEvent
-from new_terminal_helper import run_in_new_terminal
+from new_terminal_helper import run_as_subprocess, terminate_process
+
 
 # Subscription IDs
 project_id = "responsive-city-458413-a2"
@@ -27,6 +28,7 @@ class CommsManager:
         self.reader = None
         self.writer = None
         self.subscribers = {}
+        self.call_proc = None
         self.credentials = None
         self.loop = asyncio.get_event_loop()
         self.message_queue = asyncio.Queue()
@@ -63,23 +65,34 @@ class CommsManager:
                         try:
                             message_data = json.loads(msg["content"])
                             kwargs = {
-                                "from_number": message_data.get("from_number", "").replace(
-                                    "whatsapp:", ""
-                                ),
+                                "from_number": message_data.get(
+                                    "from_number", ""
+                                ).replace("whatsapp:", ""),
                                 "to_number": message_data.get("to_number", "").replace(
                                     "whatsapp:", ""
                                 ),
                             }
                             if msg["thread"] != "call":
                                 kwargs["message"] = message_data.get("message", "")
+                            elif message_data.get("message") == "Call ended":
+                                if self.call_proc is not None:
+                                    print(
+                                        "Terminating call process due to call end event"
+                                    )
+                                    terminate_process(self.call_proc)
+                                    self.call_proc = None
+                                    continue
                             else:
-                                self.call_proc = run_in_new_terminal(
+                                # Use run_as_subprocess for call processes
+                                self.call_proc = run_as_subprocess(
                                     "call.py",
                                     "dev",  # "console" if a local call is needed
                                     kwargs["from_number"],
                                     kwargs["to_number"],
                                 )
-                            success = await handle_message_action(msg["thread"], **kwargs)
+                            success = await handle_message_action(
+                                msg["thread"], **kwargs
+                            )
                             if not success:
                                 print(f"Failed to send {msg['thread']} message")
                         except json.JSONDecodeError:
@@ -128,9 +141,9 @@ class CommsManager:
                         "Unity_", ""
                     )
 
-                    self.call_proc = run_in_new_terminal(
+                    self.call_proc = run_as_subprocess(
                         "call.py",
-                        "dev",  # "console" if a local call is needed
+                        "dev",
                         from_number,
                         to_number,
                     )

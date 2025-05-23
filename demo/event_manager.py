@@ -109,6 +109,24 @@ class EventManager:
                                 await self.running_agent
                             except asyncio.CancelledError:
                                 pass
+                    elif msg["event"]["event_name"].startswith("PhoneCallEndedEvent"):
+                        print("CALL CLOSED")
+                        self.past_events.append(msg["event"])
+                        self.in_call = False
+                        gui_writer = self.writers.get("gui")
+                        asyncio.create_task(
+                            self.send_event(
+                                gui_writer,
+                                {
+                                    "type": "update_gui",
+                                    "thread": "call",
+                                    "content": json.dumps({"message": "Call ended"}),
+                                },
+                            ),
+                        )
+                        writer.close()
+                        await writer.wait_closed()
+                        break
                     if msg["to"] == "past":
                         self.past_events.append(msg["event"])
                         print("adding to past events")
