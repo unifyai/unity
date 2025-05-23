@@ -81,7 +81,9 @@ def new_client() -> unify.AsyncUnify:
     Return a fresh client *with its own conversation state* so that tests do
     not interfere with one another.
     """
-    return unify.AsyncUnify(MODEL_NAME, traced=True)
+    return unify.AsyncUnify(MODEL_NAME, cache=True, traced=True).set_system_message(
+        "Feel free to call multiple *different* tools per turn if appropriate."
+    )
 
 
 @unify.traced
