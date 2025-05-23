@@ -115,12 +115,14 @@ async def test_async_loop_concurrent_tools_waits_for_all_results():
     """
     events: list[tuple[str, float]] = []
 
+    @unify.traced
     async def fast():
         events.append(("fast_start", time.monotonic()))
         await asyncio.sleep(0.05)
         events.append(("fast_end", time.monotonic()))
         return "fast"
 
+    @unify.traced
     async def slow():
         events.append(("slow_start", time.monotonic()))
         await asyncio.sleep(0.30)
@@ -133,6 +135,7 @@ async def test_async_loop_concurrent_tools_waits_for_all_results():
             return await super().generate(**kwargs)
 
     client = InstrumentedClient(MODEL_NAME)
+    client.set_traced(True)
 
     _ = await llmh.start_async_tool_use_loop(
         client,
