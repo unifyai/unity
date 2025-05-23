@@ -86,11 +86,14 @@ def _assistant_tool_turns(msgs: List[dict[str, Any]]):
 
 
 # --------------------------------------------------------------------------- #
-#  FIXTURES                                                                   #
+#  HELPERS                                                                    #
 # --------------------------------------------------------------------------- #
-@pytest.fixture()
-def client():
-    """Provide a new client for every test function."""
+@unify.traced
+def new_client() -> unify.AsyncUnify:
+    """
+    Return a fresh client *with its own conversation state* so that tests do
+    not interfere with one another.
+    """
     return unify.AsyncUnify(MODEL_NAME, traced=True)
 
 
@@ -99,11 +102,12 @@ def client():
 # --------------------------------------------------------------------------- #
 @pytest.mark.asyncio
 @_handle_project
-async def test_interject_leads_to_second_tool_and_final_result(client):
+async def test_interject_leads_to_second_tool_and_final_result():
     """
     We start the loop asking the model to echo “A”.  Then we interject, asking
     it to echo “B” too.  We expect two separate tool calls and a final “done”.
     """
+    client = new_client()
     handle = start_async_tool_use_loop(
         client,
         message=(
@@ -148,11 +152,12 @@ async def test_interject_leads_to_second_tool_and_final_result(client):
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_stop_cancels_gracefully(client):
+async def test_stop_cancels_gracefully():
     """
     Calling ``stop()`` should cancel the loop: ``result()`` raises
     ``CancelledError`` and the underlying task is done.
     """
+    client = new_client()
     handle = start_async_tool_use_loop(
         client,
         "Echo something then say 'ok'.",
@@ -169,7 +174,7 @@ async def test_stop_cancels_gracefully(client):
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_interjections_are_processed_and_loop_completes(client):
+async def test_interjections_are_processed_and_loop_completes():
     """
     Launch the async-tool loop, fire two interjections, then wait for normal
     completion.  Verify
@@ -178,6 +183,7 @@ async def test_interjections_are_processed_and_loop_completes(client):
       • the *user* messages are preserved in FIFO order,
       • at least three tool invocations happened (A, B, C).
     """
+    client = new_client()
     handle = start_async_tool_use_loop(
         client,
         "Echo A please, then say 'done' when finished.",
@@ -209,12 +215,13 @@ async def test_interjections_are_processed_and_loop_completes(client):
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_single_tool_result_is_inserted_before_interjection(client):
+async def test_single_tool_result_is_inserted_before_interjection():
     """
     * Assistant is instructed to run `slow` once and then reply "ack".
     * We interject while `slow` is still running.
     * Expect: assistant → tool result → user interjection (contiguous order).
     """
+    client = new_client()
     handle = start_async_tool_use_loop(
         client,
         (
@@ -243,13 +250,14 @@ async def test_single_tool_result_is_inserted_before_interjection(client):
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_parallel_tool_results_shift_interjection_down(client):
+async def test_parallel_tool_results_shift_interjection_down():
     """
     * Assistant is instructed to run BOTH `fast` and `slow` before replying "done".
     * We interject while the tools are running.
     * Expect both tool results to sit immediately after the assistant turn
       (in any order) and the user message to follow them.
     """
+    client = new_client()
     handle = start_async_tool_use_loop(
         client,
         (
