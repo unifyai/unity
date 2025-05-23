@@ -12,17 +12,19 @@ from ..constants import SESSION_ID, LOGGER
 
 class Controller(threading.Thread):
 
-    def __init__(self, *, daemon: bool = True) -> None:
+    def __init__(self, *, daemon: bool = True, session_connect_url: str | None = None) -> None:
         super().__init__(daemon=daemon)
         self._redis_client = redis.Redis(host="localhost", port=6379, db=0)
         self._pubsub_text_action = self._redis_client.pubsub()
         self._pubsub_text_action.subscribe("text_action")
         self._pubsub_browser_state = self._redis_client.pubsub()
         self._pubsub_browser_state.subscribe("browser_state")
+        self.session_connect_url = session_connect_url
 
         self._browser_worker = BrowserWorker(
             start_url="https://www.google.com/",
             refresh_interval=0.4,
+            session_connect_url=self.session_connect_url,
         )
         self._browser_open = False
 
