@@ -326,15 +326,8 @@ async def _async_tool_use_loop_inner(
             # unless there was an interjection
             if pending and not had_interjection:
                 continue  # still waiting for other tool tasks
-
-            # ── C.  Cancel check before calling the LLM  ────────────────────
-            # NOTE: Light-weight early-exit guard – we do **not** want to pay
-            # for a needless ``client.generate`` if the caller has already
-            # decided to abort.
-            if cancel_event.is_set():
-                raise asyncio.CancelledError
             
-            # ── D.  Add temporary tools so the LLM can **continue** or **cancel**
+            # ── C.  Add temporary tools so the LLM can **continue** or **cancel**
             #       any still‑running tool calls ────────────────────────────────
             #
             # For each pending ``asyncio.Task`` we synthesise two VERY small helper
@@ -385,7 +378,7 @@ async def _async_tool_use_loop_inner(
             # Merge helpers into the visible toolkit for the upcoming LLM step
             tmp_tools = base_tools_schema + [method_to_schema(fn) for fn in dynamic_tools.values()]
 
-            # ── E.  Ask the LLM what to do next  ────────────────────────────
+            # ── D.  Ask the LLM what to do next  ────────────────────────────
             if log_steps:
                 LOGGER.info("🔄 LLM thinking…")
             # NOTE: No tool tasks are running **right now** (else we would
@@ -414,7 +407,7 @@ async def _async_tool_use_loop_inner(
                     Event(type=event_type, payload={"message": msg}),
                 )
 
-            # ── F.  Launch any new tool calls  ──────────────────────────────
+            # ── E.  Launch any new tool calls  ──────────────────────────────
             # NOTE: The model returned `tool_calls`.  For *each* call we:
             #   1. JSON-parse the arguments once (costly in Python – do it
             #      outside the worker thread).
@@ -571,7 +564,7 @@ async def _async_tool_use_loop_inner(
                     LOGGER.info("✅ Step finished (tool calls scheduled)")
                 continue  # back to the top
 
-            # ── G.  No new tool calls  ──────────────────────────────────────
+            # ── F.  No new tool calls  ──────────────────────────────────────
             # NOTE: Two scenarios reach this block:
             #   • `pending` **non-empty** → older tool tasks are still in
             #     flight; loop back to wait for them.
