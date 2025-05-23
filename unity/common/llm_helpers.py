@@ -238,20 +238,27 @@ async def _async_tool_use_loop_inner(
             #       • a *new* interjection appears
             if pending and not had_interjection:
                 interject_w = asyncio.create_task(interject_queue.get())
-                waiters = pending | {
-                    asyncio.create_task(cancel_event.wait()),
-                    interject_w,
-                }
+                cancel_waiter = asyncio.create_task(cancel_event.wait())
+                waiters = pending | {cancel_waiter, interject_w}
                 done, _ = await asyncio.wait(
                     waiters,
                     return_when=asyncio.FIRST_COMPLETED,
                 )
 
+                # ── ensure *unused* auxiliary waiters don't linger ──────────
+                # If one helper won the race we *must* cancel/await the other
+                # so that it cannot consume the next interjection invisibly.
+                for aux in (interject_w, cancel_waiter):
+                    if aux not in done and not aux.done():
+                        aux.cancel()
+                        await asyncio.gather(aux, return_exceptions=True)
+
                 if interject_w in done:
+                    # re-queue so branch 0 will handle user turn immediately
                     await interject_queue.put(interject_w.result())
                     continue  # → loop, will be processed in 0.
 
-                if any(t for t in done if t not in pending):
+                if cancel_waiter in done:
                     raise asyncio.CancelledError  # cancellation wins
 
                 for task in done:  # finished tool(s)
@@ -381,9 +388,7 @@ async def _async_tool_use_loop_inner(
             # ── D.  Ask the LLM what to do next  ────────────────────────────
             if log_steps:
                 LOGGER.info("🔄 LLM thinking…")
-            # NOTE: No tool tasks are running **right now** (else we would
-            # have hit the early-continue above) so it is the cheapest moment
-            # to query the model.  We let it decide freely between:
+            # NOTE: Let the model decide freely between:
             #   * another function call                → branch E
             #   * plain-text assistant response        → branch F
             # `_maybe_await` shields us from the fact that some back-ends
@@ -562,7 +567,7 @@ async def _async_tool_use_loop_inner(
 
                 if log_steps:
                     LOGGER.info("✅ Step finished (tool calls scheduled)")
-                continue  # back to the top
+                continue  # finished scheduling tools, back to the very top
 
             # ── F.  No new tool calls  ──────────────────────────────────────
             # NOTE: Two scenarios reach this block:
