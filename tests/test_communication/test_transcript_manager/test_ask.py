@@ -456,8 +456,8 @@ def setup_session_context():
         unify.delete_context(ctx)
     with unify.Context(ctx):
         unify.set_trace_context("Traces")
+        yield
 
-    yield
     unify.delete_context(ctx)
 
 
