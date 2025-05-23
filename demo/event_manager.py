@@ -183,33 +183,19 @@ class EventManager:
                         if self.writers.get("gui"):
                             print("creating tasks")
                             # For WhatsApp messages, include phone numbers in the message content
-                            if action.type in ["whatsapp", "sms"]:
+                            if action.type in ["whatsapp", "sms", "call"]:
                                 # Find phone numbers from inflight events
-                                phone_numbers = {}
-                                for event in self.past_events[::-1]:
-                                    if event.get("payload", {}).get("content"):
-                                        try:
-                                            content = json.loads(
-                                                event["payload"]["content"]
-                                            )
-                                            if (
-                                                "to_number" in content
-                                                and "from_number" in content
-                                            ):
-                                                phone_numbers = {
-                                                    "to_number": content["to_number"],
-                                                    "from_number": content[
-                                                        "from_number"
-                                                    ],
-                                                }
-                                                break
-                                        except json.JSONDecodeError:
-                                            continue
-
+                                phone_numbers = {
+                                    "to_number": action.to_number,
+                                    "from_number": action.from_number,
+                                }
                                 # Create message content with phone numbers
-                                message_content = json.dumps(
-                                    {"message": action.message, **phone_numbers}
-                                )
+                                if action.type != "call":
+                                    message_content = json.dumps(
+                                        {"message": action.message, **phone_numbers}
+                                    )
+                                else:
+                                    message_content = json.dumps(phone_numbers)
                             else:
                                 message_content = action.message
 
@@ -228,6 +214,7 @@ class EventManager:
                                 "whatsapp": WhatsappMessageSentEvent,
                                 "telegram": TelegramMessageSentEvent,
                                 "sms": SMSMessageSentEvent,
+                                "call": PhoneCallStartedEvent,
                             }
 
                             event = events_map[action.type](

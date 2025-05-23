@@ -48,6 +48,8 @@ from pydantic import BaseModel, Field
 class SendWhatsAppMessageAction(BaseModel):
     type: Literal["whatsapp"]
     message: str
+    from_number: str
+    to_number: str
 
 
 class SendTelegramMessageAction(BaseModel):
@@ -58,12 +60,20 @@ class SendTelegramMessageAction(BaseModel):
 class SendSMSMessageAction(BaseModel):
     type: Literal["sms"]
     message: str
+    from_number: str
+    to_number: str
 
 
 class SendEmailAction(BaseModel):
     type: Literal["email"]
     subject: str
     body: str
+
+
+class SendCallAction(BaseModel):
+    type: Literal["call"]
+    from_number: str
+    to_number: str
 
 
 # -------- discriminated union --------
@@ -74,6 +84,7 @@ ActionModel = Union[
     SendWhatsAppMessageAction,
     SendTelegramMessageAction,
     SendSMSMessageAction,
+    SendCallAction,
 ]
 
 
