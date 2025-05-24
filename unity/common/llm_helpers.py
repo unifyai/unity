@@ -155,6 +155,7 @@ async def _async_tool_use_loop_inner(
     interject_queue: asyncio.Queue[str],
     cancel_event: asyncio.Event,
     max_consecutive_failures: int = 3,
+    prune_tool_duplicates: bool = True,
     log_steps: bool = False,
 ) -> str:
     r"""
@@ -421,6 +422,19 @@ async def _async_tool_use_loop_inner(
                 await event_bus.publish(
                     Event(type=event_type, payload={"message": msg}),
                 )
+
+            # ── De-duplicate tool calls (optional) ────────────────────────
+            if prune_tool_duplicates and msg.get("tool_calls"):
+                seen: Set[tuple[str, str]] = set()
+                unique_calls: list = []
+                for call in msg["tool_calls"]:
+                    sig = (call["function"]["name"], call["function"]["arguments"])
+                    if sig not in seen:
+                        seen.add(sig)
+                        unique_calls.append(call)
+                if len(unique_calls) != len(msg["tool_calls"]):
+                    # mutate in-place so history never contains duplicates
+                    msg["tool_calls"] = unique_calls            
 
             # ── E.  Launch any new tool calls  ──────────────────────────────
             # NOTE: The model returned `tool_calls`.  For *each* call we:
