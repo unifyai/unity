@@ -156,6 +156,7 @@ async def _async_tool_use_loop_inner(
     cancel_event: asyncio.Event,
     max_consecutive_failures: int = 3,
     prune_tool_duplicates: bool = True,
+    interrupt_llm_with_interjections: bool = True,
     log_steps: bool = False,
 ) -> str:
     r"""
@@ -399,25 +400,72 @@ async def _async_tool_use_loop_inner(
             # ── D.  Ask the LLM what to do next  ────────────────────────────
             if log_steps:
                 LOGGER.info("🔄 LLM thinking…")
-            # NOTE: Let the model decide freely between:
-            #   * another function call                → branch E
-            #   * plain-text assistant response        → branch F
-            # `_maybe_await` shields us from the fact that some back-ends
-            # expose `generate` as a coroutine and others as a normal def.
 
-            try:
-                await _maybe_await(
-                    client.generate(
-                        return_full_completion=True,
-                        tools=tmp_tools,
-                        tool_choice="auto",
-                        stateful=True,
+            if interrupt_llm_with_interjections:
+                # ––––– new *pre-emptive* mode ––––––––––––––––––––––––––––
+                llm_task = asyncio.create_task(
+                    _maybe_await(
+                        client.generate(
+                            return_full_completion=True,
+                            tools=tmp_tools,
+                            tool_choice="auto",
+                            stateful=True,
+                        ),
                     ),
                 )
-            except:
-                raise Exception(f"LLM call failed. Messages at the time:\n{json.dumps(client.messages, indent=4)}")
+                interject_w = asyncio.create_task(interject_queue.get())
+                cancel_waiter = asyncio.create_task(cancel_event.wait())
 
+                done, _ = await asyncio.wait(
+                    {llm_task, interject_w, cancel_waiter},
+                    return_when=asyncio.FIRST_COMPLETED,
+                )
+
+                # helper cleanup
+                for tsk in (llm_task, interject_w, cancel_waiter):
+                    if tsk not in done and not tsk.done():
+                        tsk.cancel()
+                await asyncio.gather(interject_w, cancel_waiter, return_exceptions=True)
+
+                # 1️⃣ user interjected → restart immediately
+                if interject_w in done:
+                    if not llm_task.done():
+                        llm_task.cancel()
+                        await asyncio.gather(llm_task, return_exceptions=True)
+                    await interject_queue.put(interject_w.result())
+                    continue  # top of loop
+
+                # 2️⃣ cancellation requested
+                if cancel_waiter in done:
+                    if not llm_task.done():
+                        llm_task.cancel()
+                        await asyncio.gather(llm_task, return_exceptions=True)
+                    raise asyncio.CancelledError
+
+                # 3️⃣ LLM finished normally
+                if llm_task.exception():
+                    raise Exception(
+                        f"LLM call failed. Messages at the time:\n{json.dumps(client.messages, indent=4)}",
+                    )
+
+            else:
+                # ––––– legacy *blocking* mode ––––––––––––––––––––––––––––
+                try:
+                    await _maybe_await(
+                        client.generate(
+                            return_full_completion=True,
+                            tools=tmp_tools,
+                            tool_choice="auto",
+                            stateful=True,
+                        ),
+                    )
+                except Exception:
+                    raise Exception(
+                        f"LLM call failed. Messages at the time:\n{json.dumps(client.messages, indent=4)}",
+                    )
+            
             msg = client.messages[-1]
+            
             if event_bus:
                 await event_bus.publish(
                     Event(type=event_type, payload={"message": msg}),
@@ -727,6 +775,8 @@ def start_async_tool_use_loop(
     event_type: Optional[str] = None,
     event_bus: Optional[EventBus] = None,
     max_consecutive_failures: int = 3,
+    prune_tool_duplicates=True,
+    interrupt_llm_with_interjections: bool = True,
     log_steps: bool = False,
 ) -> AsyncToolLoopHandle:
     """
@@ -746,6 +796,8 @@ def start_async_tool_use_loop(
             interject_queue=interject_queue,
             cancel_event=cancel_event,
             max_consecutive_failures=max_consecutive_failures,
+            prune_tool_duplicates=prune_tool_duplicates,
+            interrupt_llm_with_interjections=interrupt_llm_with_interjections,
             log_steps=log_steps,
         ),
     )
