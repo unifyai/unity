@@ -234,3 +234,55 @@ async def test_async_loop_mixed_sync_async_tools():
     ).result()
 
     assert "13" in answer.strip()
+
+
+@pytest.mark.asyncio
+@_handle_project
+async def test_duplicate_tool_calls_are_optionally_pruned() -> None:  # noqa: D401
+    """Verify that duplicate tool calls are kept or pruned according to the flag."""
+
+    log: list[str] = []
+
+    async def echo(text: str) -> str:
+        """Minimal echo tool used only to count invocations."""
+        log.append(text)
+        return text.upper()
+
+    prompt = (
+        "You have access to a function named `echo(text: str)`.\n"
+        "For demonstration purposes **call `echo` twice** with exactly the same JSON "
+        'arguments `{ "text": "hello" }` – do not merge the calls.  After both calls, '
+        "answer with a single short sentence."
+    )
+
+    # ------------------------------------------------------------------ #
+    # 1️⃣  duplicates SHOULD be executed when pruning is disabled
+    # ------------------------------------------------------------------ #
+    log.clear()
+    client = new_client()
+    await llmh.start_async_tool_use_loop(
+        client=client,
+        message=prompt,
+        tools={"echo": echo},
+        prune_tool_duplicates=False,
+    ).result()
+    assert log == ["hello", "hello"], (
+        "With ignore_tool_duplicates=False the tool should be invoked twice."
+    )
+    assert [m["role"] for m in client.messages] == ['system', 'user', 'assistant', 'tool', 'tool', 'assistant']
+
+    # ------------------------------------------------------------------ #
+    # 2️⃣  duplicates SHOULD be removed when pruning is enabled
+    # ------------------------------------------------------------------ #
+    log.clear()
+    client = new_client()
+    await llmh.start_async_tool_use_loop(
+        client=client,
+        message=prompt,
+        tools={"echo": echo},
+        prune_tool_duplicates=True,
+    ).result()
+    assert log == ["hello", "hello"], (
+        "With ignore_tool_duplicates=True, two invocations are still expected."
+    )
+    assert [m["role"] for m in client.messages] == ['system', 'user', 'assistant', 'tool', 'assistant', 'tool', 'assistant']
