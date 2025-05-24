@@ -523,19 +523,30 @@ async def _async_tool_use_loop_inner(
                             (t for t, info in task_info.items() if info["call_id"] == call_id),
                             None,
                         )
+
+                        orig_fn = (
+                            task_info[task_to_cancel]["name"] if task_to_cancel else "unknown"
+                        )
+                        arg_json = (
+                            task_info[task_to_cancel]["call_dict"]["function"]["arguments"]
+                            if task_to_cancel
+                            else "{}"
+                        )
+                        pretty_name = f"_cancel {orig_fn}({arg_json})"
+
                         if task_to_cancel and not task_to_cancel.done():
                             task_to_cancel.cancel()
                         if task_to_cancel:
                             pending.discard(task_to_cancel)
                             task_info.pop(task_to_cancel, None)
 
-                        result = {"status": "cancelled", "call_id": call_id}
-
                         tool_msg = {
                             "role": "tool",
                             "tool_call_id": call["id"],
-                            "name": name,
-                            "content": _dumps(result, indent=4),
+                            "name": pretty_name,
+                            "content": (
+                                f"The tool call [{call_id}] has been cancelled successfully."
+                            ),
                         }
                         client.append_messages([tool_msg])
 
