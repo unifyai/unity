@@ -134,6 +134,7 @@ async def test_cancel_removes_tool_and_yields_no_result(client):
         client,
         message=("Run the tool `slow` then reply ACK (nothing else)."),
         tools={"slow": slow},
+        interrupt_llm_with_interjections=False,
     )
 
     await asyncio.sleep(0.05)  # tool in-flight
