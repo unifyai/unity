@@ -48,13 +48,13 @@ async def echo(txt: str) -> str:  # noqa: D401 – simple async tool
 
 @unify.traced
 async def slow() -> str:
-    await asyncio.sleep(0.25)
+    await asyncio.sleep(0.5)
     return "slow"
 
 
 @unify.traced
 async def fast() -> str:  # ~100 ms
-    await asyncio.sleep(0.10)
+    await asyncio.sleep(0.1)
     return "fast"
 
 
@@ -139,16 +139,16 @@ async def test_interject_leads_to_second_tool_and_final_result():
     assert first_args == {"txt": "A"}
 
     second_tool_calls = assistant_tool_turns[1]["tool_calls"]
-    last_args_of_second = json.loads(second_tool_calls[-1]["function"]["arguments"])
+    last_fn_of_second = second_tool_calls[-1]["function"]
     if len(second_tool_calls) == 1:
-        assert last_args_of_second == {"txt": "B"}
+        assert json.loads(last_fn_of_second["arguments"]) == {"txt": "B"}
     else:
         assert len(second_tool_calls) == 2
-        first_args_of_second = json.loads(second_tool_calls[0]["function"]["arguments"])
-        if "_call_id" in first_args_of_second:
-            assert last_args_of_second == {"txt": "B"}
-        elif "_call_id" in last_args_of_second:
-            assert first_args_of_second == {"txt": "B"}
+        first_fn_of_second = second_tool_calls[0]["function"]
+        if json.loads(first_fn_of_second["arguments"]) == {"txt": "B"}:
+            assert last_fn_of_second["name"].startswith("_continue_echo_call_")
+        elif json.loads(last_fn_of_second["arguments"]) == {"txt": "B"}:
+            assert first_fn_of_second["name"].startswith("_continue_echo_call_")
         else:
             raise Exception("Invalid tool arguments for second tool call")
 
@@ -249,7 +249,7 @@ async def test_single_tool_result_is_inserted_before_interjection():
         {"slow": slow},
     )
 
-    await asyncio.sleep(0.05)  # tool should still be running
+    await asyncio.sleep(0.15)  # tool should still be running
     await handle.interject("thanks!")
 
     await handle.result()  # wait for completion
@@ -285,7 +285,7 @@ async def test_parallel_tool_results_shift_interjection_down():
         {"fast": fast, "slow": slow},
     )
 
-    await asyncio.sleep(0.15)  # `fast` likely done, `slow` still running
+    await asyncio.sleep(0.3)  # `fast` done, `slow` still running
     await handle.interject("cheers!")
 
     await handle.result()
