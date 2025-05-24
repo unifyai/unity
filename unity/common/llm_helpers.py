@@ -373,16 +373,14 @@ async def _async_tool_use_loop_inner(
                     f"Cancel pending call {_fn_name}({_arg_repr}).")
 
                 # ––– 1. continue helper ––––––––––––––––––––––––––––––––––––
-                async def _continue(_call_id: str = _call_id) -> Dict[str, str]:
+                async def _continue() -> Dict[str, str]:
                     return {"status": "continue", "call_id": _call_id}
                 _continue.__doc__ = _continue_doc  # type: ignore[attr-defined]
                 _continue.__name__ = f"_continue_{_fn_name}_{_call_id}"
                 dynamic_tools[f"continue_{_call_id}"] = _continue
 
                 # ––– 2. cancel helper –––––––––––––––––––––––––––––––––––––
-                async def _cancel(
-                    _task: asyncio.Task = _task, _call_id: str = _call_id
-                ) -> Dict[str, str]:
+                async def _cancel() -> Dict[str, str]:
                     if not _task.done():
                         _task.cancel()
                     pending.discard(_task)
