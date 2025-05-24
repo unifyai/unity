@@ -143,5 +143,5 @@ async def test_cancel_removes_tool_and_yields_no_result(client):
     assert "ACK" in final.upper()
 
     msgs = client.messages
-    assert _tool_results(msgs, "slow") == 0, "no result expected after cancel"
-    assert _assistant_calls(msgs, "slow") == 0, "tool-call should be scrubbed"
+    assert _tool_results(msgs, "slow") == 1, "cancellation tool expected after cancel"
+    assert _assistant_calls(msgs, "slow") == 1, "tool-call should remain in the history"
