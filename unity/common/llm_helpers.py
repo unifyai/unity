@@ -839,10 +839,27 @@ async def _async_tool_use_loop_inner(
                         extra_kwargs["interject_queue"] = sub_q
                         is_interj = True
 
-                    # merge caller-supplied args with our extras
-                    merged_kwargs = {**args, **extra_kwargs}
+                    # ---- filter extras to match fn signature ----------
+                    import inspect
 
-                    # avoid double-passing interject_queue
+                    sig = inspect.signature(fn)
+                    params = sig.parameters
+                    has_varkw = any(
+                        p.kind == inspect.Parameter.VAR_KEYWORD
+                        for p in params.values()
+                    )
+
+                    filtered_extras = {
+                        k: v
+                        for k, v in extra_kwargs.items()
+                        if k in params or has_varkw
+                    }
+
+                    # merge caller-supplied args with the *filtered* extras
+                    merged_kwargs = {**args, **filtered_extras}
+
+                    # avoid double-passing the queue if the model already
+                    # supplied an `interject_queue` argument
                     if (
                         "interject_queue" in args
                         and name in interjectable_tools
