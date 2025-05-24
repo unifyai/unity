@@ -707,15 +707,70 @@ async def _async_tool_use_loop_inner(
                             LOGGER.info(f"🚫  {name} executed – task cancelled")
                         continue  # nothing else to schedule
 
+                    if name.startswith("_interject"):
+                        # helper signature: {"content": "..."}
+                        try:
+                            payload = json.loads(call["function"]["arguments"])
+                            new_text = payload["content"]
+                        except Exception:
+                            new_text = "<unparsable>"
+
+                        call_id = "_".join(name.split("_")[-2:])
+
+                        # locate the underlying long-running task
+                        tgt_task = next(
+                            (t for t, inf in task_info.items() if inf["call_id"] == call_id),
+                            None,
+                        )
+
+                        pretty_name = f"_interject {task_info[tgt_task]['name']}({new_text})" if tgt_task else name
+
+                        # ― push guidance onto the private queue -------------
+                        if tgt_task and task_info[tgt_task]["interject_q"] is not None:
+                            await task_info[tgt_task]["interject_q"].put(new_text)
+
+                        # ― emit a tool message so the chat log stays tidy ---
+                        tool_msg = {
+                            "role": "tool",
+                            "tool_call_id": call["id"],
+                            "name": pretty_name,
+                            "content": f'Guidance "{new_text}" forwarded to the running tool.',
+                        }
+                        client.append_messages([tool_msg])
+
+                        meta = assistant_meta.setdefault(
+                            id(msg), {"original_tool_calls": [], "results_count": 0},
+                        )
+                        insert_pos = client.messages.index(msg) + 1 + meta["results_count"]
+                        client.messages.insert(insert_pos, client.messages.pop())
+                        meta["results_count"] += 1
+
+                        if log_steps:
+                            LOGGER.info(f"💬  Interjection delivered → {new_text!r}")
+                        continue  # nothing else to schedule
+
                     fn = tools[name]
 
                     # ── wrap interjectable tools with a private queue ────
                     if name in interjectable_tools:
                         sub_q: asyncio.Queue[str] = asyncio.Queue()
-                        if asyncio.iscoroutinefunction(fn):
-                            coro = fn(interject_queue=sub_q, **args)
+                        if "interject_queue" in args:
+                            # the model already provided the kw-arg → overwrite
+                            args["interject_queue"] = sub_q
+                            if asyncio.iscoroutinefunction(fn):
+                                coro = fn(**args)
+                            else:
+                                coro = asyncio.to_thread(fn, **args)
                         else:
-                            coro = asyncio.to_thread(fn, interject_queue=sub_q, **args)
+                            # inject our queue explicitly
+                            if asyncio.iscoroutinefunction(fn):
+                                coro = fn(interject_queue=sub_q, **args)
+                            else:
+                                coro = asyncio.to_thread(
+                                    fn,
+                                    interject_queue=sub_q,
+                                    **args,
+                                )
                         is_interj = True
                     else:
                         coro = (
@@ -875,6 +930,7 @@ def start_async_tool_use_loop(
     max_consecutive_failures: int = 3,
     prune_tool_duplicates=True,
     interrupt_llm_with_interjections: bool = True,
+    interjectable_tools: Optional[Set[str]] = None,
     log_steps: bool = False,
 ) -> AsyncToolLoopHandle:
     """
@@ -896,6 +952,7 @@ def start_async_tool_use_loop(
             max_consecutive_failures=max_consecutive_failures,
             prune_tool_duplicates=prune_tool_duplicates,
             interrupt_llm_with_interjections=interrupt_llm_with_interjections,
+            interjectable_tools=interjectable_tools,
             log_steps=log_steps,
         ),
     )
