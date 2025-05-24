@@ -157,6 +157,7 @@ async def _async_tool_use_loop_inner(
     max_consecutive_failures: int = 3,
     prune_tool_duplicates: bool = True,
     interrupt_llm_with_interjections: bool = True,
+    interjectable_tools: Optional[Set[str]] = None,
     log_steps: bool = False,
 ) -> str:
     r"""
@@ -273,6 +274,9 @@ async def _async_tool_use_loop_inner(
     task_info: Dict[asyncio.Task, Dict[str, Any]] = {}
     completed_results: Dict[str, str] = {}
     assistant_meta: Dict[int, Dict[str, Any]] = {}
+
+    if interjectable_tools is None:
+        interjectable_tools = set()
 
     try:
         while True:
@@ -454,6 +458,25 @@ async def _async_tool_use_loop_inner(
                 _cancel.__doc__ = _cancel_doc  # type: ignore[attr-defined]
                 _cancel.__name__ = f"_cancel_{_fn_name}_{_call_id}"
                 dynamic_tools[f"cancel_{_call_id}"] = _cancel
+
+                # ––– 3. interject helper (optional) ––––––––––––––––––––––
+                if info.get("is_interjectable"):
+                    _interject_doc = (
+                        f"Inject additional instructions for {_fn_name}({_arg_repr}). "
+                        "Takes a single argument `content` containing plain-English guidance."
+                    )
+
+                    async def _interject(content: str) -> Dict[str, str]:  # type: ignore[valid-type]
+                        await info["interject_q"].put(content)
+                        return {
+                            "status": "interjected",
+                            "call_id": _call_id,
+                            "content": content,
+                        }
+
+                    _interject.__doc__ = _interject_doc  # type: ignore[attr-defined]
+                    _interject.__name__ = f"_interject_{_fn_name}_{_call_id}"
+                    dynamic_tools[f"interject_{_call_id}"] = _interject
 
             # Merge helpers into the visible toolkit for the upcoming LLM step
             tmp_tools = base_tools_schema + [method_to_schema(fn) for fn in dynamic_tools.values()]
@@ -685,11 +708,23 @@ async def _async_tool_use_loop_inner(
                         continue  # nothing else to schedule
 
                     fn = tools[name]
-                    coro = (
-                        fn(**args)
-                        if asyncio.iscoroutinefunction(fn)
-                        else asyncio.to_thread(fn, **args)
-                    )
+
+                    # ── wrap interjectable tools with a private queue ────
+                    if name in interjectable_tools:
+                        sub_q: asyncio.Queue[str] = asyncio.Queue()
+                        if asyncio.iscoroutinefunction(fn):
+                            coro = fn(interject_queue=sub_q, **args)
+                        else:
+                            coro = asyncio.to_thread(fn, interject_queue=sub_q, **args)
+                        is_interj = True
+                    else:
+                        coro = (
+                            fn(**args)
+                            if asyncio.iscoroutinefunction(fn)
+                            else asyncio.to_thread(fn, **args)
+                        )
+                        sub_q = None
+                        is_interj = False
 
                     call_dict = {
                         "id": call["id"],
@@ -709,6 +744,8 @@ async def _async_tool_use_loop_inner(
                         "assistant_msg": msg,
                         "call_dict": call_dict,
                         "call_idx": idx,
+                        "is_interjectable": is_interj,
+                        "interject_q": sub_q,
                     }
 
                     # ── Insert a placeholder tool message so the chat history
