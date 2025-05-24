@@ -208,6 +208,7 @@ async def _async_tool_use_loop_inner(
     consecutive_failures = 0
     pending: Set[asyncio.Task] = set()
     task_info: Dict[asyncio.Task, Dict[str, Any]] = {}
+    completed_results: Dict[str, str] = {}
     assistant_meta: Dict[int, Dict[str, Any]] = {}
 
     try:
@@ -293,29 +294,33 @@ async def _async_tool_use_loop_inner(
                     asst_msg = info["assistant_msg"]
                     meta = assistant_meta[id(asst_msg)]
 
-                    # 1. Replace the placeholder message's content with the
-                    #    real result instead of creating a *new* tool message.
-                    placeholder_msg = info.get("placeholder_msg")
-                    if placeholder_msg is not None:
-                        placeholder_msg["content"] = result
-                        tool_msg = placeholder_msg
+                    # 1. Prefer patching the *continue* placeholder (if any);
+                    #    otherwise fall back to the original tool placeholder.
+                    continue_msg = info.get("continue_msg")
+                    if continue_msg is not None:
+                        continue_msg["content"] = result
+                        tool_msg = continue_msg
                     else:
-                        # Fallback (should be rare): create a fresh tool msg.
-                        tool_msg = {
-                            "role": "tool",
-                            "tool_call_id": call_id,
-                            "name": name,
-                            "content": result,
-                        }
-                        client.append_messages([tool_msg])
-                        insert_pos = (
-                            client.messages.index(asst_msg)
-                            + 1
-                            + meta["results_count"]
-                        )
-                        moved = client.messages.pop()
-                        client.messages.insert(insert_pos, moved)
-                        meta["results_count"] += 1
+                        placeholder_msg = info.get("placeholder_msg")
+                        if placeholder_msg is not None:
+                            placeholder_msg["content"] = result
+                            tool_msg = placeholder_msg
+                        else:
+                            tool_msg = {
+                                "role": "tool",
+                                "tool_call_id": call_id,
+                                "name": name,
+                                "content": result,
+                            }
+                            client.append_messages([tool_msg])
+                            insert_pos = (
+                                client.messages.index(asst_msg)
+                                + 1
+                                + meta["results_count"]
+                            )
+                            moved = client.messages.pop()
+                            client.messages.insert(insert_pos, moved)
+                            meta["results_count"] += 1
 
                     if event_bus:
                         await event_bus.publish(
@@ -368,6 +373,7 @@ async def _async_tool_use_loop_inner(
                 async def _continue(_call_id: str = _call_id) -> Dict[str, str]:
                     return {"status": "continue", "call_id": _call_id}
                 _continue.__doc__ = _continue_doc  # type: ignore[attr-defined]
+                _continue.__name__ = f"_continue_{_fn_name}_{_call_id}"
                 dynamic_tools[f"continue_{_call_id}"] = _continue
 
                 # ––– 2. cancel helper –––––––––––––––––––––––––––––––––––––
@@ -380,6 +386,7 @@ async def _async_tool_use_loop_inner(
                     task_info.pop(_task, None)
                     return {"status": "cancelled", "call_id": _call_id}
                 _cancel.__doc__ = _cancel_doc  # type: ignore[attr-defined]
+                _cancel.__name__ = f"_cancel_{_fn_name}_{_call_id}"
                 dynamic_tools[f"cancel_{_call_id}"] = _cancel
 
             # Merge helpers into the visible toolkit for the upcoming LLM step
@@ -438,29 +445,72 @@ async def _async_tool_use_loop_inner(
                     # • continue_* → acknowledge, no scheduling
                     # • cancel_*   → cancel underlying task & purge metadata
                     if name.startswith("_continue"):
-                        call_id = name[len("_continue") :]
-                        result = {"status": "continue", "call_id": call_id}
+                        call_id = "_".join(name.split("_")[-2:])
 
-                        # ── inject a synchronous tool-result message ──────
-                        tool_msg = {
-                            "role": "tool",
-                            "tool_call_id": call["id"],
-                            "name": name,
-                            "content": _dumps(result, indent=4),
-                        }
-                        client.append_messages([tool_msg])
-
-                        # Keep chronological ordering like Section A does
-                        meta = assistant_meta.setdefault(
-                            id(msg), {"original_tool_calls": [], "results_count": 0}
+                        tgt_task = next(
+                            (t for t, inf in task_info.items() if inf["call_id"] == call_id),
+                            None,
                         )
-                        insert_pos = client.messages.index(msg) + 1 + meta["results_count"]
-                        client.messages.insert(insert_pos, client.messages.pop())
-                        meta["results_count"] += 1
 
-                        if log_steps:
-                            LOGGER.info(f"↩️  {name} acknowledged – still waiting")
-                        continue  # go to next tool-call
+                        orig_fn = (
+                            task_info[tgt_task]["name"] if tgt_task else "unknown"
+                        )
+                        arg_json = (
+                            task_info[tgt_task]["call_dict"]["function"]["arguments"]
+                            if tgt_task
+                            else "{}"
+                        )
+                        pretty_name = f"_continue {orig_fn}({arg_json})"
+
+                        if tgt_task:  # still running → insert placeholder
+                            placeholder_msg = {
+                                "role": "tool",
+                                "tool_call_id": call["id"],
+                                "name": pretty_name,
+                                "content": (
+                                    "Still waiting for the final result. "
+                                    "This message will be updated automatically."
+                                ),
+                            }
+                            client.append_messages([placeholder_msg])
+
+                            meta = assistant_meta.setdefault(
+                                id(msg), {"original_tool_calls": [], "results_count": 0}
+                            )
+                            insert_pos = client.messages.index(msg) + 1 + meta["results_count"]
+                            client.messages.insert(insert_pos, client.messages.pop())
+                            meta["results_count"] += 1
+
+                            # Section A will patch this content later
+                            task_info[tgt_task]["continue_msg"] = placeholder_msg
+
+                            if log_steps:
+                                LOGGER.info(f"↩️  {pretty_name} placeholder inserted – still waiting")
+
+                        else:  # the original tool already finished
+                            finished = completed_results.get(
+                                call_id,
+                                _dumps({"status": "not-found", "call_id": call_id}, indent=4),
+                            )
+                            tool_msg = {
+                                "role": "tool",
+                                "tool_call_id": call["id"],
+                                "name": pretty_name,
+                                "content": finished,
+                            }
+                            client.append_messages([tool_msg])
+
+                            meta = assistant_meta.setdefault(
+                                id(msg), {"original_tool_calls": [], "results_count": 0}
+                            )
+                            insert_pos = client.messages.index(msg) + 1 + meta["results_count"]
+                            client.messages.insert(insert_pos, client.messages.pop())
+                            meta["results_count"] += 1
+
+                            if log_steps:
+                                LOGGER.info(f"↩️  {pretty_name} answered immediately (already finished)")
+
+                        continue  # completed handling of this _continue
 
                     if name.startswith("_cancel"):
                         call_id = name[len("_cancel") :]
@@ -531,8 +581,8 @@ async def _async_tool_use_loop_inner(
                     placeholder_content = (
                         "The following tool calls are still running. If any of them are no longer "
                         "relevant to the sequence of user requests, then you can call their "
-                        "`cancel_*` helper, otherwise feel free to call the corresponding "
-                        "`continue_*` helper to keep waiting:\n"
+                        "`_cancel_*` helper, otherwise feel free to call the corresponding "
+                        "`_continue_*` helper to keep waiting:\n"
                         f" • {name}({call['function']['arguments']}) → "
                         f"cancel_{call['id']} / continue_{call['id']}"
                     )
