@@ -299,6 +299,9 @@ async def _async_tool_use_loop_inner(
                     continue_msg = info.get("continue_msg")
                     if continue_msg is not None:
                         continue_msg["content"] = result
+                        name = info["call_dict"]["function"]["name"]
+                        args = info["call_dict"]["function"]["arguments"]
+                        continue_msg["name"] = f"{name}({args}) completed successfully, the return values are in the `content` field below."
                         tool_msg = continue_msg
                     else:
                         placeholder_msg = info.get("placeholder_msg")
