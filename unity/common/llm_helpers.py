@@ -145,6 +145,36 @@ async def _maybe_await(obj):
     return obj
 
 
+def _chat_context_repr(
+    parent_ctx: Optional[list[dict]],
+    current_msgs: list[dict],
+) -> list[dict]:
+    """
+    Combine **existing** ``parent_ctx`` with the *current* chat history
+    (``current_msgs``) into a depth-aware nested structure:
+
+        root_msg0
+        root_msg1
+        root_msg2
+          └── children:
+              ├── child_msg0
+              └── child_msg1
+
+    Strategy – keep the original list untouched and attach the new
+    messages as ``children`` of the *last* element.
+    """
+    ctx_block = [
+        {"role": m.get("role"), "content": m.get("content")} for m in current_msgs
+    ]
+    if not parent_ctx:
+        return ctx_block
+
+    import copy
+
+    combined = copy.deepcopy(parent_ctx)
+    combined[-1].setdefault("children", []).extend(ctx_block)
+    return combined
+
 async def _async_tool_use_loop_inner(
     client: unify.AsyncUnify,
     message: str,
@@ -158,6 +188,8 @@ async def _async_tool_use_loop_inner(
     prune_tool_duplicates: bool = True,
     interrupt_llm_with_interjections: bool = True,
     interjectable_tools: Optional[Set[str]] = None,
+    propagate_chat_context: bool = True,
+    parent_chat_context: Optional[list[dict]] = None,
     log_steps: bool = False,
 ) -> str:
     r"""
@@ -242,6 +274,16 @@ async def _async_tool_use_loop_inner(
         ``_interject_<call-id>(content: str)``.  The original tool must
         accept an ``interject_queue`` keyword argument (an
         ``asyncio.Queue[str]``) to receive these live instructions.
+    propagate_chat_context : ``bool``, default ``True``
+        If *True*, the entire conversation state of **this** loop is
+        threaded into any child tool that accepts a
+        ``parent_chat_context`` keyword argument.
+
+    parent_chat_context : ``list[dict] | None``
+        Nested chat structure passed from an **outer** loop.  When
+        ``propagate_chat_context`` is on, the helper
+        :pyfunc:`_chat_context_repr` merges this with the current
+        ``client.messages`` and forwards the result downward.
 
     log_steps : ``bool``, default ``False``
         When enabled, every significant action (LLM call, tool launch,
@@ -751,35 +793,36 @@ async def _async_tool_use_loop_inner(
 
                     fn = tools[name]
 
-                    # ── wrap interjectable tools with a private queue ────
-                    if name in interjectable_tools:
-                        sub_q: asyncio.Queue[str] = asyncio.Queue()
-                        if "interject_queue" in args:
-                            # the model already provided the kw-arg → overwrite
-                            args["interject_queue"] = sub_q
-                            if asyncio.iscoroutinefunction(fn):
-                                coro = fn(**args)
-                            else:
-                                coro = asyncio.to_thread(fn, **args)
-                        else:
-                            # inject our queue explicitly
-                            if asyncio.iscoroutinefunction(fn):
-                                coro = fn(interject_queue=sub_q, **args)
-                            else:
-                                coro = asyncio.to_thread(
-                                    fn,
-                                    interject_queue=sub_q,
-                                    **args,
-                                )
-                        is_interj = True
-                    else:
-                        coro = (
-                            fn(**args)
-                            if asyncio.iscoroutinefunction(fn)
-                            else asyncio.to_thread(fn, **args)
+                    # ── build **extra** kwargs (chat context + queue) ───
+                    extra_kwargs: dict = {}
+
+                    if propagate_chat_context:
+                        ctx_repr = _chat_context_repr(
+                            parent_chat_context, client.messages
                         )
-                        sub_q = None
-                        is_interj = False
+                        extra_kwargs["parent_chat_context"] = ctx_repr
+
+                    sub_q: Optional[asyncio.Queue[str]] = None
+                    is_interj = False
+                    if name in interjectable_tools:
+                        sub_q = asyncio.Queue()
+                        extra_kwargs["interject_queue"] = sub_q
+                        is_interj = True
+
+                    # merge caller-supplied args with our extras
+                    merged_kwargs = {**args, **extra_kwargs}
+
+                    # avoid double-passing interject_queue
+                    if (
+                        "interject_queue" in args
+                        and name in interjectable_tools
+                    ):
+                        merged_kwargs["interject_queue"] = sub_q
+
+                    if asyncio.iscoroutinefunction(fn):
+                        coro = fn(**merged_kwargs)
+                    else:
+                        coro = asyncio.to_thread(fn, **merged_kwargs)
 
                     call_dict = {
                         "id": call["id"],
@@ -801,6 +844,7 @@ async def _async_tool_use_loop_inner(
                         "call_idx": idx,
                         "is_interjectable": is_interj,
                         "interject_q": sub_q,
+                        "chat_ctx": extra_kwargs.get("parent_chat_context"),
                     }
 
                     # ── Insert a placeholder tool message so the chat history
@@ -931,6 +975,8 @@ def start_async_tool_use_loop(
     prune_tool_duplicates=True,
     interrupt_llm_with_interjections: bool = True,
     interjectable_tools: Optional[Set[str]] = None,
+    propagate_chat_context: bool = True,
+    parent_chat_context: Optional[list[dict]] = None,
     log_steps: bool = False,
 ) -> AsyncToolLoopHandle:
     """
@@ -953,6 +999,8 @@ def start_async_tool_use_loop(
             prune_tool_duplicates=prune_tool_duplicates,
             interrupt_llm_with_interjections=interrupt_llm_with_interjections,
             interjectable_tools=interjectable_tools,
+            propagate_chat_context=propagate_chat_context,
+            parent_chat_context=parent_chat_context,
             log_steps=log_steps,
         ),
     )
