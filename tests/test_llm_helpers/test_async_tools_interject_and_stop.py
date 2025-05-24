@@ -114,15 +114,15 @@ async def test_interject_leads_to_second_tool_and_final_result():
     client = new_client()
     handle = start_async_tool_use_loop(
         client,
-        message=(
-            "Use the `echo` tool to output the text 'A'."
-        ),
+        message=("Use the `echo` tool to output the text 'A'."),
         tools={"echo": echo},
     )
 
     # --- inject clarification ------------------------------------------------
     await asyncio.sleep(0.02)
-    await handle.interject("And also echo B please, the order of the echos doesn't matter.")
+    await handle.interject(
+        "And also echo B please, the order of the echos doesn't matter.",
+    )
 
     await handle.result()
 
@@ -135,7 +135,9 @@ async def test_interject_leads_to_second_tool_and_final_result():
 
     # 2. first assistant turn calls echo("A"), second calls echo("B")
 
-    first_args = json.loads(assistant_tool_turns[0]["tool_calls"][0]["function"]["arguments"])
+    first_args = json.loads(
+        assistant_tool_turns[0]["tool_calls"][0]["function"]["arguments"],
+    )
     assert first_args == {"txt": "A"}
 
     second_tool_calls = assistant_tool_turns[1]["tool_calls"]

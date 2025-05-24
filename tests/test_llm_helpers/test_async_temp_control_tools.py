@@ -105,7 +105,7 @@ async def test_continue_does_not_duplicate_tool(client):
     # Interject after ~50 ms – tool still running
     await asyncio.sleep(0.05)
     await handle.interject(
-        "Make sure you're still continuing to run the `slow` tool"
+        "Make sure you're still continuing to run the `slow` tool",
     )
 
     final = await handle.result()

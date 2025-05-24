@@ -295,7 +295,7 @@ def get_custom_scenario(args, *, silent: bool) -> Optional[str]:
                 transcript = transcript[: MAX_SCENARIO_LENGTH - 3] + "..."
                 if not silent:
                     print(
-                        f"⚠️ Warning: Scenario truncated to {MAX_SCENARIO_LENGTH} characters"
+                        f"⚠️ Warning: Scenario truncated to {MAX_SCENARIO_LENGTH} characters",
                     )
 
             return transcript.strip()

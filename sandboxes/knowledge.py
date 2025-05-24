@@ -79,7 +79,8 @@ def _seed_fixed(km: KnowledgeManager) -> None:
 
 
 def _seed_llm(
-    km: KnowledgeManager, custom_scenario: Optional[str] = None
+    km: KnowledgeManager,
+    custom_scenario: Optional[str] = None,
 ) -> Optional[str]:
     """Use an LLM to generate a large set of factual sentences."""
     if custom_scenario:
@@ -197,7 +198,8 @@ async def _handle_interruptions(
                     print("⚠️ Interruption detected. Recording new input...")
                     audio_bytes = await asyncio.to_thread(_record_until_enter)
                     user_text = await asyncio.to_thread(
-                        _transcribe_deepgram, audio_bytes
+                        _transcribe_deepgram,
+                        audio_bytes,
                     )
                     if user_text:
                         print(f"▶️  New input: {user_text}")

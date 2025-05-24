@@ -76,8 +76,10 @@ class Assistant(Agent):
         self.past_events = []
         self.new_events = [
             PhoneCallStartedEvent(
-                content=json.dumps({"from_number": from_number, "to_number": to_number})
-            )
+                content=json.dumps(
+                    {"from_number": from_number, "to_number": to_number},
+                ),
+            ),
         ]
         # self.client = client
         self.current_tasks_status = None
@@ -155,14 +157,14 @@ async def entrypoint(ctx: agents.JobContext):
             if current_time - last_activity_time > INACTIVITY_TIMEOUT:
                 print("Inactivity timeout reached, shutting down agent...")
                 await session.generate_reply(
-                    instructions="Tell the user that the call has ended due to inactivity."
+                    instructions="Tell the user that the call has ended due to inactivity.",
                 )
                 await publish_event(
                     {
                         "type": "user_agent_event",
                         "to": "pending",
                         "event": PhoneCallEndedEvent().to_dict(),
-                    }
+                    },
                 )
 
     # Start inactivity checker
@@ -188,7 +190,9 @@ async def entrypoint(ctx: agents.JobContext):
             "type": "user_agent_event",
             "to": "pending",
             "event": PhoneCallStartedEvent(
-                content=json.dumps({"from_number": from_number, "to_number": to_number})
+                content=json.dumps(
+                    {"from_number": from_number, "to_number": to_number},
+                ),
             ).to_dict(),
         },
     )

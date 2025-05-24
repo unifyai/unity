@@ -359,7 +359,8 @@ class ControlPanel(tk.Tk):
                     if self._llm_line_idx is not None:
                         self.log.configure(state="normal")
                         self.log.delete(
-                            self._llm_line_idx, f"{self._llm_line_idx} lineend"
+                            self._llm_line_idx,
+                            f"{self._llm_line_idx} lineend",
                         )
                         self.log.configure(state="disabled")
                         self._llm_line_idx = None
@@ -382,10 +383,12 @@ class ControlPanel(tk.Tk):
                     if self._llm_line_idx is not None:
                         self.log.configure(state="normal")
                         self.log.delete(
-                            self._llm_line_idx, f"{self._llm_line_idx} lineend"
+                            self._llm_line_idx,
+                            f"{self._llm_line_idx} lineend",
                         )
                         self.log.insert(
-                            self._llm_line_idx, "❗ LLM error – see traceback\n"
+                            self._llm_line_idx,
+                            "❗ LLM error – see traceback\n",
                         )
                         self.log.configure(state="disabled")
                         self._llm_line_idx = None

@@ -84,7 +84,8 @@ def _seed_fixed(tlm: TaskListManager) -> None:
 
 
 def _seed_llm(
-    tlm: TaskListManager, custom_scenario: Optional[str] = None
+    tlm: TaskListManager,
+    custom_scenario: Optional[str] = None,
 ) -> Optional[str]:
     """Generate a large realistic task backlog via LLM."""
     if custom_scenario:
