@@ -228,7 +228,7 @@ async def _async_tool_use_loop_inner(
                 msg = {"role": "user", "content": extra}
                 if event_bus:
                     await event_bus.publish(
-                        Event(type=event_type, payload={"message": msg})
+                        Event(type=event_type, payload={"message": msg}),
                     )
                 client.append_messages([msg])
 
@@ -337,11 +337,11 @@ async def _async_tool_use_loop_inner(
                             "Aborted after too many consecutive tool failures.",
                         )
 
-            # ── B: wait for remaining tools before asking the LLM again, 
+            # ── B: wait for remaining tools before asking the LLM again,
             # unless there was an interjection
             if pending and not had_interjection:
                 continue  # still waiting for other tool tasks
-            
+
             # ── C.  Add temporary tools so the LLM can **continue** or **cancel**
             #       any still‑running tool calls ────────────────────────────────
             #
@@ -368,9 +368,11 @@ async def _async_tool_use_loop_inner(
 
                 # concise, informative, single‑line docs  ----------------------
                 _continue_doc = (
-                    f"Continue waiting for {_fn_name}({_arg_repr}).")
+                    f"Continue waiting for {_fn_name}({_arg_repr})."
+                )
                 _cancel_doc = (
-                    f"Cancel pending call {_fn_name}({_arg_repr}).")
+                    f"Cancel pending call {_fn_name}({_arg_repr})."
+                )
 
                 # ––– 1. continue helper ––––––––––––––––––––––––––––––––––––
                 async def _continue() -> Dict[str, str]:
@@ -409,7 +411,7 @@ async def _async_tool_use_loop_inner(
                         tools=tmp_tools,
                         tool_choice="auto",
                         stateful=True,
-                    )
+                    ),
                 )
             except:
                 raise Exception(f"LLM call failed. Messages at the time:\n{json.dumps(client.messages, indent=4)}")
@@ -476,7 +478,7 @@ async def _async_tool_use_loop_inner(
                             client.append_messages([placeholder_msg])
 
                             meta = assistant_meta.setdefault(
-                                id(msg), {"original_tool_calls": [], "results_count": 0}
+                                id(msg), {"original_tool_calls": [], "results_count": 0},
                             )
                             insert_pos = client.messages.index(msg) + 1 + meta["results_count"]
                             client.messages.insert(insert_pos, client.messages.pop())
@@ -502,7 +504,7 @@ async def _async_tool_use_loop_inner(
                             client.append_messages([tool_msg])
 
                             meta = assistant_meta.setdefault(
-                                id(msg), {"original_tool_calls": [], "results_count": 0}
+                                id(msg), {"original_tool_calls": [], "results_count": 0},
                             )
                             insert_pos = client.messages.index(msg) + 1 + meta["results_count"]
                             client.messages.insert(insert_pos, client.messages.pop())
@@ -538,7 +540,7 @@ async def _async_tool_use_loop_inner(
                         client.append_messages([tool_msg])
 
                         meta = assistant_meta.setdefault(
-                            id(msg), {"original_tool_calls": [], "results_count": 0}
+                            id(msg), {"original_tool_calls": [], "results_count": 0},
                         )
                         insert_pos = client.messages.index(msg) + 1 + meta["results_count"]
                         client.messages.insert(insert_pos, client.messages.pop())
@@ -547,7 +549,7 @@ async def _async_tool_use_loop_inner(
                         if log_steps:
                             LOGGER.info(f"🚫  {name} executed – task cancelled")
                         continue  # nothing else to schedule
-                    
+
                     fn = tools[name]
                     coro = (
                         fn(**args)
@@ -596,7 +598,7 @@ async def _async_tool_use_loop_inner(
                     client.append_messages([placeholder_msg])
 
                     meta = assistant_meta.setdefault(
-                        id(msg), {"original_tool_calls": [], "results_count": 0}
+                        id(msg), {"original_tool_calls": [], "results_count": 0},
                     )
                     insert_pos = client.messages.index(msg) + 1 + meta["results_count"]
                     moved = client.messages.pop()          # last element is the placeholder

@@ -1,4 +1,3 @@
-import os
 import sys, pathlib
 import time
 
@@ -10,7 +9,7 @@ if str(ROOT_DIR) not in sys.path:
 
 
 from playwright.sync_api import sync_playwright
-from unity.controller.session import create_session, get_live_view_urls, get_recording
+from unity.controller.session import create_session, get_live_view_urls
 from dotenv import load_dotenv
 
 load_dotenv()

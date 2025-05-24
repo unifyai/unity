@@ -27,7 +27,6 @@ from __future__ import annotations
 import asyncio
 import os
 import time
-from typing import Any, Callable, List
 from tests.helpers import _handle_project
 
 import pytest
@@ -82,7 +81,7 @@ def new_client() -> unify.AsyncUnify:
     not interfere with one another.
     """
     return unify.AsyncUnify(MODEL_NAME, cache=True, traced=True).set_system_message(
-        "Feel free to call multiple *different* tools per turn if appropriate."
+        "Feel free to call multiple *different* tools per turn if appropriate.",
     )
 
 

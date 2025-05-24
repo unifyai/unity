@@ -15,7 +15,6 @@ from typing import List
 
 import pytest
 import unify
-from tests.helpers import _handle_project
 from unity.task_list_manager.task_list_manager import TaskListManager
 from unity.task_list_manager.types.priority import Priority
 from unity.task_list_manager.types.schedule import Schedule
@@ -81,27 +80,33 @@ def basic_task_scenario(setup_session_context):
     for t_original, t_new in zip(snapshot, new_snapshot):
         if t_original["name"] != t_new["name"]:
             tlm._update_task_name(
-                task_id=t_original["task_id"], new_name=t_original["name"]
+                task_id=t_original["task_id"],
+                new_name=t_original["name"],
             )
         if t_original["description"] != t_new["description"]:
             tlm._update_task_description(
-                task_id=t_original["task_id"], new_description=t_original["description"]
+                task_id=t_original["task_id"],
+                new_description=t_original["description"],
             )
         if t_original["status"] != t_new["status"]:
             tlm._update_task_status(
-                task_ids=[t_original["task_id"]], new_status=t_original["status"]
+                task_ids=[t_original["task_id"]],
+                new_status=t_original["status"],
             )
         if t_original["priority"] != t_new["priority"]:
             tlm._update_task_priority(
-                task_id=t_original["task_id"], new_priority=t_original["priority"]
+                task_id=t_original["task_id"],
+                new_priority=t_original["priority"],
             )
         if t_original["deadline"] != t_new["deadline"]:
             tlm._update_task_deadline(
-                task_id=t_original["task_id"], new_deadline=t_original["deadline"]
+                task_id=t_original["task_id"],
+                new_deadline=t_original["deadline"],
             )
         if t_original["repeat"] != t_new["repeat"]:
             tlm._update_task_repetition(
-                task_id=t_original["task_id"], new_repeat=t_original["repeat"]
+                task_id=t_original["task_id"],
+                new_repeat=t_original["repeat"],
             )
 
     current = [x.task_id for x in tlm._get_task_queue()]

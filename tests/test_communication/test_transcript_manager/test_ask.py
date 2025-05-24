@@ -31,7 +31,6 @@ from unity.communication.transcript_manager.transcript_manager import Transcript
 from unity.communication.types.message import Message
 from unity.common.llm_helpers import _dumps
 from tests.assertion_helpers import assertion_failed
-from tests.helpers import _handle_project
 
 # --------------------------------------------------------------------------- #
 #  CONTACTS (same as before)                                                  #
@@ -463,7 +462,8 @@ def setup_session_context():
 
 @pytest.fixture(scope="session")
 def tm_scenario(
-    setup_session_context, event_loop: asyncio.AbstractEventLoop
+    setup_session_context,
+    event_loop: asyncio.AbstractEventLoop,
 ) -> TranscriptManager:
     """
     Fixture to create a TranscriptManager with a populated scenario.
@@ -524,7 +524,7 @@ async def test_ask_honors_stop():
     event_bus = EventBus()
     tm = TranscriptManager(event_bus)
     handle = tm.ask(
-        "List every message received from Carlos, then provide a detailed summary of each one in chronological order."
+        "List every message received from Carlos, then provide a detailed summary of each one in chronological order.",
     )
     handle.stop()
     with pytest.raises(asyncio.CancelledError):

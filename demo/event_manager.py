@@ -210,7 +210,7 @@ class EventManager:
                                 # Create message content with phone numbers
                                 if action.type != "call":
                                     message_content = json.dumps(
-                                        {"message": action.message, **phone_numbers}
+                                        {"message": action.message, **phone_numbers},
                                     )
                                 else:
                                     message_content = json.dumps(phone_numbers)

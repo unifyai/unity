@@ -358,7 +358,7 @@ async def test_store_stop():
 
     # Provide multiple facts in one go so that cancelling halfway through still yields a partial, meaningful result.
     handle = km.store(
-        "Bob lives in Bangkok. Alice is 30 years old. Carl is 25 years old."
+        "Bob lives in Bangkok. Alice is 30 years old. Carl is 25 years old.",
     )
     await asyncio.sleep(0.05)
     handle.stop()
@@ -417,7 +417,7 @@ async def test_retrieve_stop():
 
     # Store some data first
     handle = km.store(
-        "The capital of France is Paris. The capital of Germany is Berlin. The capital of Italy is Rome."
+        "The capital of France is Paris. The capital of Germany is Berlin. The capital of Italy is Rome.",
     )
     await handle.result()
 
