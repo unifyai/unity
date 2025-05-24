@@ -141,7 +141,11 @@ async def test_chat_context_propagation() -> None:
     final_ans = await handle.result()
     assert "done" in final_ans.lower(), "Assistant should finish with 'done'."
 
-    # Exactly one invocation and one propagated context
+    # System header must exist in the loop’s messages
+    assert client.messages[0]["role"] == "system"
+    assert client.messages[0].get("_ctx_header") is True
+
+    # Exactly one invocation and one propagated JSON context
     assert len(captured_ctx) == 1, "Tool must be called once."
     combined = captured_ctx[0]
 

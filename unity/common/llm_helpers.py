@@ -304,6 +304,27 @@ async def _async_tool_use_loop_inner(
     if log_steps:
         LOGGER.info(f"\n🧑‍💻 {message}\n")
 
+    # ── 0-a. Inject **system** header with broader context ───────────────────
+    #
+    # When a parent context is supplied we prepend a single synthetic system
+    # message that *summarises* it.  This offers the LLM immediate awareness
+    # of the wider conversation without having to scroll the nested JSON.
+    # The special marker ``_ctx_header=True`` lets us later strip it when
+    # propagating context further down (avoids duplication).
+    # -----------------------------------------------------------------------
+
+    if parent_chat_context:
+        sys_msg = {
+            "role": "system",
+            "_ctx_header": True,
+            "content": (
+                "Broader context (read-only):\n"
+                f"{json.dumps(parent_chat_context, indent=2)}\n\n"
+                "Resolve the *next* user request in light of this."
+            ),
+        }
+        client.append_messages([sys_msg])
+
     # ── initial prompt ───────────────────────────────────────────────────────
     base_tools_schema = [method_to_schema(v) for v in tools.values()]
     msg = {"role": "user", "content": message}
@@ -796,9 +817,18 @@ async def _async_tool_use_loop_inner(
                     # ── build **extra** kwargs (chat context + queue) ───
                     extra_kwargs: dict = {}
 
+                    # ------- build nested chat context --------------------
+                    # Combine any *inherited* context with the messages of
+                    # this loop, but strip the synthetic system header
+                    # (marked `_ctx_header`) so it isn't duplicated further
+                    # down the call-stack.
                     if propagate_chat_context:
+                        cur_msgs = [
+                            m for m in client.messages if not m.get("_ctx_header")
+                        ]
                         ctx_repr = _chat_context_repr(
-                            parent_chat_context, client.messages
+                            parent_chat_context,
+                            cur_msgs,
                         )
                         extra_kwargs["parent_chat_context"] = ctx_repr
 
