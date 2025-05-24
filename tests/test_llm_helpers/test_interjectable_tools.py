@@ -105,3 +105,50 @@ async def test_interjectable_tool_roundtrip() -> None:
         "The last assistant message should be plain-text – "
         "all tool calls should precede it."
     )
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Verifies *chat-context propagation* down to a tool
+# ─────────────────────────────────────────────────────────────────────────────
+@pytest.mark.asyncio
+async def test_chat_context_propagation() -> None:
+    """
+    The outer loop is given a *parent_chat_context* containing a single
+    “root” message.  We expect this to be nested under the messages of the
+    current loop and forwarded automatically to any tool that declares a
+    ``parent_chat_context`` parameter.
+    """
+    client = new_client()
+
+    root_ctx = [{"role": "user", "content": "root-level message"}]
+    captured_ctx: List[list[dict]] = []
+
+    async def record_context(
+        *,
+        parent_chat_context: list[dict] | None = None,
+    ) -> str:
+        captured_ctx.append(parent_chat_context or [])
+        return "context-recorded"
+
+    # Kick off the loop – we *require* the model to call `record_context`
+    handle = start_async_tool_use_loop(
+        client=client,
+        message="Please call the function `record_context()` once, then reply 'done'.",
+        tools={"record_context": record_context},
+        parent_chat_context=root_ctx,
+    )
+
+    final_ans = await handle.result()
+    assert "done" in final_ans.lower(), "Assistant should finish with 'done'."
+
+    # Exactly one invocation and one propagated context
+    assert len(captured_ctx) == 1, "Tool must be called once."
+    combined = captured_ctx[0]
+
+    # Shape: root_ctx[0] has a children[] array that contains the new prompt
+    assert combined[0]["content"] == "root-level message"
+    assert "children" in combined[0], "Nested children list missing."
+    child_msgs = combined[0]["children"]
+    assert child_msgs and child_msgs[0]["content"].startswith(
+        "Please call the function"
+    ), "Current loop messages not included as children."
