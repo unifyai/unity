@@ -331,9 +331,7 @@ async def test_interjection_cancels_ongoing_llm():
     await handle.result()
 
     # Assertions – only ONE assistant message should exist
-    assistant_msgs = [
-        m for m in client.messages if m.get("role") == "assistant"
-    ]
+    assistant_msgs = [m for m in client.messages if m.get("role") == "assistant"]
     assert len(assistant_msgs) == 1, (
         "Exactly one assistant reply is expected after cancellation; "
         f"found {len(assistant_msgs)}."
@@ -341,5 +339,9 @@ async def test_interjection_cancels_ongoing_llm():
 
     # The final assistant reply must come *after* both user messages
     roles = [m["role"] for m in client.messages]
-    assert roles.count("user") == 2, "Both the original user turn and the interjection must be present."
-    assert roles[-1] == "assistant", "The conversation should end with the assistant's single reply."
+    assert (
+        roles.count("user") == 2
+    ), "Both the original user turn and the interjection must be present."
+    assert (
+        roles[-1] == "assistant"
+    ), "The conversation should end with the assistant's single reply."

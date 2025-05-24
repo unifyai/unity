@@ -266,10 +266,18 @@ async def test_duplicate_tool_calls_are_optionally_pruned() -> None:  # noqa: D4
         tools={"echo": echo},
         prune_tool_duplicates=False,
     ).result()
-    assert log == ["hello", "hello"], (
-        "With ignore_tool_duplicates=False the tool should be invoked twice."
-    )
-    assert [m["role"] for m in client.messages] == ['system', 'user', 'assistant', 'tool', 'tool', 'assistant']
+    assert log == [
+        "hello",
+        "hello",
+    ], "With ignore_tool_duplicates=False the tool should be invoked twice."
+    assert [m["role"] for m in client.messages] == [
+        "system",
+        "user",
+        "assistant",
+        "tool",
+        "tool",
+        "assistant",
+    ]
 
     # ------------------------------------------------------------------ #
     # 2️⃣  duplicates SHOULD be removed when pruning is enabled
@@ -282,7 +290,16 @@ async def test_duplicate_tool_calls_are_optionally_pruned() -> None:  # noqa: D4
         tools={"echo": echo},
         prune_tool_duplicates=True,
     ).result()
-    assert log == ["hello", "hello"], (
-        "With ignore_tool_duplicates=True, two invocations are still expected."
-    )
-    assert [m["role"] for m in client.messages] == ['system', 'user', 'assistant', 'tool', 'assistant', 'tool', 'assistant']
+    assert log == [
+        "hello",
+        "hello",
+    ], "With ignore_tool_duplicates=True, two invocations are still expected."
+    assert [m["role"] for m in client.messages] == [
+        "system",
+        "user",
+        "assistant",
+        "tool",
+        "assistant",
+        "tool",
+        "assistant",
+    ]

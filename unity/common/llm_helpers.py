@@ -547,9 +547,9 @@ async def _async_tool_use_loop_inner(
                     raise Exception(
                         f"LLM call failed. Messages at the time:\n{json.dumps(client.messages, indent=4)}",
                     )
-            
+
             msg = client.messages[-1]
-            
+
             if event_bus:
                 await event_bus.publish(
                     Event(type=event_type, payload={"message": msg}),
@@ -566,7 +566,7 @@ async def _async_tool_use_loop_inner(
                         unique_calls.append(call)
                 if len(unique_calls) != len(msg["tool_calls"]):
                     # mutate in-place so history never contains duplicates
-                    msg["tool_calls"] = unique_calls            
+                    msg["tool_calls"] = unique_calls
 
             # ── E.  Launch any new tool calls  ──────────────────────────────
             # NOTE: The model returned `tool_calls`.  For *each* call we:
