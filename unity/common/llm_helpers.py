@@ -186,6 +186,67 @@ async def _async_tool_use_loop_inner(
       outside; an optional ``event_bus`` lets a UI or logger subscribe to
       every message without the loop having to know who is listening.
 
+    Parameters
+    ----------
+    client : ``unify.AsyncUnify``
+        Pre-initialised Unify client that provides ``append_messages`` and
+        ``generate``.  All tokens sent to / received from the LLM flow
+        through this object.
+
+    message : ``str``
+        The very first user prompt that kicks-off the whole interactive
+        session.
+
+    tools : ``dict[str, Callable]``
+        A mapping ``name → function`` describing every callable the LLM may
+        invoke.  Each function must be fully type-hinted and have a concise
+        docstring – these are automatically converted to an OpenAI *tool
+        schema* via :pyfunc:`method_to_schema`.
+
+    event_type, event_bus : ``str | None``, ``EventBus | None``
+        Optional pub-sub hooks.  When both are provided every message
+        exchanged inside the loop is emitted as
+        ``Event(type=event_type, payload={"message": msg})`` which lets a
+        UI or logger stay in sync without tight coupling.
+
+    interject_queue : ``asyncio.Queue[str]``
+        Thread-safe channel through which the *outer* application can push
+        additional user turns at any time (e.g. the human changes their
+        mind mid-generation).
+
+    cancel_event : ``asyncio.Event``
+        Flips to *set* when the outer caller wants graceful shutdown.  The
+        loop then cancels every running task and propagates
+        ``asyncio.CancelledError`` upstream.
+
+    max_consecutive_failures : ``int``, default ``3``
+        Hard safety valve: after this many back-to-back exceptions coming
+        from tools the loop bails out with ``RuntimeError`` to avoid an
+        infinite crash-and-retry ping-pong.
+
+    ignore_tool_duplicates : ``bool``, default ``True``
+        Deduplicates model-requested tool calls that have *identical*
+        ``function.name`` **and** argument JSON.  Duplicates are pruned
+        **in-place** before ever touching chat history or being scheduled.
+
+    interrupt_llm_with_interjection : ``bool``, default ``True``
+        Controls latency to fresh user input.  When *True* any in-flight
+        ``client.generate`` is cancelled the moment a new user turn arrives
+        so the assistant can pivot instantly.  When *False* the loop waits
+        for the model to finish (legacy behaviour).
+
+    interjectable_tools : ``set[str] | None``
+        Names of long-running tools that are *steerable* post-launch.  For
+        each pending call the loop exposes a helper
+        ``_interject_<call-id>(content: str)``.  The original tool must
+        accept an ``interject_queue`` keyword argument (an
+        ``asyncio.Queue[str]``) to receive these live instructions.
+
+    log_steps : ``bool``, default ``False``
+        When enabled, every significant action (LLM call, tool launch,
+        interjection, etc.) is logged to ``LOGGER`` for easier tracing and
+        debugging.
+
     Returns
     -------
     str
