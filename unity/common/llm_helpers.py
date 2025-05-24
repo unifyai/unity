@@ -924,10 +924,10 @@ async def _async_tool_use_loop_inner(
 
                     task_info[t]["placeholder_msg"] = placeholder_msg
 
-                    if event_bus:
-                        await event_bus.publish(
-                            Event(type=event_type, payload={"message": placeholder_msg}),
-                        )
+                    # ⬇️  DO NOT publish the *placeholder* to the event bus.
+                    #     Only the *final* tool-result message (patched in
+                    #     Section A) will be published, which prevents the
+                    #     duplicate TOOL event seen in the tests.
 
                 # metadata for orderly insertion of results
                 assistant_meta[id(msg)] = {
