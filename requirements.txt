@@ -18,3 +18,4 @@ textual-dev
 redis
 anticaptchaofficial
 browserbase
+pytest
