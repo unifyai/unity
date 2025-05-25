@@ -20,7 +20,12 @@ jobs:
         run: |
           uv venv --python 3.11 .unity
           source .unity/bin/activate
-          uv pip install -r requirements.txt
+          
+          # 1) everything from requirements.txt except the local-editable entry
+          uv pip install -r <(grep -vE '^\s*-e\s+\.\./unify' requirements.txt)
+
+          # 2) your real Unify package from GitHub
+          uv pip install git+https://github.com/unifyai/unify
 
       - name: Run black check
         run: .unity/bin/black --check .
@@ -44,7 +49,11 @@ jobs:
         run: |
           uv venv --python 3.11 .unity
           source .unity/bin/activate
-          uv pip install -r requirements.txt
+
+          # 1) everything from requirements.txt except the local-editable entry
+          uv pip install -r <(grep -vE '^\s*-e\s+\.\./unify' requirements.txt)
+
+          # 2) your real Unify package from GitHub
           uv pip install git+https://github.com/unifyai/unify
 
       - name: Run unit tests
