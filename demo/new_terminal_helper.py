@@ -35,102 +35,101 @@ def _find_unix_terminal() -> str | None:
     return None
 
 
-def run_in_new_terminal(
-    script: str | os.PathLike,
+from typing import Union
+
+def run_script(
+    script: Union[str, os.PathLike],
     *script_args: str,
+    terminal: bool = False,
 ) -> subprocess.Popen:
     """
-    Launch *script* in a brand-new terminal/console window and **return**
-    the `subprocess.Popen` instance representing the *Python process*
-    itself (not a transient wrapper).
+    Launch *script* and return a `subprocess.Popen` representing the actual
+    Python process.
 
-    Call `proc.terminate()` / `proc.kill()` / `proc.send_signal(sig)` later
-    to close it from the parent process.
+    Parameters
+    ----------
+    script : Path-like
+        The .py file to run.
+    *script_args : str
+        Extra args forwarded to the script.
+    terminal : bool, default False
+        • False – run invisibly (shares the parent console / no window).  
+        • True  – open a new terminal window and start Python **-i**.
+
+    Returns
+    -------
+    subprocess.Popen
+        Handle to the Python process (not any wrapper shell).
     """
     script_path = Path(script).expanduser().resolve()
     if not script_path.exists():
         raise FileNotFoundError(script_path)
 
-    py_cmd = [sys.executable, "-i", str(script_path), *script_args]
+    # Build the python command
+    py_cmd = [sys.executable]
+    if terminal:
+        py_cmd.append("-i")          # interactive prompt *only* in a terminal
+    py_cmd += [str(script_path), *script_args]
 
     if sys.platform.startswith("win"):
-        # ─ Windows: run the script in a *new* console and create its own process-group
-        creationflags = (
-            subprocess.CREATE_NEW_CONSOLE
-            | subprocess.CREATE_NEW_PROCESS_GROUP  # lets us send CTRL_BREAK_EVENT
-        )
-        return subprocess.Popen(
-            py_cmd,
-            creationflags=creationflags,
-        )
+        # ───────────────────────── Windows ─────────────────────────
+        if terminal:
+            creationflags = (
+                subprocess.CREATE_NEW_CONSOLE |
+                subprocess.CREATE_NEW_PROCESS_GROUP   # lets us send CTRL_BREAK_EVENT
+            )
+        else:
+            creationflags = 0                         # inherit caller’s console
+        return subprocess.Popen(py_cmd, creationflags=creationflags)
 
     elif sys.platform == "darwin":
-        # Create a unique identifier for this process
+        # ───────────────────────── macOS ───────────────────────────
+        if not terminal:
+            return subprocess.Popen(py_cmd)
+
+        # Create a unique PID-file so we can discover the real python PID
         process_id = f"{script_path.stem}_{int(time.time())}"
         pid_file = Path(f"/tmp/{process_id}.pid")
 
-        # shell line run inside Terminal with better error handling
         shell = f"""
             echo $$ > {pid_file};
             trap 'rm -f {pid_file}' EXIT;
             exec {shlex.join(py_cmd)}
         """
 
-        # Use osascript to create the terminal and run the command
-        osa = f"""
+        osa = f'''
             tell application "Terminal"
                 do script "{shell}" in selected tab of front window
             end tell
-        """
-
-        # Run osascript and wait for it to complete
+        '''
         subprocess.run(["osascript", "-e", osa], check=True)
 
-        # Wait for the PID file with better timeout and error handling
-        start_time = time.time()
-        while time.time() - start_time < 5:  # 5 second timeout
-            if pid_file.exists():
-                try:
-                    pid = int(pid_file.read_text().strip())
-                    # Verify the process is actually running
-                    if psutil.pid_exists(pid):
-                        return psutil.Process(pid)
-                except (ValueError, psutil.NoSuchProcess):
-                    pass
-            time.sleep(0.1)
+        # Wait (max 5 s) for the child to write its PID
+        start = time.time()
+        while time.time() - start < 5:
+            try:
+                pid = int(pid_file.read_text())
+                return psutil.Process(pid)
+            except (FileNotFoundError, ValueError, psutil.NoSuchProcess):
+                time.sleep(0.1)
 
-        return psutil.Process(pid)
+        raise RuntimeError("Timed out waiting for python process in Terminal")
 
-    else:  # Linux / BSD / WSL
-        term = _find_unix_terminal()
+    else:
+        # ───────────────────────── Linux / BSD / WSL ───────────────
+        if not terminal:
+            return subprocess.Popen(py_cmd, start_new_session=True)
+
+        term = _find_unix_terminal()   # your helper that finds gnome-terminal / xterm …
         if not term:
             raise RuntimeError("No terminal emulator found (gnome-terminal, xterm …)")
-        # Start python first so we know its PID, then point the terminal at it
+
+        # Start python first so we know its PID
         proc = subprocess.Popen(py_cmd, start_new_session=True)
-        subprocess.Popen(
-            [term, "--", "bash", "-c", f"exec {' '.join(map(shlex.quote, py_cmd))}"],
-        )
+        # Point the new terminal at *that* interpreter
+        subprocess.Popen([term, "--", "bash", "-c",
+                          f"exec {' '.join(map(shlex.quote, py_cmd))}"])
         return proc
 
 
-# DEMO ----------------------------------------------------------------------
-if __name__ == "__main__":
-    if len(sys.argv) < 2:
-        print("Usage: python run_in_new_terminal.py <your_script.py> [args …]")
-        sys.exit(1)
 
-    child = run_in_new_terminal(sys.argv[1], *sys.argv[2:])
-    print(f"Started {child.pid=}.  Press Enter to stop it.")
-    input()
-    # Try a graceful shutdown first
-    if sys.platform.startswith("win"):
-        # Windows: send CTRL+BREAK to the whole group
-        child.send_signal(signal.CTRL_BREAK_EVENT)
-    else:
-        child.terminate()
-
-    try:
-        child.wait(timeout=5)
-    except subprocess.TimeoutExpired:
-        print("Graceful exit failed; killing...")
-        child.kill()

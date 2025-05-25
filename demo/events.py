@@ -142,14 +142,25 @@ class SMSMessageRecievedEvent(_Message):
     platform = "SMS"
     direction = "Recieved"
 
-
+# this should be either done by user or assistant, should
+# make variants (cleanly)
 class PhoneCallStartedEvent(Event):
-    def __init__(self, content: str, **kwargs):
-        kwargs.pop("content", None)
-        super().__init__(content=content, **kwargs)
+    def __init__(self, **kwargs):
+        # kwargs.pop("content", None)
+        super().__init__(**kwargs)
 
     def __str__(self):
         return f"[Phone Call Started @ {self.fmt_timestamp}]"
+
+# this should be either done by user or assistant, should
+# make variants (cleanly)
+class PhoneCallInitiatedEvent(Event):
+    def __init__(self, **kwargs):
+        kwargs.pop("content", None)
+        super().__init__(**kwargs)
+
+    def __str__(self):
+        return f"[Phone Call Initiated... @ {self.fmt_timestamp}]"
 
 
 class PhoneCallEndedEvent(Event):

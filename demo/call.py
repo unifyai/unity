@@ -74,12 +74,11 @@ class Assistant(Agent):
     def __init__(self, from_number: str = "", to_number: str = "") -> None:
         self.past_events = []
         self.new_events = [
-            PhoneCallStartedEvent(
-                content=json.dumps({"from_number": from_number, "to_number": to_number})
-            )
+            PhoneCallStartedEvent()
         ]
         # self.client = client
         self.current_tasks_status = None
+        self.from_number = from_number
         super().__init__(instructions="", llm=openai.LLM(model="gpt-4o"))
 
     async def on_user_turn_completed(
@@ -91,7 +90,7 @@ class Assistant(Agent):
         # we will handle this through the events manager
         await publish_event(
             {
-                "type": "user_agent_event",
+                "topic": self.from_number,
                 "to": "pending",
                 "event": PhoneUtteranceEvent(
                     role="User",
@@ -132,7 +131,7 @@ async def entrypoint(ctx: agents.JobContext):
 
     # Get phone numbers from environment variables
     from_number = os.environ.get("CALL_FROM_NUMBER", "")
-    to_number = os.environ.get("CALL_TO_NUMBER", "")
+    # to_number = os.environ.get("CALL_TO_NUMBER", "")
 
     session = AgentSession(
         stt=deepgram.STT(model="nova-3", language="multi"),
@@ -142,9 +141,21 @@ async def entrypoint(ctx: agents.JobContext):
         turn_detection=MultilingualModel(),
     )
 
+
+
+
+    def end_call():
+        asyncio.create_task(
+            publish_event({"topic": from_number, "to": "past", "event": PhoneCallEndedEvent().to_dict()})
+        )
+
+
+    ctx.room.on("participant_disconnected", end_call)
+
+
     await session.start(
         room=ctx.room,
-        agent=Assistant(from_number=from_number, to_number=to_number),
+        agent=Assistant(from_number=from_number),
         room_input_options=RoomInputOptions(
             # LiveKit Cloud enhanced noise cancellation
             # - If self-hosting, omit this parameter
@@ -157,11 +168,9 @@ async def entrypoint(ctx: agents.JobContext):
     READER, WRITER = await asyncio.open_connection("127.0.0.1", 8090)
     await publish_event(
         {
-            "type": "user_agent_event",
+            "topic": from_number,
             "to": "pending",
-            "event": PhoneCallStartedEvent(
-                content=json.dumps({"from_number": from_number, "to_number": to_number})
-            ).to_dict(),
+            "event": PhoneCallStartedEvent().to_dict(),
         },
     )
 
@@ -189,7 +198,7 @@ async def entrypoint(ctx: agents.JobContext):
                         publish_event(
                             {
                                 "to": "past",
-                                "type": "user_agent_event",
+                                "topic": from_number,
                                 "event": PhoneUtteranceEvent(
                                     role="Assistant",
                                     content=assistant_res.get("phone_utterance"),
@@ -207,7 +216,7 @@ async def entrypoint(ctx: agents.JobContext):
                             publish_event(
                                 {
                                     "to": "past",
-                                    "type": "user_agent_event",
+                                    "topic": from_number,
                                     "event": InterruptEvent().to_dict(),
                                 },
                             ),
@@ -247,11 +256,11 @@ if __name__ == "__main__":
     if len(sys.argv) > 2:
         # Remove phone numbers from sys.argv to prevent them from being passed to agents.cli
         from_number = sys.argv[2]
-        to_number = sys.argv[3]
+        # to_number = sys.argv[3]
         sys.argv = sys.argv[:2]  # Keep only script name and "dev" command
 
     # Store phone numbers in environment variables to be accessed by entrypoint
     os.environ["CALL_FROM_NUMBER"] = from_number
-    os.environ["CALL_TO_NUMBER"] = to_number
+    # os.environ["CALL_TO_NUMBER"] = to_number
 
     agents.cli.run_app(agents.WorkerOptions(entrypoint_fnc=entrypoint))
