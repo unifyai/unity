@@ -45,6 +45,7 @@ jobs:
           uv venv --python 3.11 .unity
           source .unity/bin/activate
           uv pip install -r requirements.txt
+          uv pip install git+https://github.com/unifyai/unify
 
       - name: Run unit tests
         run: .unity/bin/python -m pytest --timeout=120 -p no:warnings -vv .
