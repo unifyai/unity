@@ -377,13 +377,12 @@ def _llm_assert_correct(
 
     if _is_summary_q(question):
         system_msg = (
-            "You are an expert summary evaluator. "
-            "You will be given the *source dialogue* of a short phone call "
-            "and a candidate **one-sentence** summary. "
-            'Respond ONLY with JSON {"correct": true|false}. '
-            "Mark correct⇢true if the summary captures the main intent and "
-            "key factual details of the dialogue, even if wording differs. "
-            "Ignore minor tense or stylistic variations."
+            "You are a meticulous but fair summary evaluator. "
+            "You will be given the *source dialogue* of a short phone call and a candidate **one-sentence** summary. "
+            "Your task is to decide whether the summary accurately conveys the main intent and key factual points. "
+            "Minor stylistic or tense differences, re-ordering, shortened wording, or inclusion of obviously correct contextual details are acceptable. "
+            "Mark correct⇢true unless the summary is missing a crucial fact, introduces a contradiction, or otherwise misrepresents the dialogue. "
+            'Respond ONLY with valid JSON of the form {"correct": true} or {"correct": false}. '
         )
         payload = _dumps(
             {"dialogue": expected, "summary": candidate},
@@ -402,13 +401,13 @@ def _llm_assert_correct(
             )
 
         system_msg = (
-            "You are a strict unit-test judge. "
+            "You are a meticulous but fair unit-test judge. "
             + scenario_str
-            + "Your task is to determine if the candidate answer is correct by comparing it to "
-            "the ground-truth answer. "
-            'Respond ONLY with JSON {"correct": true|false}. '
-            "Mark correct⇢true if a reasonable human would accept the candidate "
-            "as fully accurate; otherwise false."
+            + "Your role is to decide whether the candidate answer conveys the same factual information as the ground-truth answer. "
+            "Formatting or wording differences should be considered equivalent as long as the facts match. "
+            "Additional correct details that do not contradict the ground truth are acceptable. "
+            "Mark correct⇢true if the candidate clearly contains the ground-truth fact(s) and introduces no contradiction; otherwise false. "
+            'Respond ONLY with valid JSON of the form {"correct": true} or {"correct": false}. '
         )
         payload = _dumps(
             {"question": question, "ground_truth": expected, "candidate": candidate},
