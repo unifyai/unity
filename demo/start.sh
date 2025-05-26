@@ -13,6 +13,10 @@ echo "Starting event_manager.py..."
 python event_manager.py 2>&1 | prefix_output "EVENT_MGR" &
 EVENT_MANAGER_PID=$!
 
+# Give event manager time to start up
+echo "Waiting for event manager to start..."
+sleep 5
+
 # Start comms_manager.py with prefixed output
 echo "Starting comms_manager.py..."
 python comms_manager.py 2>&1 | prefix_output "COMMS_MGR" &
