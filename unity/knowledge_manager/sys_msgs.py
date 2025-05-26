@@ -49,7 +49,6 @@ Information is stored in tables, and each table has columns of a certain data ty
 
 The tools enable you to create, rename, modify, search and delete tables and columns as you see fit. In situations where you think a direct search will not reveal the required information, you can use the `nearest` tool to retrieve the data that is most semantically similar to the input query.
 
-You are strongly encouraged to refactor the table and column designs.
 
 If this retrieval request could be handled with an improved schema, then please implement this new layout via consecutive tool use (adding, deleting, renaming tables/columns etc.), before returning with your answer.
 """
