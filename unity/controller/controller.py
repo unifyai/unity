@@ -163,6 +163,6 @@ class Controller(threading.Thread):
 
         assert cmd is not None, f"text_command {text} returned empty command"
         # handle either a sequence of commands
-        actions = cmd.get("actions")
+        actions = cmd.get("action")
         self._perform_action(actions)
         return actions
