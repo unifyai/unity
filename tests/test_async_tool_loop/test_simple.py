@@ -95,7 +95,7 @@ def count_tool_messages(client: unify.AsyncUnify) -> int:
 # --------------------------------------------------------------------------- #
 @pytest.mark.asyncio
 @_handle_project
-async def test_async_loop_happy_path_single_sync_tool():
+async def test_happy_path_single_sync_tool():
     client = new_client()
 
     answer = await llmh.start_async_tool_use_loop(
@@ -114,7 +114,7 @@ async def test_async_loop_happy_path_single_sync_tool():
 # --------------------------------------------------------------------------- #
 @pytest.mark.asyncio
 @_handle_project
-async def test_async_loop_concurrent_tools_waits_for_all_results():
+async def test_concurrent_tools_waits_for_all_results():
     """
     The loop launches `fast` and `slow` concurrently but must *not* call the
     model again until *both* have finished.
@@ -178,7 +178,7 @@ async def test_async_loop_concurrent_tools_waits_for_all_results():
 # --------------------------------------------------------------------------- #
 @pytest.mark.asyncio
 @_handle_project
-async def test_async_loop_recovers_after_failure():
+async def test_recovers_after_failure():
     client = new_client()
 
     answer = await llmh.start_async_tool_use_loop(
@@ -202,7 +202,7 @@ async def test_async_loop_recovers_after_failure():
 # --------------------------------------------------------------------------- #
 @pytest.mark.asyncio
 @_handle_project
-async def test_async_loop_aborts_after_too_many_failures():
+async def test_aborts_after_too_many_failures():
     client = new_client()
 
     with pytest.raises(RuntimeError):
@@ -219,7 +219,7 @@ async def test_async_loop_aborts_after_too_many_failures():
 # --------------------------------------------------------------------------- #
 @pytest.mark.asyncio
 @_handle_project
-async def test_async_loop_mixed_sync_async_tools():
+async def test_mixed_sync_async_tools():
     client = new_client()
 
     answer = await llmh.start_async_tool_use_loop(

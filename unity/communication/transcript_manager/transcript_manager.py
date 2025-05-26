@@ -89,7 +89,7 @@ class TranscriptManager:
         """
         from unity.communication.transcript_manager.sys_msgs import ANSWER
 
-        client = unify.AsyncUnify("o4-mini@openai", cache=True)
+        client = unify.AsyncUnify("o4-mini@openai", cache=True, traced=True)
         client.set_system_message(ANSWER)
         handle = start_async_tool_use_loop(client, text, self._tools)
         if return_reasoning_steps:
@@ -126,7 +126,7 @@ class TranscriptManager:
 
         if not isinstance(exchange_ids, list):
             exchange_ids = [exchange_ids]
-        client = unify.AsyncUnify("o4-mini@openai", cache=True)
+        client = unify.AsyncUnify("o4-mini@openai", cache=True, traced=True)
         client.set_system_message(
             SUMMARIZE.replace("{guidance}", f"\n{guidance}\n" if guidance else ""),
         )
