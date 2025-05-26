@@ -29,14 +29,18 @@ class CreateCommunicationTask(BaseModel):
 
 class RespondToAgent(BaseModel):
     agent_id: str = Field(..., description="Id of the agent to respond to")
+    task_id: str = Field(..., description="Id of the response is related to")
     response: str = Field(..., description="Your resoonse to the agent's query")
 
 class EndTask(BaseModel):
+    task_id: str = Field(..., description="ID of the task")
     task_status: Literal["failed", "sucess"] = Field(..., description="The end status of the task")
     task_result: str = Field(..., 
                              description="Summary of the task results, what happened, and what was the conclusion, will be reported back to the main user agent")
 
 class AskUserAgent(BaseModel):
+    agent_id: str = Field(..., description="Id of the agent asking the query")
+    task_id: str = Field(..., description="id of the task the query is associated with")
     query: str = Field(...,
                        description="The question or clarification that is going to be sent to the main user agent")
 

@@ -25,6 +25,7 @@ with open("prompts/non_call_sys.md") as f:
 @dataclass
 class CommTask:
     agent_id: str
+    task_id: str
     contact_name: str
     contact_number: str
     status: str
@@ -81,11 +82,12 @@ class CommsAgent:
         self.contact_num_to_comm_agent: dict[str, CommsAgent] = {
 
         }
-        self.running_tasks = []
+        self.running_tasks: list[CommTask] = []
 
 
         # id gen
         self.curr_id = 0
+        self.curr_task_id = 0
         
 
     async def listen_for_events(self):
@@ -168,6 +170,7 @@ class CommsAgent:
 
                         # should be referenced in a set to avoid being garbage collected
                         # (i think)
+                        # TODO: add sms
                         if isinstance(action, SendWhatsAppMessageAction):
                             print(action)
                             asyncio.create_task(self.send_whatsapp(action.message))
@@ -189,9 +192,17 @@ class CommsAgent:
                         elif isinstance(action, EndTask):
                             print(action)
                             self.task_done(
+                                action.task_id,
                                 action.task_status, 
                                 action.task_result,
                             )
+                        
+                        elif isinstance(action, AskUserAgent):
+                            self.ask_user_agent(action.task_id, action.query)
+                        
+                        elif isinstance(action, RespondToAgent):
+                            # respond to agent logic
+                            self.respond_to_agent(action.agent_id, action.task_id, action.response)
 
 
 
@@ -289,39 +300,55 @@ class CommsAgent:
         # we are assuming one task here is being active, in some cases, another task to the same contact
         # might be pushed as well, in that case, we should just increase the tasks
         # the task should be scheduele-able as well, will think about this later
-        contact_comms_agent = CommsAgent(contact_name, self.assistant_number, contact_number.replace(" ", "").strip(),
+        contact_comms_agent = self.contact_num_to_comm_agent.get(contact_number.replace(" ", ""))
+        if not contact_comms_agent:
+            contact_comms_agent = CommsAgent(contact_name, self.assistant_number, contact_number.replace(" ", "").strip(),
                                          agent_id=self.curr_id)
-        print("created comms agent")
-        self.curr_id += 1
-        contact_comms_agent.set_event_manager(self.event_manager)
-        contact_comms_agent.subscribe([contact_number.replace(" ", "").strip(), contact_comms_agent.agent_id])
-        contact_comms_agent.performing_task = True
-        asyncio.create_task(contact_comms_agent.listen_for_events())
-        print("listening")
+            print("created comms agent")
+            self.curr_id += 1
+            contact_comms_agent.set_event_manager(self.event_manager)
+            contact_comms_agent.subscribe([contact_number.replace(" ", "").strip(), str(contact_comms_agent.agent_id)])
+            contact_comms_agent.performing_task = True
+            asyncio.create_task(contact_comms_agent.listen_for_events())
+            print("listening")
 
 
         # should generate a random id
-        task = CommTask(contact_comms_agent.agent_id, contact_name, contact_number, "in_progress", detailed_task_description)
+        task = CommTask(contact_comms_agent.agent_id, self.curr_task_id, contact_name, contact_number, "in_progress", detailed_task_description)
+        self.curr_task_id += 1
         print("created task")
         contact_comms_agent.attach_task(task)
-        self.contact_num_to_comm_agent[contact_number] = contact_comms_agent
+        self.contact_num_to_comm_agent[contact_number.replace(" ", "")] = contact_comms_agent
         self.attach_task(task)
         print("attached tasks")
     
     # mark task as done (could be failing, which is fine)
-    def task_done(self, task_status: Literal["fail", "success"], task_result: str):
+    def task_done(self, task_id: int, task_status: Literal["fail", "success"], task_result: str):
         # mark task as done and publish task done event
         # should stop listening to events 
+        self.running_tasks = [t for t in self.running_tasks if str(t.task_id) != task_id]
+
         self.publish({
             "topic": "user_agent",
-            "event": CommsTaskDoneEvent(self.agent_id, task_status=task_status, task_result=task_result).to_dict()
+            "event": CommsTaskDoneEvent(self.agent_id, task_id, task_status=task_status, task_result=task_result).to_dict()
         })
 
-    def ask_user_agent(self, query: str):
+        # other tasks remain
+        # if self.running_tasks:
+        #     self.events_queue.put_nowait(CommsTaskDoneEvent(self.agent_id, task_id, task_status=task_status, task_result=task_result).to_dict())
+
+    def ask_user_agent(self, task_id: str, query: str):
         # publish an event for the user agent to pick up
         self.publish({
             "topic": "user_agent",
-            "event": ...
+            "event": AskUserAgentEvent(self.agent_id, task_id, query).to_dict()
+        })
+    
+    def respond_to_agent(self, agent_id: str, task_id: str, response: str):
+        print("RESPONDING TO AGENT")
+        self.publish({
+            "topic": agent_id,
+            "event": UserAgentResponseEvent(task_id, response).to_dict()
         })
     
     async def wait_for_seconds_or_next_event(self, time: int):
@@ -341,12 +368,12 @@ class CommsAgent:
         if self.main_user:
             # put a task created event
             self.events_queue.put_nowait(
-                CommsTaskCreatedEvent(task.contact_name, task.contact_number, task.task_description, task.agent_id).to_dict()
+                CommsTaskCreatedEvent(task.contact_name, task.contact_number, task.task_description, task.agent_id, task.task_id).to_dict()
             )
         else:
             # put a task started event
             self.events_queue.put_nowait(
-                CommsTaskStartedEvent(task.contact_name, task.contact_number, task.task_description, task.agent_id).to_dict()
+                CommsTaskStartedEvent(task.contact_name, task.contact_number, task.task_description, task.agent_id, task.task_id).to_dict()
 
             )
     
@@ -365,6 +392,7 @@ class CommsAgent:
             for task in self.running_tasks:
                 task_status_str += f"""
 TASK: {task.task_description}
+TASK ID: {task.task_id}
 TASK STATUS: {task.status}
 """ + f"RUN BY AGENT: {task.agent_id}\n"
         else:
@@ -386,6 +414,8 @@ TASK STATUS: {task.status}
     def handle_event(self, event: dict):
         global ONGOING_CALL
         to = event.get("to")
+        if event["event"]["event_name"] == "CommsTaskDoneEvent":
+            self.running_tasks = [t for t in self.running_tasks if str(t.task_id) != str(event["event"]["payload"]["task_id"])]
         if event["event"]["event_name"] == "PhoneCallEndedEvent":
             if self.call_proc:
                 self.call_proc.kill()
