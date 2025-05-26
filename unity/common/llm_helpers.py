@@ -418,37 +418,52 @@ async def _async_tool_use_loop_inner(
                 if cancel_waiter in done:
                     raise asyncio.CancelledError  # cancellation wins
 
-                # ── clarification request bubbled up from a child tool ───
+                # ── clarification request bubbled up from a child tool ──────────────
                 if done & clar_waiters.keys():
-                    for cw in done & clar_waiters.keys():
-                        # ✱ the actual question pushed by the child tool
-                        question = cw.result()
-
-                        # ✱ locate the originating asyncio.Task / call-id
+                    for cw in (done & clar_waiters.keys()):
+                        question = cw.result()               # the text from the child
                         src_task = clar_waiters[cw]
                         call_id = task_info[src_task]["call_id"]
 
-                        # ── 1. Mark the task as *blocked* awaiting clarification
+                        # 1️⃣ mark the task as waiting
                         task_info[src_task]["waiting_for_clarification"] = True
 
-                        # ── 2. Emit the clarification_request_<CALL_ID> message
-                        tool_msg = {
-                            "role": "tool",
-                            "tool_call_id": call_id,
-                            "name": f"clarification_request_{call_id}",
-                            "content": "Tool incomplete, please answer the following to continue tool execution:\n"
-                            + question,
-                        }
-                        client.append_messages([tool_msg])
+                        # 2️⃣ REUSE the existing placeholder if we already inserted one
+                        ph = task_info[src_task].get("tool_reply_msg")
+                        if ph is None:
+                            # no placeholder yet → create one exactly once
+                            ph = {
+                                "role":        "tool",
+                                "tool_call_id": call_id,
+                                "name":        f"clarification_request_{call_id}",
+                                "content":     "",      # will fill below
+                            }
+                            client.append_messages([ph])
+                            meta = assistant_meta[id(task_info[src_task]["assistant_msg"])]
+                            insert_pos = client.messages.index(
+                                task_info[src_task]["assistant_msg"]
+                            ) + 1 + meta["results_count"]
+                            client.messages.insert(insert_pos, client.messages.pop())
+                            meta["results_count"] += 1
+                            task_info[src_task]["tool_reply_msg"] = ph
+
+                        # 3️⃣ turn (or update) the placeholder into the request
+                        ph["name"]    = f"clarification_request_{call_id}"
+                        ph["content"] = (
+                            "Tool incomplete, please answer the following to continue "
+                            f"tool execution:\n{question}"
+                        )
+                        tool_msg = ph                                   # for event_bus
 
                         if event_bus:
                             await event_bus.publish(
                                 Event(type=event_type, payload={"message": tool_msg}),
                             )
 
-                    # Hand control back to the LLM immediately so it can react
+                    # let the assistant answer immediately
                     llm_turn_required = True
                     continue
+
 
                 for task in done:  # finished tool(s)
                     # NOTE: Ordered insertion dance starts here:
@@ -501,10 +516,10 @@ async def _async_tool_use_loop_inner(
                             clarify_ph["content"] = result
                             tool_msg = clarify_ph
                         else:
-                            placeholder_msg = info.get("placeholder_msg")
-                        if placeholder_msg is not None:
-                            placeholder_msg["content"] = result
-                            tool_msg = placeholder_msg
+                            tool_reply_msg = info.get("tool_reply_msg")
+                        if tool_reply_msg is not None:
+                            tool_reply_msg["content"] = result
+                            tool_msg = tool_reply_msg
                         else:
                             tool_msg = {
                                 "role": "tool",
@@ -641,11 +656,7 @@ async def _async_tool_use_loop_inner(
             #  (a placeholder) before we let the assistant speak again.
             for _task in list(pending):
                 inf = task_info[_task]
-                if (
-                    inf.get("placeholder_msg")
-                    or inf.get("continue_msg")
-                    or inf.get("clarify_placeholder")
-                ):
+                if inf.get("tool_reply_msg") or inf.get("continue_msg") or inf.get("clarify_placeholder"):
                     continue  # already covered
 
                 name = inf["name"]
@@ -673,7 +684,7 @@ async def _async_tool_use_loop_inner(
                 meta["results_count"] += 1
 
                 # remember so we can patch later
-                inf["placeholder_msg"] = placeholder
+                inf["tool_reply_msg"] = placeholder
 
             # Merge helpers into the visible toolkit for the upcoming LLM step
             tmp_tools = base_tools_schema + [
@@ -744,13 +755,17 @@ async def _async_tool_use_loop_inner(
                             consecutive_failures += 1
                             result = traceback.format_exc()
 
+                        # 🔔 ➊  store the payload so a later `_continue_<id>` helper
+                        #   can reply immediately even after the tool has finished**
+                        completed_results[call_id] = result
+
                         asst_msg = info["assistant_msg"]
                         meta = assistant_meta[id(asst_msg)]
 
                         # ── choose where to write the result  --------------
-                        clar_ph = info.get("clarify_placeholder")
-                        continue_msg = info.get("continue_msg")
-                        placeholder = info.get("placeholder_msg")
+                        clar_ph       = info.get("clarify_placeholder")
+                        continue_msg  = info.get("continue_msg")
+                        placeholder   = info.get("tool_reply_msg")
 
                         if clar_ph is not None:
                             clar_ph["content"] = result
@@ -795,7 +810,9 @@ async def _async_tool_use_loop_inner(
                             )
 
                     # …then restart the main loop so the model sees the new info
-                    continue  # ← NEW
+                    # 👇 make sure the assistant gets an immediate turn
+                    llm_turn_required = True
+                    continue
 
                 # 1️⃣ user interjected → restart immediately
                 if interject_w in done:
@@ -905,7 +922,7 @@ async def _async_tool_use_loop_inner(
                             info = task_info[tgt_task]
                             name = info["name"]
                             arg_json = info["call_dict"]["function"]["arguments"]
-                            placeholder_msg = {
+                            tool_reply_msg = {
                                 "role": "tool",
                                 "tool_call_id": call["id"],
                                 "name": name,
@@ -917,7 +934,7 @@ async def _async_tool_use_loop_inner(
                                     f" • {name}({arg_json}) → cancel_{call['id']} / continue_{call['id']}"
                                 ),
                             }
-                            client.append_messages([placeholder_msg])
+                            client.append_messages([tool_reply_msg])
                             meta = assistant_meta.setdefault(
                                 id(msg),
                                 {"original_tool_calls": [], "results_count": 0},
@@ -927,7 +944,7 @@ async def _async_tool_use_loop_inner(
                             )
                             client.messages.insert(insert_pos, client.messages.pop())
                             meta["results_count"] += 1
-                            info["continue_msg"] = placeholder_msg
+                            info["continue_msg"] = tool_reply_msg
                             if log_steps:
                                 LOGGER.info(
                                     f"↩️  {pretty_name} placeholder inserted – still waiting"
@@ -1048,7 +1065,7 @@ async def _async_tool_use_loop_inner(
                                 if _inf["call_id"] == call_id:
                                     _inf["waiting_for_clarification"] = False
                                     break
-                        placeholder_msg = {
+                        tool_reply_msg = {
                             "role": "tool",
                             "tool_call_id": call["id"],
                             "name": name,
@@ -1057,11 +1074,11 @@ async def _async_tool_use_loop_inner(
                                 "⏳ Waiting for the original tool to finish…"
                             ),
                         }
-                        client.append_messages([placeholder_msg])
+                        client.append_messages([tool_reply_msg])
 
                         # remember it so we can patch later
-                        if tgt_task is not None:  # ← NEW
-                            task_info[tgt_task]["clarify_placeholder"] = placeholder_msg
+                        if tgt_task is not None:                   # ← NEW
+                            task_info[tgt_task]["clarify_placeholder"] = tool_reply_msg
                         meta = assistant_meta.setdefault(
                             id(msg),
                             {"original_tool_calls": [], "results_count": 0},
