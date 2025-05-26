@@ -54,7 +54,7 @@ class CommsManager:
                 msg = json.loads(raw.decode())
                 if msg["type"] == "update_gui":
                     print(
-                        f"Received GUI update for thread {msg['thread']}: {msg['content']}"
+                        f"Received GUI update for thread {msg['thread']}: {msg['content']}",
                     )
 
                     # Handle WhatsApp send events
@@ -66,10 +66,12 @@ class CommsManager:
                             message_data = json.loads(msg["content"])
                             kwargs = {
                                 "from_number": message_data.get(
-                                    "from_number", ""
+                                    "from_number",
+                                    "",
                                 ).replace("whatsapp:", ""),
                                 "to_number": message_data.get("to_number", "").replace(
-                                    "whatsapp:", ""
+                                    "whatsapp:",
+                                    "",
                                 ),
                             }
                             if msg["thread"] != "call":
@@ -77,7 +79,7 @@ class CommsManager:
                             elif message_data.get("message") == "Call ended":
                                 if self.call_proc is not None:
                                     print(
-                                        "Terminating call process due to call end event"
+                                        "Terminating call process due to call end event",
                                     )
                                     terminate_process(self.call_proc)
                                     self.call_proc = None
@@ -91,7 +93,8 @@ class CommsManager:
                                     kwargs["to_number"],
                                 )
                             success = await handle_message_action(
-                                msg["thread"], **kwargs
+                                msg["thread"],
+                                **kwargs,
                             )
                             if not success:
                                 print(f"Failed to send {msg['thread']} message")
@@ -108,7 +111,9 @@ class CommsManager:
                 break
 
     def handle_message(
-        self, message: pubsub_v1.types.PubsubMessage, subscription_id: str
+        self,
+        message: pubsub_v1.types.PubsubMessage,
+        subscription_id: str,
     ):
         """Handle incoming messages from PubSub subscriptions."""
         try:
@@ -138,7 +143,8 @@ class CommsManager:
                     message_data = json.loads(message.data.decode("utf-8"))
                     from_number = message_data.get("caller_number", "")
                     to_number = "+" + message_data.get("conference_name", "").replace(
-                        "Unity_", ""
+                        "Unity_",
+                        "",
                     )
 
                     self.call_proc = run_as_subprocess(
@@ -173,7 +179,7 @@ class CommsManager:
                         "type": "user_agent_event",
                         "to": "pending",
                         "event": message["event"],
-                    }
+                    },
                 )
             except Exception as e:
                 print(f"Error processing message from queue: {e}")
@@ -187,7 +193,8 @@ class CommsManager:
 
             subscriber = pubsub_v1.SubscriberClient(credentials=self.credentials)
             subscription_path = subscriber.subscription_path(
-                project_id, subscription_id
+                project_id,
+                subscription_id,
             )
 
             print(f"Starting subscription to {subscription_id}")

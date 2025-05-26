@@ -13,7 +13,8 @@ bb = Browserbase(api_key=os.environ["BROWSERBASE_API_KEY"])
 
 # session management
 def create_session(
-    with_context: bool = False, stealth_mode: bool = False
+    with_context: bool = False,
+    stealth_mode: bool = False,
 ) -> SessionCreateResponse:
     session = bb.sessions.create(
         project_id=os.environ["BROWSERBASE_PROJECT_ID"],

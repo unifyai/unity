@@ -40,6 +40,7 @@ from sandboxes.utils import (
     transcribe_deepgram as _transcribe_deepgram,
     speak as _speak,
     run_in_loop,
+    get_custom_scenario,
 )  # type: ignore
 
 
@@ -77,14 +78,25 @@ def _seed_fixed(km: KnowledgeManager) -> None:
         km.store(stmt)
 
 
-def _seed_llm(km: KnowledgeManager) -> Optional[str]:
+def _seed_llm(
+    km: KnowledgeManager,
+    custom_scenario: Optional[str] = None,
+) -> Optional[str]:
     """Use an LLM to generate a large set of factual sentences."""
-    prompt = (
-        "Generate 120‑180 short factual sentences suitable for ingestion by a knowledge base. "
-        "Cover diverse domains: personal bios, product pricing, purchases, geography, science facts, pets, coordinates, sports scores etc. "
-        "Avoid any personally identifying sensitive data. "
-        'Return as JSON {"statements": [...], "theme": <string>} and nothing else.'
-    )
+    if custom_scenario:
+        prompt = (
+            f"User-provided scenario:\n{custom_scenario}\n\n"
+            "Generate 120‑180 short factual sentences based on this scenario for ingestion by a knowledge base. "
+            "Avoid any personally identifying sensitive data. "
+            'Return as JSON {"statements": [...], "theme": <string>} and nothing else.'
+        )
+    else:
+        prompt = (
+            "Generate 120‑180 short factual sentences suitable for ingestion by a knowledge base. "
+            "Cover diverse domains: personal bios, product pricing, purchases, geography, science facts, pets, coordinates, sports scores etc. "
+            "Avoid any personally identifying sensitive data. "
+            'Return as JSON {"statements": [...], "theme": <string>} and nothing else.'
+        )
     client = unify.Unify("o4-mini@openai", cache=True)
     client.set_system_message(prompt)
     raw = client.generate("Produce knowledge scenario").strip()
@@ -168,7 +180,7 @@ async def _handle_interruptions(
     answer_task: asyncio.Task,
     *,
     voice_mode: bool = False,
-) -> Tuple[str, str]:
+) -> str:
     """
     Poll for user interruptions while waiting for the answer task to complete.
     Returns the kind of operation and the final result.
@@ -186,7 +198,8 @@ async def _handle_interruptions(
                     print("⚠️ Interruption detected. Recording new input...")
                     audio_bytes = await asyncio.to_thread(_record_until_enter)
                     user_text = await asyncio.to_thread(
-                        _transcribe_deepgram, audio_bytes
+                        _transcribe_deepgram,
+                        audio_bytes,
                     )
                     if user_text:
                         print(f"▶️  New input: {user_text}")
@@ -205,7 +218,7 @@ async def _handle_interruptions(
                         handle.stop()
                     else:
                         print(f"⚡ Interjecting: {user_input}")
-                        run_in_loop(handle.interject(user_text))
+                        run_in_loop(handle.interject(user_input))
 
             # Small sleep to prevent CPU spinning
             await asyncio.sleep(0.1)
@@ -227,7 +240,7 @@ async def _handle_interruptions(
 # ---------------------------------------------------------------------------
 
 
-async def _main_async(args) -> None:
+async def _main_async(args, scenario_text: Optional[str] = None) -> None:
     # Logging
     if not args.silent:
         logging.basicConfig(level=logging.INFO, format="%(message)s")
@@ -245,7 +258,11 @@ async def _main_async(args) -> None:
     km = KnowledgeManager()
 
     if fresh:
-        if args.scenario == "llm":
+        if scenario_text is not None:
+            theme = _seed_llm(km, custom_scenario=scenario_text)
+            if theme:
+                _LG.info(f"[Seed] LLM scenario theme: {theme}")
+        elif args.scenario == "llm":
             theme = _seed_llm(km)
             if theme:
                 _LG.info(f"[Seed] LLM scenario theme: {theme}")
@@ -321,7 +338,12 @@ def main() -> None:
         action="store_true",
         help="enable voice capture/playback",
     )
-    parser.add_argument("--scenario", choices=["fixed", "llm"], default="fixed")
+    parser.add_argument(
+        "--scenario",
+        choices=["fixed", "llm"],
+        default="fixed",
+        help="scenario type (overridden by --custom-scenario flags)",
+    )
     parser.add_argument("--new", "-n", action="store_true", help="wipe & reseed data")
     parser.add_argument(
         "--silent",
@@ -335,10 +357,21 @@ def main() -> None:
         action="store_true",
         help="verbose HTTP/LLM logs",
     )
+
+    group = parser.add_mutually_exclusive_group()
+    group.add_argument("--custom-scenario", type=str, help="Provide a custom scenario")
+    group.add_argument(
+        "--custom-scenario-voice",
+        action="store_true",
+        help="Describe custom scenario via voice",
+    )
+
     args = parser.parse_args()
 
+    scenario_text = get_custom_scenario(args, silent=args.silent)
+
     # Run the async main function
-    asyncio.run(_main_async(args))
+    asyncio.run(_main_async(args, scenario_text))
 
 
 if __name__ == "__main__":

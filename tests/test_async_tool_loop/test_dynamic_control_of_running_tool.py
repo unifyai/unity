@@ -39,9 +39,9 @@ MODEL_NAME = os.getenv("UNIFY_MODEL", "gpt-4o@openai")
 #  TOOLS                                                                      #
 # --------------------------------------------------------------------------- #
 @unify.traced
-async def slow(delay: float = 0.50) -> str:
+async def slow() -> str:
     """A slow-poke async tool – sleeps `delay` seconds then returns 'done'."""
-    await asyncio.sleep(delay)
+    await asyncio.sleep(0.50)
     return "done"
 
 
@@ -72,7 +72,7 @@ def _tool_results(msgs: List[dict], tool_name: str) -> int:
 # --------------------------------------------------------------------------- #
 @pytest.fixture()
 def client():
-    return unify.AsyncUnify(MODEL_NAME, traced=True)
+    return unify.AsyncUnify(MODEL_NAME, cache=True, traced=True)
 
 
 # --------------------------------------------------------------------------- #
@@ -104,7 +104,9 @@ async def test_continue_does_not_duplicate_tool(client):
 
     # Interject after ~50 ms – tool still running
     await asyncio.sleep(0.05)
-    await handle.interject("Make sure you're running the `slow` tool")
+    await handle.interject(
+        "Make sure you're still continuing to run the `slow` tool",
+    )
 
     final = await handle.result()
     assert final.strip().upper().startswith("OK")
@@ -132,6 +134,7 @@ async def test_cancel_removes_tool_and_yields_no_result(client):
         client,
         message=("Run the tool `slow` then reply ACK (nothing else)."),
         tools={"slow": slow},
+        interrupt_llm_with_interjections=False,
     )
 
     await asyncio.sleep(0.05)  # tool in-flight
@@ -141,5 +144,5 @@ async def test_cancel_removes_tool_and_yields_no_result(client):
     assert "ACK" in final.upper()
 
     msgs = client.messages
-    assert _tool_results(msgs, "slow") == 0, "no result expected after cancel"
-    assert _assistant_calls(msgs, "slow") == 0, "tool-call should be scrubbed"
+    assert _tool_results(msgs, "slow") == 1, "cancellation tool expected after cancel"
+    assert _assistant_calls(msgs, "slow") == 1, "tool-call should remain in the history"

@@ -43,7 +43,7 @@ async def test_basic_event_flow() -> None:
     bus.register_event_types("TEST")
 
     result = await _async_tool_use_loop_inner(
-        client=unify.AsyncUnify("gpt-4o@openai", traced=True).set_system_message(
+        client=unify.AsyncUnify("gpt-4o@openai", cache=True, traced=True).set_system_message(
             "please echo whatever the user says",
         ),
         message="world",
@@ -52,6 +52,7 @@ async def test_basic_event_flow() -> None:
         event_bus=bus,
         interject_queue=asyncio.Queue(),
         cancel_event=asyncio.Event(),
+        prune_tool_duplicates=True,
         log_steps=False,
     )
 
@@ -68,8 +69,8 @@ async def test_basic_event_flow() -> None:
         events[2].payload["message"]["content"].strip("'").strip('"') == "WORLD"
     )  # tool result
     assert (
-        events[3].payload["message"]["content"].strip("'").strip('"') == "WORLD"
-    )  # final assistant reply
+        events[3].payload["message"]["content"].strip("'").strip('"').upper() == "WORLD"
+    )  # final assistant reply (may either echo the user of the capitalized tool)
 
 
 # --------------------------------------------------------------------------- #
@@ -87,7 +88,7 @@ async def test_interjection_publishes_user_event() -> None:
     bus = EventBus()
     bus.register_event_types("CHAT")
 
-    client = unify.AsyncUnify("gpt-4o@openai", traced=True)
+    client = unify.AsyncUnify("gpt-4o@openai", cache=True, traced=True)
     client.set_system_message(
         "Please always respond with 'You said: {my_latest_message}', with the placeholder containing whatever I said, and do not include the quoation marks in your response.",
     )

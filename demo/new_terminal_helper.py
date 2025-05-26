@@ -77,7 +77,7 @@ def run_in_new_terminal(
                     "osascript",
                     "-e",
                     'tell application "Terminal" to close (every window whose name contains "call.py")',
-                ]
+                ],
             )
         except Exception as e:
             print(f"Warning: Could not clean up existing terminal windows: {e}")

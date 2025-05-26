@@ -463,7 +463,8 @@ def setup_session_context():
 
 @pytest.fixture(scope="session")
 def tm_scenario(
-    setup_session_context, event_loop: asyncio.AbstractEventLoop
+    setup_session_context,
+    event_loop: asyncio.AbstractEventLoop,
 ) -> TranscriptManager:
     """
     Fixture to create a TranscriptManager with a populated scenario.
@@ -518,13 +519,14 @@ async def test_ask_allows_interjection(tm_scenario: TranscriptManager):
     )
 
 
+@_handle_project
 @pytest.mark.asyncio
 @pytest.mark.eval
 async def test_ask_honors_stop():
     event_bus = EventBus()
     tm = TranscriptManager(event_bus)
     handle = tm.ask(
-        "List every message received from Carlos, then provide a detailed summary of each one in chronological order."
+        "List every message received from Carlos, then provide a detailed summary of each one in chronological order.",
     )
     handle.stop()
     with pytest.raises(asyncio.CancelledError):
