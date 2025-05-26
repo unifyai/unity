@@ -24,6 +24,7 @@ from typing import List
 import pytest
 import unify
 from unity.common.llm_helpers import start_async_tool_use_loop
+from tests.helpers import _handle_project
 
 MODEL_NAME = os.getenv("UNIFY_MODEL", "gpt-4o@openai")
 
@@ -34,6 +35,7 @@ def new_client() -> unify.AsyncUnify:
 
 
 @pytest.mark.asyncio
+@_handle_project
 async def test_interjectable_tool_roundtrip() -> None:
     client = new_client()
 
@@ -111,6 +113,7 @@ async def test_interjectable_tool_roundtrip() -> None:
 # Verifies *chat-context propagation* down to a tool
 # ─────────────────────────────────────────────────────────────────────────────
 @pytest.mark.asyncio
+@_handle_project
 async def test_chat_context_propagation() -> None:
     """
     The outer loop is given a *parent_chat_context* containing a single

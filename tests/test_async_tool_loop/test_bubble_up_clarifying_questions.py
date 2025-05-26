@@ -6,6 +6,7 @@ from typing import Optional
 import pytest
 import unify
 from unity.common.llm_helpers import start_async_tool_use_loop
+from tests.helpers import _handle_project
 
 
 # ──────────────────────────────────────────────────────────────────────────
@@ -61,6 +62,7 @@ asked_questions: list[str] = []  # for assertions
 # 3.  The test
 # ──────────────────────────────────────────────────────────────────────────
 @pytest.mark.asyncio
+@_handle_project
 async def test_clarification_bubbles_up_two_tiers() -> None:
     """
     Verifies that the clarification travels up & the answer travels down two 

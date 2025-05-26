@@ -5,6 +5,7 @@ import pytest
 import unify
 
 from unity.common.llm_helpers import start_async_tool_use_loop
+from tests.helpers import _handle_project
 
 # ────────────────────────────────────────────────────────────────────────────
 # Dummy tools – one finishes almost instantly, the other a little later
@@ -37,6 +38,7 @@ async def very_slow_task() -> str:
 # ────────────────────────────────────────────────────────────────────────────
 
 @pytest.mark.asyncio
+@_handle_project
 async def test_llm_keeps_intermediate_reasoning_when_other_tool_is_very_slow() -> None:
     """
     fast_task completes → loop triggers LLM reasoning.
@@ -104,6 +106,7 @@ async def test_llm_keeps_intermediate_reasoning_when_other_tool_is_very_slow() -
 
 
 @pytest.mark.asyncio
+@_handle_project
 async def test_llm_step_is_preempted_by_late_tool_completion() -> None:
     """
     The model is instructed to call **both** tools in a single assistant turn.
