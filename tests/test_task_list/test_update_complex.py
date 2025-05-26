@@ -110,7 +110,6 @@ def basic_task_scenario(setup_session_context):
             )
 
 
-
 # --------------------------------------------------------------------------- #
 #  1.  Re-ordering in the runnable queue                                     #
 # --------------------------------------------------------------------------- #
@@ -142,7 +141,7 @@ async def test_update_reorder_queue(basic_task_scenario):
 @pytest.mark.eval
 @pytest.mark.asyncio
 @pytest.mark.timeout(240)
-async def test_update_cancel_email_tasks(basic_task_scenario): #FIXME
+async def test_update_cancel_email_tasks(basic_task_scenario):  # FIXME
     tlm, ids = basic_task_scenario
 
     handle = tlm.update(text="Please cancel all tasks related to sending emails.")
