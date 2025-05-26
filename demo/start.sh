@@ -37,4 +37,4 @@ echo "Event manager PID: $EVENT_MANAGER_PID"
 echo "Comms manager PID: $COMMS_MANAGER_PID"
 
 # Wait for both processes to finish
-wait $EVENT_MANAGER_PID $COMMS_MANAGER_PID 
+wait $EVENT_MANAGER_PID $COMMS_MANAGER_PID

@@ -1,26 +1,15 @@
 steps:
   # Build the Docker image
-  - name: 'gcr.io/cloud-builders/docker'
-    args: [
-      'build',
-      '-t', '${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPOSITORY}/unity:${SHORT_SHA}',
-      '-t', '${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPOSITORY}/unity:latest',
-      '.'
-    ]
-    dir: 'demo'
+- name: 'gcr.io/cloud-builders/docker'
+  args: ['build', '-t', '${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPOSITORY}/unity:${SHORT_SHA}', '-t', '${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPOSITORY}/unity:latest', '.']
+  dir: 'demo'
 
   # Push the Docker image to Artifact Registry
-  - name: 'gcr.io/cloud-builders/docker'
-    args: [
-      'push',
-      '${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPOSITORY}/unity:${SHORT_SHA}'
-    ]
+- name: 'gcr.io/cloud-builders/docker'
+  args: ['push', '${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPOSITORY}/unity:${SHORT_SHA}']
 
-  - name: 'gcr.io/cloud-builders/docker'
-    args: [
-      'push',
-      '${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPOSITORY}/unity:latest'
-    ]
+- name: 'gcr.io/cloud-builders/docker'
+  args: ['push', '${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPOSITORY}/unity:latest']
 
 # Substitution variables
 substitutions:
@@ -37,5 +26,5 @@ timeout: '1200s'  # 20 minutes
 
 # Images to be pushed (for Cloud Build history)
 images:
-  - '${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPOSITORY}/unity:${SHORT_SHA}'
-  - '${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPOSITORY}/unity:latest' 
+- '${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPOSITORY}/unity:${SHORT_SHA}'
+- '${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPOSITORY}/unity:latest'
