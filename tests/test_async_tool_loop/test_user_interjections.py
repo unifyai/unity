@@ -157,5 +157,5 @@ async def test_chat_context_propagation() -> None:
     assert "children" in combined[0], "Nested children list missing."
     child_msgs = combined[0]["children"]
     assert child_msgs and child_msgs[0]["content"].startswith(
-        "Please call the function"
+        "Please call the function",
     ), "Current loop messages not included as children."

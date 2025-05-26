@@ -30,4 +30,4 @@ pydantic-core>=2.0.0
 pyaudio>=0.2.11
 
 # Twilio for SMS/WhatsApp (sample.py)
-twilio>=8.0.0 
+twilio>=8.0.0

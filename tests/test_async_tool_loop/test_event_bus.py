@@ -44,7 +44,9 @@ async def test_basic_event_flow() -> None:
 
     result = await _async_tool_use_loop_inner(
         client=unify.AsyncUnify(
-            "gpt-4o@openai", cache=True, traced=True
+            "gpt-4o@openai",
+            cache=True,
+            traced=True,
         ).set_system_message(
             "please echo whatever the user says",
         ),
