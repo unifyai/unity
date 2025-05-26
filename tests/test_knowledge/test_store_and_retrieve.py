@@ -329,10 +329,12 @@ async def test_store_interjection():
 
     # store some informatiion
     handle = km.store("Bob lives in Bangkok, Thailand.")
-    # Mid-operation, add another detail that should also get stored.
-    await handle.interject("He was born in 1990.")
 
-    handle = km.retrieve("Which city does Bob live in and what is his age?")
+    # Mid-operation, add another detail that should also get stored.
+    await handle.interject("Also, he was born in 1990.")
+
+    await handle.result()
+    handle = km.retrieve("Which city does Bob live in and when was he born?")
     out = await handle.result()
 
     # The confirmation text returned by `store()` should include both pieces of information.
