@@ -6,7 +6,6 @@ import re
 from unity.controller.commands import *
 import urllib.parse
 from playwright.sync_api import BrowserContext, Page
-import sys
 
 from .browser_utils import (
     build_boxes,

@@ -3,6 +3,7 @@ import inspect
 import asyncio
 import inspect
 import traceback
+import functools
 from enum import Enum
 from collections import defaultdict
 from pydantic import BaseModel
@@ -144,6 +145,36 @@ async def _maybe_await(obj):
     return obj
 
 
+def _chat_context_repr(
+    parent_ctx: Optional[list[dict]],
+    current_msgs: list[dict],
+) -> list[dict]:
+    """
+    Combine **existing** ``parent_ctx`` with the *current* chat history
+    (``current_msgs``) into a depth-aware nested structure:
+
+        root_msg0
+        root_msg1
+        root_msg2
+          └── children:
+              ├── child_msg0
+              └── child_msg1
+
+    Strategy – keep the original list untouched and attach the new
+    messages as ``children`` of the *last* element.
+    """
+    ctx_block = [
+        {"role": m.get("role"), "content": m.get("content")} for m in current_msgs
+    ]
+    if not parent_ctx:
+        return ctx_block
+
+    import copy
+
+    combined = copy.deepcopy(parent_ctx)
+    combined[-1].setdefault("children", []).extend(ctx_block)
+    return combined
+
 async def _async_tool_use_loop_inner(
     client: unify.AsyncUnify,
     message: str,
@@ -154,6 +185,11 @@ async def _async_tool_use_loop_inner(
     interject_queue: asyncio.Queue[str],
     cancel_event: asyncio.Event,
     max_consecutive_failures: int = 3,
+    prune_tool_duplicates: bool = True,
+    interrupt_llm_with_interjections: bool = True,
+    interjectable_tools: Optional[Set[str]] = None,
+    propagate_chat_context: bool = True,
+    parent_chat_context: Optional[list[dict]] = None,
     log_steps: bool = False,
 ) -> str:
     r"""
@@ -183,6 +219,77 @@ async def _async_tool_use_loop_inner(
       outside; an optional ``event_bus`` lets a UI or logger subscribe to
       every message without the loop having to know who is listening.
 
+    Parameters
+    ----------
+    client : ``unify.AsyncUnify``
+        Pre-initialised Unify client that provides ``append_messages`` and
+        ``generate``.  All tokens sent to / received from the LLM flow
+        through this object.
+
+    message : ``str``
+        The very first user prompt that kicks-off the whole interactive
+        session.
+
+    tools : ``dict[str, Callable]``
+        A mapping ``name → function`` describing every callable the LLM may
+        invoke.  Each function must be fully type-hinted and have a concise
+        docstring – these are automatically converted to an OpenAI *tool
+        schema* via :pyfunc:`method_to_schema`.
+
+    event_type, event_bus : ``str | None``, ``EventBus | None``
+        Optional pub-sub hooks.  When both are provided every message
+        exchanged inside the loop is emitted as
+        ``Event(type=event_type, payload={"message": msg})`` which lets a
+        UI or logger stay in sync without tight coupling.
+
+    interject_queue : ``asyncio.Queue[str]``
+        Thread-safe channel through which the *outer* application can push
+        additional user turns at any time (e.g. the human changes their
+        mind mid-generation).
+
+    cancel_event : ``asyncio.Event``
+        Flips to *set* when the outer caller wants graceful shutdown.  The
+        loop then cancels every running task and propagates
+        ``asyncio.CancelledError`` upstream.
+
+    max_consecutive_failures : ``int``, default ``3``
+        Hard safety valve: after this many back-to-back exceptions coming
+        from tools the loop bails out with ``RuntimeError`` to avoid an
+        infinite crash-and-retry ping-pong.
+
+    ignore_tool_duplicates : ``bool``, default ``True``
+        Deduplicates model-requested tool calls that have *identical*
+        ``function.name`` **and** argument JSON.  Duplicates are pruned
+        **in-place** before ever touching chat history or being scheduled.
+
+    interrupt_llm_with_interjection : ``bool``, default ``True``
+        Controls latency to fresh user input.  When *True* any in-flight
+        ``client.generate`` is cancelled the moment a new user turn arrives
+        so the assistant can pivot instantly.  When *False* the loop waits
+        for the model to finish (legacy behaviour).
+
+    interjectable_tools : ``set[str] | None``
+        Names of long-running tools that are *steerable* post-launch.  For
+        each pending call the loop exposes a helper
+        ``_interject_<call-id>(content: str)``.  The original tool must
+        accept an ``interject_queue`` keyword argument (an
+        ``asyncio.Queue[str]``) to receive these live instructions.
+    propagate_chat_context : ``bool``, default ``True``
+        If *True*, the entire conversation state of **this** loop is
+        threaded into any child tool that accepts a
+        ``parent_chat_context`` keyword argument.
+
+    parent_chat_context : ``list[dict] | None``
+        Nested chat structure passed from an **outer** loop.  When
+        ``propagate_chat_context`` is on, the helper
+        :pyfunc:`_chat_context_repr` merges this with the current
+        ``client.messages`` and forwards the result downward.
+
+    log_steps : ``bool``, default ``False``
+        When enabled, every significant action (LLM call, tool launch,
+        interjection, etc.) is logged to ``LOGGER`` for easier tracing and
+        debugging.
+
     Returns
     -------
     str
@@ -197,6 +304,27 @@ async def _async_tool_use_loop_inner(
     if log_steps:
         LOGGER.info(f"\n🧑‍💻 {message}\n")
 
+    # ── 0-a. Inject **system** header with broader context ───────────────────
+    #
+    # When a parent context is supplied we prepend a single synthetic system
+    # message that *summarises* it.  This offers the LLM immediate awareness
+    # of the wider conversation without having to scroll the nested JSON.
+    # The special marker ``_ctx_header=True`` lets us later strip it when
+    # propagating context further down (avoids duplication).
+    # -----------------------------------------------------------------------
+
+    if parent_chat_context:
+        sys_msg = {
+            "role": "system",
+            "_ctx_header": True,
+            "content": (
+                "Broader context (read-only):\n"
+                f"{json.dumps(parent_chat_context, indent=2)}\n\n"
+                "Resolve the *next* user request in light of this."
+            ),
+        }
+        client.append_messages([sys_msg])
+
     # ── initial prompt ───────────────────────────────────────────────────────
     base_tools_schema = [method_to_schema(v) for v in tools.values()]
     msg = {"role": "user", "content": message}
@@ -207,7 +335,11 @@ async def _async_tool_use_loop_inner(
     consecutive_failures = 0
     pending: Set[asyncio.Task] = set()
     task_info: Dict[asyncio.Task, Dict[str, Any]] = {}
+    completed_results: Dict[str, str] = {}
     assistant_meta: Dict[int, Dict[str, Any]] = {}
+
+    if interjectable_tools is None:
+        interjectable_tools = set()
 
     try:
         while True:
@@ -222,36 +354,11 @@ async def _async_tool_use_loop_inner(
                 except asyncio.QueueEmpty:
                     break
 
-                # hide unresolved calls in the *previous* assistant turn
-                # ------------------------------------------------------------------
-                # Each assistant message may own **several** tool calls.  We build a
-                # map  msg → {indices still pending}  and prune by position, removing
-                # the whole key only when the very last call has finished.
-                pending_idx_by_msg: Dict[int, Set[int]] = defaultdict(set)
-                msg_by_id: Dict[int, dict] = {}
-                for info in task_info.values():
-                    asst_msg = info["assistant_msg"]
-                    mid = id(asst_msg)
-                    pending_idx_by_msg[mid].add(info["call_idx"])
-                    msg_by_id[mid] = asst_msg
-
-                for mid, keep_idx in pending_idx_by_msg.items():
-                    asst_msg = msg_by_id[mid]
-                    tool_calls = asst_msg.get("tool_calls")
-                    if tool_calls is None:
-                        continue
-
-                    pruned = [tc for i, tc in enumerate(tool_calls) if i in keep_idx]
-                    if pruned:
-                        asst_msg["tool_calls"] = pruned  # keep unresolved ones
-                    else:
-                        asst_msg.pop("tool_calls", None)  # drop field when empty
-
                 had_interjection = True
                 msg = {"role": "user", "content": extra}
                 if event_bus:
                     await event_bus.publish(
-                        Event(type=event_type, payload={"message": msg})
+                        Event(type=event_type, payload={"message": msg}),
                     )
                 client.append_messages([msg])
 
@@ -262,20 +369,27 @@ async def _async_tool_use_loop_inner(
             #       • a *new* interjection appears
             if pending and not had_interjection:
                 interject_w = asyncio.create_task(interject_queue.get())
-                waiters = pending | {
-                    asyncio.create_task(cancel_event.wait()),
-                    interject_w,
-                }
+                cancel_waiter = asyncio.create_task(cancel_event.wait())
+                waiters = pending | {cancel_waiter, interject_w}
                 done, _ = await asyncio.wait(
                     waiters,
                     return_when=asyncio.FIRST_COMPLETED,
                 )
 
+                # ── ensure *unused* auxiliary waiters don't linger ──────────
+                # If one helper won the race we *must* cancel/await the other
+                # so that it cannot consume the next interjection invisibly.
+                for aux in (interject_w, cancel_waiter):
+                    if aux not in done and not aux.done():
+                        aux.cancel()
+                        await asyncio.gather(aux, return_exceptions=True)
+
                 if interject_w in done:
+                    # re-queue so branch 0 will handle user turn immediately
                     await interject_queue.put(interject_w.result())
                     continue  # → loop, will be processed in 0.
 
-                if any(t for t in done if t not in pending):
+                if cancel_waiter in done:
                     raise asyncio.CancelledError  # cancellation wins
 
                 for task in done:  # finished tool(s)
@@ -310,27 +424,36 @@ async def _async_tool_use_loop_inner(
                     asst_msg = info["assistant_msg"]
                     meta = assistant_meta[id(asst_msg)]
 
-                    # 1. restore full tool_calls list exactly once
-                    asst_msg["tool_calls"] = meta["original_tool_calls"]
-
-                    # 2. build the tool-result message
-                    tool_msg = {
-                        "role": "tool",
-                        "tool_call_id": call_id,
-                        "name": name,
-                        "content": result,
-                    }
-                    # 3a. let AsyncUnify know about the new message
-                    client.append_messages([tool_msg])
-
-                    # 3b. move it to sit right after the other results that
-                    #     belong to this assistant turn
-                    insert_pos = (
-                        client.messages.index(asst_msg) + 1 + meta["results_count"]
-                    )
-                    moved = client.messages.pop()  # last element
-                    client.messages.insert(insert_pos, moved)
-                    meta["results_count"] += 1
+                    # 1. Prefer patching the *continue* placeholder (if any);
+                    #    otherwise fall back to the original tool placeholder.
+                    continue_msg = info.get("continue_msg")
+                    if continue_msg is not None:
+                        continue_msg["content"] = result
+                        name = info["call_dict"]["function"]["name"]
+                        args = info["call_dict"]["function"]["arguments"]
+                        continue_msg["name"] = f"{name}({args}) completed successfully, the return values are in the `content` field below."
+                        tool_msg = continue_msg
+                    else:
+                        placeholder_msg = info.get("placeholder_msg")
+                        if placeholder_msg is not None:
+                            placeholder_msg["content"] = result
+                            tool_msg = placeholder_msg
+                        else:
+                            tool_msg = {
+                                "role": "tool",
+                                "tool_call_id": call_id,
+                                "name": name,
+                                "content": result,
+                            }
+                            client.append_messages([tool_msg])
+                            insert_pos = (
+                                client.messages.index(asst_msg)
+                                + 1
+                                + meta["results_count"]
+                            )
+                            moved = client.messages.pop()
+                            client.messages.insert(insert_pos, moved)
+                            meta["results_count"] += 1
 
                     if event_bus:
                         await event_bus.publish(
@@ -344,56 +467,169 @@ async def _async_tool_use_loop_inner(
                             "Aborted after too many consecutive tool failures.",
                         )
 
-            # ── B: wait for remaining tools before asking the LLM again
-            if pending:
+            # ── B: wait for remaining tools before asking the LLM again,
+            # unless there was an interjection
+            if pending and not had_interjection:
                 continue  # still waiting for other tool tasks
 
-            #  An interjection to handle, or no pending tool calls
-            while True:
-                try:
-                    extra = interject_queue.get_nowait()
-                except asyncio.QueueEmpty:
-                    break
-                if log_steps:
-                    LOGGER.info(f"\n⚡ Interjection → {extra!r}\n")
-                msg = {"role": "user", "content": extra}
-                if event_bus:
-                    await event_bus.publish(
-                        Event(type=event_type, payload={"message": msg}),
-                    )
-                client.append_messages([msg])
+            # ── C.  Add temporary tools so the LLM can **continue** or **cancel**
+            #       any still‑running tool calls ────────────────────────────────
+            #
+            # For each pending ``asyncio.Task`` we synthesise two VERY small helper
+            # tools and expose them to the model on the *next* LLM step.  Each
+            # helper's docstring is a single line that embeds **both** the name of
+            # the original function **and** the concrete arguments it was invoked
+            # with – this gives the agent just enough context without overwhelming
+            # the token budget.
+            # ------------------------------------------------------------------
 
-            # ── C.  Cancel check before calling the LLM  ────────────────────
-            # NOTE: Light-weight early-exit guard – we do **not** want to pay
-            # for a needless ``client.generate`` if the caller has already
-            # decided to abort.
-            if cancel_event.is_set():
-                raise asyncio.CancelledError
+            dynamic_tools: Dict[str, Callable] = {}
+
+            for _task in list(pending):
+                info = task_info[_task]
+                _call_id: str = info["call_id"]
+                _fn_name: str = info["name"]
+                _arg_json: str = info["call_dict"]["function"]["arguments"]
+                try:
+                    _arg_dict = json.loads(_arg_json)
+                    _arg_repr = ", ".join(f"{k}={v!r}" for k, v in _arg_dict.items())
+                except Exception:
+                    _arg_repr = _arg_json  # fallback: raw JSON string
+
+                # concise, informative, single‑line docs  ----------------------
+                _continue_doc = (
+                    f"Continue waiting for {_fn_name}({_arg_repr})."
+                )
+                _cancel_doc = (
+                    f"Cancel pending call {_fn_name}({_arg_repr})."
+                )
+
+                # ––– 1. continue helper ––––––––––––––––––––––––––––––––––––
+                async def _continue() -> Dict[str, str]:
+                    return {"status": "continue", "call_id": _call_id}
+                _continue.__doc__ = _continue_doc  # type: ignore[attr-defined]
+                _continue.__name__ = f"_continue_{_fn_name}_{_call_id}"
+                dynamic_tools[f"continue_{_call_id}"] = _continue
+
+                # ––– 2. cancel helper –––––––––––––––––––––––––––––––––––––
+                async def _cancel() -> Dict[str, str]:
+                    if not _task.done():
+                        _task.cancel()
+                    pending.discard(_task)
+                    task_info.pop(_task, None)
+                    return {"status": "cancelled", "call_id": _call_id}
+                _cancel.__doc__ = _cancel_doc  # type: ignore[attr-defined]
+                _cancel.__name__ = f"_cancel_{_fn_name}_{_call_id}"
+                dynamic_tools[f"cancel_{_call_id}"] = _cancel
+
+                # ––– 3. interject helper (optional) ––––––––––––––––––––––
+                if info.get("is_interjectable"):
+                    _interject_doc = (
+                        f"Inject additional instructions for {_fn_name}({_arg_repr}). "
+                        "Takes a single argument `content` containing plain-English guidance."
+                    )
+
+                    async def _interject(content: str) -> Dict[str, str]:  # type: ignore[valid-type]
+                        await info["interject_q"].put(content)
+                        return {
+                            "status": "interjected",
+                            "call_id": _call_id,
+                            "content": content,
+                        }
+
+                    _interject.__doc__ = _interject_doc  # type: ignore[attr-defined]
+                    _interject.__name__ = f"_interject_{_fn_name}_{_call_id}"
+                    dynamic_tools[f"interject_{_call_id}"] = _interject
+
+            # Merge helpers into the visible toolkit for the upcoming LLM step
+            tmp_tools = base_tools_schema + [method_to_schema(fn) for fn in dynamic_tools.values()]
 
             # ── D.  Ask the LLM what to do next  ────────────────────────────
             if log_steps:
                 LOGGER.info("🔄 LLM thinking…")
-            # NOTE: No tool tasks are running **right now** (else we would
-            # have hit the early-continue above) so it is the cheapest moment
-            # to query the model.  We let it decide freely between:
-            #   * another function call                → branch E
-            #   * plain-text assistant response        → branch F
-            # `_maybe_await` shields us from the fact that some back-ends
-            # expose `generate` as a coroutine and others as a normal def.
 
-            await _maybe_await(
-                client.generate(
-                    return_full_completion=True,
-                    tools=base_tools_schema,
-                    tool_choice="auto",
-                    stateful=True,
+            if interrupt_llm_with_interjections:
+                # ––––– new *pre-emptive* mode ––––––––––––––––––––––––––––
+                llm_task = asyncio.create_task(
+                    _maybe_await(
+                        client.generate(
+                            return_full_completion=True,
+                            tools=tmp_tools,
+                            tool_choice="auto",
+                            stateful=True,
+                        ),
+                    ),
                 )
-            )
+                interject_w = asyncio.create_task(interject_queue.get())
+                cancel_waiter = asyncio.create_task(cancel_event.wait())
+
+                done, _ = await asyncio.wait(
+                    {llm_task, interject_w, cancel_waiter},
+                    return_when=asyncio.FIRST_COMPLETED,
+                )
+
+                # helper cleanup
+                for tsk in (llm_task, interject_w, cancel_waiter):
+                    if tsk not in done and not tsk.done():
+                        tsk.cancel()
+                await asyncio.gather(interject_w, cancel_waiter, return_exceptions=True)
+
+                # 1️⃣ user interjected → restart immediately
+                if interject_w in done:
+                    if not llm_task.done():
+                        llm_task.cancel()
+                        await asyncio.gather(llm_task, return_exceptions=True)
+                    await interject_queue.put(interject_w.result())
+                    continue  # top of loop
+
+                # 2️⃣ cancellation requested
+                if cancel_waiter in done:
+                    if not llm_task.done():
+                        llm_task.cancel()
+                        await asyncio.gather(llm_task, return_exceptions=True)
+                    raise asyncio.CancelledError
+
+                # 3️⃣ LLM finished normally
+                if llm_task.exception():
+                    raise Exception(
+                        f"LLM call failed. Messages at the time:\n{json.dumps(client.messages, indent=4)}",
+                    )
+
+            else:
+                # ––––– legacy *blocking* mode ––––––––––––––––––––––––––––
+                try:
+                    await _maybe_await(
+                        client.generate(
+                            return_full_completion=True,
+                            tools=tmp_tools,
+                            tool_choice="auto",
+                            stateful=True,
+                        ),
+                    )
+                except Exception:
+                    raise Exception(
+                        f"LLM call failed. Messages at the time:\n{json.dumps(client.messages, indent=4)}",
+                    )
+
             msg = client.messages[-1]
+
             if event_bus:
                 await event_bus.publish(
                     Event(type=event_type, payload={"message": msg}),
                 )
+
+            # ── De-duplicate tool calls (optional) ────────────────────────
+            if prune_tool_duplicates and msg.get("tool_calls"):
+                seen: Set[tuple[str, str]] = set()
+                unique_calls: list = []
+                for call in msg["tool_calls"]:
+                    sig = (call["function"]["name"], call["function"]["arguments"])
+                    if sig not in seen:
+                        seen.add(sig)
+                        unique_calls.append(call)
+                if len(unique_calls) != len(msg["tool_calls"]):
+                    # mutate in-place so history never contains duplicates
+                    msg["tool_calls"] = unique_calls
 
             # ── E.  Launch any new tool calls  ──────────────────────────────
             # NOTE: The model returned `tool_calls`.  For *each* call we:
@@ -416,12 +652,224 @@ async def _async_tool_use_loop_inner(
                 for idx, call in enumerate(msg["tool_calls"]):  # capture index
                     name = call["function"]["name"]
                     args = json.loads(call["function"]["arguments"])
+
+                    # ── Special-case dynamic helpers ──────────────────────
+                    # • continue_* → acknowledge, no scheduling
+                    # • cancel_*   → cancel underlying task & purge metadata
+                    if name.startswith("_continue"):
+                        call_id = "_".join(name.split("_")[-2:])
+
+                        tgt_task = next(
+                            (t for t, inf in task_info.items() if inf["call_id"] == call_id),
+                            None,
+                        )
+
+                        orig_fn = (
+                            task_info[tgt_task]["name"] if tgt_task else "unknown"
+                        )
+                        arg_json = (
+                            task_info[tgt_task]["call_dict"]["function"]["arguments"]
+                            if tgt_task
+                            else "{}"
+                        )
+                        pretty_name = f"_continue {orig_fn}({arg_json})"
+
+                        if tgt_task:  # still running → insert placeholder
+                            placeholder_msg = {
+                                "role": "tool",
+                                "tool_call_id": call["id"],
+                                "name": pretty_name,
+                                "content": (
+                                    "Still waiting for the final result. "
+                                    "This message will be updated automatically."
+                                ),
+                            }
+                            client.append_messages([placeholder_msg])
+
+                            meta = assistant_meta.setdefault(
+                                id(msg), {"original_tool_calls": [], "results_count": 0},
+                            )
+                            insert_pos = client.messages.index(msg) + 1 + meta["results_count"]
+                            client.messages.insert(insert_pos, client.messages.pop())
+                            meta["results_count"] += 1
+
+                            # Section A will patch this content later
+                            task_info[tgt_task]["continue_msg"] = placeholder_msg
+
+                            if log_steps:
+                                LOGGER.info(f"↩️  {pretty_name} placeholder inserted – still waiting")
+
+                        else:  # the original tool already finished
+                            finished = completed_results.get(
+                                call_id,
+                                _dumps({"status": "not-found", "call_id": call_id}, indent=4),
+                            )
+                            tool_msg = {
+                                "role": "tool",
+                                "tool_call_id": call["id"],
+                                "name": pretty_name,
+                                "content": finished,
+                            }
+                            client.append_messages([tool_msg])
+
+                            meta = assistant_meta.setdefault(
+                                id(msg), {"original_tool_calls": [], "results_count": 0},
+                            )
+                            insert_pos = client.messages.index(msg) + 1 + meta["results_count"]
+                            client.messages.insert(insert_pos, client.messages.pop())
+                            meta["results_count"] += 1
+
+                            if log_steps:
+                                LOGGER.info(f"↩️  {pretty_name} answered immediately (already finished)")
+
+                        continue  # completed handling of this _continue
+
+                    if name.startswith("_cancel") and not name.startswith("_cancel_tasks"):
+                        call_id = "_".join(name.split("_")[-2:])
+
+                        # ── locate & cancel the underlying coroutine ──────
+                        task_to_cancel = next(
+                            (t for t, info in task_info.items() if info["call_id"] == call_id),
+                            None,
+                        )
+
+                        orig_fn = (
+                            task_info[task_to_cancel]["name"] if task_to_cancel else "unknown"
+                        )
+                        arg_json = (
+                            task_info[task_to_cancel]["call_dict"]["function"]["arguments"]
+                            if task_to_cancel
+                            else "{}"
+                        )
+                        pretty_name = f"_cancel {orig_fn}({arg_json})"
+
+                        if task_to_cancel and not task_to_cancel.done():
+                            task_to_cancel.cancel()
+                        if task_to_cancel:
+                            pending.discard(task_to_cancel)
+                            task_info.pop(task_to_cancel, None)
+
+                        tool_msg = {
+                            "role": "tool",
+                            "tool_call_id": call["id"],
+                            "name": pretty_name,
+                            "content": (
+                                f"The tool call [{call_id}] has been cancelled successfully."
+                            ),
+                        }
+                        client.append_messages([tool_msg])
+
+                        meta = assistant_meta.setdefault(
+                            id(msg), {"original_tool_calls": [], "results_count": 0},
+                        )
+                        insert_pos = client.messages.index(msg) + 1 + meta["results_count"]
+                        client.messages.insert(insert_pos, client.messages.pop())
+                        meta["results_count"] += 1
+
+                        if log_steps:
+                            LOGGER.info(f"🚫  {name} executed – task cancelled")
+                        continue  # nothing else to schedule
+
+                    if name.startswith("_interject"):
+                        # helper signature: {"content": "..."}
+                        try:
+                            payload = json.loads(call["function"]["arguments"])
+                            new_text = payload["content"]
+                        except Exception:
+                            new_text = "<unparsable>"
+
+                        call_id = "_".join(name.split("_")[-2:])
+
+                        # locate the underlying long-running task
+                        tgt_task = next(
+                            (t for t, inf in task_info.items() if inf["call_id"] == call_id),
+                            None,
+                        )
+
+                        pretty_name = f"_interject {task_info[tgt_task]['name']}({new_text})" if tgt_task else name
+
+                        # ― push guidance onto the private queue -------------
+                        if tgt_task and task_info[tgt_task]["interject_q"] is not None:
+                            await task_info[tgt_task]["interject_q"].put(new_text)
+
+                        # ― emit a tool message so the chat log stays tidy ---
+                        tool_msg = {
+                            "role": "tool",
+                            "tool_call_id": call["id"],
+                            "name": pretty_name,
+                            "content": f'Guidance "{new_text}" forwarded to the running tool.',
+                        }
+                        client.append_messages([tool_msg])
+
+                        meta = assistant_meta.setdefault(
+                            id(msg), {"original_tool_calls": [], "results_count": 0},
+                        )
+                        insert_pos = client.messages.index(msg) + 1 + meta["results_count"]
+                        client.messages.insert(insert_pos, client.messages.pop())
+                        meta["results_count"] += 1
+
+                        if log_steps:
+                            LOGGER.info(f"💬  Interjection delivered → {new_text!r}")
+                        continue  # nothing else to schedule
+
                     fn = tools[name]
-                    coro = (
-                        fn(**args)
-                        if asyncio.iscoroutinefunction(fn)
-                        else asyncio.to_thread(fn, **args)
+
+                    # ── build **extra** kwargs (chat context + queue) ───
+                    extra_kwargs: dict = {}
+
+                    # ------- build nested chat context --------------------
+                    # Combine any *inherited* context with the messages of
+                    # this loop, but strip the synthetic system header
+                    # (marked `_ctx_header`) so it isn't duplicated further
+                    # down the call-stack.
+                    if propagate_chat_context:
+                        cur_msgs = [
+                            m for m in client.messages if not m.get("_ctx_header")
+                        ]
+                        ctx_repr = _chat_context_repr(
+                            parent_chat_context,
+                            cur_msgs,
+                        )
+                        extra_kwargs["parent_chat_context"] = ctx_repr
+
+                    sub_q: Optional[asyncio.Queue[str]] = None
+                    is_interj = False
+                    if name in interjectable_tools:
+                        sub_q = asyncio.Queue()
+                        extra_kwargs["interject_queue"] = sub_q
+                        is_interj = True
+
+                    # ---- filter extras to match fn signature ----------
+                    import inspect
+
+                    sig = inspect.signature(fn)
+                    params = sig.parameters
+                    has_varkw = any(
+                        p.kind == inspect.Parameter.VAR_KEYWORD
+                        for p in params.values()
                     )
+
+                    filtered_extras = {
+                        k: v
+                        for k, v in extra_kwargs.items()
+                        if k in params or has_varkw
+                    }
+
+                    # merge caller-supplied args with the *filtered* extras
+                    merged_kwargs = {**args, **filtered_extras}
+
+                    # avoid double-passing the queue if the model already
+                    # supplied an `interject_queue` argument
+                    if (
+                        "interject_queue" in args
+                        and name in interjectable_tools
+                    ):
+                        merged_kwargs["interject_queue"] = sub_q
+
+                    if asyncio.iscoroutinefunction(fn):
+                        coro = fn(**merged_kwargs)
+                    else:
+                        coro = asyncio.to_thread(fn, **merged_kwargs)
 
                     call_dict = {
                         "id": call["id"],
@@ -441,7 +889,45 @@ async def _async_tool_use_loop_inner(
                         "assistant_msg": msg,
                         "call_dict": call_dict,
                         "call_idx": idx,
+                        "is_interjectable": is_interj,
+                        "interject_q": sub_q,
+                        "chat_ctx": extra_kwargs.get("parent_chat_context"),
                     }
+
+                    # ── Insert a placeholder tool message so the chat history
+                    #    keeps the correct assistant → tool ordering without
+                    #    touching the assistant turn itself.  Once the tool
+                    #    finishes, this message will be updated in place.
+                    placeholder_content = (
+                        "The following tool calls are still running. If any of them are no longer "
+                        "relevant to the sequence of user requests, then you can call their "
+                        "`_cancel_*` helper, otherwise feel free to call the corresponding "
+                        "`_continue_*` helper to keep waiting:\n"
+                        f" • {name}({call['function']['arguments']}) → "
+                        f"cancel_{call['id']} / continue_{call['id']}"
+                    )
+                    placeholder_msg = {
+                        "role": "tool",
+                        "tool_call_id": call["id"],
+                        "name": name,
+                        "content": placeholder_content,
+                    }
+                    client.append_messages([placeholder_msg])
+
+                    meta = assistant_meta.setdefault(
+                        id(msg), {"original_tool_calls": [], "results_count": 0},
+                    )
+                    insert_pos = client.messages.index(msg) + 1 + meta["results_count"]
+                    moved = client.messages.pop()          # last element is the placeholder
+                    client.messages.insert(insert_pos, moved)
+                    meta["results_count"] += 1
+
+                    task_info[t]["placeholder_msg"] = placeholder_msg
+
+                    # ⬇️  DO NOT publish the *placeholder* to the event bus.
+                    #     Only the *final* tool-result message (patched in
+                    #     Section A) will be published, which prevents the
+                    #     duplicate TOOL event seen in the tests.
 
                 # metadata for orderly insertion of results
                 assistant_meta[id(msg)] = {
@@ -451,7 +937,7 @@ async def _async_tool_use_loop_inner(
 
                 if log_steps:
                     LOGGER.info("✅ Step finished (tool calls scheduled)")
-                continue  # back to the top
+                continue  # finished scheduling tools, back to the very top
 
             # ── F.  No new tool calls  ──────────────────────────────────────
             # NOTE: Two scenarios reach this block:
@@ -533,6 +1019,11 @@ def start_async_tool_use_loop(
     event_type: Optional[str] = None,
     event_bus: Optional[EventBus] = None,
     max_consecutive_failures: int = 3,
+    prune_tool_duplicates=True,
+    interrupt_llm_with_interjections: bool = True,
+    interjectable_tools: Optional[Set[str]] = None,
+    propagate_chat_context: bool = True,
+    parent_chat_context: Optional[list[dict]] = None,
     log_steps: bool = False,
 ) -> AsyncToolLoopHandle:
     """
@@ -552,6 +1043,11 @@ def start_async_tool_use_loop(
             interject_queue=interject_queue,
             cancel_event=cancel_event,
             max_consecutive_failures=max_consecutive_failures,
+            prune_tool_duplicates=prune_tool_duplicates,
+            interrupt_llm_with_interjections=interrupt_llm_with_interjections,
+            interjectable_tools=interjectable_tools,
+            propagate_chat_context=propagate_chat_context,
+            parent_chat_context=parent_chat_context,
             log_steps=log_steps,
         ),
     )

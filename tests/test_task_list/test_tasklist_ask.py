@@ -207,7 +207,8 @@ async def test_ask_with_interjection(tlm_scenario: TaskListManager) -> None:
         # 3) Await combined answer
         answer, steps = await handle.result()
         active_task = _answer_semantic(
-            tlm_scenario, QUESTIONS[0]
+            tlm_scenario,
+            QUESTIONS[0],
         )  # "Write quarterly report"
         queued_cnt = _answer_semantic(tlm_scenario, QUESTIONS[1])  # e.g. "2"
 

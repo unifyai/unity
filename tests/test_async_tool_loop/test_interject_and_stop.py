@@ -42,19 +42,19 @@ MODEL_NAME = os.getenv("UNIFY_MODEL", "gpt-4o@openai")
 # --------------------------------------------------------------------------- #
 @unify.traced
 async def echo(txt: str) -> str:  # noqa: D401 – simple async tool
-    await asyncio.sleep(0.05)
+    await asyncio.sleep(0.50)
     return txt
 
 
 @unify.traced
-async def slow(txt: str = "Z", delay: float = 0.25) -> str:
-    await asyncio.sleep(delay)
-    return txt
+async def slow() -> str:
+    await asyncio.sleep(0.5)
+    return "slow"
 
 
 @unify.traced
 async def fast() -> str:  # ~100 ms
-    await asyncio.sleep(0.10)
+    await asyncio.sleep(0.1)
     return "fast"
 
 
@@ -98,7 +98,7 @@ def new_client() -> unify.AsyncUnify:
     Return a fresh client *with its own conversation state* so that tests do
     not interfere with one another.
     """
-    return unify.AsyncUnify(MODEL_NAME, traced=True)
+    return unify.AsyncUnify(MODEL_NAME, cache=True, traced=True)
 
 
 # --------------------------------------------------------------------------- #
@@ -114,20 +114,18 @@ async def test_interject_leads_to_second_tool_and_final_result():
     client = new_client()
     handle = start_async_tool_use_loop(
         client,
-        message=(
-            "Use the `echo` tool to output the text 'A'. "
-            "If the user later asks for another echo, call the tool again with "
-            "that text and finally reply exactly 'done'."
-        ),
+        message=("Use the `echo` tool to output the text 'A'."),
         tools={"echo": echo},
+        interrupt_llm_with_interjections=False,
     )
 
     # --- inject clarification ------------------------------------------------
     await asyncio.sleep(0.02)
-    await handle.interject("And echo B please")
+    await handle.interject(
+        "And also echo B please, the order of the echos doesn't matter.",
+    )
 
-    final = await handle.result()
-    assert final.strip().lower().startswith("done")
+    await handle.result()
 
     # --- assertions ----------------------------------------------------------
     msgs = client.messages
@@ -137,14 +135,25 @@ async def test_interject_leads_to_second_tool_and_final_result():
     assert len(assistant_tool_turns) >= 2
 
     # 2. first assistant turn calls echo("A"), second calls echo("B")
+
     first_args = json.loads(
-        assistant_tool_turns[0]["tool_calls"][0]["function"]["arguments"]
-    )
-    second_args = json.loads(
-        assistant_tool_turns[1]["tool_calls"][0]["function"]["arguments"]
+        assistant_tool_turns[0]["tool_calls"][0]["function"]["arguments"],
     )
     assert first_args == {"txt": "A"}
-    assert second_args == {"txt": "B"}
+
+    second_tool_calls = assistant_tool_turns[1]["tool_calls"]
+    last_fn_of_second = second_tool_calls[-1]["function"]
+    if len(second_tool_calls) == 1:
+        assert json.loads(last_fn_of_second["arguments"]) == {"txt": "B"}
+    else:
+        assert len(second_tool_calls) == 2
+        first_fn_of_second = second_tool_calls[0]["function"]
+        if json.loads(first_fn_of_second["arguments"]) == {"txt": "B"}:
+            assert last_fn_of_second["name"].startswith("_continue_echo_call_")
+        elif json.loads(last_fn_of_second["arguments"]) == {"txt": "B"}:
+            assert first_fn_of_second["name"].startswith("_continue_echo_call_")
+        else:
+            raise Exception("Invalid tool arguments for second tool call")
 
     # 3. the order is correct: initial assistant → user interjection → 2nd assistant
     idx_first_asst = msgs.index(assistant_tool_turns[0])
@@ -241,9 +250,10 @@ async def test_single_tool_result_is_inserted_before_interjection():
             "then reply with the word ACK (nothing else)."
         ),
         {"slow": slow},
+        interrupt_llm_with_interjections=False,
     )
 
-    await asyncio.sleep(0.05)  # tool should still be running
+    await asyncio.sleep(0.15)  # tool should still be running
     await handle.interject("thanks!")
 
     await handle.result()  # wait for completion
@@ -273,13 +283,14 @@ async def test_parallel_tool_results_shift_interjection_down():
     handle = start_async_tool_use_loop(
         client,
         (
-            "Call the tools `fast` and `slow`, each exactly once, "
+            "Call the tools `fast` and `slow` both at the same time, "
             "then respond with ONLY the word DONE."
         ),
         {"fast": fast, "slow": slow},
+        interrupt_llm_with_interjections=False,
     )
 
-    await asyncio.sleep(0.15)  # `fast` likely done, `slow` still running
+    await asyncio.sleep(0.3)  # `fast` done, `slow` still running
     await handle.interject("cheers!")
 
     await handle.result()
@@ -298,3 +309,39 @@ async def test_parallel_tool_results_shift_interjection_down():
 
     # Tool_calls restored once, no duplicates
     assert len(msgs[i_asst]["tool_calls"]) >= 2
+
+
+@pytest.mark.asyncio
+@_handle_project
+async def test_interjection_cancels_ongoing_llm():
+    """The first LLM generation is cancelled once the user interjects."""
+
+    # Spin up the tool-use loop and inject a message shortly afterwards
+    client = new_client()
+    client.set_cache(False)
+    handle = start_async_tool_use_loop(
+        client,
+        "Tell me something interesting about whales.",
+        {},
+    )
+
+    # Wait just a tick and then interject
+    await asyncio.sleep(0.05)
+    await handle.interject("Actually, make it about dolphins instead!")
+    await handle.result()
+
+    # Assertions – only ONE assistant message should exist
+    assistant_msgs = [m for m in client.messages if m.get("role") == "assistant"]
+    assert len(assistant_msgs) == 1, (
+        "Exactly one assistant reply is expected after cancellation; "
+        f"found {len(assistant_msgs)}."
+    )
+
+    # The final assistant reply must come *after* both user messages
+    roles = [m["role"] for m in client.messages]
+    assert (
+        roles.count("user") == 2
+    ), "Both the original user turn and the interjection must be present."
+    assert (
+        roles[-1] == "assistant"
+    ), "The conversation should end with the assistant's single reply."
