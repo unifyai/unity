@@ -185,5 +185,92 @@ class InterruptEvent(Event):
     def __str__(self):
         return f"[INTERRUPT @ {self.fmt_timestamp}] User interrupted"
 
+
+# Task events
+class CommsTaskCreatedEvent(Event):
+    def __init__(self, contact_name: str, contact_number: str, task_desc: str, agent_id: str, *args, **kwargs):
+        # Remove potential duplicates coming from deserialisation
+        kwargs.pop("contact_name", None)
+        kwargs.pop("contact_number", None)
+        kwargs.pop("task_desc", None)
+        kwargs.pop("agent_id", None)
+        
+        self.agent_id = agent_id
+        self.contact_name = contact_name
+        self.contact_number = contact_number
+        self.task_desc = task_desc
+        super().__init__(*args, **kwargs)
+    
+    def to_dict(self) -> dict[str, Any]:
+        base_dict = super().to_dict()
+        base_dict["payload"].update({
+            "agent_id": self.agent_id,
+            "contact_name": self.contact_name,
+            "contact_number": self.contact_number,
+            "task_desc": self.task_desc,
+        })
+        return base_dict
+    
     def __str__(self):
-        return f"[INTERRUPT @ {self.fmt_timestamp}] User interrupted"
+        return f"""[COMMS TASK CREATED AND HANDLED BY AGENT ID: {self.agent_id} @ {self.fmt_timestamp}]
+TASK CONTACT NAME: {self.contact_name}
+TASK CONTACT NUMBER: {self.contact_number}
+TASK DESC: {self.task_desc}
+"""
+
+class CommsTaskStartedEvent(Event):
+    def __init__(self, contact_name: str, contact_number: str, task_desc: str, agent_id: str, *args, **kwargs):
+        # Remove potential duplicates coming from deserialisation
+        kwargs.pop("contact_name", None)
+        kwargs.pop("contact_number", None)
+        kwargs.pop("task_desc", None)
+        kwargs.pop("agent_id", None)
+        
+        self.agent_id = agent_id
+        self.contact_name = contact_name
+        self.contact_number = contact_number
+        self.task_desc = task_desc
+        super().__init__(*args, **kwargs)
+    
+    def to_dict(self) -> dict[str, Any]:
+        base_dict = super().to_dict()
+        base_dict["payload"].update({
+            "agent_id": self.agent_id,
+            "contact_name": self.contact_name,
+            "contact_number": self.contact_number,
+            "task_desc": self.task_desc,
+        })
+        return base_dict
+    
+    def __str__(self):
+        return f"""[COMMS TASK CREATED @ {self.fmt_timestamp}]
+TASK CONTACT NAME: {self.contact_name}
+TASK CONTACT NUMBER: {self.contact_number}
+TASK DESC: {self.task_desc}
+"""
+
+class CommsTaskDoneEvent(Event):
+    def __init__(self, agent_id: str, task_status: str, task_result: str, *args, **kwargs):
+        # Remove potential duplicates coming from deserialisation
+        kwargs.pop("agent_id", None)
+        kwargs.pop("task_status", None)
+        kwargs.pop("task_result", None)
+        
+        self.agent_id = agent_id
+        self.task_status = task_status
+        self.task_result = task_result
+        super().__init__(*args, **kwargs)
+
+    def to_dict(self) -> dict[str, Any]:
+        base_dict = super().to_dict()
+        base_dict["payload"].update({
+            "agent_id": self.agent_id,
+            "task_status": self.task_status,
+            "task_result": self.task_result,
+        })
+        return base_dict
+
+    def __str__(self):
+        return f"""[TASK DONE BY AGENT ID: {self.agent_id} @ {self.fmt_timestamp}]
+TASK STATUS: {self.task_status}
+TASK RESULT: {self.task_result}"""

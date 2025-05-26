@@ -27,6 +27,10 @@ class CreateCommunicationTask(BaseModel):
     contact_number: str = Field(..., description="contact number with country code")
     detailed_task_description: str = Field(..., description="very detailed description of the task")
 
+class RespondToAgent(BaseModel):
+    agent_id: str = Field(..., description="Id of the agent to respond to")
+    response: str = Field(..., description="Your resoonse to the agent's query")
+
 class EndTask(BaseModel):
     task_status: Literal["failed", "sucess"] = Field(..., description="The end status of the task")
     task_result: str = Field(..., 
@@ -34,18 +38,16 @@ class EndTask(BaseModel):
 
 class AskUserAgent(BaseModel):
     query: str = Field(...,
-                       "The question or clarification that is going to be sent to the main user agent")
+                       description="The question or clarification that is going to be sent to the main user agent")
 
 
 
-# -------- discriminated union --------
-# actually, call and non-call modes will probably have some difference between their actions (as in more actions probably for the voice one),
-# but for now lets keep them the same
 ActionModel = Union[
     SendEmailAction,
     SendWhatsAppMessageAction,
     SendSMSMessageAction,
-    CreateCommunicationTask
+    CreateCommunicationTask,
+    RespondToAgent
 ]
 
 

@@ -7,7 +7,7 @@ from typing import Literal
 import openai
 
 import comms_actions
-from actions_2 import AssistantOutput, CallAssistantOutput
+from actions_2 import *
 from events import *
 from new_terminal_helper import run_script
 
@@ -16,15 +16,15 @@ client = openai.AsyncOpenAI(api_key=os.environ["OPENAI_API_KEY"])
 ONGOING_CALL = False
 
 
-with open("call_sys.md") as f:
+with open("prompts/call_sys.md") as f:
     call_sys = f.read()
 
-with open("non_call_sys.md") as f:
+with open("prompts/non_call_sys.md") as f:
     non_call_sys = f.read()
 
 @dataclass
 class CommTask:
-    task_id: int
+    agent_id: str
     contact_name: str
     contact_number: str
     status: str
@@ -43,10 +43,12 @@ class CommsAgent:
         user_number: str,
         user_phone_call_number: str = None,
         past_events: list = None,
-        main_user_agent: bool = False
+        main_user_agent: bool = False,
+        agent_id: str = None
     ):
         
         self.main_user = main_user_agent
+        self.agent_id = agent_id
 
         self.assistant_number = assistant_number
 
@@ -60,7 +62,7 @@ class CommsAgent:
         # events (history)
         self.events_listener_task = None
         self.events_queue = asyncio.Queue()
-        self.past_events = past_events
+        self.past_events = past_events or []
         self.pending_events = []
         self.inflight_events = []
 
@@ -81,6 +83,9 @@ class CommsAgent:
         }
         self.running_tasks = []
 
+
+        # id gen
+        self.curr_id = 0
         
 
     async def listen_for_events(self):
@@ -142,6 +147,7 @@ class CommsAgent:
     
     def on_run_end(self, t: asyncio.Task):
         try:
+            print("FROM ", self.agent_id)
             t: AssistantOutput | CallAssistantOutput | None = t.result()
             # everything is fine, just run the actions and add stuff to past events
             if t:
@@ -151,6 +157,7 @@ class CommsAgent:
 
                 # this should launch async tasks
                 if t.actions is not None:
+                    print("actions", t.actions)
                     for action in t.actions:
                         # take actions
 
@@ -161,15 +168,33 @@ class CommsAgent:
 
                         # should be referenced in a set to avoid being garbage collected
                         # (i think)
-                        asyncio.create_task(self.send_whatsapp(action.message))
-
-                        event = events_map[action.type](
+                        if isinstance(action, SendWhatsAppMessageAction):
+                            print(action)
+                            asyncio.create_task(self.send_whatsapp(action.message))
+                            event = events_map[action.type](
                             content=action.message,
-                        ).to_dict()
-                        if self.call_mode:
-                            self.events_queue.put_nowait(event)
-                        else:
-                            self.past_events.append(event)
+                                ).to_dict()
+                            if self.call_mode:
+                                self.events_queue.put_nowait(event)
+                            else:
+                                self.past_events.append(event)
+                        elif isinstance(action, CreateCommunicationTask):
+                            print(action)
+                            self.create_communication_task(
+                                action.contact_name, 
+                                action.contact_number.replace(" ", ""),
+                                action.detailed_task_description
+                            )
+                        
+                        elif isinstance(action, EndTask):
+                            print(action)
+                            self.task_done(
+                                action.task_status, 
+                                action.task_result,
+                            )
+
+
+
         except asyncio.CancelledError:
             pass
         finally:
@@ -182,9 +207,17 @@ class CommsAgent:
             return await self.non_phone_call_llm_run()
         
     async def non_phone_call_llm_run(self):
-        print("Running...")
+        print("Running from ...", self.agent_id)
         user_msg = self.get_user_agent_prompt()
-        print(user_msg)
+        print(user_msg, flush=True)
+
+        if self.main_user:
+            with open("prompts/non_call_sys.md") as f:
+                non_call_sys = f.read()
+        else:
+            with open("prompts/comm_non_call_sys.md") as f:
+                non_call_sys = f.read()
+
         res = await client.beta.chat.completions.parse(
             model="gpt-4.1",
             messages=[
@@ -197,11 +230,11 @@ class CommsAgent:
                     "content": user_msg,
                 },
             ],
-            response_format=AssistantOutput,
+            response_format=AssistantOutput if self.main_user else CommsAgentOutput,
         )
         message = res.choices[0].message
-        print(message)
-        print("parsed: ", message.parsed)
+        # print(message)
+        # print("parsed: ", message.parsed)
         if message.parsed:
             return message.parsed
         
@@ -224,7 +257,7 @@ class CommsAgent:
                     "content": user_msg,
                 },
             ],
-            response_format=CallAssistantOutput,
+            response_format=CallAssistantOutput if self.main_user else CallCommsAgentOutput,
         ) as stream:
 
             async for event in stream:
@@ -249,34 +282,47 @@ class CommsAgent:
             from_number=self.assistant_number, to_number=self.user_number, message=msg
         )
 
-    async def create_communication_task(
+    def create_communication_task(
         self, contact_name: str, contact_number: str, detailed_task_description: str,
         task_scheduele: str = None
     ):
         # we are assuming one task here is being active, in some cases, another task to the same contact
         # might be pushed as well, in that case, we should just increase the tasks
         # the task should be scheduele-able as well, will think about this later
-        contact_comms_agent = CommsAgent(contact_name, self.assistant_number, contact_number)
+        contact_comms_agent = CommsAgent(contact_name, self.assistant_number, contact_number.replace(" ", "").strip(),
+                                         agent_id=self.curr_id)
+        print("created comms agent")
+        self.curr_id += 1
         contact_comms_agent.set_event_manager(self.event_manager)
+        contact_comms_agent.subscribe([contact_number.replace(" ", "").strip(), contact_comms_agent.agent_id])
         contact_comms_agent.performing_task = True
-        contact_comms_agent.subscribe([contact_number, f"{contact_number}_{self.assistant_number}"])
         asyncio.create_task(contact_comms_agent.listen_for_events())
+        print("listening")
+
 
         # should generate a random id
-        task = CommTask("12345", contact_name, contact_number, "in_progress", detailed_task_description)
+        task = CommTask(contact_comms_agent.agent_id, contact_name, contact_number, "in_progress", detailed_task_description)
+        print("created task")
         contact_comms_agent.attach_task(task)
         self.contact_num_to_comm_agent[contact_number] = contact_comms_agent
         self.attach_task(task)
+        print("attached tasks")
     
     # mark task as done (could be failing, which is fine)
-    async def task_done(self, task_status: Literal["fail", "success"], task_result: str):
+    def task_done(self, task_status: Literal["fail", "success"], task_result: str):
         # mark task as done and publish task done event
         # should stop listening to events 
-        ...
+        self.publish({
+            "topic": "user_agent",
+            "event": CommsTaskDoneEvent(self.agent_id, task_status=task_status, task_result=task_result).to_dict()
+        })
 
-    async def ask_user_agent(self, query: str):
+    def ask_user_agent(self, query: str):
         # publish an event for the user agent to pick up
-        ...
+        self.publish({
+            "topic": "user_agent",
+            "event": ...
+        })
     
     async def wait_for_seconds_or_next_event(self, time: int):
         ...
@@ -290,8 +336,19 @@ class CommsAgent:
     def set_event_manager(self, event_manager):
         self.event_manager = event_manager
 
-    def attach_task(self, task):
+    def attach_task(self, task: CommTask):
         self.running_tasks.append(task)
+        if self.main_user:
+            # put a task created event
+            self.events_queue.put_nowait(
+                CommsTaskCreatedEvent(task.contact_name, task.contact_number, task.task_description, task.agent_id).to_dict()
+            )
+        else:
+            # put a task started event
+            self.events_queue.put_nowait(
+                CommsTaskStartedEvent(task.contact_name, task.contact_number, task.task_description, task.agent_id).to_dict()
+
+            )
     
     def get_user_agent_prompt(self):
         past_events_str = (
@@ -303,7 +360,15 @@ class CommsAgent:
             str(Event.from_dict(e)) for e in self.inflight_events
         )
 
-        task_status_str = "No Tasks are running"  # TODO
+        if self.running_tasks:
+            task_status_str = ""
+            for task in self.running_tasks:
+                task_status_str += f"""
+TASK: {task.task_description}
+TASK STATUS: {task.status}
+""" + f"RUN BY AGENT: {task.agent_id}\n"
+        else:
+            task_status_str = "No Tasks are running"  # TODO
         user_msg = f"""Events Log:
 ** PAST EVENTS **
 {past_events_str.strip()}
@@ -323,10 +388,8 @@ class CommsAgent:
         to = event.get("to")
         if event["event"]["event_name"] == "PhoneCallEndedEvent":
             if self.call_proc:
-                print("HELLLLLLLLLLLLLLO")
                 self.call_proc.kill()
                 self.call_proc.wait()
-                print("done")
                 self.call_proc = None
                 self.call_mode = False
                 ONGOING_CALL = False

@@ -87,11 +87,11 @@ def loop_exception_handler(loop, context):
 
 async def main():
     loop = asyncio.get_running_loop()
-    loop.set_exception_handler(loop_exception_handler)
+    # loop.set_exception_handler(loop_exception_handler)
     event_manager = EventManager()
     user_agent = CommsAgent("Yasser", "+17343611691", "+201092074828", "+12697784020", [], True)
     user_agent.set_event_manager(event_manager)
-    user_agent.subscribe(["+201092074828", "+12697784020"])
+    user_agent.subscribe(["+201092074828", "+12697784020", "user_agent"])
     comms_manager = CommsManager(events_queue=event_manager.events_queue)
     event_manager_task = asyncio.create_task(event_manager.serve())
     comms_task = asyncio.create_task(comms_manager.start())
