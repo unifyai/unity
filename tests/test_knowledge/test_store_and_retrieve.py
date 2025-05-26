@@ -119,7 +119,7 @@ async def test_round_trip_simple_fact():
 @pytest.mark.asyncio
 @pytest.mark.timeout(180)
 @_handle_project
-async def test_schema_expands_and_new_field_retrievable(): #FIXME
+async def test_schema_expands_and_new_field_retrievable():
     """
     • First fact gives Bob only 'age'.
     • Second fact adds two *previously unseen* attributes.
