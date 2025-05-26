@@ -123,7 +123,7 @@ def test_controller_screen_observation_linkedin():
     """Smoke-test Controller.act and Redis publications."""
     c = Controller()
 
-    raw_jpeg = Path('tests/test_controller/test_images/linkedin.jpeg').read_bytes()
+    raw_jpeg = Path("tests/test_controller/test_images/linkedin.jpeg").read_bytes()
     b64 = base64.b64encode(raw_jpeg).decode("utf-8")
     c._last_shot = b64
     try:
@@ -139,7 +139,7 @@ def test_controller_screen_observation_google():
     """Smoke-test Controller.act and Redis publications."""
     c = Controller()
 
-    raw_jpeg = Path('tests/test_controller/test_images/google.jpeg').read_bytes()
+    raw_jpeg = Path("tests/test_controller/test_images/google.jpeg").read_bytes()
     b64 = base64.b64encode(raw_jpeg).decode("utf-8")
     c._last_shot = b64
     try:
@@ -157,7 +157,7 @@ def test_controller_feedback_loop():
     c._observe_ctx = {"state": {"in_textbox": False}}
 
     # on google
-    raw_jpeg = Path('tests/test_controller/test_images/google.jpeg').read_bytes()
+    raw_jpeg = Path("tests/test_controller/test_images/google.jpeg").read_bytes()
     b64 = base64.b64encode(raw_jpeg).decode("utf-8")
     c._last_shot = b64
 
@@ -178,8 +178,8 @@ def test_controller_feedback_loop():
     assert isinstance(actions, list) and isinstance(actions[0], str)
     assert "open_url" in actions[0] and "linkedin.com" in actions[0]
 
-    # on linkedin 
-    raw_jpeg = Path('tests/test_controller/test_images/linkedin.jpeg').read_bytes()
+    # on linkedin
+    raw_jpeg = Path("tests/test_controller/test_images/linkedin.jpeg").read_bytes()
     b64 = base64.b64encode(raw_jpeg).decode("utf-8")
     c._last_shot = b64
 
@@ -188,5 +188,5 @@ def test_controller_feedback_loop():
         ret = c.observe("Is the page on LinkedIn?", bool)
     except Exception as exc:
         pytest.skip(f"Skipping – backend unavailable: {exc}")
-    
+
     assert ret is True

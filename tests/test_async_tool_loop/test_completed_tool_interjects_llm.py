@@ -37,6 +37,7 @@ async def very_slow_task() -> str:
 # Test
 # ────────────────────────────────────────────────────────────────────────────
 
+
 @pytest.mark.asyncio
 @_handle_project
 async def test_llm_keeps_intermediate_reasoning_when_other_tool_is_very_slow() -> None:
@@ -159,8 +160,8 @@ async def test_llm_step_is_preempted_by_late_tool_completion() -> None:
     #   assistant injests both results (final)
     assert roles[0] == "user"
     assert roles[1] == "assistant"
-    assert roles.count("assistant") == 2          # initial + final
-    assert roles.count("tool") == 2               # fast + slow
+    assert roles.count("assistant") == 2  # initial + final
+    assert roles.count("tool") == 2  # fast + slow
 
     # The two tool results must correspond to the two tool names
     tool_names = {m["name"] for m in client.messages if m["role"] == "tool"}
