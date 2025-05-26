@@ -332,9 +332,7 @@ class EventBus:
                 continue
 
             # offset still missing from deque + duplicates we already collected
-            backend_offsets[etype] = (
-                offset - skipped if skipped < offset else 0
-            ) + collected
+            backend_offsets[etype] = offset + collected
             need_backend[etype] = still_needed
 
         # ----------------------------------------------------------------------
