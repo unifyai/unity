@@ -31,6 +31,7 @@ from unity.communication.transcript_manager.transcript_manager import Transcript
 from unity.communication.types.message import Message
 from unity.common.llm_helpers import _dumps
 from tests.assertion_helpers import assertion_failed
+from tests.helpers import _handle_project
 
 # --------------------------------------------------------------------------- #
 #  CONTACTS (same as before)                                                  #
@@ -518,6 +519,7 @@ async def test_ask_allows_interjection(tm_scenario: TranscriptManager):
     )
 
 
+@_handle_project
 @pytest.mark.asyncio
 @pytest.mark.eval
 async def test_ask_honors_stop():
