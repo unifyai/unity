@@ -96,7 +96,7 @@ def _seed_llm(
             "Create 110‑140 tasks across queues with positions, priorities & ISO start times. "
             "Return only JSON with top‑level 'tasks' and optional 'theme'."
         )
-    client = unify.Unify("o4-mini@openai", cache=True)
+    client = unify.Unify("o4-mini@openai", cache=True, traced=True)
     client.set_system_message(prompt)
     raw = client.generate("Produce scenario").strip()
 

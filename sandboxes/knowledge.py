@@ -97,7 +97,7 @@ def _seed_llm(
             "Avoid any personally identifying sensitive data. "
             'Return as JSON {"statements": [...], "theme": <string>} and nothing else.'
         )
-    client = unify.Unify("o4-mini@openai", cache=True)
+    client = unify.Unify("o4-mini@openai", cache=True, traced=True)
     client.set_system_message(prompt)
     raw = client.generate("Produce knowledge scenario").strip()
 

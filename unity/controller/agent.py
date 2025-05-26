@@ -22,7 +22,7 @@ from ..constants import LOGGER
 
 import unify
 
-client = unify.Unify(cache=True)
+client = unify.Unify(cache=True, traced=True)
 client.set_system_message(PRIMITIVE_TO_BROWSER_ACTION_CANDIDATES)
 
 SCROLLING_STATE = None

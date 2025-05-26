@@ -125,7 +125,7 @@ class TaskListManager:
             handle.stop()
         """
 
-        client = unify.AsyncUnify("o4-mini@openai", cache=True)
+        client = unify.AsyncUnify("o4-mini@openai", cache=True, traced=True)
         client.set_system_message(
             ASK.replace(
                 "{datetime}",
@@ -201,7 +201,7 @@ class TaskListManager:
         """
         from .sys_msgs import UPDATE
 
-        client = unify.AsyncUnify("o4-mini@openai", cache=True)
+        client = unify.AsyncUnify("o4-mini@openai", cache=True, traced=True)
         client.set_system_message(
             UPDATE.replace(
                 "{datetime}",

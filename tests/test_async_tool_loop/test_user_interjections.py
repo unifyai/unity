@@ -30,7 +30,7 @@ MODEL_NAME = os.getenv("UNIFY_MODEL", "gpt-4o@openai")
 
 def new_client() -> unify.AsyncUnify:
     """Fresh client with caching enabled so the run becomes deterministic."""
-    return unify.AsyncUnify(MODEL_NAME, cache=True)
+    return unify.AsyncUnify(MODEL_NAME, cache=True, traced=True)
 
 
 @pytest.mark.asyncio

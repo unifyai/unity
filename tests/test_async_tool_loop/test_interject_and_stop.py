@@ -48,13 +48,13 @@ async def echo(txt: str) -> str:  # noqa: D401 – simple async tool
 
 @unify.traced
 async def slow() -> str:
-    await asyncio.sleep(0.5)
+    await asyncio.sleep(0.15)
     return "slow"
 
 
 @unify.traced
-async def fast() -> str:  # ~100 ms
-    await asyncio.sleep(0.1)
+async def fast() -> str:
+    await asyncio.sleep(0.05)
     return "fast"
 
 
@@ -280,6 +280,7 @@ async def test_parallel_tool_results_shift_interjection_down():
       (in any order) and the user message to follow them.
     """
     client = new_client()
+    client.set_cache(False)
     handle = start_async_tool_use_loop(
         client,
         (
@@ -290,7 +291,7 @@ async def test_parallel_tool_results_shift_interjection_down():
         interrupt_llm_with_interjections=False,
     )
 
-    await asyncio.sleep(0.3)  # `fast` done, `slow` still running
+    await asyncio.sleep(0.1)  # `fast` done, `slow` still running
     await handle.interject("cheers!")
 
     await handle.result()

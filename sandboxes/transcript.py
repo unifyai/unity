@@ -282,7 +282,7 @@ def _seed_llm(tm: TranscriptManager, custom_scenario=None) -> Optional[str]:
             "Return JSON with keys: contacts, exchanges, theme."
         )
 
-    client = unify.Unify("o4-mini@openai", cache=True)
+    client = unify.Unify("o4-mini@openai", cache=True, traced=True)
     client.set_system_message(prompt)
     raw = client.generate("Produce scenario").strip()
 

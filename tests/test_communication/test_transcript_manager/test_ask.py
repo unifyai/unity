@@ -373,7 +373,7 @@ def _llm_assert_correct(
     multiple_answers: bool = False,
 ) -> None:
     """LLM-based validation with stricter or fuzzier rubric per question."""
-    judge = unify.Unify("o4-mini@openai", cache=True)
+    judge = unify.Unify("o4-mini@openai", cache=True, traced=True)
 
     if _is_summary_q(question):
         system_msg = (
