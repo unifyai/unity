@@ -61,10 +61,10 @@ async def test_interjectable_tool_roundtrip() -> None:
         client=client,
         message=(
             "Follow STRICTLY these steps:\n"
-            "1️⃣  Call `long_running` with `{ \"topic\": \"cats\" }`.\n"
+            '1️⃣  Call `long_running` with `{ "topic": "cats" }`.\n'
             "2️⃣  WAIT for my next instruction.\n"
             "3️⃣  When I say “Actually, please switch to X instead.” "
-            "call the helper `interject_<id>` with `{ \"content\": \"X\" }`.\n"
+            'call the helper `interject_<id>` with `{ "content": "X" }`.\n'
             "4️⃣  After the tool finishes, reply with ONE sentence "
             "mentioning the final topic.\n"
             "Do NOT add extra text between steps."

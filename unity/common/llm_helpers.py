@@ -175,6 +175,7 @@ def _chat_context_repr(
     combined[-1].setdefault("children", []).extend(ctx_block)
     return combined
 
+
 async def _async_tool_use_loop_inner(
     client: unify.AsyncUnify,
     message: str,
@@ -431,7 +432,9 @@ async def _async_tool_use_loop_inner(
                         continue_msg["content"] = result
                         name = info["call_dict"]["function"]["name"]
                         args = info["call_dict"]["function"]["arguments"]
-                        continue_msg["name"] = f"{name}({args}) completed successfully, the return values are in the `content` field below."
+                        continue_msg["name"] = (
+                            f"{name}({args}) completed successfully, the return values are in the `content` field below."
+                        )
                         tool_msg = continue_msg
                     else:
                         placeholder_msg = info.get("placeholder_msg")
@@ -497,16 +500,13 @@ async def _async_tool_use_loop_inner(
                     _arg_repr = _arg_json  # fallback: raw JSON string
 
                 # concise, informative, single‑line docs  ----------------------
-                _continue_doc = (
-                    f"Continue waiting for {_fn_name}({_arg_repr})."
-                )
-                _cancel_doc = (
-                    f"Cancel pending call {_fn_name}({_arg_repr})."
-                )
+                _continue_doc = f"Continue waiting for {_fn_name}({_arg_repr})."
+                _cancel_doc = f"Cancel pending call {_fn_name}({_arg_repr})."
 
                 # ––– 1. continue helper ––––––––––––––––––––––––––––––––––––
                 async def _continue() -> Dict[str, str]:
                     return {"status": "continue", "call_id": _call_id}
+
                 _continue.__doc__ = _continue_doc  # type: ignore[attr-defined]
                 _continue.__name__ = f"_continue_{_fn_name}_{_call_id}"
                 dynamic_tools[f"continue_{_call_id}"] = _continue
@@ -518,6 +518,7 @@ async def _async_tool_use_loop_inner(
                     pending.discard(_task)
                     task_info.pop(_task, None)
                     return {"status": "cancelled", "call_id": _call_id}
+
                 _cancel.__doc__ = _cancel_doc  # type: ignore[attr-defined]
                 _cancel.__name__ = f"_cancel_{_fn_name}_{_call_id}"
                 dynamic_tools[f"cancel_{_call_id}"] = _cancel
@@ -542,7 +543,9 @@ async def _async_tool_use_loop_inner(
                     dynamic_tools[f"interject_{_call_id}"] = _interject
 
             # Merge helpers into the visible toolkit for the upcoming LLM step
-            tmp_tools = base_tools_schema + [method_to_schema(fn) for fn in dynamic_tools.values()]
+            tmp_tools = base_tools_schema + [
+                method_to_schema(fn) for fn in dynamic_tools.values()
+            ]
 
             # ── D.  Ask the LLM what to do next  ────────────────────────────
             if log_steps:
@@ -660,13 +663,15 @@ async def _async_tool_use_loop_inner(
                         call_id = "_".join(name.split("_")[-2:])
 
                         tgt_task = next(
-                            (t for t, inf in task_info.items() if inf["call_id"] == call_id),
+                            (
+                                t
+                                for t, inf in task_info.items()
+                                if inf["call_id"] == call_id
+                            ),
                             None,
                         )
 
-                        orig_fn = (
-                            task_info[tgt_task]["name"] if tgt_task else "unknown"
-                        )
+                        orig_fn = task_info[tgt_task]["name"] if tgt_task else "unknown"
                         arg_json = (
                             task_info[tgt_task]["call_dict"]["function"]["arguments"]
                             if tgt_task
@@ -687,9 +692,12 @@ async def _async_tool_use_loop_inner(
                             client.append_messages([placeholder_msg])
 
                             meta = assistant_meta.setdefault(
-                                id(msg), {"original_tool_calls": [], "results_count": 0},
+                                id(msg),
+                                {"original_tool_calls": [], "results_count": 0},
                             )
-                            insert_pos = client.messages.index(msg) + 1 + meta["results_count"]
+                            insert_pos = (
+                                client.messages.index(msg) + 1 + meta["results_count"]
+                            )
                             client.messages.insert(insert_pos, client.messages.pop())
                             meta["results_count"] += 1
 
@@ -697,12 +705,17 @@ async def _async_tool_use_loop_inner(
                             task_info[tgt_task]["continue_msg"] = placeholder_msg
 
                             if log_steps:
-                                LOGGER.info(f"↩️  {pretty_name} placeholder inserted – still waiting")
+                                LOGGER.info(
+                                    f"↩️  {pretty_name} placeholder inserted – still waiting"
+                                )
 
                         else:  # the original tool already finished
                             finished = completed_results.get(
                                 call_id,
-                                _dumps({"status": "not-found", "call_id": call_id}, indent=4),
+                                _dumps(
+                                    {"status": "not-found", "call_id": call_id},
+                                    indent=4,
+                                ),
                             )
                             tool_msg = {
                                 "role": "tool",
@@ -713,31 +726,46 @@ async def _async_tool_use_loop_inner(
                             client.append_messages([tool_msg])
 
                             meta = assistant_meta.setdefault(
-                                id(msg), {"original_tool_calls": [], "results_count": 0},
+                                id(msg),
+                                {"original_tool_calls": [], "results_count": 0},
                             )
-                            insert_pos = client.messages.index(msg) + 1 + meta["results_count"]
+                            insert_pos = (
+                                client.messages.index(msg) + 1 + meta["results_count"]
+                            )
                             client.messages.insert(insert_pos, client.messages.pop())
                             meta["results_count"] += 1
 
                             if log_steps:
-                                LOGGER.info(f"↩️  {pretty_name} answered immediately (already finished)")
+                                LOGGER.info(
+                                    f"↩️  {pretty_name} answered immediately (already finished)"
+                                )
 
                         continue  # completed handling of this _continue
 
-                    if name.startswith("_cancel") and not name.startswith("_cancel_tasks"):
+                    if name.startswith("_cancel") and not name.startswith(
+                        "_cancel_tasks"
+                    ):
                         call_id = "_".join(name.split("_")[-2:])
 
                         # ── locate & cancel the underlying coroutine ──────
                         task_to_cancel = next(
-                            (t for t, info in task_info.items() if info["call_id"] == call_id),
+                            (
+                                t
+                                for t, info in task_info.items()
+                                if info["call_id"] == call_id
+                            ),
                             None,
                         )
 
                         orig_fn = (
-                            task_info[task_to_cancel]["name"] if task_to_cancel else "unknown"
+                            task_info[task_to_cancel]["name"]
+                            if task_to_cancel
+                            else "unknown"
                         )
                         arg_json = (
-                            task_info[task_to_cancel]["call_dict"]["function"]["arguments"]
+                            task_info[task_to_cancel]["call_dict"]["function"][
+                                "arguments"
+                            ]
                             if task_to_cancel
                             else "{}"
                         )
@@ -760,9 +788,12 @@ async def _async_tool_use_loop_inner(
                         client.append_messages([tool_msg])
 
                         meta = assistant_meta.setdefault(
-                            id(msg), {"original_tool_calls": [], "results_count": 0},
+                            id(msg),
+                            {"original_tool_calls": [], "results_count": 0},
                         )
-                        insert_pos = client.messages.index(msg) + 1 + meta["results_count"]
+                        insert_pos = (
+                            client.messages.index(msg) + 1 + meta["results_count"]
+                        )
                         client.messages.insert(insert_pos, client.messages.pop())
                         meta["results_count"] += 1
 
@@ -782,11 +813,19 @@ async def _async_tool_use_loop_inner(
 
                         # locate the underlying long-running task
                         tgt_task = next(
-                            (t for t, inf in task_info.items() if inf["call_id"] == call_id),
+                            (
+                                t
+                                for t, inf in task_info.items()
+                                if inf["call_id"] == call_id
+                            ),
                             None,
                         )
 
-                        pretty_name = f"_interject {task_info[tgt_task]['name']}({new_text})" if tgt_task else name
+                        pretty_name = (
+                            f"_interject {task_info[tgt_task]['name']}({new_text})"
+                            if tgt_task
+                            else name
+                        )
 
                         # ― push guidance onto the private queue -------------
                         if tgt_task and task_info[tgt_task]["interject_q"] is not None:
@@ -802,9 +841,12 @@ async def _async_tool_use_loop_inner(
                         client.append_messages([tool_msg])
 
                         meta = assistant_meta.setdefault(
-                            id(msg), {"original_tool_calls": [], "results_count": 0},
+                            id(msg),
+                            {"original_tool_calls": [], "results_count": 0},
                         )
-                        insert_pos = client.messages.index(msg) + 1 + meta["results_count"]
+                        insert_pos = (
+                            client.messages.index(msg) + 1 + meta["results_count"]
+                        )
                         client.messages.insert(insert_pos, client.messages.pop())
                         meta["results_count"] += 1
 
@@ -845,8 +887,7 @@ async def _async_tool_use_loop_inner(
                     sig = inspect.signature(fn)
                     params = sig.parameters
                     has_varkw = any(
-                        p.kind == inspect.Parameter.VAR_KEYWORD
-                        for p in params.values()
+                        p.kind == inspect.Parameter.VAR_KEYWORD for p in params.values()
                     )
 
                     filtered_extras = {
@@ -860,10 +901,7 @@ async def _async_tool_use_loop_inner(
 
                     # avoid double-passing the queue if the model already
                     # supplied an `interject_queue` argument
-                    if (
-                        "interject_queue" in args
-                        and name in interjectable_tools
-                    ):
+                    if "interject_queue" in args and name in interjectable_tools:
                         merged_kwargs["interject_queue"] = sub_q
 
                     if asyncio.iscoroutinefunction(fn):
@@ -915,10 +953,11 @@ async def _async_tool_use_loop_inner(
                     client.append_messages([placeholder_msg])
 
                     meta = assistant_meta.setdefault(
-                        id(msg), {"original_tool_calls": [], "results_count": 0},
+                        id(msg),
+                        {"original_tool_calls": [], "results_count": 0},
                     )
                     insert_pos = client.messages.index(msg) + 1 + meta["results_count"]
-                    moved = client.messages.pop()          # last element is the placeholder
+                    moved = client.messages.pop()  # last element is the placeholder
                     client.messages.insert(insert_pos, moved)
                     meta["results_count"] += 1
 
