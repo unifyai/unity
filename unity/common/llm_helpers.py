@@ -190,7 +190,7 @@ async def _async_tool_use_loop_inner(
     interjectable_tools: Optional[Set[str]] = None,
     clarification_capable_tools: Optional[Set[str]] = None,
     clarification_up_q: asyncio.Queue[str] | None = None,
-    clarification_down_q: asyncio.Queue[str] | None = None,      
+    clarification_down_q: asyncio.Queue[str] | None = None,
     propagate_chat_context: bool = True,
     parent_chat_context: Optional[list[dict]] = None,
     log_steps: bool = False,
@@ -338,7 +338,9 @@ async def _async_tool_use_loop_inner(
     consecutive_failures = 0
     pending: Set[asyncio.Task] = set()
     task_info: Dict[asyncio.Task, Dict[str, Any]] = {}
-    clarification_channels: Dict[str, Tuple[asyncio.Queue[str], asyncio.Queue[str]]] = {}
+    clarification_channels: Dict[str, Tuple[asyncio.Queue[str], asyncio.Queue[str]]] = (
+        {}
+    )
     completed_results: Dict[str, str] = {}
     assistant_meta: Dict[int, Dict[str, Any]] = {}
 
@@ -380,7 +382,7 @@ async def _async_tool_use_loop_inner(
             #       • ``cancel_event`` flips
             #       • a *new* interjection appears
             if pending and not llm_turn_required:
-                interject_w   = asyncio.create_task(interject_queue.get())
+                interject_w = asyncio.create_task(interject_queue.get())
                 cancel_waiter = asyncio.create_task(cancel_event.wait())
                 clar_waiters: Dict[asyncio.Task, asyncio.Task] = {}
                 for _t in pending:
@@ -418,23 +420,24 @@ async def _async_tool_use_loop_inner(
 
                 # ── clarification request bubbled up from a child tool ───
                 if done & clar_waiters.keys():
-                    for cw in (done & clar_waiters.keys()):
+                    for cw in done & clar_waiters.keys():
                         # ✱ the actual question pushed by the child tool
                         question = cw.result()
 
                         # ✱ locate the originating asyncio.Task / call-id
                         src_task = clar_waiters[cw]
-                        call_id  = task_info[src_task]["call_id"]
+                        call_id = task_info[src_task]["call_id"]
 
                         # ── 1. Mark the task as *blocked* awaiting clarification
                         task_info[src_task]["waiting_for_clarification"] = True
 
                         # ── 2. Emit the clarification_request_<CALL_ID> message
                         tool_msg = {
-                            "role":        "tool",
+                            "role": "tool",
                             "tool_call_id": call_id,
-                            "name":        f"clarification_request_{call_id}",
-                            "content":     "Tool incomplete, please answer the following to continue tool execution:\n" + question,
+                            "name": f"clarification_request_{call_id}",
+                            "content": "Tool incomplete, please answer the following to continue tool execution:\n"
+                            + question,
                         }
                         client.append_messages([tool_msg])
 
@@ -530,7 +533,7 @@ async def _async_tool_use_loop_inner(
                         raise RuntimeError(
                             "Aborted after too many consecutive tool failures.",
                         )
-                    
+
                 # 🔄  A tool completed but others are still running.
                 #     Give the LLM an immediate turn so it can act on the
                 #     new information (e.g. pass a clarification answer
@@ -538,7 +541,7 @@ async def _async_tool_use_loop_inner(
                 #     “wait for pending” gate.
                 if pending:
                     llm_turn_required = True
-                    continue          # jump to top-of-loop                
+                    continue  # jump to top-of-loop
 
             # ── B: wait for remaining tools before asking the LLM again,
             # unless the model already deserves a turn
@@ -577,8 +580,10 @@ async def _async_tool_use_loop_inner(
                 # Skip if the task is blocked waiting for clarification; there's
                 # nothing to "continue" until the user answers.
                 if not info.get("waiting_for_clarification"):
+
                     async def _continue() -> Dict[str, str]:
                         return {"status": "continue", "call_id": _call_id}
+
                     _continue.__doc__ = _continue_doc  # type: ignore[attr-defined]
                     _continue.__name__ = f"_continue_{_fn_name}_{_call_id}"
                     dynamic_tools[f"continue_{_call_id}"] = _continue
@@ -628,7 +633,7 @@ async def _async_tool_use_loop_inner(
                             "answer": answer,
                         }
 
-                    _clarify.__doc__  = _clarify_doc   # type: ignore[attr-defined]
+                    _clarify.__doc__ = _clarify_doc  # type: ignore[attr-defined]
                     _clarify.__name__ = f"_clarify_{_fn_name}_{_call_id}"[:64]
                     dynamic_tools[f"clarify_{_call_id}"] = _clarify
 
@@ -636,14 +641,18 @@ async def _async_tool_use_loop_inner(
             #  (a placeholder) before we let the assistant speak again.
             for _task in list(pending):
                 inf = task_info[_task]
-                if inf.get("placeholder_msg") or inf.get("continue_msg") or inf.get("clarify_placeholder"):
+                if (
+                    inf.get("placeholder_msg")
+                    or inf.get("continue_msg")
+                    or inf.get("clarify_placeholder")
+                ):
                     continue  # already covered
 
-                name     = inf["name"]
-                call_id  = inf["call_id"]
+                name = inf["name"]
+                call_id = inf["call_id"]
                 arg_json = inf["call_dict"]["function"]["arguments"]
                 asst_msg = inf["assistant_msg"]
-                meta     = assistant_meta[id(asst_msg)]
+                meta = assistant_meta[id(asst_msg)]
 
                 placeholder = {
                     "role": "tool",
@@ -658,9 +667,7 @@ async def _async_tool_use_loop_inner(
                 client.append_messages([placeholder])
 
                 # keep chronological order: immediately after the assistant turn
-                insert_pos = (
-                    client.messages.index(asst_msg) + 1 + meta["results_count"]
-                )
+                insert_pos = client.messages.index(asst_msg) + 1 + meta["results_count"]
                 moved = client.messages.pop()
                 client.messages.insert(insert_pos, moved)
                 meta["results_count"] += 1
@@ -708,7 +715,7 @@ async def _async_tool_use_loop_inner(
                 await asyncio.gather(interject_w, cancel_waiter, return_exceptions=True)
 
                 # 0️⃣ A *different* tool finished before the LLM answered -----
-                if done & pending_snapshot:               # ← NEW
+                if done & pending_snapshot:  # ← NEW
                     # — cancel the half-finished reasoning step
                     if not llm_task.done():
                         llm_task.cancel()
@@ -716,19 +723,21 @@ async def _async_tool_use_loop_inner(
                         if aux not in done and not aux.done():
                             aux.cancel()
                     await asyncio.gather(
-                        llm_task, interject_w, cancel_waiter,
+                        llm_task,
+                        interject_w,
+                        cancel_waiter,
                         return_exceptions=True,
                     )
 
                     # — handle each newly-finished task exactly as branch A does
-                    for task in (done & pending_snapshot):
+                    for task in done & pending_snapshot:
                         pending.remove(task)
-                        info     = task_info.pop(task)
-                        name     = info["name"]
-                        call_id  = info["call_id"]
+                        info = task_info.pop(task)
+                        name = info["name"]
+                        call_id = info["call_id"]
 
                         try:
-                            raw    = task.result()
+                            raw = task.result()
                             result = _dumps(raw, indent=4)
                             consecutive_failures = 0
                         except Exception:
@@ -736,19 +745,19 @@ async def _async_tool_use_loop_inner(
                             result = traceback.format_exc()
 
                         asst_msg = info["assistant_msg"]
-                        meta     = assistant_meta[id(asst_msg)]
+                        meta = assistant_meta[id(asst_msg)]
 
                         # ── choose where to write the result  --------------
-                        clar_ph       = info.get("clarify_placeholder")
-                        continue_msg  = info.get("continue_msg")
-                        placeholder   = info.get("placeholder_msg")
+                        clar_ph = info.get("clarify_placeholder")
+                        continue_msg = info.get("continue_msg")
+                        placeholder = info.get("placeholder_msg")
 
                         if clar_ph is not None:
                             clar_ph["content"] = result
                             tool_msg = clar_ph
                         elif continue_msg is not None:
                             continue_msg["content"] = result
-                            fn  = info["call_dict"]["function"]["name"]
+                            fn = info["call_dict"]["function"]["name"]
                             arg = info["call_dict"]["function"]["arguments"]
                             continue_msg["name"] = (
                                 f"{fn}({arg}) completed successfully, "
@@ -786,7 +795,7 @@ async def _async_tool_use_loop_inner(
                             )
 
                     # …then restart the main loop so the model sees the new info
-                    continue                                   # ← NEW
+                    continue  # ← NEW
 
                 # 1️⃣ user interjected → restart immediately
                 if interject_w in done:
@@ -1018,16 +1027,22 @@ async def _async_tool_use_loop_inner(
 
                     if name.startswith("_clarify_"):
                         call_id = "_".join(name.split("_")[-2:])
-                        ans     = args["answer"]
+                        ans = args["answer"]
 
                         # ── find the underlying pending task (if still alive) ───────────────
-                        tgt_task = next(                           # ← NEW
-                            (t for t, inf in task_info.items() if inf["call_id"] == call_id),
+                        tgt_task = next(  # ← NEW
+                            (
+                                t
+                                for t, inf in task_info.items()
+                                if inf["call_id"] == call_id
+                            ),
                             None,
                         )
 
                         if call_id in clarification_channels:
-                            await clarification_channels[call_id][1].put(ans)  # down-queue
+                            await clarification_channels[call_id][1].put(
+                                ans
+                            )  # down-queue
                             # ✔️ the tool is un-blocked – start watching it again
                             for _t, _inf in task_info.items():
                                 if _inf["call_id"] == call_id:
@@ -1038,19 +1053,22 @@ async def _async_tool_use_loop_inner(
                             "tool_call_id": call["id"],
                             "name": name,
                             "content": (
-                                f'Clarification answer sent upstream: {ans!r}\n'
-                                '⏳ Waiting for the original tool to finish…'
+                                f"Clarification answer sent upstream: {ans!r}\n"
+                                "⏳ Waiting for the original tool to finish…"
                             ),
                         }
                         client.append_messages([placeholder_msg])
 
                         # remember it so we can patch later
-                        if tgt_task is not None:                   # ← NEW
+                        if tgt_task is not None:  # ← NEW
                             task_info[tgt_task]["clarify_placeholder"] = placeholder_msg
                         meta = assistant_meta.setdefault(
-                            id(msg), {"original_tool_calls": [], "results_count": 0},
+                            id(msg),
+                            {"original_tool_calls": [], "results_count": 0},
                         )
-                        insert_pos = client.messages.index(msg) + 1 + meta["results_count"]
+                        insert_pos = (
+                            client.messages.index(msg) + 1 + meta["results_count"]
+                        )
                         client.messages.insert(insert_pos, client.messages.pop())
                         meta["results_count"] += 1
                         continue
@@ -1219,7 +1237,7 @@ async def _async_tool_use_loop_inner(
                 continue
 
             if log_steps:
-                LOGGER.info(f"\n🤖 {msg["content"]}\n")
+                LOGGER.info(f"\n🤖 {msg['content']}\n")
                 LOGGER.info("✅ Step finished (final answer)")
             return msg["content"]  # DONE!
 

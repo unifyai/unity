@@ -19,8 +19,9 @@ def make_llm(system_message: Optional[str] = None) -> unify.AsyncUnify:
         endpoint="o4-mini@openai",
         system_message=system_message,
         cache=True,
-        traced=True
+        traced=True,
     )
+
 
 # ──────────────────────────────────────────────────────────────────────────
 # 1.  DUMMY TOOLS – send_email immediately needs clarification
@@ -38,7 +39,9 @@ async def send_email(
         raise RuntimeError("clarification queues missing")
 
     # Dummy code
-    await clarification_up_q.put("It's best that we also inform him what we're bringing. Will you be bringing anything with you (food/drink)?")
+    await clarification_up_q.put(
+        "It's best that we also inform him what we're bringing. Will you be bringing anything with you (food/drink)?"
+    )
     await clarification_down_q.get()
     return f"Email sent!"
 
@@ -61,6 +64,7 @@ async def send_text(
 # ──────────────────────────────────────────────────────────────────────────
 asked_questions: list[str] = []  # for assertions
 
+
 # ──────────────────────────────────────────────────────────────────────────
 # 3.  The test
 # ──────────────────────────────────────────────────────────────────────────
@@ -68,13 +72,15 @@ asked_questions: list[str] = []  # for assertions
 @_handle_project
 async def test_clarification_bubbles_up_two_tiers() -> None:
     """
-    Verifies that the clarification travels up & the answer travels down two 
+    Verifies that the clarification travels up & the answer travels down two
     levels of the call stack.
     """
 
-    outer_client = make_llm("If you're unsure about the answer to any clarification requests that may come up from your internal tool use, "
-                            "then please request a clarification. There is no need to cancel an incomplete task if a clarification is requested, you can simply provide the clarifications and the tool will pick up where it left off. Only cancel it if you do not want the task completing at all."
-                            "Do not hallucinate any details, if you do not know the answer.")
+    outer_client = make_llm(
+        "If you're unsure about the answer to any clarification requests that may come up from your internal tool use, "
+        "then please request a clarification. There is no need to cancel an incomplete task if a clarification is requested, you can simply provide the clarifications and the tool will pick up where it left off. Only cancel it if you do not want the task completing at all."
+        "Do not hallucinate any details, if you do not know the answer."
+    )
 
     clar_up_q = asyncio.Queue()
     clar_down_q = asyncio.Queue()
