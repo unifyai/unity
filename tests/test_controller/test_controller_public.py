@@ -1,4 +1,6 @@
 import types, sys, pytest  # noqa: E402 (stubs before imports)
+from pathlib import Path
+import base64
 
 # ---------------------------------------------------------------------------
 # Stubs for external heavy deps (redis & BrowserWorker) BEFORE importing code
@@ -102,12 +104,89 @@ def test_controller_observe_str():
 def test_controller_act_smoke():
     """Smoke-test Controller.act and Redis publications."""
     c = Controller()
+    c._observe_ctx = {"state": {"in_textbox": False}}
+
     try:
-        action_str = c.act("open browser")
+        actions = c.act("open browser")
     except Exception as exc:
         pytest.skip(f"Skipping – backend unavailable: {exc}")
-    assert isinstance(action_str, str)
+    assert isinstance(actions, list)
+    assert isinstance(actions[0], str)
     # browser worker should have been started
     assert c._browser_open is True
     # ensure action_completion event was published
-    assert ("action_completion", action_str) in c._redis_client.published
+    assert ("action_completion", actions[0]) in c._redis_client.published
+
+
+@pytest.mark.timeout(30)
+def test_controller_screen_observation_linkedin():
+    """Smoke-test Controller.act and Redis publications."""
+    c = Controller()
+
+    raw_jpeg = Path('tests/test_controller/test_images/linkedin.jpeg').read_bytes()
+    b64 = base64.b64encode(raw_jpeg).decode("utf-8")
+    c._last_shot = b64
+    try:
+        ret = c.observe("Is the page on LinkedIn?", bool)
+    except Exception as exc:
+        pytest.skip(f"Skipping – backend unavailable: {exc}")
+    assert isinstance(ret, bool)
+    assert ret is True
+
+
+@pytest.mark.timeout(30)
+def test_controller_screen_observation_google():
+    """Smoke-test Controller.act and Redis publications."""
+    c = Controller()
+
+    raw_jpeg = Path('tests/test_controller/test_images/google.jpeg').read_bytes()
+    b64 = base64.b64encode(raw_jpeg).decode("utf-8")
+    c._last_shot = b64
+    try:
+        ret = c.observe("Is the page on LinkedIn?", bool)
+    except Exception as exc:
+        pytest.skip(f"Skipping – backend unavailable: {exc}")
+    assert isinstance(ret, bool)
+    assert ret is False
+
+
+@pytest.mark.timeout(30)
+def test_controller_feedback_loop():
+    """Smoke-test Controller.act and Redis publications."""
+    c = Controller()
+    c._observe_ctx = {"state": {"in_textbox": False}}
+
+    # on google
+    raw_jpeg = Path('tests/test_controller/test_images/google.jpeg').read_bytes()
+    b64 = base64.b64encode(raw_jpeg).decode("utf-8")
+    c._last_shot = b64
+
+    # observe page state
+    try:
+        ret = c.observe("Is the page on LinkedIn?", bool)
+    except Exception as exc:
+        pytest.skip(f"Skipping – backend unavailable: {exc}")
+
+    assert ret is False
+
+    # go to linkedin and ensure command is correct
+    try:
+        actions = c.act("go to LinkedIn website")
+    except Exception as exc:
+        pytest.skip(f"Skipping – backend unavailable: {exc}")
+
+    assert isinstance(actions, list) and isinstance(actions[0], str)
+    assert "open_url" in actions[0] and "linkedin.com" in actions[0]
+
+    # on linkedin 
+    raw_jpeg = Path('tests/test_controller/test_images/linkedin.jpeg').read_bytes()
+    b64 = base64.b64encode(raw_jpeg).decode("utf-8")
+    c._last_shot = b64
+
+    # observe page state
+    try:
+        ret = c.observe("Is the page on LinkedIn?", bool)
+    except Exception as exc:
+        pytest.skip(f"Skipping – backend unavailable: {exc}")
+    
+    assert ret is True
