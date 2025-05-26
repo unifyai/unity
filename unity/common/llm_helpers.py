@@ -724,7 +724,7 @@ async def _async_tool_use_loop_inner(
 
                         continue  # completed handling of this _continue
 
-                    if name.startswith("_cancel"):
+                    if name.startswith("_cancel") and not name.startswith("_cancel_tasks"):
                         call_id = "_".join(name.split("_")[-2:])
 
                         # ── locate & cancel the underlying coroutine ──────
