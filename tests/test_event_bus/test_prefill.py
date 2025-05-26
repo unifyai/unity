@@ -46,7 +46,7 @@ async def test_prefill_from_upstream_on_new_instance():
     bus2 = EventBus()
     bus2.set_window("messages", window)
 
-    latest = (await bus2.get_latest(types=["message"], limits=window))["message"]
+    latest = await bus2.search(filter="type == 'message'", limit=window)
 
     # Each originally-sent event (identified by its ts & payload) must be present
     for sent in published:

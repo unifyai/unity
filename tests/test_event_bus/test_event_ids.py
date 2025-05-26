@@ -44,7 +44,7 @@ async def test_event_ids_are_populated_and_unique() -> None:
     for txt in ("one", "two"):
         await bus.publish(Event(type="numbers", payload=DummyPayload(msg=txt)))
 
-    latest = (await bus.get_latest(types=["numbers"], limits=2))["numbers"]
+    latest = await bus.search(filter="type == 'numbers'", limit=2)
     assert len(latest) == 2
 
     e1, e2 = latest
