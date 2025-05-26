@@ -19,11 +19,13 @@ def make_llm(system_message: Optional[str] = None) -> unify.AsyncUnify:
         endpoint="o4-mini@openai",
         system_message=system_message,
         cache=True,
+        traced=True
     )
 
 # ──────────────────────────────────────────────────────────────────────────
 # 1.  DUMMY TOOLS – send_email immediately needs clarification
 # ──────────────────────────────────────────────────────────────────────────
+@unify.traced
 async def send_email(
     address: str,
     description: str,
@@ -41,6 +43,7 @@ async def send_email(
     return f"Email sent!"
 
 
+@unify.traced
 async def send_text(
     number: str,
     description: str,
@@ -76,6 +79,7 @@ async def test_clarification_bubbles_up_two_tiers() -> None:
     clar_up_q = asyncio.Queue()
     clar_down_q = asyncio.Queue()
 
+    @unify.traced
     async def request_clarification(
         question: str,
     ) -> str:
