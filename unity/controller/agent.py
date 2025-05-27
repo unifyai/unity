@@ -6,7 +6,7 @@ import time
 from datetime import datetime, timezone
 from pydantic import BaseModel, create_model, Field
 import inspect
-
+import os
 
 from .helpers import _pascal, _slug
 from .commands import *
@@ -22,7 +22,10 @@ from ..constants import LOGGER
 
 import unify
 
-client = unify.Unify(cache=True, traced=True)
+client = unify.Unify(
+    os.environ.get("UNIFY_CACHE"),
+    traced=os.environ.get("UNIFY_TRACED"),
+)
 client.set_system_message(PRIMITIVE_TO_BROWSER_ACTION_CANDIDATES)
 
 SCROLLING_STATE = None

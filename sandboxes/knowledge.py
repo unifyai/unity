@@ -23,6 +23,7 @@ import logging
 import re
 import sys
 import select
+import os
 from typing import List, Optional, Tuple
 from pydantic import BaseModel, Field
 from pathlib import Path
@@ -97,7 +98,11 @@ def _seed_llm(
             "Avoid any personally identifying sensitive data. "
             'Return as JSON {"statements": [...], "theme": <string>} and nothing else.'
         )
-    client = unify.Unify("o4-mini@openai", cache=True, traced=True)
+    client = unify.Unify(
+        "o4-mini@openai",
+        cache=os.environ.get("UNIFY_CACHE"),
+        traced=os.environ.get("UNIFY_TRACED"),
+    )
     client.set_system_message(prompt)
     raw = client.generate("Produce knowledge scenario").strip()
 

@@ -17,6 +17,7 @@ import threading
 import time
 from datetime import datetime, timezone
 from pathlib import Path
+import os
 from typing import Dict, List, Optional, Tuple
 from pydantic import BaseModel, Field
 from pathlib import Path
@@ -96,7 +97,11 @@ def _seed_llm(
             "Create 110‑140 tasks across queues with positions, priorities & ISO start times. "
             "Return only JSON with top‑level 'tasks' and optional 'theme'."
         )
-    client = unify.Unify("o4-mini@openai", cache=True, traced=True)
+    client = unify.Unify(
+        "o4-mini@openai",
+        cache=os.environ.get("UNIFY_CACHE"),
+        traced=os.environ.get("UNIFY_TRACED"),
+    )
     client.set_system_message(prompt)
     raw = client.generate("Produce scenario").strip()
 

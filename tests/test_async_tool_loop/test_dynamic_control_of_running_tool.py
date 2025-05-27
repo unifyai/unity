@@ -72,7 +72,11 @@ def _tool_results(msgs: List[dict], tool_name: str) -> int:
 # --------------------------------------------------------------------------- #
 @pytest.fixture()
 def client():
-    return unify.AsyncUnify(MODEL_NAME, cache=True, traced=True)
+    return unify.AsyncUnify(
+        MODEL_NAME,
+        cache=os.environ.get("UNIFY_CACHE"),
+        traced=os.environ.get("UNIFY_TRACED"),
+    )
 
 
 # --------------------------------------------------------------------------- #

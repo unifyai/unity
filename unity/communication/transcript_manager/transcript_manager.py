@@ -1,6 +1,6 @@
 import json
 from typing import List, Dict, Optional, Union
-
+import os
 import unify
 from ...common.embed_utils import EMBED_MODEL, ensure_vector_column
 from ...communication.types.contact import Contact
@@ -89,7 +89,11 @@ class TranscriptManager:
         """
         from unity.communication.transcript_manager.sys_msgs import ANSWER
 
-        client = unify.AsyncUnify("o4-mini@openai", cache=True, traced=True)
+        client = unify.AsyncUnify(
+            "o4-mini@openai",
+            cache=os.environ.get("UNIFY_CACHE"),
+            traced=os.environ.get("UNIFY_TRACED"),
+        )
         client.set_system_message(ANSWER)
         handle = start_async_tool_use_loop(client, text, self._tools)
         if return_reasoning_steps:
@@ -126,7 +130,11 @@ class TranscriptManager:
 
         if not isinstance(exchange_ids, list):
             exchange_ids = [exchange_ids]
-        client = unify.AsyncUnify("o4-mini@openai", cache=True, traced=True)
+        client = unify.AsyncUnify(
+            "o4-mini@openai",
+            cache=os.environ.get("UNIFY_CACHE"),
+            traced=os.environ.get("UNIFY_TRACED"),
+        )
         client.set_system_message(
             SUMMARIZE.replace("{guidance}", f"\n{guidance}\n" if guidance else ""),
         )
