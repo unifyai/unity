@@ -19,10 +19,7 @@ steps:
   - |
     echo "Discovering Cloud Run jobs using Unity images..."
     
-    # Define the image repository pattern
-    REPO_PATTERN="${_REGION}-docker.pkg.dev/${_PROJECT_ID}/${_REPOSITORY}/unity"
-    
-    echo "Looking for jobs using images matching: $REPO_PATTERN"
+    echo "Looking for jobs using images matching: ${_REPO_PATTERN}"
     
     # Get all Cloud Run jobs and filter by image
     ALL_JOBS=$(gcloud run jobs list \
@@ -31,7 +28,7 @@ steps:
       --project=${_PROJECT_ID})
     
     # Use jq to filter jobs that use Unity images
-    UNITY_JOBS=$(echo "$ALL_JOBS" | jq -r --arg pattern "$REPO_PATTERN" '
+    UNITY_JOBS=$(echo "$ALL_JOBS" | jq -r --arg pattern "${_REPO_PATTERN}" '
       .[] | 
       select(.spec.template.spec.template.spec.containers[0].image | startswith($pattern)) |
       .metadata.name
@@ -39,7 +36,7 @@ steps:
     
     if [ -z "$UNITY_JOBS" ]; then
       echo "No Cloud Run jobs found using Unity images"
-      echo "Image pattern searched: $REPO_PATTERN"
+      echo "Image pattern searched: ${_REPO_PATTERN}"
       echo ""
       echo "Available jobs in region:"
       gcloud run jobs list --region=${_REGION} --format="table(metadata.name,spec.template.spec.template.spec.containers[0].image)"
@@ -89,15 +86,13 @@ steps:
   - |
     echo "Verifying updated jobs..."
     
-    REPO_PATTERN="${_REGION}-docker.pkg.dev/${_PROJECT_ID}/${_REPOSITORY}/unity"
-    
     # Get updated jobs
     ALL_JOBS=$(gcloud run jobs list \
       --format="json" \
       --region=${_REGION} \
       --project=${_PROJECT_ID})
     
-    UNITY_JOBS=$(echo "$ALL_JOBS" | jq -r --arg pattern "$REPO_PATTERN" '
+    UNITY_JOBS=$(echo "$ALL_JOBS" | jq -r --arg pattern "${_REPO_PATTERN}" '
       .[] | 
       select(.spec.template.spec.template.spec.containers[0].image | startswith($pattern)) |
       "\(.metadata.name): \(.spec.template.spec.template.spec.containers[0].image)"
@@ -116,6 +111,7 @@ substitutions:
   _PROJECT_ID: ''
   _REGION: 'us-central1'
   _REPOSITORY: 'unity'
+  _REPO_PATTERN: '${_REGION}-docker.pkg.dev/${_PROJECT_ID}/${_REPOSITORY}/unity'
 
 # Options
 options:
