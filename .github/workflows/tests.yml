@@ -68,3 +68,7 @@ jobs:
         UNIFY_KEY: ${{ secrets.USER_API_KEY }}
         UNIFY_BASE_URL: https://api.unify.ai/v0
         OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+        FIRST_NAME: Rick
+        AGENT_FIRST: Rick
+        AGENT_LAST: Morty
+        AGENT_AGE: 29
