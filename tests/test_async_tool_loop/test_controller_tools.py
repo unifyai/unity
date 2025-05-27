@@ -6,6 +6,7 @@ import base64
 import unify
 import unity.common.llm_helpers as llmh
 from tests.helpers import _handle_project
+import json
 
 
 # --- Redis stub -----------------------------------------------------------
@@ -82,8 +83,8 @@ async def test_controller_act_tool_loop():
     """
     client = unify.AsyncUnify(
         MODEL_NAME,
-        cache=eval(os.environ.get("UNIFY_CACHE")),
-        traced=eval(os.environ.get("UNIFY_TRACED")),
+        cache=json.loads(os.environ.get("UNIFY_CACHE")),
+        traced=json.loads(os.environ.get("UNIFY_TRACED")),
     )
     client.set_system_message("Feel free to call multiple tools per turn.")
 
@@ -111,8 +112,8 @@ async def test_controller_observe_tool_loop():
     # Create a fresh AsyncUnify client
     client = unify.AsyncUnify(
         MODEL_NAME,
-        cache=eval(os.environ.get("UNIFY_CACHE")),
-        traced=eval(os.environ.get("UNIFY_TRACED")),
+        cache=json.loads(os.environ.get("UNIFY_CACHE")),
+        traced=json.loads(os.environ.get("UNIFY_TRACED")),
     )
     client.set_system_message("Feel free to call multiple tools per turn.")
 
@@ -142,8 +143,8 @@ async def test_controller_complex_tool_loop():
     # Create a fresh AsyncUnify client
     client = unify.AsyncUnify(
         MODEL_NAME,
-        cache=eval(os.environ.get("UNIFY_CACHE")),
-        traced=eval(os.environ.get("UNIFY_TRACED")),
+        cache=json.loads(os.environ.get("UNIFY_CACHE")),
+        traced=json.loads(os.environ.get("UNIFY_TRACED")),
     )
     client.set_system_message("Feel free to call multiple tools per turn.")
 

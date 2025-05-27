@@ -22,6 +22,7 @@ from __future__ import annotations
 import asyncio
 import os
 from typing import List
+import json
 
 import pytest
 import unify
@@ -74,8 +75,8 @@ def _tool_results(msgs: List[dict], tool_name: str) -> int:
 def client():
     return unify.AsyncUnify(
         MODEL_NAME,
-        cache=eval(os.environ.get("UNIFY_CACHE")),
-        traced=eval(os.environ.get("UNIFY_TRACED")),
+        cache=json.loads(os.environ.get("UNIFY_CACHE")),
+        traced=json.loads(os.environ.get("UNIFY_TRACED")),
     )
 
 
