@@ -255,7 +255,7 @@ def setup_session_context():
     same seeded data.
     """
     file_path = __file__
-    ctx = "/".join(file_path.split("/tests/")[1].split("/"))  # e.g. "conftest"
+    ctx = "/".join(file_path.split("/tests/")[1].split("/")[:-1])
     if unify.get_contexts(prefix=ctx):
         unify.delete_context(ctx)
 
