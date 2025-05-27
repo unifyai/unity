@@ -588,6 +588,12 @@ async def _async_tool_use_loop_inner(
 
             dynamic_tools: Dict[str, Callable] = {}
 
+            # helper: register a freshly-minted coroutine as a *temporary* tool
+            def _reg_tool(key: str, func_name: str, doc: str, fn: Callable) -> None:
+                fn.__doc__ = doc  # type: ignore[attr-defined]
+                fn.__name__ = func_name[:64]
+                dynamic_tools[key] = fn
+
             for _task in list(pending):
                 info = task_info[_task]
                 _call_id: str = info["call_id"]
@@ -611,9 +617,12 @@ async def _async_tool_use_loop_inner(
                     async def _continue() -> Dict[str, str]:
                         return {"status": "continue", "call_id": _call_id}
 
-                    _continue.__doc__ = _continue_doc  # type: ignore[attr-defined]
-                    _continue.__name__ = f"_continue_{_fn_name}_{_call_id}"
-                    dynamic_tools[f"continue_{_call_id}"] = _continue
+                    _reg_tool(
+                        key=f"continue_{_call_id}",
+                        func_name=f"_continue_{_fn_name}_{_call_id}",
+                        doc=_continue_doc,
+                        fn=_continue,
+                    )
 
                 # ––– 2. cancel helper –––––––––––––––––––––––––––––––––––––
                 async def _cancel() -> Dict[str, str]:
@@ -623,9 +632,12 @@ async def _async_tool_use_loop_inner(
                     task_info.pop(_task, None)
                     return {"status": "cancelled", "call_id": _call_id}
 
-                _cancel.__doc__ = _cancel_doc  # type: ignore[attr-defined]
-                _cancel.__name__ = f"_cancel_{_fn_name}_{_call_id}"[:64]
-                dynamic_tools[f"cancel_{_call_id}"] = _cancel
+                _reg_tool(
+                    key=f"cancel_{_call_id}",
+                    func_name=f"_cancel_{_fn_name}_{_call_id}",
+                    doc=_cancel_doc,
+                    fn=_cancel,
+                )
 
                 # ––– 3. interject helper (optional) ––––––––––––––––––––––
                 if info.get("is_interjectable"):
@@ -642,9 +654,12 @@ async def _async_tool_use_loop_inner(
                             "content": content,
                         }
 
-                    _interject.__doc__ = _interject_doc  # type: ignore[attr-defined]
-                    _interject.__name__ = f"_interject_{_fn_name}_{_call_id}"[:64]
-                    dynamic_tools[f"interject_{_call_id}"] = _interject
+                    _reg_tool(
+                        key=f"interject_{_call_id}",
+                        func_name=f"_interject_{_fn_name}_{_call_id}",
+                        doc=_interject_doc,
+                        fn=_interject,
+                    )
 
                 # ––– 4. clarification-answer helper (optional) ––––––––––
                 if info.get("clar_up_q") is not None:
@@ -660,9 +675,12 @@ async def _async_tool_use_loop_inner(
                             "answer": answer,
                         }
 
-                    _clarify.__doc__ = _clarify_doc  # type: ignore[attr-defined]
-                    _clarify.__name__ = f"_clarify_{_fn_name}_{_call_id}"[:64]
-                    dynamic_tools[f"clarify_{_call_id}"] = _clarify
+                    _reg_tool(
+                        key=f"clarify_{_call_id}",
+                        func_name=f"_clarify_{_fn_name}_{_call_id}",
+                        doc=_clarify_doc,
+                        fn=_clarify,
+                    )
 
             # make sure every pending call already has a *tool* reply ──
             #  (a placeholder) before we let the assistant speak again.
