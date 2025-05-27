@@ -1,7 +1,6 @@
 import asyncio
 from datetime import datetime
 from google.cloud import pubsub_v1
-from google.oauth2.service_account import Credentials
 import json
 import os
 from actions import handle_message_action
@@ -188,10 +187,16 @@ class CommsManager:
         """Subscribe to a specific PubSub topic and process messages."""
         try:
             if not self.credentials:
-                creds_json = json.loads(os.getenv("GCP_SA_KEY"))
-                self.credentials = Credentials.from_service_account_info(creds_json)
-
-            subscriber = pubsub_v1.SubscriberClient(credentials=self.credentials)
+                # Use GOOGLE_APPLICATION_CREDENTIALS for authentication
+                if os.getenv("GOOGLE_APPLICATION_CREDENTIALS"):
+                    # Let GCP libraries use default authentication
+                    subscriber = pubsub_v1.SubscriberClient()
+                else:
+                    raise ValueError(
+                        "GOOGLE_APPLICATION_CREDENTIALS environment variable must be set"
+                    )
+            else:
+                subscriber = pubsub_v1.SubscriberClient(credentials=self.credentials)
             subscription_path = subscriber.subscription_path(
                 project_id,
                 subscription_id,

@@ -4,13 +4,14 @@ FROM python:3.11-slim
 # Set working directory
 WORKDIR /app
 
-# Install system dependencies
+# Install system dependencies including tini
 RUN apt-get update && apt-get install -y \
     gcc \
     g++ \
     portaudio19-dev \
     python3-dev \
     pkg-config \
+    tini \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy requirements file
@@ -28,5 +29,5 @@ RUN chmod +x start.sh
 # Expose the ports that the applications use
 EXPOSE 8080 8090
 
-# Use the start script to run both processes with prefixed logging
-CMD ["./start.sh"]
+# Use tini as init system and run the start script
+ENTRYPOINT ["/usr/bin/tini", "--", "./start.sh"]
