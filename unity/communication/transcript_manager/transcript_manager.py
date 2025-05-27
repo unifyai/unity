@@ -56,6 +56,7 @@ class TranscriptManager:
         text: str,
         *,
         return_reasoning_steps: bool = False,
+        parent_chat_context: list[dict] | None = None,
     ) -> "AsyncToolLoopHandle":
         """
         Ask any question as a text command, and use the tools available (the private methods of this class) to perform the action.
@@ -63,6 +64,7 @@ class TranscriptManager:
         Args:
             text (str): The text-based question to answer.
             return_reasoning_steps (bool): Whether to return the reasoning steps along with the answer.
+            parent_chat_context (list[dict]): A list of parent context messages to pass down into the tool use loop.
 
         Returns:
             AsyncToolLoopHandle: A handle to the running conversation that supports:
@@ -95,7 +97,12 @@ class TranscriptManager:
             traced=json.loads(os.environ.get("UNIFY_TRACED", "true")),
         )
         client.set_system_message(ANSWER)
-        handle = start_async_tool_use_loop(client, text, self._tools)
+        handle = start_async_tool_use_loop(
+            client,
+            text,
+            self._tools,
+            parent_chat_context=parent_chat_context,
+        )
         if return_reasoning_steps:
             # Wrap the handle.result() to return both answer and reasoning steps
             original_result = handle.result
