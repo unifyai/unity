@@ -42,18 +42,23 @@ except ImportError:
     current_dir = os.path.dirname(os.path.abspath(__file__))
     unity_root = os.path.dirname(os.path.dirname(current_dir))
     cr_path = os.path.join(
-        unity_root, "unity", "controller", "playwright", "command_runner.py"
+        unity_root,
+        "unity",
+        "controller",
+        "playwright",
+        "command_runner.py",
     )
 
     # Ensure the parent package structure exists in sys.modules
     parent_pkg = "unity.controller.playwright"
     if parent_pkg not in sys.modules or not hasattr(
-        sys.modules[parent_pkg], "__path__"
+        sys.modules[parent_pkg],
+        "__path__",
     ):
         # Create a proper package module
         pkg_mod = types.ModuleType(parent_pkg)
         pkg_mod.__path__ = [
-            os.path.join(unity_root, "unity", "controller", "playwright")
+            os.path.join(unity_root, "unity", "controller", "playwright"),
         ]
         pkg_mod.__package__ = parent_pkg
         sys.modules[parent_pkg] = pkg_mod
@@ -63,7 +68,7 @@ except ImportError:
         f"{parent_pkg}.command_runner",
         cr_path,
         submodule_search_locations=[
-            os.path.join(unity_root, "unity", "controller", "playwright")
+            os.path.join(unity_root, "unity", "controller", "playwright"),
         ],
     )
     cr_mod = importlib.util.module_from_spec(spec)

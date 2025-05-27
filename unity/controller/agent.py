@@ -21,13 +21,11 @@ from .sys_msgs import (
 from ..constants import LOGGER
 
 import unify
-from dotenv import load_dotenv
-
-load_dotenv()
+import json
 
 client = unify.Unify(
-    cache=True,
-    traced=True,
+    cache=json.loads(os.environ.get("UNIFY_CACHE")),
+    traced=json.loads(os.environ.get("UNIFY_TRACED")),
 )
 client.set_system_message(PRIMITIVE_TO_BROWSER_ACTION_CANDIDATES)
 

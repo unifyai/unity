@@ -8,6 +8,7 @@ import os
 from ..common.llm_helpers import start_async_tool_use_loop
 from ..task_list_manager.task_list_manager import TaskListManager
 from .sys_msgs import REQUEST
+import json
 
 
 class _DummyPlanner:
@@ -153,8 +154,8 @@ class TaskManager(threading.Thread):
         """
         client = unify.AsyncUnify(
             "o4-mini@openai",
-            cache=eval(os.environ.get("UNIFY_CACHE")),
-            traced=eval(os.environ.get("UNIFY_TRACED")),
+            cache=json.loads(os.environ.get("UNIFY_CACHE")),
+            traced=json.loads(os.environ.get("UNIFY_TRACED")),
         )
         client.set_system_message(REQUEST)
         ans = await start_async_tool_use_loop(
