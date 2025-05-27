@@ -1,5 +1,4 @@
 import json
-import inspect
 import asyncio
 import inspect
 import traceback
@@ -343,6 +342,102 @@ async def _async_tool_use_loop_inner(
     completed_results: Dict[str, str] = {}
     assistant_meta: Dict[int, Dict[str, Any]] = {}
 
+    # ────────────────────────────────────────────────────────────────────
+    # Helper: *single* authoritative implementation of "task finished"
+    # handling (was duplicated in two separate branches).
+    # ────────────────────────────────────────────────────────────────────
+    async def _process_completed_task(task: asyncio.Task) -> None:
+        """
+        Deal with a finished tool *task* exactly once:
+
+        1.  Pop bookkeeping (``pending`` / ``task_info``).
+        2.  Serialise *success* or *exception* into ``result``.
+        3.  Patch or insert the correct **tool** message so the transcript
+            stays perfectly chronological.
+        4.  Emit the event-bus hook (if configured).
+        5.  Record the payload in ``completed_results`` for later
+            `_continue_<id>` helpers.
+        6.  Enforce the *max_consecutive_failures* safety valve.
+        """
+
+        nonlocal consecutive_failures
+
+        pending.discard(task)
+        info = task_info.pop(task)
+        name = info["name"]
+        call_id = info["call_id"]
+
+        # 2️⃣  obtain result -------------------------------------------------
+        try:
+            raw = task.result()
+            result = _dumps(raw, indent=4)
+            consecutive_failures = 0
+            if log_steps:
+                LOGGER.info(f"\n🛠️ {name} = {result}\n")
+        except Exception:
+            consecutive_failures += 1
+            result = traceback.format_exc()
+            if log_steps:
+                LOGGER.error(
+                    f"\n❌ {name} failed "
+                    f"(attempt {consecutive_failures}/{max_consecutive_failures}):\n{result}",
+                )
+
+        # 3️⃣  remember so later `_continue_*` helpers can answer instantly
+        completed_results[call_id] = result
+
+        # 4️⃣  update / insert tool-result message --------------------------
+        asst_msg = info["assistant_msg"]
+        meta = assistant_meta[id(asst_msg)]
+
+        continue_msg = info.get("continue_msg")
+        if continue_msg is not None:
+            continue_msg["content"] = result
+            fn = info["call_dict"]["function"]["name"]
+            arg = info["call_dict"]["function"]["arguments"]
+            continue_msg["name"] = (
+                f"{fn}({arg}) completed successfully, "
+                "the return values are in the `content` field below."
+            )
+            tool_msg = continue_msg
+        else:
+            clarify_ph = info.get("clarify_placeholder")
+            if clarify_ph is not None:
+                clarify_ph["content"] = result
+                tool_msg = clarify_ph
+            else:
+                tool_reply_msg = info.get("tool_reply_msg")
+                if tool_reply_msg is not None:
+                    tool_reply_msg["content"] = result
+                    tool_msg = tool_reply_msg
+                else:
+                    tool_msg = {
+                        "role": "tool",
+                        "tool_call_id": call_id,
+                        "name": name,
+                        "content": result,
+                    }
+                    client.append_messages([tool_msg])
+                    insert_pos = (
+                        client.messages.index(asst_msg) + 1 + meta["results_count"]
+                    )
+                    moved = client.messages.pop()
+                    client.messages.insert(insert_pos, moved)
+                    meta["results_count"] += 1
+
+        if event_bus:
+            await event_bus.publish(
+                Event(type=event_type, payload={"message": tool_msg}),
+            )
+
+        # 6️⃣  failure guard -------------------------------------------------
+        if consecutive_failures >= max_consecutive_failures:
+            if log_steps:
+                LOGGER.error("🚨 Aborting: too many tool failures.")
+            raise RuntimeError(
+                "Aborted after too many consecutive tool failures.",
+            )
+
     if interjectable_tools is None:
         interjectable_tools = set()
     if clarification_capable_tools is None:
@@ -470,88 +565,7 @@ async def _async_tool_use_loop_inner(
                     continue
 
                 for task in done:  # finished tool(s)
-                    # NOTE: Ordered insertion dance starts here:
-                    #   – we first restore the original assistant turn
-                    #     (``tool_calls`` list) so its *own* content is
-                    #     visible again,
-                    #   – then we inject the matching “tool → result” message
-                    #     *immediately after* that assistant turn so the chat
-                    #     history remains perfectly chronological.
-                    pending.remove(task)
-                    info = task_info.pop(task)
-                    name = info["name"]
-                    call_id = info["call_id"]
-
-                    try:
-                        raw = task.result()
-
-                        result = _dumps(raw, indent=4)
-                        consecutive_failures = 0
-                        if log_steps:
-                            LOGGER.info(f"\n🛠️ {name} = {result}\n")
-                    except Exception:
-                        consecutive_failures += 1
-                        result = traceback.format_exc()
-                        if log_steps:
-                            LOGGER.error(
-                                f"\n❌ {name} failed "
-                                f"(attempt {consecutive_failures}/{max_consecutive_failures}):\n{result}",
-                            )
-
-                    # --- retro-patch + ordered insertion --------------------
-                    asst_msg = info["assistant_msg"]
-                    meta = assistant_meta[id(asst_msg)]
-
-                    # 1. Prefer patching the *continue* placeholder (if any);
-                    #    otherwise fall back to the original tool placeholder.
-                    continue_msg = info.get("continue_msg")
-                    if continue_msg is not None:
-                        continue_msg["content"] = result
-                        name = info["call_dict"]["function"]["name"]
-                        args = info["call_dict"]["function"]["arguments"]
-                        continue_msg["name"] = (
-                            f"{name}({args}) completed successfully, the return values are in the `content` field below."
-                        )
-                        tool_msg = continue_msg
-                    else:
-                        # 1️⃣ Was this completion preceded by a clarify_<id> call?
-                        clarify_ph = info.get("clarify_placeholder")
-                        if clarify_ph is not None:
-                            clarify_ph["content"] = result
-                            tool_msg = clarify_ph
-                        else:
-                            tool_reply_msg = info.get("tool_reply_msg")
-                        if tool_reply_msg is not None:
-                            tool_reply_msg["content"] = result
-                            tool_msg = tool_reply_msg
-                        else:
-                            tool_msg = {
-                                "role": "tool",
-                                "tool_call_id": call_id,
-                                "name": name,
-                                "content": result,
-                            }
-                            client.append_messages([tool_msg])
-                            insert_pos = (
-                                client.messages.index(asst_msg)
-                                + 1
-                                + meta["results_count"]
-                            )
-                            moved = client.messages.pop()
-                            client.messages.insert(insert_pos, moved)
-                            meta["results_count"] += 1
-
-                    if event_bus:
-                        await event_bus.publish(
-                            Event(type=event_type, payload={"message": tool_msg}),
-                        )
-
-                    if consecutive_failures >= max_consecutive_failures:
-                        if log_steps:
-                            LOGGER.error("🚨 Aborting: too many tool failures.")
-                        raise RuntimeError(
-                            "Aborted after too many consecutive tool failures.",
-                        )
+                    await _process_completed_task(task)
 
                 # 🔄  A tool completed but others are still running.
                 #     Give the LLM an immediate turn so it can act on the
@@ -750,72 +764,7 @@ async def _async_tool_use_loop_inner(
 
                     # — handle each newly-finished task exactly as branch A does
                     for task in done & pending_snapshot:
-                        pending.remove(task)
-                        info = task_info.pop(task)
-                        name = info["name"]
-                        call_id = info["call_id"]
-
-                        try:
-                            raw = task.result()
-                            result = _dumps(raw, indent=4)
-                            consecutive_failures = 0
-                        except Exception:
-                            consecutive_failures += 1
-                            result = traceback.format_exc()
-
-                        # 🔔 ➊  store the payload so a later `_continue_<id>` helper
-                        #   can reply immediately even after the tool has finished**
-                        completed_results[call_id] = result
-
-                        asst_msg = info["assistant_msg"]
-                        meta = assistant_meta[id(asst_msg)]
-
-                        # ── choose where to write the result  --------------
-                        clar_ph = info.get("clarify_placeholder")
-                        continue_msg = info.get("continue_msg")
-                        placeholder = info.get("tool_reply_msg")
-
-                        if clar_ph is not None:
-                            clar_ph["content"] = result
-                            tool_msg = clar_ph
-                        elif continue_msg is not None:
-                            continue_msg["content"] = result
-                            fn = info["call_dict"]["function"]["name"]
-                            arg = info["call_dict"]["function"]["arguments"]
-                            continue_msg["name"] = (
-                                f"{fn}({arg}) completed successfully, "
-                                "the return values are in the `content` field below."
-                            )
-                            tool_msg = continue_msg
-                        elif placeholder is not None:
-                            placeholder["content"] = result
-                            tool_msg = placeholder
-                        else:
-                            tool_msg = {
-                                "role": "tool",
-                                "tool_call_id": call_id,
-                                "name": name,
-                                "content": result,
-                            }
-                            client.append_messages([tool_msg])
-                            insert_pos = (
-                                client.messages.index(asst_msg)
-                                + 1
-                                + meta["results_count"]
-                            )
-                            moved = client.messages.pop()
-                            client.messages.insert(insert_pos, moved)
-                        meta["results_count"] += 1
-
-                        if event_bus:
-                            await event_bus.publish(
-                                Event(type=event_type, payload={"message": tool_msg}),
-                            )
-
-                        if consecutive_failures >= max_consecutive_failures:
-                            raise RuntimeError(
-                                "Aborted after too many consecutive tool failures.",
-                            )
+                        await _process_completed_task(task)
 
                     # …then restart the main loop so the model sees the new info
                     # 👇 make sure the assistant gets an immediate turn
