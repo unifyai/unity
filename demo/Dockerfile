@@ -23,6 +23,9 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Copy the demo application code
 COPY . .
 
+# Download the turn detector model files
+RUN python call.py download-files
+
 # Make the start script executable
 RUN chmod +x start.sh
 
