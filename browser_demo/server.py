@@ -23,12 +23,10 @@ async def main():
             act_res = await controller.act(action)
             print("Action result:", act_res)
         elif act_or_observe == "o":
-            print(controller._observe_ctx)
             obs = input("Observation: ")
             obs_res = await controller.observe(obs, bool)
             print("Observe result:", obs_res)
         elif act_or_observe == "c":
-            print(controller._observe_ctx)
             act_res = await controller.act("close_browser")
             print("Action result:", act_res)
             break
