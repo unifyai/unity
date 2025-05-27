@@ -11,6 +11,15 @@ steps:
 - name: 'gcr.io/cloud-builders/docker'
   args: ['push', '${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPOSITORY}/unity:latest']
 
+  # Trigger deployment pipeline via Pub/Sub
+- name: 'gcr.io/cloud-builders/gcloud'
+  entrypoint: 'bash'
+  args:
+  - '-c'
+  - |
+    gcloud pubsub topics publish unity-image-built \
+      --message='{"image_uri":"${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPOSITORY}/unity:${SHORT_SHA}","latest_uri":"${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPOSITORY}/unity:latest","commit_sha":"${SHORT_SHA}","build_id":"${BUILD_ID}","project_id":"${PROJECT_ID}","region":"${_REGION}","repository":"${_REPOSITORY}"}'
+
 # Substitution variables
 substitutions:
   _REGION: 'us-central1'  # Change to your preferred region
