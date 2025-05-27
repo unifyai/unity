@@ -539,19 +539,10 @@ async def _async_tool_use_loop_inner(
                                 "name": f"clarification_request_{call_id}",
                                 "content": "",  # will fill below
                             }
-                            client.append_messages([ph])
-                            meta = assistant_meta[
-                                id(task_info[src_task]["assistant_msg"])
-                            ]
-                            insert_pos = (
-                                client.messages.index(
-                                    task_info[src_task]["assistant_msg"],
-                                )
-                                + 1
-                                + meta["results_count"]
+                            _insert_after_assistant(
+                                task_info[src_task]["assistant_msg"],
+                                ph,
                             )
-                            client.messages.insert(insert_pos, client.messages.pop())
-                            meta["results_count"] += 1
                             task_info[src_task]["tool_reply_msg"] = ph
 
                         # 3️⃣ turn (or update) the placeholder into the request
