@@ -62,7 +62,7 @@ async def test_basic_event_flow() -> None:
 
     # Exactly four events should have been published for the run
     #    (newest-first order → reverse for readability).
-    events = (await bus.get_latest(types=["TEST"], limits=10))["TEST"]
+    events = await bus.search(filter="type == 'TEST'", limit=10)
     assert len(events) == 4
 
     roles = [evt.payload["message"]["role"] for evt in events]
@@ -112,7 +112,7 @@ async def test_interjection_publishes_user_event() -> None:
     final = await handle.result()
     assert final == "You said: second"
 
-    events = (await bus.get_latest(types=["CHAT"], limits=10))["CHAT"]
+    events = await bus.search(filter="type == 'CHAT'", limit=10)
     roles = [evt.payload["message"]["role"] for evt in events]
     assert "user" in roles  # initial user
     assert roles.count("user") == 2  # + the interjection
