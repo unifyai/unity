@@ -100,8 +100,8 @@ def new_client() -> unify.AsyncUnify:
     """
     return unify.AsyncUnify(
         MODEL_NAME,
-        cache=os.environ.get("UNIFY_CACHE"),
-        traced=os.environ.get("UNIFY_TRACED"),
+        cache=eval(os.environ.get("UNIFY_CACHE")),
+        traced=eval(os.environ.get("UNIFY_TRACED")),
     )
 
 

@@ -128,7 +128,11 @@ class Controller(threading.Thread):
     # ------------------------------------------------------------------
     #  Public helper – high-level "observe" question-answering
     # ------------------------------------------------------------------
-    async def observe(self, request: str, response_format: Type = str) -> Any:  # noqa: ANN401
+    async def observe(
+        self,
+        request: str,
+        response_format: Type = str,
+    ) -> Any:  # noqa: ANN401
         """
         Ask a question about the current browser session.
 

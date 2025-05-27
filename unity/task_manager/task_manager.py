@@ -153,8 +153,8 @@ class TaskManager(threading.Thread):
         """
         client = unify.AsyncUnify(
             "o4-mini@openai",
-            cache=os.environ.get("UNIFY_CACHE"),
-            traced=os.environ.get("UNIFY_TRACED"),
+            cache=eval(os.environ.get("UNIFY_CACHE")),
+            traced=eval(os.environ.get("UNIFY_TRACED")),
         )
         client.set_system_message(REQUEST)
         ans = await start_async_tool_use_loop(

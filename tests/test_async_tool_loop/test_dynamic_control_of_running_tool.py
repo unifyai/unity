@@ -74,8 +74,8 @@ def _tool_results(msgs: List[dict], tool_name: str) -> int:
 def client():
     return unify.AsyncUnify(
         MODEL_NAME,
-        cache=os.environ.get("UNIFY_CACHE"),
-        traced=os.environ.get("UNIFY_TRACED"),
+        cache=eval(os.environ.get("UNIFY_CACHE")),
+        traced=eval(os.environ.get("UNIFY_TRACED")),
     )
 
 
