@@ -66,3 +66,5 @@ jobs:
       run: .unity/bin/python -m pytest --timeout=120 -p no:warnings -vv .
       env:
         UNIFY_KEY: ${{ secrets.USER_API_KEY }}
+        UNIFY_BASE_URL: http://api.unify.ai
+        OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
