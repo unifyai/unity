@@ -535,3 +535,57 @@ async def test_ask_honors_stop():
     with pytest.raises(asyncio.CancelledError):
         await handle.result()
     assert handle.done()
+
+
+@_handle_project
+@pytest.mark.asyncio
+@pytest.mark.eval
+async def test_ask_respects_parent_context(tm_scenario: TranscriptManager):
+    # ── 1.  Seed a “basketball” exchange dated 2025-05-20 ───────────────
+    ebus = tm_scenario._event_bus
+    cid = _ID_BY_NAME
+    t = datetime(2025, 5, 20, 15, 0, tzinfo=timezone.utc)
+
+    for s, r, txt in [
+        (cid["dan"], cid["julia"], "Did you catch the **basketball** game?"),
+        (cid["julia"], cid["dan"], "Absolutely – great conversation!"),
+    ]:
+        await ebus.publish(
+            Event(
+                type="Messages",
+                timestamp=datetime.now(UTC),
+                payload=Message(
+                    medium="phone_call",
+                    sender_id=s,
+                    receiver_id=r,
+                    timestamp=t.isoformat(),
+                    content=txt,
+                    exchange_id=99,
+                ),
+            ),
+        )
+    ebus.join_published()
+
+    # ── 2.  Outer chat context in which `ask` will be called ────────────
+    parent_ctx = [
+        {
+            "role": "user",
+            "content": "I really enjoyed our conversation about basketball last week.",
+        },
+        {"role": "assistant", "content": "Me too."},
+    ]
+
+    # ── 3.  Call `.ask()` with that context ────────────────────────────
+    handle = tm_scenario.ask(
+        "What day was the conversation?",
+        return_reasoning_steps=True,
+        parent_chat_context=parent_ctx,
+    )
+    answer, steps = await handle.result()
+
+    # ── 4.  Assertions ─────────────────────────────────────────────────
+    # a) Broader-context header is present
+    assert any(m.get("_ctx_header") for m in steps), "System context header missing."
+    # b) LLM judged answer correct
+    expected = "2025-05-20"
+    _llm_assert_correct("What day was the conversation?", expected, answer, steps)
