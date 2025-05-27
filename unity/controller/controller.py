@@ -1,4 +1,5 @@
 import threading
+import asyncio
 from datetime import datetime, timezone
 from typing import Any, Type, Optional
 
@@ -127,17 +128,23 @@ class Controller(threading.Thread):
     # ------------------------------------------------------------------
     #  Public helper – high-level "observe" question-answering
     # ------------------------------------------------------------------
-    def observe(self, question: str, response_type: Type = str) -> Any:  # noqa: ANN401
-        """Ask an LLM a question about the *current* browser session.
+    async def observe(self, request: str, response_format: Type = str) -> Any:  # noqa: ANN401
+        """
+        Ask a question about the current browser session.
 
-        The answer is returned coerced to *response_type*.
-        Supported types: ``str``, ``bool``, ``int``, ``float`` or a
-        ``pydantic.BaseModel`` subclass for structured answers.
+        Args:
+            request: The natural-language question to ask about the browser state.
+            response_format: The Python or Pydantic type to coerce the answer into.
+
+        Returns:
+            Any: The answer returned by the LLM, coerced to the specified response_format.
         """
 
-        return ask_llm(
-            question,
-            response_type=response_type,
+        # run synchronous ask_llm in a thread to avoid blocking the event loop
+        return await asyncio.to_thread(
+            ask_llm,
+            request,
+            response_format=response_format,
             context=self._observe_ctx,
             screenshot=self._last_shot,
         )
@@ -145,15 +152,21 @@ class Controller(threading.Thread):
     # ------------------------------------------------------------------
     #  Public helper – synchronous one-shot action
     # ------------------------------------------------------------------
-    def act(self, text: str) -> Optional[str]:
-        """Convert natural-language *text* to a primitive and execute it.
+    async def act(self, action: str) -> Optional[str]:
+        """
+        Convert natural-language text to a browser action and execute it.
 
-        Returns the low-level primitive string that was executed or
-        ``None`` when the LLM failed to pick an action.
+        Args:
+            action: The natural-language instruction to convert into a browser primitive.
+
+        Returns:
+            Optional[str]: The executed action string, or None if no action was selected by the LLM.
         """
 
-        cmd = text_to_browser_action(
-            text=text,
+        # run synchronous text_to_browser_action in a thread
+        cmd = await asyncio.to_thread(
+            text_to_browser_action,
+            text=action,
             screenshot=self._last_shot,
             tabs=self._observe_ctx.get("tabs", []),
             buttons=self._observe_ctx.get("elements", []),
@@ -161,8 +174,8 @@ class Controller(threading.Thread):
             state=self._observe_ctx.get("state", {}),
         )
 
-        assert cmd is not None, f"text_command {text} returned empty command"
-        # handle either a sequence of commands
+        assert cmd is not None, f"requested action {action} returned empty command"
         actions = cmd.get("action")
-        self._perform_action(actions)
+        # perform the action in a background thread
+        await asyncio.to_thread(self._perform_action, actions)
         return actions

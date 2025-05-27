@@ -832,9 +832,12 @@ def text_to_browser_action(
         return response_format.model_validate(ret).model_dump()
     else:
         multi_step_mode = (
-            multi_step_mode or state["in_textbox"]
+            multi_step_mode
+            or (hasattr(state, "in_textbox") and state.in_textbox)
+            or state.get("in_textbox")
         )  # if in textbox, use multi-step mode for enabling key combinations
         valid_actions = _list_valid_actions(tabs, buttons, state)
+        print(valid_actions)
         lines = (
             [PRIMITIVE_TO_BROWSER_MULTI_STEP]
             if multi_step_mode
@@ -992,7 +995,7 @@ def _wrap_type(tp: Type):  # type: ignore[override]
 def ask_llm(
     question: str,
     *,
-    response_type: Type = str,
+    response_format: Type = str,
     context: dict[str, Any] | None = None,
     screenshot: bytes | None = None,
 ) -> Any:  # noqa: ANN401
@@ -1002,7 +1005,7 @@ def ask_llm(
     ----------
     question : str
         Natural-language question to ask.
-    response_type : Type, default str
+    response_format : Type, default str
         Desired Python / Pydantic type for the answer.
     context : dict | None
         Rich browser-context payload (state, elements, tabs, history …).
@@ -1010,7 +1013,7 @@ def ask_llm(
         Base-64 JPEG screenshot of current viewport (optional).
     """
 
-    Model = _wrap_type(response_type)
+    Model = _wrap_type(response_format)
 
     client.set_endpoint("o4-mini@openai")
     client.set_system_message(_OBSERVE_PROMPT)
