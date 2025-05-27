@@ -98,8 +98,8 @@ async def test_interjection_publishes_user_event() -> None:
 
     client = unify.AsyncUnify(
         "gpt-4o@openai",
-        cache=json.loads(os.environ.get("UNIFY_CACHE")),
-        traced=json.loads(os.environ.get("UNIFY_TRACED")),
+        cache=json.loads(os.environ.get("UNIFY_CACHE", "true")),
+        traced=json.loads(os.environ.get("UNIFY_TRACED", "true")),
     )
     client.set_system_message(
         "Please always respond with 'You said: {my_latest_message}', with the placeholder containing whatever I said, and do not include the quoation marks in your response.",

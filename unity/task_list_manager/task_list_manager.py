@@ -128,8 +128,8 @@ class TaskListManager:
 
         client = unify.AsyncUnify(
             "o4-mini@openai",
-            cache=json.loads(os.environ.get("UNIFY_CACHE")),
-            traced=json.loads(os.environ.get("UNIFY_TRACED")),
+            cache=json.loads(os.environ.get("UNIFY_CACHE", "true")),
+            traced=json.loads(os.environ.get("UNIFY_TRACED", "true")),
         )
         client.set_system_message(
             ASK.replace(
@@ -208,8 +208,8 @@ class TaskListManager:
 
         client = unify.AsyncUnify(
             "o4-mini@openai",
-            cache=json.loads(os.environ.get("UNIFY_CACHE")),
-            traced=json.loads(os.environ.get("UNIFY_TRACED")),
+            cache=json.loads(os.environ.get("UNIFY_CACHE", "true")),
+            traced=json.loads(os.environ.get("UNIFY_TRACED", "true")),
         )
         client.set_system_message(
             UPDATE.replace(

@@ -107,8 +107,8 @@ class KnowledgeManager:
 
         client = unify.AsyncUnify(
             "o4-mini@openai",
-            cache=json.loads(os.environ.get("UNIFY_CACHE")),
-            traced=json.loads(os.environ.get("UNIFY_TRACED")),
+            cache=json.loads(os.environ.get("UNIFY_CACHE", "true")),
+            traced=json.loads(os.environ.get("UNIFY_TRACED", "true")),
         )
         client.set_system_message(STORE)
         handle = start_async_tool_use_loop(client, text, self._store_tools)
@@ -169,8 +169,8 @@ class KnowledgeManager:
 
         client = unify.AsyncUnify(
             "o4-mini@openai",
-            cache=json.loads(os.environ.get("UNIFY_CACHE")),
-            traced=json.loads(os.environ.get("UNIFY_TRACED")),
+            cache=json.loads(os.environ.get("UNIFY_CACHE", "true")),
+            traced=json.loads(os.environ.get("UNIFY_TRACED", "true")),
         )
         client.set_system_message(RETRIEVE)
         handle = start_async_tool_use_loop(client, text, self._retrieve_tools)
