@@ -314,34 +314,6 @@ async def _async_tool_use_loop_inner(
     # propagating context further down (avoids duplication).
     # -----------------------------------------------------------------------
 
-    if parent_chat_context:
-        sys_msg = {
-            "role": "system",
-            "_ctx_header": True,
-            "content": (
-                "Broader context (read-only):\n"
-                f"{json.dumps(parent_chat_context, indent=2)}\n\n"
-                "Resolve the *next* user request in light of this."
-            ),
-        }
-        client.append_messages([sys_msg])
-
-    # ── initial prompt ───────────────────────────────────────────────────────
-    base_tools_schema = [method_to_schema(v) for v in tools.values()]
-    msg = {"role": "user", "content": message}
-    if event_bus:
-        await event_bus.publish(Event(type=event_type, payload={"message": msg}))
-    client.append_messages([msg])
-
-    consecutive_failures = 0
-    pending: Set[asyncio.Task] = set()
-    task_info: Dict[asyncio.Task, Dict[str, Any]] = {}
-    clarification_channels: Dict[str, Tuple[asyncio.Queue[str], asyncio.Queue[str]]] = (
-        {}
-    )
-    completed_results: Dict[str, str] = {}
-    assistant_meta: Dict[int, Dict[str, Any]] = {}
-
     # ── small helper: keep assistant→tool chronology DRY ────────────────────
     def _insert_after_assistant(parent_msg: dict, tool_msg: dict) -> None:
         """
@@ -357,10 +329,15 @@ async def _async_tool_use_loop_inner(
         client.messages.insert(insert_pos, client.messages.pop())
         meta["results_count"] += 1
 
-    # ────────────────────────────────────────────────────────────────────
-    # Helper: *single* authoritative implementation of "task finished"
-    # handling (was duplicated in two separate branches).
-    # ────────────────────────────────────────────────────────────────────
+    # ── small helper: publish to the EventBus (if configured) ──────────────
+    async def _to_event_bus(message: dict) -> None:
+        """Emit *message* to the EventBus iff one was provided."""
+        if event_bus:
+            await event_bus.publish(
+                Event(type=event_type, payload={"message": message}),
+            )
+
+    # ── *single* authoritative implementation of "task finished" handling ──
     async def _process_completed_task(task: asyncio.Task) -> None:
         """
         Deal with a finished tool *task* exactly once:
@@ -434,10 +411,7 @@ async def _async_tool_use_loop_inner(
                     }
                     _insert_after_assistant(asst_msg, tool_msg)
 
-        if event_bus:
-            await event_bus.publish(
-                Event(type=event_type, payload={"message": tool_msg}),
-            )
+        await _to_event_bus(tool_msg)
 
         # 6️⃣  failure guard -------------------------------------------------
         if consecutive_failures >= max_consecutive_failures:
@@ -446,6 +420,33 @@ async def _async_tool_use_loop_inner(
             raise RuntimeError(
                 "Aborted after too many consecutive tool failures.",
             )
+
+    if parent_chat_context:
+        sys_msg = {
+            "role": "system",
+            "_ctx_header": True,
+            "content": (
+                "Broader context (read-only):\n"
+                f"{json.dumps(parent_chat_context, indent=2)}\n\n"
+                "Resolve the *next* user request in light of this."
+            ),
+        }
+        client.append_messages([sys_msg])
+
+    # ── initial prompt ───────────────────────────────────────────────────────
+    base_tools_schema = [method_to_schema(v) for v in tools.values()]
+    msg = {"role": "user", "content": message}
+    await _to_event_bus(msg)
+    client.append_messages([msg])
+
+    consecutive_failures = 0
+    pending: Set[asyncio.Task] = set()
+    task_info: Dict[asyncio.Task, Dict[str, Any]] = {}
+    clarification_channels: Dict[str, Tuple[asyncio.Queue[str], asyncio.Queue[str]]] = (
+        {}
+    )
+    completed_results: Dict[str, str] = {}
+    assistant_meta: Dict[int, Dict[str, Any]] = {}
 
     if interjectable_tools is None:
         interjectable_tools = set()
@@ -470,10 +471,7 @@ async def _async_tool_use_loop_inner(
 
                 llm_turn_required = True
                 msg = {"role": "user", "content": extra}
-                if event_bus:
-                    await event_bus.publish(
-                        Event(type=event_type, payload={"message": msg}),
-                    )
+                await _to_event_bus(msg)
                 client.append_messages([msg])
 
             # ── A.  Wait for tool completion OR cancellation  ───────────────
@@ -563,11 +561,7 @@ async def _async_tool_use_loop_inner(
                             f"tool execution:\n{question}"
                         )
                         tool_msg = ph  # for event_bus
-
-                        if event_bus:
-                            await event_bus.publish(
-                                Event(type=event_type, payload={"message": tool_msg}),
-                            )
+                        await _to_event_bus(tool_msg)
 
                     # let the assistant answer immediately
                     llm_turn_required = True
@@ -814,11 +808,7 @@ async def _async_tool_use_loop_inner(
             msg = client.messages[-1]
             # LLM has just spoken – reset the flag
             llm_turn_required = False
-
-            if event_bus:
-                await event_bus.publish(
-                    Event(type=event_type, payload={"message": msg}),
-                )
+            await _to_event_bus(msg)
 
             # ── De-duplicate tool calls (optional) ────────────────────────
             if prune_tool_duplicates and msg.get("tool_calls"):
