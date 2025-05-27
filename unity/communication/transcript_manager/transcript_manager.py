@@ -1,7 +1,7 @@
 import os
 import json
 import asyncio
-from typing import List, Dict, Optional, Union
+from typing import List, Dict, Optional, Union, Callable
 
 import unify
 from ...common.embed_utils import EMBED_MODEL, ensure_vector_column
@@ -111,7 +111,7 @@ class TranscriptManager:
         if clarification_up_q is not None or clarification_down_q is not None:
 
             async def request_clarification(question: str) -> str:
-                """Query the caller for more information, and wait for the reply."""
+                """Query the user for more information, and wait for the reply."""
                 if clarification_up_q is None or clarification_down_q is None:
                     raise RuntimeError(
                         "TranscriptManager.ask was called without both "
@@ -151,6 +151,9 @@ class TranscriptManager:
         *,
         exchange_ids: Union[int, List[int]],
         guidance: Optional[str] = None,
+        parent_chat_context: list[dict] | None = None,
+        clarification_up_q: asyncio.Queue[str] | None = None,
+        clarification_down_q: asyncio.Queue[str] | None = None,
     ) -> str:
         """
         Summarize the email thread, phone call, or a time-clustered text exchange, save the summary in the backend, and also return it.
@@ -158,6 +161,9 @@ class TranscriptManager:
         Args:
             exchange_ids (int): The ids of the exchanges to summarize.
             guidance (Optional[str]): Optional guidance for the summarization.
+            parent_chat_context (list[dict]): A list of parent context messages to pass down into the tool use loop.
+            clarification_up_q (asyncio.Queue[str]): A queue to send clarification questions up to the caller.
+            clarification_down_q (asyncio.Queue[str]): A queue to send clarification answers down to the model.
 
         Returns:
             str: The summary of the exchanges.
@@ -166,6 +172,8 @@ class TranscriptManager:
 
         if not isinstance(exchange_ids, list):
             exchange_ids = [exchange_ids]
+
+        # ── 0.  Build LLM client ────────────────────────────────────────────
         client = unify.AsyncUnify(
             "o4-mini@openai",
             cache=json.loads(os.environ.get("UNIFY_CACHE", "true")),
@@ -174,13 +182,46 @@ class TranscriptManager:
         client.set_system_message(
             SUMMARIZE.replace("{guidance}", f"\n{guidance}\n" if guidance else ""),
         )
+
+        # ── 1.  Collect raw messages → JSON blob for the prompt ────────────
         msgs = self._search_messages(filter=f"exchange_id in {exchange_ids}")
         exchanges = {
-            id: [msg.content for msg in msgs if msg.exchange_id == id]
-            for id in exchange_ids
+            id: [m.content for m in msgs if m.exchange_id == id] for id in exchange_ids
         }
-        latest_timestamp = max([msg.timestamp for msg in msgs])
-        summary = await client.generate(json.dumps(exchanges, indent=4))
+        latest_timestamp = max(m.timestamp for m in msgs)
+        exchanges_json = json.dumps(exchanges, indent=2)
+
+        # ── 2.  Optional request_clarification helper tool ─────────────────
+        tools: dict[str, Callable] = {}
+        if clarification_up_q is not None or clarification_down_q is not None:
+
+            async def request_clarification(question: str) -> str:
+                """Query the user for more information, and wait for the reply."""
+                if clarification_up_q is None or clarification_down_q is None:
+                    raise RuntimeError("Clarification queues missing")
+                await clarification_up_q.put(question)
+                return await clarification_down_q.get()
+
+            tools["request_clarification"] = request_clarification
+
+        # ── 3.  Kick off the interactive loop (even if no tools) ───────────
+        from unity.common.llm_helpers import start_async_tool_use_loop
+
+        prompt = (
+            f"Here are the raw messages for exchange_id(s) {exchange_ids}:\n"
+            f"{exchanges_json}\n\nPlease produce a concise summary."
+            + (f"\n\nAdditional guidance:\n{guidance}" if guidance else "")
+        )
+
+        handle = start_async_tool_use_loop(
+            client,
+            prompt,
+            tools,
+            parent_chat_context=parent_chat_context,
+            clarification_up_q=clarification_up_q,
+            clarification_down_q=clarification_down_q,
+        )
+        summary: str = await handle.result()
         await self._event_bus.publish(
             Event(
                 type="MessageExchangeSummaries",
