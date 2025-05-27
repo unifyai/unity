@@ -20,6 +20,7 @@ from unity.common.llm_helpers import (
 )
 from unity.events.event_bus import EventBus
 from tests.helpers import _handle_project
+import os
 
 
 @unify.traced
@@ -45,8 +46,8 @@ async def test_basic_event_flow() -> None:
     result = await _async_tool_use_loop_inner(
         client=unify.AsyncUnify(
             "gpt-4o@openai",
-            cache=True,
-            traced=True,
+            cache=os.environ.get("UNIFY_CACHE"),
+            traced=os.environ.get("UNIFY_TRACED"),
         ).set_system_message(
             "please echo whatever the user says",
         ),
@@ -92,7 +93,11 @@ async def test_interjection_publishes_user_event() -> None:
     bus = EventBus()
     bus.register_event_types("CHAT")
 
-    client = unify.AsyncUnify("gpt-4o@openai", cache=True, traced=True)
+    client = unify.AsyncUnify(
+        "gpt-4o@openai",
+        cache=os.environ.get("UNIFY_CACHE"),
+        traced=os.environ.get("UNIFY_TRACED"),
+    )
     client.set_system_message(
         "Please always respond with 'You said: {my_latest_message}', with the placeholder containing whatever I said, and do not include the quoation marks in your response.",
     )

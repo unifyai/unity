@@ -21,7 +21,7 @@ from collections import Counter
 from datetime import datetime, timezone, timedelta, UTC
 from unity.events.event_bus import EventBus, Event
 from typing import List
-
+import os
 import pytest
 
 import pytest
@@ -373,7 +373,11 @@ def _llm_assert_correct(
     multiple_answers: bool = False,
 ) -> None:
     """LLM-based validation with stricter or fuzzier rubric per question."""
-    judge = unify.Unify("o4-mini@openai", cache=True, traced=True)
+    judge = unify.Unify(
+        "o4-mini@openai",
+        cache=os.environ.get("UNIFY_CACHE"),
+        traced=os.environ.get("UNIFY_TRACED"),
+    )
 
     if _is_summary_q(question):
         system_msg = (

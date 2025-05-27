@@ -1,6 +1,6 @@
 from datetime import datetime, timezone
 from typing import Dict, List, Any, Optional, Union
-
+import os
 import unify
 
 from ..common.embed_utils import EMBED_MODEL, ensure_vector_column
@@ -125,7 +125,11 @@ class TaskListManager:
             handle.stop()
         """
 
-        client = unify.AsyncUnify("o4-mini@openai", cache=True, traced=True)
+        client = unify.AsyncUnify(
+            "o4-mini@openai",
+            cache=os.environ.get("UNIFY_CACHE"),
+            traced=os.environ.get("UNIFY_TRACED"),
+        )
         client.set_system_message(
             ASK.replace(
                 "{datetime}",
@@ -201,7 +205,11 @@ class TaskListManager:
         """
         from .sys_msgs import UPDATE
 
-        client = unify.AsyncUnify("o4-mini@openai", cache=True, traced=True)
+        client = unify.AsyncUnify(
+            "o4-mini@openai",
+            cache=os.environ.get("UNIFY_CACHE"),
+            traced=os.environ.get("UNIFY_TRACED"),
+        )
         client.set_system_message(
             UPDATE.replace(
                 "{datetime}",

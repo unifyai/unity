@@ -4,7 +4,7 @@ import threading
 from typing import Dict
 
 import unify
-
+import os
 from ..common.llm_helpers import start_async_tool_use_loop
 from ..task_list_manager.task_list_manager import TaskListManager
 from .sys_msgs import REQUEST
@@ -151,7 +151,11 @@ class TaskManager(threading.Thread):
         Returns:
             Dict[str, str]: Answers to the question(s), and updates on any action(s) performed.
         """
-        client = unify.AsyncUnify("o4-mini@openai", cache=True, traced=True)
+        client = unify.AsyncUnify(
+            "o4-mini@openai",
+            cache=os.environ.get("UNIFY_CACHE"),
+            traced=os.environ.get("UNIFY_TRACED"),
+        )
         client.set_system_message(REQUEST)
         ans = await start_async_tool_use_loop(
             client,
