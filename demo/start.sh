@@ -9,10 +9,10 @@ cleanup() {
     if [ ! -z "$pid2" ] && kill -0 $pid2 2>/dev/null; then
         kill -TERM $pid2 2>/dev/null
     fi
-    
+
     # Wait a bit for graceful shutdown
     sleep 2
-    
+
     # Force kill if still running
     if [ ! -z "$pid1" ] && kill -0 $pid1 2>/dev/null; then
         kill -KILL $pid1 2>/dev/null
@@ -20,7 +20,7 @@ cleanup() {
     if [ ! -z "$pid2" ] && kill -0 $pid2 2>/dev/null; then
         kill -KILL $pid2 2>/dev/null
     fi
-    
+
     wait $pid1 $pid2 2>/dev/null
     exit 0
 }

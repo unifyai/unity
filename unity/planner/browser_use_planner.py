@@ -25,10 +25,8 @@ from __future__ import annotations
 import asyncio
 import enum
 import logging
-from collections.abc import Mapping
-from types import SimpleNamespace
 from typing import Any, Awaitable, Callable, Dict, List, Optional
-import os 
+import os
 import json
 
 from browser_use.controller.service import Controller
@@ -55,7 +53,7 @@ class _PlannerState(enum.Enum):
 class BrowserUsePlanner:
     """
     A thin, coroutine-based orchestrator around Browser-Use that exposes the
-    four UX controls(start/stop/pause/resume + interject + query) while 
+    four UX controls(start/stop/pause/resume + interject + query) while
     delegating *all* reasoning to `async_tool_use_loop_inner`.
 
     ────────────────────────────────────────────────────────────────────────
@@ -80,8 +78,7 @@ class BrowserUsePlanner:
     def __init__(
         self,
         *,
-        base_system_prompt: str
-        | None = "You are a helpful web-browsing assistant.",
+        base_system_prompt: str | None = "You are a helpful web-browsing assistant.",
         headless: bool = True,
     ) -> None:
         self._state: _PlannerState = _PlannerState.IDLE
@@ -89,7 +86,9 @@ class BrowserUsePlanner:
         self._paused_context: Optional[List[dict]] = None
 
         # ---- Browser layer -------------------------------------------------
-        self._browser = Browser(config=BrowserConfig(disable_security=True, headless=headless))
+        self._browser = Browser(
+            config=BrowserConfig(disable_security=True, headless=headless),
+        )
         self._browser_context = BrowserContext(browser=self._browser)
         self._controller = Controller()
         # ---- LLM layer -----------------------------------------------------
@@ -112,7 +111,7 @@ class BrowserUsePlanner:
             client=client,
             message=task_description,
             tools=self._tools,
-            interrupt_llm_with_interjections=False,
+            interrupt_llm_with_interjections=True,
         )
 
         self._attach_completion_callback(handle)
@@ -214,27 +213,32 @@ class BrowserUsePlanner:
 
         tools: Dict[str, Callable[..., Awaitable[str]]] = {}
 
-        from pydantic import BaseModel  
-        for action_name, reg_action in self._controller.registry.registry.actions.items():
+        from pydantic import BaseModel
+        import inspect
 
-            param_model = reg_action.param_model
+        for action_name, action in self._controller.registry.registry.actions.items():
 
+            param_model = getattr(action, "param_model", None)
+            description = action.description or f"{action_name} browser action."
+
+            # --- dynamic wrapper ------------------------------------------------
             async def _make_tool(
                 *_,
                 _action_name=action_name,
-                 **kwargs: Any,
-             ) -> str:
+                _param_model=param_model,
+                **kwargs: Any,
+            ) -> str:
                 try:
-                    # if _param_model and issubclass(_param_model, BaseModel):
-                    #     model = _param_model(**kwargs)
-                    #     params = model.model_dump()
-                    # else:
-                    #     params = kwargs
-                    params = kwargs
-                    result = await self._controller.registry.execute_action(  # type: ignore[arg-type]
+                    params: Any
+                    if _param_model and issubclass(_param_model, BaseModel):
+                        params = _param_model(**kwargs).model_dump()
+                    else:
+                        params = kwargs
+
+                    result = await self._controller.registry.execute_action(
                         _action_name,
                         params,
-                        browser=self._browser_context, # FIXME: invalid signature  
+                        browser=self._browser_context,
                     )
                     return (
                         getattr(result, "extracted_content", None)
@@ -245,16 +249,66 @@ class BrowserUsePlanner:
                     logger.exception("Tool %s failed", _action_name)
                     return f"ERROR: {exc!s}"
 
-            # Copy metadata so we can build JSON schema
+            # ---- Make the wrapper look *exactly* like the action ---------------
             _make_tool.__name__ = action_name
-            _make_tool.__doc__ = reg_action.description or f"{action_name} action."
+            _make_tool.__doc__ = description
+
+            # ---------- build inspect.Signature with required-first ------
+            raw_fields = (
+                param_model.model_fields  # pydantic-v2
+                if hasattr(param_model, "model_fields")
+                else param_model.__fields__  # pydantic-v1
+            )
+
+            required_params: list[inspect.Parameter] = []
+            optional_params: list[inspect.Parameter] = []
+
+            def _is_required(field) -> bool:
+                # v1: .required bool ; v2: .is_required()
+                return (
+                    getattr(field, "required", None)
+                    or getattr(field, "is_required", lambda: False)()
+                )
+
+            for fname, field in raw_fields.items():
+                annotation = getattr(field, "annotation", Any)
+                if _is_required(field):
+                    param = inspect.Parameter(
+                        fname,
+                        kind=inspect.Parameter.POSITIONAL_OR_KEYWORD,
+                        default=inspect._empty,
+                        annotation=annotation,
+                    )
+                    required_params.append(param)
+                else:
+                    default_val = getattr(field, "default", None)
+                    param = inspect.Parameter(
+                        fname,
+                        kind=inspect.Parameter.POSITIONAL_OR_KEYWORD,
+                        default=default_val,
+                        annotation=annotation,
+                    )
+                    optional_params.append(param)
+
+            parameters = required_params + optional_params
+            try:
+                _make_tool.__signature__ = inspect.Signature(
+                    parameters,
+                    return_annotation=str,
+                )
+            except Exception as e:
+                logger.exception("Error building tool signature for %s", action_name)
+                raise e
+
             tools[action_name] = _make_tool
 
         return tools
 
     # --------------------------------------------------------- helper utils
     def _fresh_llm_client(
-        self, *, parent_context: Optional[List[dict]] = None
+        self,
+        *,
+        parent_context: Optional[List[dict]] = None,
     ) -> AsyncUnify:
         """
         Construct a brand-new AsyncUnify client and (optionally) preload it
@@ -275,6 +329,7 @@ class BrowserUsePlanner:
 
     def _attach_completion_callback(self, handle: AsyncToolLoopHandle) -> None:
         """When the tool loop exits by itself, reset planner state."""
+
         async def _finalizer() -> None:
             try:
                 await handle.result()
@@ -286,6 +341,5 @@ class BrowserUsePlanner:
                     self._state = _PlannerState.IDLE
                 self._loop_handle = None
                 self._client = None
+
         asyncio.create_task(_finalizer())
-
-
