@@ -1,24 +1,32 @@
 steps:
-  # Build the Docker image
+  # Build Docker Image
 - name: 'gcr.io/cloud-builders/docker'
+  id: 'build-image'
   args: ['build', '-t', '${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPOSITORY}/unity:${SHORT_SHA}', '-t', '${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPOSITORY}/unity:latest', '.']
   dir: 'demo'
 
-  # Push the Docker image to Artifact Registry
+  # Push Docker Image (SHA Tag)
 - name: 'gcr.io/cloud-builders/docker'
+  id: 'push-sha-tag'
   args: ['push', '${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPOSITORY}/unity:${SHORT_SHA}']
+  waitFor: ['build-image']
 
+  # Push Docker Image (Latest Tag)
 - name: 'gcr.io/cloud-builders/docker'
+  id: 'push-latest-tag'
   args: ['push', '${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPOSITORY}/unity:latest']
+  waitFor: ['build-image']
 
-  # Trigger deployment pipeline via Pub/Sub
+  # Trigger Deployment Pipeline via Pub/Sub
 - name: 'gcr.io/cloud-builders/gcloud'
+  id: 'trigger-deployment'
   entrypoint: 'bash'
   args:
   - '-c'
   - |
     gcloud pubsub topics publish unity-image-built \
       --message='{"image_uri":"${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPOSITORY}/unity:${SHORT_SHA}","latest_uri":"${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPOSITORY}/unity:latest","commit_sha":"${SHORT_SHA}","build_id":"${BUILD_ID}","project_id":"${PROJECT_ID}","region":"${_REGION}","repository":"${_REPOSITORY}"}'
+  waitFor: ['push-sha-tag', 'push-latest-tag']
 
 # Substitution variables
 substitutions:
