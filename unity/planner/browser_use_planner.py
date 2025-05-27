@@ -134,6 +134,8 @@ class BrowserUsePlanner:
         self._loop_handle = None
         self._paused_context = None
         self._state = _PlannerState.IDLE
+        await self._browser_context.close()
+        await self._browser.close()
 
     async def pause(self) -> None:
         """Gracefully cancel the loop but keep its full chat history for resume()."""
@@ -239,6 +241,7 @@ class BrowserUsePlanner:
                         _action_name,
                         params,
                         browser=self._browser_context,
+                        page_extraction_llm=self._client,
                     )
                     return (
                         getattr(result, "extracted_content", None)
