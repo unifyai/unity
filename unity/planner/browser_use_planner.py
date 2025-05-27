@@ -316,8 +316,8 @@ class BrowserUsePlanner:
         """
         client = unify.AsyncUnify(
             "o4-mini@openai",
-            cache=json.loads(os.environ.get("UNIFY_CACHE")),
-            traced=json.loads(os.environ.get("UNIFY_TRACED")),
+            cache=json.loads(os.environ.get("UNIFY_CACHE", "true")),
+            traced=json.loads(os.environ.get("UNIFY_TRACED", "true")),
         )
         if self._base_system_prompt:
             client.set_system_message(self._base_system_prompt)

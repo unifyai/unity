@@ -34,8 +34,8 @@ def new_client() -> unify.AsyncUnify:
     """Fresh client with caching enabled so the run becomes deterministic."""
     return unify.AsyncUnify(
         MODEL_NAME,
-        cache=json.loads(os.environ.get("UNIFY_CACHE")),
-        traced=json.loads(os.environ.get("UNIFY_TRACED")),
+        cache=json.loads(os.environ.get("UNIFY_CACHE", "true")),
+        traced=json.loads(os.environ.get("UNIFY_TRACED", "true")),
     )
 
 
