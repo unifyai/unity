@@ -21,6 +21,9 @@ from .sys_msgs import (
 from ..constants import LOGGER
 
 import unify
+from dotenv import load_dotenv
+
+load_dotenv()
 
 client = unify.Unify(
     cache=eval(os.environ.get("UNIFY_CACHE")),
