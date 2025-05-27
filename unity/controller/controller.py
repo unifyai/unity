@@ -1,4 +1,5 @@
 import threading
+import time
 import asyncio
 from datetime import datetime, timezone
 from typing import Any, Type, Optional
@@ -39,59 +40,35 @@ class Controller(threading.Thread):
         self._last_shot: bytes = b""
 
     def run(self) -> None:
-        for text_action_ in self._pubsub_text_action.listen():
-            if text_action_["type"] != "message":
+        """
+        Background loop: listen for browser_state messages and update cached context.
+        """
+        for msg in self._pubsub_browser_state.listen():
+            if msg.get("type") != "message":
                 continue
-            text_action = text_action_["data"]
-            if self._browser_open:
-                raw_msg = self._pubsub_browser_state.get_message()
-                # Convert Redis pubsub payload (bytes / str) to dict if possible
-                if raw_msg and raw_msg.get("type") == "message":
-                    payload = raw_msg["data"]
-                    try:
-                        if isinstance(payload, (bytes, bytearray)):
-                            payload = payload.decode()
-                        import json, ast
-
-                        try:
-                            browser_state = json.loads(payload)
-                        except Exception:
-                            browser_state = ast.literal_eval(payload)
-                    except Exception:
-                        browser_state = {}
-                else:
-                    browser_state = {}
-            else:
+            data = msg.get("data")
+            try:
+                payload = data.decode() if isinstance(data, (bytes, bytearray)) else data
+                import json, ast
+                try:
+                    browser_state = json.loads(payload)
+                except Exception:
+                    browser_state = ast.literal_eval(payload)
+            except Exception:
                 browser_state = {}
-
-            # ------------------------------------------------------------------
-            #  Update cached observe context and latest screenshot   (step-3)
-            # ------------------------------------------------------------------
             if isinstance(browser_state, dict):
+                raw_elements = browser_state.get("elements", [])
+                elements: list[tuple[Any, Any]] = []
+                for item in raw_elements:
+                    if isinstance(item, (list, tuple)) and len(item) >= 2:
+                        elements.append((item[0], item[1]))
                 self._observe_ctx = {
                     "state": browser_state.get("state", {}),
-                    "elements": browser_state.get("elements", []),
+                    "elements": elements,
                     "tabs": browser_state.get("tabs", []),
                     "history": browser_state.get("history", []),
                 }
                 self._last_shot = browser_state.get("screenshot", b"")
-
-            with unify.Context("LLM Traces"), unify.Log(
-                session_id=SESSION_ID,
-                name="text_to_browser_action",
-            ):
-                cmd = text_to_browser_action(
-                    text=text_action,
-                    screenshot=browser_state.get("screenshot", b""),
-                    tabs=browser_state.get("tabs", []),
-                    buttons=browser_state.get("elements", []),
-                    history=browser_state.get("history", []),
-                    state=browser_state.get("state", {}),
-                )
-            assert cmd is not None, f"text_command {text_action} returned empty command"
-            action = cmd["action"]
-
-            self._perform_action(action)
 
     # ------------------------------------------------------------------
     # Internal helper – perform one or more low-level primitives (in order)
@@ -101,11 +78,11 @@ class Controller(threading.Thread):
         for action in actions:
             # action is a single string
             # ── browser life-cycle primitives ────────────────────────────
-            if action == "open browser" and not self._browser_open:
+            if action == "open_browser" and not self._browser_open:
                 self._browser_worker.start()
                 self._browser_open = True
 
-            elif action == "close browser" and self._browser_open:
+            elif action == "close_browser" and self._browser_open:
                 self._browser_worker.stop()
                 self._browser_worker.join(timeout=2)
                 self._browser_open = False
@@ -115,9 +92,9 @@ class Controller(threading.Thread):
                 # lazily (auto) start the worker if it isn't running
                 self._browser_worker.start()
                 self._browser_open = True
-                self._redis_client.publish("browser_state", action)
+                self._redis_client.publish("browser_command", action)
             else:
-                self._redis_client.publish("browser_state", action)
+                self._redis_client.publish("browser_command", action)
 
             # notify listeners that the action finished (optimistic)
             self._redis_client.publish("action_completion", action)
@@ -144,14 +121,15 @@ class Controller(threading.Thread):
             Any: The answer returned by the LLM, coerced to the specified response_format.
         """
 
-        # run synchronous ask_llm in a thread to avoid blocking the event loop
-        return await asyncio.to_thread(
+        # call LLM to answer based on refreshed context
+        result = await asyncio.to_thread(
             ask_llm,
             request,
             response_format=response_format,
             context=self._observe_ctx,
             screenshot=self._last_shot,
         )
+        return result
 
     # ------------------------------------------------------------------
     #  Public helper – synchronous one-shot action
@@ -167,7 +145,6 @@ class Controller(threading.Thread):
             Optional[str]: The executed action string, or None if no action was selected by the LLM.
         """
 
-        # run synchronous text_to_browser_action in a thread
         cmd = await asyncio.to_thread(
             text_to_browser_action,
             text=action,
@@ -180,6 +157,6 @@ class Controller(threading.Thread):
 
         assert cmd is not None, f"requested action {action} returned empty command"
         actions = cmd.get("action")
-        # perform the action in a background thread
+        # execute the primitive action
         await asyncio.to_thread(self._perform_action, actions)
         return actions

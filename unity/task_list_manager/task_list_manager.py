@@ -13,6 +13,7 @@ from .types.schedule import Schedule
 from .types.status import Status
 from .types.task import Task
 from .sys_msgs import ASK
+import json
 
 
 class TaskListManager:
@@ -127,8 +128,8 @@ class TaskListManager:
 
         client = unify.AsyncUnify(
             "o4-mini@openai",
-            cache=eval(os.environ.get("UNIFY_CACHE")),
-            traced=eval(os.environ.get("UNIFY_TRACED")),
+            cache=json.loads(os.environ.get("UNIFY_CACHE")),
+            traced=json.loads(os.environ.get("UNIFY_TRACED")),
         )
         client.set_system_message(
             ASK.replace(
@@ -207,8 +208,8 @@ class TaskListManager:
 
         client = unify.AsyncUnify(
             "o4-mini@openai",
-            cache=eval(os.environ.get("UNIFY_CACHE")),
-            traced=eval(os.environ.get("UNIFY_TRACED")),
+            cache=json.loads(os.environ.get("UNIFY_CACHE")),
+            traced=json.loads(os.environ.get("UNIFY_TRACED")),
         )
         client.set_system_message(
             UPDATE.replace(

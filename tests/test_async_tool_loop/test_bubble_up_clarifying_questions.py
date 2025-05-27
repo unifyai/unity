@@ -8,6 +8,7 @@ import unify
 from unity.common.llm_helpers import start_async_tool_use_loop
 from tests.helpers import _handle_project
 import os
+import json
 
 # ──────────────────────────────────────────────────────────────────────────
 # Small helpers
@@ -18,8 +19,8 @@ def make_llm(system_message: Optional[str] = None) -> unify.AsyncUnify:
     return unify.AsyncUnify(
         endpoint="o4-mini@openai",
         system_message=system_message,
-        cache=eval(os.environ.get("UNIFY_CACHE")),
-        traced=eval(os.environ.get("UNIFY_TRACED")),
+        cache=json.loads(os.environ.get("UNIFY_CACHE")),
+        traced=json.loads(os.environ.get("UNIFY_TRACED")),
     )
 
 

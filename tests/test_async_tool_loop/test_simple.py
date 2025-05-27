@@ -28,6 +28,7 @@ import asyncio
 import os
 import time
 from tests.helpers import _handle_project
+import json
 
 import pytest
 import unify
@@ -82,8 +83,8 @@ def new_client() -> unify.AsyncUnify:
     """
     return unify.AsyncUnify(
         MODEL_NAME,
-        cache=eval(os.environ.get("UNIFY_CACHE")),
-        traced=eval(os.environ.get("UNIFY_TRACED")),
+        cache=json.loads(os.environ.get("UNIFY_CACHE")),
+        traced=json.loads(os.environ.get("UNIFY_TRACED")),
     ).set_system_message(
         "Feel free to call multiple *different* tools per turn if appropriate.",
     )

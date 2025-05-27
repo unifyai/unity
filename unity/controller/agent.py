@@ -21,13 +21,11 @@ from .sys_msgs import (
 from ..constants import LOGGER
 
 import unify
-from dotenv import load_dotenv
-
-load_dotenv()
+import json
 
 client = unify.Unify(
-    cache=eval(os.environ.get("UNIFY_CACHE")),
-    traced=eval(os.environ.get("UNIFY_TRACED")),
+    cache=json.loads(os.environ.get("UNIFY_CACHE")),
+    traced=json.loads(os.environ.get("UNIFY_TRACED")),
 )
 client.set_system_message(PRIMITIVE_TO_BROWSER_ACTION_CANDIDATES)
 
@@ -44,12 +42,10 @@ def _list_valid_actions(tabs, buttons, state) -> list[str]:
     """
 
     if not tabs and not buttons and not state:
-        return ["open browser"]
+        return ["open_browser"]
 
     valid_schemas = get_valid_actions(state, mode="schema")
     valid_actions = get_valid_actions(state, mode="actions")
-    if CMD_OPEN_BROWSER in valid_actions:
-        valid_actions.remove("open_browser")
 
     flat = sorted(valid_schemas)
 
@@ -79,6 +75,7 @@ def _list_valid_actions(tabs, buttons, state) -> list[str]:
         a = a.replace(" *", "").replace("*", "").replace(" ", "")
         norm.append(a)
 
+    norm.append("close_browser")
     return sorted(set(norm))
 
 
