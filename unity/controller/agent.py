@@ -44,12 +44,10 @@ def _list_valid_actions(tabs, buttons, state) -> list[str]:
     """
 
     if not tabs and not buttons and not state:
-        return ["open browser"]
+        return ["open_browser"]
 
     valid_schemas = get_valid_actions(state, mode="schema")
     valid_actions = get_valid_actions(state, mode="actions")
-    if CMD_OPEN_BROWSER in valid_actions:
-        valid_actions.remove("open_browser")
 
     flat = sorted(valid_schemas)
 
@@ -79,6 +77,7 @@ def _list_valid_actions(tabs, buttons, state) -> list[str]:
         a = a.replace(" *", "").replace("*", "").replace(" ", "")
         norm.append(a)
 
+    norm.append("close_browser")
     return sorted(set(norm))
 
 
