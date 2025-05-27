@@ -5,6 +5,7 @@ from typing import Any, Dict, List, Optional, Union
 
 import requests
 import unify
+import json
 
 from ..common.embed_utils import EMBED_MODEL, ensure_vector_column
 from ..helpers import _handle_exceptions
@@ -106,8 +107,8 @@ class KnowledgeManager:
 
         client = unify.AsyncUnify(
             "o4-mini@openai",
-            cache=eval(os.environ.get("UNIFY_CACHE")),
-            traced=eval(os.environ.get("UNIFY_TRACED")),
+            cache=json.loads(os.environ.get("UNIFY_CACHE")),
+            traced=json.loads(os.environ.get("UNIFY_TRACED")),
         )
         client.set_system_message(STORE)
         handle = start_async_tool_use_loop(client, text, self._store_tools)
@@ -168,8 +169,8 @@ class KnowledgeManager:
 
         client = unify.AsyncUnify(
             "o4-mini@openai",
-            cache=eval(os.environ.get("UNIFY_CACHE")),
-            traced=eval(os.environ.get("UNIFY_TRACED")),
+            cache=json.loads(os.environ.get("UNIFY_CACHE")),
+            traced=json.loads(os.environ.get("UNIFY_TRACED")),
         )
         client.set_system_message(RETRIEVE)
         handle = start_async_tool_use_loop(client, text, self._retrieve_tools)
