@@ -342,6 +342,21 @@ async def _async_tool_use_loop_inner(
     completed_results: Dict[str, str] = {}
     assistant_meta: Dict[int, Dict[str, Any]] = {}
 
+    # ── small helper: keep assistant→tool chronology DRY ────────────────────
+    def _insert_after_assistant(parent_msg: dict, tool_msg: dict) -> None:
+        """
+        Append *tool_msg* and move it directly after *parent_msg*, while
+        updating the per-assistant `results_count` bookkeeping.
+        """
+        meta = assistant_meta.setdefault(
+            id(parent_msg),
+            {"original_tool_calls": [], "results_count": 0},
+        )
+        client.append_messages([tool_msg])
+        insert_pos = client.messages.index(parent_msg) + 1 + meta["results_count"]
+        client.messages.insert(insert_pos, client.messages.pop())
+        meta["results_count"] += 1
+
     # ────────────────────────────────────────────────────────────────────
     # Helper: *single* authoritative implementation of "task finished"
     # handling (was duplicated in two separate branches).
@@ -417,13 +432,7 @@ async def _async_tool_use_loop_inner(
                         "name": name,
                         "content": result,
                     }
-                    client.append_messages([tool_msg])
-                    insert_pos = (
-                        client.messages.index(asst_msg) + 1 + meta["results_count"]
-                    )
-                    moved = client.messages.pop()
-                    client.messages.insert(insert_pos, moved)
-                    meta["results_count"] += 1
+                    _insert_after_assistant(asst_msg, tool_msg)
 
         if event_bus:
             await event_bus.publish(
@@ -697,13 +706,7 @@ async def _async_tool_use_loop_inner(
                         "to keep waiting."
                     ),
                 }
-                client.append_messages([placeholder])
-
-                # keep chronological order: immediately after the assistant turn
-                insert_pos = client.messages.index(asst_msg) + 1 + meta["results_count"]
-                moved = client.messages.pop()
-                client.messages.insert(insert_pos, moved)
-                meta["results_count"] += 1
+                _insert_after_assistant(asst_msg, placeholder)
 
                 # remember so we can patch later
                 inf["tool_reply_msg"] = placeholder
@@ -891,16 +894,7 @@ async def _async_tool_use_loop_inner(
                                     f" • {name}({arg_json}) → cancel_{call['id']} / continue_{call['id']}"
                                 ),
                             }
-                            client.append_messages([tool_reply_msg])
-                            meta = assistant_meta.setdefault(
-                                id(msg),
-                                {"original_tool_calls": [], "results_count": 0},
-                            )
-                            insert_pos = (
-                                client.messages.index(msg) + 1 + meta["results_count"]
-                            )
-                            client.messages.insert(insert_pos, client.messages.pop())
-                            meta["results_count"] += 1
+                            _insert_after_assistant(msg, tool_reply_msg)
                             info["continue_msg"] = tool_reply_msg
                             if log_steps:
                                 LOGGER.info(
@@ -921,23 +915,11 @@ async def _async_tool_use_loop_inner(
                                 "name": pretty_name,
                                 "content": finished,
                             }
-                            client.append_messages([tool_msg])
-
-                            meta = assistant_meta.setdefault(
-                                id(msg),
-                                {"original_tool_calls": [], "results_count": 0},
-                            )
-                            insert_pos = (
-                                client.messages.index(msg) + 1 + meta["results_count"]
-                            )
-                            client.messages.insert(insert_pos, client.messages.pop())
-                            meta["results_count"] += 1
-
+                            _insert_after_assistant(asst_msg, tool_msg)
                             if log_steps:
                                 LOGGER.info(
                                     f"↩️  {pretty_name} answered immediately (already finished)",
                                 )
-
                         continue  # completed handling of this _continue
 
                     if name.startswith("_cancel") and not name.startswith(
@@ -983,17 +965,7 @@ async def _async_tool_use_loop_inner(
                                 f"The tool call [{call_id}] has been cancelled successfully."
                             ),
                         }
-                        client.append_messages([tool_msg])
-
-                        meta = assistant_meta.setdefault(
-                            id(msg),
-                            {"original_tool_calls": [], "results_count": 0},
-                        )
-                        insert_pos = (
-                            client.messages.index(msg) + 1 + meta["results_count"]
-                        )
-                        client.messages.insert(insert_pos, client.messages.pop())
-                        meta["results_count"] += 1
+                        _insert_after_assistant(msg, tool_msg)
 
                         if log_steps:
                             LOGGER.info(f"🚫  {name} executed – task cancelled")
@@ -1031,20 +1003,9 @@ async def _async_tool_use_loop_inner(
                                 "⏳ Waiting for the original tool to finish…"
                             ),
                         }
-                        client.append_messages([tool_reply_msg])
-
-                        # remember it so we can patch later
-                        if tgt_task is not None:  # ← NEW
+                        _insert_after_assistant(msg, tool_reply_msg)
+                        if tgt_task is not None:
                             task_info[tgt_task]["clarify_placeholder"] = tool_reply_msg
-                        meta = assistant_meta.setdefault(
-                            id(msg),
-                            {"original_tool_calls": [], "results_count": 0},
-                        )
-                        insert_pos = (
-                            client.messages.index(msg) + 1 + meta["results_count"]
-                        )
-                        client.messages.insert(insert_pos, client.messages.pop())
-                        meta["results_count"] += 1
                         continue
 
                     if name.startswith("_interject"):
@@ -1084,17 +1045,7 @@ async def _async_tool_use_loop_inner(
                             "name": pretty_name,
                             "content": f'Guidance "{new_text}" forwarded to the running tool.',
                         }
-                        client.append_messages([tool_msg])
-
-                        meta = assistant_meta.setdefault(
-                            id(msg),
-                            {"original_tool_calls": [], "results_count": 0},
-                        )
-                        insert_pos = (
-                            client.messages.index(msg) + 1 + meta["results_count"]
-                        )
-                        client.messages.insert(insert_pos, client.messages.pop())
-                        meta["results_count"] += 1
+                        _insert_after_assistant(msg, tool_msg)
 
                         if log_steps:
                             LOGGER.info(f"💬  Interjection delivered → {new_text!r}")
