@@ -1,6 +1,8 @@
-import json
-from typing import List, Dict, Optional, Union
 import os
+import json
+import asyncio
+from typing import List, Dict, Optional, Union
+
 import unify
 from ...common.embed_utils import EMBED_MODEL, ensure_vector_column
 from ...communication.types.contact import Contact
@@ -57,6 +59,8 @@ class TranscriptManager:
         *,
         return_reasoning_steps: bool = False,
         parent_chat_context: list[dict] | None = None,
+        clarification_up_q: asyncio.Queue[str] | None = None,  # NEW
+        clarification_down_q: asyncio.Queue[str] | None = None,  # NEW
     ) -> "AsyncToolLoopHandle":
         """
         Ask any question as a text command, and use the tools available (the private methods of this class) to perform the action.
@@ -65,6 +69,8 @@ class TranscriptManager:
             text (str): The text-based question to answer.
             return_reasoning_steps (bool): Whether to return the reasoning steps along with the answer.
             parent_chat_context (list[dict]): A list of parent context messages to pass down into the tool use loop.
+            clarification_up_q (asyncio.Queue[str]): A queue to send clarification questions up to the caller.
+            clarification_down_q (asyncio.Queue[str]): A queue to send clarification answers down to the model.
 
         Returns:
             AsyncToolLoopHandle: A handle to the running conversation that supports:
@@ -91,27 +97,50 @@ class TranscriptManager:
         """
         from unity.communication.transcript_manager.sys_msgs import ANSWER
 
+        # ── 0.  Build LLM client ───────────────────────────────────────────
         client = unify.AsyncUnify(
             "o4-mini@openai",
             cache=json.loads(os.environ.get("UNIFY_CACHE", "true")),
             traced=json.loads(os.environ.get("UNIFY_TRACED", "true")),
         )
         client.set_system_message(ANSWER)
+
+        # ── 1.  Expose tools + a *dynamic* request_clarification helper ──
+        tools = dict(self._tools)
+
+        if clarification_up_q is not None or clarification_down_q is not None:
+
+            async def request_clarification(question: str) -> str:
+                """Query the caller for more information, and wait for the reply."""
+                if clarification_up_q is None or clarification_down_q is None:
+                    raise RuntimeError(
+                        "TranscriptManager.ask was called without both "
+                        "clarification queues but the model requested clarifications.",
+                    )
+                await clarification_up_q.put(question)
+                return await clarification_down_q.get()
+
+            tools["request_clarification"] = request_clarification
+
+        # ── 2.  Launch the interactive tool-use loop ──────────────────────
         handle = start_async_tool_use_loop(
             client,
             text,
-            self._tools,
+            tools,
             parent_chat_context=parent_chat_context,
+            clarification_up_q=clarification_up_q,
+            clarification_down_q=clarification_down_q,
         )
+
+        # ── 3.  Optionally wrap .result() to expose reasoning  ────────────
         if return_reasoning_steps:
-            # Wrap the handle.result() to return both answer and reasoning steps
             original_result = handle.result
 
             async def wrapped_result():
                 answer = await original_result()
                 return answer, client.messages
 
-            handle.result = wrapped_result
+            handle.result = wrapped_result  # type: ignore[attr-defined]
 
         return handle
 
