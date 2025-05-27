@@ -26,8 +26,8 @@ from dotenv import load_dotenv
 load_dotenv()
 
 client = unify.Unify(
-    cache=eval(os.environ.get("UNIFY_CACHE")),
-    traced=eval(os.environ.get("UNIFY_TRACED")),
+    cache=True,
+    traced=True,
 )
 client.set_system_message(PRIMITIVE_TO_BROWSER_ACTION_CANDIDATES)
 
