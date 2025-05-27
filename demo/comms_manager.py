@@ -186,17 +186,11 @@ class CommsManager:
     async def subscribe_to_topic(self, subscription_id: str):
         """Subscribe to a specific PubSub topic and process messages."""
         try:
-            if not self.credentials:
-                # Use GOOGLE_APPLICATION_CREDENTIALS for authentication
-                if os.getenv("GOOGLE_APPLICATION_CREDENTIALS"):
-                    # Let GCP libraries use default authentication
-                    subscriber = pubsub_v1.SubscriberClient()
-                else:
-                    raise ValueError(
-                        "GOOGLE_APPLICATION_CREDENTIALS environment variable must be set"
-                    )
-            else:
+            # Let GCP libraries handle authentication automatically
+            if self.credentials:
                 subscriber = pubsub_v1.SubscriberClient(credentials=self.credentials)
+            else:
+                subscriber = pubsub_v1.SubscriberClient()
             subscription_path = subscriber.subscription_path(
                 project_id,
                 subscription_id,
