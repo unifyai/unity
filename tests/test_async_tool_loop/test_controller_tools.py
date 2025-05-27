@@ -7,6 +7,7 @@ import unify
 import unity.common.llm_helpers as llmh
 from tests.helpers import _handle_project
 
+
 # --- Redis stub -----------------------------------------------------------
 class _FakePubSub:
     def __init__(self):
@@ -79,7 +80,11 @@ async def test_controller_act_tool_loop():
     Verify that the Controller.act method can be used as a tool
     within the async-tool-use loop to perform a browser action.
     """
-    client = unify.AsyncUnify(MODEL_NAME, cache=True, traced=True)
+    client = unify.AsyncUnify(
+        MODEL_NAME,
+        cache=eval(os.environ.get("UNIFY_CACHE")),
+        traced=eval(os.environ.get("UNIFY_TRACED")),
+    )
     client.set_system_message("Feel free to call multiple tools per turn.")
 
     controller = Controller()
@@ -95,6 +100,7 @@ async def test_controller_act_tool_loop():
     # Expect the action command to appear in the result
     assert "enter_text" in result.lower()
 
+
 @pytest.mark.asyncio
 @_handle_project
 async def test_controller_observe_tool_loop():
@@ -103,7 +109,11 @@ async def test_controller_observe_tool_loop():
     within the async-tool-use loop to answer a simple question.
     """
     # Create a fresh AsyncUnify client
-    client = unify.AsyncUnify(MODEL_NAME, cache=True, traced=True)
+    client = unify.AsyncUnify(
+        MODEL_NAME,
+        cache=eval(os.environ.get("UNIFY_CACHE")),
+        traced=eval(os.environ.get("UNIFY_TRACED")),
+    )
     client.set_system_message("Feel free to call multiple tools per turn.")
 
     # Instantiate Controller and prime minimal context
@@ -121,6 +131,7 @@ async def test_controller_observe_tool_loop():
     # The tool returns a boolean; ensure the answer contains 'true'
     assert any(token in answer.lower() for token in ("true", "yes"))
 
+
 @pytest.mark.asyncio
 @_handle_project
 async def test_controller_complex_tool_loop():
@@ -129,7 +140,11 @@ async def test_controller_complex_tool_loop():
     within the async-tool-use loop to answer a simple question.
     """
     # Create a fresh AsyncUnify client
-    client = unify.AsyncUnify(MODEL_NAME, cache=True, traced=True)
+    client = unify.AsyncUnify(
+        MODEL_NAME,
+        cache=eval(os.environ.get("UNIFY_CACHE")),
+        traced=eval(os.environ.get("UNIFY_TRACED")),
+    )
     client.set_system_message("Feel free to call multiple tools per turn.")
 
     # Instantiate Controller and prime minimal context
@@ -153,4 +168,6 @@ async def test_controller_complex_tool_loop():
     ).result()
 
     # The tool returns a boolean; ensure the answer contains 'true'
-    assert all(token in answer.lower() for token in ("ctrl", "cursor left twice", "delete"))
+    assert all(
+        token in answer.lower() for token in ("ctrl", "cursor left twice", "delete")
+    )

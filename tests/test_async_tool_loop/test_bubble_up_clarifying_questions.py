@@ -18,8 +18,8 @@ def make_llm(system_message: Optional[str] = None) -> unify.AsyncUnify:
     return unify.AsyncUnify(
         endpoint="o4-mini@openai",
         system_message=system_message,
-        cache=os.environ.get("UNIFY_CACHE"),
-        traced=os.environ.get("UNIFY_TRACED"),
+        cache=eval(os.environ.get("UNIFY_CACHE")),
+        traced=eval(os.environ.get("UNIFY_TRACED")),
     )
 
 

@@ -104,7 +104,11 @@ class KnowledgeManager:
         """
         from unity.knowledge_manager.sys_msgs import STORE
 
-        client = unify.AsyncUnify("o4-mini@openai", cache=True, traced=True)
+        client = unify.AsyncUnify(
+            "o4-mini@openai",
+            cache=eval(os.environ.get("UNIFY_CACHE")),
+            traced=eval(os.environ.get("UNIFY_TRACED")),
+        )
         client.set_system_message(STORE)
         handle = start_async_tool_use_loop(client, text, self._store_tools)
 
@@ -162,7 +166,11 @@ class KnowledgeManager:
         """
         from unity.knowledge_manager.sys_msgs import RETRIEVE
 
-        client = unify.AsyncUnify("o4-mini@openai", cache=True, traced=True)
+        client = unify.AsyncUnify(
+            "o4-mini@openai",
+            cache=eval(os.environ.get("UNIFY_CACHE")),
+            traced=eval(os.environ.get("UNIFY_TRACED")),
+        )
         client.set_system_message(RETRIEVE)
         handle = start_async_tool_use_loop(client, text, self._retrieve_tools)
 
