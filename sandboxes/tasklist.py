@@ -99,8 +99,8 @@ def _seed_llm(
         )
     client = unify.Unify(
         "o4-mini@openai",
-        cache=json.loads(os.environ.get("UNIFY_CACHE")),
-        traced=json.loads(os.environ.get("UNIFY_TRACED")),
+        cache=json.loads(os.environ.get("UNIFY_CACHE", "true")),
+        traced=json.loads(os.environ.get("UNIFY_TRACED", "true")),
     )
     client.set_system_message(prompt)
     raw = client.generate("Produce scenario").strip()
