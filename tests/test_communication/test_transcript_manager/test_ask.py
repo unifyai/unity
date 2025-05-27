@@ -589,3 +589,127 @@ async def test_ask_respects_parent_context(tm_scenario: TranscriptManager):
     # b) LLM judged answer correct
     expected = "2025-05-20"
     _llm_assert_correct("What day was the conversation?", expected, answer, steps)
+
+
+@pytest.mark.asyncio
+@_handle_project
+async def test_ask_requests_clarification_when_context_missing(
+    tm_scenario: TranscriptManager,
+) -> None:
+    """
+    Without a *parent_chat_context* the assistant should realise it does not
+    know which conversation the user means and therefore invoke its internal
+    `request_clarification` helper.  The question must bubble up via
+    `clarification_up_q`; the supplied answer then flows back down and the
+    tool use continues to completion.
+    """
+
+    tm = tm_scenario
+    ebus: EventBus = tm._event_bus
+
+    # ── 1.  Seed a short “basketball” conversation on 2025-05-20 ───────────
+    t_conv = datetime(2025, 5, 20, 18, 0, tzinfo=timezone.utc)
+    dan, julia = _ID_BY_NAME["dan"], _ID_BY_NAME["julia"]
+
+    for s, r, txt in [
+        (dan, julia, "Did you catch the **basketball** game last night?"),
+        (julia, dan, "Absolutely – great chat!"),
+    ]:
+        await ebus.publish(
+            Event(
+                type="Messages",
+                timestamp=datetime.now(UTC),
+                payload=Message(
+                    medium="phone_call",
+                    sender_id=s,
+                    receiver_id=r,
+                    timestamp=t_conv.isoformat(),
+                    content=txt,
+                    exchange_id=123,
+                ),
+            ),
+        )
+    ebus.join_published()
+
+    # ── 2.  Prepare clarification channels ────────────────────────────────
+    up_q: asyncio.Queue[str] = asyncio.Queue()
+    down_q: asyncio.Queue[str] = asyncio.Queue()
+
+    # ── 3.  Call `.ask()` WITHOUT parent context ───────────────────────────
+    handle = tm.ask(
+        "What day was the conversation?",
+        return_reasoning_steps=True,
+        clarification_up_q=up_q,
+        clarification_down_q=down_q,
+    )
+
+    # ── 4.  The very first thing should be a clarification request ─────────
+    clar_question: str = await asyncio.wait_for(up_q.get(), timeout=30)
+    assert clar_question, "No clarification question was asked."
+
+    # The wording is model-dependent; merely check it *asks which conversation*.
+    assert "which" in clar_question.lower() or "conversation" in clar_question.lower()
+
+    # ── 5.  Supply an answer that disambiguates (mention ‘basketball’) ─────
+    await down_q.put("The conversation about basketball we had last week.")
+
+    # ── 6.  Await final answer and reasoning steps ─────────────────────────
+    answer, steps = await handle.result()
+
+    # ── 7.  Initial step roles ─────────────────────────
+    assert steps[0]["role"] == "system"
+    assert steps[1]["role"] == "user"
+
+    # ── 8.  Clarification requested ─────────────────────────
+    assert steps[2]["role"] == "assistant"
+    assert len(steps[2]["tool_calls"]) == 1
+    assert steps[2]["tool_calls"][0]["function"]["name"] == "request_clarification"
+
+    # ── 9.  Clarification received ─────────────────────────
+    assert steps[3]["role"] == "tool"
+    assert steps[3]["name"] == "request_clarification"
+    assert "basketball" in steps[3]["content"].lower()
+
+    # ── 10.  search messages for basketball is called ─────────────────────────
+    assert steps[4]["role"] == "assistant"
+    assert len(steps[4]["tool_calls"]) == 1
+    assert steps[4]["tool_calls"][0]["function"]["name"] == "_search_messages"
+    assert "basketball" in steps[4]["tool_calls"][0]["function"]["arguments"].lower()
+
+    # ── 11.  Messages received ─────────────────────────
+    assert steps[5]["role"] == "tool"
+    assert steps[5]["name"] == "_search_messages"
+    assert "2025-05-20" in steps[5]["content"].lower()
+
+    # ── 12.  Assistant responds ─────────────────────────
+    assert steps[6]["role"] == "assistant"
+    assert steps[6]["tool_calls"] is None
+    assert "2025" in steps[6]["content"]
+    assert len(steps) == 7
+
+    # ── 13.  Evaluate – should return the correct date 2025-05-20 ───────────
+    expected = "2025-05-20"
+
+    judge = unify.Unify(
+        "o4-mini@openai",
+        cache=json.loads(os.environ.get("UNIFY_CACHE", "true")),
+        traced=json.loads(os.environ.get("UNIFY_TRACED", "true")),
+    )
+    judge.set_system_message(
+        'Answer strictly with JSON: {"correct": true|false} – '
+        "true iff the candidate contains the exact date 2025-05-20, "
+        "but this can be expressed in any date format (does **not** need to be yyyy-mm-dd)",
+    )
+    verdict = judge.generate(
+        _dumps(
+            {"candidate": answer},
+            indent=2,
+        ),
+    )
+    is_ok = json.loads(verdict[verdict.find("{") : verdict.rfind("}") + 1])["correct"]
+    assert is_ok is True, assertion_failed(
+        expected,
+        answer,
+        steps,
+        "Clarification flow failed",
+    )
