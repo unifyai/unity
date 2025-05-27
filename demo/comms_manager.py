@@ -2,7 +2,6 @@ import asyncio
 from datetime import datetime
 from google.cloud import pubsub_v1
 import json
-import os
 from actions import handle_message_action
 from events import Event, SMSMessageRecievedEvent, WhatsappMessageRecievedEvent
 from new_terminal_helper import run_as_subprocess, terminate_process
