@@ -120,8 +120,8 @@ def _llm_assert_correct(
 
     judge = unify.Unify(
         "o4-mini@openai",
-        cache=json.loads(os.environ.get("UNIFY_CACHE")),
-        traced=json.loads(os.environ.get("UNIFY_TRACED")),
+        cache=json.loads(os.environ.get("UNIFY_CACHE", "true")),
+        traced=json.loads(os.environ.get("UNIFY_TRACED", "true")),
     )
     judge.set_system_message(
         "You are a strict unit-test judge. "

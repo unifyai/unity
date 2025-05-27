@@ -24,8 +24,8 @@ import unify
 import json
 
 client = unify.Unify(
-    cache=json.loads(os.environ.get("UNIFY_CACHE")),
-    traced=json.loads(os.environ.get("UNIFY_TRACED")),
+    cache=json.loads(os.environ.get("UNIFY_CACHE", "true")),
+    traced=json.loads(os.environ.get("UNIFY_TRACED", "true")),
 )
 client.set_system_message(PRIMITIVE_TO_BROWSER_ACTION_CANDIDATES)
 

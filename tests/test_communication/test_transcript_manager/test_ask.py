@@ -375,8 +375,8 @@ def _llm_assert_correct(
     """LLM-based validation with stricter or fuzzier rubric per question."""
     judge = unify.Unify(
         "o4-mini@openai",
-        cache=json.loads(os.environ.get("UNIFY_CACHE")),
-        traced=json.loads(os.environ.get("UNIFY_TRACED")),
+        cache=json.loads(os.environ.get("UNIFY_CACHE", "true")),
+        traced=json.loads(os.environ.get("UNIFY_TRACED", "true")),
     )
 
     if _is_summary_q(question):
