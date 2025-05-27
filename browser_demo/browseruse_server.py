@@ -1,11 +1,13 @@
 from langchain_openai import ChatOpenAI
 from browser_use import Agent, Browser
 from dotenv import load_dotenv
+
 load_dotenv()
 
 import asyncio
 
 llm = ChatOpenAI(model="gpt-4o")
+
 
 async def main():
     browser = Browser()
@@ -29,6 +31,7 @@ async def main():
 
     await context.close()
     await browser.close()
+
 
 if __name__ == "__main__":
     asyncio.run(main())

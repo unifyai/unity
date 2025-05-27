@@ -10,6 +10,7 @@ if str(ROOT_DIR) not in sys.path:
 
 from unity.controller.controller import Controller
 
+
 async def main():
     # Instantiate and start the controller thread
     controller = Controller()
@@ -32,6 +33,7 @@ async def main():
             break
         else:
             print("Invalid method")
+
 
 if __name__ == "__main__":
     asyncio.run(main())

@@ -1,15 +1,13 @@
 import threading
-import time
 import asyncio
 from datetime import datetime, timezone
 from typing import Any, Type, Optional
 
 import redis
-import unify
 
 from .playwright.worker import BrowserWorker
 from .agent import text_to_browser_action, ask_llm
-from ..constants import SESSION_ID, LOGGER
+from ..constants import LOGGER
 
 
 class Controller(threading.Thread):
@@ -48,8 +46,11 @@ class Controller(threading.Thread):
                 continue
             data = msg.get("data")
             try:
-                payload = data.decode() if isinstance(data, (bytes, bytearray)) else data
+                payload = (
+                    data.decode() if isinstance(data, (bytes, bytearray)) else data
+                )
                 import json, ast
+
                 try:
                     browser_state = json.loads(payload)
                 except Exception:
