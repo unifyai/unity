@@ -1,6 +1,7 @@
 steps:
-  # Parse the Pub/Sub message to extract image information
+  # Parse Pub/Sub Message and Log Deployment Info
 - name: 'gcr.io/cloud-builders/gcloud'
+  id: 'parse-deployment-info'
   entrypoint: 'bash'
   args:
   - '-c'
@@ -9,8 +10,9 @@ steps:
     echo "Commit SHA: ${_COMMIT_SHA}"
     echo "Build ID: ${_BUILD_ID}"
 
-  # Discover and update all Cloud Run jobs using Unity images
+  # Discover and Update All Cloud Run Jobs Using Unity Images
 - name: 'gcr.io/cloud-builders/gcloud'
+  id: 'update-cloud-run-jobs'
   entrypoint: 'bash'
   args:
   - '-c'
@@ -18,9 +20,9 @@ steps:
     echo "Discovering Cloud Run jobs using Unity images..."
     
     # Define the image repository pattern
-    IMAGE_REPO_PATTERN="${_REGION}-docker.pkg.dev/${_PROJECT_ID}/${_REPOSITORY}/unity"
+    REPO_PATTERN="${_REGION}-docker.pkg.dev/${_PROJECT_ID}/${_REPOSITORY}/unity"
     
-    echo "Looking for jobs using images matching: $IMAGE_REPO_PATTERN"
+    echo "Looking for jobs using images matching: $REPO_PATTERN"
     
     # Get all Cloud Run jobs and filter by image
     ALL_JOBS=$(gcloud run jobs list \
@@ -29,7 +31,7 @@ steps:
       --project=${_PROJECT_ID})
     
     # Use jq to filter jobs that use Unity images
-    UNITY_JOBS=$(echo "$ALL_JOBS" | jq -r --arg pattern "$IMAGE_REPO_PATTERN" '
+    UNITY_JOBS=$(echo "$ALL_JOBS" | jq -r --arg pattern "$REPO_PATTERN" '
       .[] | 
       select(.spec.template.spec.template.spec.containers[0].image | startswith($pattern)) |
       .metadata.name
@@ -37,7 +39,7 @@ steps:
     
     if [ -z "$UNITY_JOBS" ]; then
       echo "No Cloud Run jobs found using Unity images"
-      echo "Image pattern searched: $IMAGE_REPO_PATTERN"
+      echo "Image pattern searched: $REPO_PATTERN"
       echo ""
       echo "Available jobs in region:"
       gcloud run jobs list --region=${_REGION} --format="table(metadata.name,spec.template.spec.template.spec.containers[0].image)"
@@ -78,15 +80,16 @@ steps:
     
     echo "🎉 All Unity-dependent jobs updated successfully!"
 
-  # Verify deployments
+  # Verify Deployments and Show Updated Job Images
 - name: 'gcr.io/cloud-builders/gcloud'
+  id: 'verify-deployments'
   entrypoint: 'bash'
   args:
   - '-c'
   - |
     echo "Verifying updated jobs..."
     
-    IMAGE_REPO_PATTERN="${_REGION}-docker.pkg.dev/${_PROJECT_ID}/${_REPOSITORY}/unity"
+    REPO_PATTERN="${_REGION}-docker.pkg.dev/${_PROJECT_ID}/${_REPOSITORY}/unity"
     
     # Get updated jobs
     ALL_JOBS=$(gcloud run jobs list \
@@ -94,7 +97,7 @@ steps:
       --region=${_REGION} \
       --project=${_PROJECT_ID})
     
-    UNITY_JOBS=$(echo "$ALL_JOBS" | jq -r --arg pattern "$IMAGE_REPO_PATTERN" '
+    UNITY_JOBS=$(echo "$ALL_JOBS" | jq -r --arg pattern "$REPO_PATTERN" '
       .[] | 
       select(.spec.template.spec.template.spec.containers[0].image | startswith($pattern)) |
       "\(.metadata.name): \(.spec.template.spec.template.spec.containers[0].image)"
@@ -102,6 +105,7 @@ steps:
     
     echo "Current Unity job images:"
     echo "$UNITY_JOBS"
+  waitFor: ['update-cloud-run-jobs']
 
 # Substitution variables (these will be populated from the Pub/Sub message)
 substitutions:
@@ -119,4 +123,4 @@ options:
   machineType: 'E2_HIGHCPU_8'
 
 # Timeout
-timeout: '600s'  # 10 minutes 
+timeout: '600s'  # 10 minutes
