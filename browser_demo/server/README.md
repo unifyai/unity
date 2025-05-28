@@ -2,11 +2,11 @@
 
 1. Build Dockerfile
 
-`docker build -t bu_test -f Dockerfile .
+`docker build -t bu_test -f Dockerfile .`
 
 2. Run Docker container
 
-`docker run -p 6080:6080 -rm bu_test
+`docker run -p 6080:6080 -rm bu_test`
 
 Note: add `-d` for detached mode
 
