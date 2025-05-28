@@ -48,7 +48,7 @@ async def main():
         agent.add_new_task(action)
         result = await agent.run()
         print(result)
-    
+
     await agent.close()
     # await context.close()
     await browser.close()
@@ -56,6 +56,3 @@ async def main():
 
 if __name__ == "__main__":
     asyncio.run(main())
-
-
-
