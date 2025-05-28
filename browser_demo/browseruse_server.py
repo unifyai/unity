@@ -29,7 +29,7 @@ async def main():
         agent.add_new_task(action)
         result = await agent.run()
         print(result)
-    
+
     await agent.close()
     await context.close()
     await browser.close()
