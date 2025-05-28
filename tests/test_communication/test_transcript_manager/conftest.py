@@ -10,6 +10,7 @@ from unity.events.event_bus import EventBus, Event
 from datetime import timedelta
 from typing import List
 import pytest
+import os
 
 import asyncio
 import unify
@@ -263,7 +264,8 @@ def setup_session_context():
         unify.set_trace_context("Traces")
         yield
 
-    unify.delete_context(ctx)
+    if os.environ.get("UNIFY_DELETE_CONTEXT_ON_EXIT", "false").lower() == "true":
+        unify.delete_context(ctx)
 
 
 # --------------------------------------------------------------------------- #
@@ -276,4 +278,4 @@ def tm_scenario(
 ):
     """Seed the backend exactly once and share the TM instance."""
     builder = event_loop.run_until_complete(ScenarioBuilder.create())
-    return builder.tm
+    return builder.tm, _ID_BY_NAME
