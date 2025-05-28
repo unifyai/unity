@@ -3,43 +3,6 @@ from typing import List, Optional
 from pydantic import BaseModel, Field
 
 
-# thanks to o3 (probably not needed if pred is going to happen outside of livekit)
-class FlatSchemaModel(BaseModel):
-    """
-    Base class that post-processes Pydantic’s JSON-schema so that
-    all $refs are expanded in-place and the top-level $defs block
-    is removed.  Call `YourModel.model_json_schema()` as usual.
-    """
-
-    @classmethod
-    def model_json_schema(cls, **kwargs):  # type: ignore[override]
-        schema: dict = super().model_json_schema(**kwargs)
-
-        # Pull out the central definitions store (if any)
-        definitions = schema.pop("$defs", None)
-        if not definitions:
-            return schema  # nothing to flatten
-
-        # Recursively walk the schema tree and replace every $ref
-        def _inline_refs(node):
-            if isinstance(node, dict):
-                ref = node.pop("$ref", None)
-                if ref:
-                    # "#/$defs/Foo"  ->  "Foo"
-                    def_key = ref.rsplit("/", 1)[-1]
-                    node.update(definitions[def_key])
-                    _inline_refs(node)  # the in-lined part may itself contain refs
-                else:
-                    for value in node.values():
-                        _inline_refs(value)
-            elif isinstance(node, list):
-                for item in node:
-                    _inline_refs(item)
-
-        _inline_refs(schema)
-        return schema
-
-
 from typing import List, Literal, Union, Optional
 from pydantic import BaseModel, Field
 
@@ -51,23 +14,40 @@ class SendWhatsAppMessageAction(BaseModel):
     from_number: str
     to_number: str
 
-
-class SendTelegramMessageAction(BaseModel):
-    type: Literal["telegram"]
-    message: str
-
-
 class SendSMSMessageAction(BaseModel):
     type: Literal["sms"]
     message: str
     from_number: str
     to_number: str
 
-
 class SendEmailAction(BaseModel):
     type: Literal["email"]
     subject: str
     body: str
+
+
+class CreateCommunicationTask(BaseModel):
+    contact_name: str = Field(..., description="contact name")
+    contact_number: str = Field(..., description="contact number with country code")
+    detailed_task_description: str = Field(..., description="very detailed description of the task")
+
+class RespondToAgent(BaseModel):
+    agent_id: str = Field(..., description="Id of the agent to respond to")
+    task_id: str = Field(..., description="Id of the response is related to")
+    response: str = Field(..., description="Your resoonse to the agent's query")
+
+class EndTask(BaseModel):
+    task_id: str = Field(..., description="ID of the task")
+    task_status: Literal["failed", "sucess"] = Field(..., description="The end status of the task")
+    task_result: str = Field(..., 
+                             description="Summary of the task results, what happened, and what was the conclusion, will be reported back to the main user agent")
+
+class AskUserAgent(BaseModel):
+    agent_id: str = Field(..., description="Id of the agent asking the query")
+    task_id: str = Field(..., description="id of the task the query is associated with")
+    query: str = Field(...,
+                       description="The question or clarification that is going to be sent to the main user agent")
+
 
 
 class SendCallAction(BaseModel):
@@ -82,14 +62,16 @@ class SendCallAction(BaseModel):
 ActionModel = Union[
     SendEmailAction,
     SendWhatsAppMessageAction,
-    SendTelegramMessageAction,
     SendSMSMessageAction,
+    CreateCommunicationTask,
+    RespondToAgent,
     SendCallAction,
+
 ]
 
 
 # -------- assistant output --------
-class CallAssistantOutput(FlatSchemaModel):
+class CallAssistantOutput(BaseModel):
     phone_utterance: str = Field(
         ...,
         description="Your response to the user over the phone",
@@ -100,8 +82,34 @@ class CallAssistantOutput(FlatSchemaModel):
     )
 
 
-class AssistantOutput(FlatSchemaModel):
+class AssistantOutput(BaseModel):
     actions: List[ActionModel] = Field(
+        ...,
+        description="Actions the assistant should perform",
+    )
+
+
+CommsActionModel = Union[
+    SendEmailAction,
+    SendWhatsAppMessageAction,
+    SendSMSMessageAction,
+    SendCallAction,
+    AskUserAgent,
+    EndTask
+]
+
+class CommsAgentOutput(BaseModel):
+    actions: List[CommsActionModel] = Field(
+        ...,
+        description="Actions the comms agent should perform",
+    )
+
+class CallCommsAgentOutput(BaseModel):
+    phone_utterance: str = Field(
+        ...,
+        description="Your response to the user over the phone",
+    )
+    actions: Optional[List[CommsActionModel]] = Field(
         ...,
         description="Actions the assistant should perform",
     )
