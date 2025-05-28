@@ -59,8 +59,8 @@ class TranscriptManager:
         *,
         return_reasoning_steps: bool = False,
         parent_chat_context: list[dict] | None = None,
-        clarification_up_q: asyncio.Queue[str] | None = None,  # NEW
-        clarification_down_q: asyncio.Queue[str] | None = None,  # NEW
+        clarification_up_q: asyncio.Queue[str] | None = None,
+        clarification_down_q: asyncio.Queue[str] | None = None,
     ) -> "AsyncToolLoopHandle":
         """
         Ask any question as a text command, and use the tools available (the private methods of this class) to perform the action.
@@ -140,7 +140,7 @@ class TranscriptManager:
                 answer = await original_result()
                 return answer, client.messages
 
-            handle.result = wrapped_result  # type: ignore[attr-defined]
+            handle.result = wrapped_result
 
         return handle
 
