@@ -4,8 +4,8 @@ import random
 import pytest
 from datetime import datetime, UTC
 
-from unity.communication.types.message import Message, VALID_MEDIA
-from unity.communication.transcript_manager.transcript_manager import TranscriptManager
+from unity.transcript_manager.types.message import Message, VALID_MEDIA
+from unity.transcript_manager.transcript_manager import TranscriptManager
 from unity.events.event_bus import EventBus, Event
 from tests.helpers import _handle_project
 
@@ -41,124 +41,6 @@ def _create_contacts():
     unify.create_logs(
         context="Contacts",
         entries=CONTACTS,
-    )
-
-
-@pytest.mark.unit
-@_handle_project
-def test_create_contact():
-    eb = EventBus()
-    eb.register_event_types(["Messages", "MessageExchangeSummaries"])
-    transcript_manager = TranscriptManager(eb)
-    transcript_manager.create_contact(
-        first_name="Dan",
-    )
-    contacts = transcript_manager._search_contacts()
-    assert len(contacts) == 1
-    contact = contacts[0]
-    assert contact.model_dump() == {
-        "contact_id": 0,
-        "first_name": "Dan",
-        "surname": None,
-        "email_address": None,
-        "phone_number": None,
-        "whatsapp_number": None,
-    }
-
-
-@pytest.mark.unit
-@_handle_project
-def test_update_contact():
-    eb = EventBus()
-    eb.register_event_types(["Messages", "MessageExchangeSummaries"])
-    transcript_manager = TranscriptManager(eb)
-
-    # create
-    transcript_manager.create_contact(
-        first_name="Dan",
-    )
-
-    # check
-    contacts = transcript_manager._search_contacts()
-    assert len(contacts) == 1
-    contact = contacts[0]
-    assert contact.model_dump() == {
-        "contact_id": 0,
-        "first_name": "Dan",
-        "surname": None,
-        "email_address": None,
-        "phone_number": None,
-        "whatsapp_number": None,
-    }
-
-    # update
-    transcript_manager.update_contact(
-        contact_id=0,
-        first_name="Daniel",
-    )
-
-    # check
-    contacts = transcript_manager._search_contacts()
-    assert len(contacts) == 1
-    contact = contacts[0]
-    assert contact.model_dump() == {
-        "contact_id": 0,
-        "first_name": "Daniel",
-        "surname": None,
-        "email_address": None,
-        "phone_number": None,
-        "whatsapp_number": None,
-    }
-
-
-@pytest.mark.unit
-@_handle_project
-def test_create_contacts():
-    eb = EventBus()
-    eb.register_event_types(["Messages", "MessageExchangeSummaries"])
-    transcript_manager = TranscriptManager(eb)
-
-    # first
-    transcript_manager.create_contact(
-        first_name="Dan",
-    )
-    contacts = transcript_manager._search_contacts()
-    assert len(contacts) == 1
-    contact = contacts[0]
-    assert contact.model_dump() == {
-        "contact_id": 0,
-        "first_name": "Dan",
-        "surname": None,
-        "email_address": None,
-        "phone_number": None,
-        "whatsapp_number": None,
-    }
-
-    # second
-    transcript_manager.create_contact(
-        first_name="Tom",
-    )
-    contacts = transcript_manager._search_contacts()
-    assert len(contacts) == 2
-    contact = contacts[0]
-    assert contact.model_dump() == {
-        "contact_id": 1,
-        "first_name": "Tom",
-        "surname": None,
-        "email_address": None,
-        "phone_number": None,
-        "whatsapp_number": None,
-    }
-
-
-@pytest.mark.unit
-@_handle_project
-def test_search_contacts():
-    eb = EventBus()
-    eb.register_event_types(["Messages", "MessageExchangeSummaries"])
-    transcript_manager = TranscriptManager(eb)
-    transcript_manager.create_contact(
-        first_name="Dan",
     )
 
 

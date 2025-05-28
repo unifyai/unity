@@ -26,11 +26,15 @@ import pytest
 import pytest
 import asyncio
 import unify
-from unity.communication.transcript_manager.transcript_manager import TranscriptManager
-from unity.communication.types.message import Message
+from unity.transcript_manager.transcript_manager import TranscriptManager
+from unity.transcript_manager.types.message import Message
 from unity.common.llm_helpers import _dumps
 from tests.assertion_helpers import assertion_failed
 from tests.helpers import _handle_project
+from tests.test_transcript_manager.conftest import (
+    _ID_BY_NAME,
+    ScenarioBuilder,
+)
 
 
 # --------------------------------------------------------------------------- #
@@ -296,7 +300,7 @@ async def test_ask_honors_stop():
 async def test_ask_respects_parent_context(
     tm_scenario: tuple[TranscriptManager, dict[str, int]],
 ):
-    # ── 1.  Seed a “basketball” exchange dated 2025-05-20 ───────────────
+    # ── 1.  Seed a "basketball" exchange dated 2025-05-20 ───────────────
     tm, _ID_BY_NAME = tm_scenario
     ebus = tm._event_bus
     cid = _ID_BY_NAME
@@ -362,7 +366,7 @@ async def test_ask_requests_clarification_when_context_missing(
     tm, _ID_BY_NAME = tm_scenario
     ebus: EventBus = tm._event_bus
 
-    # ── 1.  Seed a short “basketball” conversation on 2025-05-20 ───────────
+    # ── 1.  Seed a short "basketball" conversation on 2025-05-20 ───────────
     t_conv = datetime(2025, 5, 20, 18, 0, tzinfo=timezone.utc)
     dan, julia = _ID_BY_NAME["dan"], _ID_BY_NAME["julia"]
 
@@ -405,7 +409,7 @@ async def test_ask_requests_clarification_when_context_missing(
     # The wording is model-dependent; merely check it *asks which conversation*.
     assert "which" in clar_question.lower() or "conversation" in clar_question.lower()
 
-    # ── 5.  Supply an answer that disambiguates (mention ‘basketball’) ─────
+    # ── 5.  Supply an answer that disambiguates (mention 'basketball') ─────
     await down_q.put("The conversation about basketball we had last week.")
 
     # ── 6.  Await final answer and reasoning steps ─────────────────────────
