@@ -48,8 +48,31 @@ steps:
 
     # Test if the region is valid and accessible
     echo "Testing region access..."
-    gcloud run services list --region=$$TARGET_REGION --project=${PROJECT_ID} --limit=1 || echo "Region test failed"
     
+    # First, verify the region exists
+    echo "Checking if region $$TARGET_REGION is valid..."
+    gcloud run regions list --filter="name:$$TARGET_REGION" --format="value(name)" | grep -q "$$TARGET_REGION" || {
+      echo "❌ Region $$TARGET_REGION is not valid for Cloud Run"
+      echo "Available Cloud Run regions:"
+      gcloud run regions list --format="value(name)" | head -10
+      exit 1
+    }
+
+    echo "✅ Region $$TARGET_REGION is valid"
+
+    # Test Cloud Run access with a simpler command
+    echo "Testing Cloud Run API access..."
+    gcloud run jobs list --region=$$TARGET_REGION --limit=1 --format="value(metadata.name)" >/dev/null 2>&1 || {
+      echo "❌ Cannot access Cloud Run jobs API in region $$TARGET_REGION"
+      echo "This might be due to:"
+      echo "  - Cloud Run API not enabled"
+      echo "  - Insufficient permissions"
+      echo "  - Region not available for your project"
+      exit 1
+    }
+
+    echo "✅ Cloud Run API access successful"
+
     # Get all Cloud Run jobs and filter by image
     echo "Listing Cloud Run jobs in region $$TARGET_REGION..."
     ALL_JOBS=$$(gcloud run jobs list \
