@@ -19,11 +19,6 @@ events_map: dict[str, Event] = {
     "msg-sub": SMSMessageRecievedEvent,
 }
 
-with open(r"C:\Users\LEGION\Desktop\unity\unity\gcp_creds.json", encoding="utf-8") as f:
-    os.environ["GCP_SA_KEY"] = f.read().strip()
-
-
-
 class CommsManager:
     def __init__(self, events_queue):
         self.subscribers = {}
