@@ -26,8 +26,8 @@ sys.path.insert(0, str(ROOT))
 import unify
 
 from unity.constants import LOGGER as _LG  # type: ignore
-from unity.communication.transcript_manager.transcript_manager import TranscriptManager  # type: ignore
-from unity.communication.types.message import Message  # type: ignore
+from unity.transcript_manager.transcript_manager import TranscriptManager  # type: ignore
+from unity.transcript_manager.types.message import Message  # type: ignore
 from sandboxes.utils import run_in_loop, get_custom_scenario
 
 # Voice helpers (PortAudio capture, Deepgram STT, Cartesia TTS)

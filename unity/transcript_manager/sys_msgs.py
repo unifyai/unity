@@ -1,10 +1,11 @@
 import json
 
-from ...communication.transcript_manager.transcript_manager import TranscriptManager
-from ...communication.types.contact import Contact
-from ...communication.types.message import Message
-from ..types.message_exchange_summary import MessageExchangeSummary
-from ...communication.transcript_manager.transcript_manager import TranscriptManager
+from ..transcript_manager.transcript_manager import TranscriptManager
+from ..contact_manager.contact_manager import ContactManager
+from ..contact_manager.types.contact import Contact
+from .types.message import Message
+from .types.message_exchange_summary import MessageExchangeSummary
+from ..transcript_manager.transcript_manager import TranscriptManager
 
 SUMMARIZE = """
 You will be given a series of exchanges, and you need to summarize these exchanges, based on the following guidance.
@@ -27,7 +28,7 @@ As a recap, the schemas for contacts, messages and summaries are as follows:
 
 Available tools:
 • {TranscriptManager.summarize.__name__}(exchange_ids, guidance?): summarise one or more exchanges.
-• {TranscriptManager._search_contacts.__name__.lstrip("_")}(filter?, offset=0, limit=100) → List[Contact] – flexible boolean filtering.
+• {ContactManager.search_contacts.__name__}(filter?, offset=0, limit=100) → List[Contact] – flexible boolean filtering.
 • {TranscriptManager._search_messages.__name__.lstrip("_")}(filter?, offset=0, limit=100) → List[Message] – flexible boolean filtering.
 • {TranscriptManager._search_summaries.__name__.lstrip("_")}(filter?, offset=0, limit=100) → List[MessageExchangeSummary] – flexible boolean filtering.
 • {TranscriptManager._nearest_messages.__name__.lstrip("_")}(text: str, k: int = 10) → List[Message] – returns the top-k messages semantically similar to the given text.
@@ -38,7 +39,7 @@ nearest_messages(text="banking and budgeting", k=3)
 
 Some example filter expressions (`filter: str`) for the tools are as follows.
 
-{TranscriptManager._search_contacts.__name__.lstrip("_")}:
+{ContactManager.search_contacts.__name__}:
 
 - Sender's first name is John:  `filter="first_name == 'John'"`
 - email address is gmail: `filter="'@gmail' in email"`

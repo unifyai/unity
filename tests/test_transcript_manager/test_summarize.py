@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import pytest
 import asyncio
-from unity.communication.transcript_manager.transcript_manager import TranscriptManager
+from unity.transcript_manager.transcript_manager import TranscriptManager
 from tests.helpers import _handle_project
 
 
