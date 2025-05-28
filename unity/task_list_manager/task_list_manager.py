@@ -622,7 +622,8 @@ class TaskListManager:
                 ),
                 limit=2,
             )
-            assert head_candidates, f"Queue is malformed – no head found"
+            if not head_candidates:
+                return []
             assert (
                 len(head_candidates) == 1
             ), f"Multiple heads detected: {head_candidates}"
