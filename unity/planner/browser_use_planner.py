@@ -38,6 +38,9 @@ from unity.common.llm_helpers import (
 )
 from unify import AsyncUnify
 import unify
+import uuid
+from unity.events.event_bus import EventBus, Event
+from unity.communication.transcript_manager.transcript_manager import TranscriptManager
 
 __all__ = ["BrowserUsePlanner"]
 
@@ -80,6 +83,7 @@ class BrowserUsePlanner:
         *,
         base_system_prompt: str | None = "You are a helpful web-browsing assistant.",
         headless: bool = True,
+        disable_browser_security: bool = False,
     ) -> None:
         self._state: _PlannerState = _PlannerState.IDLE
         self._loop_handle: Optional[AsyncToolLoopHandle] = None
@@ -87,38 +91,83 @@ class BrowserUsePlanner:
 
         # ---- Browser layer -------------------------------------------------
         self._browser = Browser(
-            config=BrowserConfig(disable_security=True, headless=headless),
+            config=BrowserConfig(
+                disable_security=disable_browser_security,
+                headless=headless,
+            ),
         )
         self._browser_context = BrowserContext(browser=self._browser)
         self._controller = Controller()
         # ---- LLM layer -----------------------------------------------------
         self._base_system_prompt = base_system_prompt
         self._client = None
+
+        # ---- Managers / event bus -----------------------------------------
+        self._bus: EventBus = EventBus()
+        self._tm: TranscriptManager = TranscriptManager(event_bus=self._bus)
+        # Shared clarification channels (bubble-up / bubble-down)
+        self._clar_up_q: asyncio.Queue[str] = asyncio.Queue()
+        self._clar_down_q: asyncio.Queue[str] = asyncio.Queue()
+
         # Build the tool mapping exactly once – we reuse the same callables
         self._tools: Dict[str, Callable[..., Awaitable[str]]] = self._build_tools()
 
     # ------------------------------------------------------------ public API
-    async def execute(self, task_description: str) -> None:
+
+    @property
+    def status(self) -> str:
+        """‘idle’ | ‘running’ | ‘paused’ – handy for UI bindings."""
+        return self._state.name.lower()
+
+    @property
+    def clarification_questions(self) -> asyncio.Queue[str]:
+        """
+        Queue of pending bottom-up clarification questions.
+        UI should:  `question = await planner.clarification_questions.get()`
+        """
+        return self._clar_up_q
+
+    async def answer_clarification(self, answer: str) -> None:
+        """Send the user’s answer back to the blocked tool-loop."""
+        if self._state is not _PlannerState.RUNNING:
+            raise RuntimeError("No running task awaiting clarification.")
+        await self._clar_down_q.put(answer)
+
+    async def execute(self, task_description: str) -> str:
         """Start a brand-new task (or replace a paused one)."""
         if self._state is _PlannerState.RUNNING:
             raise RuntimeError("A task is already running – stop or pause it first.")
 
         # If a task was paused, we implicitly abandon it when starting a new one
         self._paused_context = None
+        self._task_id = str(uuid.uuid4())
 
         client = self._fresh_llm_client()
         handle = start_async_tool_use_loop(
             client=client,
             message=task_description,
+            event_bus=self._bus,
+            event_type="BROWSER",
             tools=self._tools,
             interrupt_llm_with_interjections=True,
+            clarification_capable_tools=set(self._tools),
+            clarification_up_q=self._clar_up_q,
+            clarification_down_q=self._clar_down_q,
         )
 
         self._attach_completion_callback(handle)
         self._loop_handle = handle
-        self._state = _PlannerState.RUNNING
         self._client = client
-        await handle.result()
+        self._set_state(_PlannerState.RUNNING)
+
+        try:
+            result: str = await handle.result()
+        finally:
+            # loop finished by itself
+            self._loop_handle = None
+            self._client = None
+            self._set_state(_PlannerState.IDLE)
+        return result
 
     async def stop(self) -> None:
         """Terminate the running loop (or discard a paused one) and reset state."""
@@ -133,9 +182,7 @@ class BrowserUsePlanner:
         # Reset everything
         self._loop_handle = None
         self._paused_context = None
-        self._state = _PlannerState.IDLE
-        await self._browser_context.close()
-        await self._browser.close()
+        self._set_state(_PlannerState.IDLE)
 
     async def pause(self) -> None:
         """Gracefully cancel the loop but keep its full chat history for resume()."""
@@ -144,13 +191,13 @@ class BrowserUsePlanner:
 
         # 1. cancel
         self._loop_handle.stop()
-        await asyncio.sleep(0)
+        await self._loop_handle._task
 
         # 2. capture chat history  – deep-copy so we’re immune to later edits
         self._paused_context = list(self._client.messages)  # type: ignore[arg-type]
         self._loop_handle = None
         self._client = None
-        self._state = _PlannerState.PAUSED
+        self._set_state(_PlannerState.PAUSED)
 
     async def resume(self) -> None:
         """Restart a previously-paused task in-place."""
@@ -165,12 +212,17 @@ class BrowserUsePlanner:
             parent_chat_context=self._paused_context,
             propagate_chat_context=True,
             interrupt_llm_with_interjections=True,
+            event_bus=self._bus,
+            event_type="BROWSER",
+            clarification_capable_tools=set(self._tools),
+            clarification_up_q=self._clar_up_q,
+            clarification_down_q=self._clar_down_q,
         )
 
         self._attach_completion_callback(handle)
         self._loop_handle = handle
         self._client = client
-        self._state = _PlannerState.RUNNING
+        self._set_state(_PlannerState.RUNNING)
         self._paused_context = None
 
     async def interject(self, message: str) -> None:
@@ -181,26 +233,39 @@ class BrowserUsePlanner:
 
     async def query(self, question: str) -> str:
         """
-        Ask the assistant a side-question and return its *next* assistant
-        message. Implemented as an interjection + one-shot listener.
+        Ask a question *during* execution.
+        • if task **running** → inject + capture next assistant reply
+        • if task **paused**  → answer via TranscriptManager.ask
         """
+        if self._state is _PlannerState.PAUSED and self._tm:
+            h = self._tm.ask(
+                question,
+                parent_chat_context=self._paused_context,
+                clarification_up_q=self._clar_up_q,
+                clarification_down_q=self._clar_down_q,
+            )
+            return await h.result()
+
         if self._state is not _PlannerState.RUNNING or not self._loop_handle:
             raise RuntimeError("No running task to query.")
 
-        # Snapshot the current message-log length so we know when the *next*
-        # assistant turn has arrived.
-        start_idx = len(self._client.messages)
         await self._loop_handle.interject(question)
 
-        # Poll until a brand-new assistant message shows up (30 s budget)
-        deadline = asyncio.get_event_loop().time() + 30
-        while asyncio.get_event_loop().time() < deadline:
-            await asyncio.sleep(0.5)
-            for msg in self._client.messages[start_idx:]:
-                if msg.get("role") == "assistant" and not msg.get("function_call"):
-                    return msg["content"]
+        fut: asyncio.Future[str] = asyncio.get_event_loop().create_future()
 
-        raise TimeoutError("Timed-out waiting for the assistant to answer.")
+        def _listener(msg: dict) -> None:
+            if (
+                msg.get("role") == "assistant"
+                and not msg.get("function_call")
+                and not fut.done()
+            ):
+                fut.set_result(msg["content"])
+
+        unsubscribe = self._client.on("message", _listener)  # type: ignore[attr-defined]
+        try:
+            return await asyncio.wait_for(fut, timeout=30)
+        finally:
+            unsubscribe()
 
     # ---------------------------------------------------------------- tools
     def _build_tools(self) -> Dict[str, Callable[..., Awaitable[str]]]:
@@ -237,11 +302,26 @@ class BrowserUsePlanner:
                     else:
                         params = kwargs
 
+                    # Build isolated “page extraction” LLM to avoid chat-pollution
+                    if (
+                        "page_extraction_llm"
+                        in inspect.signature(
+                            self._controller.registry.execute_action,
+                        ).parameters
+                    ):
+                        extraction_llm = unify.AsyncUnify(
+                            "o4-mini@openai",
+                            cache=True,
+                            traced=False,
+                        )
+                    else:
+                        extraction_llm = None
+
                     result = await self._controller.registry.execute_action(
                         _action_name,
                         params,
                         browser=self._browser_context,
-                        page_extraction_llm=self._client,
+                        page_extraction_llm=extraction_llm,
                     )
                     return (
                         getattr(result, "extracted_content", None)
@@ -341,8 +421,39 @@ class BrowserUsePlanner:
                 pass
             finally:
                 if self._state is _PlannerState.RUNNING:
-                    self._state = _PlannerState.IDLE
+                    self._set_state(_PlannerState.IDLE)
                 self._loop_handle = None
                 self._client = None
 
         asyncio.create_task(_finalizer())
+
+    # ----------------------------------------------------- async context mgr
+    async def __aenter__(self) -> "BrowserUsePlanner":
+        return self
+
+    async def __aexit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc: BaseException | None,
+        tb: Any,
+    ) -> None:
+        await self.stop()
+        await self._browser_context.close()
+        await self._browser.close()
+
+    # --------------------------------------------------- private helpers
+
+    def _set_state(self, new_state: "_PlannerState") -> None:
+        self._state = new_state
+        # broadcast for TaskListManager listeners
+        asyncio.create_task(
+            self._bus.publish(
+                Event(
+                    type="TASK_STATUS",
+                    payload={
+                        "task_id": getattr(self, "_task_id", "n/a"),
+                        "status": self.status,
+                    },
+                ),
+            ),
+        )
