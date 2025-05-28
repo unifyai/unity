@@ -6,7 +6,7 @@ import os
 from ..common.llm_helpers import start_async_tool_use_loop
 from ..planner.dummy import DummyPlanner
 from ..task_list_manager.task_list_manager import TaskListManager
-from .sys_msgs import REQUEST
+from .sys_msgs import REQUEST, ASK
 import json
 
 
@@ -23,26 +23,65 @@ class TaskManager(threading.Thread):
         self._tlm = TaskListManager()
         self._planner = DummyPlanner()
 
-        self._task_list_tools = {
+        self._passive_tools = {
+            # task list
             self._ask_about_task_list.__name__: self._ask_about_task_list,
-            self._update_task_list.__name__: self._update_task_list,
-        }
-        self._active_task_tools = {
-            self._start_task.__name__: self._start_task,
+            # planner
             self._ask_about_active_task.__name__: self._ask_about_active_task,
+        }
+        self._active_tools = {
+            # task list
+            self._update_task_list.__name__: self._update_task_list,
+            # planner
+            self._start_task.__name__: self._start_task,
             self._steer_active_task.__name__: self._steer_active_task,
             self._stop_active_task.__name__: self._stop_active_task,
         }
 
         self._tools = {
-            **self._task_list_tools,
-            **self._active_task_tools,
+            **self._passive_tools,
+            **self._active_tools,
         }
 
     # Public #
     # -------#
 
     # English-Text requests
+
+    async def ask(
+        self,
+        question: str,
+        *,
+        return_reasoning_steps: bool = False,
+        log_tool_steps: bool = False,
+    ) -> str:
+        """
+        Asks a question about any task, whether it be scheduled, active, cancelled, complete.
+        The question can be about the fine-grained details of execution, the broader context, or anything in between.
+
+        Args:
+            question (str): The question to ask about the task.
+            return_reasoning_steps (bool): Whether to return the reasoning steps for the ask request.
+            log_tool_steps (bool): Whether to log the steps taken by the tool.
+
+        Returns:
+            str: The answer to the question about the task.
+        """
+        client = unify.AsyncUnify(
+            "o4-mini@openai",
+            cache=json.loads(os.environ.get("UNIFY_CACHE", "true")),
+            traced=json.loads(os.environ.get("UNIFY_TRACED", "true")),
+        )
+        client.set_system_message(ASK)
+        ans = await start_async_tool_use_loop(
+            client,
+            question,
+            self._passive_tools,
+            log_steps=log_tool_steps,
+        ).result()
+        if return_reasoning_steps:
+            return ans, client.messages
+        return ans
 
     async def request(
         self,
