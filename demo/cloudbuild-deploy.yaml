@@ -13,7 +13,7 @@ steps:
     echo "Deployment triggered for image: $$NEW_IMAGE_URI"
     echo "Commit SHA: ${_COMMIT_SHA}"
     echo "Project ID: ${PROJECT_ID}"
-    
+
     # Extract region from repo pattern (format: region-docker.pkg.dev/...)
     TARGET_REGION=$$(echo "${_REPO_PATTERN}" | sed 's/-docker\.pkg\.dev.*//')
     echo "Region (extracted): $$TARGET_REGION"
@@ -48,7 +48,7 @@ steps:
 
     # Test if the region is valid and accessible
     echo "Testing region access..."
-    
+
     # First, verify the region exists
     echo "Checking if region $$TARGET_REGION is valid..."
     gcloud run regions list --filter="name:$$TARGET_REGION" --format="value(name)" | grep -q "$$TARGET_REGION" || {
@@ -124,7 +124,7 @@ steps:
       echo "  - Jobs are in a different region"
       exit 0
     fi
-    
+
     # Update each job with the new image
     echo "$$UNITY_JOBS" | while read -r JOB_NAME; do
       if [ -n "$$JOB_NAME" ]; then
@@ -134,16 +134,16 @@ steps:
         CURRENT_IMAGE=$$(gcloud run jobs describe "$$JOB_NAME" \
           --region=$$TARGET_REGION \
           --format="value(spec.template.spec.template.spec.containers[0].image)")
-        
+
         echo "  Current image: $$CURRENT_IMAGE"
         echo "  New image: $$NEW_IMAGE_URI"
-        
+
         # Update the job with the new image
         gcloud run jobs update "$$JOB_NAME" \
           --image=$$NEW_IMAGE_URI \
           --region=$$TARGET_REGION \
           --quiet
-        
+
         if [ $$? -eq 0 ]; then
           echo "✅ Successfully updated job: $$JOB_NAME"
         else
@@ -165,10 +165,10 @@ steps:
   - '-c'
   - |
     echo "Verifying updated jobs..."
-    
+
     # Extract region from repo pattern
     TARGET_REGION=$$(echo "${_REPO_PATTERN}" | sed 's/-docker\.pkg\.dev.*//')
-    
+
     # Get updated jobs that use Unity images
     UNITY_JOBS=$$(gcloud run jobs list \
       --region=$$TARGET_REGION \
@@ -201,7 +201,7 @@ steps:
           fi
         fi
       done)
-      
+
       if [ -z "$$OUTDATED_JOBS" ]; then
         echo ""
         echo "✅ All Unity jobs successfully updated to: $$NEW_IMAGE_URI"
