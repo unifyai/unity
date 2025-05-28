@@ -15,6 +15,7 @@ from __future__ import annotations
 import os, sys, shutil, shlex, subprocess, signal
 from pathlib import Path
 import time
+from typing import Union
 import psutil
 from threading import Thread
 
@@ -35,8 +36,6 @@ def _find_unix_terminal() -> str | None:
             return term
     return None
 
-
-from typing import Union
 
 def run_script(
     script: Union[str, os.PathLike],
@@ -133,4 +132,109 @@ def run_script(
         return proc
 
 
+def run_as_subprocess(
+    script: str | os.PathLike,
+    *script_args: str,
+) -> subprocess.Popen:
+    """
+    Launch *script* as a background subprocess and return the Popen instance.
+    Output is both shown in the terminal and logged to files.
+    """
+    script_path = Path(script).expanduser().resolve()
+    if not script_path.exists():
+        raise FileNotFoundError(script_path)
 
+    py_cmd = [sys.executable, str(script_path), *script_args]
+
+    # Create log files
+    out_log = open(f"{script_path.stem}.out.log", "a")
+    err_log = open(f"{script_path.stem}.err.log", "a")
+
+    # Start background tasks to handle output
+    def handle_output(pipe, log_file):
+        for line in pipe:
+            print(line, end="")  # Show in terminal
+            log_file.write(line)  # Write to log file
+            log_file.flush()
+
+    # Create a new process group for better process management
+    if sys.platform.startswith("win"):
+        creationflags = subprocess.CREATE_NEW_PROCESS_GROUP
+        proc = subprocess.Popen(
+            py_cmd,
+            creationflags=creationflags,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            bufsize=1,
+        )
+    # On Unix-like systems, create a new process group
+    else:
+        proc = subprocess.Popen(
+            py_cmd,
+            start_new_session=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            bufsize=1,
+        )
+
+    # Start output handling threads
+    Thread(target=handle_output, args=(proc.stdout, out_log), daemon=True).start()
+    Thread(target=handle_output, args=(proc.stderr, err_log), daemon=True).start()
+
+    return proc
+
+
+def terminate_process(proc: subprocess.Popen) -> None:
+    """
+    Terminate a subprocess gracefully, falling back to force kill if needed.
+    Handles both Windows and Unix-like systems.
+    """
+    if proc is None:
+        return
+
+    try:
+        # Send SIGTERM to the process group
+        if sys.platform.startswith("win"):
+            proc.send_signal(signal.CTRL_BREAK_EVENT)
+        else:
+            os.killpg(os.getpgid(proc.pid), signal.SIGTERM)
+
+        # Wait for process to terminate
+        try:
+            proc.wait(timeout=5)
+            print("Process terminated gracefully")
+        except subprocess.TimeoutExpired:
+            # If process doesn't terminate gracefully, force kill
+            print("Process did not terminate gracefully, force killing...")
+            if sys.platform.startswith("win"):
+                proc.kill()
+            else:
+                os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
+            proc.wait()
+    except Exception as e:
+        print(f"Error during process termination: {e}")
+
+
+# DEMO ----------------------------------------------------------------------
+if __name__ == "__main__":
+    if len(sys.argv) < 2:
+        print("Usage: python run_in_new_terminal.py <your_script.py> [args …]")
+        sys.exit(1)
+
+    child = run_script(sys.argv[1], *sys.argv[2:])
+    print(f"Started {child.pid=}.  Press Enter to stop it.")
+    input()
+    # Try a graceful shutdown first
+    if sys.platform.startswith("win"):
+        # Windows: send CTRL+BREAK to the whole group
+        child.send_signal(signal.CTRL_BREAK_EVENT)
+    else:
+        child.terminate()
+
+    try:
+        child.wait(timeout=5)
+    except subprocess.TimeoutExpired:
+        print("Graceful exit failed; killing...")
+        child.kill()

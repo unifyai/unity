@@ -142,13 +142,29 @@ async def entrypoint(ctx: agents.JobContext):
         turn_detection=MultilingualModel(),
     )
 
-
-
-
     def end_call():
         asyncio.create_task(
             publish_event({"topic": from_number, "to": "past", "event": PhoneCallEndedEvent().to_dict()})
         )
+
+    # Add inactivity timeout
+    INACTIVITY_TIMEOUT = 300  # 5 minutes in seconds
+    last_activity_time = asyncio.get_event_loop().time()
+
+    async def check_inactivity():
+        nonlocal last_activity_time
+        while True:
+            await asyncio.sleep(10)  # Check every 10 seconds
+            current_time = asyncio.get_event_loop().time()
+            if current_time - last_activity_time > INACTIVITY_TIMEOUT:
+                print("Inactivity timeout reached, shutting down agent...")
+                await session.generate_reply(
+                    instructions="Tell the user that the call has ended due to inactivity.",
+                )
+                end_call()
+
+    # Start inactivity checker
+    asyncio.create_task(check_inactivity())
 
 
     ctx.room.on("participant_disconnected", end_call)
