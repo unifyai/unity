@@ -4,6 +4,7 @@ import inspect
 import traceback
 from enum import Enum
 from pydantic import BaseModel
+import time
 from typing import (
     Tuple,
     List,
@@ -192,6 +193,8 @@ async def _async_tool_use_loop_inner(
     propagate_chat_context: bool = True,
     parent_chat_context: Optional[list[dict]] = None,
     log_steps: bool = False,
+    max_steps: int = 20,
+    timeout: int = 60,
 ) -> str:
     r"""
     Orchestrate an *interactive* "function-calling" dialogue between an LLM
@@ -297,6 +300,8 @@ async def _async_tool_use_loop_inner(
         The assistant's final plain-text reply *after* every tool result has
         been fed back into the conversation.
     """
+    # ── runtime guards ────────────────────────────────────────────────────
+    start_ts = time.perf_counter()
 
     assert (event_bus and event_type) or (
         not event_bus and not event_type
@@ -459,6 +464,20 @@ async def _async_tool_use_loop_inner(
 
     try:
         while True:
+
+            # 0-α. **Global timeout**
+            if time.perf_counter() - start_ts > timeout:
+                raise asyncio.TimeoutError(
+                    f"Loop exceeded {timeout}s wall-clock limit",
+                )
+
+            # 0-β. **Chat history length**
+            if len(client.messages) > max_steps:
+                raise RuntimeError(
+                    f"Conversation exceeded max_steps={max_steps} "
+                    f"(len(client.messages)={len(client.messages)})",
+                )
+
             # ── 0. Drain *all* queued interjections, allowed at any time ──
             # NOTE: We must do this *before* waiting on tool completion so a
             # fast typist can still sneak in a question while long-running
@@ -815,6 +834,13 @@ async def _async_tool_use_loop_inner(
                     )
 
             msg = client.messages[-1]
+
+            # ── timeout guard (post-LLM) ───────────────────────────────
+            if time.perf_counter() - start_ts > timeout:
+                raise asyncio.TimeoutError(
+                    f"Loop exceeded {timeout}s wall-clock limit",
+                )
+
             # LLM has just spoken – reset the flag
             llm_turn_required = False
             await _to_event_bus(msg)
@@ -1160,6 +1186,18 @@ async def _async_tool_use_loop_inner(
             if pending:  # still waiting for others
                 continue
 
+            # ── timeout guard (final turn) ──────────────────────────────────
+            if time.perf_counter() - start_ts > timeout:
+                raise asyncio.TimeoutError(
+                    f"Loop exceeded {timeout}s wall-clock limit",
+                )
+
+            if len(client.messages) > max_steps:
+                raise RuntimeError(
+                    f"Conversation exceeded max_steps={max_steps} "
+                    f"(len(client.messages)={len(client.messages)})",
+                )
+
             if log_steps:
                 LOGGER.info(f"\n🤖 {msg['content']}\n")
                 LOGGER.info("✅ Step finished (final answer)")
@@ -1240,6 +1278,8 @@ def start_async_tool_use_loop(
     propagate_chat_context: bool = True,
     parent_chat_context: Optional[list[dict]] = None,
     log_steps: bool = False,
+    max_steps: int = 20,
+    timeout: int = 60,
 ) -> AsyncToolLoopHandle:
     """
     Kick off `_async_tool_use_loop_inner` in its own task and give the caller
@@ -1267,6 +1307,8 @@ def start_async_tool_use_loop(
             propagate_chat_context=propagate_chat_context,
             parent_chat_context=parent_chat_context,
             log_steps=log_steps,
+            max_steps=max_steps,
+            timeout=timeout,
         ),
     )
 
