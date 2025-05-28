@@ -73,26 +73,23 @@ steps:
 
     echo "✅ Cloud Run API access successful"
 
-    # Get all Cloud Run jobs and filter by image
+    # Get all Cloud Run jobs that use Unity images directly
     echo "Listing Cloud Run jobs in region $$TARGET_REGION..."
-    ALL_JOBS=$$(gcloud run jobs list \
-      --format="json" \
+    UNITY_JOBS=$$(gcloud run jobs list \
       --region=$$TARGET_REGION \
-      --project=${PROJECT_ID})
-    
-    # Use jq to filter jobs that use Unity images
-    UNITY_JOBS=$$(echo "$$ALL_JOBS" | jq -r --arg pattern "${_REPO_PATTERN}" '
-      .[] | 
-      select(.spec.template.spec.template.spec.containers[0].image | startswith($$pattern)) |
-      .metadata.name
-    ')
+      --project=${PROJECT_ID} \
+      --filter="spec.template.spec.template.spec.containers[0].image:${_REPO_PATTERN}*" \
+      --format="value(metadata.name)")
     
     if [ -z "$$UNITY_JOBS" ]; then
       echo "No Cloud Run jobs found using Unity images"
       echo "Image pattern searched: ${_REPO_PATTERN}"
       echo ""
       echo "Available jobs in region:"
-      gcloud run jobs list --region=$$TARGET_REGION --format="table(metadata.name,spec.template.spec.template.spec.containers[0].image)"
+      gcloud run jobs list \
+        --region=$$TARGET_REGION \
+        --project=${PROJECT_ID} \
+        --format="table(metadata.name,spec.template.spec.template.spec.containers[0].image)"
       exit 0
     fi
     
@@ -150,11 +147,12 @@ steps:
 #       --region=$$TARGET_REGION \
 #       --project=${PROJECT_ID})
     
-#     UNITY_JOBS=$$(echo "$$ALL_JOBS" | jq -r --arg pattern "${_REPO_PATTERN}" '
-#       .[] |
-#       select(.spec.template.spec.template.spec.containers[0].image | startswith($$pattern)) |
-#       "\(.metadata.name): \(.spec.template.spec.template.spec.containers[0].image)"
-#     ')
+#     # Get updated jobs that use Unity images
+#     UNITY_JOBS=$$(gcloud run jobs list \
+#       --region=$$TARGET_REGION \
+#       --project=${PROJECT_ID} \
+#       --filter="spec.template.spec.template.spec.containers[0].image:${_REPO_PATTERN}*" \
+#       --format="table(metadata.name,spec.template.spec.template.spec.containers[0].image)")
 
 #     echo "Current Unity job images:"
 #     echo "$$UNITY_JOBS"
