@@ -3,7 +3,7 @@ from typing import Dict
 import unify
 import os
 from ..common.llm_helpers import start_async_tool_use_loop
-from ..planner.dummy import DummyPlanner
+from ..planner.simulated import SimulatedPlanner
 from ..communication.transcript_manager.transcript_manager import TranscriptManager
 from ..task_list_manager.task_list_manager import TaskListManager
 from ..knowledge_manager.knowledge_manager import KnowledgeManager
@@ -25,7 +25,7 @@ class TaskManager:
         self._transcript_manager = TranscriptManager(self._event_bus)
         self._knowledge_manager = KnowledgeManager()
         self._task_list_manager = TaskListManager()
-        self._planner = DummyPlanner()
+        self._planner = SimulatedPlanner()
 
         self._passive_tools = {
             # contact
