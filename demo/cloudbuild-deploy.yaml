@@ -109,8 +109,8 @@ substitutions:
   _COMMIT_SHA: ''
   _BUILD_ID: ''
   _PROJECT_ID: ''
-  _REGION: 'us-central1'
-  _REPOSITORY: 'unity'
+  _REGION: ''
+  _REPOSITORY: ''
   _REPO_PATTERN: '${_REGION}-docker.pkg.dev/${_PROJECT_ID}/${_REPOSITORY}/unity'
 
 # Options
