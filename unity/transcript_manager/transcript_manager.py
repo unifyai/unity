@@ -30,7 +30,7 @@ class TranscriptManager:
 
         self._tools = {
             self.summarize.__name__: self.summarize,
-            self._contact_manager.search_contacts.__name__: self._contact_manager.search_contacts,
+            self._contact_manager._search_contacts.__name__: self._contact_manager._search_contacts,
             self._search_messages.__name__: self._search_messages,
             self._search_summaries.__name__: self._search_summaries,
             self._nearest_messages.__name__: self._nearest_messages,
