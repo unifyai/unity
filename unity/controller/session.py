@@ -18,7 +18,9 @@ def create_session(
 ) -> SessionCreateResponse:
     session = bb.sessions.create(
         project_id=os.environ["BROWSERBASE_PROJECT_ID"],
-        # keep_alive=True,
+        browser_settings={
+            "advanced_stealth": stealth_mode,
+        },
     )
     return session
 
