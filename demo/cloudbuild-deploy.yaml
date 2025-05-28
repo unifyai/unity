@@ -66,35 +66,35 @@ steps:
 
     echo "🎉 Job discovery completed successfully! (No actual updates performed)"
     
-    # Update each job with the new image
-    # echo "$$UNITY_JOBS" | while read -r JOB_NAME; do
-    #   if [ -n "$$JOB_NAME" ]; then
-    #     echo "Updating job: $$JOB_NAME"
+  # Update each job with the new image
+  # echo "$$UNITY_JOBS" | while read -r JOB_NAME; do
+  #   if [ -n "$$JOB_NAME" ]; then
+  #     echo "Updating job: $$JOB_NAME"
 
-    #     # Get current image for comparison
-    #     CURRENT_IMAGE=$$(gcloud run jobs describe "$$JOB_NAME" \
-    #       --region=$$TARGET_REGION \
-    #       --format="value(spec.template.spec.template.spec.containers[0].image)")
+  #     # Get current image for comparison
+  #     CURRENT_IMAGE=$$(gcloud run jobs describe "$$JOB_NAME" \
+  #       --region=$$TARGET_REGION \
+  #       --format="value(spec.template.spec.template.spec.containers[0].image)")
         
-    #     echo "  Current image: $$CURRENT_IMAGE"
-    #     echo "  New image: $$NEW_IMAGE_URI"
+  #     echo "  Current image: $$CURRENT_IMAGE"
+  #     echo "  New image: $$NEW_IMAGE_URI"
         
-    #     # COMMENTED OUT FOR TESTING - Update the job with the new image
-    #     gcloud run jobs update "$$JOB_NAME" \
-    #       --image=$$NEW_IMAGE_URI \
-    #       --region=$$TARGET_REGION \
-    #       --quiet
+  #     # COMMENTED OUT FOR TESTING - Update the job with the new image
+  #     gcloud run jobs update "$$JOB_NAME" \
+  #       --image=$$NEW_IMAGE_URI \
+  #       --region=$$TARGET_REGION \
+  #       --quiet
         
-    #     if [ $$? -eq 0 ]; then
-    #       echo "✅ Successfully updated job: $$JOB_NAME"
-    #     else
-    #       echo "❌ Failed to update job: $$JOB_NAME"
-    #       exit 1
-    #     fi
+  #     if [ $$? -eq 0 ]; then
+  #       echo "✅ Successfully updated job: $$JOB_NAME"
+  #     else
+  #       echo "❌ Failed to update job: $$JOB_NAME"
+  #       exit 1
+  #     fi
         
-    #     echo "🔍 Would update job: $$JOB_NAME (update commented out for testing)"
-    #   fi
-    # done
+  #     echo "🔍 Would update job: $$JOB_NAME (update commented out for testing)"
+  #   fi
+  # done
 
   # Verify Deployments and Show Updated Job Images
 # - name: 'gcr.io/cloud-builders/gcloud'
