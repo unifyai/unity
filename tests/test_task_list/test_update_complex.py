@@ -12,6 +12,7 @@ from __future__ import annotations
 import re
 from datetime import datetime, timedelta, timezone
 from typing import List
+import os
 
 import pytest
 import unify
@@ -64,7 +65,8 @@ def setup_session_context():
         unify.set_trace_context("Traces")
         yield
 
-    unify.delete_context(ctx)
+    if os.environ.get("UNIFY_DELETE_CONTEXT_ON_EXIT", "false").lower() == "true":
+        unify.delete_context(ctx)
 
 
 @pytest.fixture(scope="session")
