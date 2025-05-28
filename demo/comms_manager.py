@@ -73,9 +73,9 @@ class CommsManager:
                 )
 
                     # this should be handled through the comms agents i think
-                    # self.call_proc = run_in_new_terminal(
+                    # self.call_proc = run_as_subprocess(
                     #     "call.py",
-                    #     "dev",  # "console" if a local call is needed
+                    #     "dev",
                     #     from_number,
                     #     to_number,
                     # )
