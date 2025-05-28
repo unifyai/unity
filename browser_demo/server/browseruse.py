@@ -11,7 +11,7 @@ llm = ChatOpenAI(model="gpt-4o")
 
 async def main():
     browser = BrowserSession(
-        executable_path="/usr/bin/chromium",
+        # executable_path="/usr/bin/chromium",
         chromium_sandbox=False,
         keep_alive=True,
         args=[
@@ -19,8 +19,11 @@ async def main():
             "--no-sandbox",
             "--window-position=0,0",
             "--window-size=1920,1080",
-            "--start-fullscreen"
+            "--start-fullscreen",
+            # "--use-fake-ui-for-media-stream",
+            # "--use-fake-device-for-media-stream",
         ],
+        # permissions=["microphone", "camera"],
     )
 
     agent = Agent(
@@ -31,14 +34,14 @@ async def main():
     result = await agent.run()
 
     while True:
-        await asyncio.sleep(1)
-        # action = input("Actions: ")
-        # if action == "close":
-        #     break
+        # await asyncio.sleep(1)
+        action = input("Actions: ")
+        if action == "close":
+            break
 
-        # agent.add_new_task(action)
-        # result = await agent.run()
-        # print(result)
+        agent.add_new_task(action)
+        result = await agent.run()
+        print(result)
     
     await agent.close()
     # await context.close()
