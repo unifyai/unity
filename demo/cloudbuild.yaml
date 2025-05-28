@@ -25,7 +25,7 @@ steps:
   - '-c'
   - |
     gcloud pubsub topics publish unity-image-built \
-      --message='{"_IMAGE_URI":"${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPOSITORY}/unity:${SHORT_SHA}","_LATEST_URI":"${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPOSITORY}/unity:latest","_COMMIT_SHA":"${SHORT_SHA}","_BUILD_ID":"${BUILD_ID}","_PROJECT_ID":"${PROJECT_ID}","_REGION":"${_REGION}","_REPOSITORY":"${_REPOSITORY}"}'
+      --message='{"_COMMIT_SHA":"${SHORT_SHA}","_REPO_PATTERN":"${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPOSITORY}/unity"}'
   waitFor: ['push-sha-tag', 'push-latest-tag']
 
 # Substitution variables
