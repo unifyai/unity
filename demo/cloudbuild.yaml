@@ -18,15 +18,15 @@ steps:
   waitFor: ['build-image']
 
   # Trigger Deployment Pipeline via Pub/Sub
-- name: 'gcr.io/cloud-builders/gcloud'
-  id: 'trigger-deployment'
-  entrypoint: 'bash'
-  args:
-  - '-c'
-  - |
-    gcloud pubsub topics publish unity-image-built \
-      --message='{"_COMMIT_SHA":"${SHORT_SHA}","_REPO_PATTERN":"${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPOSITORY}/unity"}'
-  waitFor: ['push-sha-tag', 'push-latest-tag']
+# - name: 'gcr.io/cloud-builders/gcloud'
+#   id: 'trigger-deployment'
+#   entrypoint: 'bash'
+#   args:
+#   - '-c'
+#   - |
+#     gcloud pubsub topics publish unity-image-built \
+#       --message='{"_COMMIT_SHA":"${SHORT_SHA}","_REPO_PATTERN":"${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPOSITORY}/unity"}'
+#   waitFor: ['push-sha-tag', 'push-latest-tag']
 
 # Substitution variables
 substitutions:
