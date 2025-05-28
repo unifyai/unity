@@ -4,8 +4,10 @@ import datetime as dt
 from collections import deque
 
 from unity.events.event_bus import EventBus, Event
-from unity.communication.types.message import Message
-from unity.communication.types.message_exchange_summary import MessageExchangeSummary
+from unity.transcript_manager.types.message import Message
+from unity.transcript_manager.types.message_exchange_summary import (
+    MessageExchangeSummary,
+)
 from tests.helpers import _handle_project
 
 

@@ -14,8 +14,9 @@ import os
 
 import asyncio
 import unify
-from unity.communication.transcript_manager.transcript_manager import TranscriptManager
-from unity.communication.types.message import Message
+from unity.contact_manager.contact_manager import ContactManager
+from unity.transcript_manager.transcript_manager import TranscriptManager
+from unity.transcript_manager.types.message import Message
 
 # --------------------------------------------------------------------------- #
 #  CONTACTS (same as before)                                                  #
@@ -72,6 +73,7 @@ class ScenarioBuilder:
 
     def __init__(self) -> None:
         self._event_bus = EventBus()
+        self.cm = ContactManager(self._event_bus)
         self.tm = TranscriptManager(self._event_bus)
 
     @classmethod
@@ -93,7 +95,7 @@ class ScenarioBuilder:
     # --------------------------------------------------------------------- #
     async def _seed_contacts(self) -> None:
         for idx, c in enumerate(_CONTACTS):
-            self.tm.create_contact(**c)
+            self.cm.create_contact(**c)
             _ID_BY_NAME[c["first_name"].lower()] = idx
 
     # --------------------------------------------------------------------- #

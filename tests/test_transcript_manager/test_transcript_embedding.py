@@ -1,8 +1,8 @@
 import pytest
 from datetime import datetime, UTC
 
-from unity.communication.transcript_manager.transcript_manager import TranscriptManager
-from unity.communication.types.message import Message, VALID_MEDIA
+from unity.transcript_manager.transcript_manager import TranscriptManager
+from unity.transcript_manager.types.message import Message, VALID_MEDIA
 from tests.helpers import _handle_project
 from unity.events.event_bus import EventBus, Event
 import random
