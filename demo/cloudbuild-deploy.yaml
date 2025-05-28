@@ -15,7 +15,7 @@ steps:
     echo "Project ID: ${PROJECT_ID}"
     
     # Extract region from repo pattern (format: region-docker.pkg.dev/...)
-    TARGET_REGION=$$(echo "${_REPO_PATTERN}" | cut -d'-' -f1)
+    TARGET_REGION=$$(echo "${_REPO_PATTERN}" | sed 's/-docker\.pkg\.dev.*//')
     echo "Region (extracted): $$TARGET_REGION"
     echo "Repo Pattern: ${_REPO_PATTERN}"
     echo "=== END DEBUG INFO ==="
@@ -31,7 +31,7 @@ steps:
     echo "Looking for jobs using images matching: ${_REPO_PATTERN}"
 
     # Extract region from repo pattern and construct image URI
-    TARGET_REGION=$$(echo "${_REPO_PATTERN}" | cut -d'-' -f1)
+    TARGET_REGION=$$(echo "${_REPO_PATTERN}" | sed 's/-docker\.pkg\.dev.*//')
     NEW_IMAGE_URI="${_REPO_PATTERN}:${_COMMIT_SHA}"
     echo "Using region: $$TARGET_REGION"
     echo "New image URI: $$NEW_IMAGE_URI"
@@ -142,7 +142,7 @@ steps:
 #     echo "Verifying updated jobs..."
     
 #     # Extract region from repo pattern
-#     TARGET_REGION=$$(echo "${_REPO_PATTERN}" | cut -d'-' -f1)
+#     TARGET_REGION=$$(echo "${_REPO_PATTERN}" | sed 's/-docker\.pkg\.dev.*//')
     
 #     # Get updated jobs
 #     ALL_JOBS=$$(gcloud run jobs list \
