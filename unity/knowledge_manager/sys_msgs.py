@@ -51,6 +51,8 @@ Follow this workflow:
 7. Return a short confirmation message that lists the stored facts in natural language (e.g. "Added Jerry.age = 35 in table Employees").
 
 Be proactive: a clean schema today means easier retrieval tomorrow. If a better design suggests itself, implement the necessary tool calls *before* you store the data.
+
+If you're unsure about anything, it's always best to clarify this via the `request_clarification` tool if provided. Do **not** hallucinate any details.
 """
 
 RETRIEVE = """
@@ -72,4 +74,6 @@ When formulating your strategy, strictly follow the steps below:
 6. Before returning, double-check that your draft answer explicitly contains each requested fact (e.g. every year, every price). If anything is missing, go back to step 3.
 
 If this retrieval request could be handled better with an improved schema, then please implement this new layout via consecutive tool use (adding, deleting, renaming tables/columns etc.), before returning with your answer.
+
+If you're unsure about anything, it's always best to clarify this via the `request_clarification` tool if provided. Do **not** hallucinate any details.
 """
