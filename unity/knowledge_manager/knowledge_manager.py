@@ -138,8 +138,6 @@ class KnowledgeManager:
             text,
             tools,
             parent_chat_context=parent_chat_context,
-            clarification_up_q=clarification_up_q,
-            clarification_down_q=clarification_down_q,
         )
 
         # ── 3.  Optionally wrap .result() to expose reasoning  ────────────
@@ -231,8 +229,6 @@ class KnowledgeManager:
             text,
             tools,
             parent_chat_context=parent_chat_context,
-            clarification_up_q=clarification_up_q,
-            clarification_down_q=clarification_down_q,
         )
 
         # ── 3.  Optionally wrap .result() to expose reasoning  ────────────

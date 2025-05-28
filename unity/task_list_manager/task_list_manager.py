@@ -164,8 +164,6 @@ class TaskListManager:
             text,
             tools,
             parent_chat_context=parent_chat_context,
-            clarification_up_q=clarification_up_q,
-            clarification_down_q=clarification_down_q,
             log_steps=log_tool_steps,
         )
         if return_reasoning_steps:
@@ -268,8 +266,6 @@ class TaskListManager:
             text,
             tools,
             parent_chat_context=parent_chat_context,
-            clarification_up_q=clarification_up_q,
-            clarification_down_q=clarification_down_q,
             log_steps=log_tool_steps,
         )
         if return_reasoning_steps:
