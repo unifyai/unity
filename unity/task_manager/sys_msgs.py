@@ -2,6 +2,9 @@ import json
 from ..task_list_manager.types.task import Task
 from .task_manager import TaskManager
 
+ASK = f"""
+"""
+
 REQUEST = f"""
 Your task is to handle any plain-text english task-related request, which can either:
 
