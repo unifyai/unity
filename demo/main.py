@@ -97,7 +97,11 @@ async def main():
     )
     user_agent.set_event_manager(event_manager)
     user_agent.subscribe(
-        [os.getenv("USER_NUMBER", ""), os.getenv("USER_PHONE_NUMBER", ""), "user_agent"]
+        [
+            os.getenv("USER_NUMBER", ""),
+            os.getenv("USER_PHONE_NUMBER", ""),
+            "user_agent",
+        ],
     )
     comms_manager = CommsManager(events_queue=event_manager.events_queue)
     event_manager_task = asyncio.create_task(event_manager.serve())
