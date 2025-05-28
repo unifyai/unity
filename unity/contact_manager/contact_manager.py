@@ -158,7 +158,7 @@ class ContactManager:
             contact_id=contact_id,
         )
 
-    def search_contacts(
+    def _search_contacts(
         self,
         *,
         filter: Optional[str] = None,

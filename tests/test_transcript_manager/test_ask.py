@@ -31,10 +31,6 @@ from unity.transcript_manager.types.message import Message
 from unity.common.llm_helpers import _dumps
 from tests.assertion_helpers import assertion_failed
 from tests.helpers import _handle_project
-from tests.test_transcript_manager.conftest import (
-    _ID_BY_NAME,
-    ScenarioBuilder,
-)
 
 
 # --------------------------------------------------------------------------- #
@@ -300,7 +296,7 @@ async def test_ask_honors_stop():
 async def test_ask_respects_parent_context(
     tm_scenario: tuple[TranscriptManager, dict[str, int]],
 ):
-    # ── 1.  Seed a "basketball" exchange dated 2025-05-20 ───────────────
+    # ── 1.  Seed a “basketball” exchange dated 2025-05-20 ───────────────
     tm, _ID_BY_NAME = tm_scenario
     ebus = tm._event_bus
     cid = _ID_BY_NAME
