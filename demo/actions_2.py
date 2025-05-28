@@ -14,11 +14,13 @@ class SendWhatsAppMessageAction(BaseModel):
     from_number: str
     to_number: str
 
+
 class SendSMSMessageAction(BaseModel):
     type: Literal["sms"]
     message: str
     from_number: str
     to_number: str
+
 
 class SendEmailAction(BaseModel):
     type: Literal["email"]
@@ -29,25 +31,37 @@ class SendEmailAction(BaseModel):
 class CreateCommunicationTask(BaseModel):
     contact_name: str = Field(..., description="contact name")
     contact_number: str = Field(..., description="contact number with country code")
-    detailed_task_description: str = Field(..., description="very detailed description of the task")
+    detailed_task_description: str = Field(
+        ...,
+        description="very detailed description of the task",
+    )
+
 
 class RespondToAgent(BaseModel):
     agent_id: str = Field(..., description="Id of the agent to respond to")
     task_id: str = Field(..., description="Id of the response is related to")
     response: str = Field(..., description="Your resoonse to the agent's query")
 
+
 class EndTask(BaseModel):
     task_id: str = Field(..., description="ID of the task")
-    task_status: Literal["failed", "sucess"] = Field(..., description="The end status of the task")
-    task_result: str = Field(..., 
-                             description="Summary of the task results, what happened, and what was the conclusion, will be reported back to the main user agent")
+    task_status: Literal["failed", "sucess"] = Field(
+        ...,
+        description="The end status of the task",
+    )
+    task_result: str = Field(
+        ...,
+        description="Summary of the task results, what happened, and what was the conclusion, will be reported back to the main user agent",
+    )
+
 
 class AskUserAgent(BaseModel):
     agent_id: str = Field(..., description="Id of the agent asking the query")
     task_id: str = Field(..., description="id of the task the query is associated with")
-    query: str = Field(...,
-                       description="The question or clarification that is going to be sent to the main user agent")
-
+    query: str = Field(
+        ...,
+        description="The question or clarification that is going to be sent to the main user agent",
+    )
 
 
 class SendCallAction(BaseModel):
@@ -66,7 +80,6 @@ ActionModel = Union[
     CreateCommunicationTask,
     RespondToAgent,
     SendCallAction,
-
 ]
 
 
@@ -95,14 +108,16 @@ CommsActionModel = Union[
     SendSMSMessageAction,
     SendCallAction,
     AskUserAgent,
-    EndTask
+    EndTask,
 ]
+
 
 class CommsAgentOutput(BaseModel):
     actions: List[CommsActionModel] = Field(
         ...,
         description="Actions the comms agent should perform",
     )
+
 
 class CallCommsAgentOutput(BaseModel):
     phone_utterance: str = Field(
