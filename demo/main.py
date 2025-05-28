@@ -7,7 +7,6 @@ import asyncio
 import json
 from collections import defaultdict
 
-import openai
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -24,9 +23,8 @@ class EventManager:
         self.readers = {}
         self.writers: dict[str, asyncio.StreamWriter] = {}
         self.topic_to_subs = defaultdict(list)
-        
-        self.events_queue = asyncio.Queue()
 
+        self.events_queue = asyncio.Queue()
 
     async def serve(self):
         self.servers["call"] = await asyncio.start_server(
@@ -38,8 +36,7 @@ class EventManager:
         self.event_aggregator_task = asyncio.create_task(self.collect_events())
         async with self.servers["call"]:
             await self.servers["call"].serve_forever()
-        
-    
+
     async def collect_events(self):
         print("collecting...")
         while True:
@@ -85,18 +82,29 @@ class EventManager:
 def loop_exception_handler(loop, context):
     print("Error:", context.get("message"), context.get("exception"))
 
+
 async def main():
     loop = asyncio.get_running_loop()
     # loop.set_exception_handler(loop_exception_handler)
     event_manager = EventManager()
-    user_agent = CommsAgent(os.getenv("USER_NAME", ""), os.getenv("ASSISTANT_NUMBER", ""), os.getenv("USER_NUMBER", ""), os.getenv("USER_PHONE_NUMBER", ""), [], True)
+    user_agent = CommsAgent(
+        os.getenv("USER_NAME", ""),
+        os.getenv("ASSISTANT_NUMBER", ""),
+        os.getenv("USER_NUMBER", ""),
+        os.getenv("USER_PHONE_NUMBER", ""),
+        [],
+        True,
+    )
     user_agent.set_event_manager(event_manager)
-    user_agent.subscribe([os.getenv("USER_NUMBER", ""), os.getenv("USER_PHONE_NUMBER", ""), "user_agent"])
+    user_agent.subscribe(
+        [os.getenv("USER_NUMBER", ""), os.getenv("USER_PHONE_NUMBER", ""), "user_agent"]
+    )
     comms_manager = CommsManager(events_queue=event_manager.events_queue)
     event_manager_task = asyncio.create_task(event_manager.serve())
     comms_task = asyncio.create_task(comms_manager.start())
     user_manager_task = asyncio.create_task(user_agent.listen_for_events())
     await event_manager_task
+
 
 if __name__ == "__main__":
     asyncio.run(main())

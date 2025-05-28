@@ -31,10 +31,6 @@ from unity.communication.types.message import Message
 from unity.common.llm_helpers import _dumps
 from tests.assertion_helpers import assertion_failed
 from tests.helpers import _handle_project
-from tests.test_communication.test_transcript_manager.conftest import (
-    _ID_BY_NAME,
-    ScenarioBuilder,
-)
 
 
 # --------------------------------------------------------------------------- #
@@ -42,7 +38,11 @@ from tests.test_communication.test_transcript_manager.conftest import (
 # --------------------------------------------------------------------------- #
 
 
-def _answer_semantic(tm: TranscriptManager, question: str) -> str:
+def _answer_semantic(
+    tm: TranscriptManager,
+    question: str,
+    _ID_BY_NAME: dict[str, int],
+) -> str:
     """Compute the *correct* answer directly from stored data."""
     q = question.lower()
     messages = tm._search_messages(limit=None)
@@ -226,40 +226,6 @@ def _llm_assert_correct(
 # --------------------------------------------------------------------------- #
 #  PARAMETRISED TEST                                                          #
 # --------------------------------------------------------------------------- #
-@pytest.fixture(scope="session")
-def event_loop():
-    """
-    Create a session-scoped asyncio event loop.
-    """
-    loop = asyncio.get_event_loop_policy().new_event_loop()
-    yield loop
-    loop.close()
-
-
-@pytest.fixture(scope="session", autouse=True)
-def setup_session_context():
-    """Set up a session-wide context for all tests in this module."""
-    file_path = __file__
-    ctx = "/".join(file_path.split("/tests/")[1].split("/"))[:-3]
-    if unify.get_contexts(prefix=ctx):
-        unify.delete_context(ctx)
-    with unify.Context(ctx):
-        unify.set_trace_context("Traces")
-        yield
-
-    unify.delete_context(ctx)
-
-
-@pytest.fixture(scope="session")
-def tm_scenario(
-    setup_session_context,
-    event_loop: asyncio.AbstractEventLoop,
-) -> TranscriptManager:
-    """
-    Fixture to create a TranscriptManager with a populated scenario.
-    """
-    builder = event_loop.run_until_complete(ScenarioBuilder.create())
-    return builder.tm
 
 
 @pytest.mark.eval
@@ -267,24 +233,26 @@ def tm_scenario(
 @pytest.mark.parametrize("question", QUESTIONS)
 async def test_ask_semantic_with_llm_judgement(
     question: str,
-    tm_scenario: TranscriptManager,
+    tm_scenario: tuple[TranscriptManager, dict[str, int]],
 ) -> None:
     """
     Calls the real `.ask()` (which itself may call the LLM multiple
     times), then asks a _separate_ LLM whether the answer is acceptable.
     """
-    tm = tm_scenario
+    tm, _ID_BY_NAME = tm_scenario
     handle = tm.ask(question, return_reasoning_steps=True)
     candidate, steps = await handle.result()
-    expected = _answer_semantic(tm, question)
+    expected = _answer_semantic(tm, question, _ID_BY_NAME)
     _llm_assert_correct(question, expected, candidate, steps)
 
 
 @pytest.mark.asyncio
 @pytest.mark.eval
-async def test_ask_allows_interjection(tm_scenario: TranscriptManager):
+async def test_ask_allows_interjection(
+    tm_scenario: tuple[TranscriptManager, dict[str, int]],
+):
     """Ask one semantic question, then interject with a second, and verify both answers appear."""
-    tm = tm_scenario
+    tm, _ID_BY_NAME = tm_scenario
     # 1) Initial semantic query – last Dan ⇢ Julia phone call date
     q_initial = QUESTIONS[1]  # "When did Dan last speak with Julia on the phone?"
     handle = tm.ask(q_initial, return_reasoning_steps=True)
@@ -295,8 +263,8 @@ async def test_ask_allows_interjection(tm_scenario: TranscriptManager):
 
     # 3) Await combined answer
     answer, steps = await handle.result()
-    expected_date_call = _answer_semantic(tm, q_initial)
-    expected_date_holiday = _answer_semantic(tm, q_follow_up)
+    expected_date_call = _answer_semantic(tm, q_initial, _ID_BY_NAME)
+    expected_date_holiday = _answer_semantic(tm, q_follow_up, _ID_BY_NAME)
 
     # 4) Assertions
     _llm_assert_correct(
@@ -323,12 +291,14 @@ async def test_ask_honors_stop():
     assert handle.done()
 
 
-@_handle_project
 @pytest.mark.asyncio
 @pytest.mark.eval
-async def test_ask_respects_parent_context(tm_scenario: TranscriptManager):
+async def test_ask_respects_parent_context(
+    tm_scenario: tuple[TranscriptManager, dict[str, int]],
+):
     # ── 1.  Seed a “basketball” exchange dated 2025-05-20 ───────────────
-    ebus = tm_scenario._event_bus
+    tm, _ID_BY_NAME = tm_scenario
+    ebus = tm._event_bus
     cid = _ID_BY_NAME
     t = datetime(2025, 5, 20, 15, 0, tzinfo=timezone.utc)
 
@@ -362,7 +332,7 @@ async def test_ask_respects_parent_context(tm_scenario: TranscriptManager):
     ]
 
     # ── 3.  Call `.ask()` with that context ────────────────────────────
-    handle = tm_scenario.ask(
+    handle = tm.ask(
         "What day was the conversation?",
         return_reasoning_steps=True,
         parent_chat_context=parent_ctx,
@@ -378,9 +348,8 @@ async def test_ask_respects_parent_context(tm_scenario: TranscriptManager):
 
 
 @pytest.mark.asyncio
-@_handle_project
 async def test_ask_requests_clarification_when_context_missing(
-    tm_scenario: TranscriptManager,
+    tm_scenario: tuple[TranscriptManager, dict[str, int]],
 ) -> None:
     """
     Without a *parent_chat_context* the assistant should realise it does not
@@ -390,7 +359,7 @@ async def test_ask_requests_clarification_when_context_missing(
     tool use continues to completion.
     """
 
-    tm = tm_scenario
+    tm, _ID_BY_NAME = tm_scenario
     ebus: EventBus = tm._event_bus
 
     # ── 1.  Seed a short “basketball” conversation on 2025-05-20 ───────────
