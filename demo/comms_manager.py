@@ -2,7 +2,6 @@ import asyncio
 from datetime import datetime
 from google.cloud import pubsub_v1
 import json
-import os
 from events import *
 
 
@@ -19,6 +18,7 @@ events_map: dict[str, Event] = {
     "msg-sub": SMSMessageRecievedEvent,
 }
 
+
 class CommsManager:
     def __init__(self, events_queue):
         self.subscribers = {}
@@ -26,7 +26,6 @@ class CommsManager:
         self.credentials = None
         self.loop = asyncio.get_event_loop()
         self.message_queue = events_queue
-
 
     def handle_message(
         self,
@@ -45,7 +44,9 @@ class CommsManager:
                 self.loop.call_soon_threadsafe(
                     self.message_queue.put_nowait,
                     {
-                        "topic": json.loads(message.data.decode("utf-8"))["from_number"].replace("whatsapp:", "").strip(),
+                        "topic": json.loads(message.data.decode("utf-8"))["from_number"]
+                        .replace("whatsapp:", "")
+                        .strip(),
                         "event": events_map[subscription_id](
                             content=json.loads(message.data.decode("utf-8"))["body"],
                             timestamp=datetime.now(),
@@ -65,12 +66,12 @@ class CommsManager:
                     )
 
                     self.loop.call_soon_threadsafe(
-                    self.message_queue.put_nowait,
-                    {
-                        "topic": message_data["caller_number"],
-                        "event": PhoneCallInitiatedEvent().to_dict(),
-                    },
-                )
+                        self.message_queue.put_nowait,
+                        {
+                            "topic": message_data["caller_number"],
+                            "event": PhoneCallInitiatedEvent().to_dict(),
+                        },
+                    )
 
                     # this should be handled through the comms agents i think
                     # self.call_proc = run_as_subprocess(
@@ -91,7 +92,6 @@ class CommsManager:
         except Exception as e:
             print(f"Error processing message: {e}")
             message.nack()
-
 
     async def subscribe_to_topic(self, subscription_id: str):
         """Subscribe to a specific PubSub topic and process messages."""
@@ -140,6 +140,7 @@ class CommsManager:
             # Cleanup subscriptions
             for future in self.subscribers.values():
                 future.cancel()
+
 
 async def main():
     """Main entry point for the communication manager application."""

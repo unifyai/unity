@@ -75,7 +75,7 @@ class Assistant(Agent):
     def __init__(self, from_number: str = "", to_number: str = "") -> None:
         self.past_events = []
         self.new_events = [
-            PhoneCallStartedEvent()
+            PhoneCallStartedEvent(),
         ]
         # self.client = client
         self.current_tasks_status = None
@@ -144,7 +144,13 @@ async def entrypoint(ctx: agents.JobContext):
 
     def end_call():
         asyncio.create_task(
-            publish_event({"topic": from_number, "to": "past", "event": PhoneCallEndedEvent().to_dict()})
+            publish_event(
+                {
+                    "topic": from_number,
+                    "to": "past",
+                    "event": PhoneCallEndedEvent().to_dict(),
+                },
+            ),
         )
 
     # Add inactivity timeout
@@ -166,9 +172,7 @@ async def entrypoint(ctx: agents.JobContext):
     # Start inactivity checker
     asyncio.create_task(check_inactivity())
 
-
     ctx.room.on("participant_disconnected", end_call)
-
 
     await session.start(
         room=ctx.room,

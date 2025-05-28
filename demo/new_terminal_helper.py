@@ -12,12 +12,15 @@ proc.kill()            # force-kill
 """
 
 from __future__ import annotations
-import os, sys, shutil, shlex, subprocess, signal
+import os
+import sys
+import shutil
+import shlex
+import subprocess
 from pathlib import Path
 import time
 from typing import Union
 import psutil
-from threading import Thread
 
 
 def _find_unix_terminal() -> str | None:
@@ -53,7 +56,7 @@ def run_script(
     *script_args : str
         Extra args forwarded to the script.
     terminal : bool, default False
-        • False – run invisibly (shares the parent console / no window).  
+        • False – run invisibly (shares the parent console / no window).
         • True  – open a new terminal window and start Python **-i**.
 
     Returns
@@ -68,18 +71,18 @@ def run_script(
     # Build the python command
     py_cmd = [sys.executable]
     if terminal:
-        py_cmd.append("-i")          # interactive prompt *only* in a terminal
+        py_cmd.append("-i")  # interactive prompt *only* in a terminal
     py_cmd += [str(script_path), *script_args]
 
     if sys.platform.startswith("win"):
         # ───────────────────────── Windows ─────────────────────────
         if terminal:
             creationflags = (
-                subprocess.CREATE_NEW_CONSOLE |
-                subprocess.CREATE_NEW_PROCESS_GROUP   # lets us send CTRL_BREAK_EVENT
+                subprocess.CREATE_NEW_CONSOLE
+                | subprocess.CREATE_NEW_PROCESS_GROUP  # lets us send CTRL_BREAK_EVENT
             )
         else:
-            creationflags = 0                         # inherit caller’s console
+            creationflags = 0  # inherit caller’s console
         return subprocess.Popen(py_cmd, creationflags=creationflags)
 
     elif sys.platform == "darwin":
@@ -97,11 +100,11 @@ def run_script(
             {shlex.join(py_cmd)}
         """
 
-        osa = f'''
+        osa = f"""
             tell application "Terminal"
                 do script "{shell}" in selected tab of front window
             end tell
-        '''
+        """
         subprocess.run(["osascript", "-e", osa], check=True)
 
         # Wait (max 5 s) for the child to write its PID
@@ -120,15 +123,22 @@ def run_script(
         if not terminal:
             return subprocess.Popen(py_cmd, start_new_session=True)
 
-        term = _find_unix_terminal()   # your helper that finds gnome-terminal / xterm …
+        term = _find_unix_terminal()  # your helper that finds gnome-terminal / xterm …
         if not term:
             raise RuntimeError("No terminal emulator found (gnome-terminal, xterm …)")
 
         # Start python first so we know its PID
         proc = subprocess.Popen(py_cmd, start_new_session=True)
         # Point the new terminal at *that* interpreter
-        subprocess.Popen([term, "--", "bash", "-c",
-                          f"exec {' '.join(map(shlex.quote, py_cmd))}"])
+        subprocess.Popen(
+            [
+                term,
+                "--",
+                "bash",
+                "-c",
+                f"exec {' '.join(map(shlex.quote, py_cmd))}",
+            ],
+        )
         return proc
 
 

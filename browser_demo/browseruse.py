@@ -1,5 +1,4 @@
 import sys, pathlib
-import time
 import asyncio
 
 # Ensure repository root is on PYTHONPATH so `import unity` works when this
@@ -9,7 +8,7 @@ if str(ROOT_DIR) not in sys.path:
     sys.path.insert(0, str(ROOT_DIR))
 
 
-from unity.controller.session import create_session, get_live_view_urls
+from unity.controller.session import create_session
 from langchain_openai import ChatOpenAI
 from browser_use import Agent, BrowserSession
 from dotenv import load_dotenv
