@@ -1,0 +1,123 @@
+import pytest
+
+from unity.contact_manager.contact_manager import ContactManager
+from unity.events.event_bus import EventBus
+from tests.helpers import _handle_project
+
+
+@pytest.mark.unit
+@_handle_project
+def test_create_contact():
+    eb = EventBus()
+    eb.register_event_types(["Messages", "MessageExchangeSummaries"])
+    contact_manager = ContactManager(eb)
+    contact_manager.create_contact(
+        first_name="Dan",
+    )
+    contacts = contact_manager._search_contacts()
+    assert len(contacts) == 1
+    contact = contacts[0]
+    assert contact.model_dump() == {
+        "contact_id": 0,
+        "first_name": "Dan",
+        "surname": None,
+        "email_address": None,
+        "phone_number": None,
+        "whatsapp_number": None,
+    }
+
+
+@pytest.mark.unit
+@_handle_project
+def test_update_contact():
+    eb = EventBus()
+    eb.register_event_types(["Messages", "MessageExchangeSummaries"])
+    contact_manager = ContactManager(eb)
+
+    # create
+    contact_manager.create_contact(
+        first_name="Dan",
+    )
+
+    # check
+    contacts = contact_manager._search_contacts()
+    assert len(contacts) == 1
+    contact = contacts[0]
+    assert contact.model_dump() == {
+        "contact_id": 0,
+        "first_name": "Dan",
+        "surname": None,
+        "email_address": None,
+        "phone_number": None,
+        "whatsapp_number": None,
+    }
+
+    # update
+    contact_manager.update_contact(
+        contact_id=0,
+        first_name="Daniel",
+    )
+
+    # check
+    contacts = contact_manager._search_contacts()
+    assert len(contacts) == 1
+    contact = contacts[0]
+    assert contact.model_dump() == {
+        "contact_id": 0,
+        "first_name": "Daniel",
+        "surname": None,
+        "email_address": None,
+        "phone_number": None,
+        "whatsapp_number": None,
+    }
+
+
+@pytest.mark.unit
+@_handle_project
+def test_create_contacts():
+    eb = EventBus()
+    eb.register_event_types(["Messages", "MessageExchangeSummaries"])
+    contact_manager = ContactManager(eb)
+
+    # first
+    contact_manager.create_contact(
+        first_name="Dan",
+    )
+    contacts = contact_manager._search_contacts()
+    assert len(contacts) == 1
+    contact = contacts[0]
+    assert contact.model_dump() == {
+        "contact_id": 0,
+        "first_name": "Dan",
+        "surname": None,
+        "email_address": None,
+        "phone_number": None,
+        "whatsapp_number": None,
+    }
+
+    # second
+    contact_manager.create_contact(
+        first_name="Tom",
+    )
+    contacts = contact_manager._search_contacts()
+    assert len(contacts) == 2
+    contact = contacts[0]
+    assert contact.model_dump() == {
+        "contact_id": 1,
+        "first_name": "Tom",
+        "surname": None,
+        "email_address": None,
+        "phone_number": None,
+        "whatsapp_number": None,
+    }
+
+
+@pytest.mark.unit
+@_handle_project
+def test_search_contacts():
+    eb = EventBus()
+    eb.register_event_types(["Messages", "MessageExchangeSummaries"])
+    contact_manager = ContactManager(eb)
+    contact_manager.create_contact(
+        first_name="Dan",
+    )
