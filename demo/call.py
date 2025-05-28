@@ -16,6 +16,7 @@ from livekit.plugins import (
     # noise_cancellation,
     silero,
 )
+
 if sys.platform == "darwin":
     from livekit.plugins import noise_cancellation
 from livekit.plugins.turn_detector.multilingual import MultilingualModel
@@ -160,7 +161,9 @@ async def entrypoint(ctx: agents.JobContext):
             # LiveKit Cloud enhanced noise cancellation
             # - If self-hosting, omit this parameter
             # - For telephony applications, use `BVCTelephony` for best results
-            noise_cancellation=noise_cancellation.BVC() if sys.platform=="darwin" else None,
+            noise_cancellation=(
+                noise_cancellation.BVC() if sys.platform == "darwin" else None
+            ),
         ),
     )
 
@@ -175,11 +178,13 @@ async def entrypoint(ctx: agents.JobContext):
     )
 
     async def response_task():
-        nonlocal session
+        nonlocal session, last_activity_time
         handle = await session.generate_reply()
+        last_activity_time = asyncio.get_event_loop().time()  # Update activity time
         return handle.chat_message.text_content, handle.interrupted
 
     def on_response_end(t: asyncio.Task):
+        nonlocal last_activity_time
         print("FIRED!!!")
         try:
             result = t.result()
@@ -206,6 +211,8 @@ async def entrypoint(ctx: agents.JobContext):
                             },
                         ),
                     )
+                    # Update activity time on assistant response
+                    last_activity_time = asyncio.get_event_loop().time()
                     # send interupt as an event to be added to pending events (?)
                     # this might confuse things a bit actually, maybe it should be sent to past events instead
                     # to prevent re-triggering events if nothing happens
@@ -225,6 +232,7 @@ async def entrypoint(ctx: agents.JobContext):
             pass
 
     async def collect_events():
+        nonlocal last_activity_time
         global chunk_queue
         while True:
             try:
@@ -233,6 +241,8 @@ async def entrypoint(ctx: agents.JobContext):
                     break
                 msg = json.loads(raw.decode())
                 print("GOT", msg)
+                # Update activity time on any event
+                last_activity_time = asyncio.get_event_loop().time()
                 # handle msg
                 if msg["type"] == "start_gen":
                     # nonlocal session

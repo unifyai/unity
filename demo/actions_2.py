@@ -11,10 +11,14 @@ from pydantic import BaseModel, Field
 class SendWhatsAppMessageAction(BaseModel):
     type: Literal["whatsapp"]
     message: str
+    from_number: str
+    to_number: str
 
 class SendSMSMessageAction(BaseModel):
     type: Literal["sms"]
     message: str
+    from_number: str
+    to_number: str
 
 class SendEmailAction(BaseModel):
     type: Literal["email"]
@@ -46,12 +50,23 @@ class AskUserAgent(BaseModel):
 
 
 
+class SendCallAction(BaseModel):
+    type: Literal["call"]
+    from_number: str
+    to_number: str
+
+
+# -------- discriminated union --------
+# actually, call and non-call modes will probably have some difference between their actions (as in more actions probably for the voice one),
+# but for now lets keep them the same
 ActionModel = Union[
     SendEmailAction,
     SendWhatsAppMessageAction,
     SendSMSMessageAction,
     CreateCommunicationTask,
-    RespondToAgent
+    RespondToAgent,
+    SendCallAction,
+
 ]
 
 
@@ -78,6 +93,7 @@ CommsActionModel = Union[
     SendEmailAction,
     SendWhatsAppMessageAction,
     SendSMSMessageAction,
+    SendCallAction,
     AskUserAgent,
     EndTask
 ]

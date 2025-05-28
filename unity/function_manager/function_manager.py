@@ -19,10 +19,28 @@ class FunctionManager(threading.Thread):
     #  Construction                                                      #
     # ------------------------------------------------------------------ #
 
-    def __init__(self, *, daemon: bool = True) -> None:
+    def __init__(self, *, daemon: bool = True, traced: bool = False) -> None:
         super().__init__(daemon=daemon)
         # ToDo: expose tools to LLM once needed
         self._tools: Dict[str, callable] = {}
+
+        # Internal monotonically-increasing function-id counter.  We keep it local
+        # to the manager to avoid an expensive scan across *all* logs every
+        # time we create a function.  Initialised lazily on first use.
+        self._next_id: Optional[int] = None
+
+        ctxs = unify.get_active_context()
+        read_ctx, write_ctx = ctxs["read"], ctxs["write"]
+        assert (
+            read_ctx == write_ctx
+        ), "read and write contexts must be the same when instantiating a FunctionManager."
+        self._ctx = f"{read_ctx}/Functions" if read_ctx else "Functions"
+
+        if self._ctx not in unify.get_contexts():
+            unify.create_context(self._ctx)
+        # Add tracing
+        if traced:
+            self = unify.traced(self)
 
     # ------------------------------------------------------------------ #
     #  Static validation helpers                                          #
@@ -135,21 +153,23 @@ class FunctionManager(threading.Thread):
     #  Private helpers for persistence                                    #
     # ------------------------------------------------------------------ #
 
-    _CTX = "Functions"
-
     def _get_log_by_function_id(self, *, function_id: int) -> unify.Log:
         logs = unify.get_logs(
-            context=self._CTX,
+            context=self._ctx,
             filter=f"function_id == {function_id}",
         )
         assert len(logs) == 1, f"No function with id {function_id!r} exists."
         return logs[0]
 
     def _next_function_id(self) -> int:
-        if self._CTX not in unify.get_contexts():
+        if self._next_id is not None:
+            return self._next_id
+        if self._ctx not in unify.get_contexts():
             return 0
-        logs = unify.get_logs(context=self._CTX)
-        return max(lg.entries["function_id"] for lg in logs) + 1 if logs else 0
+        logs = unify.get_logs(context=self._ctx)
+        next_id = max(lg.entries["function_id"] for lg in logs) + 1 if logs else 0
+        self._next_id = next_id
+        return next_id
 
     # ------------------------------------------------------------------ #
     #  Public API                                                        #
@@ -198,7 +218,7 @@ class FunctionManager(threading.Thread):
             calls = list(self._collect_function_calls(node))
 
             unify.log(
-                context=self._CTX,
+                context=self._ctx,
                 function_id=next_id,
                 name=name,
                 argspec=signature,
@@ -231,7 +251,7 @@ class FunctionManager(threading.Thread):
           ``include_implementations=True``)
         """
         entries: Dict[str, Dict[str, Any]] = {}
-        for log in unify.get_logs(context=self._CTX):
+        for log in unify.get_logs(context=self._ctx):
             data = {
                 "argspec": log.entries["argspec"],
                 "docstring": log.entries["docstring"],
@@ -260,7 +280,7 @@ class FunctionManager(threading.Thread):
         # Identify dependants (direct callers)
         if delete_dependents:
             dependants = unify.get_logs(
-                context=self._CTX,
+                context=self._ctx,
                 filter=f"'{target_name}' in calls",
             )
             for dep in dependants:
@@ -272,7 +292,7 @@ class FunctionManager(threading.Thread):
                 )
 
         unify.delete_logs(
-            context=self._CTX,
+            context=self._ctx,
             logs=log.id,
         )
         return {target_name: "deleted"}
@@ -296,7 +316,7 @@ class FunctionManager(threading.Thread):
         >>> mgr.search_functions(filter="name.startswith('get_')")
         """
         logs = unify.get_logs(
-            context=self._CTX,
+            context=self._ctx,
             filter=filter,
             offset=offset,
             limit=limit,

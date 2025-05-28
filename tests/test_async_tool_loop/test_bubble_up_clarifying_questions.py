@@ -1,0 +1,177 @@
+from __future__ import annotations
+
+import asyncio
+from typing import Optional
+
+import pytest
+import unify
+from unity.common.llm_helpers import start_async_tool_use_loop
+from tests.helpers import _handle_project
+import os
+import json
+
+# ──────────────────────────────────────────────────────────────────────────
+# Small helpers
+# ──────────────────────────────────────────────────────────────────────────
+
+
+def make_llm(system_message: Optional[str] = None) -> unify.AsyncUnify:
+    return unify.AsyncUnify(
+        endpoint="o4-mini@openai",
+        system_message=system_message,
+        cache=json.loads(os.environ.get("UNIFY_CACHE", "true")),
+        traced=json.loads(os.environ.get("UNIFY_TRACED", "true")),
+    )
+
+
+# ──────────────────────────────────────────────────────────────────────────
+# 1.  DUMMY TOOLS – send_email immediately needs clarification
+# ──────────────────────────────────────────────────────────────────────────
+@unify.traced
+async def send_email(
+    address: str,
+    description: str,
+    *,
+    clarification_up_q: asyncio.Queue[str] | None = None,
+    clarification_down_q: asyncio.Queue[str] | None = None,
+) -> str:
+    """Send an email, based on the general description provided."""
+    if clarification_up_q is None or clarification_down_q is None:
+        raise RuntimeError("clarification queues missing")
+
+    # Dummy code
+    await clarification_up_q.put(
+        "It's best that we also inform him what we're bringing. Will you be bringing anything with you (food/drink)?",
+    )
+    await clarification_down_q.get()
+    return f"Email sent!"
+
+
+@unify.traced
+async def send_text(
+    number: str,
+    description: str,
+    *,
+    clarification_up_q: asyncio.Queue[str] | None = None,
+    clarification_down_q: asyncio.Queue[str] | None = None,
+) -> str:
+    """Send a text message, based on the general description provided."""
+    if clarification_up_q is None or clarification_down_q is None:
+        raise RuntimeError("clarification queues missing")
+
+
+# ──────────────────────────────────────────────────────────────────────────
+# 2.  OUTER get_clarification – simulates the user
+# ──────────────────────────────────────────────────────────────────────────
+asked_questions: list[str] = []  # for assertions
+
+
+# ──────────────────────────────────────────────────────────────────────────
+# 3.  The test
+# ──────────────────────────────────────────────────────────────────────────
+@pytest.mark.asyncio
+@_handle_project
+async def test_clarification_bubbles_up_two_tiers() -> None:
+    """
+    Verifies that the clarification travels up & the answer travels down two
+    levels of the call stack.
+    """
+
+    outer_client = make_llm(
+        "If you're unsure about the answer to any clarification requests that may come up from your internal tool use, "
+        "then please request a clarification. There is no need to cancel an incomplete task if a clarification is requested, you can simply provide the clarifications and the tool will pick up where it left off. Only cancel it if you do not want the task completing at all."
+        "Do not hallucinate any details, if you do not know the answer.",
+    )
+
+    clar_up_q = asyncio.Queue()
+    clar_down_q = asyncio.Queue()
+
+    @unify.traced
+    async def request_clarification(
+        question: str,
+    ) -> str:
+        """Ask the user **question** and return their reply."""
+        # Bubble the request up …
+        await clar_up_q.put(question)
+        # … then block until the answer comes back down.
+        return await clar_down_q.get()
+
+    outer_tools = {
+        "send_email": send_email,
+        "send_text": send_text,
+        "request_clarification": request_clarification,
+    }
+
+    outer_handle = start_async_tool_use_loop(  # type: ignore[attr-defined]
+        outer_client,
+        message="Please email jonathan.smith123@gmail.com and politely tell him I (Dan) will be arriving at the BBQ around 5pm.",
+        tools=outer_tools,
+        clarification_capable_tools={"send_email", "send_text"},
+        clarification_up_q=clar_up_q,
+        clarification_down_q=clar_down_q,
+        log_steps=False,
+    )
+
+    await clar_up_q.get()
+    await clar_down_q.put("I'll be bringing sausages and a pack of beer")
+
+    await outer_handle.result()
+
+    # ─────────────────────────
+    # Assertions
+    # ─────────────────────────
+
+    import json
+
+    # 0️⃣ basic shape – we always end with 8 chat entries
+    assert len(outer_client.messages) == 8
+
+    # 1️⃣ original user request ------------------------------------------------
+    assert outer_client.messages[0]["role"] == "user"
+    assert outer_client.messages[0]["content"] == (
+        "Please email jonathan.smith123@gmail.com and politely tell him I (Dan) "
+        "will be arriving at the BBQ around 5pm."
+    )
+
+    # 2️⃣ assistant chooses `send_email` --------------------------------------
+    m1 = outer_client.messages[1]
+    assert m1["role"] == "assistant"
+    assert len(m1["tool_calls"]) == 1
+    call1 = m1["tool_calls"][0]
+    assert call1["function"]["name"] == "send_email"
+    args1 = json.loads(call1["function"]["arguments"])
+    assert args1["address"] == "jonathan.smith123@gmail.com"
+
+    # 3️⃣ tool asks a clarification question ----------------------------------
+    clar_req = outer_client.messages[2]
+    assert clar_req["role"] == "tool"
+    assert clar_req["name"].startswith("clarification_request_")
+    assert "Will you be bringing anything" in clar_req["content"]
+
+    # 4️⃣ assistant calls `request_clarification` -----------------------------
+    m3 = outer_client.messages[3]
+    assert m3["role"] == "assistant"
+    assert m3["tool_calls"][0]["function"]["name"] == "request_clarification"
+
+    # 5️⃣ tool returns the user’s answer --------------------------------------
+    clar_ans = outer_client.messages[4]
+    assert clar_ans["role"] == "tool"
+    assert clar_ans["name"] == "request_clarification"
+    assert "sausages" in clar_ans["content"]
+    assert "beer" in clar_ans["content"]
+
+    # 6️⃣ assistant forwards the answer via `_clarify_send_email…` ------------
+    m5 = outer_client.messages[5]
+    assert m5["role"] == "assistant"
+    assert m5["tool_calls"][0]["function"]["name"].startswith("_clarify_send_email")
+
+    # 7️⃣ final tool message contains the real result -------------------------
+    final_tool = outer_client.messages[6]
+    assert final_tool["role"] == "tool"
+    assert final_tool["name"].startswith("_clarify_send_email")
+    assert "Email sent" in final_tool["content"]
+
+    # 8️⃣ assistant wraps up ---------------------------------------------------
+    closing = outer_client.messages[7]
+    assert closing["role"] == "assistant"
+    assert "email has been sent" in closing["content"].lower()

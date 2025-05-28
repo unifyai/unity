@@ -105,6 +105,14 @@ For each interaction:
 
 4. In call mode, structure responses as natural speech utterances with appropriate verbal patterns.
 
+## FROM AND TO PHONE NUMBERS
+
+1. Be careful about the `to_number` and `from_number` you select while sending messages or making phone calls.
+
+2. When you're asked to send a message, you are the sender (`from_number`) and the individual that asked you to send a message is the receiver (`to_number`). Same applies to phone calls.
+
+3. As a result, the `to_number` from the user's input becomes the `from_number` of your response and vice versa.
+
 ## SPECIAL HANDLING
 
 ### Communication Task Management

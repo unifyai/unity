@@ -8,7 +8,7 @@ import unify
 import asyncio
 import datetime as dt
 from collections import deque
-from typing import List, Deque, Dict, Iterable, Union, Mapping, Any
+from typing import List, Deque, Dict, Iterable, Union, Mapping, Any, Optional
 from importlib import import_module
 from pydantic import (
     BaseModel,
@@ -135,7 +135,11 @@ class EventBus:
         """Populate each per‑type deque with newest logs from Unify."""
         for etype, context in self._specific_ctxs.items():
             window_size = self._window_sizes.setdefault(etype, self._default_window)
-            raw_logs = unify.get_logs(context=context, limit=window_size)
+            raw_logs = unify.get_logs(
+                context=context,
+                limit=window_size,
+                sorting={"timestamp": "descending"},
+            )
             # unify returns most‑recent‑first – reverse for chronological order
             dq: Deque[Event] = deque(maxlen=window_size)
             for log in reversed(raw_logs):
@@ -240,26 +244,142 @@ class EventBus:
         """Ensures all published events have been uploaded"""
         self._logger.join()
 
-    async def get_latest(
+    async def search(
         self,
-        types: Iterable[str] | None = None,
-        limits: Union[int, Dict[str, int]] = 100,
-    ) -> list[Event]:
+        *,
+        filter: Optional[str] = None,
+        offset: int = 0,
+        limit: Union[int, Dict[str, int]] = 100,
+        grouped_by_type: bool = False,
+    ) -> Union[List[Event], Dict[str, List[Event]]]:
         """
-        Return up to *limit* events drawn from the specified *types*
-        (or from *all* types if None).
+        Return the most-recent *limit* events that satisfy *filter*.
 
-        Always works with the in-memory deques; does not mutate them.
+        Parameters
+        ----------
+        filter
+            A Python expression evaluated against every event.
+            • Use ``event_type`` or ``type`` for the event-type
+            • The whole ``Event`` object is available as ``evt``
+              (e.g. ``evt.payload.user_id == 7``)
+        offset
+            Number of matching events to **skip first** (newest→oldest
+            chronology – identical to Unify's *offset* semantics).
+        limit
+            Either a single integer applied to *every* event-type or a
+            ``{event_type: int}`` dict for per-type limits.
+        grouped_by_type
+            ``False``  → flat list (each element *includes* its ``type``)
+            ``True``   → ``{etype: [events...]}``
         """
-        ret: Dict[str, List[Event]] = {}
+        # 0. figure the per-type limits we should respect -----------------
+        if isinstance(limit, int):
+            per_type_limit = {t: limit for t in self._deques}
+        else:
+            per_type_limit = {t: limit.get(t, 0) for t in self._deques}
+
+        # ----------------------------------------------------------------------
+        # 1. scan the deque -----------------------------------------------------
+        def _matches(evt: Event) -> bool:
+            if not filter:
+                return True
+            # VERY small, controlled eval-sandbox
+            ns = {
+                "evt": evt,
+                "event_type": evt.type,
+                "type": evt.type,
+                **evt.model_dump(mode="python"),
+            }
+            return bool(eval(filter, {"__builtins__": {}}, ns))
+
+        in_memory: Dict[str, List[Event]] = {}
+        deque_meta: Dict[str, tuple[int, int]] = {}  # etype -> (skipped, collected)
+
         async with self._lock:
-            wanted = set(types) if types is not None else self._deques.keys()
-            limits = limits if isinstance(limits, dict) else {w: limits for w in wanted}
-            for t in wanted:
-                dq = self._deques.get(t)
-                if dq:
-                    ret[t] = list(dq)[-limits[t] :]
-        return ret
+            for etype, dq in self._deques.items():
+                lim = per_type_limit[etype]
+                if lim == 0:
+                    continue
+
+                skipped = collected = 0
+                keep: list[Event] = []
+
+                for evt in reversed(dq):  # newest → oldest
+                    if not _matches(evt):
+                        continue
+
+                    if skipped < offset:  # still burning offset
+                        skipped += 1
+                        continue
+
+                    keep.append(evt)
+                    collected += 1
+                    if collected >= lim:
+                        break
+
+                in_memory[etype] = keep
+                deque_meta[etype] = (skipped, collected)
+
+        # ----------------------------------------------------------------------
+        # 2. decide what and where to fetch ------------------------------------
+        need_backend: dict[str, int] = {}
+        backend_offsets: dict[str, int] = {}
+
+        for etype, lim in per_type_limit.items():
+            skipped, collected = deque_meta.get(etype, (0, 0))
+            still_needed = lim - collected
+            if still_needed <= 0:
+                continue
+
+            # offset still missing from deque + duplicates we already collected
+            backend_offsets[etype] = offset + collected
+            need_backend[etype] = still_needed
+
+        # ----------------------------------------------------------------------
+        # 3. fetch from *global* Events table ----------------------------------
+        for etype, want in need_backend.items():
+            full_filter = f'type == "{etype}"' + (f" and ({filter})" if filter else "")
+
+            logs = unify.get_logs(
+                context=self._global_ctx,
+                filter=full_filter,
+                sorting={"timestamp": "descending"},
+                offset=backend_offsets[etype],
+                limit=want,
+            )
+
+            fetched = []
+            for lg in logs:  # lg.entries uses Event schema
+                e = lg.entries.copy()
+                fetched.append(
+                    Event(
+                        event_id=e.pop("event_id"),
+                        calling_id=e.pop("calling_id"),
+                        type=e.pop("type"),
+                        timestamp=e.pop("timestamp"),
+                        payload_cls=e.pop("payload_cls", ""),
+                        payload=e.pop("payload"),
+                    ),
+                )
+
+            in_memory.setdefault(etype, []).extend(fetched)
+
+        # 4. shape the result --------------------------------------------
+        if grouped_by_type:
+            # guarantee each list is *exactly* per_type_limit long
+            return {
+                et: evts[: per_type_limit[et]] for et, evts in in_memory.items() if evts
+            }
+
+        # flatten + truncate globally (to respect int-style limit)
+        flat: List[Event] = []
+        for et, evts in in_memory.items():
+            flat.extend(evts[: per_type_limit[et]])
+        # newest-first global ordering
+        flat.sort(key=lambda e: e.timestamp, reverse=True)
+        if isinstance(limit, int):
+            flat = flat[:limit]
+        return flat
 
     def set_window(self, event_type: str, new_size: int) -> None:
         """
@@ -298,90 +418,6 @@ class EventBus:
           messages up to *new_size*.
         """
         self._default_window = new_size
-
-    async def get_event_call_stack(self, event_id: str | int) -> list[Event]:
-        """
-        Return all parent-events of *event_id* **top-down**.
-
-        The first element is the *root* event whose ``calling_id`` is an empty
-        string, the last element is the event that matches the supplied
-        *event_id*.  If any link in the chain cannot be found the traversal
-        stops and the partial stack is returned.
-
-        Lookup strategy
-        ----------------
-        1. Search the in-memory deques (cheap).
-        2. If a required event is missing, query Unify's *global* Events
-           context with ``filter_expr='event_id == "<id>"'`` to hydrate it.
-        """
-
-        def _find_local(eid: str) -> Event | None:
-            """Scan all in-memory windows for *eid* (non-blocking)."""
-            for dq in self._deques.values():
-                for ev in dq:
-                    if ev.event_id == eid:
-                        return ev
-            return None
-
-        def _fetch_from_unify(eid: str) -> Event | None:
-            """Slow path – pull single row from the persisted global log."""
-            try:
-                logs = unify.get_logs(
-                    context=self._global_ctx,
-                    limit=1,
-                    filter_expr=f"'event_id == \"{eid}\"'",
-                )
-            except Exception:
-                return None
-
-            if not logs:
-                return None
-
-            row = logs[0]
-            entries = getattr(row, "entries", None)
-            if not entries:
-                return None
-
-            try:
-                # Entries might already be a full Event-like dict
-                return Event(**entries)
-            except ValidationError:
-                # Fall back to a best-effort reconstruction
-                ts = getattr(row, "ts", dt.datetime.now(dt.UTC)).isoformat()
-                return Event(
-                    event_id=str(eid),
-                    calling_id=entries.get("calling_id", ""),
-                    type=entries.get("type", "Unknown"),
-                    timestamp=entries.get("timestamp", ts),
-                    payload=entries,
-                )
-
-        eid = str(event_id)
-        stack_rev: list[Event] = []
-        seen: set[str] = set()
-
-        while eid and eid not in seen:
-            seen.add(eid)
-
-            evt = _find_local(eid)
-            if evt is None:  # not in cache → ask Unify
-                evt = _fetch_from_unify(eid)
-                if evt is None:
-                    break  # gap – abort traversal
-
-                # Cache it inside the appropriate deque for future calls
-                self._deques.setdefault(
-                    evt.type,
-                    deque(maxlen=self._default_window),
-                ).append(
-                    evt,
-                )
-
-            stack_rev.append(evt)
-            eid = evt.calling_id
-
-        # Return *root → leaf*
-        return list(reversed(stack_rev))
 
     @property
     def ctxs(self):

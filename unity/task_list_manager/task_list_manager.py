@@ -1,7 +1,8 @@
+import os
+import unify
+import asyncio
 from datetime import datetime, timezone
 from typing import Dict, List, Any, Optional, Union
-
-import unify
 
 from ..common.embed_utils import EMBED_MODEL, ensure_vector_column
 from ..common.llm_helpers import start_async_tool_use_loop, AsyncToolLoopHandle
@@ -13,6 +14,7 @@ from .types.schedule import Schedule
 from .types.status import Status
 from .types.task import Task
 from .sys_msgs import ASK
+import json
 
 
 class TaskListManager:
@@ -87,6 +89,9 @@ class TaskListManager:
         *,
         return_reasoning_steps: bool = False,
         log_tool_steps: bool = False,
+        parent_chat_context: list[dict] | None = None,
+        clarification_up_q: asyncio.Queue[str] | None = None,
+        clarification_down_q: asyncio.Queue[str] | None = None,
     ) -> "AsyncToolLoopHandle":
         """
         Handle any plain-text english question to ask something about the list of tasks.
@@ -95,6 +100,9 @@ class TaskListManager:
             text (str): The text-based question to ask about the task list.
             return_reasoning_steps (bool): Whether to return the reasoning steps for the update request.
             log_tool_steps (bool): Whether to log the steps taken by the tool.
+            parent_chat_context (list[dict]): A list of parent context messages to pass down into the tool use loop.
+            clarification_up_q (asyncio.Queue[str]): A queue to send clarification questions up to the caller.
+            clarification_down_q (asyncio.Queue[str]): A queue to send clarification answers down to the model.
 
         Returns:
             AsyncToolLoopHandle: A handle to the running conversation that supports:
@@ -125,17 +133,39 @@ class TaskListManager:
             handle.stop()
         """
 
-        client = unify.AsyncUnify("o4-mini@openai", cache=True)
+        client = unify.AsyncUnify(
+            "o4-mini@openai",
+            cache=json.loads(os.environ.get("UNIFY_CACHE", "true")),
+            traced=json.loads(os.environ.get("UNIFY_TRACED", "true")),
+        )
         client.set_system_message(
             ASK.replace(
                 "{datetime}",
                 datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC"),
             ),
         )
+        # ── 0.  Optionally expose a request_clarification helper ───────────
+        tools = dict(self._ask_tools)
+
+        if clarification_up_q is not None or clarification_down_q is not None:
+
+            async def request_clarification(question: str) -> str:
+                """Bubble *question* up, then wait for the answer."""
+                if clarification_up_q is None or clarification_down_q is None:
+                    raise RuntimeError("Clarification queues missing.")
+                await clarification_up_q.put(question)
+                return await clarification_down_q.get()
+
+            tools["request_clarification"] = request_clarification
+
+        # ── 1.  Kick off the tool-use loop ─────────────────────────────────
         handle = start_async_tool_use_loop(
             client,
             text,
-            self._ask_tools,
+            tools,
+            parent_chat_context=parent_chat_context,
+            clarification_up_q=clarification_up_q,
+            clarification_down_q=clarification_down_q,
             log_steps=log_tool_steps,
         )
         if return_reasoning_steps:
@@ -158,6 +188,9 @@ class TaskListManager:
         *,
         return_reasoning_steps: bool = False,
         log_tool_steps: bool = False,
+        parent_chat_context: list[dict] | None = None,
+        clarification_up_q: asyncio.Queue[str] | None = None,
+        clarification_down_q: asyncio.Queue[str] | None = None,
     ) -> "AsyncToolLoopHandle":
         """
         Handle any plain-text english command to update the list of tasks in some manner.
@@ -166,6 +199,9 @@ class TaskListManager:
             text (str): The text-based request to update the task list.
             return_reasoning_steps (bool): Whether to return the reasoning steps for the update request.
             log_tool_steps (bool): Whether to log the steps taken by the tool.
+            parent_chat_context (list[dict]): A list of parent context messages to pass down into the tool use loop.
+            clarification_up_q (asyncio.Queue[str]): A queue to send clarification questions up to the caller.
+            clarification_down_q (asyncio.Queue[str]): A queue to send clarification answers down to the model.
 
         Returns:
             AsyncToolLoopHandle: A handle to the running conversation that supports:
@@ -201,17 +237,39 @@ class TaskListManager:
         """
         from .sys_msgs import UPDATE
 
-        client = unify.AsyncUnify("o4-mini@openai", cache=True)
+        client = unify.AsyncUnify(
+            "o4-mini@openai",
+            cache=json.loads(os.environ.get("UNIFY_CACHE", "true")),
+            traced=json.loads(os.environ.get("UNIFY_TRACED", "true")),
+        )
         client.set_system_message(
             UPDATE.replace(
                 "{datetime}",
                 datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC"),
             ),
         )
+        # ── 0.  Offer a request_clarification helper if queues supplied ──
+        tools = dict(self._update_tools)
+
+        if clarification_up_q is not None or clarification_down_q is not None:
+
+            async def request_clarification(question: str) -> str:
+                """Bubble *question* up and wait for the reply."""
+                if clarification_up_q is None or clarification_down_q is None:
+                    raise RuntimeError("Clarification queues missing.")
+                await clarification_up_q.put(question)
+                return await clarification_down_q.get()
+
+            tools["request_clarification"] = request_clarification
+
+        # ── 1.  Kick off interactive loop ─────────────────────────────────
         handle = start_async_tool_use_loop(
             client,
             text,
-            self._update_tools,
+            tools,
+            parent_chat_context=parent_chat_context,
+            clarification_up_q=clarification_up_q,
+            clarification_down_q=clarification_down_q,
             log_steps=log_tool_steps,
         )
         if return_reasoning_steps:
@@ -564,7 +622,8 @@ class TaskListManager:
                 ),
                 limit=2,
             )
-            assert head_candidates, f"Queue is malformed – no head found"
+            if not head_candidates:
+                return []
             assert (
                 len(head_candidates) == 1
             ), f"Multiple heads detected: {head_candidates}"

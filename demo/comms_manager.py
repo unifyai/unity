@@ -1,7 +1,6 @@
 import asyncio
 from datetime import datetime
 from google.cloud import pubsub_v1
-from google.oauth2.service_account import Credentials
 import json
 import os
 from events import *
@@ -28,13 +27,16 @@ with open(r"C:\Users\LEGION\Desktop\unity\unity\gcp_creds.json", encoding="utf-8
 class CommsManager:
     def __init__(self, events_queue):
         self.subscribers = {}
+        self.call_proc = None
         self.credentials = None
         self.loop = asyncio.get_event_loop()
         self.message_queue = events_queue
 
 
     def handle_message(
-        self, message: pubsub_v1.types.PubsubMessage, subscription_id: str
+        self,
+        message: pubsub_v1.types.PubsubMessage,
+        subscription_id: str,
     ):
         """Handle incoming messages from PubSub subscriptions."""
         try:
@@ -63,7 +65,8 @@ class CommsManager:
                     message_data = json.loads(message.data.decode("utf-8"))
                     from_number = message_data.get("caller_number", "")
                     to_number = "+" + message_data.get("conference_name", "").replace(
-                        "Unity_", ""
+                        "Unity_",
+                        "",
                     )
 
                     self.loop.call_soon_threadsafe(
@@ -98,13 +101,14 @@ class CommsManager:
     async def subscribe_to_topic(self, subscription_id: str):
         """Subscribe to a specific PubSub topic and process messages."""
         try:
-            if not self.credentials:
-                creds_json = json.loads(os.getenv("GCP_SA_KEY"))
-                self.credentials = Credentials.from_service_account_info(creds_json)
-
-            subscriber = pubsub_v1.SubscriberClient(credentials=self.credentials)
+            # Let GCP libraries handle authentication automatically
+            if self.credentials:
+                subscriber = pubsub_v1.SubscriberClient(credentials=self.credentials)
+            else:
+                subscriber = pubsub_v1.SubscriberClient()
             subscription_path = subscriber.subscription_path(
-                project_id, subscription_id
+                project_id,
+                subscription_id,
             )
 
             print(f"Starting subscription to {subscription_id}")

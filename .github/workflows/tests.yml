@@ -1,0 +1,76 @@
+name: Testing Unity with uv
+
+on: push
+
+jobs:
+  black:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v2
+
+    - name: Set up Python
+      uses: actions/setup-python@v2
+      with:
+        python-version: '3.11'
+
+    - name: Install system dependencies
+      run: sudo apt-get update && sudo apt-get install -y portaudio19-dev
+
+    - name: Install uv
+      run: pip install uv
+
+    - name: Create virtualenv and install deps
+      run: |
+        uv venv --python 3.11 .unity
+        source .unity/bin/activate
+
+        # 1) everything from requirements.txt except the local-editable entry
+        uv pip install -r <(grep -vE '^\s*-e\s+\.\./unify' requirements.txt)
+
+        # 2) your real Unify package from GitHub
+        uv pip install git+https://github.com/unifyai/unify
+
+    - name: Run black check
+      run: .unity/bin/black --check .
+
+  pytest:
+    runs-on: ubuntu-latest
+    environment: unity-testing
+    timeout-minutes: 120
+    steps:
+    - uses: actions/checkout@v2
+
+    - name: Set up Python
+      uses: actions/setup-python@v2
+      with:
+        python-version: '3.11'
+
+    - name: Install system dependencies
+      run: sudo apt-get update && sudo apt-get install -y portaudio19-dev
+
+    - name: Install uv
+      run: pip install uv
+
+    - name: Create virtualenv and install deps
+      run: |
+        uv venv --python 3.11 .unity
+        source .unity/bin/activate
+
+        # 1) everything from requirements.txt except the local-editable entry
+        uv pip install -r <(grep -vE '^\s*-e\s+\.\./unify' requirements.txt)
+
+        # 2) your real Unify package from GitHub
+        uv pip install git+https://github.com/unifyai/unify
+
+    - name: Run unit tests
+      run: .unity/bin/python -m pytest --timeout=120 -p no:warnings -vv .
+      env:
+        UNIFY_KEY: ${{ secrets.USER_API_KEY }}
+        UNIFY_BASE_URL: https://api.unify.ai/v0
+        UNIFY_CACHE: false
+        UNIFY_TRACED: false
+        OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+        FIRST_NAME: Rick
+        AGENT_FIRST: Rick
+        AGENT_LAST: Morty
+        AGENT_AGE: 29

@@ -39,6 +39,7 @@ SAMPLE_RATE = 16000
 CHUNK = 1024
 FORMAT = pyaudio.paInt16
 CHANNELS = 1
+MAX_SCENARIO_LENGTH = 2048
 
 ERROR_HANDLER_FUNC = CFUNCTYPE(None, c_char_p, c_int, c_char_p, c_int, c_char_p)
 
@@ -257,6 +258,55 @@ def input_with_timeout(timeout: float = 0.1) -> Tuple[bool, Optional[str]]:
         if rlist:
             return True, sys.stdin.readline().strip()
         return False, None
+
+
+def get_custom_scenario(args, *, silent: bool) -> Optional[str]:
+    """Get custom scenario from args, either text or voice input.
+
+    Args:
+        args: Parsed command line arguments with custom_scenario and custom_scenario_voice
+        silent: If True, suppress recording messages and warnings
+
+    Returns:
+        Custom scenario string if provided/captured, None otherwise
+    """
+    # Check for text-based custom scenario first
+    if hasattr(args, "custom_scenario") and args.custom_scenario:
+        return args.custom_scenario
+
+    # Check for voice-based custom scenario
+    if hasattr(args, "custom_scenario_voice") and args.custom_scenario_voice:
+        if not silent:
+            print("🎙️ Recording custom scenario...")
+
+        try:
+            # Record and transcribe audio
+            audio_bytes = record_until_enter()
+            transcript = transcribe_deepgram(audio_bytes)
+
+            # Handle empty or failed transcription
+            if not transcript or transcript.strip() == "":
+                if not silent:
+                    print("⚠️ Warning: No transcript received from voice input")
+                return None
+
+            # Truncate if too long
+            if len(transcript) > MAX_SCENARIO_LENGTH:
+                transcript = transcript[: MAX_SCENARIO_LENGTH - 3] + "..."
+                if not silent:
+                    print(
+                        f"⚠️ Warning: Scenario truncated to {MAX_SCENARIO_LENGTH} characters",
+                    )
+
+            return transcript.strip()
+
+        except Exception as exc:
+            if not silent:
+                print(f"⚠️ Warning: Voice scenario capture failed ({exc})")
+            return None
+
+    # No custom scenario provided
+    return None
 
 
 # ---------------------------------------------------------------------------

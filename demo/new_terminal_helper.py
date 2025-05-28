@@ -16,6 +16,7 @@ import os, sys, shutil, shlex, subprocess, signal
 from pathlib import Path
 import time
 import psutil
+from threading import Thread
 
 
 def _find_unix_terminal() -> str | None:
@@ -94,7 +95,7 @@ def run_script(
         shell = f"""
             echo $$ > {pid_file};
             trap 'rm -f {pid_file}' EXIT;
-            exec {shlex.join(py_cmd)}
+            {shlex.join(py_cmd)}
         """
 
         osa = f'''

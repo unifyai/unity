@@ -42,7 +42,7 @@ async def test_window_eviction_at_limit():
         await bus.publish(evt)
 
     # Fetch everything currently buffered for "message"
-    latest = (await bus.get_latest(types=["message"], limits=10))["message"]
+    latest = await bus.search(filter="type == 'message'", limit=10)
 
     # Filter to the events we just published (there may be pre-existing logs)
     latest_ours = [e for e in latest if e in events]
@@ -50,4 +50,6 @@ async def test_window_eviction_at_limit():
     # We expect only *window* of our events (the newest three) to remain
     assert len(latest_ours) == window
     assert events[0] not in latest_ours  # the earliest one was evicted
-    assert latest_ours == events[1:]  # oldest appears first (oldest-first order)
+    assert latest_ours == list(
+        reversed(events[1:]),
+    )  # newest appears first (newest-first order)

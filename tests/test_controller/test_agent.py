@@ -8,17 +8,17 @@ from unity.controller.states import BrowserState
 def test_text_to_browser_action():
     """Smoke-test that agent.text_to_browser_action returns a dict with keys.
     Relies on online Unify backend; will skip when network/API not available."""
-    try:
-        result = agent_mod.text_to_browser_action(
-            "open browser",
-            screenshot=None,
-            tabs=[],
-            buttons=None,
-            history=[],
-            state=BrowserState(),
-        )
-    except Exception as exc:
-        pytest.skip(f"Skipping – Unify backend unavailable: {exc}")
+    # try:
+    result = agent_mod.text_to_browser_action(
+        "open browser",
+        screenshot=None,
+        tabs=[],
+        buttons=None,
+        history=[],
+        state=BrowserState(),
+    )
+    # except Exception as exc:
+    #     pytest.skip(f"Skipping – Unify backend unavailable: {exc}")
 
     assert isinstance(result, dict)
     assert "action" in result
@@ -33,16 +33,13 @@ def test_text_to_browser_action_multi_step_select():
     Relies on online Unify backend; will skip when network/API not available."""
     try:
         # Set the state to be in a textbox as key presses only available in textbox
-        test_state = BrowserState()
-        test_state.in_textbox = True
-
         result = agent_mod.text_to_browser_action(
             "select three characters to the left",
             screenshot=None,
             tabs=[],
             buttons=None,
             history=[],
-            state=test_state,
+            state=BrowserState(in_textbox=True),
             multi_step_mode=True,
         )
     except Exception as exc:
@@ -64,16 +61,13 @@ def test_text_to_browser_action_multi_step_select_word():
     Relies on online Unify backend; will skip when network/API not available."""
     try:
         # Set the state to be in a textbox as key presses only available in textbox
-        test_state = BrowserState()
-        test_state.in_textbox = True
-
         result = agent_mod.text_to_browser_action(
             "select a word to the left",
             screenshot=None,
             tabs=[],
             buttons=None,
             history=[],
-            state=test_state,
+            state=BrowserState(in_textbox=True),
             multi_step_mode=True,
         )
     except Exception as exc:
@@ -96,16 +90,13 @@ def test_text_to_browser_action_multi_step_select_all():
     Relies on online Unify backend; will skip when network/API not available."""
     try:
         # Set the state to be in a textbox as key presses only available in textbox
-        test_state = BrowserState()
-        test_state.in_textbox = True
-
         result = agent_mod.text_to_browser_action(
             "select all texts",
             screenshot=None,
             tabs=[],
             buttons=None,
             history=[],
-            state=test_state,
+            state=BrowserState(in_textbox=True),
             multi_step_mode=True,
         )
     except Exception as exc:
@@ -127,16 +118,13 @@ def test_text_to_browser_action_multi_step_delete_left():
     Relies on online Unify backend; will skip when network/API not available."""
     try:
         # Set the state to be in a textbox as key presses only available in textbox
-        test_state = BrowserState()
-        test_state.in_textbox = True
-
         result = agent_mod.text_to_browser_action(
             "delete a character to the left",
             screenshot=None,
             tabs=[],
             buttons=None,
             history=[],
-            state=test_state,
+            state=BrowserState(in_textbox=True),
             multi_step_mode=True,
         )
     except Exception as exc:
@@ -156,16 +144,13 @@ def test_text_to_browser_action_multi_step_delete_right():
     Relies on online Unify backend; will skip when network/API not available."""
     try:
         # Set the state to be in a textbox as key presses only available in textbox
-        test_state = BrowserState()
-        test_state.in_textbox = True
-
         result = agent_mod.text_to_browser_action(
             "delete two characters to the right",
             screenshot=None,
             tabs=[],
             buttons=None,
             history=[],
-            state=test_state,
+            state=BrowserState(in_textbox=True),
             multi_step_mode=True,
         )
     except Exception as exc:
@@ -183,7 +168,7 @@ def test_text_to_browser_action_multi_step_delete_right():
 def test_ask_llm_bool():
     """Smoke-test ask_llm with boolean response_type. Skips when backend unavailable."""
     try:
-        answer = agent_mod.ask_llm("Is 2+2 equal to 4?", response_type=bool)
+        answer = agent_mod.ask_llm("Is 2+2 equal to 4?", response_format=bool)
     except Exception as exc:
         pytest.skip(f"Skipping – Unify backend unavailable: {exc}")
 
@@ -194,7 +179,7 @@ def test_ask_llm_bool():
 def test_ask_llm_str():
     """ask_llm should return a plain string when response_type=str"""
     try:
-        answer = agent_mod.ask_llm("Say hello in one word.", response_type=str)
+        answer = agent_mod.ask_llm("Say hello in one word.", response_format=str)
     except Exception as exc:
         pytest.skip(f"Skipping – Unify backend unavailable: {exc}")
 
@@ -216,7 +201,7 @@ def test_ask_llm_custom_model():
     try:
         ret = agent_mod.ask_llm(
             "Provide the coordinates of the Eiffel Tower as JSON with 'lat' and 'lon'.",
-            response_type=_Coords,
+            response_format=_Coords,
         )
     except Exception as exc:
         pytest.skip(f"Skipping – Unify backend unavailable: {exc}")
@@ -231,7 +216,7 @@ def test_ask_llm_custom_model():
 def test_ask_llm_int():
     """ask_llm should return an int when response_type=int"""
     try:
-        answer = agent_mod.ask_llm("What is 10 minus 3?", response_type=int)
+        answer = agent_mod.ask_llm("What is 10 minus 3?", response_format=int)
     except Exception as exc:
         pytest.skip(f"Skipping – Unify backend unavailable: {exc}")
 
@@ -244,7 +229,7 @@ def test_ask_llm_float():
     try:
         answer = agent_mod.ask_llm(
             "Provide 1 divided by 3 as a decimal.",
-            response_type=float,
+            response_format=float,
         )
     except Exception as exc:
         pytest.skip(f"Skipping – Unify backend unavailable: {exc}")

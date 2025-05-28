@@ -329,10 +329,12 @@ async def test_store_interjection():
 
     # store some informatiion
     handle = km.store("Bob lives in Bangkok, Thailand.")
-    # Mid-operation, add another detail that should also get stored.
-    await handle.interject("He was born in 1990.")
 
-    handle = km.retrieve("Which city does Bob live in and what is his age?")
+    # Mid-operation, add another detail that should also get stored.
+    await handle.interject("Also, he was born in 1990.")
+
+    await handle.result()
+    handle = km.retrieve("Which city does Bob live in and when was he born?")
     out = await handle.result()
 
     # The confirmation text returned by `store()` should include both pieces of information.
@@ -358,7 +360,7 @@ async def test_store_stop():
 
     # Provide multiple facts in one go so that cancelling halfway through still yields a partial, meaningful result.
     handle = km.store(
-        "Bob lives in Bangkok. Alice is 30 years old. Carl is 25 years old."
+        "Bob lives in Bangkok. Alice is 30 years old. Carl is 25 years old.",
     )
     await asyncio.sleep(0.05)
     handle.stop()
@@ -387,12 +389,12 @@ async def test_retrieve_interjection():
     handle = km.store("Alice is 30 years old.")
     handle = km.store("Alice lives in New York.")
     await handle.result()
-    
+
     # Now retrieve with interjection
     handle = km.retrieve("How old is Alice?")
     await handle.interject("Also, where does she live?")
     out = await handle.result()
-    
+
     assert _contains(out, "30", "New York"), assertion_failed(
         "Output containing both '30' and 'New York'",
         out,
@@ -416,9 +418,11 @@ async def test_retrieve_stop():
     km = KnowledgeManager()
 
     # Store some data first
-    handle = km.store("The capital of France is Paris. The capital of Germany is Berlin. The capital of Italy is Rome.")
+    handle = km.store(
+        "The capital of France is Paris. The capital of Germany is Berlin. The capital of Italy is Rome.",
+    )
     await handle.result()
-    
+
     # Now retrieve with stop
     handle = km.retrieve("List the capitals of European countries.")
     await asyncio.sleep(0.05)

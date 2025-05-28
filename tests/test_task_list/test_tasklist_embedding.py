@@ -15,9 +15,10 @@ def test_tasklist_embedding_search():
         name="connecting with industry professionals",
         description="looking for contacts on a career-oriented site",
     )
+    # create a totally different task
     id2 = manager._create_task(
-        name="collecting resumes from job boards",
-        description="harvesting candidate information from online employment listings",
+        name="Find product prices",
+        description="get the prices of all products",
     )
 
     # Keyword-based filter search should yield no hits
@@ -29,7 +30,7 @@ def test_tasklist_embedding_search():
     assert isinstance(sim_results, list)
     assert len(sim_results) == 2
     assert sim_results[0]["name"] == "connecting with industry professionals"
-    assert sim_results[1]["name"] == "collecting resumes from job boards"
+    assert sim_results[1]["name"] == "Find product prices"
 
     # Semantic search with k=1 respects the limit and returns only the closest match
     sim_results_k1 = manager._search_similar(

@@ -2,7 +2,7 @@ import aiohttp
 import os
 from dotenv import load_dotenv
 
-load_dotenv()
+load_dotenv("../.env")
 
 
 async def send_whatsapp_message(from_number: str, to_number: str, message: str) -> bool:
@@ -81,6 +81,39 @@ async def send_sms(from_number: str, to_number: str, message: str) -> bool:
         return False
 
 
+async def send_call(from_number: str, to_number: str) -> bool:
+    """
+    Send a call using the call provider API.
+
+    Args:
+        from_number: The sender's phone number
+        to_number: The recipient's phone number
+
+    Returns:
+        bool: True if call was sent successfully, False otherwise
+    """
+    try:
+        print(f"Sending call from {from_number} to {to_number}")
+        async with aiohttp.ClientSession() as session:
+            async with session.post(
+                f"{os.getenv('UNITY_COMMS_URL')}/phone/send-call",
+                json={"From": from_number, "To": to_number, "NewCall": "true"},
+            ) as response:
+                if response.status != 200:
+                    print(f"Failed to send call. Status: {response.status}")
+                    return False
+
+                response_text = await response.text()
+                print(f"Response: {response_text}")
+                return True
+    except aiohttp.ClientError as e:
+        print(f"Network error while sending call: {e}")
+        return False
+    except Exception as e:
+        print(f"Error sending call: {e}")
+        return False
+
+
 async def handle_message_action(action_type: str, **kwargs) -> bool:
     """
     Handle different types of message actions based on the action type.
@@ -92,7 +125,11 @@ async def handle_message_action(action_type: str, **kwargs) -> bool:
     Returns:
         bool: True if action was successful, False otherwise
     """
-    action_map = {"whatsapp": send_whatsapp_message, "sms": send_sms}
+    action_map = {
+        "whatsapp": send_whatsapp_message,
+        "sms": send_sms,
+        "call": send_call,
+    }
 
     if action_type not in action_map:
         print(f"Unknown action type: {action_type}")

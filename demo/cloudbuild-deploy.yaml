@@ -1,0 +1,230 @@
+steps:
+  # Parse Pub/Sub Message and Log Deployment Info
+- name: 'gcr.io/cloud-builders/gcloud'
+  id: 'parse-deployment-info'
+  entrypoint: 'bash'
+  args:
+  - '-c'
+  - |
+    echo "=== DEPLOYMENT DEBUG INFO ==="
+
+    # Construct the full image URI from repo pattern and commit SHA
+    NEW_IMAGE_URI="${_REPO_PATTERN}:${_COMMIT_SHA}"
+    echo "Deployment triggered for image: $$NEW_IMAGE_URI"
+    echo "Commit SHA: ${_COMMIT_SHA}"
+    echo "Project ID: ${PROJECT_ID}"
+
+    # Extract region from repo pattern (format: region-docker.pkg.dev/...)
+    TARGET_REGION=$$(echo "${_REPO_PATTERN}" | sed 's/-docker\.pkg\.dev.*//')
+    echo "Region (extracted): $$TARGET_REGION"
+    echo "Repo Pattern: ${_REPO_PATTERN}"
+    echo "=== END DEBUG INFO ==="
+
+  # Discover and Update All Cloud Run Jobs Using Unity Images
+- name: 'gcr.io/cloud-builders/gcloud'
+  id: 'update-cloud-run-jobs'
+  entrypoint: 'bash'
+  args:
+  - '-c'
+  - |
+    echo "Discovering Cloud Run jobs using Unity images..."
+    echo "Looking for jobs using images matching: ${_REPO_PATTERN}"
+
+    # Extract region from repo pattern and construct image URI
+    TARGET_REGION=$$(echo "${_REPO_PATTERN}" | sed 's/-docker\.pkg\.dev.*//')
+    NEW_IMAGE_URI="${_REPO_PATTERN}:${_COMMIT_SHA}"
+    echo "Using region: $$TARGET_REGION"
+    echo "New image URI: $$NEW_IMAGE_URI"
+    echo "Project ID: ${PROJECT_ID}"
+
+    # Debug: Show what gcloud thinks the current project is
+    echo "=== GCLOUD DEBUG INFO ==="
+    gcloud config list
+    echo "Current gcloud project: $$(gcloud config get-value project)"
+    echo "========================="
+
+    gcloud config set project ${PROJECT_ID}
+    echo "Set project to: ${PROJECT_ID}"
+
+    # Test if the region is valid and accessible
+    echo "Testing region access..."
+
+    # First, verify the region exists
+    echo "Checking if region $$TARGET_REGION is valid..."
+    gcloud run regions list --filter="name:$$TARGET_REGION" --format="value(name)" | grep -q "$$TARGET_REGION" || {
+      echo "❌ Region $$TARGET_REGION is not valid for Cloud Run"
+      echo "Available Cloud Run regions:"
+      gcloud run regions list --format="value(name)" | head -10
+      exit 1
+    }
+
+    echo "✅ Region $$TARGET_REGION is valid"
+
+    # Test Cloud Run access with a simpler command
+    echo "Testing Cloud Run API access..."
+    gcloud run jobs list --region=$$TARGET_REGION --limit=1 --format="value(metadata.name)" >/dev/null 2>&1 || {
+      echo "❌ Cannot access Cloud Run jobs API in region $$TARGET_REGION"
+      echo "This might be due to:"
+      echo "  - Cloud Run API not enabled"
+      echo "  - Insufficient permissions"
+      echo "  - Region not available for your project"
+      exit 1
+    }
+
+    echo "✅ Cloud Run API access successful"
+
+    # Get all Cloud Run jobs that use Unity images (any version/tag)
+    echo "Listing Cloud Run jobs in region $$TARGET_REGION..."
+    echo "Searching for jobs using images from: ${_REPO_PATTERN}"
+
+    # First, let's see all jobs in the region for debugging
+    echo "All jobs in region:"
+    gcloud run jobs list \
+      --region=$$TARGET_REGION \
+      --project=${PROJECT_ID} \
+      --format="table(metadata.name,spec.template.spec.template.spec.containers[0].image)"
+    echo ""
+
+    # Find jobs using any version of the Unity image (filter by base image path, not specific tag)
+    UNITY_JOBS=$$(gcloud run jobs list \
+      --region=$$TARGET_REGION \
+      --project=${PROJECT_ID} \
+      --filter="spec.template.spec.template.spec.containers[0].image:${_REPO_PATTERN}" \
+      --format="value(metadata.name)")
+
+    echo "Jobs found using Unity images:"
+    if [ -n "$$UNITY_JOBS" ]; then
+      echo "$$UNITY_JOBS"
+      echo ""
+
+      # Show current images for each Unity job
+      echo "Current images for Unity jobs:"
+      echo "$$UNITY_JOBS" | while read -r JOB_NAME; do
+        if [ -n "$$JOB_NAME" ]; then
+          CURRENT_IMAGE=$$(gcloud run jobs describe "$$JOB_NAME" \
+            --region=$$TARGET_REGION \
+            --project=${PROJECT_ID} \
+            --format="value(spec.template.spec.template.spec.containers[0].image)")
+          echo "  $$JOB_NAME: $$CURRENT_IMAGE"
+        fi
+      done
+      echo ""
+      echo "New image to deploy: $$NEW_IMAGE_URI"
+    else
+      echo "None found"
+    fi
+
+    if [ -z "$$UNITY_JOBS" ]; then
+      echo "No Cloud Run jobs found using Unity images"
+      echo "Image pattern searched: ${_REPO_PATTERN}"
+      echo ""
+      echo "This might be normal if:"
+      echo "  - No Unity jobs have been deployed yet"
+      echo "  - Jobs are using a different image repository"
+      echo "  - Jobs are in a different region"
+      exit 0
+    fi
+
+    # Update each job with the new image
+    echo "$$UNITY_JOBS" | while read -r JOB_NAME; do
+      if [ -n "$$JOB_NAME" ]; then
+        echo "Updating job: $$JOB_NAME"
+
+        # Get current image for comparison
+        CURRENT_IMAGE=$$(gcloud run jobs describe "$$JOB_NAME" \
+          --region=$$TARGET_REGION \
+          --format="value(spec.template.spec.template.spec.containers[0].image)")
+
+        echo "  Current image: $$CURRENT_IMAGE"
+        echo "  New image: $$NEW_IMAGE_URI"
+
+        # Update the job with the new image
+        gcloud run jobs update "$$JOB_NAME" \
+          --image=$$NEW_IMAGE_URI \
+          --region=$$TARGET_REGION \
+          --quiet
+
+        if [ $$? -eq 0 ]; then
+          echo "✅ Successfully updated job: $$JOB_NAME"
+        else
+          echo "❌ Failed to update job: $$JOB_NAME"
+          exit 1
+        fi
+      fi
+    done
+
+    echo ""
+    echo "🎉 All Unity jobs updated successfully!"
+    echo "Updated $$(echo "$$UNITY_JOBS" | wc -l | tr -d ' ') job(s) to image: $$NEW_IMAGE_URI"
+
+  # Verify Deployments and Show Updated Job Images
+- name: 'gcr.io/cloud-builders/gcloud'
+  id: 'verify-deployments'
+  entrypoint: 'bash'
+  args:
+  - '-c'
+  - |
+    echo "Verifying updated jobs..."
+
+    # Extract region from repo pattern
+    TARGET_REGION=$$(echo "${_REPO_PATTERN}" | sed 's/-docker\.pkg\.dev.*//')
+
+    # Get updated jobs that use Unity images
+    UNITY_JOBS=$$(gcloud run jobs list \
+      --region=$$TARGET_REGION \
+      --project=${PROJECT_ID} \
+      --filter="spec.template.spec.template.spec.containers[0].image:${_REPO_PATTERN}" \
+      --format="value(metadata.name)")
+
+    echo "Verification - Current Unity job images:"
+    if [ -n "$$UNITY_JOBS" ]; then
+      echo "$$UNITY_JOBS" | while read -r JOB_NAME; do
+        if [ -n "$$JOB_NAME" ]; then
+          CURRENT_IMAGE=$$(gcloud run jobs describe "$$JOB_NAME" \
+            --region=$$TARGET_REGION \
+            --project=${PROJECT_ID} \
+            --format="value(spec.template.spec.template.spec.containers[0].image)")
+          echo "  $$JOB_NAME: $$CURRENT_IMAGE"
+        fi
+      done
+
+      # Check if all jobs are using the new image
+      NEW_IMAGE_URI="${_REPO_PATTERN}:${_COMMIT_SHA}"
+      OUTDATED_JOBS=$$(echo "$$UNITY_JOBS" | while read -r JOB_NAME; do
+        if [ -n "$$JOB_NAME" ]; then
+          CURRENT_IMAGE=$$(gcloud run jobs describe "$$JOB_NAME" \
+            --region=$$TARGET_REGION \
+            --project=${PROJECT_ID} \
+            --format="value(spec.template.spec.template.spec.containers[0].image)")
+          if [ "$$CURRENT_IMAGE" != "$$NEW_IMAGE_URI" ]; then
+            echo "$$JOB_NAME"
+          fi
+        fi
+      done)
+
+      if [ -z "$$OUTDATED_JOBS" ]; then
+        echo ""
+        echo "✅ All Unity jobs successfully updated to: $$NEW_IMAGE_URI"
+      else
+        echo ""
+        echo "❌ Some jobs were not updated properly:"
+        echo "$$OUTDATED_JOBS"
+        exit 1
+      fi
+    else
+      echo "No Unity jobs found during verification"
+    fi
+  waitFor: ['update-cloud-run-jobs']
+
+# Substitution variables (these will be populated from the Pub/Sub message)
+substitutions:
+  _COMMIT_SHA: ''
+  _REPO_PATTERN: ''
+
+# Options
+options:
+  logging: CLOUD_LOGGING_ONLY
+  machineType: 'E2_HIGHCPU_8'
+
+# Timeout
+timeout: '600s'  # 10 minutes

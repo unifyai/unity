@@ -20,8 +20,11 @@ from unity.common.llm_helpers import (
 )
 from unity.events.event_bus import EventBus
 from tests.helpers import _handle_project
+import os
+import json
 
 
+@unify.traced
 async def echo(text: str) -> str:  # noqa: D401 – simple echo tool
     await asyncio.sleep(0.01)  # prove we can yield control
     return text.upper()
@@ -41,22 +44,29 @@ async def test_basic_event_flow() -> None:
     bus = EventBus()
     bus.register_event_types("TEST")
 
+    client = unify.AsyncUnify(
+        "gpt-4o@openai",
+        cache=True,
+        traced=True,
+    ).set_system_message(
+        "please echo whatever the user says",
+    )
+
     result = await _async_tool_use_loop_inner(
-        client=unify.AsyncUnify("gpt-4o@openai", cache=True).set_system_message(
-            "please echo whatever the user says",
-        ),
+        client=client,
         message="world",
         tools={"echo": echo},
         event_type="TEST",
         event_bus=bus,
         interject_queue=asyncio.Queue(),
         cancel_event=asyncio.Event(),
+        prune_tool_duplicates=True,
         log_steps=False,
     )
 
     # Exactly four events should have been published for the run
     #    (newest-first order → reverse for readability).
-    events = (await bus.get_latest(types=["TEST"], limits=10))["TEST"]
+    events = list(reversed(await bus.search(filter="type == 'TEST'", limit=10)))
     assert len(events) == 4
 
     roles = [evt.payload["message"]["role"] for evt in events]
@@ -67,8 +77,8 @@ async def test_basic_event_flow() -> None:
         events[2].payload["message"]["content"].strip("'").strip('"') == "WORLD"
     )  # tool result
     assert (
-        events[3].payload["message"]["content"].strip("'").strip('"') == "WORLD"
-    )  # final assistant reply
+        events[3].payload["message"]["content"].strip("'").strip('"').upper() == "WORLD"
+    )  # final assistant reply (may either echo the user of the capitalized tool)
 
 
 # --------------------------------------------------------------------------- #
@@ -86,7 +96,11 @@ async def test_interjection_publishes_user_event() -> None:
     bus = EventBus()
     bus.register_event_types("CHAT")
 
-    client = unify.AsyncUnify("gpt-4o@openai", cache=True)
+    client = unify.AsyncUnify(
+        "gpt-4o@openai",
+        cache=json.loads(os.environ.get("UNIFY_CACHE", "true")),
+        traced=json.loads(os.environ.get("UNIFY_TRACED", "true")),
+    )
     client.set_system_message(
         "Please always respond with 'You said: {my_latest_message}', with the placeholder containing whatever I said, and do not include the quoation marks in your response.",
     )
@@ -106,7 +120,7 @@ async def test_interjection_publishes_user_event() -> None:
     final = await handle.result()
     assert final == "You said: second"
 
-    events = (await bus.get_latest(types=["CHAT"], limits=10))["CHAT"]
+    events = await bus.search(filter="type == 'CHAT'", limit=10)
     roles = [evt.payload["message"]["role"] for evt in events]
     assert "user" in roles  # initial user
     assert roles.count("user") == 2  # + the interjection
