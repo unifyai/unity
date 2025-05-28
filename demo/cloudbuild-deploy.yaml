@@ -35,10 +35,23 @@ steps:
     NEW_IMAGE_URI="${_REPO_PATTERN}:${_COMMIT_SHA}"
     echo "Using region: $$TARGET_REGION"
     echo "New image URI: $$NEW_IMAGE_URI"
+    echo "Project ID: ${PROJECT_ID}"
+
+    # Debug: Show what gcloud thinks the current project is
+    echo "=== GCLOUD DEBUG INFO ==="
+    gcloud config list
+    echo "Current gcloud project: $$(gcloud config get-value project)"
+    echo "========================="
 
     gcloud config set project ${PROJECT_ID}
+    echo "Set project to: ${PROJECT_ID}"
+
+    # Test if the region is valid and accessible
+    echo "Testing region access..."
+    gcloud run services list --region=$$TARGET_REGION --project=${PROJECT_ID} --limit=1 || echo "Region test failed"
     
     # Get all Cloud Run jobs and filter by image
+    echo "Listing Cloud Run jobs in region $$TARGET_REGION..."
     ALL_JOBS=$$(gcloud run jobs list \
       --format="json" \
       --region=$$TARGET_REGION \
