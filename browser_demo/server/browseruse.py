@@ -22,15 +22,13 @@ async def main():
             "--start-fullscreen"
         ],
     )
-    # context = await browser.new_context()
+
     agent = Agent(
         task="You're a helpful assistant. Open google search page and wait for the user to give you a task.",
         llm=llm,
         browser_session=browser,
-        # browser_context=context,
     )
     result = await agent.run()
-    # print(browser.config)
 
     while True:
         await asyncio.sleep(1)
@@ -38,7 +36,6 @@ async def main():
         # if action == "close":
         #     break
 
-        # # print(browser.config)
         # agent.add_new_task(action)
         # result = await agent.run()
         # print(result)
