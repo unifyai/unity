@@ -1,41 +1,57 @@
-import threading
 from typing import Dict
 
 import unify
 import os
 from ..common.llm_helpers import start_async_tool_use_loop
 from ..planner.dummy import DummyPlanner
+from ..communication.transcript_manager.transcript_manager import TranscriptManager
 from ..task_list_manager.task_list_manager import TaskListManager
+from ..knowledge_manager.knowledge_manager import KnowledgeManager
+
+# from ..contact_manager.contact_manager import ContactManager
+from ..events.event_bus import EventBus
 from .sys_msgs import REQUEST, ASK
 import json
 
 
-class TaskManager(threading.Thread):
+class TaskManager:
 
-    def __init__(self, *, daemon: bool = True) -> None:
+    def __init__(self) -> None:
         """
         Responsible for managing the set of tasks to complete by updating, scheduling, executing and steering tasks, both scheduled and active.
-
-        Args:
-            daemon (bool): Whether the thread should be a daemon thread.
         """
-        super().__init__(daemon=daemon)
-        self._tlm = TaskListManager()
+        self._event_bus = EventBus()
+        # self._contact_manager = ContactManager
+        self._transcript_manager = TranscriptManager(self._event_bus)
+        self._knowledge_manager = KnowledgeManager()
+        self._task_list_manager = TaskListManager()
         self._planner = DummyPlanner()
 
         self._passive_tools = {
+            # contact
+            # f"ContactManager.{self._contact_manager.ask.__name__}": self._contact_manager.ask,
+            # transcript
+            f"TranscriptManager.{self._transcript_manager.ask.__name__}": self._transcript_manager.ask,
+            # knowledge
+            f"KnowledgeManager.{self._knowledge_manager.retrieve}": self._knowledge_manager.retrieve,
             # task list
-            self._ask_about_task_list.__name__: self._ask_about_task_list,
+            f"TaskListManager.{self._task_list_manager.ask}": self._task_list_manager.ask,
             # planner
-            self._ask_about_active_task.__name__: self._ask_about_active_task,
+            f"Planner.{self._planner.ask}": self._planner.ask,
         }
         self._active_tools = {
+            # contact
+            # f"ContactManager.{self._contact_manager.update.__name__}": self._contact_manager.update,
+            # transcript
+            f"TranscriptManager.{self._transcript_manager.summarize}": self._transcript_manager.summarize,
+            # knowledge
+            f"KnowledgeManager.{self._knowledge_manager.store}": self._knowledge_manager.store,
             # task list
-            self._update_task_list.__name__: self._update_task_list,
+            f"TaskListManager.{self._task_list_manager.update}": self._task_list_manager.update,
             # planner
-            self._start_task.__name__: self._start_task,
-            self._steer_active_task.__name__: self._steer_active_task,
-            self._stop_active_task.__name__: self._stop_active_task,
+            f"Planner.{self._planner.start}": self._planner.start,
+            f"Planner.{self._planner.steer}": self._planner.steer,
+            f"Planner.{self._planner.stop}": self._planner.stop,
         }
 
         self._tools = {
@@ -118,86 +134,3 @@ class TaskManager(threading.Thread):
         if return_reasoning_steps:
             return ans, client.messages
         return ans
-
-    # Tools #
-    # ------#
-
-    # Task List
-
-    def _ask_about_task_list(self, question: str) -> str:
-        f"""
-        Ask any question about the list of tasks (including scheduled, cancelled, failed, and the active task) based on a natural language question.
-
-        This function *cannot* answer questions about the *live state* of the active task.
-        It can answer questions about the schedule, priority, title, description, queue ordering etc.
-
-        Args:
-            question (str): The question to ask about the task list.
-
-        Returns:
-            str: The answer to the question about the task list.
-        """
-        return self._tlm.ask(question)
-
-    def _update_task_list(self, update: str) -> str:
-        f"""
-        Update the list of tasks (including scheduled, cancelled, failed, and the active task) based on a natural language question.
-
-        Args:
-            update (str): The update instruction in natural language.
-
-        Returns:
-            str: Whether the update was applied successfully or not.
-        """
-        return self._tlm.update(update)
-
-    # Active Task
-
-    def _start_task(self, description: str) -> str:
-        """
-        Start a new task, making it the active task. If there is already an active task,
-        it will be paused.
-
-        Args:
-            description (str): Description of the task to start.
-
-        Returns:
-            str: A message confirming the task was started, or explaining why it couldn't be started.
-        """
-        return self._planner.start(description)
-
-    def _ask_about_active_task(self, question: str) -> str:
-        """
-        Ask a question about the currently active task, including its live state.
-
-        Args:
-            question (str): The question to ask about the active task.
-
-        Returns:
-            str: The answer about the active task's current state, or a message indicating no active task.
-        """
-        return self._planner.ask(question)
-
-    def _steer_active_task(self, instruction: str) -> str:
-        """
-        Provide steering instructions to modify the behavior of the currently active task.
-
-        Args:
-            instruction (str): The steering instruction in natural language.
-
-        Returns:
-            str: A message confirming the steering instruction was applied, or explaining why it couldn't be applied.
-        """
-        return self._planner.steer(instruction)
-
-    def _stop_active_task(self, reason: str) -> str:
-        """
-        Stop the currently active task.
-
-        Args:
-            reason (str): The reason for stopping the task, which will be recorded.
-
-        Returns:
-            str: A message confirming the task was stopped, or explaining why it couldn't be stopped.
-        """
-        self._planner.stop(reason)
