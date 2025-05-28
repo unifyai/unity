@@ -149,8 +149,6 @@ class BrowserUsePlanner:
             tools=self._tools,
             interrupt_llm_with_interjections=True,
             clarification_capable_tools=set(self._tools),
-            clarification_up_q=self._clar_up_q,
-            clarification_down_q=self._clar_down_q,
         )
 
         self._attach_completion_callback(handle)
@@ -211,8 +209,6 @@ class BrowserUsePlanner:
             propagate_chat_context=True,
             interrupt_llm_with_interjections=True,
             clarification_capable_tools=set(self._tools),
-            clarification_up_q=self._clar_up_q,
-            clarification_down_q=self._clar_down_q,
         )
 
         self._attach_completion_callback(handle)

@@ -107,8 +107,6 @@ async def test_clarification_bubbles_up_two_tiers() -> None:
         message="Please email jonathan.smith123@gmail.com and politely tell him I (Dan) will be arriving at the BBQ around 5pm.",
         tools=outer_tools,
         clarification_capable_tools={"send_email", "send_text"},
-        clarification_up_q=clar_up_q,
-        clarification_down_q=clar_down_q,
         log_steps=False,
     )
 
