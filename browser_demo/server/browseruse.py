@@ -11,7 +11,7 @@ llm = ChatOpenAI(model="gpt-4o")
 
 async def main():
     browser = BrowserSession(
-        # executable_path="/usr/bin/chromium",
+        executable_path="/usr/bin/chromium",
         chromium_sandbox=False,
         keep_alive=True,
         args=[
@@ -22,6 +22,8 @@ async def main():
             "--start-fullscreen",
             # "--use-fake-ui-for-media-stream",
             # "--use-fake-device-for-media-stream",
+            # "--use-file-for-fake-video-capture=avatar.y4m",
+            # "--use-file-for-fake-audio-capture=audio.wav",
         ],
         # permissions=["microphone", "camera"],
     )
