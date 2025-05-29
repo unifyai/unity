@@ -77,7 +77,6 @@ async def test_interjectable_tool_roundtrip() -> None:
             "Do NOT add extra text between steps."
         ),
         tools={"long_running": long_running},
-        interjectable_tools={"long_running"},
     )
 
     # ── 3.  Wait until the model has really scheduled the first call ──

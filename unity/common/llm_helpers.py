@@ -378,6 +378,10 @@ async def _async_tool_use_loop_inner(
             #            tool-message in the transcript.
             # ───────────────────────────────────────────────────────────────
             if isinstance(raw, _AsyncToolLoopLike):
+                # Upgrade interjectability if handle exposes it
+                if hasattr(raw, "interject"):
+                    info["is_interjectable"] = True
+
                 # 1️⃣ spawn the nested waiter
                 nested_task = asyncio.create_task(raw.result())
                 pending.add(nested_task)
@@ -500,8 +504,6 @@ async def _async_tool_use_loop_inner(
     completed_results: Dict[str, str] = {}
     assistant_meta: Dict[int, Dict[str, Any]] = {}
 
-    if interjectable_tools is None:
-        interjectable_tools = set()
     if clarification_capable_tools is None:
         clarification_capable_tools = set()
 
@@ -1168,8 +1170,17 @@ async def _async_tool_use_loop_inner(
                         )
                         extra_kwargs["parent_chat_context"] = ctx_repr
 
+                    # ── interjection capability (implicit) ─────────────
+                    sig = inspect.signature(fn)
+                    params = sig.parameters
+                    has_varkw = any(
+                        p.kind == inspect.Parameter.VAR_KEYWORD for p in params.values()
+                    )
+
+                    sig_accepts_queue = "interject_queue" in params or has_varkw
+
                     sub_q: Optional[asyncio.Queue[str]] = None
-                    is_interj = False
+                    is_interj = sig_accepts_queue  # may be upgraded later
                     # ── per-call clarification queues (optional) ─────────
                     clar_up_q: Optional[asyncio.Queue[str]] = None
                     clar_down_q: Optional[asyncio.Queue[str]] = None
@@ -1178,14 +1189,11 @@ async def _async_tool_use_loop_inner(
                         clar_down_q = asyncio.Queue()
                         extra_kwargs["clarification_up_q"] = clar_up_q
                         extra_kwargs["clarification_down_q"] = clar_down_q
-                    if name in interjectable_tools:
+                    if sig_accepts_queue:
                         sub_q = asyncio.Queue()
                         extra_kwargs["interject_queue"] = sub_q
-                        is_interj = True
 
                     # ---- filter extras to match fn signature ----------
-                    import inspect
-
                     sig = inspect.signature(fn)
                     params = sig.parameters
                     has_varkw = any(
@@ -1203,7 +1211,7 @@ async def _async_tool_use_loop_inner(
 
                     # avoid double-passing the queue if the model already
                     # supplied an `interject_queue` argument
-                    if "interject_queue" in args and name in interjectable_tools:
+                    if "interject_queue" in args and sig_accepts_queue:
                         merged_kwargs["interject_queue"] = sub_q
 
                     if asyncio.iscoroutinefunction(fn):
@@ -1355,7 +1363,6 @@ def start_async_tool_use_loop(
     max_consecutive_failures: int = 3,
     prune_tool_duplicates=True,
     interrupt_llm_with_interjections: bool = True,
-    interjectable_tools: Optional[Set[str]] = None,
     clarification_capable_tools: Optional[Set[str]] = None,
     propagate_chat_context: bool = True,
     parent_chat_context: Optional[list[dict]] = None,
@@ -1382,7 +1389,6 @@ def start_async_tool_use_loop(
             max_consecutive_failures=max_consecutive_failures,
             prune_tool_duplicates=prune_tool_duplicates,
             interrupt_llm_with_interjections=interrupt_llm_with_interjections,
-            interjectable_tools=interjectable_tools,
             clarification_capable_tools=clarification_capable_tools,
             propagate_chat_context=propagate_chat_context,
             parent_chat_context=parent_chat_context,
