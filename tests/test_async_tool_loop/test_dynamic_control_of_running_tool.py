@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+import time
 from typing import List
 import json
 
@@ -58,6 +59,20 @@ def _assistant_calls(msgs: List[dict], tool_name: str) -> int:
         if m["role"] == "assistant"
         and any(
             tc["function"]["name"] == tool_name for tc in (m.get("tool_calls") or [])
+        )
+    )
+
+
+@unify.traced
+def _assistant_calls_prefix(msgs: List[dict], prefix: str) -> int:
+    """Count assistant turns whose tool-call name *starts with* `prefix`."""
+    return sum(
+        1
+        for m in msgs
+        if m["role"] == "assistant"
+        and any(
+            tc["function"]["name"].startswith(prefix)
+            for tc in (m.get("tool_calls") or [])
         )
     )
 
@@ -151,3 +166,105 @@ async def test_cancel_removes_tool_and_yields_no_result(client):
     msgs = client.messages
     assert _tool_results(msgs, "slow") == 1, "cancellation tool expected after cancel"
     assert _assistant_calls(msgs, "slow") == 1, "tool-call should remain in the history"
+
+
+@pytest.mark.asyncio
+@_handle_project
+async def test_functional_tool_pause_extends_wall_clock(client):
+    """
+    * The assistant must…
+        1️⃣  call `pausable_fn`;
+        2️⃣  when the *user* says **hold**, invoke the `_pause_…` helper;
+        3️⃣  when the *user* says **go**,   invoke the `_resume_…` helper;
+        4️⃣  finally answer 'done'.
+    * We measure wall-clock time: because the loop is paused for ~2 s in the
+      middle, total duration must be ≥ 2 s + the tool's own 1-second workload.
+    """
+
+    async def pausable_fn(*, pause_event: asyncio.Event) -> str:
+        # “work” for 1 second in 0.1-s ticks while honouring pause_event
+        for _ in range(10):
+            await pause_event.wait()
+            await asyncio.sleep(0.1)
+        return "ok"
+
+    client.set_system_message(
+        "1️⃣ Call `pausable_fn`.\n"
+        "2️⃣ When the user says **hold**, call the helper whose name starts "
+        "with `_pause_`.\n"
+        "3️⃣ When the user says **go**,   call the helper whose name starts "
+        "with `_resume_`.\n"
+        "4️⃣ Once the tool finishes, reply with **done**.",
+    )
+
+    outer = start_async_tool_use_loop(
+        client,
+        message="start",
+        tools={"pausable_fn": pausable_fn},
+        max_steps=30,
+        timeout=300,
+    )
+
+    t0 = time.perf_counter()
+
+    # let assistant schedule the tool, then pause for ~2 s
+    await asyncio.sleep(0.3)
+    await outer.interject("hold")
+    await asyncio.sleep(2.0)  # loop is paused here
+    await outer.interject("go")
+
+    final = await outer.result()
+    elapsed = time.perf_counter() - t0
+
+    # ── assertions ───────────────────────────────────────────────────────
+    assert final.strip().lower() == "done"
+    assert (
+        elapsed >= 3.0
+    ), f"loop finished too fast ({elapsed:.2f}s) – pause ineffective"
+
+
+@pytest.mark.asyncio
+@_handle_project
+async def test_functional_tool_pause_resume_helpers_called_once(client):
+    """
+    Same scenario as above but we *count* helper invocations in the chat log.
+
+    • Exactly one `_pause_…` and one `_resume_…` tool-call must appear.
+    """
+
+    async def pausable_fn(*, pause_event: asyncio.Event) -> str:
+        for _ in range(8):
+            await pause_event.wait()
+            await asyncio.sleep(1)
+        return "yo"
+
+    client.set_system_message(
+        "1️⃣ Call `pausable_fn`.\n"
+        "2️⃣ If the user says **freeze**, call `_pause_…` once.\n"
+        "3️⃣ If the user then says **unfreeze**, call `_resume_…` once.\n"
+        "4️⃣ Finish with **all done**.",
+    )
+
+    h = start_async_tool_use_loop(
+        client,
+        message="go",
+        tools={"pausable_fn": pausable_fn},
+        timeout=1000,
+    )
+
+    # trigger pause / resume via user turns
+    await asyncio.sleep(2)
+    await h.interject("freeze")
+    await asyncio.sleep(2)
+    await h.interject("unfreeze")
+
+    final = await h.result()
+    msgs = client.messages
+
+    # helper counters -----------------------------------------------------
+    pause_calls = _assistant_calls_prefix(msgs, "_pause")
+    resume_calls = _assistant_calls_prefix(msgs, "_resume")
+
+    assert "all done" in final.strip().lower()
+    assert pause_calls == 1, f"expected exactly 1 _pause_ helper, got {pause_calls}"
+    assert resume_calls == 1, f"expected exactly 1 _resume_ helper, got {resume_calls}"
