@@ -17,6 +17,8 @@ from typing import (
     get_origin,
     get_args,
     Callable,
+    Protocol,
+    runtime_checkable,
 )
 
 import unify
@@ -365,6 +367,53 @@ async def _async_tool_use_loop_inner(
         # 2️⃣  obtain result -------------------------------------------------
         try:
             raw = task.result()
+
+            # ───────────────────────────────────────────────────────────────
+            #  NEW:  the tool *did not really finish* – it returned *another*
+            #        AsyncToolLoopHandle.  We:
+            #        (1) schedule `handle.result()` as a *new* task,
+            #        (2) keep the **same** `call_id` so the continue/-cancel
+            #            helpers keep working,
+            #        (3) create / patch one placeholder "still running…"
+            #            tool-message in the transcript.
+            # ───────────────────────────────────────────────────────────────
+            if isinstance(raw, _AsyncToolLoopLike):
+                # 1️⃣ spawn the nested waiter
+                nested_task = asyncio.create_task(raw.result())
+                pending.add(nested_task)
+
+                # 2️⃣ insert / update a single placeholder
+                ph = info.get("tool_reply_msg")
+                if ph is None:
+                    ph = {
+                        "role": "tool",
+                        "tool_call_id": call_id,
+                        "name": info["name"],
+                        "content": (
+                            "Nested async tool loop started… waiting for result."
+                        ),
+                    }
+                    _insert_after_assistant(info["assistant_msg"], ph)
+                    info["tool_reply_msg"] = ph  # remember on *parent*
+                else:
+                    ph["content"] = (
+                        "Nested async tool loop started… waiting for result."
+                    )
+
+                await _to_event_bus(ph)
+
+                # 3️⃣ book-keeping for the *new* task (inherit + share placeholder)
+                task_info[nested_task] = {
+                    **info,
+                    "handle": raw,
+                    "is_interjectable": hasattr(raw, "interject"),
+                    "tool_reply_msg": ph,  # ← carry over
+                }
+                return
+
+            # ───────────────────────────────────────────────────────────────
+            #  Normal (non-handle) result – unchanged path
+            # ───────────────────────────────────────────────────────────────
             result = _dumps(raw, indent=4)
             consecutive_failures = 0
             if log_steps:
@@ -613,6 +662,7 @@ async def _async_tool_use_loop_inner(
 
             for _task in list(pending):
                 info = task_info[_task]
+                handle = info.get("handle")
                 _call_id: str = info["call_id"]
                 _fn_name: str = info["name"]
                 _arg_json: str = info["call_dict"]["function"]["arguments"]
@@ -643,8 +693,10 @@ async def _async_tool_use_loop_inner(
 
                 # ––– 2. cancel helper –––––––––––––––––––––––––––––––––––––
                 async def _cancel() -> Dict[str, str]:
+                    if handle is not None:
+                        handle.stop()  # graceful shutdown of the *nested* loop
                     if not _task.done():
-                        _task.cancel()
+                        _task.cancel()  # kill the waiter coroutine
                     pending.discard(_task)
                     task_info.pop(_task, None)
                     return {"status": "cancelled", "call_id": _call_id}
@@ -657,14 +709,15 @@ async def _async_tool_use_loop_inner(
                 )
 
                 # ––– 3. interject helper (optional) ––––––––––––––––––––––
-                if info.get("is_interjectable"):
+                if info.get("is_interjectable") and handle is not None:
                     _interject_doc = (
                         f"Inject additional instructions for {_fn_name}({_arg_repr}). "
                         "Takes a single argument `content` containing plain-English guidance."
                     )
 
-                    async def _interject(content: str) -> Dict[str, str]:  # type: ignore[valid-type]
-                        await info["interject_q"].put(content)
+                    async def _interject(content: str) -> Dict[str, str]:
+                        # forward directly to the nested loop
+                        await handle.interject(content)  # type: ignore[arg-type]
                         return {
                             "status": "interjected",
                             "call_id": _call_id,
@@ -1155,7 +1208,7 @@ async def _async_tool_use_loop_inner(
                         "assistant_msg": msg,
                         "call_dict": call_dict,
                         "call_idx": idx,
-                        "is_interjectable": is_interj,
+                        "is_interjectable": is_interj,  # may later become True automatically
                         "interject_q": sub_q,
                         "chat_ctx": extra_kwargs.get("parent_chat_context"),
                         "clar_up_q": clar_up_q,
@@ -1214,8 +1267,20 @@ async def _async_tool_use_loop_inner(
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# 2.  A tiny handle object exposed to callers
+# 2.  Tiny handle objects exposed to callers
 # ─────────────────────────────────────────────────────────────────────────────
+
+
+@runtime_checkable
+class _AsyncToolLoopLike(Protocol):
+    async def result(self) -> str: ...
+    def stop(self) -> None: ...
+
+    # `interject` is optional – its *existence* makes the result
+    # interjectable, but not every handle has to expose it.
+    async def interject(self, message: str) -> None: ...
+
+
 class AsyncToolLoopHandle:
     """
     Returned by `start_async_tool_use_loop`.  Lets you
