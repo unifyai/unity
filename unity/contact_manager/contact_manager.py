@@ -270,33 +270,49 @@ class ContactManager:
             "phone_number": phone_number,
             "whatsapp_number": whatsapp_number,
         }
-        assert any(
-            contact_details.values(),
-        ), "At least one contact detail must be provided."
-
-        # Verify uniqueness
-        for key, value in contact_details.items():
-            if key in ["first_name", "surname"] or value is None:
-                continue
-            logs = unify.get_logs(
-                context=self._ctx,
-                filter=f"{key} == '{value}'",
+        updates_to_apply = [{k: v} for k, v in contact_details.items() if v is not None]
+        if not updates_to_apply:
+            raise ValueError(
+                "At least one contact detail must be provided for an update.",
             )
-            assert (
-                len(logs) == 0
-            ), f"Invalid, contact with {key} {value} already exists."
 
-        # get log id
-        logs = unify.get_logs(
+        for key, value in contact_details.items():
+            if (
+                key in ["email_address", "phone_number", "whatsapp_number"]
+                and value is not None
+            ):
+                logs = unify.get_logs(
+                    context=self._ctx,
+                    filter=f"{key} == '{value}' and contact_id != {contact_id}",
+                )
+                if logs:
+                    raise ValueError(
+                        f"Another contact with {key} '{value}' already exists.",
+                    )
+
+        # Find the specific log entry to update
+        target_logs = unify.get_logs(
             context=self._ctx,
             filter=f"contact_id == {contact_id}",
         )
-        assert len(logs) == 1
-        log: unify.Log = logs[0]
-        log.update_entries(
-            **contact_details,
-            contact_id=contact_id,
+        if not target_logs:
+            raise ValueError(
+                f"No contact found with contact_id {contact_id} to update.",
+            )
+        if len(target_logs) > 1:
+            raise ValueError(
+                f"Multiple contacts found with contact_id {contact_id}. Data integrity issue.",
+            )
+
+        log_to_update_id = target_logs[0].id  # Get the actual Unify log ID
+    
+        unify.update_logs(
+            logs=[log_to_update_id] * len(updates_to_apply),
+            context=self._ctx,
+            entries=updates_to_apply,
+            overwrite=True,
         )
+        return contact_id
 
     def _search_contacts(
         self,
