@@ -188,3 +188,65 @@ async def test_cancel_nested_loop_calls_stop(monkeypatch):
         and "cancelled successfully" in (m.get("content") or "").lower()
         for m in client.messages
     ), "No tool-message indicates the cancellation happened"
+
+
+@pytest.mark.asyncio
+async def test_clarification_nested_handle():
+    """
+    Inner tool asks a question, outer loop surfaces it, assistant answers
+    via `_clarify_<id>`, inner loop receives the answer, outer loop completes.
+    """
+    exec_log = []
+
+    # ── inner tool that *requires* clarification ─────────────────────────
+    async def ask_colour(
+        *,
+        clarification_up_q: asyncio.Queue[str],
+        clarification_down_q: asyncio.Queue[str],
+    ) -> str:
+        await clarification_up_q.put("Which colour?")
+        colour = await clarification_down_q.get()
+        exec_log.append(colour)
+        return f"Chose {colour}"
+
+    # ── outer tool launches a nested loop and *exposes the same queues* ──
+    async def outer_tool() -> AsyncToolLoopHandle:
+        up_q, down_q = asyncio.Queue(), asyncio.Queue()
+        inner_client = unify.AsyncUnify("gpt-4o@openai", cache=True, traced=True)
+        inner_client.set_system_message(
+            "1️⃣  Call `ask_colour`.\n"
+            "2️⃣  Wait for the clarification answer.\n"
+            "3️⃣  Reply with exactly 'done'.",
+        )
+        handle = start_async_tool_use_loop(
+            client=inner_client,
+            message="go",
+            tools={"ask_colour": ask_colour},
+            max_steps=10,
+            timeout=120,
+        )
+        # expose the queues so the *outer* loop sees them
+        handle.clarification_up_q = up_q
+        handle.clarification_down_q = down_q
+        return handle
+
+    # ── top-level loop – the assistant must answer the clar request ——––
+    client = unify.AsyncUnify("gpt-4o@openai", cache=True, traced=True)
+    client.set_system_message(
+        "Call `outer_tool`.  When the tool asks a question, answer 'blue' "
+        "via the provided helper, then say 'all done'.",
+    )
+
+    top_handle = start_async_tool_use_loop(
+        client,
+        message="start",
+        tools={"outer_tool": outer_tool},
+        max_steps=20,
+        timeout=240,
+    )
+
+    final_reply = await top_handle.result()
+
+    # Assertions ---------------------------------------------------------
+    assert "all done" in final_reply.strip().lower()
+    assert exec_log == ["blue"], "Inner loop must receive 'blue' from outer helper."
