@@ -1027,6 +1027,14 @@ async def _async_tool_use_loop_inner(
                         )
                         pretty_name = f"_cancel {orig_fn}({arg_json})"
 
+                        # ── gracefully shut down any *nested* async-tool loop first ──────
+                        if task_to_cancel:
+                            nested_handle = task_info[task_to_cancel].get("handle")
+                            if nested_handle is not None:
+                                # public API call – propagates cancellation downwards
+                                nested_handle.stop()
+
+                        # ── then cancel the waiter coroutine itself ───────────────────────────
                         if task_to_cancel and not task_to_cancel.done():
                             task_to_cancel.cancel()
                         if task_to_cancel:
