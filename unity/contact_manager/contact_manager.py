@@ -40,6 +40,7 @@ class ContactManager:
             self = unify.traced(self)
 
         # Public #
+
     # -------#
     def ask(
         self,
@@ -305,7 +306,7 @@ class ContactManager:
             )
 
         log_to_update_id = target_logs[0].id  # Get the actual Unify log ID
-    
+
         unify.update_logs(
             logs=[log_to_update_id] * len(updates_to_apply),
             context=self._ctx,
