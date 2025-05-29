@@ -397,3 +397,138 @@ async def test_handle_interject_method_appears_late():
     assert final.strip().lower() == "done"
     assert interject_seen["called"], "handle.interject should have been invoked"
     assert interject_seen["payload"] == "ping"
+
+
+@pytest.mark.asyncio
+async def test_pause_nested_loop_calls_pause():
+    """
+    Launch a nested loop, tell the assistant to *pause* it via the helper,
+    and verify that `AsyncToolLoopHandle.pause()` is invoked exactly once.
+    """
+    pause_called = {"count": 0}
+
+    async def dummy_long_job() -> (
+        AsyncToolLoopHandle
+    ):  # returns quickly, but "long" enough to pause
+        handle = AsyncToolLoopHandle(
+            task=asyncio.create_task(asyncio.sleep(4)),
+            interject_queue=asyncio.Queue(),
+            cancel_event=asyncio.Event(),
+        )
+
+        # expose `.pause` and `.resume`
+        async def _pause(self):  # noqa: D401
+            pause_called["count"] += 1
+
+        async def _resume(self):  # noqa: D401
+            pass  # no-op for this test
+
+        setattr(handle, "pause", _pause.__get__(handle, AsyncToolLoopHandle))
+        setattr(handle, "resume", _resume.__get__(handle, AsyncToolLoopHandle))
+        return handle
+
+    # outer conversation --------------------------------------------------
+    client = unify.AsyncUnify("gpt-4o@openai", cache=True, traced=True)
+    client.set_system_message(
+        "1️⃣  Call `dummy_long_job`.\n"
+        "2️⃣  When the *user* says **pause**, call the helper whose name "
+        "starts with `_pause_`.\n"
+        "3️⃣  Keep waiting for the job to finish, then reply with 'paused done'.",
+    )
+
+    top = start_async_tool_use_loop(
+        client=client,
+        message="start",
+        tools={"dummy_long_job": dummy_long_job},
+        max_steps=20,
+        timeout=240,
+    )
+
+    # helper exists next turn – now ask to pause
+    await asyncio.sleep(2)
+    await top.interject("pause")
+
+    final = await top.result()
+
+    # assertions ----------------------------------------------------------
+    assert final.strip().lower() == "paused done"
+    assert pause_called["count"] == 1, "handle.pause() should be called exactly once"
+
+
+@pytest.mark.asyncio
+async def test_resume_nested_loop_calls_resume():
+    """
+    Pause *and then* resume a running nested loop; ensure both helpers
+    reach the corresponding `AsyncToolLoopHandle` methods once each.
+    """
+    counts = {"pause": 0, "resume": 0}
+
+    async def dummy_job() -> AsyncToolLoopHandle:
+        """Return a handle whose underlying coroutine can be paused / resumed."""
+
+        # ── internal pausable sleeper ─────────────────────────────────────────
+        async def _run(timer: float, gate: asyncio.Event):
+            remaining = timer
+            step = 0.1  # seconds per loop-tick
+            while remaining > 0:
+                await gate.wait()  # block if paused
+                await asyncio.sleep(step)
+                remaining -= step
+
+        gate = asyncio.Event()
+        gate.set()  # start in *running* state
+        task = asyncio.create_task(_run(8, gate))
+
+        handle = AsyncToolLoopHandle(
+            task=task,
+            interject_queue=asyncio.Queue(),
+            cancel_event=asyncio.Event(),
+        )
+
+        # ── public pause / resume on the handle ──────────────────────────────
+        async def _pause(self):
+            if gate.is_set():  # already running → switch to paused
+                gate.clear()
+                counts["pause"] += 1
+
+        async def _resume(self):
+            if not gate.is_set():  # currently paused → resume
+                gate.set()
+                counts["resume"] += 1
+
+        setattr(handle, "pause", _pause.__get__(handle, AsyncToolLoopHandle))
+        setattr(handle, "resume", _resume.__get__(handle, AsyncToolLoopHandle))
+        return handle
+
+        setattr(handle, "pause", _pause.__get__(handle, AsyncToolLoopHandle))
+        setattr(handle, "resume", _resume.__get__(handle, AsyncToolLoopHandle))
+        return handle
+
+    client = unify.AsyncUnify("gpt-4o@openai", cache=True, traced=True)
+    client.set_system_message(
+        "1️⃣  Call `dummy_job`.\n"
+        "2️⃣  When the *user* says **hold on**, call the `_pause_…` helper.\n"
+        "3️⃣  When the *user* then says **continue**, call the `_resume_…` helper.\n"
+        "4️⃣  Finally reply with 'all done' once the job completes.",
+    )
+
+    h = start_async_tool_use_loop(
+        client=client,
+        message="start",
+        tools={"dummy_job": dummy_job},
+        max_steps=30,
+        timeout=300,
+    )
+
+    await asyncio.sleep(4)
+    await h.interject("hold on")
+    await asyncio.sleep(4)
+    await h.interject("continue")
+
+    final = await h.result()
+
+    assert final.strip().lower() == "all done"
+    assert counts == {
+        "pause": 1,
+        "resume": 1,
+    }, "pause/resume should each be called once"
