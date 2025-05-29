@@ -397,3 +397,55 @@ async def test_handle_interject_method_appears_late():
     assert final.strip().lower() == "done"
     assert interject_seen["called"], "handle.interject should have been invoked"
     assert interject_seen["payload"] == "ping"
+
+
+@pytest.mark.asyncio
+async def test_handle_ask_roundtrip():
+    """
+    Verify that the dynamic _ask_… helper calls handle.ask() and the answer
+    flows back to the outer transcript.
+    """
+
+    # ── custom handle exposing .ask ─────────────────────────────────────
+    class QHandle(AsyncToolLoopHandle):
+        async def ask(self, q: str) -> str:  # helper for _ask_… tests
+            return q.upper()  # trivial echo
+
+    async def dummy_tool() -> QHandle:
+        async def _work() -> str:  # ← real job
+            await asyncio.sleep(5)  # …do something
+            return "completed"  # ← what the tool “returns”
+
+        return QHandle(
+            task=asyncio.create_task(_work()),  # the task now *finishes*
+            interject_queue=asyncio.Queue(),
+            cancel_event=asyncio.Event(),
+        )
+
+    # ── outer conversation ─────────────────────────────────────────────
+    client = unify.AsyncUnify("gpt-4o@openai", cache=True, traced=True)
+    client.set_system_message(
+        "1️⃣  Call `dummy_tool`.\n"
+        "2️⃣  When the user says ASK, use the `_ask_…` helper with "
+        '`{ "question": "hello" }`, then reply with the answer.\n',
+    )
+
+    h = start_async_tool_use_loop(
+        client,
+        message="start",
+        tools={"dummy_tool": dummy_tool},
+        max_steps=20,
+        timeout=240,
+    )
+
+    # signal the assistant to ask
+    await asyncio.sleep(2)
+    await h.interject("ASK")
+
+    reply = await h.result()
+
+    assert "HELLO" in reply
+    # ensure the tool-message with the answer exists
+    assert any(
+        m["role"] == "tool" and m.get("content") == "HELLO" for m in client.messages
+    )
