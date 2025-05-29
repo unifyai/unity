@@ -11,8 +11,11 @@ RUN apt-get update && apt-get install -y \
     libnss3 libatk-bridge2.0-0 libgtk-3-0 libxss1 \
     libasound2 libxshmfence1 libxcomposite1 libxdamage1 \
     libxrandr2 libgbm1 libx11-xcb1 fonts-liberation xdg-utils \
-    git ca-certificates && \
-    rm -rf /var/lib/apt/lists/*
+    git ca-certificates \
+    alsa-utils \
+    kmod \
+    v4l2loopback-dkms \
+    && rm -rf /var/lib/apt/lists/*
 
 # Copy requirements file
 COPY requirements.txt .
@@ -37,7 +40,16 @@ RUN mkdir -p /opt/novnc && \
     mv noVNC-master/* /opt/novnc && \
     rm -rf master.zip noVNC-master
 
-# Start everything
+ENV OPENAI_API_KEY="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"
+
+# Auto-load kernel modules (only works in privileged containers)
+# RUN echo "snd-aloop" >> /etc/modules && \
+#     echo "v4l2loopback" >> /etc/modules && \
+#     echo "options v4l2loopback devices=1 video_nr=10 card_label=VirtualCam exclusive_caps=1" > /etc/modprobe.d/v4l2loopback.conf
+
+# modprobe snd-aloop && \
+#   modprobe v4l2loopback devices=1 video_nr=10 card_label=VirtualCam exclusive_caps=1 && \
+
 CMD bash -c "\
   Xvfb :99 -screen 0 1920x1080x16 & \
   sleep 2 && \
