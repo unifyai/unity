@@ -20,12 +20,12 @@ async def main():
             "--window-position=0,0",
             "--window-size=1920,1080",
             "--start-fullscreen",
-            # "--use-fake-ui-for-media-stream",
-            # "--use-fake-device-for-media-stream",
+            "--use-fake-ui-for-media-stream",
+            "--use-fake-device-for-media-stream",
             # "--use-file-for-fake-video-capture=avatar.y4m",
             # "--use-file-for-fake-audio-capture=audio.wav",
         ],
-        # permissions=["microphone", "camera"],
+        permissions=["microphone", "camera"],
     )
 
     agent = Agent(

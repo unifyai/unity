@@ -11,8 +11,11 @@ RUN apt-get update && apt-get install -y \
     libnss3 libatk-bridge2.0-0 libgtk-3-0 libxss1 \
     libasound2 libxshmfence1 libxcomposite1 libxdamage1 \
     libxrandr2 libgbm1 libx11-xcb1 fonts-liberation xdg-utils \
-    git ca-certificates && \
-    rm -rf /var/lib/apt/lists/*
+    git ca-certificates \
+    alsa-utils \
+    kmod \
+    v4l2loopback-dkms \
+    && rm -rf /var/lib/apt/lists/*
 
 # Copy requirements file
 COPY requirements.txt .
@@ -37,7 +40,6 @@ RUN mkdir -p /opt/novnc && \
     mv noVNC-master/* /opt/novnc && \
     rm -rf master.zip noVNC-master
 
-# Start everything
 CMD bash -c "\
   Xvfb :99 -screen 0 1920x1080x16 & \
   sleep 2 && \
