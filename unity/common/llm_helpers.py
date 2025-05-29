@@ -17,8 +17,6 @@ from typing import (
     get_origin,
     get_args,
     Callable,
-    Protocol,
-    runtime_checkable,
 )
 
 import unify
@@ -1361,18 +1359,6 @@ async def _async_tool_use_loop_inner(
 # ─────────────────────────────────────────────────────────────────────────────
 # 2.  Tiny handle objects exposed to callers
 # ─────────────────────────────────────────────────────────────────────────────
-
-
-@runtime_checkable
-class _AsyncToolLoopLike(Protocol):
-    async def result(self) -> str: ...
-    def stop(self) -> None: ...
-
-    # `interject` is optional – its *existence* makes the result
-    # interjectable, but not every handle has to expose it.
-    async def interject(self, message: str) -> None: ...
-
-
 class AsyncToolLoopHandle:
     """
     Returned by `start_async_tool_use_loop`.  Lets you
