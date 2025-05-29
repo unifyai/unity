@@ -21,9 +21,140 @@ class ContactManager:
         event_bus.register_event_types(["Contacts"])
         self._ctx = event_bus.ctxs["Contacts"]
 
+        # Define tools for ask and update methods
+        self._ask_tools: Dict[str, Callable] = {
+            self._search_contacts.__name__: self._search_contacts,
+        }
+        self._update_tools: Dict[str, Callable] = {
+            self._create_contact.__name__: self._create_contact,
+            self._update_contact.__name__: self._update_contact,
+            self._search_contacts.__name__: self._search_contacts,
+        }
         # Add tracing
         if traced:
             self = unify.traced(self)
+
+        # Public #
+    # -------#
+    def ask(
+        self,
+        text: str,
+        *,
+        return_reasoning_steps: bool = False,
+        parent_chat_context: Optional[List[Dict[str, Any]]] = None,
+        clarification_up_q: Optional[asyncio.Queue[str]] = None,
+        clarification_down_q: Optional[asyncio.Queue[str]] = None,
+    ) -> AsyncToolLoopHandle:
+        """
+        Ask any question as a text command about contacts.
+
+        Args:
+            text (str): The text-based question to answer.
+            return_reasoning_steps (bool): Whether to return the reasoning steps along with the answer.
+            parent_chat_context (list[dict]): A list of parent context messages to pass down into the tool use loop.
+            clarification_up_q (asyncio.Queue[str]): A queue to send clarification questions up to the caller.
+            clarification_down_q (asyncio.Queue[str]): A queue to send clarification answers down to the model.
+
+        Returns:
+            AsyncToolLoopHandle: A handle to the running conversation.
+        """
+        client = unify.AsyncUnify(
+            "o4-mini@openai",  # Consider making model configurable
+            cache=json.loads(os.environ.get("UNIFY_CACHE", "true")),
+            traced=json.loads(os.environ.get("UNIFY_TRACED", "true")),
+        )
+        client.set_system_message(ASK_CONTACTS)
+
+        tools = dict(self._ask_tools)
+        if clarification_up_q is not None and clarification_down_q is not None:
+
+            async def request_clarification(question: str) -> str:
+                if clarification_up_q is None or clarification_down_q is None:
+                    raise RuntimeError(
+                        "Clarification queues not properly initialized for ask.",
+                    )
+                await clarification_up_q.put(question)
+                return await clarification_down_q.get()
+
+            tools["request_clarification"] = request_clarification
+
+        handle = start_async_tool_use_loop(
+            client,
+            text,
+            tools,
+            parent_chat_context=parent_chat_context,
+        )
+
+        if return_reasoning_steps:
+            original_result = handle.result
+
+            async def wrapped_result():
+                answer = await original_result()
+                return answer, client.messages
+
+            handle.result = wrapped_result  # type: ignore
+
+        return handle
+
+    def update(
+        self,
+        text: str,
+        *,
+        return_reasoning_steps: bool = False,
+        parent_chat_context: Optional[List[Dict[str, Any]]] = None,
+        clarification_up_q: Optional[asyncio.Queue[str]] = None,
+        clarification_down_q: Optional[asyncio.Queue[str]] = None,
+    ) -> AsyncToolLoopHandle:
+        """
+        Handle any plain-text english command to create or update contacts.
+
+        Args:
+            text (str): The text-based request.
+            return_reasoning_steps (bool): Whether to return the reasoning steps.
+            parent_chat_context (list[dict]): A list of parent context messages.
+            clarification_up_q (asyncio.Queue[str]): Queue for clarification questions.
+            clarification_down_q (asyncio.Queue[str]): Queue for clarification answers.
+
+        Returns:
+            AsyncToolLoopHandle: A handle to the running conversation.
+        """
+        client = unify.AsyncUnify(
+            "o4-mini@openai",
+            cache=json.loads(os.environ.get("UNIFY_CACHE", "true")),
+            traced=json.loads(os.environ.get("UNIFY_TRACED", "true")),
+        )
+        client.set_system_message(UPDATE_CONTACTS)
+
+        tools = dict(self._update_tools)
+        if clarification_up_q is not None and clarification_down_q is not None:
+
+            async def request_clarification(question: str) -> str:
+                if clarification_up_q is None or clarification_down_q is None:
+                    raise RuntimeError(
+                        "Clarification queues not properly initialized for update.",
+                    )
+                await clarification_up_q.put(question)
+                return await clarification_down_q.get()
+
+            tools["request_clarification"] = request_clarification
+
+        handle = start_async_tool_use_loop(
+            client,
+            text,
+            tools,
+            parent_chat_context=parent_chat_context,
+        )
+
+        if return_reasoning_steps:
+            original_result = handle.result
+
+            async def wrapped_result():
+                answer = await original_result()
+                return answer, client.messages
+
+            handle.result = wrapped_result  # type: ignore
+
+        return handle
 
     # Private #
     # --------#
