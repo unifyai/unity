@@ -802,36 +802,6 @@ async def _async_tool_use_loop_inner(
                         fn=_clarify,
                     )
 
-                # ––– 5. ask-question helper (optional) –––––––––––––––––––
-                if handle is not None and hasattr(handle, "ask"):
-                    _ask_doc = (
-                        f"Ask a one-off question to the running tool {_fn_name}. "
-                        "Takes a single argument `question` (string) "
-                        "and returns the tool's answer."
-                    )
-
-                    async def _ask(question: str) -> Dict[str, str]:  # type: ignore[valid-type]
-                        try:
-                            ans = await _maybe_await(handle.ask(question))  # type: ignore[attr-defined]
-                            return {
-                                "status": "asked",
-                                "call_id": _call_id,
-                                "answer": ans,
-                            }
-                        except Exception as exc:
-                            return {
-                                "status": "error",
-                                "call_id": _call_id,
-                                "error": repr(exc),
-                            }
-
-                    _reg_tool(
-                        key=f"ask_{_call_id}",
-                        func_name=f"_ask_{_fn_name}_{_call_id}",
-                        doc=_ask_doc,
-                        fn=_ask,
-                    )
-
             # make sure every pending call already has a *tool* reply ──
             #  (a placeholder) before we let the assistant speak again.
             for _task in list(pending):
@@ -1221,46 +1191,6 @@ async def _async_tool_use_loop_inner(
                             LOGGER.info(f"💬  Interjection delivered → {new_text!r}")
                         continue  # nothing else to schedule
 
-                    # ── ask helper results ────────────────────────────────────
-                    if name.startswith("_ask_"):
-                        call_id = "_".join(name.split("_")[-2:])
-                        question = args.get("question", "")
-
-                        # locate the running task / handle -----------------
-                        tgt_task = next(
-                            (
-                                t
-                                for t, inf in task_info.items()
-                                if inf["call_id"] == call_id
-                            ),
-                            None,
-                        )
-
-                        if tgt_task is None:
-                            answer_txt = "[not-running]"
-                        else:
-                            h = task_info[tgt_task].get("handle")
-                            if h is not None and hasattr(h, "ask"):
-                                try:
-                                    answer_txt = await _maybe_await(h.ask(question))  # type: ignore[attr-defined]
-                                except Exception as exc:
-                                    answer_txt = f"[ask-error]: {exc}"
-                            else:
-                                answer_txt = "[ask-unsupported]"
-
-                        # emit tool message so transcript stays consistent --
-                        tool_msg = {
-                            "role": "tool",
-                            "tool_call_id": call["id"],
-                            "name": name,
-                            "content": answer_txt,
-                        }
-                        _insert_after_assistant(msg, tool_msg)
-
-                        if log_steps:
-                            LOGGER.info(f"❓  Question answered → {answer_txt!r}")
-                        continue
-
                     fn = tools[name]
 
                     # ── build **extra** kwargs (chat context + queue) ───
@@ -1454,63 +1384,6 @@ class AsyncToolLoopHandle:
         await self._queue.put(message)
 
     @unify.traced
-    async def ask(self, question: str, *, model: str | None = None) -> str:
-        """
-        Ask an **out-of-band** question about the current progress of the loop.
-        """
-
-        # We lazily attach `_client` in start_async_tool_use_loop; older handles
-        # (created before this feature existed) won't have it.
-        if not hasattr(self, "_client"):
-            raise RuntimeError(
-                "This handle predates the `ask` feature and cannot supply "
-                "conversation context.",
-            )
-
-        conv_client: unify.AsyncUnify = self._client  # type: ignore[attr-defined]
-        full_msgs = conv_client.messages or []
-
-        # ── 1.  Prepare context digest ────────────────────────────────────
-        from textwrap import indent
-
-        last_msgs = full_msgs[-25:]  # keep it short
-        chat_dump = "\n".join(
-            f"{m['role']}: {(m.get('name') or '')} {(m.get('content') or '')}".strip()
-            for m in last_msgs
-        )
-
-        pending_tools = [
-            m["name"]
-            for m in last_msgs
-            if m.get("role") == "tool"
-            and isinstance(m.get("content"), str)
-            and "Still running" in m["content"]
-        ]
-
-        helper_names: list[str] = []
-        for m in reversed(last_msgs):
-            if m.get("role") == "assistant" and m.get("tool_calls"):
-                helper_names = [c["function"]["name"] for c in m["tool_calls"]]
-                break
-
-        sys_prompt = (
-            "You are an auxiliary assistant whose only job is to answer questions "
-            "about the progress of an *ongoing* assistant-tool loop.\n\n"
-            "Tool loop so far:\n"
-            f"{indent(chat_dump, '    ')}\n\n"
-            f"Pending tool calls: {', '.join(pending_tools) or 'none'}\n"
-            f"Tools available next turn: {', '.join(helper_names) or 'none'}\n\n"
-            "Answer the user's question concisely and do **not** invent steps."
-        )
-
-        # ── 2.  Delegate to a lightweight LLM ────────────────────────────
-        helper_model = model or "gpt-4o@openai"
-        helper_client = unify.AsyncUnify(helper_model, cache=True, traced=False)
-        helper_client.set_system_message(sys_prompt)
-        reply = await helper_client.generate(question)
-        return reply.strip()
-
-    @unify.traced
     def stop(self) -> None:
         """Politely ask the loop to shut down (gracefully)."""
         self._cancel_event.set()
@@ -1572,11 +1445,8 @@ def start_async_tool_use_loop(
         ),
     )
 
-    handle = AsyncToolLoopHandle(
+    return AsyncToolLoopHandle(
         task=task,
         interject_queue=interject_queue,
         cancel_event=cancel_event,
     )
-    handle._client = client
-    handle._tools_schema = [method_to_schema(v) for v in tools.values()]
-    return handle
