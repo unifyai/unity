@@ -356,6 +356,28 @@ class BrowserUsePlanner:
 
             tools[action_name] = _make_tool
 
+        async def request_clarification_tool(question: str) -> str:
+            await self._clar_up_q.put(question)
+            answer = await self._clar_down_q.get()
+            return answer
+
+        request_clarification_tool.__name__ = "request_clarification_tool"
+        request_clarification_tool.__doc__ = (
+            "Use this tool to ask the end-user a clarifying question if you need more "
+            "information to proceed with the task. The user's response will be returned."
+        )
+        param = inspect.Parameter(
+            "question",
+            inspect.Parameter.POSITIONAL_OR_KEYWORD,
+            annotation=str,
+            default=inspect.Parameter.empty,
+        )
+        request_clarification_tool.__signature__ = inspect.Signature(
+            parameters=[param],
+            return_annotation=str,
+        )
+
+        tools["request_clarification_tool"] = request_clarification_tool
         return tools
 
     # --------------------------------------------------------- helper utils
@@ -397,22 +419,6 @@ class BrowserUsePlanner:
                 self._client = None
 
         asyncio.create_task(_finalizer())
-
-    # ----------------------------------------------------- async context mgr
-    async def __aenter__(self) -> "BrowserUsePlanner":
-        return self
-
-    async def __aexit__(
-        self,
-        exc_type: type[BaseException] | None,
-        exc: BaseException | None,
-        tb: Any,
-    ) -> None:
-        await self.stop()
-        await self._browser_context.close()
-        await self._browser.close()
-
-    # --------------------------------------------------- private helpers
 
     def _set_state(self, new_state: "_PlannerState") -> None:
         self._state = new_state
