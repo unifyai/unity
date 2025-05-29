@@ -183,6 +183,7 @@ async def _async_tool_use_loop_inner(
     *,
     interject_queue: asyncio.Queue[str],
     cancel_event: asyncio.Event,
+    pause_event: asyncio.Event,
     max_consecutive_failures: int = 3,
     prune_tool_duplicates: bool = True,
     interrupt_llm_with_interjections: bool = True,
@@ -519,6 +520,54 @@ async def _async_tool_use_loop_inner(
 
     try:
         while True:
+
+            # ── 0-α-P. Global *pause* gate  ────────────────────────────
+            # Keep handling tool completions & cancellation, but *never*
+            # let the LLM speak while we're paused.
+            if not pause_event.is_set():
+                # Give any pending tool tasks a chance to finish OR wait until the
+                # loop is resumed / cancelled.  Every coroutine is wrapped in an
+                # asyncio.Task so `asyncio.wait()` is happy.
+                if pending:
+                    pause_waiter = asyncio.create_task(pause_event.wait())
+                    cancel_waiter = asyncio.create_task(cancel_event.wait())
+                    waiters = pending | {pause_waiter, cancel_waiter}
+
+                    done, _ = await asyncio.wait(
+                        waiters,
+                        timeout=0.1,
+                        return_when=asyncio.FIRST_COMPLETED,
+                    )
+
+                    # helper-task cleanup so they don't dangle
+                    for w in (pause_waiter, cancel_waiter):
+                        if w not in done and not w.done():
+                            w.cancel()
+                            await asyncio.gather(w, return_exceptions=True)
+
+                    # tool finished?
+                    for t in done & pending:
+                        await _process_completed_task(t)
+                    if cancel_event.is_set():
+                        raise asyncio.CancelledError
+                else:
+                    # nothing running – just idle until resumed or cancelled
+                    done, _ = await asyncio.wait(
+                        {
+                            asyncio.create_task(pause_event.wait()),
+                            asyncio.create_task(cancel_event.wait()),
+                        },
+                        return_when=asyncio.FIRST_COMPLETED,
+                    )
+
+                    # resumed?
+                    if pause_event.is_set():
+                        continue  # back to main loop, un-paused
+
+                    # cancelled?
+                    if cancel_event.is_set():
+                        raise asyncio.CancelledError
+                        continue  # top-of-loop, still paused
 
             # 0-α. **Global timeout**
             if time.perf_counter() - start_ts > timeout:
@@ -1481,10 +1530,14 @@ class AsyncToolLoopHandle:
         task: asyncio.Task,
         interject_queue: asyncio.Queue[str],
         cancel_event: asyncio.Event,
+        pause_event: Optional[asyncio.Event] = None,
     ):
         self._task = task
         self._queue = interject_queue
         self._cancel_event = cancel_event
+        # “running” ⇢ Event **set**,  “paused” ⇢ Event **cleared**
+        self._pause_event = pause_event or asyncio.Event()
+        self._pause_event.set()
 
     # -- public API -----------------------------------------------------------
     @unify.traced
@@ -1496,6 +1549,16 @@ class AsyncToolLoopHandle:
     def stop(self) -> None:
         """Politely ask the loop to shut down (gracefully)."""
         self._cancel_event.set()
+
+    @unify.traced
+    def pause(self) -> None:
+        """Temporarily freeze the outer loop (tools keep running)."""
+        self._pause_event.clear()
+
+    @unify.traced
+    def resume(self) -> None:
+        """Un-freeze a loop that was paused with :pyfunc:`pause`."""
+        self._pause_event.set()
 
     # Optional helpers --------------------------------------------------------
     @unify.traced
@@ -1533,6 +1596,8 @@ def start_async_tool_use_loop(
     """
     interject_queue: asyncio.Queue[str] = asyncio.Queue()
     cancel_event = asyncio.Event()
+    pause_event = asyncio.Event()
+    pause_event.set()  # start un-paused
 
     task = asyncio.create_task(
         _async_tool_use_loop_inner(
@@ -1543,6 +1608,7 @@ def start_async_tool_use_loop(
             event_bus=event_bus,
             interject_queue=interject_queue,
             cancel_event=cancel_event,
+            pause_event=pause_event,
             max_consecutive_failures=max_consecutive_failures,
             prune_tool_duplicates=prune_tool_duplicates,
             interrupt_llm_with_interjections=interrupt_llm_with_interjections,
@@ -1558,4 +1624,5 @@ def start_async_tool_use_loop(
         task=task,
         interject_queue=interject_queue,
         cancel_event=cancel_event,
+        pause_event=pause_event,
     )
