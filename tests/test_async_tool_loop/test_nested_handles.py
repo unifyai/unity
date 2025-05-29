@@ -191,6 +191,87 @@ async def test_cancel_nested_loop_calls_stop(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_interject_nested_handle(monkeypatch):
+    """
+    * Inner tool returns a handle (nested loop).
+    * Assistant is instructed to interject with "dogs".
+    * We monkey-patch `AsyncToolLoopHandle.interject` to count calls.
+    """
+
+    # 1.  Monkey-patch the public interject method so we can detect use
+    interject_calls = {"count": 0, "payloads": []}
+
+    orig_interject = AsyncToolLoopHandle.interject
+
+    async def patched_interject(self, message: str):
+        interject_calls["count"] += 1
+        interject_calls["payloads"].append(message)
+        await orig_interject(self, message)
+
+    monkeypatch.setattr(
+        AsyncToolLoopHandle,
+        "interject",
+        patched_interject,
+        raising=True,
+    )
+
+    # 2.  Inner tool that waits for the steer via `interject_queue`
+    async def slow_topic(
+        *,
+        interject_queue: asyncio.Queue[str],
+    ) -> str:
+        try:
+            new = await asyncio.wait_for(interject_queue.get(), timeout=5)
+            return f"topic={new}"
+        except asyncio.TimeoutError:
+            return "topic=cats"
+
+    # 3.  Outer tool: launches nested loop and returns its handle
+    async def outer_tool() -> AsyncToolLoopHandle:
+        inner_client = unify.AsyncUnify("gpt-4o@openai", cache=True, traced=True)
+        inner_client.set_system_message(
+            "1️⃣  Call `slow_topic`.\n"
+            "2️⃣  Wait until the topic changes.\n"
+            "3️⃣  Answer with exactly 'done'.",
+        )
+        return start_async_tool_use_loop(
+            client=inner_client,
+            message="start",
+            tools={"slow_topic": slow_topic},
+            max_steps=10,
+            timeout=120,
+        )
+
+    # 4.  Top-level loop – assistant must use `_interject_…`
+    client = unify.AsyncUnify("gpt-4o@openai", cache=True, traced=True)
+    client.set_system_message(
+        "1️⃣  Call `outer_tool`.\n"
+        "2️⃣  When the *user* says 'switch to dogs', call the helper whose "
+        'name starts with `_interject_` and pass `{ "content": "dogs" }`.\n'
+        "3️⃣  Finally, reply with 'outer done'.",
+    )
+
+    top_handle = start_async_tool_use_loop(
+        client=client,
+        message="start",
+        tools={"outer_tool": outer_tool},
+        max_steps=20,
+        timeout=240,
+    )
+
+    # give assistant time to schedule outer_tool so helper exists
+    await asyncio.sleep(2)
+    await top_handle.interject("switch to dogs")
+
+    final_reply = await top_handle.result()
+
+    # 5.  Assertions
+    assert final_reply.strip().lower() == "outer done"
+    assert interject_calls["count"] == 1, "handle.interject should be called once"
+    assert "dogs" in interject_calls["payloads"][0].lower()
+
+
+@pytest.mark.asyncio
 async def test_clarification_nested_handle():
     """
     Inner tool asks a question, outer loop surfaces it, assistant answers
