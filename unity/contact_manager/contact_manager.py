@@ -25,10 +25,10 @@ class ContactManager:
         if traced:
             self = unify.traced(self)
 
-    # Public #
-    # -------#
+    # Private #
+    # --------#
 
-    def create_contact(
+    def _create_contact(
         self,
         *,
         first_name: Optional[str] = None,
@@ -47,7 +47,7 @@ class ContactManager:
             phone_number (str): The phone number of the contact.
             whatsapp_number (str): The WhatsApp number of the contact.
         Returns:
-            int: The id of the newly created contact.
+            int: The contact_id of the newly created contact.
         """
 
         # Prune None values
@@ -98,7 +98,7 @@ class ContactManager:
             new=True,
         ).id
 
-    def update_contact(
+    def _update_contact(
         self,
         *,
         contact_id: int,
@@ -120,7 +120,7 @@ class ContactManager:
             whatsapp_number (Optional[str]): The WhatsApp number of the contact.
 
         Returns:
-            int: The id of the updated contact.
+            int: The contact_id of the updated contact.
         """
         # Prune None values
         contact_details = {
@@ -164,7 +164,7 @@ class ContactManager:
         filter: Optional[str] = None,
         offset: int = 0,
         limit: int = 100,
-    ) -> List[Dict[str, str]]:
+    ) -> List[Contact]:
         """
         Retrieve contact details, based on flexible filtering for first name, surname, email address, WhatsApp number, phone number, or anything else.
 
@@ -174,7 +174,7 @@ class ContactManager:
             limit (int): The maximum number of contacts to retrieve.
 
         Returns:
-            List[Dict[str, str]]: A list of contacts.
+            List[Contact]: A list of contacts.
         """
         logs = unify.get_logs(
             context=self._ctx,
