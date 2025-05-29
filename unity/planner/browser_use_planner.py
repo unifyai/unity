@@ -148,7 +148,6 @@ class BrowserUsePlanner:
             message=task_description,
             tools=self._tools,
             interrupt_llm_with_interjections=True,
-            clarification_capable_tools=set(self._tools),
         )
 
         self._attach_completion_callback(handle)
@@ -208,7 +207,6 @@ class BrowserUsePlanner:
             parent_chat_context=self._paused_context,
             propagate_chat_context=True,
             interrupt_llm_with_interjections=True,
-            clarification_capable_tools=set(self._tools),
         )
 
         self._attach_completion_callback(handle)

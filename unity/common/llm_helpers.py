@@ -188,8 +188,6 @@ async def _async_tool_use_loop_inner(
     max_consecutive_failures: int = 3,
     prune_tool_duplicates: bool = True,
     interrupt_llm_with_interjections: bool = True,
-    interjectable_tools: Optional[Set[str]] = None,
-    clarification_capable_tools: Optional[Set[str]] = None,
     propagate_chat_context: bool = True,
     parent_chat_context: Optional[list[dict]] = None,
     log_steps: bool = False,
@@ -272,12 +270,7 @@ async def _async_tool_use_loop_inner(
         so the assistant can pivot instantly.  When *False* the loop waits
         for the model to finish (legacy behaviour).
 
-    interjectable_tools : ``set[str] | None``
-        Names of long-running tools that are *steerable* post-launch.  For
-        each pending call the loop exposes a helper
-        ``_interject_<call-id>(content: str)``.  The original tool must
-        accept an ``interject_queue`` keyword argument (an
-        ``asyncio.Queue[str]``) to receive these live instructions.
+
     propagate_chat_context : ``bool``, default ``True``
         If *True*, the entire conversation state of **this** loop is
         threaded into any child tool that accepts a
@@ -498,14 +491,12 @@ async def _async_tool_use_loop_inner(
     consecutive_failures = 0
     pending: Set[asyncio.Task] = set()
     task_info: Dict[asyncio.Task, Dict[str, Any]] = {}
-    clarification_channels: Dict[str, Tuple[asyncio.Queue[str], asyncio.Queue[str]]] = (
-        {}
-    )
+    clarification_channels: Dict[
+        str,
+        Tuple[asyncio.Queue[str], asyncio.Queue[str]],
+    ] = {}
     completed_results: Dict[str, str] = {}
     assistant_meta: Dict[int, Dict[str, Any]] = {}
-
-    if clarification_capable_tools is None:
-        clarification_capable_tools = set()
 
     # Set to *True* whenever the loop must grant the LLM an immediate turn
     # before waiting again (user interjection, clarification answer, etc.).
@@ -1177,19 +1168,36 @@ async def _async_tool_use_loop_inner(
                         p.kind == inspect.Parameter.VAR_KEYWORD for p in params.values()
                     )
 
-                    sig_accepts_queue = "interject_queue" in params or has_varkw
+                    sig_accepts_interject_q = "interject_queue" in params or has_varkw
+
+                    # ── clarification capability (implicit) ─────────────
+                    sig_accepts_clar_qs = (
+                        "clarification_up_q" in params
+                        and "clarification_down_q" in params
+                    ) or has_varkw
+
+                    # sanity: must provide *both* queues or neither
+                    if (
+                        ("clarification_up_q" in params)
+                        ^ ("clarification_down_q" in params)
+                    ) and not has_varkw:
+                        raise TypeError(
+                            f"Tool {name!r} provides only one of "
+                            "'clarification_up_q' / 'clarification_down_q'. "
+                            "Both are required for clarification support.",
+                        )
 
                     sub_q: Optional[asyncio.Queue[str]] = None
-                    is_interj = sig_accepts_queue  # may be upgraded later
+                    is_interj = sig_accepts_interject_q  # may be upgraded later
                     # ── per-call clarification queues (optional) ─────────
                     clar_up_q: Optional[asyncio.Queue[str]] = None
                     clar_down_q: Optional[asyncio.Queue[str]] = None
-                    if name in clarification_capable_tools:
+                    if sig_accepts_clar_qs:
                         clar_up_q = asyncio.Queue()
                         clar_down_q = asyncio.Queue()
                         extra_kwargs["clarification_up_q"] = clar_up_q
                         extra_kwargs["clarification_down_q"] = clar_down_q
-                    if sig_accepts_queue:
+                    if sig_accepts_interject_q:
                         sub_q = asyncio.Queue()
                         extra_kwargs["interject_queue"] = sub_q
 
@@ -1211,7 +1219,7 @@ async def _async_tool_use_loop_inner(
 
                     # avoid double-passing the queue if the model already
                     # supplied an `interject_queue` argument
-                    if "interject_queue" in args and sig_accepts_queue:
+                    if "interject_queue" in args and sig_accepts_interject_q:
                         merged_kwargs["interject_queue"] = sub_q
 
                     if asyncio.iscoroutinefunction(fn):
@@ -1245,7 +1253,10 @@ async def _async_tool_use_loop_inner(
                     }
 
                     if clar_up_q is not None:
-                        clarification_channels[call["id"]] = (clar_up_q, clar_down_q)
+                        clarification_channels[call["id"]] = (
+                            clar_up_q,
+                            clar_down_q,
+                        )
 
                 # metadata for orderly insertion of results
                 assistant_meta[id(msg)] = {
@@ -1363,7 +1374,6 @@ def start_async_tool_use_loop(
     max_consecutive_failures: int = 3,
     prune_tool_duplicates=True,
     interrupt_llm_with_interjections: bool = True,
-    clarification_capable_tools: Optional[Set[str]] = None,
     propagate_chat_context: bool = True,
     parent_chat_context: Optional[list[dict]] = None,
     log_steps: bool = False,
@@ -1389,7 +1399,6 @@ def start_async_tool_use_loop(
             max_consecutive_failures=max_consecutive_failures,
             prune_tool_duplicates=prune_tool_duplicates,
             interrupt_llm_with_interjections=interrupt_llm_with_interjections,
-            clarification_capable_tools=clarification_capable_tools,
             propagate_chat_context=propagate_chat_context,
             parent_chat_context=parent_chat_context,
             log_steps=log_steps,
