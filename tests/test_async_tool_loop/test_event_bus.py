@@ -52,6 +52,9 @@ async def test_basic_event_flow() -> None:
         "please echo whatever the user says",
     )
 
+    pause_event = asyncio.Event()
+    pause_event.set()  # start un-paused
+
     result = await _async_tool_use_loop_inner(
         client=client,
         message="world",
@@ -60,6 +63,7 @@ async def test_basic_event_flow() -> None:
         event_bus=bus,
         interject_queue=asyncio.Queue(),
         cancel_event=asyncio.Event(),
+        pause_event=pause_event,
         prune_tool_duplicates=True,
         log_steps=False,
     )
