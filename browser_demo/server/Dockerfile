@@ -40,16 +40,6 @@ RUN mkdir -p /opt/novnc && \
     mv noVNC-master/* /opt/novnc && \
     rm -rf master.zip noVNC-master
 
-ENV OPENAI_API_KEY="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"
-
-# Auto-load kernel modules (only works in privileged containers)
-# RUN echo "snd-aloop" >> /etc/modules && \
-#     echo "v4l2loopback" >> /etc/modules && \
-#     echo "options v4l2loopback devices=1 video_nr=10 card_label=VirtualCam exclusive_caps=1" > /etc/modprobe.d/v4l2loopback.conf
-
-# modprobe snd-aloop && \
-#   modprobe v4l2loopback devices=1 video_nr=10 card_label=VirtualCam exclusive_caps=1 && \
-
 CMD bash -c "\
   Xvfb :99 -screen 0 1920x1080x16 & \
   sleep 2 && \
