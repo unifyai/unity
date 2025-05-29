@@ -709,20 +709,33 @@ async def _async_tool_use_loop_inner(
                 )
 
                 # ––– 3. interject helper (optional) ––––––––––––––––––––––
-                if info.get("is_interjectable") and handle is not None:
+                if info.get("is_interjectable"):
                     _interject_doc = (
                         f"Inject additional instructions for {_fn_name}({_arg_repr}). "
                         "Takes a single argument `content` containing plain-English guidance."
                     )
 
-                    async def _interject(content: str) -> Dict[str, str]:
-                        # forward directly to the nested loop
-                        await handle.interject(content)  # type: ignore[arg-type]
-                        return {
-                            "status": "interjected",
-                            "call_id": _call_id,
-                            "content": content,
-                        }
+                    if handle is not None:
+
+                        async def _interject(content: str) -> Dict[str, str]:
+                            # nested async-tool loop: delegate to its public API
+                            await handle.interject(content)  # type: ignore[arg-type]
+                            return {
+                                "status": "interjected",
+                                "call_id": _call_id,
+                                "content": content,
+                            }
+
+                    else:
+
+                        async def _interject(content: str) -> Dict[str, str]:
+                            # regular tool: push onto its private queue
+                            await info["interject_q"].put(content)
+                            return {
+                                "status": "interjected",
+                                "call_id": _call_id,
+                                "content": content,
+                            }
 
                     _reg_tool(
                         key=f"interject_{_call_id}",
