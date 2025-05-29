@@ -74,9 +74,7 @@ async def process_structured_output(
 class Assistant(Agent):
     def __init__(self, from_number: str = "", to_number: str = "") -> None:
         self.past_events = []
-        self.new_events = [
-            PhoneCallStartedEvent(),
-        ]
+        self.new_events = []
         # self.client = client
         self.current_tasks_status = None
         self.from_number = from_number
