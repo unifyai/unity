@@ -27,6 +27,45 @@ from ..events.event_bus import EventBus, Event
 TYPE_MAP = {str: "string", int: "integer", float: "number", bool: "boolean"}
 
 
+# Dynamic-handle helpers ––––––––––––––––––––––––––––––––––––––––––––––––––––––
+#  Public methods we *do not* expose again (already wrapped by dedicated helpers
+#  or meaningless to the LLM).
+_MANAGEMENT_METHOD_NAMES: set[str] = {
+    "interject",
+    "pause",
+    "resume",
+    "stop",
+    "done",
+    "result",
+}
+
+
+def _discover_public_methods(handle) -> dict[str, Callable]:
+    """
+    Return a mapping ``name → bound_method`` of *public* callables on *handle*:
+        • name does **not** start with ``_``  _and_
+        • name is not one of the management helpers above.
+    """
+    import inspect
+
+    methods: dict[str, Callable] = {}
+    for name, attr in inspect.getmembers(handle):
+        if (
+            name.startswith("_")
+            or name in _MANAGEMENT_METHOD_NAMES
+            or not callable(attr)
+        ):
+            continue
+        # Bind the method to *handle* (important for late-added attributes).
+        try:
+            bound = attr.__get__(handle, type(handle))  # type: ignore[arg-type]
+        except Exception:
+            # Attribute access raised – treat as non-callable.
+            continue
+        methods[name] = bound
+    return methods
+
+
 def _dumps(
     obj: Any,
     idx: List[Union[str, int]] = None,
@@ -893,6 +932,43 @@ async def _async_tool_use_loop_inner(
                         fn=_resume,
                     )
 
+                # 7.  expose *all* other public methods of the handle
+                if handle is not None:
+                    for meth_name, bound in _discover_public_methods(handle).items():
+                        # use the same name we’re about to give fn.__name__
+                        func_name = f"_{meth_name}_{_call_id}"
+                        helper_key = func_name
+
+                        # Skip if we already generated one this turn (possible when
+                        # the loop revisits the same pending task).
+                        if helper_key in dynamic_tools:
+                            continue
+
+                        async def _invoke_handle_method(
+                            _bound=bound,
+                            **_kw,
+                        ):  # default args → capture current bound method
+                            """
+                            Auto-generated wrapper that calls the corresponding
+                            method on the live handle and **waits** for the return
+                            value (sync or async).
+                            """
+                            res = await _maybe_await(_bound(**_kw))
+                            return {"call_id": _call_id, "result": res}
+
+                        # override the wrapper’s signature to match the real method
+                        _invoke_handle_method.__signature__ = inspect.signature(bound)
+
+                        _reg_tool(
+                            key=helper_key,
+                            func_name=func_name,
+                            doc=(
+                                f"Invoke `{meth_name}` on the running handle (id={_call_id}). "
+                                "Returns when that method finishes."
+                            ),
+                            fn=_invoke_handle_method,
+                        )
+
             # make sure every pending call already has a *tool* reply ──
             #  (a placeholder) before we let the assistant speak again.
             for _task in list(pending):
@@ -1362,7 +1438,11 @@ async def _async_tool_use_loop_inner(
                             LOGGER.info(f"💬  Interjection delivered → {new_text!r}")
                         continue  # nothing else to schedule
 
-                    fn = tools[name]
+                    # first check any dynamic helpers we generated for long-running handles
+                    if name in dynamic_tools:
+                        fn = dynamic_tools[name]
+                    else:
+                        fn = tools[name]
 
                     # ── build **extra** kwargs (chat context + queue) ───
                     extra_kwargs: dict = {}
@@ -1443,8 +1523,25 @@ async def _async_tool_use_loop_inner(
                         if k in params or has_varkw
                     }
 
-                    # merge caller-supplied args with the *filtered* extras
-                    merged_kwargs = {**args, **filtered_extras}
+                    # 1️⃣ re-fetch the real signature of the chosen fn
+                    sig = inspect.signature(fn)
+                    params = sig.parameters
+
+                    # 2️⃣ only keep those caller-supplied args the fn actually declares
+                    allowed_call_args = {k: v for k, v in args.items() if k in params}
+
+                    # 3️⃣ filter any extra_kwargs the same way
+                    has_varkw = any(
+                        p.kind == inspect.Parameter.VAR_KEYWORD for p in params.values()
+                    )
+                    filtered_extras = {
+                        k: v
+                        for k, v in extra_kwargs.items()
+                        if k in params or has_varkw
+                    }
+
+                    # 4️⃣ finally merge
+                    merged_kwargs = {**allowed_call_args, **filtered_extras}
 
                     # avoid double-passing the queue if the model already
                     # supplied an `interject_queue` argument
