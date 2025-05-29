@@ -370,7 +370,10 @@ async def _async_tool_use_loop_inner(
             #        (3) create / patch one placeholder "still running…"
             #            tool-message in the transcript.
             # ───────────────────────────────────────────────────────────────
-            if isinstance(raw, _AsyncToolLoopLike):
+            # treat ANY AsyncToolLoopHandle (or subclass) as a nested loop
+            from unity.common.llm_helpers import AsyncToolLoopHandle
+
+            if isinstance(raw, AsyncToolLoopHandle):
                 # ── upgrade interject / clarification flags from handle ─────
                 if hasattr(raw, "interject"):
                     info["is_interjectable"] = True
@@ -670,6 +673,35 @@ async def _async_tool_use_loop_inner(
             for _task in list(pending):
                 info = task_info[_task]
                 handle = info.get("handle")
+
+                # ── DYNAMIC capability refresh (handle may change) ─────
+                if handle is not None:
+                    # 1. interjection
+                    info["is_interjectable"] = hasattr(handle, "interject")
+
+                    # 2. clarification queues
+                    h_up_q = getattr(handle, "clarification_up_q", None)
+                    h_dn_q = getattr(handle, "clarification_down_q", None)
+
+                    if (h_up_q is not None) ^ (h_dn_q is not None):
+                        raise AttributeError(
+                            f"Handle of call {info['call_id']} now exposes only one "
+                            "of clarification queues; both or neither required.",
+                        )
+
+                    # update bookkeeping & channel map
+                    prev_up_q = info.get("clar_up_q")
+                    if h_up_q is not prev_up_q:
+                        # remove old mapping if any
+                        clarification_channels.pop(info["call_id"], None)
+                        if h_up_q is not None:
+                            clarification_channels[info["call_id"]] = (
+                                h_up_q,
+                                h_dn_q,
+                            )
+                    info["clar_up_q"] = h_up_q
+                    info["clar_down_q"] = h_dn_q
+
                 _call_id: str = info["call_id"]
                 _fn_name: str = info["name"]
                 _arg_json: str = info["call_dict"]["function"]["arguments"]
@@ -700,8 +732,8 @@ async def _async_tool_use_loop_inner(
 
                 # ––– 2. cancel helper –––––––––––––––––––––––––––––––––––––
                 async def _cancel() -> Dict[str, str]:
-                    if handle is not None:
-                        handle.stop()  # graceful shutdown of the *nested* loop
+                    if handle is not None and hasattr(handle, "stop"):
+                        await _maybe_await(handle.stop())  # graceful nested shutdown
                     if not _task.done():
                         _task.cancel()  # kill the waiter coroutine
                     pending.discard(_task)
@@ -1139,8 +1171,14 @@ async def _async_tool_use_loop_inner(
                         )
 
                         # ― push guidance onto the private queue -------------
-                        if tgt_task and task_info[tgt_task]["interject_q"] is not None:
-                            await task_info[tgt_task]["interject_q"].put(new_text)
+                        if tgt_task:
+                            iq = task_info[tgt_task]["interject_q"]
+                            h = task_info[tgt_task].get("handle")
+
+                            if iq is not None:
+                                await iq.put(new_text)
+                            elif h is not None and hasattr(h, "interject"):
+                                await _maybe_await(h.interject(new_text))
 
                         # ― emit a tool message so the chat log stays tidy ---
                         tool_msg = {

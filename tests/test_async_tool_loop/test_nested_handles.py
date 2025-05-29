@@ -331,3 +331,69 @@ async def test_clarification_nested_handle():
     # Assertions ---------------------------------------------------------
     assert "all done" in final_reply.strip().lower()
     assert exec_log == ["blue"], "Inner loop must receive 'blue' from outer helper."
+
+
+@pytest.mark.asyncio
+async def test_handle_interject_method_appears_late():
+    """
+    Handle initially exposes no `.interject`, then adds it after 1 s.
+    The outer loop should create `_interject_…` helper *only* after it
+    becomes available, and the assistant must use it successfully.
+    """
+
+    interject_seen = {"called": False, "payload": None}
+
+    # dummy handle that adds .interject later --------------------------
+    class SlowHandle(AsyncToolLoopHandle):
+        pass  # will monkey-patch .interject later
+
+    async def dummy_tool() -> SlowHandle:
+        handle = SlowHandle(
+            task=asyncio.create_task(asyncio.sleep(6)),
+            interject_queue=asyncio.Queue(),
+            cancel_event=asyncio.Event(),
+        )
+
+        # after 1 s expose `.interject`
+        async def add_interject():
+            await asyncio.sleep(1)
+
+            async def _interject(self, msg: str):
+                interject_seen["called"] = True
+                interject_seen["payload"] = msg
+                await asyncio.sleep(0)  # no-op
+
+            setattr(handle, "interject", _interject.__get__(handle, SlowHandle))
+
+        asyncio.create_task(add_interject())
+        return handle
+
+    # outer conversation ----------------------------------------------
+    client = unify.AsyncUnify("gpt-4o@openai", cache=True, traced=True)
+    client.set_system_message(
+        "You are running inside an automated test.\n"
+        "1️⃣  Call `dummy_tool`.\n"
+        "2️⃣  *After* the tool starts and the user says **now**, you MUST call "
+        "the helper whose name starts with `_interject_` *exactly once*, "
+        'passing `{ "content": "ping" }`.\n'
+        "3️⃣  Do **NOT** reply 'done' until after the helper returns.\n"
+        "4️⃣  Finally, respond with the single word **done**.",
+    )
+
+    outer = start_async_tool_use_loop(
+        client,
+        message="start",
+        tools={"dummy_tool": dummy_tool},
+        max_steps=20,
+        timeout=240,
+    )
+
+    # wait long enough for the handle to grow `.interject`
+    await asyncio.sleep(4)  # helper will exist now
+    await outer.interject("now")
+
+    final = await outer.result()
+
+    assert final.strip().lower() == "done"
+    assert interject_seen["called"], "handle.interject should have been invoked"
+    assert interject_seen["payload"] == "ping"
