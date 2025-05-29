@@ -8,7 +8,7 @@ from events import *
 
 # Subscription IDs
 project_id = "responsive-city-458413-a2"
-subscription_id = os.getenv("ASSISTANT_ID", "default_assistant")
+subscription_id = os.getenv("ASSISTANT_ID", "default-assistant")
 call_subscription_id = "call-sub"
 email_subscription_id = "email-sub"
 msg_subscription_id = "msg-sub"
