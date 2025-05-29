@@ -1454,6 +1454,63 @@ class AsyncToolLoopHandle:
         await self._queue.put(message)
 
     @unify.traced
+    async def ask(self, question: str, *, model: str | None = None) -> str:
+        """
+        Ask an **out-of-band** question about the current progress of the loop.
+        """
+
+        # We lazily attach `_client` in start_async_tool_use_loop; older handles
+        # (created before this feature existed) won't have it.
+        if not hasattr(self, "_client"):
+            raise RuntimeError(
+                "This handle predates the `ask` feature and cannot supply "
+                "conversation context.",
+            )
+
+        conv_client: unify.AsyncUnify = self._client  # type: ignore[attr-defined]
+        full_msgs = conv_client.messages or []
+
+        # ── 1.  Prepare context digest ────────────────────────────────────
+        from textwrap import indent
+
+        last_msgs = full_msgs[-25:]  # keep it short
+        chat_dump = "\n".join(
+            f"{m['role']}: {(m.get('name') or '')} {(m.get('content') or '')}".strip()
+            for m in last_msgs
+        )
+
+        pending_tools = [
+            m["name"]
+            for m in last_msgs
+            if m.get("role") == "tool"
+            and isinstance(m.get("content"), str)
+            and "Still running" in m["content"]
+        ]
+
+        helper_names: list[str] = []
+        for m in reversed(last_msgs):
+            if m.get("role") == "assistant" and m.get("tool_calls"):
+                helper_names = [c["function"]["name"] for c in m["tool_calls"]]
+                break
+
+        sys_prompt = (
+            "You are an auxiliary assistant whose only job is to answer questions "
+            "about the progress of an *ongoing* assistant-tool loop.\n\n"
+            "Tool loop so far:\n"
+            f"{indent(chat_dump, '    ')}\n\n"
+            f"Pending tool calls: {', '.join(pending_tools) or 'none'}\n"
+            f"Tools available next turn: {', '.join(helper_names) or 'none'}\n\n"
+            "Answer the user's question concisely and do **not** invent steps."
+        )
+
+        # ── 2.  Delegate to a lightweight LLM ────────────────────────────
+        helper_model = model or "gpt-4o@openai"
+        helper_client = unify.AsyncUnify(helper_model, cache=True, traced=False)
+        helper_client.set_system_message(sys_prompt)
+        reply = await helper_client.generate(question)
+        return reply.strip()
+
+    @unify.traced
     def stop(self) -> None:
         """Politely ask the loop to shut down (gracefully)."""
         self._cancel_event.set()
@@ -1515,8 +1572,11 @@ def start_async_tool_use_loop(
         ),
     )
 
-    return AsyncToolLoopHandle(
+    handle = AsyncToolLoopHandle(
         task=task,
         interject_queue=interject_queue,
         cancel_event=cancel_event,
     )
+    handle._client = client
+    handle._tools_schema = [method_to_schema(v) for v in tools.values()]
+    return handle
