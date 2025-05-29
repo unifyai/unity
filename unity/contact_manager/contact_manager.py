@@ -1,8 +1,13 @@
-from typing import List, Dict, Optional
+from typing import List, Dict, Optional, Callable, Any
+import asyncio
+import json
+import os
 
 import unify
 from .types.contact import Contact
 from ..events.event_bus import EventBus
+from ..common.llm_helpers import start_async_tool_use_loop, AsyncToolLoopHandle
+from .sys_msgs import ASK_CONTACTS, UPDATE_CONTACTS
 
 
 class ContactManager:
@@ -195,12 +200,14 @@ class ContactManager:
 
         # If it's the first contact, create immediately
         if not unify.get_logs(context=self._ctx):
-            return unify.log(
+            unify.log(
                 context=self._ctx,
                 **contact_details,
                 contact_id=0,
                 new=True,
-            ).id
+                mutable=True,
+            )
+            return 0
 
         # Verify uniqueness
         for key, value in contact_details.items():
@@ -222,12 +229,14 @@ class ContactManager:
         this_id = largest_id + 1
 
         # Create the new contact
-        return unify.log(
+        unify.log(
             context=self._ctx,
             **contact_details,
             contact_id=this_id,
             new=True,
-        ).id
+            mutable=True,
+        )
+        return this_id
 
     def _update_contact(
         self,
