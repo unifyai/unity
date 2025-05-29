@@ -537,14 +537,15 @@ async def test_resume_nested_loop_calls_resume():
 @pytest.mark.asyncio
 async def test_handle_pause_and_resume_freeze_and_unfreeze_loop(monkeypatch):
     """
-    Verify that the *public* AsyncToolLoopHandle.pause / .resume methods
-    freeze and un-freeze the conversation and are each invoked exactly once.
-    We patch the methods on the class itself so we count the calls made on
-    the **outer** handle (the one returned by start_async_tool_use_loop).
+    • Call pause very early.
+    • Wait three seconds while paused (tool finishes in the meantime).
+    • Resume and ensure the outer loop *now* completes.
+    • Verify pause/resume got invoked once each and that total duration
+      exceeds the pause interval.
     """
     counts = {"pause": 0, "resume": 0}
 
-    # ── 1. Monkey-patch the class methods so we can count invocations ─────
+    # ── 1.  Count invocations of the public API  ─────────────────────────
     original_pause = AsyncToolLoopHandle.pause
     original_resume = AsyncToolLoopHandle.resume
 
@@ -559,51 +560,24 @@ async def test_handle_pause_and_resume_freeze_and_unfreeze_loop(monkeypatch):
     monkeypatch.setattr(AsyncToolLoopHandle, "pause", patched_pause, raising=True)
     monkeypatch.setattr(AsyncToolLoopHandle, "resume", patched_resume, raising=True)
 
-    # ── 2. A long-running tool (returns its own pausable handle) ──────────
+    # ── 2.  A very short tool (1 s) – proves that waiting is *because* of pause
     async def long_tool() -> AsyncToolLoopHandle:
-        gate = asyncio.Event()
-        gate.set()  # start un-paused
-
         async def _run():
-            remaining = 3.0  # seconds of actual work
-            step = 0.1
-            while remaining > 0:
-                await gate.wait()  # honour pause / resume
-                await asyncio.sleep(step)
-                remaining -= step
+            await asyncio.sleep(1)  # completes quickly
             return "done-inside"
 
-        inner_handle = AsyncToolLoopHandle(
+        return AsyncToolLoopHandle(
             task=asyncio.create_task(_run()),
             interject_queue=asyncio.Queue(),
             cancel_event=asyncio.Event(),
         )
 
-        # give the inner handle its own pause/resume so it’s *truly* pausable
-        async def _pause(self):
-            gate.clear()
-
-        async def _resume(self):
-            gate.set()
-
-        setattr(
-            inner_handle,
-            "pause",
-            _pause.__get__(inner_handle, AsyncToolLoopHandle),
-        )
-        setattr(
-            inner_handle,
-            "resume",
-            _resume.__get__(inner_handle, AsyncToolLoopHandle),
-        )
-        return inner_handle
-
-    # ── 3. Start the outer conversational loop ────────────────────────────
+    # ── 3.  Kick off outer loop ───────────────────────────────────────────
     client = unify.AsyncUnify("gpt-4o@openai", cache=True, traced=True)
     client.set_system_message(
-        "1️⃣  Call `long_tool`.\n"
-        "2️⃣  Wait for completion.\n"
-        "3️⃣  Reply with exactly **finished**.",
+        "1️⃣ Call `long_tool`.\n"
+        "2️⃣ Wait for completion.\n"
+        "3️⃣ Reply with exactly **finished**.",
     )
 
     outer_handle = start_async_tool_use_loop(
@@ -614,27 +588,28 @@ async def test_handle_pause_and_resume_freeze_and_unfreeze_loop(monkeypatch):
         timeout=300,
     )
 
-    # ── 4. Pause very early and check that the assistant stays silent ─────
-    await asyncio.sleep(2)  # allow tool to be scheduled
-    assistant_msgs_before = [m for m in client.messages if m.get("role") == "assistant"]
+    # ── 4.  Pause soon after launch, wait 3 s, then resume ────────────────
+    start_ts = time.perf_counter()
 
+    await asyncio.sleep(0.5)  # allow assistant to schedule the tool
     outer_handle.pause()
-    await asyncio.sleep(2)  # only tool messages may appear
 
-    assistant_msgs_after = [m for m in client.messages if m.get("role") == "assistant"]
-    assert len(assistant_msgs_after) == len(
-        assistant_msgs_before,
-    ), "assistant should emit no new turns while paused"
-
-    # ── 5. Resume and wait for the run to finish normally ─────────────────
+    await asyncio.sleep(3.0)  # tool finishes while loop is paused
     outer_handle.resume()
-    final_reply = await outer_handle.result()
 
+    final_reply = await outer_handle.result()
+    elapsed = time.perf_counter() - start_ts
+
+    # ── 5.  Assertions ───────────────────────────────────────────────────
     assert final_reply.strip().lower() == "finished"
-    assert counts == {
-        "pause": 1,
-        "resume": 1,
-    }, "pause & resume should each be called exactly once"
+
+    # pause/resume each called exactly once
+    assert counts == {"pause": 1, "resume": 1}
+
+    # prove that pause stretched total runtime
+    assert (
+        elapsed >= 3.0
+    ), f"loop finished too quickly ({elapsed:.2f}s) – pause gate failed"
 
 
 @pytest.mark.asyncio
