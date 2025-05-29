@@ -13,11 +13,13 @@ proc.kill()            # force-kill
 
 from __future__ import annotations
 import os
+import signal
 import sys
 import shutil
 import shlex
 import subprocess
 from pathlib import Path
+from threading import Thread
 import time
 from typing import Union
 import psutil
