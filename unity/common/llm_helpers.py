@@ -802,6 +802,36 @@ async def _async_tool_use_loop_inner(
                         fn=_clarify,
                     )
 
+                # ––– 5. ask-question helper (optional) –––––––––––––––––––
+                if handle is not None and hasattr(handle, "ask"):
+                    _ask_doc = (
+                        f"Ask a one-off question to the running tool {_fn_name}. "
+                        "Takes a single argument `question` (string) "
+                        "and returns the tool's answer."
+                    )
+
+                    async def _ask(question: str) -> Dict[str, str]:  # type: ignore[valid-type]
+                        try:
+                            ans = await _maybe_await(handle.ask(question))  # type: ignore[attr-defined]
+                            return {
+                                "status": "asked",
+                                "call_id": _call_id,
+                                "answer": ans,
+                            }
+                        except Exception as exc:
+                            return {
+                                "status": "error",
+                                "call_id": _call_id,
+                                "error": repr(exc),
+                            }
+
+                    _reg_tool(
+                        key=f"ask_{_call_id}",
+                        func_name=f"_ask_{_fn_name}_{_call_id}",
+                        doc=_ask_doc,
+                        fn=_ask,
+                    )
+
             # make sure every pending call already has a *tool* reply ──
             #  (a placeholder) before we let the assistant speak again.
             for _task in list(pending):
@@ -1190,6 +1220,46 @@ async def _async_tool_use_loop_inner(
                         if log_steps:
                             LOGGER.info(f"💬  Interjection delivered → {new_text!r}")
                         continue  # nothing else to schedule
+
+                    # ── ask helper results ────────────────────────────────────
+                    if name.startswith("_ask_"):
+                        call_id = "_".join(name.split("_")[-2:])
+                        question = args.get("question", "")
+
+                        # locate the running task / handle -----------------
+                        tgt_task = next(
+                            (
+                                t
+                                for t, inf in task_info.items()
+                                if inf["call_id"] == call_id
+                            ),
+                            None,
+                        )
+
+                        if tgt_task is None:
+                            answer_txt = "[not-running]"
+                        else:
+                            h = task_info[tgt_task].get("handle")
+                            if h is not None and hasattr(h, "ask"):
+                                try:
+                                    answer_txt = await _maybe_await(h.ask(question))  # type: ignore[attr-defined]
+                                except Exception as exc:
+                                    answer_txt = f"[ask-error]: {exc}"
+                            else:
+                                answer_txt = "[ask-unsupported]"
+
+                        # emit tool message so transcript stays consistent --
+                        tool_msg = {
+                            "role": "tool",
+                            "tool_call_id": call["id"],
+                            "name": name,
+                            "content": answer_txt,
+                        }
+                        _insert_after_assistant(msg, tool_msg)
+
+                        if log_steps:
+                            LOGGER.info(f"❓  Question answered → {answer_txt!r}")
+                        continue
 
                     fn = tools[name]
 
