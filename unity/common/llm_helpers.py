@@ -802,6 +802,41 @@ async def _async_tool_use_loop_inner(
                         fn=_clarify,
                     )
 
+                # ––– 5. pause helper –––––––––––––––––––––––––––––––––––––––––––
+                _pause_doc = (
+                    f"Pause the pending call {_fn_name}({_arg_repr}). "
+                    "Use when you want to momentarily halt its execution."
+                )
+
+                async def _pause() -> Dict[str, str]:
+                    if handle is not None and hasattr(handle, "pause"):
+                        await _maybe_await(handle.pause())  # graceful nested pause
+                    return {"status": "paused", "call_id": _call_id}
+
+                _reg_tool(
+                    key=f"pause_{_call_id}",
+                    func_name=f"_pause_{_fn_name}_{_call_id}",
+                    doc=_pause_doc,
+                    fn=_pause,
+                )
+
+                # ––– 6. resume helper ––––––––––––––––––––––––––––––––––––––––––
+                _resume_doc = (
+                    f"Resume the (previously paused) call {_fn_name}({_arg_repr})."
+                )
+
+                async def _resume() -> Dict[str, str]:
+                    if handle is not None and hasattr(handle, "resume"):
+                        await _maybe_await(handle.resume())  # graceful nested resume
+                    return {"status": "resumed", "call_id": _call_id}
+
+                _reg_tool(
+                    key=f"resume_{_call_id}",
+                    func_name=f"_resume_{_fn_name}_{_call_id}",
+                    doc=_resume_doc,
+                    fn=_resume,
+                )
+
             # make sure every pending call already has a *tool* reply ──
             #  (a placeholder) before we let the assistant speak again.
             for _task in list(pending):
@@ -1104,6 +1139,80 @@ async def _async_tool_use_loop_inner(
                         if log_steps:
                             LOGGER.info(f"🚫  {name} executed – task cancelled")
                         continue  # nothing else to schedule
+
+                    # ── _pause helper ────────────────────────────────────────────────
+                    if name.startswith("_pause") and not name.startswith(
+                        "_pause_tasks",
+                    ):
+                        call_id = "_".join(name.split("_")[-2:])
+                        tgt_task = next(
+                            (
+                                t
+                                for t, info in task_info.items()
+                                if info["call_id"] == call_id
+                            ),
+                            None,
+                        )
+                        orig_fn = task_info[tgt_task]["name"] if tgt_task else "unknown"
+                        arg_json = (
+                            task_info[tgt_task]["call_dict"]["function"]["arguments"]
+                            if tgt_task
+                            else "{}"
+                        )
+                        pretty_name = f"_pause {orig_fn}({arg_json})"
+
+                        if tgt_task:
+                            h = task_info[tgt_task].get("handle")
+                            if h is not None and hasattr(h, "pause"):
+                                await _maybe_await(h.pause())
+
+                        tool_msg = {
+                            "role": "tool",
+                            "tool_call_id": call["id"],
+                            "name": pretty_name,
+                            "content": f"The tool call [{call_id}] has been paused successfully.",
+                        }
+                        _insert_after_assistant(msg, tool_msg)
+                        if log_steps:
+                            LOGGER.info(f"⏸️  {pretty_name} executed – task paused")
+                        continue  # helper handled, move on
+
+                    # ── _resume helper ───────────────────────────────────────────────
+                    if name.startswith("_resume") and not name.startswith(
+                        "_resume_tasks",
+                    ):
+                        call_id = "_".join(name.split("_")[-2:])
+                        tgt_task = next(
+                            (
+                                t
+                                for t, info in task_info.items()
+                                if info["call_id"] == call_id
+                            ),
+                            None,
+                        )
+                        orig_fn = task_info[tgt_task]["name"] if tgt_task else "unknown"
+                        arg_json = (
+                            task_info[tgt_task]["call_dict"]["function"]["arguments"]
+                            if tgt_task
+                            else "{}"
+                        )
+                        pretty_name = f"_resume {orig_fn}({arg_json})"
+
+                        if tgt_task:
+                            h = task_info[tgt_task].get("handle")
+                            if h is not None and hasattr(h, "resume"):
+                                await _maybe_await(h.resume())
+
+                        tool_msg = {
+                            "role": "tool",
+                            "tool_call_id": call["id"],
+                            "name": pretty_name,
+                            "content": f"The tool call [{call_id}] has been resumed successfully.",
+                        }
+                        _insert_after_assistant(msg, tool_msg)
+                        if log_steps:
+                            LOGGER.info(f"▶️  {pretty_name} executed – task resumed")
+                        continue  # helper handled
 
                     if name.startswith("_clarify_"):
                         call_id = "_".join(name.split("_")[-2:])
