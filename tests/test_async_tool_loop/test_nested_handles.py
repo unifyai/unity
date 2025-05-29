@@ -646,3 +646,77 @@ async def test_handle_result_blocks_until_resume():
     final = await asyncio.wait_for(h.result(), timeout=20)
 
     assert final.strip().lower() == "done"
+
+
+@pytest.mark.asyncio
+async def test_dynamic_handle_public_method():
+    """
+    The inner tool returns a handle exposing a **public `.ask()` method**.
+    The outer loop must surface an `_ask_…` helper, use it exactly once when
+    the user asks "progress?", and finally reply with 'all done' after the
+    long-running task completes.
+    """
+
+    progress_calls = {"count": 0}
+
+    # ── tool that returns a handle with `.ask` ──────────────────────────
+    async def long_compute() -> AsyncToolLoopHandle:
+        """
+        • Runs a 3-second dummy job in the background.
+        • Provides `.ask()` so external callers can query the elapsed time.
+        """
+
+        start_ts = time.perf_counter()
+
+        async def _job():
+            await asyncio.sleep(8)
+            return "compute-done"
+
+        handle = AsyncToolLoopHandle(
+            task=asyncio.create_task(_job()),
+            interject_queue=asyncio.Queue(),
+            cancel_event=asyncio.Event(),
+        )
+
+        # public helper – gets exposed automatically
+        async def _ask(self):
+            progress_calls["count"] += 1
+            elapsed = time.perf_counter() - start_ts
+            return f"{elapsed:.1f}s elapsed"
+
+        # Bind and expose
+        setattr(handle, "ask", _ask.__get__(handle, AsyncToolLoopHandle))
+        return handle
+
+    # ── outer conversation that uses `long_compute` ────────────────────
+    client = unify.AsyncUnify("gpt-4o@openai", cache=True, traced=True)
+    client.set_system_message(
+        "1️⃣  Call `long_compute`.\n"
+        "2️⃣  When the *user* asks **progress?**, call the helper whose name "
+        "starts with `_ask_` exactly once.\n"
+        "3️⃣  Wait for the computation to finish, then answer with 'all done'.",
+    )
+
+    top = start_async_tool_use_loop(
+        client,
+        message="start",
+        tools={"long_compute": long_compute},
+        max_steps=25,
+        timeout=300,
+    )
+
+    # Give the assistant a moment to launch the tool so `_ask_…` exists
+    await asyncio.sleep(5)
+    await top.interject("progress?")
+
+    final_reply = await top.result()
+
+    # ── Assertions ─────────────────────────────────────────────────────
+    assert "all done" in final_reply.strip().lower()
+    assert progress_calls["count"] == 1, ".ask should be invoked exactly once"
+
+    # Optional: sanity-check that a tool-message from `_ask_…` is present
+    assert any(
+        m.get("role") == "tool" and "_ask_" in (m.get("name") or "")
+        for m in client.messages
+    ), "No tool-message from the `_ask_…` helper found"
