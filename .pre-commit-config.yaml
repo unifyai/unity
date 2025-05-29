@@ -27,7 +27,7 @@ repos:
   hooks:
   - id: autoflake
     name: autoflake
-    entry: .unity/bin/autoflake
+    entry: autoflake
     language: system
     types: [python]
     args: [--in-place, --remove-all-unused-imports, --remove-duplicate-keys]
@@ -38,6 +38,6 @@ repos:
 
   - id: black
     name: Format with Black
-    entry: .unity/bin/black
+    entry: black
     language: system
     types: [python]
