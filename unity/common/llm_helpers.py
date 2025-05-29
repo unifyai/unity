@@ -720,6 +720,7 @@ async def _async_tool_use_loop_inner(
             for _task in list(pending):
                 info = task_info[_task]
                 handle = info.get("handle")
+                ev = info.get("pause_event")
 
                 # ── DYNAMIC capability refresh (handle may change) ─────
                 if handle is not None:
@@ -852,39 +853,45 @@ async def _async_tool_use_loop_inner(
                     )
 
                 # ––– 5. pause helper –––––––––––––––––––––––––––––––––––––––––––
-                _pause_doc = (
-                    f"Pause the pending call {_fn_name}({_arg_repr}). "
-                    "Use when you want to momentarily halt its execution."
-                )
+                can_pause = (handle is not None and hasattr(handle, "pause")) or ev
+                can_resume = (handle is not None and hasattr(handle, "resume")) or ev
 
-                async def _pause() -> Dict[str, str]:
-                    if handle is not None and hasattr(handle, "pause"):
-                        await _maybe_await(handle.pause())  # graceful nested pause
-                    return {"status": "paused", "call_id": _call_id}
+                if can_pause:
+                    _pause_doc = f"Pause the pending call {_fn_name}({_arg_repr})."
 
-                _reg_tool(
-                    key=f"pause_{_call_id}",
-                    func_name=f"_pause_{_fn_name}_{_call_id}",
-                    doc=_pause_doc,
-                    fn=_pause,
-                )
+                    async def _pause() -> Dict[str, str]:
+                        if handle is not None and hasattr(handle, "pause"):
+                            await _maybe_await(handle.pause())
+                        elif ev is not None:
+                            ev.clear()
+                        return {"status": "paused", "call_id": _call_id}
+
+                    _reg_tool(
+                        key=f"pause_{_call_id}",
+                        func_name=f"_pause_{_fn_name}_{_call_id}",
+                        doc=_pause_doc,
+                        fn=_pause,
+                    )
 
                 # ––– 6. resume helper ––––––––––––––––––––––––––––––––––––––––––
-                _resume_doc = (
-                    f"Resume the (previously paused) call {_fn_name}({_arg_repr})."
-                )
+                if can_resume:
+                    _resume_doc = (
+                        f"Resume the previously paused call {_fn_name}({_arg_repr})."
+                    )
 
-                async def _resume() -> Dict[str, str]:
-                    if handle is not None and hasattr(handle, "resume"):
-                        await _maybe_await(handle.resume())  # graceful nested resume
-                    return {"status": "resumed", "call_id": _call_id}
+                    async def _resume() -> Dict[str, str]:
+                        if handle is not None and hasattr(handle, "resume"):
+                            await _maybe_await(handle.resume())
+                        elif ev is not None:
+                            ev.set()
+                        return {"status": "resumed", "call_id": _call_id}
 
-                _reg_tool(
-                    key=f"resume_{_call_id}",
-                    func_name=f"_resume_{_fn_name}_{_call_id}",
-                    doc=_resume_doc,
-                    fn=_resume,
-                )
+                    _reg_tool(
+                        key=f"resume_{_call_id}",
+                        func_name=f"_resume_{_fn_name}_{_call_id}",
+                        doc=_resume_doc,
+                        fn=_resume,
+                    )
 
             # make sure every pending call already has a *tool* reply ──
             #  (a placeholder) before we let the assistant speak again.
@@ -1212,8 +1219,11 @@ async def _async_tool_use_loop_inner(
 
                         if tgt_task:
                             h = task_info[tgt_task].get("handle")
+                            ev = task_info[tgt_task].get("pause_event")
                             if h is not None and hasattr(h, "pause"):
                                 await _maybe_await(h.pause())
+                            elif ev is not None:
+                                ev.clear()
 
                         tool_msg = {
                             "role": "tool",
@@ -1249,8 +1259,11 @@ async def _async_tool_use_loop_inner(
 
                         if tgt_task:
                             h = task_info[tgt_task].get("handle")
+                            ev = task_info[tgt_task].get("pause_event")
                             if h is not None and hasattr(h, "resume"):
                                 await _maybe_await(h.resume())
+                            elif ev is not None:
+                                ev.set()
 
                         tool_msg = {
                             "role": "tool",
@@ -1377,6 +1390,14 @@ async def _async_tool_use_loop_inner(
                     )
 
                     sig_accepts_interject_q = "interject_queue" in params or has_varkw
+                    sig_accepts_pause_event = "pause_event" in params or has_varkw
+
+                    # ── dedicated pause/resume event (optional) ────────────────────
+                    pause_ev: Optional[asyncio.Event] = None
+                    if sig_accepts_pause_event:
+                        pause_ev = asyncio.Event()
+                        pause_ev.set()  # start *running*
+                        extra_kwargs["pause_event"] = pause_ev
 
                     # ── clarification capability (implicit) ─────────────
                     sig_accepts_clar_qs = (
@@ -1458,6 +1479,7 @@ async def _async_tool_use_loop_inner(
                         "chat_ctx": extra_kwargs.get("parent_chat_context"),
                         "clar_up_q": clar_up_q,
                         "clar_down_q": clar_down_q,
+                        "pause_event": pause_ev,
                     }
 
                     if clar_up_q is not None:
