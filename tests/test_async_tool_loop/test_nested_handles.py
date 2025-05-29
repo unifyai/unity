@@ -449,3 +449,56 @@ async def test_handle_ask_roundtrip():
     assert any(
         m["role"] == "tool" and m.get("content") == "HELLO" for m in client.messages
     )
+
+
+@pytest.mark.asyncio
+async def test_public_handle_ask_default():
+    """
+    Smoke-test the built-in `.ask()` helper that every handle now inherits.
+    We:
+
+    • launch a trivial long-running tool,
+    • call `handle.ask(...)` *while the loop is still active*,
+    • ensure the answer looks sane,
+    • let the loop finish normally.
+    """
+
+    # ── 1.  Dummy tool – completes after a short delay ──────────────────
+    async def slow_job() -> str:
+        await asyncio.sleep(2)  # simulate work
+        return "job-done"
+
+    # ── 2.  Top-level conversation --------------------------------------
+    client = unify.AsyncUnify("gpt-4o@openai", cache=True, traced=True)
+    client.set_system_message(
+        "You are running inside an automated test.\n"
+        "1️⃣  Call `slow_job` with no arguments.\n"
+        "2️⃣  After it finishes, reply with exactly the word **done**.",
+    )
+
+    handle = start_async_tool_use_loop(
+        client,
+        message="start",
+        tools={"slow_job": slow_job},
+        max_steps=20,
+        timeout=240,
+    )
+
+    # ── 3.  Ask a progress question while the tool is still running ─────
+    await asyncio.sleep(0.5)  # give the loop a moment to start
+    reply = await handle.ask(
+        "What was the first **user** message in this **tool loop**?",
+    )
+
+    # we expect the helper LLM to mention "start"
+    assert "start" in reply.lower(), "ask() did not reflect the conversation context"
+
+    # ── 4.  Wait for normal completion & sanity-check --------------------
+    final = await handle.result()
+    assert "done" in final.strip().lower()
+
+    # Optional – ensure the transcript now contains our tool result
+    assert any(
+        m.get("role") == "tool" and "job-done" in str(m.get("content"))
+        for m in client.messages
+    ), "tool result missing from transcript"
