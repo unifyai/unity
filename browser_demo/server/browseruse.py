@@ -36,14 +36,14 @@ async def main():
     result = await agent.run()
 
     while True:
-        # await asyncio.sleep(1)
-        action = input("Actions: ")
-        if action == "close":
-            break
+        await asyncio.sleep(1)
+        # action = input("Actions: ")
+        # if action == "close":
+        #     break
 
-        agent.add_new_task(action)
-        result = await agent.run()
-        print(result)
+        # agent.add_new_task(action)
+        # result = await agent.run()
+        # print(result)
 
     await agent.close()
     # await context.close()

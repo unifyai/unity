@@ -44,4 +44,4 @@ CMD bash -c "\
   fluxbox & \
   x11vnc -display :99 -nopw -forever -shared -bg -rfbport 5900 && \
   websockify --web=/opt/novnc 6080 localhost:5900 & \
-  python browseruse_server.py"
+  python browseruse.py"
