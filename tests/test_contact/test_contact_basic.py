@@ -11,7 +11,7 @@ def test_create_contact():
     eb = EventBus()
     eb.register_event_types(["Messages", "MessageExchangeSummaries"])
     contact_manager = ContactManager(eb)
-    contact_manager.create_contact(
+    contact_manager._create_contact(
         first_name="Dan",
     )
     contacts = contact_manager._search_contacts()
@@ -35,7 +35,7 @@ def test_update_contact():
     contact_manager = ContactManager(eb)
 
     # create
-    contact_manager.create_contact(
+    contact_manager._create_contact(
         first_name="Dan",
     )
 
@@ -53,7 +53,7 @@ def test_update_contact():
     }
 
     # update
-    contact_manager.update_contact(
+    contact_manager._update_contact(
         contact_id=0,
         first_name="Daniel",
     )
@@ -80,7 +80,7 @@ def test_create_contacts():
     contact_manager = ContactManager(eb)
 
     # first
-    contact_manager.create_contact(
+    contact_manager._create_contact(
         first_name="Dan",
     )
     contacts = contact_manager._search_contacts()
@@ -96,7 +96,7 @@ def test_create_contacts():
     }
 
     # second
-    contact_manager.create_contact(
+    contact_manager._create_contact(
         first_name="Tom",
     )
     contacts = contact_manager._search_contacts()
@@ -118,6 +118,6 @@ def test_search_contacts():
     eb = EventBus()
     eb.register_event_types(["Messages", "MessageExchangeSummaries"])
     contact_manager = ContactManager(eb)
-    contact_manager.create_contact(
+    contact_manager._create_contact(
         first_name="Dan",
     )
