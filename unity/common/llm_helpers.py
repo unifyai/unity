@@ -371,9 +371,19 @@ async def _async_tool_use_loop_inner(
             #            tool-message in the transcript.
             # ───────────────────────────────────────────────────────────────
             if isinstance(raw, _AsyncToolLoopLike):
-                # Upgrade interjectability if handle exposes it
+                # ── upgrade interject / clarification flags from handle ─────
                 if hasattr(raw, "interject"):
                     info["is_interjectable"] = True
+
+                h_up_q = getattr(raw, "clarification_up_q", None)
+                h_down_q = getattr(raw, "clarification_down_q", None)
+
+                if (h_up_q is not None) ^ (h_down_q is not None):
+                    raise AttributeError(
+                        f"Handle returned by tool {info['name']!r} exposes only "
+                        "one of 'clarification_up_q' / 'clarification_down_q'. "
+                        "Both queues are required (or neither).",
+                    )
 
                 # 1️⃣ spawn the nested waiter
                 nested_task = asyncio.create_task(raw.result())
@@ -404,8 +414,12 @@ async def _async_tool_use_loop_inner(
                     **info,
                     "handle": raw,
                     "is_interjectable": hasattr(raw, "interject"),
-                    "tool_reply_msg": ph,  # ← carry over
+                    "tool_reply_msg": ph,
+                    "clar_up_q": h_up_q,
+                    "clar_down_q": h_down_q,
                 }
+                if h_up_q is not None:
+                    clarification_channels[call_id] = (h_up_q, h_down_q)
                 return
 
             # ───────────────────────────────────────────────────────────────
