@@ -1,5 +1,6 @@
 import pytest
 import time
+import asyncio
 import unify
 
 from unity.common.llm_helpers import start_async_tool_use_loop, AsyncToolLoopHandle
@@ -48,7 +49,7 @@ async def outer_tool() -> AsyncToolLoopHandle:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-#  The actual test
+#  Tests
 # ─────────────────────────────────────────────────────────────────────────────
 
 
@@ -118,3 +119,72 @@ async def test_nested_async_tool_loop():
         "tool_calls": None,
     }
     assert len(client.messages) == 5
+
+
+@pytest.mark.asyncio
+async def test_cancel_nested_loop_calls_stop(monkeypatch):
+    """
+    Launch `outer_tool`, then instruct the assistant to *cancel* it via the
+    dynamic helper.  The test passes only if that helper ends up calling
+    `AsyncToolLoopHandle.stop()` exactly once.
+    """
+
+    # 1.  Instrument `AsyncToolLoopHandle.stop` so we can count invocations
+    stop_called = {"count": 0}
+
+    original_stop = AsyncToolLoopHandle.stop
+
+    def patched_stop(self):
+        stop_called["count"] += 1
+        return original_stop(self)
+
+    monkeypatch.setattr(
+        AsyncToolLoopHandle,
+        "stop",
+        patched_stop,
+        raising=True,
+    )
+
+    # 2.  Fire up the *outer* conversational loop
+    client = unify.AsyncUnify("gpt-4o@openai", cache=True, traced=True)
+    client.set_system_message(
+        "You are running inside an automated test.\n"
+        "1️⃣  Call `outer_tool` with no arguments.\n"
+        "2️⃣  If the *user* later says **cancel**, call the appropriate "
+        "`_cancel_…` helper to cancel that running call.\n"
+        "3️⃣  Then reply with exactly the single line 'outer cancelled'.",
+    )
+
+    outer_handle = start_async_tool_use_loop(
+        client=client,
+        message="start",
+        tools={"outer_tool": outer_tool},
+        log_steps=False,
+        max_steps=20,
+        timeout=240,
+    )
+
+    # 3.  Interject: ask the assistant to cancel the running tool call
+    # Give the assistant a moment to schedule `outer_tool` so that the
+    # dynamic `_cancel_…` helper exists in the next turn.
+    await asyncio.sleep(3)
+    await outer_handle.interject("cancel")
+
+    # 4.  Wait for completion & check outcomes
+    final_reply = await outer_handle.result()
+
+    # A. The assistant must have followed the instructions.
+    assert final_reply.strip().lower() == "outer cancelled"
+
+    # B. Our patched `stop()` *must* have been invoked once.
+    assert (
+        stop_called["count"] == 1
+    ), "Nested AsyncToolLoopHandle.stop() was *not* invoked via cancellation"
+
+    # C. Optional sanity – a tool message that confirms cancellation.
+    assert any(
+        m.get("role") == "tool"
+        and "_cancel" in (m.get("name") or "")
+        and "cancelled successfully" in (m.get("content") or "").lower()
+        for m in client.messages
+    ), "No tool-message indicates the cancellation happened"
