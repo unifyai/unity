@@ -35,7 +35,7 @@ import unify
 
 from unity.constants import LOGGER as _LG  # type: ignore
 from unity.knowledge_manager.knowledge_manager import KnowledgeManager  # type: ignore
-from unity.common.llm_helpers import AsyncToolLoopHandle  # type: ignore
+from unity.common.llm_helpers import SteerableToolHandle  # type: ignore
 from sandboxes.utils import (
     record_until_enter as _record_until_enter,
     transcribe_deepgram as _transcribe_deepgram,
@@ -141,7 +141,7 @@ async def _dispatch(
     raw: str,
     *,
     show_steps: bool,
-) -> Tuple[str, AsyncToolLoopHandle, List | None]:
+) -> Tuple[str, SteerableToolHandle, List | None]:
     raw = raw.strip()
 
     # Quick rule: voice input often lacks punctuation – fall back to heuristic + LLM judge if ambiguous
@@ -181,7 +181,7 @@ def _poll_for_input(timeout: float = 0.1) -> Optional[str]:
 
 
 async def _handle_interruptions(
-    handle: AsyncToolLoopHandle,
+    handle: SteerableToolHandle,
     answer_task: asyncio.Task,
     *,
     voice_mode: bool = False,

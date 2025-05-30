@@ -34,7 +34,7 @@ from browser_use import Browser, BrowserConfig
 from browser_use.browser.context import BrowserContext
 from unity.common.llm_helpers import (
     start_async_tool_use_loop,
-    AsyncToolLoopHandle,
+    SteerableToolHandle,
 )
 from unify import AsyncUnify
 import unify
@@ -84,7 +84,7 @@ class BrowserUsePlanner:
         disable_browser_security: bool = False,
     ) -> None:
         self._state: _PlannerState = _PlannerState.IDLE
-        self._loop_handle: Optional[AsyncToolLoopHandle] = None
+        self._loop_handle: Optional[SteerableToolHandle] = None
         self._paused_context: Optional[List[dict]] = None
 
         # ---- Browser layer -------------------------------------------------
@@ -403,7 +403,7 @@ class BrowserUsePlanner:
 
         return client
 
-    def _attach_completion_callback(self, handle: AsyncToolLoopHandle) -> None:
+    def _attach_completion_callback(self, handle: SteerableToolHandle) -> None:
         """When the tool loop exits by itself, reset planner state."""
 
         async def _finalizer() -> None:

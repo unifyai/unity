@@ -6,7 +6,7 @@ import os
 import unify
 from .types.contact import Contact
 from ..events.event_bus import EventBus
-from ..common.llm_helpers import start_async_tool_use_loop, AsyncToolLoopHandle
+from ..common.llm_helpers import start_async_tool_use_loop, SteerableToolHandle
 from .sys_msgs import ASK_CONTACTS, UPDATE_CONTACTS
 
 
@@ -50,7 +50,7 @@ class ContactManager:
         parent_chat_context: Optional[List[Dict[str, Any]]] = None,
         clarification_up_q: Optional[asyncio.Queue[str]] = None,
         clarification_down_q: Optional[asyncio.Queue[str]] = None,
-    ) -> AsyncToolLoopHandle:
+    ) -> SteerableToolHandle:
         """
         Ask any question as a text command about contacts.
 
@@ -110,7 +110,7 @@ class ContactManager:
         parent_chat_context: Optional[List[Dict[str, Any]]] = None,
         clarification_up_q: Optional[asyncio.Queue[str]] = None,
         clarification_down_q: Optional[asyncio.Queue[str]] = None,
-    ) -> AsyncToolLoopHandle:
+    ) -> SteerableToolHandle:
         """
         Handle any plain-text english command to create or update contacts.
 

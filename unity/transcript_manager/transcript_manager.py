@@ -8,7 +8,7 @@ from ..common.embed_utils import EMBED_MODEL, ensure_vector_column
 from ..contact_manager.contact_manager import ContactManager
 from .types.message import Message
 from .types.message_exchange_summary import MessageExchangeSummary
-from ..common.llm_helpers import start_async_tool_use_loop, AsyncToolLoopHandle
+from ..common.llm_helpers import start_async_tool_use_loop, SteerableToolHandle
 from ..events.event_bus import EventBus, Event
 
 
@@ -64,7 +64,7 @@ class TranscriptManager:
         parent_chat_context: list[dict] | None = None,
         clarification_up_q: asyncio.Queue[str] | None = None,
         clarification_down_q: asyncio.Queue[str] | None = None,
-    ) -> "AsyncToolLoopHandle":
+    ) -> "SteerableToolHandle":
         """
         Ask any question as a text command, and use the tools available (the private methods of this class) to perform the action.
 

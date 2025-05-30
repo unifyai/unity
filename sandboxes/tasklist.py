@@ -28,7 +28,7 @@ sys.path.insert(0, str(ROOT))
 import unify
 
 from unity.constants import LOGGER as _LG  # type: ignore
-from unity.common import AsyncToolLoopHandle  # type: ignore
+from unity.common import SteerableToolHandle  # type: ignore
 from unity.task_list_manager.task_list_manager import TaskListManager  # type: ignore
 from unity.task_list_manager.types.priority import Priority  # type: ignore
 from unity.task_list_manager.types.schedule import Schedule  # type: ignore
@@ -205,7 +205,7 @@ def _non_blocking_input(prompt: str = "", timeout: float = 0.1) -> Optional[str]
     return None
 
 
-def _poll_for_interruption(handle: AsyncToolLoopHandle) -> None:
+def _poll_for_interruption(handle: SteerableToolHandle) -> None:
     """Poll for user input to interrupt or stop the current operation."""
     print("⏳ Processing... Type anything to interrupt, or 'stop'/'cancel' to abort.")
 

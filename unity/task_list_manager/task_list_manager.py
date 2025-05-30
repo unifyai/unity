@@ -5,7 +5,7 @@ from datetime import datetime, timezone
 from typing import Dict, List, Any, Optional, Union
 
 from ..common.embed_utils import EMBED_MODEL, ensure_vector_column
-from ..common.llm_helpers import start_async_tool_use_loop, AsyncToolLoopHandle
+from ..common.llm_helpers import start_async_tool_use_loop, SteerableToolHandle
 from .types.status import Status
 from .types.priority import Priority
 from .types.schedule import Schedule
@@ -92,7 +92,7 @@ class TaskListManager:
         parent_chat_context: list[dict] | None = None,
         clarification_up_q: asyncio.Queue[str] | None = None,
         clarification_down_q: asyncio.Queue[str] | None = None,
-    ) -> "AsyncToolLoopHandle":
+    ) -> "SteerableToolHandle":
         """
         Handle any plain-text english question to ask something about the list of tasks.
 
@@ -189,7 +189,7 @@ class TaskListManager:
         parent_chat_context: list[dict] | None = None,
         clarification_up_q: asyncio.Queue[str] | None = None,
         clarification_down_q: asyncio.Queue[str] | None = None,
-    ) -> "AsyncToolLoopHandle":
+    ) -> "SteerableToolHandle":
         """
         Handle any plain-text english command to update the list of tasks in some manner.
 

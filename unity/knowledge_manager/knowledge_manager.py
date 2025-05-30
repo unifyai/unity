@@ -8,7 +8,7 @@ import json
 from ..common.embed_utils import EMBED_MODEL, ensure_vector_column
 from ..helpers import _handle_exceptions
 from .types import ColumnType
-from ..common.llm_helpers import start_async_tool_use_loop, AsyncToolLoopHandle
+from ..common.llm_helpers import start_async_tool_use_loop, SteerableToolHandle
 from ..helpers import _handle_exceptions
 
 API_KEY = os.environ["UNIFY_KEY"]
@@ -69,7 +69,7 @@ class KnowledgeManager:
         parent_chat_context: list[dict] | None = None,
         clarification_up_q: asyncio.Queue[str] | None = None,
         clarification_down_q: asyncio.Queue[str] | None = None,
-    ) -> "AsyncToolLoopHandle":
+    ) -> "SteerableToolHandle":
         """
         Take in any storage text command, and use the tools available (the *non-skipped* private methods of this class) to store the information, refactoring the table and column schema along the way if needed.
 
@@ -160,7 +160,7 @@ class KnowledgeManager:
         parent_chat_context: list[dict] | None = None,
         clarification_up_q: asyncio.Queue[str] | None = None,
         clarification_down_q: asyncio.Queue[str] | None = None,
-    ) -> "AsyncToolLoopHandle":
+    ) -> "SteerableToolHandle":
         """
         Take in any retrieval text command, and use the tools available (the *non-skipped* private methods of this class) to retrieve the information, refactoring the table and column schema along the way if needed.
 

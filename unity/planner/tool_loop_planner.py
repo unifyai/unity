@@ -9,7 +9,7 @@ import uuid
 
 from unity.common.llm_helpers import (
     start_async_tool_use_loop,
-    AsyncToolLoopHandle,
+    SteerableToolHandle,
 )
 from unity.controller.controller import Controller
 from unify import AsyncUnify
@@ -50,7 +50,7 @@ class ToolLoopPlanner:
         base_system_prompt: str = "You are a helpful assistant. Use the available tools to complete the user's request. Prioritize completing the primary request.",
     ) -> None:
         self._state: _PlannerState = _PlannerState.IDLE
-        self._loop_handle: Optional[AsyncToolLoopHandle] = None
+        self._loop_handle: Optional[SteerableToolHandle] = None
         self._paused_context: Optional[List[dict]] = None
         self._task_id: Optional[str] = None  # To track the current task
 
@@ -188,7 +188,7 @@ class ToolLoopPlanner:
                 client.append_messages(messages_to_load)
         return client
 
-    def _attach_completion_callback(self, handle: AsyncToolLoopHandle) -> None:
+    def _attach_completion_callback(self, handle: SteerableToolHandle) -> None:
         """Sets up a callback for when the tool loop finishes or is cancelled."""
         current_task_id = (
             self._task_id
