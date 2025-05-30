@@ -3,15 +3,16 @@ import random
 import threading
 
 import unify
+from unity.common.llm_helpers import SteerableToolHandle
 
 
-class SimulatedPlanner:
+class SimulatedPlan(SteerableToolHandle):
     """
-    A dummy planner class that simulates task execution and question answering.
-    The simulated execution timer can now be paused and resumed.
+    A dummy plan class that simulates task execution and question answering.
     """
 
-    def __init__(self) -> None:
+    def __init__(self, task: str) -> None:
+        self._task = task
         self._active_task = None
         self._paused = None
         self._task_thread: threading.Thread | None = None
@@ -30,6 +31,7 @@ class SimulatedPlanner:
             traced=True,
             stateful=True,
         )
+        self._start()
 
     # ──────────────────────────────────────────────────────────────────────────
     # Core helpers
@@ -68,10 +70,7 @@ class SimulatedPlanner:
             self._pause_event.set()  # ensure future tasks start unpaused
             self._stop_event.clear()
 
-    # ──────────────────────────────────────────────────────────────────────────
-    # Public planner API
-    # ──────────────────────────────────────────────────────────────────────────
-    def start(self, task: str):
+    def _start(self, task: str):
         """
         Begin a simulated task asynchronously.
         The method returns immediately; the task can be paused/resumed.
@@ -92,6 +91,10 @@ class SimulatedPlanner:
             daemon=True,
         )
         self._task_thread.start()
+
+    # ──────────────────────────────────────────────────────────────────────────
+    # Public planner API
+    # ──────────────────────────────────────────────────────────────────────────
 
     def stop(self, reason: str) -> str:
         """
@@ -167,3 +170,14 @@ class SimulatedPlanner:
         else:
             available[f"Planner.{self.pause}"] = self.pause
         return available
+
+
+class SimulatedPlanner:
+
+    def __init__(self) -> None:
+        self._running = list()
+
+    def start(self, task: str):
+        plan = SimulatedPlan(task)
+        self._running.append(plan)
+        return plan
