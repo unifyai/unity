@@ -4,7 +4,7 @@ FROM python:3.11-slim
 # Set environment variables
 ENV DEBIAN_FRONTEND=noninteractive
 ENV DISPLAY=:99
-ENV OPENAI_API_KEY="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"
+
 
 # Install system dependencies
 RUN apt-get update && apt-get install -y \
@@ -16,14 +16,11 @@ RUN apt-get update && apt-get install -y \
     rm -rf /var/lib/apt/lists/*
 
 RUN apt update && apt install -y \
-    pipewire pipewire-audio pipewire-pulse wireplumber \
-    libportaudio2 portaudio19-dev \
-    alsa-utils alsa-oss alsa-tools \
-    python3-pip \
+    pipewire pipewire-audio pipewire-bin pipewire-pulse wireplumber \
+    libpipewire-0.3-modules libportaudio2 portaudio19-dev \
+    pulseaudio-utils alsa-utils alsa-oss alsa-tools \
+    dbus dbus-x11 python3-pip \
     && rm -rf /var/lib/apt/lists/*
-
-# Set up runtime dirs
-RUN mkdir -p /tmp/xdg /tmp/pulse && chmod -R 777 /tmp/xdg /tmp/pulse
 
 # Install Chromium
 RUN apt-get update && apt-get install -y --no-install-recommends \
