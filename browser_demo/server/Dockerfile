@@ -1,9 +1,10 @@
 # Use Python 3.11 slim image as base
 FROM python:3.11-slim
 
-# Avoid tzdata interactive prompt
+# Set environment variables
 ENV DEBIAN_FRONTEND=noninteractive
 ENV DISPLAY=:99
+ENV OPENAI_API_KEY="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"
 
 # Install system dependencies
 RUN apt-get update && apt-get install -y \
@@ -11,21 +12,20 @@ RUN apt-get update && apt-get install -y \
     libnss3 libatk-bridge2.0-0 libgtk-3-0 libxss1 \
     libasound2 libxshmfence1 libxcomposite1 libxdamage1 \
     libxrandr2 libgbm1 libx11-xcb1 fonts-liberation xdg-utils \
-    git ca-certificates \
-    alsa-utils \
-    kmod \
-    v4l2loopback-dkms \
+    ffmpeg git ca-certificates && \
+    rm -rf /var/lib/apt/lists/*
+
+RUN apt update && apt install -y \
+    pipewire pipewire-audio pipewire-pulse wireplumber \
+    libportaudio2 portaudio19-dev \
+    alsa-utils alsa-oss alsa-tools \
+    python3-pip \
     && rm -rf /var/lib/apt/lists/*
 
-# Copy requirements file
-COPY requirements.txt .
+# Set up runtime dirs
+RUN mkdir -p /tmp/xdg /tmp/pulse && chmod -R 777 /tmp/xdg /tmp/pulse
 
-# Install Python dependencies
-RUN pip install --no-cache-dir -r requirements.txt
-
-# Copy the demo application code
-COPY . .
-
+# Install Chromium
 RUN apt-get update && apt-get install -y --no-install-recommends \
     chromium \
     chromium-driver \
@@ -40,10 +40,16 @@ RUN mkdir -p /opt/novnc && \
     mv noVNC-master/* /opt/novnc && \
     rm -rf master.zip noVNC-master
 
-CMD bash -c "\
-  Xvfb :99 -screen 0 1920x1080x16 & \
-  sleep 2 && \
-  fluxbox & \
-  x11vnc -display :99 -nopw -forever -shared -bg -rfbport 5900 && \
-  websockify --web=/opt/novnc 6080 localhost:5900 & \
-  python browseruse.py"
+# Copy the demo application code
+COPY . .
+
+# Start everything
+RUN chmod +x device.sh
+
+# Copy requirements file
+COPY requirements.txt .
+
+# Install Python dependencies
+RUN pip install --no-cache-dir -r requirements.txt
+
+CMD ["/device.sh"]

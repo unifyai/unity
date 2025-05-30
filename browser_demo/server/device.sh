@@ -1,8 +1,19 @@
-sudo apt update
-sudo apt install -y linux-modules-extra-$(uname -r) v4l2loopback-dkms alsa-utils
+#!/bin/bash
+set -e
 
-# Load snd-aloop
-sudo modprobe snd-aloop
+# Start X11 virtual display
+Xvfb :99 -screen 0 1920x1080x16 &
 
-# Load v4l2loopback with custom config
-sudo modprobe v4l2loopback devices=1 video_nr=10 card_label="VirtualCam" exclusive_caps=1
+# Wait for Xvfb to initialize
+sleep 2
+
+# Start window manager
+fluxbox &
+
+# Start VNC server
+x11vnc -display :99 -nopw -forever -shared -bg -rfbport 5900
+
+# Start noVNC websockify proxy (this will block and keep the container running)
+websockify --web=/opt/novnc 6080 localhost:5900 &
+
+python browseruse.py

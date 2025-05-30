@@ -3,3 +3,6 @@ langchain-openai
 python-dotenv
 playwright
 websockify
+sounddevice
+soundfile
+numpy

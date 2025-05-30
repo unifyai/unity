@@ -2,6 +2,8 @@ from langchain_openai import ChatOpenAI
 from browser_use import Agent, BrowserSession
 import asyncio
 from dotenv import load_dotenv
+import sounddevice as sd
+import soundfile as sf
 
 load_dotenv()
 
@@ -36,16 +38,18 @@ async def main():
     result = await agent.run()
 
     while True:
+        print("mic", sd.query_devices())
         action = input("Actions: ")
         if action == "close":
             break
-        # elif action == "play audio":
-        #     # Load audio
-        #     data, samplerate = sf.read("audio.wav")
+        elif action == "play audio":
+            # Load audio
+            data, samplerate = sf.read("audio.wav")
 
-        #     # Use the index of 'Virtual_Sink' or match by name
-        #     sd.play(data, samplerate, device="Virtual_Sink")
-        #     sd.wait()
+            # Use the index of 'Virtual_Sink' or match by name
+            sd.play(data, samplerate, device="Virtual_Mic")
+            sd.wait()
+            continue
 
         agent.add_new_task(action)
         result = await agent.run()
