@@ -802,7 +802,7 @@ async def _async_tool_use_loop_inner(
 
                 # concise, informative, single‑line docs  ----------------------
                 _continue_doc = f"Continue waiting for {_fn_name}({_arg_repr})."
-                _cancel_doc = f"Cancel pending call {_fn_name}({_arg_repr})."
+                _stop_doc = f"Stop pending call {_fn_name}({_arg_repr})."
 
                 # ––– 1. continue helper ––––––––––––––––––––––––––––––––––––
                 # Skip if the task is blocked waiting for clarification; there's
@@ -819,21 +819,21 @@ async def _async_tool_use_loop_inner(
                         fn=_continue,
                     )
 
-                # ––– 2. cancel helper –––––––––––––––––––––––––––––––––––––
-                async def _cancel() -> Dict[str, str]:
+                # ––– 2. stop helper –––––––––––––––––––––––––––––––––––––
+                async def _stop() -> Dict[str, str]:
                     if handle is not None and hasattr(handle, "stop"):
                         await _maybe_await(handle.stop())  # graceful nested shutdown
                     if not _task.done():
                         _task.cancel()  # kill the waiter coroutine
                     pending.discard(_task)
                     task_info.pop(_task, None)
-                    return {"status": "cancelled", "call_id": _call_id}
+                    return {"status": "stopped", "call_id": _call_id}
 
                 _reg_tool(
-                    key=f"cancel_{_call_id}",
-                    func_name=f"_cancel_{_fn_name}_{_call_id}",
-                    doc=_cancel_doc,
-                    fn=_cancel,
+                    key=f"stop_{_call_id}",
+                    func_name=f"_stop_{_fn_name}_{_call_id}",
+                    doc=_stop_doc,
+                    fn=_stop,
                 )
 
                 # ––– 3. interject helper (optional) ––––––––––––––––––––––
@@ -1216,8 +1216,8 @@ async def _async_tool_use_loop_inner(
                                 )
                         continue  # completed handling of this _continue
 
-                    if name.startswith("_cancel") and not name.startswith(
-                        "_cancel_tasks",
+                    if name.startswith("_stop") and not name.startswith(
+                        "_stop_tasks",
                     ):
                         call_id = "_".join(name.split("_")[-2:])
 
@@ -1243,7 +1243,7 @@ async def _async_tool_use_loop_inner(
                             if task_to_cancel
                             else "{}"
                         )
-                        pretty_name = f"_cancel {orig_fn}({arg_json})"
+                        pretty_name = f"_stop   {orig_fn}({arg_json})"
 
                         # ── gracefully shut down any *nested* async-tool loop first ──────
                         if task_to_cancel:
@@ -1264,13 +1264,13 @@ async def _async_tool_use_loop_inner(
                             "tool_call_id": call["id"],
                             "name": pretty_name,
                             "content": (
-                                f"The tool call [{call_id}] has been cancelled successfully."
+                                f"The tool call [{call_id}] has been stopped successfully."
                             ),
                         }
                         _insert_after_assistant(msg, tool_msg)
 
                         if log_steps:
-                            LOGGER.info(f"🚫  {name} executed – task cancelled")
+                            LOGGER.info(f"🚫  {name} executed – task stopped")
                         continue  # nothing else to schedule
 
                     # ── _pause helper ────────────────────────────────────────────────

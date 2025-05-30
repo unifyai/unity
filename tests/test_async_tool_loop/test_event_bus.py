@@ -62,7 +62,7 @@ async def test_basic_event_flow() -> None:
         event_type="TEST",
         event_bus=bus,
         interject_queue=asyncio.Queue(),
-        cancel_event=asyncio.Event(),
+        stop_event=asyncio.Event(),
         pause_event=pause_event,
         prune_tool_duplicates=True,
         log_steps=False,

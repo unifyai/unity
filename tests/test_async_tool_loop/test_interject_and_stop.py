@@ -6,7 +6,7 @@ What’s covered
 --------------
 
 * Injecting extra user messages that trigger additional tool calls.
-* Graceful cancellation with ``stop()``.
+* Graceful stoplation with ``stop()``.
 * Preservation of the order of multiple interjections.
 * Handling of an interjection that arrives while a tool call is still running.
 
@@ -177,9 +177,9 @@ async def test_interject_leads_to_second_tool_and_final_result():
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_stop_cancels_gracefully():
+async def test_stop_stops_gracefully():
     """
-    Calling ``stop()`` should cancel the loop: ``result()`` raises
+    Calling ``stop()`` should stop the loop: ``result()`` raises
     ``CancelledError`` and the underlying task is done.
     """
     client = new_client()
@@ -318,8 +318,8 @@ async def test_parallel_tool_results_shift_interjection_down():
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_interjection_cancels_ongoing_llm():
-    """The first LLM generation is cancelled once the user interjects."""
+async def test_interjection_stops_ongoing_llm():
+    """The first LLM generation is stopped once the user interjects."""
 
     # Spin up the tool-use loop and inject a message shortly afterwards
     client = new_client()
@@ -338,7 +338,7 @@ async def test_interjection_cancels_ongoing_llm():
     # Assertions – only ONE assistant message should exist
     assistant_msgs = [m for m in client.messages if m.get("role") == "assistant"]
     assert len(assistant_msgs) == 1, (
-        "Exactly one assistant reply is expected after cancellation; "
+        "Exactly one assistant reply is expected after stoplation; "
         f"found {len(assistant_msgs)}."
     )
 
