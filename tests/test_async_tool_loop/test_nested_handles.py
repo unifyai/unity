@@ -144,9 +144,9 @@ async def test_nested_async_tool_loop():
 
 
 @pytest.mark.asyncio
-async def test_cancel_nested_loop_calls_stop(monkeypatch):
+async def test_stop_nested_loop_calls_stop(monkeypatch):
     """
-    Launch `outer_tool`, then instruct the assistant to *cancel* it via the
+    Launch `outer_tool`, then instruct the assistant to *stop* it via the
     dynamic helper.  The test passes only if that helper ends up calling
     `AsyncToolLoopHandle.stop()` exactly once.
     """
@@ -172,9 +172,9 @@ async def test_cancel_nested_loop_calls_stop(monkeypatch):
     client.set_system_message(
         "You are running inside an automated test.\n"
         "1️⃣  Call `outer_tool` with no arguments.\n"
-        "2️⃣  If the *user* later says **cancel**, call the appropriate "
-        "`_cancel_…` helper to cancel that running call.\n"
-        "3️⃣  Then reply with exactly the single line 'outer cancelled'.",
+        "2️⃣  If the *user* later says **stop**, call the appropriate "
+        "`_stop_…` helper to stop that running call.\n"
+        "3️⃣  Then reply with exactly the single line 'outer stopped'.",
     )
 
     outer_handle = start_async_tool_use_loop(
@@ -186,30 +186,30 @@ async def test_cancel_nested_loop_calls_stop(monkeypatch):
         timeout=240,
     )
 
-    # 3.  Interject: ask the assistant to cancel the running tool call
+    # 3.  Interject: ask the assistant to stop the running tool call
     # Give the assistant a moment to schedule `outer_tool` so that the
-    # dynamic `_cancel_…` helper exists in the next turn.
+    # dynamic `_stop_…` helper exists in the next turn.
     await asyncio.sleep(3)
-    await outer_handle.interject("cancel")
+    await outer_handle.interject("stop")
 
     # 4.  Wait for completion & check outcomes
     final_reply = await outer_handle.result()
 
     # A. The assistant must have followed the instructions.
-    assert final_reply.strip().lower() == "outer cancelled"
+    assert final_reply.strip().lower() == "outer stopped"
 
     # B. Our patched `stop()` *must* have been invoked once.
     assert (
         stop_called["count"] == 1
-    ), "Nested AsyncToolLoopHandle.stop() was *not* invoked via cancellation"
+    ), "Nested AsyncToolLoopHandle.stop() was *not* invoked via stoplation"
 
-    # C. Optional sanity – a tool message that confirms cancellation.
+    # C. Optional sanity – a tool message that confirms stoplation.
     assert any(
         m.get("role") == "tool"
-        and "_cancel" in (m.get("name") or "")
-        and "cancelled successfully" in (m.get("content") or "").lower()
+        and "_stop" in (m.get("name") or "")
+        and "stopped successfully" in (m.get("content") or "").lower()
         for m in client.messages
-    ), "No tool-message indicates the cancellation happened"
+    ), "No tool-message indicates the stoplation happened"
 
 
 @pytest.mark.asyncio
@@ -398,7 +398,7 @@ async def test_handle_interject_method_appears_late():
         handle = SlowHandle(
             task=asyncio.create_task(asyncio.sleep(6)),
             interject_queue=asyncio.Queue(),
-            cancel_event=asyncio.Event(),
+            stop_event=asyncio.Event(),
         )
 
         # after 1 s expose `.interject`
@@ -460,7 +460,7 @@ async def test_pause_nested_loop_calls_pause():
         handle = AsyncToolLoopHandle(
             task=asyncio.create_task(asyncio.sleep(4)),
             interject_queue=asyncio.Queue(),
-            cancel_event=asyncio.Event(),
+            stop_event=asyncio.Event(),
         )
 
         # expose `.pause` and `.resume`
@@ -529,7 +529,7 @@ async def test_resume_nested_loop_calls_resume():
         handle = AsyncToolLoopHandle(
             task=task,
             interject_queue=asyncio.Queue(),
-            cancel_event=asyncio.Event(),
+            stop_event=asyncio.Event(),
         )
 
         # ── public pause / resume on the handle ──────────────────────────────
@@ -616,7 +616,7 @@ async def test_handle_pause_and_resume_freeze_and_unfreeze_loop(monkeypatch):
         return AsyncToolLoopHandle(
             task=asyncio.create_task(_run()),
             interject_queue=asyncio.Queue(),
-            cancel_event=asyncio.Event(),
+            stop_event=asyncio.Event(),
         )
 
     # ── 3.  Kick off outer loop ───────────────────────────────────────────
@@ -684,7 +684,7 @@ async def test_handle_result_blocks_until_resume():
     h.pause()
 
     with pytest.raises(asyncio.TimeoutError):
-        # Shield protects the inner task from the cancellation that
+        # Shield protects the inner task from the stoplation that
         # `wait_for` sends when the 1-second timeout expires.
         await asyncio.wait_for(asyncio.shield(h.result()), timeout=1)
 
@@ -722,7 +722,7 @@ async def test_dynamic_handle_public_method():
         handle = AsyncToolLoopHandle(
             task=asyncio.create_task(_job()),
             interject_queue=asyncio.Queue(),
-            cancel_event=asyncio.Event(),
+            stop_event=asyncio.Event(),
         )
 
         # public helper – gets exposed automatically

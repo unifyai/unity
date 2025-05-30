@@ -9,7 +9,7 @@ What we verify
   the assistant to *keep waiting*; the loop must *not* start a second copy of
   that tool.
 
-* **Cancel** – The user interjects asking to *cancel* the running tool; the
+* **Stop** – The user interjects asking to *stop* the running tool; the
   task is aborted, no tool-result message appears, and the control decision is
   omitted from the permanent chat transcript.
 
@@ -138,7 +138,7 @@ async def test_continue_does_not_duplicate_tool(client):
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_cancel_removes_tool_and_yields_no_result(client):
+async def test_stop_removes_tool_and_yields_no_result(client):
     """
     Scenario
     --------
@@ -146,7 +146,7 @@ async def test_cancel_removes_tool_and_yields_no_result(client):
     * Shortly after, interject: “Cancel that operation.”
     Expected
     --------
-    * **Zero** tool-result messages for `slow` (task was cancelled).
+    * **Zero** tool-result messages for `slow` (task was stopped).
     * No assistant turn in the log still exposes `slow` in `tool_calls`.
     * Loop finishes with a normal assistant reply.
     """
@@ -158,13 +158,13 @@ async def test_cancel_removes_tool_and_yields_no_result(client):
     )
 
     await asyncio.sleep(0.05)  # tool in-flight
-    await handle.interject("Please cancel that run right away.")
+    await handle.interject("Please stop that run right away.")
 
     final = await handle.result()
     assert "ACK" in final.upper()
 
     msgs = client.messages
-    assert _tool_results(msgs, "slow") == 1, "cancellation tool expected after cancel"
+    assert _tool_results(msgs, "slow") == 1, "stopping tool expected after stop"
     assert _assistant_calls(msgs, "slow") == 1, "tool-call should remain in the history"
 
 

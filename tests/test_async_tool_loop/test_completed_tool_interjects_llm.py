@@ -113,7 +113,7 @@ async def test_llm_step_is_preempted_by_late_tool_completion() -> None:
     The model is instructed to call **both** tools in a single assistant turn.
     ``fast_task`` completes first, triggering an LLM reasoning step; while the
     model is still thinking ``slow_task`` finishes.  The patched loop must
-    cancel the in-flight `generate`, deliver the new result, and only then run
+    stop the in-flight `generate`, deliver the new result, and only then run
     a fresh LLM step.
 
     In the final transcript we therefore expect:
@@ -156,7 +156,7 @@ async def test_llm_step_is_preempted_by_late_tool_completion() -> None:
     #   tool  (fast_task result)
     #   assistant starts replying
     #   tool  (slow_task result)
-    #   earlier assistant call is cancelled
+    #   earlier assistant call is stopped
     #   assistant injests both results (final)
     assert roles[0] == "user"
     assert roles[1] == "assistant"

@@ -50,13 +50,13 @@ def test_multiline_docstring_stripped():
     assert inspect.getdoc(helper) == "Line one.\nLine two."
 
 
-def test_builtin_dynamic_docstring_fallback_for_cancel():
-    # Simulate a generated cancel helper with no original docstring
-    async def cancel_fn():
+def test_builtin_dynamic_docstring_fallback_for_stop():
+    # Simulate a generated stop helper with no original docstring
+    async def stop_fn():
         pass
 
     fallback = "Cancel pending call inner_tool()."
-    helper = apply_doc(cancel_fn, fallback)
+    helper = apply_doc(stop_fn, fallback)
     # The docstring should start with our fallback text
     assert helper.__doc__.startswith("Cancel pending call")
 
@@ -78,17 +78,17 @@ def test_mixed_scenario_multiple_helpers():
             """Ask current status."""
             return "ok"
 
-        def cancel(self):
+        def stop(self):
             pass
 
     h = Handle()
     bound_ask = h.ask
-    bound_cancel = h.cancel
+    bound_stop = h.stop
     ask_helper = apply_doc(bound_ask, "Fallback ask doc.")
-    cancel_helper = apply_doc(bound_cancel, "Fallback cancel doc.")
+    stop_helper = apply_doc(bound_stop, "Fallback stop doc.")
 
     assert inspect.getdoc(ask_helper) == "Ask current status."
-    assert cancel_helper.__doc__ == "Fallback cancel doc."
+    assert stop_helper.__doc__ == "Fallback stop doc."
 
 
 if __name__ == "__main__":
