@@ -1,5 +1,6 @@
 import time
 import random
+import asyncio
 import threading
 
 import unify
@@ -13,8 +14,13 @@ class SimulatedPlan(SteerableToolHandle):
     based on whether a task is running and whether it is paused.
     """
 
-    def __init__(self, task: str) -> None:
+    def __init__(self, task: str, steps: int) -> None:
         self._task = task
+        self._steps = steps
+        # count how many public calls have been made
+        self._step_count = 0
+        # future that .result() will await
+        self._future = asyncio.get_event_loop().create_future()
         self._paused = None
         self._task_thread: threading.Thread | None = None
         self._pause_event = threading.Event()
@@ -32,7 +38,6 @@ class SimulatedPlan(SteerableToolHandle):
             traced=True,
             stateful=True,
         )
-
         self._start()
 
     # ──────────────────────────────────────────────────────────────────────────
@@ -81,9 +86,25 @@ class SimulatedPlan(SteerableToolHandle):
         )
         self._task_thread.start()
 
-    # ──────────────────────────────────────────────────────────────────────────
-    # Rename public API methods to private…
-    # ──────────────────────────────────────────────────────────────────────────
+    # Pubic
+
+    async def result(self) -> str:
+        """Wait until the specified number of public method calls have completed."""
+        return await self._future
+
+    def _complete(self) -> None:
+        """Internal: finish the plan once step target reached."""
+        if not self._future.done():
+            # stop background thread
+            self._stop_event.set()
+            if self._task_thread and self._task_thread.is_alive():
+                self._task_thread.join(timeout=1)
+            # fulfill the future
+            self._future.set_result(
+                f"Task '{self._task}' completed after {self._steps} steps.",
+            )
+
+    # Dynamic Methods (Public vs Private Depending on State)
 
     def _stop(self, reason: str) -> str:
         if not self._task:
@@ -122,9 +143,7 @@ class SimulatedPlan(SteerableToolHandle):
             raise Exception("No tasks are currently being performed.")
         return self._ask_simulator.generate(question)
 
-    # ──────────────────────────────────────────────────────────────────────────
     # Dynamic exposure of only the valid methods
-    # ──────────────────────────────────────────────────────────────────────────
 
     def _can_stop(self) -> bool:
         return self._task is not None
@@ -142,16 +161,25 @@ class SimulatedPlan(SteerableToolHandle):
         return (self._task is not None) and (self._paused is True)
 
     def __getattr__(self, name: str):
-        # if it's one of our public APIs, check its predicate
-        if name in ("stop", "interject", "ask", "pause", "resume"):
+        # any public API call counts as a step
+        public = ("stop", "interject", "ask", "pause", "resume")
+        if name in public:
             can_method = getattr(self, f"_can_{name}")
-            if can_method():
-                return getattr(self, f"_{name}")
-            # else: not currently valid
-            raise AttributeError(
-                f"'{type(self).__name__}' object has no attribute '{name}'",
-            )
-        # otherwise normal behavior
+            if not can_method():
+                raise AttributeError(
+                    f"'{type(self).__name__}' object has no attribute '{name}'",
+                )
+            fn = getattr(self, f"_{name}")
+
+            def wrapped(*args, **kwargs):
+                # increment step counter
+                if not self._future.done():
+                    self._step_count += 1
+                    if self._step_count >= self._steps:
+                        self._complete()
+                return fn(*args, **kwargs)
+
+            return wrapped
         raise AttributeError(
             f"'{type(self).__name__}' object has no attribute '{name}'",
         )
