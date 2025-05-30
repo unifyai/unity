@@ -752,7 +752,9 @@ async def _async_tool_use_loop_inner(
 
             # helper: register a freshly-minted coroutine as a *temporary* tool
             def _reg_tool(key: str, func_name: str, doc: str, fn: Callable) -> None:
-                fn.__doc__ = doc  # type: ignore[attr-defined]
+                # prefer the function’s own docstring if it exists, else fall back
+                existing = inspect.getdoc(fn)
+                fn.__doc__ = existing.strip() if existing else doc
                 fn.__name__ = func_name[:64]
                 dynamic_tools[key] = fn
 
