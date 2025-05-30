@@ -1,10 +1,10 @@
 from langchain_openai import ChatOpenAI
 from browser_use import Agent, BrowserSession
+import asyncio
 from dotenv import load_dotenv
 
 load_dotenv()
 
-import asyncio
 
 llm = ChatOpenAI(model="gpt-4o")
 
@@ -36,14 +36,20 @@ async def main():
     result = await agent.run()
 
     while True:
-        await asyncio.sleep(1)
-        # action = input("Actions: ")
-        # if action == "close":
-        #     break
+        action = input("Actions: ")
+        if action == "close":
+            break
+        # elif action == "play audio":
+        #     # Load audio
+        #     data, samplerate = sf.read("audio.wav")
 
-        # agent.add_new_task(action)
-        # result = await agent.run()
-        # print(result)
+        #     # Use the index of 'Virtual_Sink' or match by name
+        #     sd.play(data, samplerate, device="Virtual_Sink")
+        #     sd.wait()
+
+        agent.add_new_task(action)
+        result = await agent.run()
+        print(result)
 
     await agent.close()
     # await context.close()

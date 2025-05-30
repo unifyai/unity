@@ -6,7 +6,7 @@
 
 2. Run Docker container, add `OPENAI_API_KEY` env variable through the env arg.
 
-`docker run -p 6080:6080 --rm bu_test`
+`docker run -it -p 6080:6080 --rm bu_test`
 
 Note: add `-d` for detached mode
 
