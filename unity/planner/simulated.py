@@ -19,8 +19,9 @@ class SimulatedPlan(SteerableToolHandle):
         self._steps = steps
         # count how many public calls have been made
         self._step_count = 0
-        # future that .result() will await
-        self._future = asyncio.get_event_loop().create_future()
+        # event to signal completion and storage for result
+        self._done_event = threading.Event()
+        self._result_str: str | None = None
         self._paused = None
         self._task_thread: threading.Thread | None = None
         self._pause_event = threading.Event()
@@ -90,19 +91,20 @@ class SimulatedPlan(SteerableToolHandle):
 
     async def result(self) -> str:
         """Wait until the specified number of public method calls have completed."""
-        return await self._future
+        # block in threadpool until we call _complete
+        await asyncio.to_thread(self._done_event.wait)
+        return self._result_str  # type: ignore
 
-    def _complete(self) -> None:
-        """Internal: finish the plan once step target reached."""
-        if not self._future.done():
+    def _complete(self, message: str) -> None:
+        """Internal: finish the plan once step target reached or stopped early."""
+        if not self._done_event.is_set():
             # stop background thread
             self._stop_event.set()
             if self._task_thread and self._task_thread.is_alive():
                 self._task_thread.join(timeout=1)
-            # fulfill the future
-            self._future.set_result(
-                f"Task '{self._task}' completed after {self._steps} steps.",
-            )
+            # store result and signal completion
+            self._result_str = message
+            self._done_event.set()
 
     # Dynamic Methods (Public vs Private Depending on State)
 
@@ -110,10 +112,10 @@ class SimulatedPlan(SteerableToolHandle):
         if not self._task:
             raise Exception("No tasks are currently being performed.")
         task = self._task
-        self._stop_event.set()
-        if self._task_thread and self._task_thread.is_alive():
-            self._task_thread.join(timeout=1)
-        return f"Stopped task '{task}' for reason: {reason}"
+        msg = f"Stopped task '{self._task}' for reason: {reason}"
+        # complete with stop message
+        self._complete(msg)
+        return msg
 
     def _interject(self, instruction: str) -> str:
         if not self._task:
@@ -173,10 +175,13 @@ class SimulatedPlan(SteerableToolHandle):
 
             def wrapped(*args, **kwargs):
                 # increment step counter
-                if not self._future.done():
+                if not self._done_event.is_set():
                     self._step_count += 1
                     if self._step_count >= self._steps:
-                        self._complete()
+                        # complete with success message
+                        self._complete(
+                            f"Task '{self._task}' completed after {self._steps} steps.",
+                        )
                 return fn(*args, **kwargs)
 
             return wrapped
@@ -195,10 +200,11 @@ class SimulatedPlan(SteerableToolHandle):
 
 class SimulatedPlanner:
 
-    def __init__(self) -> None:
+    def __init__(self, steps) -> None:
+        self._steps = steps
         self._plans = list()
 
     def start(self, task: str):
-        plan = SimulatedPlan(task)
+        plan = SimulatedPlan(task, self._steps)
         self._plans.append(plan)
         return plan
