@@ -55,6 +55,8 @@ class ToolLoopPlanner:
         self._task_id: Optional[str] = None  # To track the current task
 
         self._controller = Controller()
+        self._controller.start()
+
         self._coms_manager = ComsManager()
 
         self._base_system_prompt = base_system_prompt
