@@ -1,3 +1,3 @@
-from .llm_helpers import AsyncToolLoopHandle
+from .llm_helpers import SteerableToolHandle
 
-__all__ = ["AsyncToolLoopHandle"]
+__all__ = ["SteerableToolHandle"]

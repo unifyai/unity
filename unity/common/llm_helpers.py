@@ -409,9 +409,9 @@ async def _async_tool_use_loop_inner(
             #            tool-message in the transcript.
             # ───────────────────────────────────────────────────────────────
             # treat ANY AsyncToolLoopHandle (or subclass) as a nested loop
-            from unity.common.llm_helpers import AsyncToolLoopHandle
+            from unity.common.llm_helpers import SteerableToolHandle
 
-            if isinstance(raw, AsyncToolLoopHandle):
+            if isinstance(raw, SteerableToolHandle):
                 # ── upgrade interject / clarification flags from handle ─────
                 if hasattr(raw, "interject"):
                     info["is_interjectable"] = True
@@ -1637,7 +1637,7 @@ async def _async_tool_use_loop_inner(
 # ─────────────────────────────────────────────────────────────────────────────
 # 2.  Tiny handle objects exposed to callers
 # ─────────────────────────────────────────────────────────────────────────────
-class AsyncToolLoopHandle:
+class SteerableToolHandle:
     """
     Returned by `start_async_tool_use_loop`.  Lets you
       • queue extra user messages while the loop runs and
@@ -1709,7 +1709,7 @@ def start_async_tool_use_loop(
     log_steps: bool = False,
     max_steps: int = 20,
     timeout: int = 60,
-) -> AsyncToolLoopHandle:
+) -> SteerableToolHandle:
     """
     Kick off `_async_tool_use_loop_inner` in its own task and give the caller
     a handle for live interaction.
@@ -1740,7 +1740,7 @@ def start_async_tool_use_loop(
         ),
     )
 
-    return AsyncToolLoopHandle(
+    return SteerableToolHandle(
         task=task,
         interject_queue=interject_queue,
         cancel_event=cancel_event,
