@@ -1,5 +1,6 @@
 import pytest
 import time
+import json
 import asyncio
 import unify
 
@@ -13,7 +14,7 @@ from unity.common.llm_helpers import start_async_tool_use_loop, AsyncToolLoopHan
 
 def inner_tool() -> str:  # noqa: D401 – simple value
     """Returns the literal string 'inner‑result'."""
-    time.sleep(1)
+    time.sleep(8)
     return "inner-result"
 
 
@@ -55,7 +56,7 @@ async def outer_tool() -> AsyncToolLoopHandle:
 
 @pytest.mark.asyncio
 async def test_nested_async_tool_loop():
-    """Full end‑to‑end check – no mocks, real network call to OpenAI."""
+    """Full end-to-end check – no mocks, real network call to OpenAI."""
 
     # Outer client that drives the *first* loop
     client = unify.AsyncUnify("gpt-4o@openai", cache=True, traced=True)
@@ -81,35 +82,54 @@ async def test_nested_async_tool_loop():
     # The assistant must answer as instructed.
     assert final_reply.strip().lower() == "all done"
 
-    # System message
+    # 0. System message
     assert client.messages[0] == {
         "role": "system",
-        "content": "You are running inside an automated test. Perform the steps exactly:\n1\ufe0f\u20e3  Call `outer_tool` with no arguments.\n2\ufe0f\u20e3  Continue running this tool call, when given the option.\n3\ufe0f\u20e3  Once it is *completed*, respond with exactly 'all done'.",
+        "content": "You are running inside an automated test. Perform the steps exactly:\n"
+        "1\ufe0f\u20e3  Call `outer_tool` with no arguments.\n"
+        "2\ufe0f\u20e3  Continue running this tool call, when given the option.\n"
+        "3\ufe0f\u20e3  Once it is *completed*, respond with exactly 'all done'.",
     }
 
-    # User message
+    # 1. User message
     assert client.messages[1] == {
         "role": "user",
         "content": "start",
     }
 
-    # Assistant tool selection
-    tool_selection_msg = client.messages[2]
-    assert tool_selection_msg["role"] == "assistant"
-    assert len(tool_selection_msg["tool_calls"]) == 1
-    assert tool_selection_msg["tool_calls"][0]["function"] == {
+    # 2. Assistant: initial tool selection
+    initial_call = client.messages[2]
+    assert initial_call["role"] == "assistant"
+    assert len(initial_call["tool_calls"]) == 1
+    assert initial_call["tool_calls"][0]["function"] == {
         "arguments": "{}",
         "name": "outer_tool",
     }
 
-    # Tool response
-    tool_response = client.messages[3]
-    assert tool_response["role"] == "tool"
-    assert tool_response["name"] == "outer_tool"
-    assert "done" in tool_response["content"].lower()
+    # 3. Tool: initial response
+    first_tool_resp = client.messages[3]
+    assert first_tool_resp["role"] == "tool"
+    assert first_tool_resp["name"] == "outer_tool"
+    assert "waiting for result" in first_tool_resp["content"].lower()
 
-    # Assistant final response
-    assert client.messages[4] == {
+    # 4. Assistant: continuation tool selection
+    cont_call = client.messages[4]
+    assert cont_call["role"] == "assistant"
+    assert len(cont_call["tool_calls"]) == 1
+    fn = cont_call["tool_calls"][0]["function"]
+    # name should start with the continuation helper + original call ID
+    assert fn["arguments"] == "{}"
+    assert fn["name"].startswith("_continue_outer_tool_call_")
+
+    # 5. Tool: completion response
+    comp_tool_resp = client.messages[5]
+    assert comp_tool_resp["role"] == "tool"
+    # the tool "name" field includes the completion notice
+    assert "completed successfully" in comp_tool_resp["name"].lower()
+    assert "done" in comp_tool_resp["content"].lower()
+
+    # 6. Assistant: final response
+    assert client.messages[6] == {
         "content": "all done",
         "refusal": None,
         "role": "assistant",
@@ -118,7 +138,9 @@ async def test_nested_async_tool_loop():
         "function_call": None,
         "tool_calls": None,
     }
-    assert len(client.messages) == 5
+
+    # exactly 7 messages in total
+    assert len(client.messages) == 7
 
 
 @pytest.mark.asyncio
@@ -260,15 +282,40 @@ async def test_interject_nested_handle(monkeypatch):
     )
 
     # give assistant time to schedule outer_tool so helper exists
-    await asyncio.sleep(2)
+    await asyncio.sleep(5)
     await top_handle.interject("switch to dogs")
 
     final_reply = await top_handle.result()
 
-    # 5.  Assertions
-    assert final_reply.strip().lower() == "outer done"
-    assert interject_calls["count"] == 1, "handle.interject should be called once"
-    assert "dogs" in interject_calls["payloads"][0].lower()
+    # 5. Assertions
+    msgs = client.messages
+
+    # a) The assistant should have invoked `outer_tool` in its first tool call
+    assert msgs[2]["tool_calls"][0]["function"]["name"] == "outer_tool"
+
+    # b) The tool should then return the raw string "done"
+    assert msgs[3]["role"] == "tool"
+    assert msgs[3]["name"] == "outer_tool"
+    assert msgs[3]["content"] == '"done"'
+
+    # c) The user then says "switch to dogs"
+    assert msgs[4]["role"] == "user"
+    assert msgs[4]["content"].strip().lower() == "switch to dogs"
+
+    # d) The assistant must call the interject‐helper next
+    interj = msgs[-3]["tool_calls"][0]["function"]
+    assert interj["name"].startswith("_interject_outer_tool_call_")
+    #    ...and pass exactly {"content": "dogs"}
+    assert json.loads(interj["arguments"]) == {"content": "dogs"}
+
+    # e) That helper then returns confirmation
+    assert msgs[-2]["role"] == "tool"
+    assert msgs[-2]["name"].startswith("_interject outer_tool")
+    assert 'Guidance "dogs" forwarded to the running tool.' in msgs[-2]["content"]
+
+    # f) Finally, the assistant’s last message must be “outer done”
+    assert msgs[-1]["role"] == "assistant"
+    assert msgs[-1]["content"].strip().lower() == "outer done"
 
 
 @pytest.mark.asyncio
