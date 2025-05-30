@@ -1637,7 +1637,25 @@ async def _async_tool_use_loop_inner(
 # ─────────────────────────────────────────────────────────────────────────────
 # 2.  Tiny handle objects exposed to callers
 # ─────────────────────────────────────────────────────────────────────────────
-class SteerableToolHandle:
+from abc import ABC, abstractmethod
+
+
+class SteerableToolHandle(ABC):
+    """Abstract base class for steerable tool handles."""
+
+    @abstractmethod
+    def __init__(
+        self,
+    ) -> None:
+        pass
+
+    @abstractmethod
+    @unify.traced
+    async def result(self) -> str:
+        """Wait for the assistant's *final* reply."""
+
+
+class AsyncToolUseLoopHandle(SteerableToolHandle):
     """
     Returned by `start_async_tool_use_loop`.  Lets you
       • queue extra user messages while the loop runs and
@@ -1709,7 +1727,7 @@ def start_async_tool_use_loop(
     log_steps: bool = False,
     max_steps: int = 20,
     timeout: int = 60,
-) -> SteerableToolHandle:
+) -> AsyncToolUseLoopHandle:
     """
     Kick off `_async_tool_use_loop_inner` in its own task and give the caller
     a handle for live interaction.
@@ -1740,7 +1758,7 @@ def start_async_tool_use_loop(
         ),
     )
 
-    return SteerableToolHandle(
+    return AsyncToolUseLoopHandle(
         task=task,
         interject_queue=interject_queue,
         cancel_event=cancel_event,
