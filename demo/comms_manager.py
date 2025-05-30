@@ -8,7 +8,9 @@ from events import *
 
 # Subscription IDs
 project_id = "responsive-city-458413-a2"
-subscription_id = os.getenv("ASSISTANT_ID", "default-assistant") + "-sub"
+subscription_id = (
+    ("unity-" + os.getenv("ASSISTANT_ID")) if os.getenv("ASSISTANT_ID") else "default-assistant"
+) + "-sub"
 
 # Map subscription IDs to their corresponding event types
 events_map: dict[str, Event] = {
