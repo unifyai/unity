@@ -130,10 +130,10 @@ class ToolLoopPlanner:
             return answer
 
         return {
-            "act": act_tool,
-            "observe": observe_tool,
-            "communicate": communicate_tool,
-            "request_clarification": request_clarification_tool,
+            "act_tool": act_tool,
+            "observe_tool": observe_tool,
+            "communicate_tool": communicate_tool,
+            "request_clarification_tool": request_clarification_tool,
         }
 
     @property
@@ -251,7 +251,7 @@ class ToolLoopPlanner:
             message=task_description,
             tools=self._tools,  # Includes request_clarification
             interrupt_llm_with_interjections=True,
-            log_steps=False,  # Enable for detailed debugging
+            log_steps=True,  # Enable for detailed debugging
         )
 
         self._attach_completion_callback(self._loop_handle)
