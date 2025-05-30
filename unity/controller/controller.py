@@ -11,7 +11,6 @@ from ..constants import LOGGER
 
 
 class Controller(threading.Thread):
-
     def __init__(
         self,
         *,
@@ -41,6 +40,10 @@ class Controller(threading.Thread):
         """
         Background loop: listen for browser_state messages and update cached context.
         """
+        if not self._browser_open:
+            self._browser_worker.start()
+            self._browser_open = True
+
         for msg in self._pubsub_browser_state.listen():
             if msg.get("type") != "message":
                 continue
