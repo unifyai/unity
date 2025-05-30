@@ -70,8 +70,6 @@ class SimulatedPlan(SteerableToolHandle):
             self._stop_event.clear()
 
     def _start(self):
-        if self._task is not None:
-            raise Exception("Another task is already running.")
         self._paused = False
         self._pause_event.set()
         self._stop_event.clear()
