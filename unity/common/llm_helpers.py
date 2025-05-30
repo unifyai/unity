@@ -993,9 +993,8 @@ async def _async_tool_use_loop_inner(
                     "tool_call_id": call_id,
                     "name": name,
                     "content": (
-                        "Still running… If this call is no longer needed call "
-                        f"`cancel_{call_id}` otherwise use `continue_{call_id}` "
-                        "to keep waiting."
+                        "Still running… you can use any of the available helper tools "
+                        "to interact with this tool call while it is in progress."
                     ),
                 }
                 _insert_after_assistant(asst_msg, placeholder)
