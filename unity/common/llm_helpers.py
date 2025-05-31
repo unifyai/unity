@@ -58,7 +58,7 @@ def _discover_public_methods(handle) -> dict[str, Callable]:
             continue
         # Bind the method to *handle* (important for late-added attributes).
         try:
-            bound = handle.__getattr__(name)
+            bound = handle.__getattribute__(name)
         except Exception:
             # Attribute access raised – treat as non-callable.
             continue
