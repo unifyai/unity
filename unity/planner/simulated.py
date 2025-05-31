@@ -261,7 +261,7 @@ class SimulatedPlanner:
             steps: Number of steps before plans complete
         """
         self._steps = steps
-        self._plans = list()
+        self._plan = None
 
     def plan(self, task: str):
         """
@@ -274,5 +274,5 @@ class SimulatedPlanner:
             A new SimulatedPlan instance
         """
         plan = SimulatedPlan(task, self._steps)
-        self._plans.append(plan)
+        self._plan = plan
         return plan
