@@ -161,10 +161,22 @@ def method_to_schema(bound_method):
         if param.default is inspect._empty:
             required.append(name)
 
+    if hasattr(bound_method, "__self__") and hasattr(
+        bound_method.__self__,
+        "__class__",
+    ):
+        prefix = f"{bound_method.__self__.__class__.__name__}_"
+    elif hasattr(bound_method, "__qualname__"):
+        parts = bound_method.__qualname__.split(".")
+        prefix = f"{parts[-2]}_" if len(parts) > 1 else ""
+    else:
+        prefix = ""
+    tool_name = f"{prefix}{bound_method.__name__}"
+
     return {
         "type": "function",
         "function": {
-            "name": bound_method.__name__,
+            "name": tool_name,
             "description": (bound_method.__doc__ or "").strip(),
             "parameters": {
                 "type": "object",
