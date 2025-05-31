@@ -236,6 +236,8 @@ class SimulatedPlan(SteerableToolHandle):
 
     @property
     def valid_tools(self):
+        if self._task is None:
+            return {}
         available = {
             self.stop.__name__: self.stop,
             self.interject.__name__: self.interject,
