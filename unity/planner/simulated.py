@@ -13,7 +13,13 @@ class SimulatedPlan(SteerableToolHandle):
     based on whether a task is running and whether it is paused.
     """
 
-    def __init__(self, task: str, steps: int) -> None:
+    def __init__(
+        self,
+        task: str,
+        steps: int,
+        clarification_up_q: asyncio.Queue[str] | None = None,
+        clarification_down_q: asyncio.Queue[str] | None = None,
+    ) -> None:
         """
         Initialize a simulated plan.
 
@@ -23,6 +29,11 @@ class SimulatedPlan(SteerableToolHandle):
         """
         self._task = task
         self._steps = steps
+        self._clar_up_q = clarification_up_q
+        self._clar_down_q = clarification_down_q
+        self._request_clarification: bool = (
+            self._clar_up_q is not None and self._clar_down_q is not None
+        )
 
         # step-counting
         self._step_count = 0
@@ -72,6 +83,30 @@ class SimulatedPlan(SteerableToolHandle):
             )
 
             while True:
+
+                if self._request_clarification:
+                    # send the question up
+                    try:
+                        self._clar_up_q.put_nowait(
+                            "Can you please clarify what exactly you'd like me to do?",
+                        )
+                    except asyncio.QueueFull:
+                        pass
+
+                    # wait (non-blocking) for the answer to come back down
+                    while True:
+                        try:
+                            answer: str = self._clar_down_q.get_nowait()
+                            break
+                        except asyncio.QueueEmpty:
+                            time.sleep(0.05)
+
+                    # finish immediately once we have the clarification
+                    self._complete(f"Clarification received: {answer}")
+                    return
+
+                # normal execution path (only reached when no clarification needed)
+
                 if self._stop_event.is_set():
                     return
 
@@ -261,9 +296,14 @@ class SimulatedPlanner:
             steps: Number of steps before plans complete
         """
         self._steps = steps
-        self._plan = None
+        self._active_plan = None
 
-    def plan(self, task: str):
+    def plan(
+        self,
+        task: str,
+        clarification_up_q: asyncio.Queue[str] | None = None,
+        clarification_down_q: asyncio.Queue[str] | None = None,
+    ):
         """
         Start a new simulated plan.
 
@@ -273,6 +313,15 @@ class SimulatedPlanner:
         Returns:
             A new SimulatedPlan instance
         """
-        plan = SimulatedPlan(task, self._steps)
-        self._plan = plan
+        plan = SimulatedPlan(
+            task,
+            self._steps,
+            clarification_up_q=clarification_up_q,
+            clarification_down_q=clarification_down_q,
+        )
+        self._active_plan = plan
         return plan
+
+    @property
+    def active_plan(self) -> SimulatedPlan:
+        return self._active_plan
