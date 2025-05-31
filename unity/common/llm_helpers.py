@@ -937,7 +937,19 @@ async def _async_tool_use_loop_inner(
 
                 # 7.  expose *all* other public methods of the handle
                 if handle is not None:
-                    for meth_name, bound in _discover_public_methods(handle).items():
+
+                    public_methods = _discover_public_methods(handle)
+
+                    # ── honour handle.valid_tools, if present ──────────────
+                    if hasattr(handle, "valid_tools"):
+                        allowed: set[str] = set(getattr(handle, "valid_tools", []))
+                        public_methods = {
+                            name: bound
+                            for name, bound in public_methods.items()
+                            if name in allowed
+                        }
+
+                    for meth_name, bound in public_methods.items():
                         # use the same name we’re about to give fn.__name__
                         func_name = f"_{meth_name}_{_call_id}"
                         helper_key = func_name
