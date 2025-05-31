@@ -1,6 +1,7 @@
 import time
 import asyncio
 import threading
+import functools
 
 import unify
 from unity.common.llm_helpers import SteerableToolHandle
@@ -170,6 +171,7 @@ class SimulatedPlan(SteerableToolHandle):
                 )
             fn = getattr(self, f"_{name}")
 
+            @functools.wraps(fn)
             def wrapped(*args, **kwargs):
                 # increment step counter
                 if not self._done_event.is_set():
