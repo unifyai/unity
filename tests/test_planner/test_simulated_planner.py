@@ -162,9 +162,9 @@ async def test_stop_simulated_plan(monkeypatch):
     original_stop = SimulatedPlan.stop
 
     @functools.wraps(original_stop)
-    def stop(self, reason: str) -> str:
+    def stop(self) -> str:
         stopped["count"] += 1
-        return original_stop(self, reason)
+        return original_stop(self)
 
     monkeypatch.setattr(SimulatedPlan, "stop", stop, raising=True)
 
