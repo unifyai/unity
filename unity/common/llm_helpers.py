@@ -40,7 +40,7 @@ _MANAGEMENT_METHOD_NAMES: set[str] = {
 }
 
 
-def _discover_public_methods(handle) -> dict[str, Callable]:
+def _discover_custom_public_methods(handle) -> dict[str, Callable]:
     """
     Return a mapping ``name → bound_method`` of *public* callables on *handle*:
         • name does **not** start with ``_``  _and_
@@ -938,7 +938,7 @@ async def _async_tool_use_loop_inner(
                 # 7.  expose *all* other public methods of the handle
                 if handle is not None:
 
-                    public_methods = _discover_public_methods(handle)
+                    public_methods = _discover_custom_public_methods(handle)
 
                     # ── honour handle.valid_tools, if present ──────────────
                     if hasattr(handle, "valid_tools"):
