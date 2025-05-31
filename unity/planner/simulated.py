@@ -143,12 +143,9 @@ class SimulatedPlan(SteerableToolHandle):
 
     # Dynamic Methods (Public vs Private Depending on State)
 
-    def stop(self, reason: str) -> str:
+    def stop(self) -> str:
         """
         Stop the currently running task.
-
-        Args:
-            reason: The reason for stopping the task
 
         Returns:
             A message confirming the task was stopped
@@ -158,7 +155,7 @@ class SimulatedPlan(SteerableToolHandle):
         """
         if not self._task:
             raise Exception("No tasks are currently being performed.")
-        msg = f"Stopped task '{self._task}' for reason: {reason}"
+        msg = f"Stopped task '{self._task}'"
         # complete with stop message
         self._complete(msg)
         return msg
