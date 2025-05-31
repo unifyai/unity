@@ -951,7 +951,7 @@ async def _async_tool_use_loop_inner(
 
                     for meth_name, bound in public_methods.items():
                         # use the same name we’re about to give fn.__name__
-                        func_name = f"_{meth_name}_{_call_id}"
+                        func_name = f"_{meth_name}_{_fn_name}_{_call_id}"
                         helper_key = func_name
 
                         # Skip if we already generated one this turn (possible when

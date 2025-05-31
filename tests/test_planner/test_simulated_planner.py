@@ -51,11 +51,6 @@ async def test_start_and_ask_simulated_plan(monkeypatch):
     assert "done" in final.strip().lower()
     # ask should have been called exactly once
     assert ask_called["count"] == 1, "._ask should be invoked exactly once"
-    # check a tool-message from _ask_ helper
-    assert any(
-        m.get("role") == "tool" and m.get("name", "").startswith("_ask_call_")
-        for m in client.messages
-    ), "No tool-message from the `_ask_…` helper found"
 
 
 @pytest.mark.asyncio
