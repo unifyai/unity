@@ -1,8 +1,6 @@
 import time
 import asyncio
-import inspect
 import threading
-import functools
 
 import unify
 from unity.common.llm_helpers import SteerableToolHandle
@@ -25,9 +23,12 @@ class SimulatedPlan(SteerableToolHandle):
         """
         self._task = task
         self._steps = steps
-        # count how many public calls have been made
+
+        # step-counting
         self._step_count = 0
-        # event to signal completion and storage for result
+        self._step_lock = threading.Lock()
+
+        # task-control primitives
         self._done_event = threading.Event()
         self._result_str: str | None = None
         self._paused = None
@@ -73,6 +74,11 @@ class SimulatedPlan(SteerableToolHandle):
             while True:
                 if self._stop_event.is_set():
                     return
+
+                if self._step_count >= self._steps:
+                    self._complete(f"Completed task '{task}' in {self._steps} steps.")
+                    return
+
                 self._pause_event.wait()
                 time.sleep(0.1)
         finally:
@@ -100,19 +106,6 @@ class SimulatedPlan(SteerableToolHandle):
         )
         self._task_thread.start()
 
-    # Pubic
-
-    async def result(self) -> str:
-        """
-        Wait until the specified number of public method calls have completed.
-
-        Returns:
-            The final result message from the completed plan
-        """
-        # block in threadpool until we call _complete
-        await asyncio.to_thread(self._done_event.wait)
-        return self._result_str  # type: ignore
-
     def _complete(self, message: str) -> None:
         """
         Internal: finish the plan once step target reached or stopped early.
@@ -129,9 +122,27 @@ class SimulatedPlan(SteerableToolHandle):
             self._result_str = message
             self._done_event.set()
 
+    def _count_step(self):
+        if not self._done_event.is_set():
+            with self._step_lock:
+                self._step_count += 1
+
+    # Pubic
+
+    async def result(self) -> str:
+        """
+        Wait until the specified number of public method calls have completed.
+
+        Returns:
+            The final result message from the completed plan
+        """
+        # block in threadpool until we call _complete
+        await asyncio.to_thread(self._done_event.wait)
+        return self._result_str  # type: ignore
+
     # Dynamic Methods (Public vs Private Depending on State)
 
-    def _stop(self, reason: str) -> str:
+    def stop(self, reason: str) -> str:
         """
         Stop the currently running task.
 
@@ -152,7 +163,7 @@ class SimulatedPlan(SteerableToolHandle):
         self._complete(msg)
         return msg
 
-    def _interject(self, instruction: str) -> str:
+    def interject(self, instruction: str) -> str:
         """
         Send an instruction to influence the running task.
 
@@ -167,9 +178,10 @@ class SimulatedPlan(SteerableToolHandle):
         """
         if not self._task:
             raise Exception("No tasks are currently being performed.")
+        self._count_step()
         return self._interject_simulator.generate(instruction)
 
-    def _pause(self) -> str:
+    def pause(self) -> str:
         """
         Pause the currently running task.
 
@@ -185,9 +197,10 @@ class SimulatedPlan(SteerableToolHandle):
             return "Task is already paused."
         self._paused = True
         self._pause_event.clear()
+        self._count_step()
         return f"Paused task '{self._task}'."
 
-    def _resume(self) -> str:
+    def resume(self) -> str:
         """
         Resume a paused task.
 
@@ -203,9 +216,10 @@ class SimulatedPlan(SteerableToolHandle):
             return "Task is already running."
         self._paused = False
         self._pause_event.set()
+        self._count_step()
         return f"Resumed task '{self._task}'."
 
-    def _ask(self, question: str) -> str:
+    def ask(self, question: str) -> str:
         """
         Ask a question about the progress of the ongoing plan.
 
@@ -220,87 +234,22 @@ class SimulatedPlan(SteerableToolHandle):
         """
         if not self._task:
             raise Exception("No tasks are currently being performed.")
+        self._count_step()
         return self._ask_simulator.generate(question)
 
-    # Dynamic exposure of only the valid methods
-
-    def _can_stop(self) -> bool:
-        """Check if stop operation is currently valid."""
-        return self._task is not None
-
-    def _can_interject(self) -> bool:
-        """Check if interject operation is currently valid."""
-        return self._task is not None
-
-    def _can_ask(self) -> bool:
-        """Check if ask operation is currently valid."""
-        return self._task is not None
-
-    def _can_pause(self) -> bool:
-        """Check if pause operation is currently valid."""
-        return (self._task is not None) and (not self._paused)
-
-    def _can_resume(self) -> bool:
-        """Check if resume operation is currently valid."""
-        return (self._task is not None) and (self._paused is True)
-
-    def __getattr__(self, name: str):
-        """
-        Dynamic attribute lookup that exposes public methods only when valid.
-
-        Args:
-            name: The attribute name being looked up
-
-        Returns:
-            The wrapped method if available
-
-        Raises:
-            AttributeError: If the method is not available in current state
-        """
-        # any public API call counts as a step
-        public = ("stop", "interject", "ask", "pause", "resume")
-        if name in public:
-            can_method = getattr(self, f"_can_{name}")
-            if not can_method():
-                raise AttributeError(
-                    f"'{type(self).__name__}' object has no attribute '{name}'",
-                )
-            fn = getattr(self, f"_{name}")
-
-            @functools.wraps(fn)
-            def wrapped(*args, **kwargs):
-                # increment step counter
-                if not self._done_event.is_set():
-                    self._step_count += 1
-                    if self._step_count >= self._steps:
-                        # complete with success message
-                        self._complete(
-                            f"Task '{self._task}' completed after {self._steps} steps.",
-                        )
-                return fn(*args, **kwargs)
-
-            sig = inspect.signature(fn)
-            wrapped.__signature__ = sig  # so introspection works
-            wrapped.__annotations__ = getattr(fn, "__annotations__", {}).copy()
-
-            return wrapped
-        raise AttributeError(
-            f"'{type(self).__name__}' object has no attribute '{name}'",
-        )
-
-    def __dir__(self):
-        """
-        Return list of valid attributes, including only currently available public methods.
-
-        Returns:
-            List of valid attribute names
-        """
-        base = set(super().__dir__())
-        # add only those public names whose predicate is true
-        for name in ("stop", "interject", "ask", "pause", "resume"):
-            if getattr(self, f"_can_{name}")():
-                base.add(name)
-        return sorted(base)
+    @property
+    def valid_tools(self):
+        available = {
+            f"Planner.{self.stop}": self.stop,
+            f"Planner.{self.interject}": self.interject,
+            f"Planner.{self.ask}": self.ask,
+        }
+        # When paused we want the user to be able to resume, not call start again.
+        if self._paused:
+            available[f"Planner.{self.resume}"] = self.resume
+        else:
+            available[f"Planner.{self.pause}"] = self.pause
+        return available
 
 
 class SimulatedPlanner:
