@@ -1,4 +1,5 @@
 import pytest
+import asyncio
 import functools
 import unify
 
@@ -34,7 +35,7 @@ async def test_start_and_ask_simulated_plan(monkeypatch):
 
     system = (
         "You are running inside an automated test.\n"
-        "1️⃣ Call `start` with argument task='perform research on a competitor company'.\n"
+        "1️⃣ Call `start` with argument task='perform research on a Tasty Cola Ltd.'.\n"
         "2️⃣ When given the option, call the helper whose name starts with `_ask_call_` **once**, and ask if there are any early findings already\n"
         "3️⃣ Finally, regardless of the response to this question, just reply back to the user with exactly 'done', without calling any more tools."
     )
@@ -57,41 +58,46 @@ async def test_start_and_ask_simulated_plan(monkeypatch):
     ), "No tool-message from the `_ask_…` helper found"
 
 
-# @pytest.mark.asyncio
-# async def test_interject_simulated_plan(monkeypatch):
-#     """
-#     Test that the outer loop can interject instructions into the simulated plan via the `_interject_` helper.
-#     """
-#     planner = SimulatedPlanner()
-#     interjected = {"count": 0, "msgs": []}
-#     original_interject = SimulatedPlan._interject
-#     def patched_interject(self, instruction: str) -> str:
-#         interjected["count"] += 1
-#         interjected["msgs"].append(instruction)
-#         return original_interject(self, instruction)
-#     monkeypatch.setattr(SimulatedPlan, "_interject", patched_interject, raising=True)
+@pytest.mark.asyncio
+@_handle_project
+async def test_interject_simulated_plan(monkeypatch):
+    """
+    Test that the outer loop can interject instructions into the simulated plan via the `_interject_` helper.
+    """
+    planner = SimulatedPlanner(1)
+    interjected = {"count": 0, "msgs": []}
+    original_interject = SimulatedPlan.interject
 
-#     system = (
-#         "You are running inside an automated test.\n"
-#         "1️⃣ Call `start` with task='long-run'.\n"
-#         "2️⃣ When the user says 'adjust', call the helper starting with `_interject_start_call_` passing {\"content\": \"faster\"}.\n"
-#         "3️⃣ Finally, reply with 'adjusted done'."
-#     )
-#     client = make_client(system)
-#     handle = start_async_tool_use_loop(
-#         client=client,
-#         message="kickoff",
-#         tools={"start": planner.start},
-#         max_steps=20,
-#         timeout=120,
-#     )
-#     # wait for initial scheduling
-#     await asyncio.sleep(2)
-#     await handle.interject("adjust")
-#     final = await handle.result()
-#     assert final.strip().lower() == "adjusted done"
-#     assert interjected["count"] == 1, "._interject should be called exactly once"
-#     assert interjected["msgs"] == ["faster"], "Interjection payload incorrect"
+    @functools.wraps(original_interject)
+    def interject(self, instruction: str) -> str:
+        interjected["count"] += 1
+        interjected["msgs"].append(instruction)
+        return original_interject(self, instruction)
+
+    monkeypatch.setattr(SimulatedPlan, "interject", interject, raising=True)
+
+    system = (
+        "You are running inside an automated test.\n"
+        "1️⃣ Call `start` with argument task='perform research on Tasty Cola Ltd.'.\n"
+        "2️⃣ When the user says 'adjust', call the helper starting with `_interject_call_` **once**, explaining that we want to know what their revenue is, as part of the research.\n"
+        "3️⃣ Finally, reply to the user with 'interjection sent'."
+    )
+    client = make_client(system)
+    handle = start_async_tool_use_loop(
+        client=client,
+        message="kickoff",
+        tools={"start": planner.start},
+        max_steps=20,
+        timeout=120,
+    )
+    # wait for initial scheduling
+    await asyncio.sleep(5)
+    await handle.interject("adjust")
+    final = await handle.result()
+    assert "interjection sent" in final.strip().lower()
+    assert interjected["count"] == 1, "._interject should be called exactly once"
+    assert "revenue" in interjected["msgs"][0].lower(), "Interjection payload incorrect"
+
 
 # @pytest.mark.asyncio
 # async def test_pause_and_resume_simulated_plan(monkeypatch):
