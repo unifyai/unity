@@ -151,34 +151,39 @@ async def test_pause_and_resume_simulated_plan(monkeypatch):
     }, "pause/resume should each be called once"
 
 
-# @pytest.mark.asyncio
-# async def test_stop_simulated_plan(monkeypatch):
-#     """
-#     Test that the outer loop can stop the simulated plan via `_stop_` helper.
-#     """
-#     planner = SimulatedPlanner()
-#     stopped = {"count": 0}
-#     original_stop = SimulatedPlan._stop
-#     def patched_stop(self, reason: str) -> str:
-#         stopped["count"] += 1
-#         return original_stop(self, reason)
-#     monkeypatch.setattr(SimulatedPlan, "_stop", patched_stop, raising=True)
+@pytest.mark.asyncio
+@_handle_project
+async def test_stop_simulated_plan(monkeypatch):
+    """
+    Test that the outer loop can stop the simulated plan via `_stop_` helper.
+    """
+    planner = SimulatedPlanner(1)
+    stopped = {"count": 0}
+    original_stop = SimulatedPlan.stop
 
-#     system = (
-#         "1️⃣ Call `start` with task='stoptest'.\n"
-#         "2️⃣ When the user says 'stop it', call the helper starting with `_stop_start_call_`.\n"
-#         "3️⃣ Finally, reply with 'stopped done'."
-#     )
-#     client = make_client(system)
-#     handle = start_async_tool_use_loop(
-#         client=client,
-#         message="begin",
-#         tools={"start": planner.start},
-#         max_steps=20,
-#         timeout=120,
-#     )
-#     await asyncio.sleep(2)
-#     await handle.interject("stop it")
-#     final = await handle.result()
-#     assert final.strip().lower() == "stopped done"
-#     assert stopped["count"] == 1, "._stop should be called exactly once"
+    @functools.wraps(original_stop)
+    def stop(self, reason: str) -> str:
+        stopped["count"] += 1
+        return original_stop(self, reason)
+
+    monkeypatch.setattr(SimulatedPlan, "stop", stop, raising=True)
+
+    system = (
+        "You are running inside an automated test.\n"
+        "1️⃣ Call `start` with argument task='perform research on Tasty Cola Ltd.'.\n"
+        "2️⃣ When the user says 'stop it', call the helper starting with `_stop_call_`.\n"
+        "3️⃣ Finally, reply with 'stopped'."
+    )
+    client = make_client(system)
+    handle = start_async_tool_use_loop(
+        client=client,
+        message="begin",
+        tools={"start": planner.start},
+        max_steps=20,
+        timeout=120,
+    )
+    await asyncio.sleep(5)
+    await handle.interject("stop it")
+    final = await handle.result()
+    assert "stopped" in final.strip().lower()
+    assert stopped["count"] == 1, "._stop should be called exactly once"
