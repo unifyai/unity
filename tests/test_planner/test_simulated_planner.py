@@ -182,3 +182,34 @@ async def test_stop_simulated_plan(monkeypatch):
     final = await handle.result()
     assert "stopped" in final.strip().lower()
     assert stopped["count"] == 1, "._stop should be called exactly once"
+
+
+@pytest.mark.asyncio
+@_handle_project
+async def test_plan_requests_clarification():
+    """
+    The planner should send a clarification question over `clarification_up_q`
+    and wait for the reply on `clarification_down_q` before finishing.
+    """
+    planner = SimulatedPlanner(steps=1)
+
+    up_q: asyncio.Queue[str] = asyncio.Queue()
+    down_q: asyncio.Queue[str] = asyncio.Queue()
+
+    # start a plan that needs clarification
+    plan = planner.plan(
+        "Compile the quarterly report",
+        clarification_up_q=up_q,
+        clarification_down_q=down_q,
+    )
+
+    # the plan must ask a clarification question first
+    question = await asyncio.wait_for(up_q.get(), timeout=30)
+    assert "clarify" in question.lower()
+
+    # provide the clarification answer
+    await down_q.put("Yes, please compile the Q1 report now.")
+
+    # the final result should propagate the clarification answer
+    result = await plan.result()
+    assert "q1 report" in result.lower()
