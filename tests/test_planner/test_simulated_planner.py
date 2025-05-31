@@ -99,45 +99,57 @@ async def test_interject_simulated_plan(monkeypatch):
     assert "revenue" in interjected["msgs"][0].lower(), "Interjection payload incorrect"
 
 
-# @pytest.mark.asyncio
-# async def test_pause_and_resume_simulated_plan(monkeypatch):
-#     """
-#     Test that the outer loop can pause and resume the simulated plan via `_pause_` and `_resume_` helpers.
-#     """
-#     planner = SimulatedPlanner()
-#     counts = {"pause": 0, "resume": 0}
-#     original_pause = SimulatedPlan._pause
-#     original_resume = SimulatedPlan._resume
-#     def patched_pause(self) -> str:
-#         counts["pause"] += 1
-#         return original_pause(self)
-#     def patched_resume(self) -> str:
-#         counts["resume"] += 1
-#         return original_resume(self)
-#     monkeypatch.setattr(SimulatedPlan, "_pause", patched_pause, raising=True)
-#     monkeypatch.setattr(SimulatedPlan, "_resume", patched_resume, raising=True)
+@pytest.mark.asyncio
+@_handle_project
+async def test_pause_and_resume_simulated_plan(monkeypatch):
+    """
+    Test that the outer loop can pause and resume the simulated plan via `_pause_` and `_resume_` helpers.
+    """
+    planner = SimulatedPlanner(2)
+    counts = {"pause": 0, "resume": 0}
+    original_pause = SimulatedPlan.pause
 
-#     system = (
-#         "1️⃣ Call `start` with task='pausable'.\n"
-#         "2️⃣ When the user says 'hold', call the helper starting with `_pause_start_call_`.\n"
-#         "3️⃣ When the user says 'go', call the helper starting with `_resume_start_call_`.\n"
-#         "4️⃣ After resume, reply with 'resumed done'."
-#     )
-#     client = make_client(system)
-#     handle = start_async_tool_use_loop(
-#         client=client,
-#         message="run",
-#         tools={"start": planner.start},
-#         max_steps=30,
-#         timeout=180,
-#     )
-#     await asyncio.sleep(2)
-#     await handle.interject("hold")
-#     await asyncio.sleep(1)
-#     await handle.interject("go")
-#     final = await handle.result()
-#     assert final.strip().lower() == "resumed done"
-#     assert counts == {"pause": 1, "resume": 1}, "pause/resume should each be called once"
+    @functools.wraps(original_pause)
+    def pause(self) -> str:
+        counts["pause"] += 1
+        return original_pause(self)
+
+    original_resume = SimulatedPlan.resume
+
+    @functools.wraps(original_resume)
+    def resume(self) -> str:
+        counts["resume"] += 1
+        return original_resume(self)
+
+    monkeypatch.setattr(SimulatedPlan, "pause", pause, raising=True)
+    monkeypatch.setattr(SimulatedPlan, "resume", resume, raising=True)
+
+    system = (
+        "You are running inside an automated test.\n"
+        "1️⃣ Call `start` with argument task='perform research on Tasty Cola Ltd.'.\n"
+        "2️⃣ When the user says 'hold', call the helper starting with `_pause_call_`.\n"
+        "3️⃣ When the user says 'go', call the helper starting with `_resume_call_`.\n"
+        "4️⃣ After resume, reply with 'done'."
+    )
+    client = make_client(system)
+    handle = start_async_tool_use_loop(
+        client=client,
+        message="run",
+        tools={"start": planner.start},
+        max_steps=30,
+        timeout=180,
+    )
+    await asyncio.sleep(5)
+    await handle.interject("hold")
+    await asyncio.sleep(5)
+    await handle.interject("go")
+    final = await handle.result()
+    assert "done" in final.strip().lower()
+    assert counts == {
+        "pause": 1,
+        "resume": 1,
+    }, "pause/resume should each be called once"
+
 
 # @pytest.mark.asyncio
 # async def test_stop_simulated_plan(monkeypatch):
