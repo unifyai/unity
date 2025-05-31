@@ -101,7 +101,7 @@ class SimulatedPlan(SteerableToolHandle):
         self._stop_event.clear()
         self._task_thread = threading.Thread(
             target=self._run_task,
-            args=(self._task),
+            args=(self._task,),
             daemon=True,
         )
         self._task_thread.start()
@@ -116,11 +116,12 @@ class SimulatedPlan(SteerableToolHandle):
         if not self._done_event.is_set():
             # stop background thread
             self._stop_event.set()
-            if self._task_thread and self._task_thread.is_alive():
-                self._task_thread.join(timeout=1)
             # store result and signal completion
             self._result_str = message
             self._done_event.set()
+            # kill task thread
+            if self._task_thread and self._task_thread.is_alive():
+                self._task_thread.join(timeout=1)
 
     def _count_step(self):
         if not self._done_event.is_set():
@@ -157,7 +158,6 @@ class SimulatedPlan(SteerableToolHandle):
         """
         if not self._task:
             raise Exception("No tasks are currently being performed.")
-        task = self._task
         msg = f"Stopped task '{self._task}' for reason: {reason}"
         # complete with stop message
         self._complete(msg)
