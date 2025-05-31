@@ -35,7 +35,7 @@ async def test_start_and_ask_simulated_plan(monkeypatch):
     system = (
         "You are running inside an automated test.\n"
         "1️⃣ Call `start` with argument task='perform research on a competitor company'.\n"
-        "2️⃣ When given the option, call the helper whose name starts with `_ask_call_` **once**, and ask for the name of the company to perform research on\n"
+        "2️⃣ When given the option, call the helper whose name starts with `_ask_call_` **once**, and ask if there are any early findings already\n"
         "3️⃣ Finally, regardless of the response to this question, just reply back to the user with exactly 'done', without calling any more tools."
     )
     client = make_client(system)
