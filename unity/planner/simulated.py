@@ -240,15 +240,15 @@ class SimulatedPlan(SteerableToolHandle):
     @property
     def valid_tools(self):
         available = {
-            f"Planner.{self.stop}": self.stop,
-            f"Planner.{self.interject}": self.interject,
-            f"Planner.{self.ask}": self.ask,
+            self.stop.__name__: self.stop,
+            self.interject.__name__: self.interject,
+            self.ask.__name__: self.ask,
         }
         # When paused we want the user to be able to resume, not call start again.
         if self._paused:
-            available[f"Planner.{self.resume}"] = self.resume
+            available[self.resume.__name__] = self.resume
         else:
-            available[f"Planner.{self.pause}"] = self.pause
+            available[self.pause.__name__] = self.pause
         return available
 
 
