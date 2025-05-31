@@ -1,5 +1,6 @@
 import time
 import asyncio
+import inspect
 import threading
 import functools
 
@@ -182,6 +183,10 @@ class SimulatedPlan(SteerableToolHandle):
                             f"Task '{self._task}' completed after {self._steps} steps.",
                         )
                 return fn(*args, **kwargs)
+
+            sig = inspect.signature(fn)
+            wrapped.__signature__ = sig  # so introspection works
+            wrapped.__annotations__ = getattr(fn, "__annotations__", {}).copy()
 
             return wrapped
         raise AttributeError(
