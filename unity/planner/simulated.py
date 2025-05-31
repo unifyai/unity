@@ -1,5 +1,4 @@
 import time
-import random
 import asyncio
 import threading
 
@@ -45,7 +44,7 @@ class SimulatedPlan(SteerableToolHandle):
     # Internal helpers
     # ──────────────────────────────────────────────────────────────────────────
 
-    def _run_task(self, task: str, duration: float) -> None:
+    def _run_task(self, task: str) -> None:
         try:
             self._ask_simulator.set_system_message(
                 f"You should pretend you are completing the following task:\n{task}\n"
@@ -56,8 +55,7 @@ class SimulatedPlan(SteerableToolHandle):
                 "Come up with imaginary responses to the user requests to steer the task behaviour.",
             )
 
-            start_time = time.perf_counter()
-            while time.perf_counter() - start_time < duration:
+            while True:
                 if self._stop_event.is_set():
                     return
                 self._pause_event.wait()
@@ -79,10 +77,9 @@ class SimulatedPlan(SteerableToolHandle):
         self._paused = False
         self._pause_event.set()
         self._stop_event.clear()
-        duration = random.uniform(5, 30)
         self._task_thread = threading.Thread(
             target=self._run_task,
-            args=(self._task, duration),
+            args=(self._task),
             daemon=True,
         )
         self._task_thread.start()
