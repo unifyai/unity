@@ -35,15 +35,15 @@ async def test_start_and_ask_simulated_plan(monkeypatch):
 
     system = (
         "You are running inside an automated test.\n"
-        "1️⃣ Call `start` with argument task='perform research on a Tasty Cola Ltd.'.\n"
-        "2️⃣ When given the option, call the helper whose name starts with `_ask_call_` **once**, and ask if there are any early findings already\n"
+        "1️⃣ Call `plan` with argument task='perform research on a Tasty Cola Ltd.'.\n"
+        "2️⃣ When given the option, call the helper whose name starts with `_ask_plan_call_` **once**, and ask if there are any early findings already\n"
         "3️⃣ Finally, regardless of the response to this question, just reply back to the user with exactly 'done', without calling any more tools."
     )
     client = make_client(system)
     handle = start_async_tool_use_loop(
         client=client,
         message="begin",
-        tools={"start": planner.start},
+        tools={"plan": planner.plan},
         max_steps=20,
         timeout=120,
     )
@@ -73,15 +73,15 @@ async def test_interject_simulated_plan(monkeypatch):
 
     system = (
         "You are running inside an automated test.\n"
-        "1️⃣ Call `start` with argument task='perform research on Tasty Cola Ltd.'.\n"
-        "2️⃣ When the user says 'adjust', call the helper starting with `_interject_call_` **once**, explaining that we want to know what their revenue is, as part of the research.\n"
+        "1️⃣ Call `plan` with argument task='perform research on Tasty Cola Ltd.'.\n"
+        "2️⃣ When the user says 'adjust', call the helper starting with `_interject_plan_call_` **once**, explaining that we want to know what their revenue is, as part of the research.\n"
         "3️⃣ Finally, reply to the user with 'interjection sent'."
     )
     client = make_client(system)
     handle = start_async_tool_use_loop(
         client=client,
         message="kickoff",
-        tools={"start": planner.start},
+        tools={"plan": planner.plan},
         max_steps=20,
         timeout=120,
     )
@@ -121,16 +121,16 @@ async def test_pause_and_resume_simulated_plan(monkeypatch):
 
     system = (
         "You are running inside an automated test.\n"
-        "1️⃣ Call `start` with argument task='perform research on Tasty Cola Ltd.'.\n"
-        "2️⃣ When the user says 'hold', call the helper starting with `_pause_call_`.\n"
-        "3️⃣ When the user says 'go', call the helper starting with `_resume_call_`.\n"
+        "1️⃣ Call `plan` with argument task='perform research on Tasty Cola Ltd.'.\n"
+        "2️⃣ When the user says 'hold', call the helper starting with `_pause_plan_call_`.\n"
+        "3️⃣ When the user says 'go', call the helper starting with `_resume_plan_call_`.\n"
         "4️⃣ After resume, reply with 'done'."
     )
     client = make_client(system)
     handle = start_async_tool_use_loop(
         client=client,
         message="run",
-        tools={"start": planner.start},
+        tools={"plan": planner.plan},
         max_steps=30,
         timeout=180,
     )
@@ -165,15 +165,15 @@ async def test_stop_simulated_plan(monkeypatch):
 
     system = (
         "You are running inside an automated test.\n"
-        "1️⃣ Call `start` with argument task='perform research on Tasty Cola Ltd.'.\n"
-        "2️⃣ When the user says 'stop it', call the helper starting with `_stop_call_`.\n"
+        "1️⃣ Call `plan` with argument task='perform research on Tasty Cola Ltd.'.\n"
+        "2️⃣ When the user says 'stop it', call the helper starting with `_stop_plan_call_`.\n"
         "3️⃣ Finally, reply with 'stopped'."
     )
     client = make_client(system)
     handle = start_async_tool_use_loop(
         client=client,
         message="begin",
-        tools={"start": planner.start},
+        tools={"plan": planner.plan},
         max_steps=20,
         timeout=120,
     )

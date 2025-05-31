@@ -263,7 +263,7 @@ class SimulatedPlanner:
         self._steps = steps
         self._plans = list()
 
-    def start(self, task: str):
+    def plan(self, task: str):
         """
         Start a new simulated plan.
 
