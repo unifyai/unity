@@ -116,6 +116,20 @@ class SimulatedTaskListManager:
     def __init__(self, description: str = "You manage an imaginary task list.") -> None:
         self._description = description
 
+        # One shared, stateful LLM client
+        self._llm = unify.Unify(
+            "gpt-4o@openai",
+            cache=json.loads(os.getenv("UNIFY_CACHE", "true")),
+            traced=json.loads(os.getenv("UNIFY_TRACED", "true")),
+            stateful=True,
+        )
+        self._llm.set_system_message(
+            "You are a *simulated* task-list manager. "
+            "There is NO real database – fabricate convincing yet *consistent* "
+            "answers and confirmations over time.\n\n"
+            f"Back-story: {self._description}",
+        )
+
     # ------------------------------------------------------------------ #
     #  ask                                                               #
     # ------------------------------------------------------------------ #
@@ -129,25 +143,9 @@ class SimulatedTaskListManager:
         clarification_up_q: asyncio.Queue[str] | None = None,
         clarification_down_q: asyncio.Queue[str] | None = None,
     ) -> SteerableToolHandle:
-        # System persona
-        sys_msg = (
-            "You are a *simulated* task-list manager. "
-            "You must not call any tools.  Simply answer the user's "
-            "questions naturally and confidently, inventing plausible "
-            "details when necessary.\n\n"
-            f"Context / back-story: {self._description}"
-        )
-
-        llm = unify.Unify(
-            "gpt-4o@openai",
-            cache=json.loads(os.getenv("UNIFY_CACHE", "true")),
-            traced=json.loads(os.getenv("UNIFY_TRACED", "true")),
-            stateful=True,
-        )
-        llm.set_system_message(sys_msg)
-
+        # Re-use shared, memory-retaining client
         return _SimulatedTaskListHandle(
-            llm,
+            self._llm,
             text,
             mode="ask",
             return_reasoning_steps=return_reasoning_steps,
@@ -168,25 +166,9 @@ class SimulatedTaskListManager:
         clarification_up_q: asyncio.Queue[str] | None = None,
         clarification_down_q: asyncio.Queue[str] | None = None,
     ) -> SteerableToolHandle:
-        sys_msg = (
-            "You are a *simulated* task-list manager. "
-            "Assume you have full control over an imaginary list of tasks. "
-            "When the user asks you to modify the list, simply reply with a "
-            "natural-language confirmation as though the change succeeded.  "
-            "Do **not** call any tools.\n\n"
-            f"Context / back-story: {self._description}"
-        )
-
-        llm = unify.Unify(
-            "gpt-4o@openai",
-            cache=json.loads(os.getenv("UNIFY_CACHE", "true")),
-            traced=json.loads(os.getenv("UNIFY_TRACED", "true")),
-            stateful=True,
-        )
-        llm.set_system_message(sys_msg)
-
+        # Same shared client – keeps the evolving fictitious task state
         return _SimulatedTaskListHandle(
-            llm,
+            self._llm,
             text,
             mode="update",
             return_reasoning_steps=return_reasoning_steps,
