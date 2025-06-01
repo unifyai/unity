@@ -98,3 +98,31 @@ async def test_tm_requests_clarification():
     answer = await handle.result()
 
     assert isinstance(answer, str) and answer.strip(), "Answer should not be empty"
+
+
+# ────────────────────────────────────────────────────────────────────────────
+# 5.  Stateful memory across serial asks                                     #
+# ────────────────────────────────────────────────────────────────────────────
+@pytest.mark.asyncio
+@_handle_project
+async def test_tm_stateful_memory():
+    """
+    Two consecutive .ask() calls should share the same conversation context
+    because the manager's LLM is stateful.
+    """
+    tm = SimulatedTranscriptManager()
+
+    # 1) Ask for a unique codename – expect a non-empty answer
+    handle1 = tm.ask(
+        "Please invent a unique project codename for our upcoming initiative. "
+        "Respond with *only* the codename.",
+    )
+    codename = (await handle1.result()).strip()
+    assert codename, "Codename should not be empty"
+
+    # 2) Ask the LLM to recall what it just said
+    handle2 = tm.ask("Great. What codename did you suggest earlier?")
+    answer2 = (await handle2.result()).lower()
+
+    # The second answer should mention the same codename exactly
+    assert codename.lower() in answer2, "LLM should recall the previous codename"
