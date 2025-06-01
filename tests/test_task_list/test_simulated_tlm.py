@@ -104,3 +104,54 @@ async def test_tlm_requests_clarification():
     assert isinstance(answer, str) and answer.strip(), "Answer should not be empty"
     # It should reflect the task theme (prioritisation) somehow
     assert "priorit" in answer.lower(), "Answer should reference prioritisation"
+
+
+# ────────────────────────────────────────────────────────────────────────────
+# 5.  Stateful memory across serial asks                                     #
+# ────────────────────────────────────────────────────────────────────────────
+@pytest.mark.asyncio
+@_handle_project
+async def test_tlm_stateful_memory_serial_asks():
+    """
+    Two consecutive .ask() calls should share the same conversation context.
+    """
+    tlm = SimulatedTaskListManager()
+
+    # 1) Ask for a unique codename – any non-empty string
+    h1 = tlm.ask(
+        "Please invent a codename for our secret task-force. "
+        "Respond with only the codename.",
+    )
+    codename = (await h1.result()).strip()
+    assert codename, "Codename should not be empty"
+
+    # 2) Ask what codename was suggested
+    h2 = tlm.ask("Great. What codename did you propose earlier?")
+    answer2 = (await h2.result()).lower()
+
+    assert codename.lower() in answer2, "LLM should recall the previous codename"
+
+
+# ────────────────────────────────────────────────────────────────────────────
+# 6.  Update then ask – state propagated                                     #
+# ────────────────────────────────────────────────────────────────────────────
+@pytest.mark.asyncio
+@_handle_project
+async def test_tlm_stateful_update_then_ask():
+    """
+    An .update() call should influence subsequent .ask() calls.
+    """
+    tlm = SimulatedTaskListManager()
+    task_name = "Draft Budget FY26"
+
+    # 1) Tell the manager to add a new high-priority task
+    h_upd = tlm.update(
+        f"Please create a new task called '{task_name}' with high priority.",
+    )
+    _ = await h_upd.result()  # we don't assert its exact wording
+
+    # 2) Ask about high-priority tasks – should mention the one we just added
+    h_q = tlm.ask("Which tasks are high priority right now?")
+    answer = (await h_q.result()).lower()
+
+    assert "budget" in answer, "Answer should reference the task added via update"
