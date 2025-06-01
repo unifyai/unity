@@ -3,10 +3,10 @@ import asyncio
 import threading
 
 import unify
-from unity.common.llm_helpers import SteerableToolHandle
+from .base import BasePlanner, BasePlan
 
 
-class SimulatedPlan(SteerableToolHandle):
+class SimulatedPlan(BasePlan):
     """
     A dummy plan class that simulates task execution and question answering.
     Public API surface (stop, ask, interject, pause, resume) is determined dynamically
@@ -286,7 +286,7 @@ class SimulatedPlan(SteerableToolHandle):
         return available
 
 
-class SimulatedPlanner:
+class SimulatedPlanner(BasePlanner[SimulatedPlan]):
 
     def __init__(self, steps) -> None:
         """
@@ -295,33 +295,19 @@ class SimulatedPlanner:
         Args:
             steps: Number of steps before plans complete
         """
+        super().__init__()
         self._steps = steps
-        self._active_plan = None
 
-    def plan(
+    def _make_plan(
         self,
         task: str,
-        clarification_up_q: asyncio.Queue[str] | None = None,
-        clarification_down_q: asyncio.Queue[str] | None = None,
-    ):
-        """
-        Start a new simulated plan.
-
-        Args:
-            task: The task description to simulate
-
-        Returns:
-            A new SimulatedPlan instance
-        """
-        plan = SimulatedPlan(
+        *,
+        clarification_up_q=None,
+        clarification_down_q=None,
+    ) -> SimulatedPlan:
+        return SimulatedPlan(
             task,
             self._steps,
             clarification_up_q=clarification_up_q,
             clarification_down_q=clarification_down_q,
         )
-        self._active_plan = plan
-        return plan
-
-    @property
-    def active_plan(self) -> SimulatedPlan:
-        return self._active_plan
