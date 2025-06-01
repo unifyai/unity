@@ -1,0 +1,164 @@
+# unity/contact_manager/simulated_contact_manager.py
+from __future__ import annotations
+
+import asyncio
+import json
+import os
+import threading
+from typing import List, Dict, Any
+
+import unify
+
+from ..common.llm_helpers import SteerableToolHandle
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Internal handle
+# ─────────────────────────────────────────────────────────────────────────────
+class _SimulatedContactHandle(SteerableToolHandle):
+    """
+    Minimal LLM-backed handle used by SimulatedContactManager.ask / update.
+    """
+
+    def __init__(
+        self,
+        llm: unify.Unify,
+        initial_text: str,
+        *,
+        return_reasoning_steps: bool,
+        clarification_up_q: asyncio.Queue[str] | None,
+        clarification_down_q: asyncio.Queue[str] | None,
+    ):
+        self._llm = llm
+        self._initial = initial_text
+        self._want_steps = return_reasoning_steps
+        self._clar_up_q = clarification_up_q
+        self._clar_down_q = clarification_down_q
+        self._needs_clar = self._clar_up_q is not None and self._clar_down_q is not None
+
+        if self._needs_clar:
+            try:
+                self._clar_up_q.put_nowait(
+                    "Could you clarify your request about contacts?",
+                )
+            except asyncio.QueueFull:
+                pass
+
+        self._extra_msgs: List[str] = []
+
+        self._done = threading.Event()
+        self._cancelled = False
+        self._answer: str | None = None
+        self._messages: List[Dict[str, Any]] = []
+
+    # --------------------------------------------------------------------- #
+    # SteerableToolHandle implementation
+    # --------------------------------------------------------------------- #
+    async def result(self):
+        if self._cancelled:
+            raise asyncio.CancelledError()
+
+        if not self._done.is_set():
+            if self._needs_clar:
+                clar = await self._clar_down_q.get()
+                self._extra_msgs.append(f"Clarification: {clar}")
+
+            prompt = "\n\n---\n\n".join([self._initial] + self._extra_msgs)
+            answer = await asyncio.to_thread(self._llm.generate, prompt)
+            self._answer = answer
+            self._messages = [
+                {"role": "user", "content": prompt},
+                {"role": "assistant", "content": answer},
+            ]
+            self._done.set()
+
+        if self._want_steps:
+            return self._answer, self._messages
+        return self._answer
+
+    def interject(self, message: str) -> str:
+        if self._cancelled:
+            return "Interaction stopped."
+        self._extra_msgs.append(message)
+        return "Acknowledged."
+
+    def stop(self) -> str:
+        self._cancelled = True
+        self._done.set()
+        return "Stopped."
+
+    # orchestrator expects this
+    def done(self) -> bool:  # type: ignore[override]
+        return self._done.is_set()
+
+    @property
+    def valid_tools(self):
+        return {}
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Public simulated manager
+# ─────────────────────────────────────────────────────────────────────────────
+class SimulatedContactManager:
+    """
+    Drop-in replacement for ContactManager with imaginary data and
+    stateful LLM memory.
+    """
+
+    def __init__(self, description: str = "Imaginary CRM.") -> None:
+        self._description = description
+
+        # Shared, stateful LLM
+        self._llm = unify.Unify(
+            "gpt-4o@openai",
+            cache=json.loads(os.getenv("UNIFY_CACHE", "true")),
+            traced=json.loads(os.getenv("UNIFY_TRACED", "true")),
+            stateful=True,
+        )
+        self._llm.set_system_message(
+            "You are a *simulated* contact-manager assistant. "
+            "There is no real database; invent plausible contact records and "
+            "keep your story consistent across turns.\n\n"
+            f"Back-story: {self._description}",
+        )
+
+    # --------------------------------------------------------------------- #
+    # ask                                                                   #
+    # --------------------------------------------------------------------- #
+    def ask(
+        self,
+        text: str,
+        *,
+        return_reasoning_steps: bool = False,
+        parent_chat_context: list[dict] | None = None,
+        clarification_up_q: asyncio.Queue[str] | None = None,
+        clarification_down_q: asyncio.Queue[str] | None = None,
+    ) -> SteerableToolHandle:
+        # parent_chat_context is ignored – state is kept by self._llm
+        return _SimulatedContactHandle(
+            self._llm,
+            text,
+            return_reasoning_steps=return_reasoning_steps,
+            clarification_up_q=clarification_up_q,
+            clarification_down_q=clarification_down_q,
+        )
+
+    # --------------------------------------------------------------------- #
+    # update                                                                #
+    # --------------------------------------------------------------------- #
+    def update(
+        self,
+        text: str,
+        *,
+        return_reasoning_steps: bool = False,
+        parent_chat_context: list[dict] | None = None,
+        clarification_up_q: asyncio.Queue[str] | None = None,
+        clarification_down_q: asyncio.Queue[str] | None = None,
+    ) -> SteerableToolHandle:
+        return _SimulatedContactHandle(
+            self._llm,
+            text,
+            return_reasoning_steps=return_reasoning_steps,
+            clarification_up_q=clarification_up_q,
+            clarification_down_q=clarification_down_q,
+        )
