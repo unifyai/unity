@@ -14,6 +14,7 @@ from unity.common.llm_helpers import (
     start_async_tool_use_loop,
     SteerableToolHandle,
 )
+from .base import BasePlan, BasePlanner
 from unify import AsyncUnify
 import unify
 
@@ -36,7 +37,7 @@ class _BrowserPlannerState(enum.Enum):
     ERROR = enum.auto()
 
 
-class BrowserUsePlan(SteerableToolHandle):
+class BrowserUsePlan(BasePlan):
     """
     Represents an active plan being executed by the BrowserUsePlanner.
     Inherits from SteerableToolHandle to provide a consistent interface for interaction.
@@ -55,7 +56,6 @@ class BrowserUsePlan(SteerableToolHandle):
         clarification_up_q: Optional[asyncio.Queue[str]] = None,
         clarification_down_q: Optional[asyncio.Queue[str]] = None,
     ):
-        super().__init__()
         self._task_description = task_description
         self._client = initial_client  # LLM client for the main tool loop
         self._tools = tools  # Tools available to the main tool loop
@@ -391,13 +391,14 @@ class BrowserUsePlan(SteerableToolHandle):
         return sorted(list(default_attrs.union(exposed_methods)))
 
 
-class BrowserUsePlanner:
+class BrowserUsePlanner(BasePlanner[BrowserUsePlan]):
     def __init__(
         self,
         base_system_prompt: str | None = "You are a helpful web-Browser assistant.",
         headless: bool = True,
         disable_browser_security: bool = False,
     ):
+        super().__init__()
         self._base_system_prompt = base_system_prompt
         self._browser = Browser(
             config=BrowserConfig(
@@ -523,7 +524,7 @@ class BrowserUsePlanner:
             tools[action_name] = _make_tool_wrapper
         return tools
 
-    def plan(
+    def _make_plan(
         self,
         task_description: str,
         parent_chat_context: Optional[List[dict]] = None,

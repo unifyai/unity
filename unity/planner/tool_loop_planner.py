@@ -11,6 +11,7 @@ from unity.common.llm_helpers import (
     start_async_tool_use_loop,
     SteerableToolHandle,
 )
+from .base import BasePlan, BasePlanner
 from unity.controller.controller import (
     Controller,
 )
@@ -42,7 +43,7 @@ class _PlanState(enum.Enum):
     ERROR = enum.auto()
 
 
-class ToolLoopPlan(SteerableToolHandle):
+class ToolLoopPlan(BasePlan):
     """
     Represents an active plan being executed by the ToolLoopPlanner.
     Inherits from SteerableToolHandle to provide a consistent interface for interaction.
@@ -61,7 +62,6 @@ class ToolLoopPlan(SteerableToolHandle):
         clarification_up_q: Optional[asyncio.Queue[str]] = None,
         clarification_down_q: Optional[asyncio.Queue[str]] = None,
     ):
-        super().__init__()
         self._task_description = task_description
         self._client = initial_client  # LLM client for the main tool loop
         self._tools = tools  # Tools available to the main tool loop
@@ -394,11 +394,12 @@ class ToolLoopPlan(SteerableToolHandle):
         return sorted(list(default_attrs.union(exposed_methods)))
 
 
-class ToolLoopPlanner:
+class ToolLoopPlanner(BasePlanner[ToolLoopPlan]):
     def __init__(
         self,
         base_system_prompt: str = "You are a helpful assistant. Use the available tools to complete the user's request. Prioritize completing the primary request.",
     ):
+        super().__init__()
         self._base_system_prompt = base_system_prompt
         self._controller = Controller()
         if not self._controller.is_alive():
@@ -471,7 +472,7 @@ class ToolLoopPlanner:
             "communicate_tool": communicate_tool,
         }
 
-    def plan(
+    def _make_plan(
         self,
         task_description: str,
         parent_chat_context: Optional[List[dict]] = None,
