@@ -113,6 +113,20 @@ class SimulatedTranscriptManager:
     ) -> None:
         self._description = description
 
+        # one shared, *stateful* LLM instance – preserves chat history
+        self._llm = unify.Unify(
+            "gpt-4o@openai",
+            cache=json.loads(os.getenv("UNIFY_CACHE", "true")),
+            traced=json.loads(os.getenv("UNIFY_TRACED", "true")),
+            stateful=True,
+        )
+        self._llm.set_system_message(
+            "You are a *simulated* transcript assistant. "
+            "There is NO real database – fabricate convincing yet consistent "
+            "answers about emails, chats, calls, etc.\n\n"
+            f"Back-story: {self._description}",
+        )
+
     # --------------------------------------------------------------------- #
     # ask                                                                   #
     # --------------------------------------------------------------------- #
@@ -125,22 +139,9 @@ class SimulatedTranscriptManager:
         clarification_up_q: asyncio.Queue[str] | None = None,
         clarification_down_q: asyncio.Queue[str] | None = None,
     ) -> SteerableToolHandle:
-        sys_msg = (
-            "You are a *simulated* transcript assistant. "
-            "There is NO real database – feel free to fabricate convincing yet "
-            "consistent answers about emails, chats, calls, etc.\n\n"
-            f"Back-story: {self._description}"
-        )
-        llm = unify.Unify(
-            "gpt-4o@openai",
-            cache=json.loads(os.getenv("UNIFY_CACHE", "true")),
-            traced=json.loads(os.getenv("UNIFY_TRACED", "true")),
-            stateful=True,
-        )
-        llm.set_system_message(sys_msg)
-
+        # we reuse the shared, stateful client
         return _SimulatedTranscriptHandle(
-            llm,
+            self._llm,
             text,
             return_reasoning_steps=return_reasoning_steps,
             clarification_up_q=clarification_up_q,
