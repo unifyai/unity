@@ -458,6 +458,13 @@ class ToolLoopPlanner:
             )
             return await self._coms_manager.communicate(description)
 
+        act_tool.__name__ = "act_tool"
+        act_tool.__qualname__ = "act_tool"
+        observe_tool.__name__ = "observe_tool"
+        observe_tool.__qualname__ = "observe_tool"
+        communicate_tool.__name__ = "communicate_tool"
+        communicate_tool.__qualname__ = "communicate_tool"
+
         return {
             "act_tool": act_tool,
             "observe_tool": observe_tool,
