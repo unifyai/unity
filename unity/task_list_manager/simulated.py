@@ -31,6 +31,17 @@ class _SimulatedTaskListHandle(SteerableToolHandle):
         self._clar_down_q = clarification_down_q
         self._needs_clar = self._clar_up_q is not None and self._clar_down_q is not None
 
+        # ── fire the clarification request right away ──────────────────
+        self._clar_requested = False
+        if self._needs_clar:
+            try:
+                self._clar_up_q.put_nowait(
+                    "Could you please clarify exactly what you want?",
+                )
+                self._clar_requested = True
+            except asyncio.QueueFull:
+                pass
+
         self._interjections: List[str] = []
 
         self._done_event = threading.Event()
@@ -47,15 +58,8 @@ class _SimulatedTaskListHandle(SteerableToolHandle):
             raise asyncio.CancelledError()
 
         if not self._done_event.is_set():
-            # If clarification is required, handle it first
+            # Wait for clarification answer if required
             if self._needs_clar:
-                try:
-                    self._clar_up_q.put_nowait(
-                        "Could you please clarify exactly what you want?",
-                    )
-                except asyncio.QueueFull:
-                    pass  # best effort
-
                 clar_reply = await self._clar_down_q.get()
                 self._interjections.append(f"Clarification: {clar_reply}")
 
