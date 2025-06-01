@@ -15,11 +15,6 @@ from ..common.llm_helpers import (
     start_async_tool_use_loop,
 )
 from ..events.event_bus import EventBus
-from ..knowledge_manager.knowledge_manager import KnowledgeManager
-from ..planner.simulated import SimulatedPlanner
-from ..task_list_manager.task_list_manager import TaskListManager
-from ..transcript_manager.transcript_manager import TranscriptManager
-from ..contact_manager.contact_manager import ContactManager
 
 PASSIVE_PLAN_METHODS: set[str] = {"ask"}
 
@@ -35,13 +30,45 @@ class TaskManager:
 
     # ------------------------------------------------------------------ #
 
-    def __init__(self, planner_steps: int = 8) -> None:
+    def __init__(self, planner_steps: int = 2, *, simulated: bool = False) -> None:
+        """
+        Args:
+            planner_steps:   How many "steps" a simulated plan should take before
+                             auto-completing (only relevant for SimulatedPlanner).
+            simulated:       When *True* all subordinate managers are replaced by
+                             their **simulated** counterparts which keep all state
+                             inside an LLM conversation rather than touching real
+                             storage back-ends.  Defaults to *False* (real managers).
+        """
+
         self._event_bus = EventBus()
-        self._contact_manager = ContactManager(self._event_bus)
-        self._transcript_manager = TranscriptManager(self._event_bus)
-        self._knowledge_manager = KnowledgeManager()
-        self._task_list_manager = TaskListManager()
-        self._planner = SimulatedPlanner(planner_steps)
+
+        if simulated:
+            from ..knowledge_manager.simulated import SimulatedKnowledgeManager
+            from ..planner.simulated import SimulatedPlanner
+            from ..task_list_manager.simulated import SimulatedTaskListManager
+            from ..transcript_manager.simulated import SimulatedTranscriptManager
+            from ..contact_manager.simulated import SimulatedContactManager
+
+            # ── Simulated façade (pure-LLM back-ends) ────────────────────
+            self._contact_manager = SimulatedContactManager()
+            self._transcript_manager = SimulatedTranscriptManager()
+            self._knowledge_manager = SimulatedKnowledgeManager()
+            self._task_list_manager = SimulatedTaskListManager()
+            self._planner = SimulatedPlanner(planner_steps)
+        else:
+            from ..knowledge_manager.knowledge_manager import KnowledgeManager
+            from ..planner.tool_loop_planner import ToolLoopPlanner
+            from ..task_list_manager.task_list_manager import TaskListManager
+            from ..transcript_manager.transcript_manager import TranscriptManager
+            from ..contact_manager.contact_manager import ContactManager
+
+            # ── Real managers touching Unify back-ends ───────────────────
+            self._contact_manager = ContactManager(self._event_bus)
+            self._transcript_manager = TranscriptManager(self._event_bus)
+            self._knowledge_manager = KnowledgeManager()
+            self._task_list_manager = TaskListManager()
+            self._planner = ToolLoopPlanner(planner_steps)
 
         # static, always-present tools -------------------------------------------------
         self._static_passive_tools: Dict[str, Callable] = {
