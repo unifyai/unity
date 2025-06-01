@@ -126,3 +126,19 @@ async def test_tm_stateful_memory():
 
     # The second answer should mention the same codename exactly
     assert codename.lower() in answer2, "LLM should recall the previous codename"
+
+
+# ────────────────────────────────────────────────────────────────────────────
+# 6.  Summarize                                                             #
+# ────────────────────────────────────────────────────────────────────────────
+@pytest.mark.asyncio
+@_handle_project
+async def test_simulated_tm_summarize():
+    """
+    Ensure summarize(...) returns a non-empty, human-readable string.
+    """
+    tm = SimulatedTranscriptManager()
+    guidance = "Focus on the key points."
+    summary = await tm.summarize(exchange_ids=99, guidance=guidance)
+
+    assert isinstance(summary, str) and summary.strip(), "Summary should not be empty"
