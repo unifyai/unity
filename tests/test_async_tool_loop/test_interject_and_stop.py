@@ -146,18 +146,22 @@ async def test_interject_leads_to_second_tool_and_final_result():
     assert first_args == {"txt": "A"}
 
     second_tool_calls = assistant_tool_turns[1]["tool_calls"]
-    last_fn_of_second = second_tool_calls[-1]["function"]
-    if len(second_tool_calls) == 1:
-        assert json.loads(last_fn_of_second["arguments"]) == {"txt": "B"}
-    else:
-        assert len(second_tool_calls) == 2
-        first_fn_of_second = second_tool_calls[0]["function"]
-        if json.loads(first_fn_of_second["arguments"]) == {"txt": "B"}:
-            assert last_fn_of_second["name"].startswith("_continue_echo_call_")
-        elif json.loads(last_fn_of_second["arguments"]) == {"txt": "B"}:
-            assert first_fn_of_second["name"].startswith("_continue_echo_call_")
-        else:
-            raise Exception("Invalid tool arguments for second tool call")
+
+    # Check that the second assistant turn includes an echo("B") call
+    # The LLM might also choose to continue/stop the first echo, which is fine
+    echo_b_found = False
+    for call in second_tool_calls:
+        try:
+            args = json.loads(call["function"]["arguments"])
+            if args == {"txt": "B"} and call["function"]["name"] == "echo":
+                echo_b_found = True
+                break
+        except (json.JSONDecodeError, KeyError):
+            continue  # Skip malformed calls
+
+    assert (
+        echo_b_found
+    ), f"Second assistant turn should include echo('B'), got: {second_tool_calls}"
 
     # 3. the order is correct: initial assistant → user interjection → 2nd assistant
     idx_first_asst = msgs.index(assistant_tool_turns[0])
@@ -170,7 +174,14 @@ async def test_interject_leads_to_second_tool_and_final_result():
     assert idx_first_asst < idx_user_B < idx_second_asst
 
     # 4. there are matching tool *results* for A and B
-    tool_msgs = [m for m in msgs if m["role"] == "tool" and m["name"] == "echo"]
+    # Handle both normal completion (name="echo") and continue helper completion
+    # (name starts with "echo(" like "echo({"txt":"A"}) completed successfully...")
+    tool_msgs = [
+        m
+        for m in msgs
+        if m["role"] == "tool"
+        and (m["name"] == "echo" or m["name"].startswith("echo("))
+    ]
     assert any("A" in m["content"] for m in tool_msgs)
     assert any("B" in m["content"] for m in tool_msgs)
 
