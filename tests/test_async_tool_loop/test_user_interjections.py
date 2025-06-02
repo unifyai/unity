@@ -63,6 +63,9 @@ async def test_interjectable_tool_roundtrip() -> None:
             exec_log.append("no-steer")
             return f"Final topic: {topic}"
 
+    long_running.__name__ = "long_running"
+    long_running.__qualname__ = "long_running"
+
     # ── 2.  Kick off the async-tool loop ──────────────────────────────
     handle = start_async_tool_use_loop(
         client=client,
@@ -136,6 +139,9 @@ async def test_chat_context_propagation() -> None:
     ) -> str:
         captured_ctx.append(parent_chat_context or [])
         return "context-recorded"
+
+    record_context.__name__ = "record_context"
+    record_context.__qualname__ = "record_context"
 
     # Kick off the loop – we *require* the model to call `record_context`
     handle = start_async_tool_use_loop(
