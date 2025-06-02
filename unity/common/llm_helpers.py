@@ -169,9 +169,15 @@ def method_to_schema(bound_method):
         #      ``propagate_chat_context`` is *True* and MUST **never** be
         #      surfaced to the LLM – the decision is a global one, not left
         #      to the model.
-        if (
-            name.startswith("_") and param.default is not inspect._empty
-        ) or name == "parent_chat_context":
+        # Internal-only parameters never exposed to the LLM:
+        #   • private “_” args with defaults
+        #   • chat-context plumbing
+        #   • clarification queues (now injected automatically)
+        if (name.startswith("_") and param.default is not inspect._empty) or name in (
+            "parent_chat_context",
+            "clarification_up_q",
+            "clarification_down_q",
+        ):
             continue
 
         ann = hints.get(name, str)
@@ -1628,9 +1634,9 @@ async def _async_tool_use_loop_inner(
                     # ── per-call clarification queues (optional) ─────────
                     clar_up_q: Optional[asyncio.Queue[str]] = None
                     clar_down_q: Optional[asyncio.Queue[str]] = None
-                    if sig_accepts_clar_qs and (
-                        "clarification_up_q" in args or "clarification_down_q" in args
-                    ):
+                    # Always provide queues when the tool supports them – the LLM
+                    # never passes them explicitly anymore.
+                    if sig_accepts_clar_qs:
                         clar_up_q = asyncio.Queue()
                         clar_down_q = asyncio.Queue()
                         extra_kwargs["clarification_up_q"] = clar_up_q
