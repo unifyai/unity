@@ -155,3 +155,25 @@ async def test_tlm_stateful_update_then_ask():
     answer = (await h_q.result()).lower()
 
     assert "budget" in answer, "Answer should reference the task added via update"
+
+
+# ────────────────────────────────────────────────────────────────────────────
+# 7.  Doc-string inheritance                                                 #
+# ────────────────────────────────────────────────────────────────────────────
+def test_simulated_cm_docstrings_match_base():
+    """
+    Public methods in SimulatedContactManager should copy the real
+    BaseContactManager doc-strings one-for-one (via functools.wraps).
+    """
+    from unity.task_list_manager.base import BaseTaskListManager
+    from unity.task_list_manager.simulated import SimulatedTaskListManager
+
+    assert (
+        SimulatedTaskListManager.ask.__doc__.strip()
+        == BaseTaskListManager.ask.__doc__.strip()
+    ), ".store doc-string was not copied correctly"
+
+    assert (
+        SimulatedTaskListManager.update.__doc__.strip()
+        == BaseTaskListManager.update.__doc__.strip()
+    ), ".retrieve doc-string was not copied correctly"
