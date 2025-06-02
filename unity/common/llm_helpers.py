@@ -388,7 +388,7 @@ async def _async_tool_use_loop_inner(
             )
 
     # ── *single* authoritative implementation of "task finished" handling ──
-    async def _process_completed_task(task: asyncio.Task) -> None:
+    async def _process_completed_task(task: asyncio.Task) -> bool:
         """
         Deal with a finished tool *task* exactly once:
 
@@ -475,7 +475,7 @@ async def _async_tool_use_loop_inner(
                 }
                 if h_up_q is not None:
                     clarification_channels[call_id] = (h_up_q, h_down_q)
-                return
+                return False  # ⬅️  no LLM turn required
 
             # ───────────────────────────────────────────────────────────────
             #  Normal (non-handle) result – unchanged path
@@ -530,6 +530,9 @@ async def _async_tool_use_loop_inner(
                     _insert_after_assistant(asst_msg, tool_msg)
 
         await _to_event_bus(tool_msg)
+
+        # successful (or failed) *final* result → LLM may need to react
+        return True
 
         # 6️⃣  failure guard -------------------------------------------------
         if consecutive_failures >= max_consecutive_failures:
@@ -804,16 +807,15 @@ async def _async_tool_use_loop_inner(
                     llm_turn_required = True
                     continue
 
+                needs_turn = False
                 for task in done:  # finished tool(s)
-                    await _process_completed_task(task)
+                    if await _process_completed_task(task):
+                        needs_turn = True
 
-                # 🔄  A tool completed but others are still running.
-                #     Give the LLM an immediate turn so it can act on the
-                #     new information (e.g. pass a clarification answer
-                #     back to the child tool) before we re-enter the
-                #     “wait for pending” gate.
+                # Other tools may still be running.
                 if pending:
-                    llm_turn_required = True
+                    if needs_turn:  # only when something new
+                        llm_turn_required = True
                     continue  # jump to top-of-loop
 
             # ── B: wait for remaining tools before asking the LLM again,
@@ -1152,14 +1154,15 @@ async def _async_tool_use_loop_inner(
                         cancel_waiter,
                         return_exceptions=True,
                     )
-
                     # — handle each newly-finished task exactly as branch A does
+                    needs_turn = False
                     for task in done & pending_snapshot:
-                        await _process_completed_task(task)
+                        if await _process_completed_task(task):
+                            needs_turn = True
 
                     # …then restart the main loop so the model sees the new info
-                    # 👇 make sure the assistant gets an immediate turn
-                    llm_turn_required = True
+                    if needs_turn:  # assistant speaks only if needed
+                        llm_turn_required = True
                     continue
 
                 # 1️⃣ user interjected → restart immediately
