@@ -3,11 +3,12 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import functools
 import threading
 from typing import List, Dict, Any
 
 import unify
-
+from .knowledge_manager import KnowledgeManager
 from ..common.llm_helpers import SteerableToolHandle
 
 
@@ -98,7 +99,7 @@ class _SimulatedKnowledgeHandle(SteerableToolHandle):
 # ─────────────────────────────────────────────────────────────────────────────
 # Public simulated KnowledgeManager
 # ─────────────────────────────────────────────────────────────────────────────
-class SimulatedKnowledgeManager:
+class SimulatedKnowledgeManager(KnowledgeManager):
     """
     A drop-in, side-effect-free replacement for KnowledgeManager that uses a
     single stateful LLM to invent and recall knowledge in-chat.
@@ -124,6 +125,7 @@ class SimulatedKnowledgeManager:
     # ------------------------------------------------------------------ #
     #  store                                                             #
     # ------------------------------------------------------------------ #
+    @functools.wraps(KnowledgeManager.store)
     def store(
         self,
         text: str,
@@ -133,6 +135,10 @@ class SimulatedKnowledgeManager:
         clarification_up_q: asyncio.Queue[str] | None = None,
         clarification_down_q: asyncio.Queue[str] | None = None,
     ) -> SteerableToolHandle:
+        if parent_chat_context:
+            self._llm._system_message += (
+                f"\nCalling chat context:{json.dumps(parent_chat_context, indent=4)}"
+            )
         return _SimulatedKnowledgeHandle(
             self._llm,
             text,
@@ -144,6 +150,7 @@ class SimulatedKnowledgeManager:
     # ------------------------------------------------------------------ #
     #  retrieve                                                          #
     # ------------------------------------------------------------------ #
+    @functools.wraps(KnowledgeManager.retrieve)
     def retrieve(
         self,
         text: str,
@@ -153,6 +160,10 @@ class SimulatedKnowledgeManager:
         clarification_up_q: asyncio.Queue[str] | None = None,
         clarification_down_q: asyncio.Queue[str] | None = None,
     ) -> SteerableToolHandle:
+        if parent_chat_context:
+            self._llm._system_message += (
+                f"\nCalling chat context:{json.dumps(parent_chat_context, indent=4)}"
+            )
         return _SimulatedKnowledgeHandle(
             self._llm,
             text,
