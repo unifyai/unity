@@ -4,11 +4,12 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import functools
 import threading
 from typing import List, Dict, Any
 
 import unify
-
+from .contact_manager import ContactManager
 from ..common.llm_helpers import SteerableToolHandle
 
 
@@ -99,7 +100,7 @@ class _SimulatedContactHandle(SteerableToolHandle):
 # ─────────────────────────────────────────────────────────────────────────────
 # Public simulated manager
 # ─────────────────────────────────────────────────────────────────────────────
-class SimulatedContactManager:
+class SimulatedContactManager(ContactManager):
     """
     Drop-in replacement for ContactManager with imaginary data and
     stateful LLM memory.
@@ -125,6 +126,7 @@ class SimulatedContactManager:
     # --------------------------------------------------------------------- #
     # ask                                                                   #
     # --------------------------------------------------------------------- #
+    @functools.wraps(ContactManager.ask)
     def ask(
         self,
         text: str,
@@ -134,7 +136,10 @@ class SimulatedContactManager:
         clarification_up_q: asyncio.Queue[str] | None = None,
         clarification_down_q: asyncio.Queue[str] | None = None,
     ) -> SteerableToolHandle:
-        # parent_chat_context is ignored – state is kept by self._llm
+        if parent_chat_context:
+            self._llm._system_message += (
+                f"\nCalling chat context:{json.dumps(parent_chat_context, indent=4)}"
+            )
         return _SimulatedContactHandle(
             self._llm,
             text,
@@ -146,6 +151,7 @@ class SimulatedContactManager:
     # --------------------------------------------------------------------- #
     # update                                                                #
     # --------------------------------------------------------------------- #
+    @functools.wraps(ContactManager.update)
     def update(
         self,
         text: str,
@@ -155,6 +161,10 @@ class SimulatedContactManager:
         clarification_up_q: asyncio.Queue[str] | None = None,
         clarification_down_q: asyncio.Queue[str] | None = None,
     ) -> SteerableToolHandle:
+        if parent_chat_context:
+            self._llm._system_message += (
+                f"\nCalling chat context:{json.dumps(parent_chat_context, indent=4)}"
+            )
         return _SimulatedContactHandle(
             self._llm,
             text,
