@@ -43,7 +43,7 @@ async def test_start_and_ask_simulated_plan(monkeypatch):
     handle = start_async_tool_use_loop(
         client=client,
         message="begin",
-        tools={"plan": planner.plan},
+        tools={"SimulatedPlanner_plan": planner.plan},
         max_steps=20,
         timeout=120,
     )
@@ -81,7 +81,7 @@ async def test_interject_simulated_plan(monkeypatch):
     handle = start_async_tool_use_loop(
         client=client,
         message="kickoff",
-        tools={"plan": planner.plan},
+        tools={"SimulatedPlanner_plan": planner.plan},
         max_steps=20,
         timeout=120,
     )
@@ -130,7 +130,7 @@ async def test_pause_and_resume_simulated_plan(monkeypatch):
     handle = start_async_tool_use_loop(
         client=client,
         message="run",
-        tools={"plan": planner.plan},
+        tools={"SimulatedPlanner_plan": planner.plan},
         max_steps=30,
         timeout=180,
     )
@@ -173,7 +173,7 @@ async def test_stop_simulated_plan(monkeypatch):
     handle = start_async_tool_use_loop(
         client=client,
         message="begin",
-        tools={"plan": planner.plan},
+        tools={"SimulatedPlanner_plan": planner.plan},
         max_steps=20,
         timeout=120,
     )
