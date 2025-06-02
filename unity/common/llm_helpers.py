@@ -769,6 +769,7 @@ async def _async_tool_use_loop_inner(
                 existing = inspect.getdoc(fn)
                 fn.__doc__ = existing.strip() if existing else doc
                 fn.__name__ = func_name[:64]
+                fn.__qualname__ = func_name[:64]
                 dynamic_tools[key] = fn
 
             for _task in list(pending):
@@ -1108,7 +1109,7 @@ async def _async_tool_use_loop_inner(
                 # 3️⃣ LLM finished normally
                 if llm_task.exception():
                     raise Exception(
-                        f"LLM call failed. Messages at the time:\n{json.dumps(client.messages, indent=4)}",
+                        f"LLM call failed. Messages at the time:\n{json.dumps(client.messages, indent=4)}, exception: {llm_task.exception()}",
                     )
 
             else:
@@ -1124,7 +1125,7 @@ async def _async_tool_use_loop_inner(
                     )
                 except Exception:
                     raise Exception(
-                        f"LLM call failed. Messages at the time:\n{json.dumps(client.messages, indent=4)}",
+                        f"LLM call failed. Messages at the time:\n{json.dumps(client.messages, indent=4)}, exception: {llm_task.exception()}",
                     )
 
             msg = client.messages[-1]
