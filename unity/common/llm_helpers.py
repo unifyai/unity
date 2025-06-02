@@ -1311,7 +1311,7 @@ async def _async_tool_use_loop_inner(
                                 "name": pretty_name,
                                 "content": finished,
                             }
-                            _insert_after_assistant(asst_msg, tool_msg)
+                            _insert_after_assistant(info["assistant_msg"], tool_msg)
                             if log_steps:
                                 LOGGER.info(
                                     f"↩️  {pretty_name} answered immediately (already finished)",
