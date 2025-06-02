@@ -1528,7 +1528,9 @@ async def _async_tool_use_loop_inner(
                     # ── per-call clarification queues (optional) ─────────
                     clar_up_q: Optional[asyncio.Queue[str]] = None
                     clar_down_q: Optional[asyncio.Queue[str]] = None
-                    if sig_accepts_clar_qs:
+                    if sig_accepts_clar_qs and (
+                        "clarification_up_q" in args or "clarification_down_q" in args
+                    ):
                         clar_up_q = asyncio.Queue()
                         clar_down_q = asyncio.Queue()
                         extra_kwargs["clarification_up_q"] = clar_up_q
