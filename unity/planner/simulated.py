@@ -1,4 +1,5 @@
 import time
+import functools
 import asyncio
 import threading
 import os
@@ -168,29 +169,15 @@ class SimulatedPlan(BasePlan):
 
     # Pubic
 
+    @functools.wraps(BasePlan.result, updated=())
     async def result(self) -> str:
-        """
-        Wait until the specified number of public method calls have completed.
-
-        Returns:
-            The final result message from the completed plan
-        """
-        # block in threadpool until we call _complete
         await asyncio.to_thread(self._done_event.wait)
         return self._result_str  # type: ignore
 
     # Dynamic Methods (Public vs Private Depending on State)
 
+    @functools.wraps(BasePlan.stop, updated=())
     def stop(self) -> str:
-        """
-        Stop the currently running task.
-
-        Returns:
-            A message confirming the task was stopped
-
-        Raises:
-            Exception: If no task is currently running
-        """
         if not self._task:
             raise Exception("No tasks are currently being performed.")
         msg = f"Stopped task '{self._task}'"
@@ -198,34 +185,15 @@ class SimulatedPlan(BasePlan):
         self._complete(msg)
         return msg
 
+    @functools.wraps(BasePlan.interject, updated=())
     def interject(self, instruction: str) -> str:
-        """
-        Send an instruction to influence the running task.
-
-        Args:
-            instruction: The instruction to send
-
-        Returns:
-            A simulated response to the instruction
-
-        Raises:
-            Exception: If no task is currently running
-        """
         if not self._task:
             raise Exception("No tasks are currently being performed.")
         self._count_step()
         return self._interject_simulator.generate(instruction)
 
+    @functools.wraps(BasePlan.pause, updated=())
     def pause(self) -> str:
-        """
-        Pause the currently running task.
-
-        Returns:
-            A message confirming the task was paused
-
-        Raises:
-            Exception: If no task is running
-        """
         if not self._task:
             raise Exception("No task is running, so nothing to pause.")
         if self._paused:
@@ -235,16 +203,8 @@ class SimulatedPlan(BasePlan):
         self._count_step()
         return f"Paused task '{self._task}'."
 
+    @functools.wraps(BasePlan.resume, updated=())
     def resume(self) -> str:
-        """
-        Resume a paused task.
-
-        Returns:
-            A message confirming the task was resumed
-
-        Raises:
-            Exception: If no task is running
-        """
         if not self._task:
             raise Exception("No task is running, so nothing to resume.")
         if not self._paused:
@@ -254,24 +214,14 @@ class SimulatedPlan(BasePlan):
         self._count_step()
         return f"Resumed task '{self._task}'."
 
+    @functools.wraps(BasePlan.ask, updated=())
     def ask(self, question: str) -> str:
-        """
-        Ask a question about the progress of the ongoing plan.
-
-        Args:
-            question: The question to ask
-
-        Returns:
-            A simulated answer to the question
-
-        Raises:
-            Exception: If no task is currently running
-        """
         if not self._task:
             raise Exception("No tasks are currently being performed.")
         self._count_step()
         return self._ask_simulator.generate(question)
 
+    @functools.wraps(BasePlan.valid_tools, updated=())
     @property
     def valid_tools(self):
         if self._task is None:
