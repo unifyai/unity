@@ -221,8 +221,8 @@ class SimulatedPlan(BasePlan):
         self._count_step()
         return self._ask_simulator.generate(question)
 
-    @functools.wraps(BasePlan.valid_tools, updated=())
     @property
+    @functools.wraps(BasePlan.valid_tools, updated=())
     def valid_tools(self):
         if self._task is None:
             return {}

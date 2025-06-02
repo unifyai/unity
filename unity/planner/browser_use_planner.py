@@ -369,8 +369,8 @@ class BrowserUsePlan(BasePlan):
             )
             return f"Error answering question: {e}"
 
-    @functools.wraps(BasePlan.valid_tools, updated=())
     @property
+    @functools.wraps(BasePlan.valid_tools, updated=())
     def valid_tools(self) -> Dict[str, Callable[..., Awaitable[Any]]]:
         tools = {}
         for method_name in ["stop", "pause", "resume", "interject", "ask"]:
