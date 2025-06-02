@@ -155,3 +155,48 @@ def test_parent_chat_context_parameter_is_always_hidden() -> None:
         # The parameter must be stripped from both *properties* and *required*
         assert "parent_chat_context" not in props
         assert "parent_chat_context" not in required
+
+
+# --------------------------------------------------------------------------- #
+#  CLARIFICATION QUEUES MUST NEVER BE EXPOSED                                 #
+# --------------------------------------------------------------------------- #
+
+import asyncio
+
+
+def test_clarification_queues_are_hidden_from_tool_schema() -> None:
+    """
+    Parameters named ``clarification_up_q`` / ``clarification_down_q`` are
+    injected automatically by the tool-loop when the callee supports them.
+    They must **not** appear in the schema that is presented to the LLM,
+    regardless of whether they are required or optional.
+    """
+
+    # ── required queues variant ───────────────────────────────────────────
+    @unify.traced
+    def tool_with_required_clar(
+        a: int,
+        clarification_up_q: asyncio.Queue[str],
+        clarification_down_q: asyncio.Queue[str],
+    ) -> int:  # noqa: D401
+        return a
+
+    # ── optional queues variant ───────────────────────────────────────────
+    @unify.traced
+    def tool_with_optional_clar(  # noqa: D401
+        a: int,
+        clarification_up_q: asyncio.Queue[str] | None = None,
+        clarification_down_q: asyncio.Queue[str] | None = None,
+    ) -> int:
+        return a
+
+    for fn in (tool_with_required_clar, tool_with_optional_clar):
+        schema = llmh.method_to_schema(fn)
+        props = schema["function"]["parameters"]["properties"]
+        required = schema["function"]["parameters"]["required"]
+
+        # Neither queue should be visible at all
+        assert "clarification_up_q" not in props
+        assert "clarification_down_q" not in props
+        assert "clarification_up_q" not in required
+        assert "clarification_down_q" not in required
