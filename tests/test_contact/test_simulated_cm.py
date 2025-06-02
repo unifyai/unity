@@ -143,7 +143,7 @@ async def test_cm_stateful_update_then_ask():
 def test_simulated_cm_docstrings_match_base():
     """
     Public methods in SimulatedContactManager should copy the real
-    ContactManager doc-strings one-for-one (via functools.wraps).
+    BaseContactManager doc-strings one-for-one (via functools.wraps).
     """
     from unity.contact_manager.base import BaseContactManager
     from unity.contact_manager.simulated import SimulatedContactManager

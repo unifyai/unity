@@ -143,17 +143,17 @@ async def test_km_stateful_serial_retrieves():
 def test_simulated_km_docstrings_match_real():
     """
     Public methods in SimulatedKnowledgeManager should copy the real
-    KnowledgeManager doc-strings one-for-one (via functools.wraps).
+    BaseKnowledgeManager doc-strings one-for-one (via functools.wraps).
     """
-    from unity.knowledge_manager.knowledge_manager import KnowledgeManager
+    from unity.knowledge_manager.base import BaseKnowledgeManager
     from unity.knowledge_manager.simulated import SimulatedKnowledgeManager
 
     assert (
         SimulatedKnowledgeManager.store.__doc__.strip()
-        == KnowledgeManager.store.__doc__.strip()
+        == BaseKnowledgeManager.store.__doc__.strip()
     ), ".store doc-string was not copied correctly"
 
     assert (
         SimulatedKnowledgeManager.retrieve.__doc__.strip()
-        == KnowledgeManager.retrieve.__doc__.strip()
+        == BaseKnowledgeManager.retrieve.__doc__.strip()
     ), ".retrieve doc-string was not copied correctly"

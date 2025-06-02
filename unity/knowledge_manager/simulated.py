@@ -8,7 +8,7 @@ import threading
 from typing import List, Dict, Any
 
 import unify
-from .knowledge_manager import KnowledgeManager
+from .base import BaseKnowledgeManager
 from ..common.llm_helpers import SteerableToolHandle
 
 
@@ -99,7 +99,7 @@ class _SimulatedKnowledgeHandle(SteerableToolHandle):
 # ─────────────────────────────────────────────────────────────────────────────
 # Public simulated KnowledgeManager
 # ─────────────────────────────────────────────────────────────────────────────
-class SimulatedKnowledgeManager(KnowledgeManager):
+class SimulatedKnowledgeManager(BaseKnowledgeManager):
     """
     A drop-in, side-effect-free replacement for KnowledgeManager that uses a
     single stateful LLM to invent and recall knowledge in-chat.
@@ -125,7 +125,7 @@ class SimulatedKnowledgeManager(KnowledgeManager):
     # ------------------------------------------------------------------ #
     #  store                                                             #
     # ------------------------------------------------------------------ #
-    @functools.wraps(KnowledgeManager.store)
+    @functools.wraps(BaseKnowledgeManager.store, updated=())
     def store(
         self,
         text: str,
@@ -150,7 +150,7 @@ class SimulatedKnowledgeManager(KnowledgeManager):
     # ------------------------------------------------------------------ #
     #  retrieve                                                          #
     # ------------------------------------------------------------------ #
-    @functools.wraps(KnowledgeManager.retrieve)
+    @functools.wraps(BaseKnowledgeManager.retrieve, updated=())
     def retrieve(
         self,
         text: str,
