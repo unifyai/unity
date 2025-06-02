@@ -52,7 +52,6 @@ class BrowserUsePlan(BasePlan):
         initial_client: AsyncUnify,
         tools: Dict[str, Callable[..., Awaitable[str]]],
         base_system_prompt: Optional[str],
-        parent_chat_context: Optional[List[dict]] = None,
         clarification_up_q: Optional[asyncio.Queue[str]] = None,
         clarification_down_q: Optional[asyncio.Queue[str]] = None,
     ):
@@ -60,8 +59,7 @@ class BrowserUsePlan(BasePlan):
         self._client = initial_client  # LLM client for the main tool loop
         self._tools = tools  # Tools available to the main tool loop
         self._base_system_prompt = base_system_prompt
-        self._parent_chat_context_on_pause: Optional[List[dict]] = parent_chat_context
-
+        self._parent_chat_context_on_pause: Optional[List[dict]] = []
         # Clarification queues for interaction with the entity that started this plan
         self._clar_up_q_internal: asyncio.Queue[str] = (
             clarification_up_q or asyncio.Queue()
@@ -527,13 +525,12 @@ class BrowserUsePlanner(BasePlanner[BrowserUsePlan]):
     def _make_plan(
         self,
         task_description: str,
-        parent_chat_context: Optional[List[dict]] = None,
+        *,
         clarification_up_q: Optional[asyncio.Queue[str]] = None,
         clarification_down_q: Optional[asyncio.Queue[str]] = None,
     ) -> BrowserUsePlan:
         """
         Initiates a new plan for the given task description using browser_use tools.
-        Renamed from 'start' to 'plan'.
         """
         logger.info(f"BrowserUsePlanner: Planning task: '{task_description}'")
 
@@ -542,31 +539,15 @@ class BrowserUsePlanner(BasePlanner[BrowserUsePlan]):
             cache=json.loads(os.environ.get("UNIFY_CACHE", "true")),
             traced=json.loads(os.environ.get("UNIFY_TRACED", "true")),
         )
-        current_client_messages = []
+
         if self._base_system_prompt:
             plan_client.set_system_message(self._base_system_prompt)
-            current_client_messages.append(
-                {"role": "system", "content": self._base_system_prompt},
-            )
-
-        if parent_chat_context:
-            messages_to_load = parent_chat_context
-            if (
-                self._base_system_prompt
-                and messages_to_load
-                and messages_to_load[0].get("role") == "system"
-            ):
-                messages_to_load = messages_to_load[1:]
-            if messages_to_load:
-                plan_client.append_messages(messages_to_load)
-                current_client_messages.extend(messages_to_load)
 
         plan = BrowserUsePlan(
             task_description=task_description,
             initial_client=plan_client,
             tools=self._get_tools(),
             base_system_prompt=self._base_system_prompt,
-            parent_chat_context=current_client_messages,
             clarification_up_q=clarification_up_q,
             clarification_down_q=clarification_down_q,
         )

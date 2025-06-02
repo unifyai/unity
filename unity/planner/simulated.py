@@ -4,6 +4,7 @@ import threading
 
 import unify
 from .base import BasePlanner, BasePlan
+from typing import Optional
 
 
 class SimulatedPlan(BasePlan):
@@ -300,13 +301,13 @@ class SimulatedPlanner(BasePlanner[SimulatedPlan]):
 
     def _make_plan(
         self,
-        task: str,
+        task_description: str,
         *,
-        clarification_up_q=None,
-        clarification_down_q=None,
+        clarification_up_q: Optional[asyncio.Queue[str]] = None,
+        clarification_down_q: Optional[asyncio.Queue[str]] = None,
     ) -> SimulatedPlan:
         return SimulatedPlan(
-            task,
+            task_description,
             self._steps,
             clarification_up_q=clarification_up_q,
             clarification_down_q=clarification_down_q,

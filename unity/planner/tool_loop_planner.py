@@ -58,7 +58,6 @@ class ToolLoopPlan(BasePlan):
         initial_client: AsyncUnify,
         tools: Dict[str, Callable[..., Awaitable[Any]]],
         base_system_prompt: Optional[str],
-        parent_chat_context: Optional[List[dict]] = None,
         clarification_up_q: Optional[asyncio.Queue[str]] = None,
         clarification_down_q: Optional[asyncio.Queue[str]] = None,
     ):
@@ -66,7 +65,7 @@ class ToolLoopPlan(BasePlan):
         self._client = initial_client  # LLM client for the main tool loop
         self._tools = tools  # Tools available to the main tool loop
         self._base_system_prompt = base_system_prompt
-        self._parent_chat_context_on_pause: Optional[List[dict]] = parent_chat_context
+        self._parent_chat_context_on_pause: Optional[List[dict]] = []
 
         # Clarification queues for interaction with the entity that started this plan
         self._clar_up_q_internal: asyncio.Queue[str] = (
@@ -147,11 +146,7 @@ class ToolLoopPlan(BasePlan):
             client=self._client,
             message=self._task_description,
             tools=current_tools,
-            parent_chat_context=(
-                self._parent_chat_context_on_pause
-                if self._state != _PlanState.RUNNING
-                else None
-            ),
+            parent_chat_context=None,
             propagate_chat_context=True,
             interrupt_llm_with_interjections=True,
             log_steps=False,
@@ -475,7 +470,7 @@ class ToolLoopPlanner(BasePlanner[ToolLoopPlan]):
     def _make_plan(
         self,
         task_description: str,
-        parent_chat_context: Optional[List[dict]] = None,
+        *,
         clarification_up_q: Optional[asyncio.Queue[str]] = None,
         clarification_down_q: Optional[asyncio.Queue[str]] = None,
     ) -> ToolLoopPlan:
@@ -490,31 +485,14 @@ class ToolLoopPlanner(BasePlanner[ToolLoopPlan]):
             cache=json.loads(os.environ.get("UNIFY_CACHE", "true")),
             traced=json.loads(os.environ.get("UNIFY_TRACED", "true")),
         )
-        current_client_messages = []
         if self._base_system_prompt:
             plan_client.set_system_message(self._base_system_prompt)
-            current_client_messages.append(
-                {"role": "system", "content": self._base_system_prompt},
-            )
-
-        if parent_chat_context:
-            messages_to_load = parent_chat_context
-            if (
-                self._base_system_prompt
-                and messages_to_load
-                and messages_to_load[0].get("role") == "system"
-            ):
-                messages_to_load = messages_to_load[1:]
-            if messages_to_load:
-                plan_client.append_messages(messages_to_load)
-                current_client_messages.extend(messages_to_load)
 
         plan = ToolLoopPlan(
             task_description=task_description,
             initial_client=plan_client,
             tools=self._get_tools(),
             base_system_prompt=self._base_system_prompt,
-            parent_chat_context=current_client_messages,
             clarification_up_q=clarification_up_q,
             clarification_down_q=clarification_down_q,
         )
