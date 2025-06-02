@@ -383,7 +383,6 @@ async def test_interject_nested_handle(monkeypatch):
 
 
 @pytest.mark.asyncio
-@pytest.mark.skip(reason="infinite loop issue")
 async def test_clarification_nested_handle():
     """
     Inner tool asks a question, outer loop surfaces it, assistant answers
@@ -415,19 +414,40 @@ async def test_clarification_nested_handle():
         )
         inner_client.set_system_message(
             "1️⃣  Call `ask_colour`.\n"
-            "2️⃣  Wait for the clarification answer.\n"
-            "3️⃣  Reply with exactly 'done'.",
+            "2️⃣  Wait for the clarification answer.\n."
+            "3️⃣  Reply with **only** with 'done'.",
         )
+
+        # Wrap `ask_colour` so it always uses *the very same* up/down queues we
+        # created above.  This guarantees that:
+        #   • the clarification request travels **upwards** via `up_q` and can be
+        #     observed by the *outer* conversational loop, **and**
+        #   • the assistant's answer – delivered through the `_clarify_…` helper –
+        #     flows **back down** the exact same `down_q`, unblocking the inner
+        #     tool.
+
+        async def _ask_colour_wrapped() -> str:  # type: ignore[valid-type]
+            return await ask_colour(
+                clarification_up_q=up_q,
+                clarification_down_q=down_q,
+            )
+
+        _ask_colour_wrapped.__name__ = "ask_colour"
+        _ask_colour_wrapped.__qualname__ = "ask_colour"
+
         handle = start_async_tool_use_loop(
             client=inner_client,
             message="go",
-            tools={"ask_colour": ask_colour},
+            tools={"ask_colour": _ask_colour_wrapped},
             max_steps=10,
-            timeout=120,
+            timeout=60,
         )
-        # expose the queues so the *outer* loop sees them
+
+        # Expose the same queues on the returned *handle* so the **outer** loop
+        # can surface the clarification request and later push the answer down.
         handle.clarification_up_q = up_q
         handle.clarification_down_q = down_q
+
         return handle
 
     outer_tool.__name__ = "outer_tool"
@@ -440,7 +460,7 @@ async def test_clarification_nested_handle():
         traced=json.loads(os.environ.get("UNIFY_TRACED", "true")),
     )
     client.set_system_message(
-        "Call `outer_tool`.  When the tool asks a question, answer 'blue' "
+        "Call `outer_tool`.  When the tool asks a question, answer **only** with 'blue' "
         "via the provided helper, then say 'all done'.",
     )
 
