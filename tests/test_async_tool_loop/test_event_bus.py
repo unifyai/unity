@@ -46,8 +46,8 @@ async def test_basic_event_flow() -> None:
 
     client = unify.AsyncUnify(
         "gpt-4o@openai",
-        cache=True,
-        traced=True,
+        cache=json.loads(os.environ.get("UNIFY_CACHE", "true")),
+        traced=json.loads(os.environ.get("UNIFY_TRACED", "true")),
     ).set_system_message(
         "please echo whatever the user says",
     )
@@ -62,7 +62,7 @@ async def test_basic_event_flow() -> None:
         event_type="TEST",
         event_bus=bus,
         interject_queue=asyncio.Queue(),
-        stop_event=asyncio.Event(),
+        cancel_event=asyncio.Event(),
         pause_event=pause_event,
         prune_tool_duplicates=True,
         log_steps=False,
