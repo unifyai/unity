@@ -1,5 +1,6 @@
 import json
 import asyncio
+import functools
 import inspect
 import traceback
 from enum import Enum
@@ -1767,9 +1768,28 @@ class SteerableToolHandle(ABC):
         pass
 
     @abstractmethod
-    @unify.traced
+    async def interject(self, message: str) -> None:
+        """Inject an additional *user* turn into the running conversation."""
+
+    @abstractmethod
+    def stop(self) -> None:
+        """Politely ask the loop to shut down (gracefully)."""
+
+    @abstractmethod
+    def pause(self) -> None:
+        """Temporarily freeze the outer loop (tools keep running)."""
+
+    @abstractmethod
+    def resume(self) -> None:
+        """Un-freeze a loop that was paused with :pyfunc:`pause`."""
+
+    @abstractmethod
+    def done(self) -> bool:
+        """Flag for whether or not this task is done."""
+
+    @abstractmethod
     async def result(self) -> str:
-        """Wait for the assistant's *final* reply."""
+        """Wait for the assistant’s *final* reply."""
 
 
 class AsyncToolUseLoopHandle(SteerableToolHandle):
@@ -1795,34 +1815,28 @@ class AsyncToolUseLoopHandle(SteerableToolHandle):
         self._pause_event.set()
 
     # -- public API -----------------------------------------------------------
-    @unify.traced
+    @functools.wraps(SteerableToolHandle.interject, updated=())
     async def interject(self, message: str) -> None:
-        """Inject an additional *user* turn into the running conversation."""
         await self._queue.put(message)
 
-    @unify.traced
+    @functools.wraps(SteerableToolHandle.stop, updated=())
     def stop(self) -> None:
-        """Politely ask the loop to shut down (gracefully)."""
         self._cancel_event.set()
 
-    @unify.traced
+    @functools.wraps(SteerableToolHandle.pause, updated=())
     def pause(self) -> None:
-        """Temporarily freeze the outer loop (tools keep running)."""
         self._pause_event.clear()
 
-    @unify.traced
+    @functools.wraps(SteerableToolHandle.resume, updated=())
     def resume(self) -> None:
-        """Un-freeze a loop that was paused with :pyfunc:`pause`."""
         self._pause_event.set()
 
-    # Optional helpers --------------------------------------------------------
-    @unify.traced
+    @functools.wraps(SteerableToolHandle.done, updated=())
     def done(self) -> bool:
         return self._task.done()
 
-    @unify.traced
+    @functools.wraps(SteerableToolHandle.result, updated=())
     async def result(self) -> str:
-        """Wait for the assistant’s *final* reply."""
         return await self._task
 
 
