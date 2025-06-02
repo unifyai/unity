@@ -21,7 +21,7 @@ class _SimulatedTaskListHandle(SteerableToolHandle):
         initial_text: str,
         *,
         mode: str,
-        return_reasoning_steps: bool = False,
+        _return_reasoning_steps: bool = False,
         clarification_up_q: asyncio.Queue[str] | None = None,
         clarification_down_q: asyncio.Queue[str] | None = None,
     ) -> None:
@@ -140,7 +140,7 @@ class SimulatedTaskListManager(BaseTaskListManager):
         self,
         text: str,
         *,
-        return_reasoning_steps: bool = False,
+        _return_reasoning_steps: bool = False,
         log_tool_steps: bool = False,  # Ignored – we do not expose tools
         parent_chat_context: list[dict] | None = None,  # Unused – synthetic
         clarification_up_q: asyncio.Queue[str] | None = None,
@@ -167,7 +167,7 @@ class SimulatedTaskListManager(BaseTaskListManager):
         self,
         text: str,
         *,
-        return_reasoning_steps: bool = False,
+        _return_reasoning_steps: bool = False,
         log_tool_steps: bool = False,  # Ignored – no tools here
         parent_chat_context: list[dict] | None = None,
         clarification_up_q: asyncio.Queue[str] | None = None,
