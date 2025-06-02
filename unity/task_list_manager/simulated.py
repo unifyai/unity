@@ -3,11 +3,13 @@ import asyncio
 import json
 import os
 import threading
+import functools
 from typing import List, Optional
 
 import unify
 
 from ..common.llm_helpers import SteerableToolHandle
+from .base import BaseTaskListManager
 
 
 class _SimulatedTaskListHandle(SteerableToolHandle):
@@ -106,7 +108,7 @@ class _SimulatedTaskListHandle(SteerableToolHandle):
         return {}
 
 
-class SimulatedTaskListManager:
+class SimulatedTaskListManager(BaseTaskListManager):
     """
     Drop-in replacement for TaskListManager where the underlying data is
     entirely imaginary – useful for offline demos or unit tests that only
@@ -133,6 +135,7 @@ class SimulatedTaskListManager:
     # ------------------------------------------------------------------ #
     #  ask                                                               #
     # ------------------------------------------------------------------ #
+    @functools.wraps(BaseTaskListManager.ask, updated=())
     def ask(
         self,
         text: str,
@@ -156,6 +159,7 @@ class SimulatedTaskListManager:
     # ------------------------------------------------------------------ #
     #  update                                                            #
     # ------------------------------------------------------------------ #
+    @functools.wraps(BaseTaskListManager.update, updated=())
     def update(
         self,
         text: str,

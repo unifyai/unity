@@ -1,6 +1,7 @@
 import os
 import unify
 import asyncio
+import functools
 from datetime import datetime, timezone
 from typing import Dict, List, Any, Optional, Union
 
@@ -14,10 +15,11 @@ from .types.schedule import Schedule
 from .types.status import Status
 from .types.task import Task
 from .sys_msgs import ASK
+from .base import BaseTaskListManager
 import json
 
 
-class TaskListManager:
+class TaskListManager(BaseTaskListManager):
 
     _VEC_TASK = "task_emb"
 
@@ -83,6 +85,7 @@ class TaskListManager:
 
     # English-Text question
 
+    @functools.wraps(BaseTaskListManager.ask, updated=())
     def ask(
         self,
         text: str,
@@ -92,47 +95,7 @@ class TaskListManager:
         parent_chat_context: list[dict] | None = None,
         clarification_up_q: asyncio.Queue[str] | None = None,
         clarification_down_q: asyncio.Queue[str] | None = None,
-    ) -> "SteerableToolHandle":
-        """
-        Handle any plain-text english question to ask something about the list of tasks.
-
-        Args:
-            text (str): The text-based question to ask about the task list.
-            return_reasoning_steps (bool): Whether to return the reasoning steps for the update request.
-            log_tool_steps (bool): Whether to log the steps taken by the tool.
-            parent_chat_context (list[dict]): A list of parent context messages to pass down into the tool use loop.
-            clarification_up_q (asyncio.Queue[str]): A queue to send clarification questions up to the caller.
-            clarification_down_q (asyncio.Queue[str]): A queue to send clarification answers down to the model.
-
-        Returns:
-            AsyncToolLoopHandle: A handle to the running conversation that supports:
-                - await handle.result() - Get the final answer
-                - await handle.interject(message) - Add a user message mid-conversation
-                - handle.stop() - Gracefully cancel the conversation
-
-            When return_reasoning_steps=True, returns a tuple of (handle, messages)
-
-        Usage:
-            # Synchronous call that returns a handle immediately:
-            handle = tlm.ask("Which tasks are high priority?")
-
-            # Retrieve the answer (must be awaited):
-            answer = await handle.result()
-
-            # If you need the reasoning steps that led to the answer:
-            handle = tlm.ask(
-                "List all active tasks.",
-                return_reasoning_steps=True,
-            )
-            answer, reasoning_steps = await handle.result()
-
-            # Mid-conversation clarification:
-            await handle.interject("Only include tasks assigned to me.")
-
-            # Or abort the interaction:
-            handle.stop()
-        """
-
+    ) -> SteerableToolHandle:
         client = unify.AsyncUnify(
             "o4-mini@openai",
             cache=json.loads(os.environ.get("UNIFY_CACHE", "true")),
@@ -180,6 +143,7 @@ class TaskListManager:
 
     # English-Text update request
 
+    @functools.wraps(BaseTaskListManager.update, updated=())
     def update(
         self,
         text: str,
@@ -189,50 +153,7 @@ class TaskListManager:
         parent_chat_context: list[dict] | None = None,
         clarification_up_q: asyncio.Queue[str] | None = None,
         clarification_down_q: asyncio.Queue[str] | None = None,
-    ) -> "SteerableToolHandle":
-        """
-        Handle any plain-text english command to update the list of tasks in some manner.
-
-        Args:
-            text (str): The text-based request to update the task list.
-            return_reasoning_steps (bool): Whether to return the reasoning steps for the update request.
-            log_tool_steps (bool): Whether to log the steps taken by the tool.
-            parent_chat_context (list[dict]): A list of parent context messages to pass down into the tool use loop.
-            clarification_up_q (asyncio.Queue[str]): A queue to send clarification questions up to the caller.
-            clarification_down_q (asyncio.Queue[str]): A queue to send clarification answers down to the model.
-
-        Returns:
-            AsyncToolLoopHandle: A handle to the running conversation that supports:
-                - await handle.result() - Get the final answer
-                - await handle.interject(message) - Add a user message mid-conversation
-                - handle.stop() - Gracefully cancel the conversation
-
-            When return_reasoning_steps=True, returns a tuple of (handle, messages)
-
-        Usage:
-            # Create a new task via natural language:
-            handle = tlm.update(
-                "Please add a new task called 'Promote Jeff Smith' with the description 'Send an email to Jeff Smith, kindly congratulating him and explaining that he has been promoted from sales rep to sales manager.'",
-            )
-            await handle.result()
-
-            # Delete a task by its id:
-            handle = tlm.update("Delete the task with id 0.")
-            await handle.result()
-
-            # If you need reasoning steps:
-            handle = tlm.update(
-                "Pause the current active task.",
-                return_reasoning_steps=True,
-            )
-            outcome, reasoning_steps = await handle.result()
-
-            # You can interject additional instructions while it's running:
-            await handle.interject("Actually, cancel it instead.")
-
-            # Or stop the update loop entirely:
-            handle.stop()
-        """
+    ) -> SteerableToolHandle:
         from .sys_msgs import UPDATE
 
         client = unify.AsyncUnify(
