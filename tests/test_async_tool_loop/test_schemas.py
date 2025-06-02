@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from enum import Enum
 
+import unify
 import pytest
 from pydantic import BaseModel
 
@@ -74,3 +75,46 @@ def test_method_to_schema_includes_enum():
     assert params["a"]["type"] == "string"
     # Enum must appear with *exact* allowed literals
     assert params["col"]["enum"] == ["str", "int"]
+
+
+# --------------------------------------------------------------------------- #
+#  PRIVATE OPTIONAL ARGUMENTS ARE NOT EXPOSED                                 #
+# --------------------------------------------------------------------------- #
+
+
+def test_private_optional_parameters_are_hidden_from_tool_schema() -> None:
+    """
+    *Optional* parameters whose names begin with an underscore (``_``)
+    must **not** appear in the schema that is presented to the LLM.
+    Required private parameters, however, *must* stay visible or the
+    tool would become impossible to call.
+    """
+
+    # ── 1. optional private argument should be hidden ─────────────────────
+    @unify.traced
+    def sample_tool(a: int, b: int = 0, _secret: str = "x") -> int:  # noqa: D401
+        return a + b
+
+    schema = llmh.method_to_schema(sample_tool)
+    props = schema["function"]["parameters"]["properties"]
+    required = schema["function"]["parameters"]["required"]
+
+    # public arguments are present …
+    assert "a" in props and "b" in props
+    # … while the optional private one is not
+    assert "_secret" not in props
+
+    # required list unchanged
+    assert "a" in required and "b" not in required
+
+    # ── 2. required private argument should be kept ───────────────────────
+    @unify.traced
+    def tool_with_required_private(x: int, _hidden: str) -> str:  # noqa: D401
+        return _hidden * x
+
+    schema2 = llmh.method_to_schema(tool_with_required_private)
+    props2 = schema2["function"]["parameters"]["properties"]
+    required2 = schema2["function"]["parameters"]["required"]
+
+    # the *required* private parameter is still exposed
+    assert "_hidden" in props2 and "_hidden" in required2
