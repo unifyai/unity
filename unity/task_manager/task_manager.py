@@ -73,22 +73,22 @@ class TaskManager:
         # static, always-present tools -------------------------------------------------
         self._static_passive_tools: Dict[str, Callable] = {
             # contact
-            "ContactManager_ask": self._contact_manager.ask,
+            f"{self._contact_manager.__class__.__name__}_ask": self._contact_manager.ask,
             # transcript
-            "TranscriptManager_ask": self._transcript_manager.ask,
+            f"{self._transcript_manager.__class__.__name__}_ask": self._transcript_manager.ask,
             # knowledge
-            "KnowledgeManager_retrieve": self._knowledge_manager.retrieve,
+            f"{self._knowledge_manager.__class__.__name__}_retrieve": self._knowledge_manager.retrieve,
             # task-list
-            "TaskListManager_ask": self._task_list_manager.ask,
+            f"{self._task_list_manager.__class__.__name__}_ask": self._task_list_manager.ask,
         }
 
         self._static_active_tools: Dict[str, Callable] = {
             # transcript
-            "TranscriptManager_summarize": self._transcript_manager.summarize,
+            f"{self._transcript_manager.__class__.__name__}_summarize": self._transcript_manager.summarize,
             # knowledge
-            "KnowledgeManager_store": self._knowledge_manager.store,
+            f"{self._knowledge_manager.__class__.__name__}_store": self._knowledge_manager.store,
             # task-list
-            "TaskListManager_update": self._task_list_manager.update,
+            f"{self._task_list_manager.__class__.__name__}_update": self._task_list_manager.update,
         }
 
         # ---------- planner wrappers --------------------------------------------------
