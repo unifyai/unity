@@ -135,3 +135,25 @@ async def test_km_stateful_serial_retrieves():
     )
     ans2 = (await h2.result()).lower()
     assert theme.lower() in ans2, "LLM should recall the theme it produced earlier"
+
+
+# ────────────────────────────────────────────────────────────────────────────
+# 7.  Doc-string inheritance                                                 #
+# ────────────────────────────────────────────────────────────────────────────
+def test_simulated_docstrings_match_real():
+    """
+    Public methods in SimulatedKnowledgeManager should copy the real
+    KnowledgeManager doc-strings one-for-one (via functools.wraps).
+    """
+    from unity.knowledge_manager.knowledge_manager import KnowledgeManager
+    from unity.knowledge_manager.simulated import SimulatedKnowledgeManager
+
+    assert (
+        SimulatedKnowledgeManager.store.__doc__.strip()
+        == KnowledgeManager.store.__doc__.strip()
+    ), ".store doc-string was not copied correctly"
+
+    assert (
+        SimulatedKnowledgeManager.retrieve.__doc__.strip()
+        == KnowledgeManager.retrieve.__doc__.strip()
+    ), ".retrieve doc-string was not copied correctly"
