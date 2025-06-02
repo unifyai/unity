@@ -140,7 +140,7 @@ async def test_km_stateful_serial_retrieves():
 # ────────────────────────────────────────────────────────────────────────────
 # 7.  Doc-string inheritance                                                 #
 # ────────────────────────────────────────────────────────────────────────────
-def test_simulated_docstrings_match_real():
+def test_simulated_km_docstrings_match_real():
     """
     Public methods in SimulatedKnowledgeManager should copy the real
     KnowledgeManager doc-strings one-for-one (via functools.wraps).

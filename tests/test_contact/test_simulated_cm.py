@@ -135,3 +135,25 @@ async def test_cm_stateful_update_then_ask():
     assert (
         "john" in ans and "email" in ans
     ), "Contact created via update should be recalled"
+
+
+# ────────────────────────────────────────────────────────────────────────────
+# 7.  Doc-string inheritance                                                 #
+# ────────────────────────────────────────────────────────────────────────────
+def test_simulated_cm_docstrings_match_real():
+    """
+    Public methods in SimulatedContactManager should copy the real
+    ContactManager doc-strings one-for-one (via functools.wraps).
+    """
+    from unity.contact_manager.contact_manager import ContactManager
+    from unity.contact_manager.simulated import SimulatedContactManager
+
+    assert (
+        SimulatedContactManager.ask.__doc__.strip()
+        == ContactManager.ask.__doc__.strip()
+    ), ".store doc-string was not copied correctly"
+
+    assert (
+        SimulatedContactManager.update.__doc__.strip()
+        == ContactManager.update.__doc__.strip()
+    ), ".retrieve doc-string was not copied correctly"
