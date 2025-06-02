@@ -5,11 +5,13 @@ import asyncio
 import json
 import os
 import threading
+import functools
 from typing import List, Optional, Union, Dict, Any
 
 import unify
 
 from ..common.llm_helpers import SteerableToolHandle
+from .base import BaseTranscriptManager
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -100,7 +102,7 @@ class _SimulatedTranscriptHandle(SteerableToolHandle):
 # ─────────────────────────────────────────────────────────────────────────────
 # Public Simulated Manager
 # ─────────────────────────────────────────────────────────────────────────────
-class SimulatedTranscriptManager:
+class SimulatedTranscriptManager(BaseTranscriptManager):
     """
     Lightweight, fake implementation of TranscriptManager that only uses an
     LLM to invent plausible answers.  Suitable for offline demos and tests
@@ -130,6 +132,7 @@ class SimulatedTranscriptManager:
     # --------------------------------------------------------------------- #
     # ask                                                                   #
     # --------------------------------------------------------------------- #
+    @functools.wraps(BaseTranscriptManager.ask, updated=())
     def ask(
         self,
         text: str,
@@ -151,6 +154,7 @@ class SimulatedTranscriptManager:
     # --------------------------------------------------------------------- #
     # summarize                                                             #
     # --------------------------------------------------------------------- #
+    @functools.wraps(BaseTranscriptManager.summarize, updated=())
     async def summarize(
         self,
         *,
@@ -160,10 +164,6 @@ class SimulatedTranscriptManager:
         clarification_up_q: asyncio.Queue[str] | None = None,
         clarification_down_q: asyncio.Queue[str] | None = None,
     ) -> str:
-        """
-        Synthetically summarise the given exchange IDs.  All content is
-        invented; we simply echo back a plausible summary paragraph.
-        """
         if not isinstance(exchange_ids, list):
             exchange_ids = [exchange_ids]
 
