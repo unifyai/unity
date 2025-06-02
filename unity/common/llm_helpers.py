@@ -244,6 +244,7 @@ async def _async_tool_use_loop_inner(
     log_steps: bool = False,
     max_steps: Optional[int] = None,
     timeout: Optional[int] = None,
+    raise_on_limit: bool = False,
 ) -> str:
     r"""
     Orchestrate an *interactive* "function-calling" dialogue between an LLM
@@ -566,6 +567,37 @@ async def _async_tool_use_loop_inner(
     completed_results: Dict[str, str] = {}
     assistant_meta: Dict[int, Dict[str, Any]] = {}
 
+    # ── helper: graceful early-exit when limits are hit ────────────────────
+    async def _handle_limit_reached(reason: str) -> str:
+        """
+        Gracefully terminate the loop when *timeout* or *max_steps* are
+        exceeded and `raise_on_limit` is *False*:
+          • stop every pending tool (via handle.stop() if available)
+          • cancel waiter coroutines
+          • append a short assistant notice
+        """
+        for t in list(pending):
+            h = task_info.get(t, {}).get("handle")
+            try:
+                if h is not None and hasattr(h, "stop"):
+                    await _maybe_await(h.stop())
+            except Exception:
+                pass
+            if not t.done():
+                t.cancel()
+        await asyncio.gather(*pending, return_exceptions=True)
+        pending.clear()
+
+        notice = {
+            "role": "assistant",
+            "content": f"🔚 Terminating early: {reason}",
+        }
+        client.append_messages([notice])
+        await _to_event_bus(notice)
+        if log_steps:
+            LOGGER.info(f"⏹️  Early exit – {reason}")
+        return notice["content"]
+
     # Set to *True* whenever the loop must grant the LLM an immediate turn
     # before waiting again (user interjection, clarification answer, etc.).
     llm_turn_required = False
@@ -623,16 +655,26 @@ async def _async_tool_use_loop_inner(
 
             # 0-α. **Global timeout**
             if timeout is not None and time.perf_counter() - start_ts > timeout:
-                raise asyncio.TimeoutError(
-                    f"Loop exceeded {timeout}s wall-clock limit",
-                )
+                if raise_on_limit:
+                    raise asyncio.TimeoutError(
+                        f"Loop exceeded {timeout}s wall-clock limit",
+                    )
+                else:
+                    return await _handle_limit_reached(
+                        f"timeout ({timeout}s) exceeded",
+                    )
 
             # 0-β. **Chat history length**
-            if max_steps is not None and len(client.messages) > max_steps:
-                raise RuntimeError(
-                    f"Conversation exceeded max_steps={max_steps} "
-                    f"(len(client.messages)={len(client.messages)})",
-                )
+            if max_steps is not None and len(client.messages) >= max_steps:
+                if raise_on_limit:
+                    raise RuntimeError(
+                        f"Conversation exceeded max_steps={max_steps} "
+                        f"(len(client.messages)={len(client.messages)})",
+                    )
+                else:
+                    return await _handle_limit_reached(
+                        f"max_steps ({max_steps}) exceeded",
+                    )
 
             # ── 0. Drain *all* queued interjections, allowed at any time ──
             # NOTE: We must do this *before* waiting on tool completion so a
@@ -673,10 +715,39 @@ async def _async_tool_use_loop_inner(
                         w = asyncio.create_task(cuq.get())
                         clar_waiters[w] = _t
                 waiters = pending | set(clar_waiters) | {cancel_waiter, interject_w}
+
+                # ── honour global *timeout* while we wait for tools ───────────
+                wait_timeout: Optional[float] = None
+                if timeout is not None:
+                    wait_timeout = timeout - (time.perf_counter() - start_ts)
+                    # already exceeded?
+                    if wait_timeout <= 0:
+                        if raise_on_limit:
+                            raise asyncio.TimeoutError(
+                                f"Loop exceeded {timeout}s wall-clock limit",
+                            )
+                        else:
+                            return await _handle_limit_reached(
+                                f"timeout ({timeout}s) exceeded",
+                            )
+
                 done, _ = await asyncio.wait(
                     waiters,
+                    timeout=wait_timeout,
                     return_when=asyncio.FIRST_COMPLETED,
                 )
+
+                # ── hit the timeout while waiting? ────────────────────────────
+                if not done:
+                    # nothing completed → the wait *timed out*
+                    if raise_on_limit:
+                        raise asyncio.TimeoutError(
+                            f"Loop exceeded {timeout}s wall-clock limit",
+                        )
+                    else:
+                        return await _handle_limit_reached(
+                            f"timeout ({timeout}s) exceeded",
+                        )
 
                 # ── ensure *unused* auxiliary waiters don't linger ──────────
                 # If one helper won the race we *must* cancel/await the other
@@ -1132,9 +1203,14 @@ async def _async_tool_use_loop_inner(
 
             # ── timeout guard (post-LLM) ───────────────────────────────
             if timeout is not None and time.perf_counter() - start_ts > timeout:
-                raise asyncio.TimeoutError(
-                    f"Loop exceeded {timeout}s wall-clock limit",
-                )
+                if raise_on_limit:
+                    raise asyncio.TimeoutError(
+                        f"Loop exceeded {timeout}s wall-clock limit",
+                    )
+                else:
+                    return await _handle_limit_reached(
+                        f"timeout ({timeout}s) exceeded",
+                    )
 
             # LLM has just spoken – reset the flag
             llm_turn_required = False
@@ -1635,15 +1711,25 @@ async def _async_tool_use_loop_inner(
 
             # ── timeout guard (final turn) ──────────────────────────────────
             if timeout is not None and time.perf_counter() - start_ts > timeout:
-                raise asyncio.TimeoutError(
-                    f"Loop exceeded {timeout}s wall-clock limit",
-                )
+                if raise_on_limit:
+                    raise asyncio.TimeoutError(
+                        f"Loop exceeded {timeout}s wall-clock limit",
+                    )
+                else:
+                    return await _handle_limit_reached(
+                        f"timeout ({timeout}s) exceeded",
+                    )
 
-            if max_steps is not None and len(client.messages) > max_steps:
-                raise RuntimeError(
-                    f"Conversation exceeded max_steps={max_steps} "
-                    f"(len(client.messages)={len(client.messages)})",
-                )
+            if max_steps is not None and len(client.messages) >= max_steps:
+                if raise_on_limit:
+                    raise RuntimeError(
+                        f"Conversation exceeded max_steps={max_steps} "
+                        f"(len(client.messages)={len(client.messages)})",
+                    )
+                else:
+                    return await _handle_limit_reached(
+                        f"max_steps ({max_steps}) exceeded",
+                    )
 
             if log_steps:
                 LOGGER.info(f"\n🤖 {msg['content']}\n")
@@ -1755,6 +1841,7 @@ def start_async_tool_use_loop(
     log_steps: bool = False,
     max_steps: Optional[int] = None,
     timeout: Optional[int] = None,
+    raise_on_limit: bool = False,
 ) -> AsyncToolUseLoopHandle:
     """
     Kick off `_async_tool_use_loop_inner` in its own task and give the caller
@@ -1783,6 +1870,7 @@ def start_async_tool_use_loop(
             log_steps=log_steps,
             max_steps=max_steps,
             timeout=timeout,
+            raise_on_limit=raise_on_limit,
         ),
     )
 
