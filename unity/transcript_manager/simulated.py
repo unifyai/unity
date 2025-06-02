@@ -142,7 +142,10 @@ class SimulatedTranscriptManager(BaseTranscriptManager):
         clarification_up_q: asyncio.Queue[str] | None = None,
         clarification_down_q: asyncio.Queue[str] | None = None,
     ) -> SteerableToolHandle:
-        # we reuse the shared, stateful client
+        if parent_chat_context:
+            self._llm._system_message += (
+                f"\nCalling chat context:{json.dumps(parent_chat_context, indent=4)}"
+            )
         return _SimulatedTranscriptHandle(
             self._llm,
             text,
@@ -164,6 +167,10 @@ class SimulatedTranscriptManager(BaseTranscriptManager):
         clarification_up_q: asyncio.Queue[str] | None = None,
         clarification_down_q: asyncio.Queue[str] | None = None,
     ) -> str:
+        if parent_chat_context:
+            self._llm._system_message += (
+                f"\nCalling chat context:{json.dumps(parent_chat_context, indent=4)}"
+            )
         if not isinstance(exchange_ids, list):
             exchange_ids = [exchange_ids]
 

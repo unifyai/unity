@@ -146,7 +146,10 @@ class SimulatedTaskListManager(BaseTaskListManager):
         clarification_up_q: asyncio.Queue[str] | None = None,
         clarification_down_q: asyncio.Queue[str] | None = None,
     ) -> SteerableToolHandle:
-        # Re-use shared, memory-retaining client
+        if parent_chat_context:
+            self._llm._system_message += (
+                f"\nCalling chat context:{json.dumps(parent_chat_context, indent=4)}"
+            )
         return _SimulatedTaskListHandle(
             self._llm,
             text,
@@ -170,7 +173,10 @@ class SimulatedTaskListManager(BaseTaskListManager):
         clarification_up_q: asyncio.Queue[str] | None = None,
         clarification_down_q: asyncio.Queue[str] | None = None,
     ) -> SteerableToolHandle:
-        # Same shared client – keeps the evolving fictitious task state
+        if parent_chat_context:
+            self._llm._system_message += (
+                f"\nCalling chat context:{json.dumps(parent_chat_context, indent=4)}"
+            )
         return _SimulatedTaskListHandle(
             self._llm,
             text,
