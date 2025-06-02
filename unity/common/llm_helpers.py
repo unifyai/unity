@@ -162,10 +162,16 @@ def method_to_schema(bound_method):
     props, required = {}, []
 
     for name, param in sig.parameters.items():
-        # ── Skip *optional* private parameters ────────────────────────────
-        #    These are intended for internal/human use and should not be
-        #    surfaced to the LLM when they are not required.
-        if name.startswith("_") and param.default is not inspect._empty:
+        # ── Skip internal-only parameters ─────────────────────────────────
+        #    • optional private parameters (leading "_" with a default) **or**
+        #    • the special ``parent_chat_context`` argument.
+        #      The latter is injected automatically whenever
+        #      ``propagate_chat_context`` is *True* and MUST **never** be
+        #      surfaced to the LLM – the decision is a global one, not left
+        #      to the model.
+        if (
+            name.startswith("_") and param.default is not inspect._empty
+        ) or name == "parent_chat_context":
             continue
 
         ann = hints.get(name, str)
@@ -334,11 +340,14 @@ async def _async_tool_use_loop_inner(
         so the assistant can pivot instantly.  When *False* the loop waits
         for the model to finish (legacy behaviour).
 
-
     propagate_chat_context : ``bool``, default ``True``
         If *True*, the entire conversation state of **this** loop is
         threaded into any child tool that accepts a
         ``parent_chat_context`` keyword argument.
+        If *True*, the entire conversation state of **this** loop is threaded
+        into any child tool via the *internal-only* ``parent_chat_context``
+        argument.  This parameter is added automatically and is **not**
+        exposed to the LLM.
 
     parent_chat_context : ``list[dict] | None``
         Nested chat structure passed from an **outer** loop.  When
