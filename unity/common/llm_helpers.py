@@ -153,10 +153,21 @@ def annotation_to_schema(ann: Any) -> Dict[str, Any]:
 
 
 def method_to_schema(bound_method):
+    """
+    Convert **bound_method** into an OpenAI-compatible *function*-tool schema.
+    """
+
     sig = inspect.signature(bound_method)
     hints = get_type_hints(bound_method)
     props, required = {}, []
+
     for name, param in sig.parameters.items():
+        # ── Skip *optional* private parameters ────────────────────────────
+        #    These are intended for internal/human use and should not be
+        #    surfaced to the LLM when they are not required.
+        if name.startswith("_") and param.default is not inspect._empty:
+            continue
+
         ann = hints.get(name, str)
         props[name] = annotation_to_schema(ann)
         if param.default is inspect._empty:
