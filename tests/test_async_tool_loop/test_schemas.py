@@ -118,3 +118,40 @@ def test_private_optional_parameters_are_hidden_from_tool_schema() -> None:
 
     # the *required* private parameter is still exposed
     assert "_hidden" in props2 and "_hidden" in required2
+
+
+# --------------------------------------------------------------------------- #
+#  `parent_chat_context` MUST NEVER BE EXPOSED                                #
+# --------------------------------------------------------------------------- #
+
+
+def test_parent_chat_context_parameter_is_always_hidden() -> None:
+    """
+    Arguments literally named ``parent_chat_context`` are injected
+    automatically when ``propagate_chat_context`` is *True*.  They are an
+    internal implementation detail and **must not** be visible in the tool
+    schema presented to the LLM, regardless of whether they are declared as
+    required or optional in Python.
+    """
+
+    # required variant ------------------------------------------------------
+    @unify.traced
+    def tool_with_ctx(a: int, parent_chat_context: list[dict]):  # noqa: D401
+        return a
+
+    # optional variant ------------------------------------------------------
+    @unify.traced
+    def tool_with_ctx_optional(  # noqa: D401
+        a: int,
+        parent_chat_context: list[dict] | None = None,
+    ):
+        return a
+
+    for fn in (tool_with_ctx, tool_with_ctx_optional):
+        schema = llmh.method_to_schema(fn)
+        props = schema["function"]["parameters"]["properties"]
+        required = schema["function"]["parameters"]["required"]
+
+        # The parameter must be stripped from both *properties* and *required*
+        assert "parent_chat_context" not in props
+        assert "parent_chat_context" not in required
