@@ -86,7 +86,7 @@ def _tool_results(msgs: List[dict], tool_name: str) -> int:
 # --------------------------------------------------------------------------- #
 #  FIXTURE                                                                    #
 # --------------------------------------------------------------------------- #
-@pytest.fixture()
+@pytest.fixture(scope="function")
 def client():
     return unify.AsyncUnify(
         MODEL_NAME,
@@ -176,7 +176,7 @@ async def test_functional_tool_pause_extends_wall_clock(client):
         1️⃣  call `pausable_fn`;
         2️⃣  when the *user* says **hold**, invoke the `_pause_…` helper;
         3️⃣  when the *user* says **go**,   invoke the `_resume_…` helper;
-        4️⃣  finally answer 'done'.
+        4️⃣  when the tool finishes, reply with **done**.
     * We measure wall-clock time: because the loop is paused for ~2 s in the
       middle, total duration must be ≥ 2 s + the tool's own 1-second workload.
     """
@@ -187,6 +187,9 @@ async def test_functional_tool_pause_extends_wall_clock(client):
             await pause_event.wait()
             await asyncio.sleep(0.1)
         return "ok"
+
+    pausable_fn.__name__ = "pausable_fn"
+    pausable_fn.__qualname__ = "pausable_fn"
 
     client.set_system_message(
         "1️⃣ Call `pausable_fn`.\n"
@@ -238,11 +241,14 @@ async def test_functional_tool_pause_resume_helpers_called_once(client):
             await asyncio.sleep(1)
         return "yo"
 
+    pausable_fn.__name__ = "pausable_fn"
+    pausable_fn.__qualname__ = "pausable_fn"
+
     client.set_system_message(
         "1️⃣ Call `pausable_fn`.\n"
-        "2️⃣ If the user says **freeze**, call `_pause_…` once.\n"
-        "3️⃣ If the user then says **unfreeze**, call `_resume_…` once.\n"
-        "4️⃣ Finish with **all done**.",
+        "2️⃣ If the user says **freeze**, call `_pause_…` *once*.\n"
+        "3️⃣ If the user then says **unfreeze**, call `_resume_…` *once*.\n"
+        "4️⃣ When the tool finishes, reply with **all done**.",
     )
 
     h = start_async_tool_use_loop(

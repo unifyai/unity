@@ -1125,7 +1125,7 @@ async def _async_tool_use_loop_inner(
                     )
                 except Exception:
                     raise Exception(
-                        f"LLM call failed. Messages at the time:\n{json.dumps(client.messages, indent=4)}, exception: {llm_task.exception()}",
+                        f"LLM call failed. Messages at the time:\n{json.dumps(client.messages, indent=4)}",
                     )
 
             msg = client.messages[-1]
