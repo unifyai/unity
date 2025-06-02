@@ -63,7 +63,7 @@ class TranscriptManager(BaseTranscriptManager):
         self,
         text: str,
         *,
-        return_reasoning_steps: bool = False,
+        _return_reasoning_steps: bool = False,
         parent_chat_context: list[dict] | None = None,
         clarification_up_q: asyncio.Queue[str] | None = None,
         clarification_down_q: asyncio.Queue[str] | None = None,

@@ -25,7 +25,7 @@ class BaseTranscriptManager(ABC):
         self,
         text: str,
         *,
-        return_reasoning_steps: bool = False,
+        _return_reasoning_steps: bool = False,
         parent_chat_context: Optional[List[Dict[str, Any]]] = None,
         clarification_up_q: Optional[asyncio.Queue[str]] = None,
         clarification_down_q: Optional[asyncio.Queue[str]] = None,
