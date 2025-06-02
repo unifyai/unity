@@ -1,16 +1,18 @@
 from typing import List, Dict, Optional, Callable, Any
 import asyncio
+import functools
 import json
 import os
 
 import unify
 from .types.contact import Contact
+from .base import BaseContactManager
 from ..events.event_bus import EventBus
 from ..common.llm_helpers import start_async_tool_use_loop, SteerableToolHandle
 from .sys_msgs import ASK_CONTACTS, UPDATE_CONTACTS
 
 
-class ContactManager:
+class ContactManager(BaseContactManager):
 
     def __init__(self, event_bus: EventBus, *, traced: bool = True) -> None:
         """
@@ -39,9 +41,9 @@ class ContactManager:
         if traced:
             self = unify.traced(self)
 
-        # Public #
-
+    # Public #
     # -------#
+    @functools.wraps(BaseContactManager.ask, updated=())
     def ask(
         self,
         text: str,
@@ -51,19 +53,6 @@ class ContactManager:
         clarification_up_q: Optional[asyncio.Queue[str]] = None,
         clarification_down_q: Optional[asyncio.Queue[str]] = None,
     ) -> SteerableToolHandle:
-        """
-        Ask any question as a text command about contacts.
-
-        Args:
-            text (str): The text-based question to answer.
-            return_reasoning_steps (bool): Whether to return the reasoning steps along with the answer.
-            parent_chat_context (list[dict]): A list of parent context messages to pass down into the tool use loop.
-            clarification_up_q (asyncio.Queue[str]): A queue to send clarification questions up to the caller.
-            clarification_down_q (asyncio.Queue[str]): A queue to send clarification answers down to the model.
-
-        Returns:
-            AsyncToolLoopHandle: A handle to the running conversation.
-        """
         client = unify.AsyncUnify(
             "o4-mini@openai",  # Consider making model configurable
             cache=json.loads(os.environ.get("UNIFY_CACHE", "true")),
@@ -102,6 +91,7 @@ class ContactManager:
 
         return handle
 
+    @functools.wraps(BaseContactManager.update, updated=())
     def update(
         self,
         text: str,
@@ -111,19 +101,6 @@ class ContactManager:
         clarification_up_q: Optional[asyncio.Queue[str]] = None,
         clarification_down_q: Optional[asyncio.Queue[str]] = None,
     ) -> SteerableToolHandle:
-        """
-        Handle any plain-text english command to create or update contacts.
-
-        Args:
-            text (str): The text-based request.
-            return_reasoning_steps (bool): Whether to return the reasoning steps.
-            parent_chat_context (list[dict]): A list of parent context messages.
-            clarification_up_q (asyncio.Queue[str]): Queue for clarification questions.
-            clarification_down_q (asyncio.Queue[str]): Queue for clarification answers.
-
-        Returns:
-            AsyncToolLoopHandle: A handle to the running conversation.
-        """
         client = unify.AsyncUnify(
             "o4-mini@openai",
             cache=json.loads(os.environ.get("UNIFY_CACHE", "true")),
