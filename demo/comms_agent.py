@@ -8,7 +8,7 @@ import openai
 import comms_actions
 from actions_2 import *
 from events import *
-from new_terminal_helper import run_as_subprocess
+from new_terminal_helper import run_script
 
 client = openai.AsyncOpenAI(api_key=os.environ["OPENAI_API_KEY"])
 
@@ -99,7 +99,7 @@ class CommsAgent:
                 if new_event["event_name"] == "PhoneCallInitiatedEvent":
                     global ONGOING_CALL
                     if not ONGOING_CALL:
-                        self.call_proc = run_as_subprocess(
+                        self.call_proc = run_script(
                             "call.py",
                             "dev",
                             self.user_phone_call_number,  # "console" if a local call is needed

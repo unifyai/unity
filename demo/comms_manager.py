@@ -68,7 +68,7 @@ class CommsManager:
                         },
                     )
                     # this should be handled through the comms agents i think
-                    # self.call_proc = run_as_subprocess(
+                    # self.call_proc = run_script(
                     #     "call.py",
                     #     "dev",
                     #     from_number,
