@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+import asyncio
 from typing import Callable, Dict, Generic, Optional, TypeVar
 
 from unity.common.llm_helpers import SteerableToolHandle
@@ -85,7 +86,13 @@ class BasePlanner(Generic[PlanT], ABC):
 
     # ─────────────────────────── Plan management ────────────────────────── #
 
-    def plan(self, *args, **kwargs) -> PlanT:
+    def plan(
+        self,
+        task_description: str,
+        *,
+        clarification_up_q: Optional[asyncio.Queue[str]] = None,
+        clarification_down_q: Optional[asyncio.Queue[str]] = None,
+    ) -> PlanT:
         """
         Create (and start) a new plan.
 
@@ -99,12 +106,22 @@ class BasePlanner(Generic[PlanT], ABC):
                 "completion before starting a new one.",
             )
 
-        plan = self._make_plan(*args, **kwargs)
+        plan = self._make_plan(
+            task_description,
+            clarification_up_q=clarification_up_q,
+            clarification_down_q=clarification_down_q,
+        )
         self._active_plan = plan
         return plan
 
     @abstractmethod
-    def _make_plan(self, *args, **kwargs) -> PlanT:
+    def _make_plan(
+        self,
+        task_description: str,
+        *,
+        clarification_up_q: Optional[asyncio.Queue[str]] = None,
+        clarification_down_q: Optional[asyncio.Queue[str]] = None,
+    ) -> PlanT:
         """
         Concrete planner must build **and start** a plan implementation
         (e.g. ``SimulatedPlan``) and return it.
