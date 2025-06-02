@@ -242,8 +242,8 @@ async def _async_tool_use_loop_inner(
     propagate_chat_context: bool = True,
     parent_chat_context: Optional[list[dict]] = None,
     log_steps: bool = False,
-    max_steps: int = 20,
-    timeout: int = 60,
+    max_steps: Optional[int] = None,
+    timeout: Optional[int] = None,
 ) -> str:
     r"""
     Orchestrate an *interactive* "function-calling" dialogue between an LLM
@@ -622,13 +622,13 @@ async def _async_tool_use_loop_inner(
                         continue  # top-of-loop, still paused
 
             # 0-α. **Global timeout**
-            if time.perf_counter() - start_ts > timeout:
+            if timeout is not None and time.perf_counter() - start_ts > timeout:
                 raise asyncio.TimeoutError(
                     f"Loop exceeded {timeout}s wall-clock limit",
                 )
 
             # 0-β. **Chat history length**
-            if len(client.messages) > max_steps:
+            if max_steps is not None and len(client.messages) > max_steps:
                 raise RuntimeError(
                     f"Conversation exceeded max_steps={max_steps} "
                     f"(len(client.messages)={len(client.messages)})",
@@ -1131,7 +1131,7 @@ async def _async_tool_use_loop_inner(
             msg = client.messages[-1]
 
             # ── timeout guard (post-LLM) ───────────────────────────────
-            if time.perf_counter() - start_ts > timeout:
+            if timeout is not None and time.perf_counter() - start_ts > timeout:
                 raise asyncio.TimeoutError(
                     f"Loop exceeded {timeout}s wall-clock limit",
                 )
@@ -1634,12 +1634,12 @@ async def _async_tool_use_loop_inner(
                 continue
 
             # ── timeout guard (final turn) ──────────────────────────────────
-            if time.perf_counter() - start_ts > timeout:
+            if timeout is not None and time.perf_counter() - start_ts > timeout:
                 raise asyncio.TimeoutError(
                     f"Loop exceeded {timeout}s wall-clock limit",
                 )
 
-            if len(client.messages) > max_steps:
+            if max_steps is not None and len(client.messages) > max_steps:
                 raise RuntimeError(
                     f"Conversation exceeded max_steps={max_steps} "
                     f"(len(client.messages)={len(client.messages)})",
@@ -1753,8 +1753,8 @@ def start_async_tool_use_loop(
     propagate_chat_context: bool = True,
     parent_chat_context: Optional[list[dict]] = None,
     log_steps: bool = False,
-    max_steps: int = 20,
-    timeout: int = 60,
+    max_steps: Optional[int] = None,
+    timeout: Optional[int] = None,
 ) -> AsyncToolUseLoopHandle:
     """
     Kick off `_async_tool_use_loop_inner` in its own task and give the caller
