@@ -133,12 +133,18 @@ async def test_concurrent_tools_waits_for_all_results():
         events.append(("fast_end", time.monotonic()))
         return "fast"
 
+    fast.__name__ = "fast"
+    fast.__qualname__ = "fast"
+
     @unify.traced
     async def slow():
         events.append(("slow_start", time.monotonic()))
         await asyncio.sleep(0.30)
         events.append(("slow_end", time.monotonic()))
         return "slow"
+
+    slow.__name__ = "slow"
+    slow.__qualname__ = "slow"
 
     class InstrumentedClient(unify.AsyncUnify):  # type: ignore[misc]
         async def generate(self, **kwargs):  # noqa: D401
@@ -252,6 +258,9 @@ async def test_duplicate_tool_calls_are_optionally_pruned() -> None:  # noqa: D4
         """Minimal echo tool used only to count invocations."""
         log.append(text)
         return text.upper()
+
+    echo.__name__ = "echo"
+    echo.__qualname__ = "echo"
 
     prompt = (
         "You have access to a function named `echo(text: str)`.\n"
