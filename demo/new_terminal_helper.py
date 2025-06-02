@@ -144,60 +144,6 @@ def run_script(
         return proc
 
 
-def run_as_subprocess(
-    script: str | os.PathLike,
-    *script_args: str,
-) -> subprocess.Popen:
-    """
-    Launch *script* as a background subprocess and return the Popen instance.
-    Output is both shown in the terminal and logged to files.
-    """
-    script_path = Path(script).expanduser().resolve()
-    if not script_path.exists():
-        raise FileNotFoundError(script_path)
-
-    py_cmd = [sys.executable, str(script_path), *script_args]
-
-    # Create log files
-    out_log = open(f"{script_path.stem}.out.log", "a")
-    err_log = open(f"{script_path.stem}.err.log", "a")
-
-    # Start background tasks to handle output
-    def handle_output(pipe, log_file):
-        for line in pipe:
-            print(line, end="")  # Show in terminal
-            log_file.write(line)  # Write to log file
-            log_file.flush()
-
-    # Create a new process group for better process management
-    if sys.platform.startswith("win"):
-        creationflags = subprocess.CREATE_NEW_PROCESS_GROUP
-        proc = subprocess.Popen(
-            py_cmd,
-            creationflags=creationflags,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
-            bufsize=1,
-        )
-    # On Unix-like systems, create a new process group
-    else:
-        proc = subprocess.Popen(
-            py_cmd,
-            start_new_session=True,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
-            bufsize=1,
-        )
-
-    # Start output handling threads
-    Thread(target=handle_output, args=(proc.stdout, out_log), daemon=True).start()
-    Thread(target=handle_output, args=(proc.stderr, err_log), daemon=True).start()
-
-    return proc
-
-
 def terminate_process(proc: subprocess.Popen) -> None:
     """
     Terminate a subprocess gracefully, falling back to force kill if needed.
