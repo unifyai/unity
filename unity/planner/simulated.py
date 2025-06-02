@@ -1,6 +1,8 @@
 import time
 import asyncio
 import threading
+import os
+import json
 
 import unify
 from .base import BasePlanner, BasePlan
@@ -50,14 +52,14 @@ class SimulatedPlan(BasePlan):
 
         self._ask_simulator = unify.Unify(
             "gpt-4o@openai",
-            cache=True,
-            traced=True,
+            cache=json.loads(os.environ.get("UNIFY_CACHE", "true")),
+            traced=json.loads(os.environ.get("UNIFY_TRACED", "true")),
             stateful=True,
         )
         self._interject_simulator = unify.Unify(
             "gpt-4o@openai",
-            cache=True,
-            traced=True,
+            cache=json.loads(os.environ.get("UNIFY_CACHE", "true")),
+            traced=json.loads(os.environ.get("UNIFY_TRACED", "true")),
             stateful=True,
         )
         self._start()
