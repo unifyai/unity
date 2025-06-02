@@ -9,7 +9,7 @@ import threading
 from typing import List, Dict, Any
 
 import unify
-from .contact_manager import ContactManager
+from .base import BaseContactManager
 from ..common.llm_helpers import SteerableToolHandle
 
 
@@ -100,7 +100,7 @@ class _SimulatedContactHandle(SteerableToolHandle):
 # ─────────────────────────────────────────────────────────────────────────────
 # Public simulated manager
 # ─────────────────────────────────────────────────────────────────────────────
-class SimulatedContactManager(ContactManager):
+class SimulatedContactManager(BaseContactManager):
     """
     Drop-in replacement for ContactManager with imaginary data and
     stateful LLM memory.
@@ -126,7 +126,7 @@ class SimulatedContactManager(ContactManager):
     # --------------------------------------------------------------------- #
     # ask                                                                   #
     # --------------------------------------------------------------------- #
-    @functools.wraps(ContactManager.ask)
+    @functools.wraps(BaseContactManager.ask, updated=())
     def ask(
         self,
         text: str,
@@ -151,7 +151,7 @@ class SimulatedContactManager(ContactManager):
     # --------------------------------------------------------------------- #
     # update                                                                #
     # --------------------------------------------------------------------- #
-    @functools.wraps(ContactManager.update)
+    @functools.wraps(BaseContactManager.update, updated=())
     def update(
         self,
         text: str,
