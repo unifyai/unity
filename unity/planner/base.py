@@ -30,38 +30,17 @@ class BasePlan(SteerableToolHandle, ABC):
     # ───────────────────────────── Public API ───────────────────────────── #
 
     @abstractmethod
-    async def result(self) -> str:
+    def ask(self, question: str) -> str:
         """
-        Await the completion of the plan and return the final result
-        (raising if the task failed for any reason).
+        Ask any question about the live (ongoing and active) task being worked on.
         """
 
-    # Steering controls ---------------------------------------------------- #
-    @abstractmethod
-    def stop(self) -> str: ...
-
-    @abstractmethod
-    def pause(self) -> str: ...
-
-    @abstractmethod
-    def resume(self) -> str: ...
-
-    @abstractmethod
-    def interject(self, instruction: str) -> str: ...
-
-    @abstractmethod
-    def ask(self, question: str) -> str: ...
-
-    # Discovery ------------------------------------------------------------ #
     @property
     @abstractmethod
     def valid_tools(self) -> Dict[str, Callable]:
         """
         Map of *public-name* ➜ *callable* for the user-accessible controls
         that are *currently* valid in the plan’s lifecycle state.
-
-        Concrete plans (e.g. :class:`SimulatedPlan`) usually assemble this
-        dict dynamically each time it is accessed.
         """
 
 
