@@ -291,4 +291,10 @@ if __name__ == "__main__":
     os.environ["CALL_FROM_NUMBER"] = from_number
     # os.environ["CALL_TO_NUMBER"] = to_number
 
-    agents.cli.run_app(agents.WorkerOptions(entrypoint_fnc=entrypoint))
+    agent_name = f"unity_{os.environ['ASSISTANT_NUMBER']}"
+    agents.cli.run_app(
+        agents.WorkerOptions(
+            entrypoint_fnc=entrypoint,
+            agent_name=agent_name,
+        ),
+    )
