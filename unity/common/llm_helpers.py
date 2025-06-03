@@ -664,7 +664,7 @@ async def _async_tool_use_loop_inner(
             raise RuntimeError(
                 "Aborted after too many consecutive tool failures.",
             )
-        
+
         # successful (or failed) *final* result → LLM may need to react
         return True
 
