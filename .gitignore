@@ -8,3 +8,5 @@ log.txt
 .logs.txt
 logs.txt
 test.py
+.env.old
+.env.temp
