@@ -54,11 +54,15 @@ class _SimulatedTranscriptHandle(SteerableToolHandle):
         self._cancelled = False
         self._answer: Optional[str] = None
         self._msgs: List[Dict[str, Any]] = []
+        self._paused = False
 
     # ──  API expected by SteerableToolHandle  ──────────────────────────────
     async def result(self):
         if self._cancelled:
             raise asyncio.CancelledError()
+
+        while self._paused and not self._cancelled:
+            await asyncio.sleep(0.05)
 
         if not self._done.is_set():
             # wait for clarification reply if requested
@@ -90,13 +94,32 @@ class _SimulatedTranscriptHandle(SteerableToolHandle):
         self._done.set()
         return "Stopped."
 
-    # property expected by orchestrator
-    def done(self) -> bool:  # type: ignore[override]
+    def pause(self) -> str:
+        if self._paused:
+            return "Already paused."
+        self._paused = True
+        return "Paused."
+
+    def resume(self) -> str:
+        if not self._paused:
+            return "Already running."
+        self._paused = False
+        return "Resumed."
+
+    def done(self) -> bool:
         return self._done.is_set()
 
     @property
     def valid_tools(self):
-        return {}
+        tools = {
+            self.interject.__name__: self.interject,
+            self.stop.__name__: self.stop,
+        }
+        if self._paused:
+            tools[self.resume.__name__] = self.resume
+        else:
+            tools[self.pause.__name__] = self.pause
+        return tools
 
 
 # ─────────────────────────────────────────────────────────────────────────────
