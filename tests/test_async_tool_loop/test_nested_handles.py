@@ -94,7 +94,6 @@ async def test_nested_async_tool_loop():
     # The assistant must answer as instructed.
     assert final_reply.strip().lower() == "all done"
 
-    print(client.messages)
     assert len(client.messages) == 5, "Expected a 5-message sequence"
 
     # 0. System message
@@ -112,7 +111,9 @@ async def test_nested_async_tool_loop():
     # 2. Assistant: initial tool selection
     initial_call = client.messages[2]
     assert initial_call["role"] == "assistant"
-    assert initial_call.get("tool_calls") is not None, "Assistant should make a tool call"
+    assert (
+        initial_call.get("tool_calls") is not None
+    ), "Assistant should make a tool call"
     assert len(initial_call["tool_calls"]) == 1
     assert initial_call["tool_calls"][0]["function"] == {
         "arguments": "{}",
@@ -124,14 +125,17 @@ async def test_nested_async_tool_loop():
     first_tool_resp = client.messages[3]
     assert first_tool_resp["role"] == "tool"
     assert first_tool_resp["name"] == "outer_tool"
-    assert first_tool_resp["content"] == '"done"', "The placeholder for outer_tool should be updated with the inner loop's final result."
+    assert (
+        first_tool_resp["content"] == '"done"'
+    ), "The placeholder for outer_tool should be updated with the inner loop's final result."
 
     # 4. Assistant: final response "all done"
     final_assistant_msg = client.messages[4]
     assert final_assistant_msg["role"] == "assistant"
     assert final_assistant_msg["content"].strip().lower() == "all done"
-    assert final_assistant_msg.get("tool_calls") is None, "Final assistant message should not have tool calls"
-
+    assert (
+        final_assistant_msg.get("tool_calls") is None
+    ), "Final assistant message should not have tool calls"
 
 
 @pytest.mark.asyncio

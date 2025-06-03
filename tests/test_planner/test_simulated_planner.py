@@ -70,8 +70,8 @@ async def test_start_and_ask_simulated_plan(monkeypatch):
 
     system = (
         "You are running inside an automated test.\n"
-        "1️⃣ Call `plan` with argument task='perform research on a Tasty Cola Ltd.'.\n"
-        "2️⃣ When given the option, call the helper whose name starts with `_ask_plan_call_` **once**, and ask if there are any early findings already\n"
+        "1️⃣ Call `SimulatedPlanner_plan` with argument task_description='perform research on a Tasty Cola Ltd.'.\n"
+        "2️⃣ When the user says 'ask', call the  `_ask_plan_call_` **once**, and ask if there are any early findings already\n"
         "3️⃣ Finally, regardless of the response to this question, just reply back to the user with exactly 'done', without calling any more tools."
     )
     client = make_client(system)
@@ -82,6 +82,8 @@ async def test_start_and_ask_simulated_plan(monkeypatch):
         max_steps=20,
         timeout=120,
     )
+    await asyncio.sleep(5)
+    await handle.interject("ask")
     final = await handle.result()
     assert "done" in final.strip().lower()
     # ask should have been called exactly once
