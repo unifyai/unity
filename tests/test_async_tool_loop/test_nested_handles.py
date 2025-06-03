@@ -418,14 +418,6 @@ async def test_clarification_nested_handle():
             "3️⃣  Reply with **only** with 'done'.",
         )
 
-        # Wrap `ask_colour` so it always uses *the very same* up/down queues we
-        # created above.  This guarantees that:
-        #   • the clarification request travels **upwards** via `up_q` and can be
-        #     observed by the *outer* conversational loop, **and**
-        #   • the assistant's answer – delivered through the `_clarify_…` helper –
-        #     flows **back down** the exact same `down_q`, unblocking the inner
-        #     tool.
-
         async def _ask_colour_wrapped() -> str:  # type: ignore[valid-type]
             return await ask_colour(
                 clarification_up_q=up_q,
