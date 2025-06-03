@@ -36,6 +36,19 @@ class CommTask:
 # task status update
 #
 
+class WhatsappQueue:
+    def __init__(self):
+        self.queue = asyncio.Queue()
+
+    def add_message_task(self, mt):
+        self.queue.put_nowait(mt)
+    
+    async def run(self):
+        while True:
+            task = await self.queue.get()
+            await task
+            await asyncio.sleep(0.5)
+
 
 class CommsAgent:
     def __init__(
@@ -47,9 +60,12 @@ class CommsAgent:
         past_events: list = None,
         main_user_agent: bool = False,
         agent_id: str = None,
+        contact_name: str = None,
+        contact_number: str = None
     ):
 
         self.main_user = main_user_agent
+        self.contact_name = contact_name
         self.agent_id = agent_id
 
         self.assistant_number = assistant_number
@@ -74,10 +90,6 @@ class CommsAgent:
         self.call_mode = False
 
         # tasks attributes
-        # if the comm agent performing a specific task
-        # should be switched false once all associated tasks are done
-        # (probs the comms agent will be removed all together actually if it is done with its task)
-        self.performing_task = False
 
         # this only makes sense to the "main" comms agent (the user agent)
         self.contact_num_to_comm_agent: dict[str, CommsAgent] = {}
@@ -87,7 +99,11 @@ class CommsAgent:
         self.curr_id = 0
         self.curr_task_id = 0
 
+        # queue for communication channels to make sure messages arrive in the right order
+        self.whatsapp_queue = WhatsappQueue()
+
     async def listen_for_events(self):
+        asyncio.create_task(self.whatsapp_queue.run())
         print("COLLECTING...")
         while True:
             try:
@@ -170,14 +186,7 @@ class CommsAgent:
                         # TODO: add sms
                         if isinstance(action, SendWhatsAppMessageAction):
                             print(action)
-                            asyncio.create_task(self.send_whatsapp(action.message))
-                            event = events_map[action.type](
-                                content=action.message,
-                            ).to_dict()
-                            if self.call_mode:
-                                self.events_queue.put_nowait(event)
-                            else:
-                                self.past_events.append(event)
+                            self.whatsapp_queue.add_message_task(self.send_whatsapp(action.message))
                         elif isinstance(action, CreateCommunicationTask):
                             print(action)
                             self.create_communication_task(
@@ -222,11 +231,11 @@ class CommsAgent:
         print(user_msg, flush=True)
 
         if self.main_user:
-            with open("prompts/non_call_sys.md") as f:
-                non_call_sys = f.read()
+            with open("prompts/non_call_sys_2.md") as f:
+                non_call_sys = f.read().format(name=self.user_name)
         else:
-            with open("prompts/comm_non_call_sys.md") as f:
-                non_call_sys = f.read()
+            with open("prompts/comm_non_call_sys_2.md") as f:
+                non_call_sys = f.read().format(main_user_name=self.user_name, other_user_name=self.contact_name)
 
         res = await client.beta.chat.completions.parse(
             model="gpt-4.1",
@@ -289,11 +298,19 @@ class CommsAgent:
         return event.parsed
 
     async def send_whatsapp(self, msg):
-        return await comms_actions.send_whatsapp_message(
+        status = await comms_actions.send_whatsapp_message(
             from_number=self.assistant_number,
             to_number=self.user_number,
             message=msg,
         )
+        if status:
+            event = WhatsappMessageSentEvent(
+                                    content=msg,
+                                ).to_dict()
+            if self.call_mode:
+                self.events_queue.put_nowait(event)
+            else:
+                self.past_events.append(event)
 
     async def send_sms(self, msg):
         return await comms_actions.send_sms(
@@ -315,11 +332,14 @@ class CommsAgent:
         contact_comms_agent = self.contact_num_to_comm_agent.get(
             contact_number.replace(" ", ""),
         )
+        # if not contact_name or contact_number:
+        #     ...
         if not contact_comms_agent:
             contact_comms_agent = CommsAgent(
-                contact_name,
+                self.user_name,
                 self.assistant_number,
                 contact_number.replace(" ", "").strip(),
+                contact_name=contact_name,
                 agent_id=self.curr_id,
             )
             print("created comms agent")
@@ -331,7 +351,6 @@ class CommsAgent:
                     str(contact_comms_agent.agent_id),
                 ],
             )
-            contact_comms_agent.performing_task = True
             asyncio.create_task(contact_comms_agent.listen_for_events())
             print("listening")
 
@@ -459,15 +478,11 @@ TASK STATUS: {task.status}
                 )
         else:
             task_status_str = "No Tasks are running"  # TODO
-        user_msg = f"""Events Log:
+        user_msg = f"""Events Stream:
 ** PAST EVENTS **
 {past_events_str.strip()}
 ** NEW EVENTS **
-{new_events_str.strip()}
-
-
-# Tasks status:
-# {task_status_str.strip()}"""
+{new_events_str.strip()}"""
         return user_msg
 
     def publish(self, event: dict):
