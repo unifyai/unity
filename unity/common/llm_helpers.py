@@ -97,6 +97,104 @@ def _dumps(
     return json.dumps(ret, indent=indent) if base else ret
 
 
+# ─────────────────────────────────────────────────────────────────────────────
+#  strip doc-lines that describe “hidden” parameters
+# ─────────────────────────────────────────────────────────────────────────────
+import re
+from textwrap import dedent
+
+_PARAM_LINE_RX = re.compile(
+    r"""
+    ^
+    (?P<indent>\s*)                  #     any amount of leading WS
+    (?P<names>[^\s:]+(?:\s*,\s*[^\s:]+)*)   # 1 or more names (a, b, …)
+    (\s*\([^)]*\))?                 #     optional "(type)"
+    \s*:
+    """,
+    re.VERBOSE,
+)
+
+
+def _strip_hidden_params_from_doc(doc: str, hidden: set[str]) -> str:
+    """
+    Remove *parameter documentation blocks* whose parameter name is in
+    **hidden** from a Google- or NumPy-style docstring.
+
+    We look only inside the “Args:” or “Parameters” section; everything
+    else is kept verbatim.
+    """
+    if not doc or not hidden:
+        return doc
+
+    lines = dedent(doc).splitlines()
+    out: list[str] = []
+
+    inside_param_section = False
+    skip_block = False
+    current_indent = 0
+
+    for ln in lines:
+        stripped = ln.lstrip()
+
+        # ── detect section headers ────────────────────────────────────────
+        if stripped.lower() in ("args:", "parameters"):
+            inside_param_section = True
+            skip_block = False
+            out.append(ln)
+            continue
+        if inside_param_section and not stripped:
+            # blank line inside section
+            out.append(ln)
+            continue
+        if inside_param_section and not stripped.startswith(" "):
+            # left the section
+            inside_param_section = False
+            skip_block = False
+
+        if inside_param_section:
+            m = _PARAM_LINE_RX.match(ln)
+            if m:
+                # Are *any* of the listed names hidden?
+                names = {n.strip() for n in m.group("names").split(",")}
+                if names & hidden:
+                    # start skipping this parameter-block
+                    skip_block = True
+                    current_indent = len(m.group("indent"))
+                    continue  # swallow the parameter line itself
+            if skip_block:
+                # keep skipping as long as the line is *more indented*
+                indent = len(ln) - len(stripped)
+                if indent > current_indent:
+                    continue
+                # description block ended
+                skip_block = False
+
+        if not skip_block:
+            out.append(ln)
+
+    # normalise consecutive blank lines
+    cleaned: list[str] = []
+    prev_blank = False
+    for ln in out:
+        blank = not ln.strip()
+        if blank and prev_blank:
+            continue
+        cleaned.append(ln)
+        prev_blank = blank
+
+    if hidden:
+        pat = re.compile(
+            r"^\s*(?:"
+            + "|".join(re.escape(name) for name in hidden)
+            + r")\s*:.*(?:\n\s+.*)*",
+            flags=re.MULTILINE,
+        )
+        cleaned = pat.sub("", "\n".join(cleaned))
+        cleaned = re.sub(r"\n{3,}", "\n\n", cleaned)  # collapse big gaps
+
+    return "\n".join(cleaned).rstrip()
+
+
 def annotation_to_schema(ann: Any) -> Dict[str, Any]:
     """Convert a Python type annotation into an OpenAI-compatible JSON-Schema
     fragment, including full support for Pydantic BaseModel subclasses.
@@ -159,32 +257,33 @@ def method_to_schema(bound_method):
 
     sig = inspect.signature(bound_method)
     hints = get_type_hints(bound_method)
-    props, required = {}, []
+
+    props, required, hidden = {}, [], set()
 
     for name, param in sig.parameters.items():
-        # ── Skip internal-only parameters ─────────────────────────────────
-        #    • optional private parameters (leading "_" with a default) **or**
-        #    • the special ``parent_chat_context`` argument.
-        #      The latter is injected automatically whenever
-        #      ``propagate_chat_context`` is *True* and MUST **never** be
-        #      surfaced to the LLM – the decision is a global one, not left
-        #      to the model.
-        # Internal-only parameters never exposed to the LLM:
-        #   • private “_” args with defaults
-        #   • chat-context plumbing
-        #   • clarification queues (now injected automatically)
-        if (name.startswith("_") and param.default is not inspect._empty) or name in (
+        # Determine whether *name* is **hidden** (never exposed to the LLM)
+        is_hidden = (
+            name.startswith("_") and param.default is not inspect._empty
+        ) or name in (
             "parent_chat_context",
             "clarification_up_q",
             "clarification_down_q",
-        ):
-            continue
+        )
+
+        if is_hidden:
+            hidden.add(name)
+            continue  # do NOT surface to the model
 
         ann = hints.get(name, str)
         props[name] = annotation_to_schema(ann)
         if param.default is inspect._empty:
             required.append(name)
 
+    # ── scrub the docstring so hidden args disappear from “Args:”/“Parameters” ──
+    raw_doc = bound_method.__doc__ or ""
+    cleaned_doc = _strip_hidden_params_from_doc(raw_doc, hidden)
+
+    # … remainder is unchanged …
     if hasattr(bound_method, "__self__") and hasattr(
         bound_method.__self__,
         "__class__",
@@ -201,7 +300,7 @@ def method_to_schema(bound_method):
         "type": "function",
         "function": {
             "name": tool_name,
-            "description": (bound_method.__doc__ or "").strip(),
+            "description": cleaned_doc.strip(),
             "parameters": {
                 "type": "object",
                 "properties": props,
