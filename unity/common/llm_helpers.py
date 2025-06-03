@@ -264,7 +264,11 @@ def annotation_to_schema(ann: Any) -> Dict[str, Any]:
     return {"type": "string"}
 
 
-def method_to_schema(bound_method):
+def method_to_schema(
+    bound_method,
+    tool_name: Optional[str] = None,
+    include_class_name: bool = True,
+):
     """
     Convert **bound_method** into an OpenAI-compatible *function*-tool schema.
     """
@@ -308,7 +312,11 @@ def method_to_schema(bound_method):
         prefix = f"{parts[-2]}_" if len(parts) > 1 else ""
     else:
         prefix = ""
-    tool_name = f"{prefix}{bound_method.__name__}".replace("__", "_")
+    if tool_name is None:
+        if include_class_name:
+            tool_name = f"{prefix}{bound_method.__name__}".replace("__", "_")
+        else:
+            tool_name = bound_method.__name__.lstrip("_")
 
     return {
         "type": "function",
@@ -382,6 +390,7 @@ async def _async_tool_use_loop_inner(
     max_steps: Optional[int] = None,
     timeout: Optional[int] = None,
     raise_on_limit: bool = False,
+    include_class_in_dynamic_tool_names: bool = False,
 ) -> str:
     r"""
     Orchestrate an *interactive* "function-calling" dialogue between an LLM
@@ -695,7 +704,7 @@ async def _async_tool_use_loop_inner(
         client.append_messages([sys_msg])
 
     # ── initial prompt ───────────────────────────────────────────────────────
-    base_tools_schema = [method_to_schema(v) for v in tools.values()]
+    base_tools_schema = [method_to_schema(v, k) for k, v in tools.items()]
     msg = {"role": "user", "content": message}
     await _to_event_bus(msg)
     client.append_messages([msg])
@@ -1243,7 +1252,11 @@ async def _async_tool_use_loop_inner(
 
             # Merge helpers into the visible toolkit for the upcoming LLM step
             tmp_tools = base_tools_schema + [
-                method_to_schema(fn) for fn in dynamic_tools.values()
+                method_to_schema(
+                    fn,
+                    include_class_name=include_class_in_dynamic_tool_names,
+                )
+                for fn in dynamic_tools.values()
             ]
 
             # ── D.  Ask the LLM what to do next  ────────────────────────────
@@ -1998,6 +2011,7 @@ def start_async_tool_use_loop(
     max_steps: Optional[int] = None,
     timeout: Optional[int] = None,
     raise_on_limit: bool = False,
+    include_class_in_dynamic_tool_names: bool = False,
 ) -> AsyncToolUseLoopHandle:
     """
     Kick off `_async_tool_use_loop_inner` in its own task and give the caller
@@ -2027,6 +2041,7 @@ def start_async_tool_use_loop(
             max_steps=max_steps,
             timeout=timeout,
             raise_on_limit=raise_on_limit,
+            include_class_in_dynamic_tool_names=include_class_in_dynamic_tool_names,
         ),
     )
 
