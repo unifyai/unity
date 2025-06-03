@@ -33,10 +33,11 @@ class SimulatedPlan(BasePlan):
         """
         self._task = task
         self._steps = steps
-        self._clar_up_q = clarification_up_q
-        self._clar_down_q = clarification_down_q
+        self._clarification_up_q = clarification_up_q
+        self._clarification_down_q = clarification_down_q
         self._request_clarification: bool = (
-            self._clar_up_q is not None and self._clar_down_q is not None
+            self._clarification_up_q is not None
+            and self._clarification_down_q is not None
         )
 
         # step-counting
@@ -68,6 +69,13 @@ class SimulatedPlan(BasePlan):
     # ──────────────────────────────────────────────────────────────────────────
     # Internal helpers
     # ──────────────────────────────────────────────────────────────────────────
+    @property
+    def clarification_up_q(self) -> Optional[asyncio.Queue[str]]:
+        return self._clarification_up_q
+
+    @property
+    def clarification_down_q(self) -> Optional[asyncio.Queue[str]]:
+        return self._clarification_down_q
 
     def _run_task(self, task: str) -> None:
         """
@@ -91,7 +99,7 @@ class SimulatedPlan(BasePlan):
                 if self._request_clarification:
                     # send the question up
                     try:
-                        self._clar_up_q.put_nowait(
+                        self._clarification_up_q.put_nowait(
                             "Can you please clarify what exactly you'd like me to do?",
                         )
                     except asyncio.QueueFull:
@@ -100,7 +108,7 @@ class SimulatedPlan(BasePlan):
                     # wait (non-blocking) for the answer to come back down
                     while True:
                         try:
-                            answer: str = self._clar_down_q.get_nowait()
+                            answer: str = self._clarification_down_q.get_nowait()
                             break
                         except asyncio.QueueEmpty:
                             time.sleep(0.05)
