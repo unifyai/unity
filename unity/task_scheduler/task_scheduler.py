@@ -42,6 +42,7 @@ class TaskScheduler(BaseTaskScheduler):
             self._get_task_queue,
             self._get_active_task,
             self._get_paused_task,
+            include_class_name=False,  # redundant, all same class (this one)
         )
 
         # Write-capable helpers – every mutating operation as well as the read-only ones.
@@ -65,6 +66,7 @@ class TaskScheduler(BaseTaskScheduler):
                 self._update_task_deadline,
                 self._update_task_repetition,
                 self._update_task_priority,
+                include_class_name=False,  # redundant, all same class (this one)
             ),
         }
 
