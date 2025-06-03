@@ -40,7 +40,7 @@ width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
 height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
 pipeline = Gst.parse_launch(
     f"appsrc name=src is-live=true block=true format=TIME "
-    f"caps=video/x-raw,format=RGB,width={width},height={height},framerate={int(fps)}/1 "
+    f"caps=video/x-raw,format=I420,width={width},height={height},framerate={int(fps)}/1 "
     f"! videoconvert ! pipewiresink name=sink",
 )
 
@@ -74,20 +74,17 @@ def push_frame(frame):
 
 
 pipeline.set_state(Gst.State.PLAYING)
-# ret, frame = cap.read()
-# rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-# push_frame(rgb)
-# cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
 
 
 def start_camera_loop():
     def loop():
+        print("Running...")
         while True:
             ret, frame = cap.read()
             if not ret:
                 cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
                 continue
-            rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+            rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2YUV_I420)
             if not push_frame(rgb):
                 break
             time.sleep(1.0 / fps)
@@ -112,7 +109,8 @@ async def main():
             "--window-position=0,0",
             "--window-size=1920,1080",
             "--start-fullscreen",
-            "--use-fake-ui-for-media-stream",
+            # "--use-fake-ui-for-media-stream",
+            "--enable-features=WebRtcPipeWireCamera",
             "--enable-webrtc-pipewire-camera",
         ],
         permissions=["microphone", "camera"],
