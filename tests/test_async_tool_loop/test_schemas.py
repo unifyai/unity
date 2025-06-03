@@ -80,123 +80,177 @@ def test_method_to_schema_includes_enum():
 # --------------------------------------------------------------------------- #
 #  PRIVATE OPTIONAL ARGUMENTS ARE NOT EXPOSED                                 #
 # --------------------------------------------------------------------------- #
-
-
 def test_private_optional_parameters_are_hidden_from_tool_schema() -> None:
     """
     *Optional* parameters whose names begin with an underscore (``_``)
     must **not** appear in the schema that is presented to the LLM.
     Required private parameters, however, *must* stay visible or the
-    tool would become impossible to call.
+    tool would become impossible to call – and their docs should stay too.
     """
 
     # ── 1. optional private argument should be hidden ─────────────────────
     @unify.traced
-    def sample_tool(a: int, b: int = 0, _secret: str = "x") -> int:  # noqa: D401
+    def sample_tool(a: int, b: int = 0, _secret: str = "x") -> int:
+        """
+        Sample calculator.
+
+        Args:
+            a: first addend.
+            b: second addend, defaults to 0.
+            _secret: **internal** flag, never shown to the LLM.
+        """
         return a + b
 
     schema = llmh.method_to_schema(sample_tool)
     props = schema["function"]["parameters"]["properties"]
     required = schema["function"]["parameters"]["required"]
+    desc = schema["function"]["description"]
 
     # public arguments are present …
     assert "a" in props and "b" in props
     # … while the optional private one is not
     assert "_secret" not in props
+    # and its doc-line has been pruned
+    assert "_secret" not in desc
 
     # required list unchanged
     assert "a" in required and "b" not in required
 
     # ── 2. required private argument should be kept ───────────────────────
     @unify.traced
-    def tool_with_required_private(x: int, _hidden: str) -> str:  # noqa: D401
+    def tool_with_required_private(x: int, _hidden: str) -> str:
+        """
+        Echo tool.
+
+        Parameters
+        ----------
+        x : int
+            Multiplier.
+        _hidden : str
+            Mandatory private value (must stay visible).
+        """
         return _hidden * x
 
     schema2 = llmh.method_to_schema(tool_with_required_private)
     props2 = schema2["function"]["parameters"]["properties"]
     required2 = schema2["function"]["parameters"]["required"]
+    desc2 = schema2["function"]["description"]
 
-    # the *required* private parameter is still exposed
+    # the *required* private parameter is still exposed …
     assert "_hidden" in props2 and "_hidden" in required2
+    # … and its doc-line is still present
+    assert "_hidden" in desc2
 
 
 # --------------------------------------------------------------------------- #
 #  `parent_chat_context` MUST NEVER BE EXPOSED                                #
 # --------------------------------------------------------------------------- #
-
-
 def test_parent_chat_context_parameter_is_always_hidden() -> None:
     """
-    Arguments literally named ``parent_chat_context`` are injected
-    automatically when ``propagate_chat_context`` is *True*.  They are an
-    internal implementation detail and **must not** be visible in the tool
-    schema presented to the LLM, regardless of whether they are declared as
-    required or optional in Python.
+    The special ``parent_chat_context`` argument is injected automatically by
+    the tool-loop.  It must be hidden from both the schema **and** the
+    docstring that is sent to the LLM.
     """
 
-    # required variant ------------------------------------------------------
     @unify.traced
-    def tool_with_ctx(a: int, parent_chat_context: list[dict]):  # noqa: D401
+    def tool_with_ctx(a: int, parent_chat_context: list[dict]):
+        """
+        Dummy tool.
+
+        Parameters
+        ----------
+        a : int
+            Some value.
+        parent_chat_context : list[dict]
+            Internal plumbing, never surfaced.
+        """
         return a
 
-    # optional variant ------------------------------------------------------
     @unify.traced
-    def tool_with_ctx_optional(  # noqa: D401
+    def tool_with_ctx_optional(
         a: int,
         parent_chat_context: list[dict] | None = None,
     ):
+        """
+        Dummy tool (optional ctx).
+
+        Args:
+            a: Some value.
+            parent_chat_context: Internal plumbing, never surfaced.
+        """
         return a
 
     for fn in (tool_with_ctx, tool_with_ctx_optional):
         schema = llmh.method_to_schema(fn)
         props = schema["function"]["parameters"]["properties"]
         required = schema["function"]["parameters"]["required"]
+        desc = schema["function"]["description"]
 
-        # The parameter must be stripped from both *properties* and *required*
         assert "parent_chat_context" not in props
         assert "parent_chat_context" not in required
+        # docstring has been scrubbed
+        assert "parent_chat_context" not in desc
 
 
 # --------------------------------------------------------------------------- #
 #  CLARIFICATION QUEUES MUST NEVER BE EXPOSED                                 #
 # --------------------------------------------------------------------------- #
-
 import asyncio
 
 
 def test_clarification_queues_are_hidden_from_tool_schema() -> None:
     """
-    Parameters named ``clarification_up_q`` / ``clarification_down_q`` are
-    injected automatically by the tool-loop when the callee supports them.
-    They must **not** appear in the schema that is presented to the LLM,
-    regardless of whether they are required or optional.
+    ``clarification_up_q`` / ``clarification_down_q`` are injected at runtime
+    and must never appear in the visible schema or description.
     """
 
-    # ── required queues variant ───────────────────────────────────────────
     @unify.traced
     def tool_with_required_clar(
         a: int,
         clarification_up_q: asyncio.Queue[str],
         clarification_down_q: asyncio.Queue[str],
-    ) -> int:  # noqa: D401
+    ) -> int:
+        """
+        Test tool.
+
+        Args:
+            a: Some value.
+            clarification_up_q: internal.
+            clarification_down_q: internal.
+        """
         return a
 
-    # ── optional queues variant ───────────────────────────────────────────
     @unify.traced
-    def tool_with_optional_clar(  # noqa: D401
+    def tool_with_optional_clar(
         a: int,
         clarification_up_q: asyncio.Queue[str] | None = None,
         clarification_down_q: asyncio.Queue[str] | None = None,
     ) -> int:
+        """
+        Test tool (optional queues).
+
+        Parameters
+        ----------
+        a : int
+            Some value.
+        clarification_up_q : asyncio.Queue[str] | None
+            internal.
+        clarification_down_q : asyncio.Queue[str] | None
+            internal.
+        """
         return a
 
     for fn in (tool_with_required_clar, tool_with_optional_clar):
         schema = llmh.method_to_schema(fn)
         props = schema["function"]["parameters"]["properties"]
         required = schema["function"]["parameters"]["required"]
+        desc = schema["function"]["description"]
 
-        # Neither queue should be visible at all
+        # queues are absent from schema …
         assert "clarification_up_q" not in props
         assert "clarification_down_q" not in props
         assert "clarification_up_q" not in required
         assert "clarification_down_q" not in required
+        # … and from the docstring
+        assert "clarification_up_q" not in desc
+        assert "clarification_down_q" not in desc
