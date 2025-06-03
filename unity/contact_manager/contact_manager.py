@@ -80,7 +80,7 @@ class ContactManager(BaseContactManager):
             parent_chat_context=parent_chat_context,
         )
 
-        if return_reasoning_steps:
+        if _return_reasoning_steps:
             original_result = handle.result
 
             async def wrapped_result():
@@ -128,7 +128,7 @@ class ContactManager(BaseContactManager):
             parent_chat_context=parent_chat_context,
         )
 
-        if return_reasoning_steps:
+        if _return_reasoning_steps:
             original_result = handle.result
 
             async def wrapped_result():

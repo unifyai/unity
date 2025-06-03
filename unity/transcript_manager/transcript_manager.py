@@ -104,7 +104,7 @@ class TranscriptManager(BaseTranscriptManager):
         )
 
         # ── 3.  Optionally wrap .result() to expose reasoning  ────────────
-        if return_reasoning_steps:
+        if _return_reasoning_steps:
             original_result = handle.result
 
             async def wrapped_result():
