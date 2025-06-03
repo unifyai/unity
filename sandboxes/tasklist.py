@@ -1,6 +1,6 @@
 """tasklist_sandbox.py  (voice mode, Deepgram SDK v4, sync)
 ===========================================================
-Interactive sandbox for **TaskListManager** with optional hands‑free
+Interactive sandbox for **TaskScheduler** with optional hands‑free
 voice input. All shared audio/STT/TTS helpers are imported from
 `utils.py` to avoid duplication with other sandboxes.
 """
@@ -29,9 +29,9 @@ import unify
 
 from unity.constants import LOGGER as _LG  # type: ignore
 from unity.common import SteerableToolHandle  # type: ignore
-from unity.task_list_manager.task_list_manager import TaskListManager  # type: ignore
-from unity.task_list_manager.types.priority import Priority  # type: ignore
-from unity.task_list_manager.types.schedule import Schedule  # type: ignore
+from unity.task_scheduler.task_scheduler import TaskScheduler  # type: ignore
+from unity.task_scheduler.types.priority import Priority  # type: ignore
+from unity.task_scheduler.types.schedule import Schedule  # type: ignore
 from tests.test_task_list.test_update_complex import _next_weekday  # type: ignore
 from sandboxes.utils import (
     record_until_enter as _record_until_enter,
@@ -47,19 +47,19 @@ from sandboxes.utils import (
 # ---------------------------------------------------------------------------
 
 
-def _seed_fixed(tlm: TaskListManager) -> None:
+def _seed_fixed(ts: TaskScheduler) -> None:
     """Populate a small but varied set of starter tasks."""
-    tlm._create_task(
+    ts._create_task(
         name="Write quarterly report",
         description="Compile and draft the Q2 report for management.",
         status="active",
     )
-    tlm._create_task(
+    ts._create_task(
         name="Prepare slide deck",
         description="Create slides for the upcoming board meeting.",
         status="queued",
     )
-    tlm._create_task(
+    ts._create_task(
         name="Client follow‑up email",
         description="Send follow‑up email about the proposal.",
         status="queued",
@@ -67,7 +67,7 @@ def _seed_fixed(tlm: TaskListManager) -> None:
 
     base = datetime.now(timezone.utc)
     next_mon = _next_weekday(base, 0).replace(hour=9, minute=0, second=0, microsecond=0)
-    tlm._create_task(
+    ts._create_task(
         name="Send KPI report",
         description="Automated email of KPIs to leadership.",
         schedule=Schedule(
@@ -77,7 +77,7 @@ def _seed_fixed(tlm: TaskListManager) -> None:
         ),
         priority=Priority.high,
     )
-    tlm._create_task(
+    ts._create_task(
         name="Deploy new release",
         description="Roll out version 2.0 to production servers.",
         status="paused",
@@ -85,7 +85,7 @@ def _seed_fixed(tlm: TaskListManager) -> None:
 
 
 def _seed_llm(
-    tlm: TaskListManager,
+    ts: TaskScheduler,
     custom_scenario: Optional[str] = None,
 ) -> Optional[str]:
     """Generate a large realistic task backlog via LLM."""
@@ -109,7 +109,7 @@ def _seed_llm(
         payload = json.loads(raw)
     except Exception:
         _LG.warning("LLM scenario failed – using fixed seed.")
-        _seed_fixed(tlm)
+        _seed_fixed(ts)
         return None
 
     theme = payload.get("theme")
@@ -137,7 +137,7 @@ def _seed_llm(
                     prev_task=None,
                     next_task=None,
                 )
-            task_id = tlm._create_task(**kwargs)
+            task_id = ts._create_task(**kwargs)
             id_map[(g_name, idx)] = task_id
 
     # Wire up prev/next links inside each queue group
@@ -148,7 +148,7 @@ def _seed_llm(
             next_ = id_map.get((g_name, idx + 1)) if idx < len(g) - 1 else None
             unify.update_logs(
                 context="Tasks",
-                logs=tlm._get_logs_by_task_ids(task_ids=cur),
+                logs=ts._get_logs_by_task_ids(task_ids=cur),
                 entries={"schedule": {"prev_task": prev_, "next_task": next_}},
                 overwrite=True,
             )
@@ -165,7 +165,7 @@ class _DispatchResp(BaseModel):
     fixed_text: str = Field(...)
 
 
-def _dispatch(tlm: TaskListManager, raw: str, *, show_steps: bool):
+def _dispatch(ts: TaskScheduler, raw: str, *, show_steps: bool):
     raw = raw.strip()
 
     llm = unify.Unify("gpt-4o@openai", response_format=_DispatchResp)
@@ -177,14 +177,14 @@ def _dispatch(tlm: TaskListManager, raw: str, *, show_steps: bool):
     resp = _DispatchResp.model_validate_json(llm.generate(raw))
 
     if resp.require_update:
-        handle = tlm.update(
+        handle = ts.update(
             text=resp.fixed_text,
             return_reasoning_steps=show_steps,
             log_tool_steps=show_steps,
         )
         return "update", handle
 
-    handle = tlm.ask(
+    handle = ts.ask(
         text=resp.fixed_text,
         return_reasoning_steps=show_steps,
         log_tool_steps=show_steps,
@@ -228,7 +228,7 @@ def _poll_for_interruption(handle: SteerableToolHandle) -> None:
 
 
 async def _process_voice_input(
-    tlm: TaskListManager,
+    ts: TaskScheduler,
     audio_bytes: bytes,
     show_steps: bool,
 ):
@@ -242,7 +242,7 @@ async def _process_voice_input(
         return "quit"
 
     _speak("Working on this now…")
-    kind, handle = _dispatch(tlm, user_text, show_steps=show_steps)
+    kind, handle = _dispatch(ts, user_text, show_steps=show_steps)
 
     # Start a background thread to poll for interruptions
     threading.Thread(target=_poll_for_interruption, args=(handle,), daemon=True).start()
@@ -256,7 +256,7 @@ async def _process_voice_input(
         print("Operation was cancelled.")
 
 
-async def _process_text_input(tlm: TaskListManager, text: str, show_steps: bool):
+async def _process_text_input(ts: TaskScheduler, text: str, show_steps: bool):
     """Process text input with interruption support."""
     if text.lower() in {"quit", "exit"}:
         return "quit"
@@ -264,7 +264,7 @@ async def _process_text_input(tlm: TaskListManager, text: str, show_steps: bool)
     if not text:
         return
 
-    kind, handle = _dispatch(tlm, text, show_steps=show_steps)
+    kind, handle = _dispatch(ts, text, show_steps=show_steps)
 
     # Start a background thread to poll for interruptions
     threading.Thread(target=_poll_for_interruption, args=(handle,), daemon=True).start()
@@ -279,7 +279,7 @@ async def _process_text_input(tlm: TaskListManager, text: str, show_steps: bool)
 
 async def _async_main():
     parser = argparse.ArgumentParser(
-        description="TaskListManager sandbox with minimalist voice mode (Deepgram v4, Cartesia)",
+        description="TaskScheduler sandbox with minimalist voice mode (Deepgram v4, Cartesia)",
     )
     parser.add_argument(
         "--voice",
@@ -328,29 +328,29 @@ async def _async_main():
                 logging.getLogger(noisy).setLevel(logging.WARNING)
 
     # Unify context
-    unify.activate("TaskListSandbox")
+    unify.activate("TaskScheduleSandbox")
     fresh = "Tasks" not in unify.get_contexts() or args.new
     unify.set_context("Tasks", overwrite=fresh)
 
     # Manager
-    tlm = TaskListManager()
+    ts = TaskScheduler()
 
     if fresh:
         if scenario_text is not None:
-            _seed_llm(tlm, custom_scenario=scenario_text)
+            _seed_llm(ts, custom_scenario=scenario_text)
         elif args.scenario == "llm":
-            _seed_llm(tlm)
+            _seed_llm(ts)
         else:
-            _seed_fixed(tlm)
+            _seed_fixed(ts)
 
-    print("TaskListManager sandbox – speak or type. 'quit' to exit.\n")
+    print("TaskScheduler sandbox – speak or type. 'quit' to exit.\n")
 
     # Interaction loop
     if args.voice:
         while True:
             audio_bytes = _record_until_enter()
             result = await _process_voice_input(
-                tlm,
+                ts,
                 audio_bytes,
                 show_steps=not args.silent,
             )
@@ -361,7 +361,7 @@ async def _async_main():
             while True:
                 line = input("> ").strip()
                 result = await _process_text_input(
-                    tlm,
+                    ts,
                     line,
                     show_steps=not args.silent,
                 )

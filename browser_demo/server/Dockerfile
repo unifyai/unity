@@ -4,22 +4,49 @@ FROM python:3.11-slim
 # Set environment variables
 ENV DEBIAN_FRONTEND=noninteractive
 ENV DISPLAY=:99
-
+ENV OPENAI_API_KEY="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"
 
 # Install system dependencies
 RUN apt-get update && apt-get install -y \
-    curl wget unzip gnupg2 xvfb x11vnc fluxbox \
+    curl wget unzip gnupg2 \
+    # xdg-desktop-portal xdg-desktop-portal-wlr weston wayvnc \
+    xvfb x11vnc fluxbox \
     libnss3 libatk-bridge2.0-0 libgtk-3-0 libxss1 \
     libasound2 libxshmfence1 libxcomposite1 libxdamage1 \
     libxrandr2 libgbm1 libx11-xcb1 fonts-liberation xdg-utils \
     ffmpeg git ca-certificates && \
     rm -rf /var/lib/apt/lists/*
 
+# Dependencies for virtual audio
 RUN apt update && apt install -y \
     pipewire pipewire-audio pipewire-bin pipewire-pulse wireplumber \
     libpipewire-0.3-modules libportaudio2 portaudio19-dev \
     pulseaudio-utils alsa-utils alsa-oss alsa-tools \
     dbus dbus-x11 python3-pip \
+    && rm -rf /var/lib/apt/lists/*
+
+# Dependencies for virtual camera
+RUN apt-get update && apt-get install -y \
+    gstreamer1.0-tools \
+    gstreamer1.0-plugins-base \
+    gstreamer1.0-plugins-good \
+    gstreamer1.0-plugins-bad \
+    gstreamer1.0-plugins-ugly \
+    gstreamer1.0-libav \
+    gstreamer1.0-pipewire \
+    gstreamer1.0-libcamera \
+    python3-gi \
+    gir1.2-gtk-3.0 \
+    libgirepository1.0-dev \
+    libcairo2-dev \
+    pkg-config \
+    build-essential \
+    cmake \
+    libspa-0.2-modules \
+    libcamera0.0.3 \
+    libcamera-tools \
+    gir1.2-gst-plugins-base-1.0 \
+    gir1.2-gstreamer-1.0 \
     && rm -rf /var/lib/apt/lists/*
 
 # Install Chromium

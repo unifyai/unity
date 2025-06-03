@@ -19,7 +19,6 @@ import shutil
 import shlex
 import subprocess
 from pathlib import Path
-from threading import Thread
 import time
 from typing import Union
 import psutil
