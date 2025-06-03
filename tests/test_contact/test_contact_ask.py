@@ -98,7 +98,7 @@ async def test_ask_semantic_queries(
     """Tests various semantic queries against the ContactManager's ask method."""
     cm, _ = contact_manager_scenario
 
-    handle = cm.ask(question, return_reasoning_steps=True)
+    handle = cm.ask(question, _return_reasoning_steps=True)
     candidate_answer, reasoning_steps = await handle.result()
 
     # For better judgment context, fetch all contacts to pass to the LLM judge
@@ -132,7 +132,7 @@ async def test_ask_with_parent_context(
     handle = cm.ask(
         question,
         parent_chat_context=parent_ctx,
-        return_reasoning_steps=True,
+        _return_reasoning_steps=True,
     )
     candidate_answer, reasoning_steps = await handle.result()
 
@@ -167,7 +167,7 @@ async def test_ask_with_clarification(
         question,
         clarification_up_q=clar_up_q,
         clarification_down_q=clar_down_q,
-        return_reasoning_steps=True,
+        _return_reasoning_steps=True,
     )
 
     # Expect a clarification question
@@ -205,7 +205,7 @@ async def test_ask_interjection(
     expected_fragment_charlie = "goodgrief@example.org"  # Charlie's email
     expected_fragment_bob = "444-555-6666"  # Bob's phone
 
-    handle = cm.ask(initial_question, return_reasoning_steps=True)
+    handle = cm.ask(initial_question, _return_reasoning_steps=True)
     await asyncio.sleep(0.1)  # Allow initial query to start
     await handle.interject(interjected_question)
     candidate_answer, reasoning_steps = await handle.result()

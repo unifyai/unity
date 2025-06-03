@@ -115,7 +115,7 @@ async def test_update_create_new_contact(
     desc = "Create Eve Adams"
     expected_fragment = "Eve Adams"
 
-    handle = cm.update(command, return_reasoning_steps=True)
+    handle = cm.update(command, _return_reasoning_steps=True)
     assistant_response, reasoning_steps = await handle.result()
 
     _llm_judge_update_confirmation(
@@ -154,7 +154,7 @@ async def test_update_existing_contact_details(
     desc = f"Update Alice Smith (ID {alice_smith_id})"
     expected_fragment = f"ID {alice_smith_id}"
 
-    handle = cm.update(command, return_reasoning_steps=True)
+    handle = cm.update(command, _return_reasoning_steps=True)
     assistant_response, reasoning_steps = await handle.result()
 
     _llm_judge_update_confirmation(
@@ -205,7 +205,7 @@ async def test_update_with_parent_context_identification(
     handle = cm.update(
         command,
         parent_chat_context=parent_ctx,
-        return_reasoning_steps=True,
+        _return_reasoning_steps=True,
     )
     assistant_response, reasoning_steps = await handle.result()
 
@@ -243,7 +243,7 @@ async def test_update_with_clarification_needed(
         command,
         clarification_up_q=clar_up_q,
         clarification_down_q=clar_down_q,
-        return_reasoning_steps=True,
+        _return_reasoning_steps=True,
     )
 
     clarification_question_text = await asyncio.wait_for(
@@ -292,7 +292,7 @@ async def test_update_interjection_modification(
     desc = "Create Frank Castle, then interject phone"
     expected_fragment = "Frank P. Castle"
 
-    handle = cm.update(command, return_reasoning_steps=True)
+    handle = cm.update(command, _return_reasoning_steps=True)
     await asyncio.sleep(0.2)
     await handle.interject("Actually, also add his phone as 555-SKULL.")
     assistant_response, reasoning_steps = await handle.result()

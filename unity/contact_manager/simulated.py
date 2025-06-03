@@ -143,7 +143,7 @@ class SimulatedContactManager(BaseContactManager):
         return _SimulatedContactHandle(
             self._llm,
             text,
-            return_reasoning_steps=_return_reasoning_steps,
+            _return_reasoning_steps=_return_reasoning_steps,
             clarification_up_q=clarification_up_q,
             clarification_down_q=clarification_down_q,
         )
@@ -168,7 +168,7 @@ class SimulatedContactManager(BaseContactManager):
         return _SimulatedContactHandle(
             self._llm,
             text,
-            return_reasoning_steps=_return_reasoning_steps,
+            _return_reasoning_steps=_return_reasoning_steps,
             clarification_up_q=clarification_up_q,
             clarification_down_q=clarification_down_q,
         )
