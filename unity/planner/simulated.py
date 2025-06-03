@@ -229,6 +229,10 @@ class SimulatedPlan(BasePlan):
         self._count_step()
         return self._ask_simulator.generate(question)
 
+    @functools.wraps(BasePlan.done, updated=())
+    def done(self) -> bool:
+        return self._done_event.is_set()
+
     @property
     @functools.wraps(BasePlan.valid_tools, updated=())
     def valid_tools(self):
