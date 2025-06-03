@@ -26,7 +26,7 @@ class _SimulatedContactHandle(SteerableToolHandle):
         llm: unify.Unify,
         initial_text: str,
         *,
-        return_reasoning_steps: bool,
+        _return_reasoning_steps: bool,
         clarification_up_q: asyncio.Queue[str] | None,
         clarification_down_q: asyncio.Queue[str] | None,
     ):
