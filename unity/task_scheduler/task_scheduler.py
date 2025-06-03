@@ -6,7 +6,11 @@ from datetime import datetime, timezone
 from typing import Dict, List, Any, Optional, Union
 
 from ..common.embed_utils import EMBED_MODEL, ensure_vector_column
-from ..common.llm_helpers import start_async_tool_use_loop, SteerableToolHandle
+from ..common.llm_helpers import (
+    start_async_tool_use_loop,
+    SteerableToolHandle,
+    methods_to_tool_dict,
+)
 from .types.status import Status
 from .types.priority import Priority
 from .types.schedule import Schedule
@@ -31,35 +35,37 @@ class TaskScheduler(BaseTaskScheduler):
             daemon (bool): Whether the thread should be a daemon thread.
         """
 
-        self._ask_tools = {
-            # Query-only helpers – safe, read-only operations
-            self._search.__name__: self._search,
-            self._search_similar.__name__: self._search_similar,
-            self._get_task_queue.__name__: self._get_task_queue,
-            self._get_active_task.__name__: self._get_active_task,
-            self._get_paused_task.__name__: self._get_paused_task,
-        }
+        # Query-only helpers – safe, read-only operations
+        self._ask_tools = methods_to_tool_dict(
+            self._search,
+            self._search_similar,
+            self._get_task_queue,
+            self._get_active_task,
+            self._get_paused_task,
+        )
 
         # Write-capable helpers – every mutating operation as well as the read-only ones.
         self._update_tools = {
             **self._ask_tools,
-            # Creation / deletion
-            self._create_task.__name__: self._create_task,
-            self._delete_task.__name__: self._delete_task,
-            # Status transitions
-            self._pause.__name__: self._pause,
-            self._continue.__name__: self._continue,
-            self._cancel_tasks.__name__: self._cancel_tasks,
-            # Queue manipulation
-            self._update_task_queue.__name__: self._update_task_queue,
-            # Attribute mutations
-            self._update_task_name.__name__: self._update_task_name,
-            self._update_task_description.__name__: self._update_task_description,
-            self._update_task_status.__name__: self._update_task_status,
-            self._update_task_start_at.__name__: self._update_task_start_at,
-            self._update_task_deadline.__name__: self._update_task_deadline,
-            self._update_task_repetition.__name__: self._update_task_repetition,
-            self._update_task_priority.__name__: self._update_task_priority,
+            **methods_to_tool_dict(
+                # Creation / deletion
+                self._create_task,
+                self._delete_task,
+                # Status transitions
+                self._pause,
+                self._continue,
+                self._cancel_tasks,
+                # Queue manipulation
+                self._update_task_queue,
+                # Attribute mutations
+                self._update_task_name,
+                self._update_task_description,
+                self._update_task_status,
+                self._update_task_start_at,
+                self._update_task_deadline,
+                self._update_task_repetition,
+                self._update_task_priority,
+            ),
         }
 
         # Internal monotonically-increasing task-id counter.  We keep it local
