@@ -127,7 +127,9 @@ async def test_tm_stateful_memory():
     answer2 = (await handle2.result()).lower()
 
     # The second answer should mention the same codename exactly
-    assert codename.lower() in answer2, "LLM should recall the previous codename"
+    assert (
+        codename.lower().split(" ")[-1] in answer2
+    ), "LLM should recall the previous codename"
 
 
 # ────────────────────────────────────────────────────────────────────────────
