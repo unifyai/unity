@@ -94,65 +94,44 @@ async def test_nested_async_tool_loop():
     # The assistant must answer as instructed.
     assert final_reply.strip().lower() == "all done"
 
+    print(client.messages)
+    assert len(client.messages) == 5, "Expected a 5-message sequence"
+
     # 0. System message
-    assert client.messages[0] == {
-        "role": "system",
-        "content": "You are running inside an automated test. Perform the steps exactly:\n"
+    assert client.messages[0]["role"] == "system"
+    assert client.messages[0]["content"] == (
+        "You are running inside an automated test. Perform the steps exactly:\n"
         "1\ufe0f\u20e3  Call `outer_tool` with no arguments.\n"
         "2\ufe0f\u20e3  Continue running this tool call, when given the option.\n"
-        "3\ufe0f\u20e3  Once it is *completed*, respond with exactly 'all done'.",
-    }
+        "3\ufe0f\u20e3  Once it is *completed*, respond with exactly 'all done'."
+    )
 
     # 1. User message
-    assert client.messages[1] == {
-        "role": "user",
-        "content": "start",
-    }
+    assert client.messages[1] == {"role": "user", "content": "start"}
 
     # 2. Assistant: initial tool selection
     initial_call = client.messages[2]
     assert initial_call["role"] == "assistant"
+    assert initial_call.get("tool_calls") is not None, "Assistant should make a tool call"
     assert len(initial_call["tool_calls"]) == 1
     assert initial_call["tool_calls"][0]["function"] == {
         "arguments": "{}",
         "name": "outer_tool",
     }
 
-    # 3. Tool: initial response
+    # 3. Tool: response for outer_tool.
+    # Its content should reflect the final result of the nested loop ("done" as a JSON string).
     first_tool_resp = client.messages[3]
     assert first_tool_resp["role"] == "tool"
     assert first_tool_resp["name"] == "outer_tool"
-    assert "waiting for result" in first_tool_resp["content"].lower()
+    assert first_tool_resp["content"] == '"done"', "The placeholder for outer_tool should be updated with the inner loop's final result."
 
-    # 4. Assistant: continuation tool selection
-    cont_call = client.messages[4]
-    assert cont_call["role"] == "assistant"
-    assert len(cont_call["tool_calls"]) == 1
-    fn = cont_call["tool_calls"][0]["function"]
-    # name should start with the continuation helper + original call ID
-    assert fn["arguments"] == "{}"
-    assert fn["name"].startswith("_continue_outer_tool_call_")
+    # 4. Assistant: final response "all done"
+    final_assistant_msg = client.messages[4]
+    assert final_assistant_msg["role"] == "assistant"
+    assert final_assistant_msg["content"].strip().lower() == "all done"
+    assert final_assistant_msg.get("tool_calls") is None, "Final assistant message should not have tool calls"
 
-    # 5. Tool: completion response
-    comp_tool_resp = client.messages[5]
-    assert comp_tool_resp["role"] == "tool"
-    # the tool "name" field includes the completion notice
-    assert "completed successfully" in comp_tool_resp["name"].lower()
-    assert "done" in comp_tool_resp["content"].lower()
-
-    # 6. Assistant: final response
-    assert client.messages[6] == {
-        "content": "all done",
-        "refusal": None,
-        "role": "assistant",
-        "annotations": [],
-        "audio": None,
-        "function_call": None,
-        "tool_calls": None,
-    }
-
-    # exactly 7 messages in total
-    assert len(client.messages) == 7
 
 
 @pytest.mark.asyncio
