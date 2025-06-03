@@ -1,5 +1,5 @@
 import json
-from ..task_list_manager.types.task import Task
+from ..task_scheduler.types.task import Task
 
 ASK = f"""
 Your task is to handle any plain-text english task-related question, which can either ask about:

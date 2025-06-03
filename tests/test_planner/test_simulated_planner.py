@@ -39,10 +39,39 @@ async def test_start_and_ask_simulated_plan(monkeypatch):
 
     monkeypatch.setattr(SimulatedPlan, "ask", ask, raising=True)
 
+    original_make_plan = SimulatedPlanner._make_plan
+
+    @functools.wraps(original_make_plan)
+    def _make_plan(
+        self,
+        task_description: str,
+        *,
+        clarification_up_q,
+        clarification_down_q,
+    ):
+        """
+        Create (and start) a new plan.
+
+        Sub-classes implement the actual creation logic in
+        :meth:`_make_plan`.  This thin wrapper only enforces the
+        *single-active-plan* rule and stores the reference.
+        """
+        # don't pass the queues to the plan, they are not used in this test
+        return original_make_plan(
+            self,
+            task_description,
+            clarification_up_q=None,
+            clarification_down_q=None,
+        )
+
+    _make_plan.__name__ = "SimulatedPlanner_plan"
+    _make_plan.__qualname__ = "SimulatedPlanner_plan"
+    monkeypatch.setattr(SimulatedPlanner, "_make_plan", _make_plan, raising=True)
+
     system = (
         "You are running inside an automated test.\n"
-        "1️⃣ Call `plan` with argument task='perform research on a Tasty Cola Ltd.'.\n"
-        "2️⃣ When given the option, call the helper whose name starts with `_ask_plan_call_` **once**, and ask if there are any early findings already\n"
+        "1️⃣ Call `SimulatedPlanner_plan` with argument task_description='perform research on a Tasty Cola Ltd.'.\n"
+        "2️⃣ When the user says 'ask', call the  `_ask_plan_call_` **once**, and ask if there are any early findings already\n"
         "3️⃣ Finally, regardless of the response to this question, just reply back to the user with exactly 'done', without calling any more tools."
     )
     client = make_client(system)
@@ -53,6 +82,8 @@ async def test_start_and_ask_simulated_plan(monkeypatch):
         max_steps=20,
         timeout=120,
     )
+    await asyncio.sleep(5)
+    await handle.interject("ask")
     final = await handle.result()
     assert "done" in final.strip().lower()
     # ask should have been called exactly once
@@ -76,6 +107,35 @@ async def test_interject_simulated_plan(monkeypatch):
         return original_interject(self, instruction)
 
     monkeypatch.setattr(SimulatedPlan, "interject", interject, raising=True)
+
+    original_make_plan = SimulatedPlanner._make_plan
+
+    @functools.wraps(original_make_plan)
+    def _make_plan(
+        self,
+        task_description: str,
+        *,
+        clarification_up_q,
+        clarification_down_q,
+    ):
+        """
+        Create (and start) a new plan.
+
+        Sub-classes implement the actual creation logic in
+        :meth:`_make_plan`.  This thin wrapper only enforces the
+        *single-active-plan* rule and stores the reference.
+        """
+        # don't pass the queues to the plan, they are not used in this test
+        return original_make_plan(
+            self,
+            task_description,
+            clarification_up_q=None,
+            clarification_down_q=None,
+        )
+
+    _make_plan.__name__ = "SimulatedPlanner_plan"
+    _make_plan.__qualname__ = "SimulatedPlanner_plan"
+    monkeypatch.setattr(SimulatedPlanner, "_make_plan", _make_plan, raising=True)
 
     system = (
         "You are running inside an automated test.\n"
@@ -125,9 +185,38 @@ async def test_pause_and_resume_simulated_plan(monkeypatch):
     monkeypatch.setattr(SimulatedPlan, "pause", pause, raising=True)
     monkeypatch.setattr(SimulatedPlan, "resume", resume, raising=True)
 
+    original_make_plan = SimulatedPlanner._make_plan
+
+    @functools.wraps(original_make_plan)
+    def _make_plan(
+        self,
+        task_description: str,
+        *,
+        clarification_up_q,
+        clarification_down_q,
+    ):
+        """
+        Create (and start) a new plan.
+
+        Sub-classes implement the actual creation logic in
+        :meth:`_make_plan`.  This thin wrapper only enforces the
+        *single-active-plan* rule and stores the reference.
+        """
+        # don't pass the queues to the plan, they are not used in this test
+        return original_make_plan(
+            self,
+            task_description,
+            clarification_up_q=None,
+            clarification_down_q=None,
+        )
+
+    _make_plan.__name__ = "SimulatedPlanner_plan"
+    _make_plan.__qualname__ = "SimulatedPlanner_plan"
+    monkeypatch.setattr(SimulatedPlanner, "_make_plan", _make_plan, raising=True)
+
     system = (
         "You are running inside an automated test.\n"
-        "1️⃣ Call `plan` with argument task='perform research on Tasty Cola Ltd.'.\n"
+        "1️⃣ Call `plan` with argument `task_description='perform research on Tasty Cola Ltd.'`.\n"
         "2️⃣ When the user says 'hold', call the helper starting with `_pause_plan_call_`.\n"
         "3️⃣ When the user says 'go', call the helper starting with `_resume_plan_call_`.\n"
         "4️⃣ After resume, reply with 'done'."
@@ -168,6 +257,35 @@ async def test_stop_simulated_plan(monkeypatch):
         return original_stop(self)
 
     monkeypatch.setattr(SimulatedPlan, "stop", stop, raising=True)
+
+    original_make_plan = SimulatedPlanner._make_plan
+
+    @functools.wraps(original_make_plan)
+    def _make_plan(
+        self,
+        task_description: str,
+        *,
+        clarification_up_q,
+        clarification_down_q,
+    ):
+        """
+        Create (and start) a new plan.
+
+        Sub-classes implement the actual creation logic in
+        :meth:`_make_plan`.  This thin wrapper only enforces the
+        *single-active-plan* rule and stores the reference.
+        """
+        # don't pass the queues to the plan, they are not used in this test
+        return original_make_plan(
+            self,
+            task_description,
+            clarification_up_q=None,
+            clarification_down_q=None,
+        )
+
+    _make_plan.__name__ = "SimulatedPlanner_plan"
+    _make_plan.__qualname__ = "SimulatedPlanner_plan"
+    monkeypatch.setattr(SimulatedPlanner, "_make_plan", _make_plan, raising=True)
 
     system = (
         "You are running inside an automated test.\n"

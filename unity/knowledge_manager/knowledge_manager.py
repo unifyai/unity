@@ -1,6 +1,7 @@
 import os
 import asyncio
 import unify
+import functools
 import requests
 from typing import Any, Dict, List, Optional, Union
 
@@ -10,11 +11,12 @@ from ..helpers import _handle_exceptions
 from .types import ColumnType
 from ..common.llm_helpers import start_async_tool_use_loop, SteerableToolHandle
 from ..helpers import _handle_exceptions
+from .base import BaseKnowledgeManager
 
 API_KEY = os.environ["UNIFY_KEY"]
 
 
-class KnowledgeManager:
+class KnowledgeManager(BaseKnowledgeManager):
 
     def __init__(self, *, traced: bool = True) -> None:
         """
@@ -61,51 +63,16 @@ class KnowledgeManager:
 
     # English-Text Command
 
+    @functools.wraps(BaseKnowledgeManager.store, updated=())
     def store(
         self,
         text: str,
         *,
-        return_reasoning_steps: bool = False,
+        _return_reasoning_steps: bool = False,
         parent_chat_context: list[dict] | None = None,
         clarification_up_q: asyncio.Queue[str] | None = None,
         clarification_down_q: asyncio.Queue[str] | None = None,
     ) -> "SteerableToolHandle":
-        """
-        Take in any storage text command, and use the tools available (the *non-skipped* private methods of this class) to store the information, refactoring the table and column schema along the way if needed.
-
-        Args:
-            text (str): The information storage request, as a plain-text command.
-            return_reasoning_steps (bool): Whether to return the reasoning steps for the storage request.
-            parent_chat_context (list[dict]): A list of parent context messages to pass down into the tool use loop.
-            clarification_up_q (asyncio.Queue[str]): A queue to send clarification questions up to the caller.
-            clarification_down_q (asyncio.Queue[str]): A queue to send clarification answers down to the model.
-
-        Returns:
-            AsyncToolLoopHandle: A handle to the running conversation that allows:
-                - `await handle.result()` to get the final result
-                - `await handle.interject(message)` to add a user message mid-conversation
-                - `handle.stop()` to gracefully cancel the conversation
-
-        Usage:
-            # Synchronous call that returns a handle immediately:
-            handle = km.store("Adrian was born in 1994.")
-
-            # Wait until the operation completes (must be awaited):
-            await handle.result()
-
-            # If you also want the LLM reasoning steps:
-            handle = km.store(
-                "Adrian moved to London in 2020.",
-                return_reasoning_steps=True,
-            )
-            confirmation, reasoning_steps = await handle.result()
-
-            # You can interject while the assistant is still processing:
-            await handle.interject("Actually, Adrian moved in 2021.")
-
-            # Or stop the interaction early:
-            handle.stop()
-        """
         from unity.knowledge_manager.sys_msgs import STORE
 
         client = unify.AsyncUnify(
@@ -141,7 +108,7 @@ class KnowledgeManager:
         )
 
         # ── 3.  Optionally wrap .result() to expose reasoning  ────────────
-        if return_reasoning_steps:
+        if _return_reasoning_steps:
             original_result = handle.result
 
             async def wrapped_result():
@@ -152,51 +119,16 @@ class KnowledgeManager:
 
         return handle
 
+    @functools.wraps(BaseKnowledgeManager.retrieve, updated=())
     def retrieve(
         self,
         text: str,
         *,
-        return_reasoning_steps: bool = False,
+        _return_reasoning_steps: bool = False,
         parent_chat_context: list[dict] | None = None,
         clarification_up_q: asyncio.Queue[str] | None = None,
         clarification_down_q: asyncio.Queue[str] | None = None,
     ) -> "SteerableToolHandle":
-        """
-        Take in any retrieval text command, and use the tools available (the *non-skipped* private methods of this class) to retrieve the information, refactoring the table and column schema along the way if needed.
-
-        Args:
-            text (str): The information retrieval request, as a plain-text command.
-            return_reasoning_steps (bool): Whether to return the reasoning steps for the retrieval request.
-            parent_chat_context (list[dict]): A list of parent context messages to pass down into the tool use loop.
-            clarification_up_q (asyncio.Queue[str]): A queue to send clarification questions up to the caller.
-            clarification_down_q (asyncio.Queue[str]): A queue to send clarification answers down to the model.
-
-        Returns:
-            AsyncToolLoopHandle: A handle to the running conversation that allows:
-                - `await handle.result()` to get the final result
-                - `await handle.interject(message)` to add a user message mid-conversation
-                - `handle.stop()` to gracefully cancel the conversation
-
-        Usage:
-            # Synchronous call that returns a handle immediately:
-            handle = km.retrieve("When was Adrian born?")
-
-            # Retrieve the answer (must be awaited):
-            answer = await handle.result()
-
-            # If you also want the LLM reasoning steps:
-            handle = km.retrieve(
-                "When was Adrian born?",
-                return_reasoning_steps=True,
-            )
-            answer, reasoning_steps = await handle.result()
-
-            # You can refine your query while it's running:
-            await handle.interject("I mean Adrian Smith, not Adrian Li.")
-
-            # Or cancel the query altogether:
-            handle.stop()
-        """
         from unity.knowledge_manager.sys_msgs import RETRIEVE
 
         client = unify.AsyncUnify(
@@ -232,7 +164,7 @@ class KnowledgeManager:
         )
 
         # ── 3.  Optionally wrap .result() to expose reasoning  ────────────
-        if return_reasoning_steps:
+        if _return_reasoning_steps:
             original_result = handle.result
 
             async def wrapped_result():

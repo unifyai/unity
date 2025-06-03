@@ -6,3 +6,5 @@ websockify
 sounddevice
 soundfile
 numpy
+opencv-python
+pygobject==3.50.0

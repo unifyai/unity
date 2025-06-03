@@ -1,5 +1,6 @@
 import json
 import asyncio
+import functools
 import inspect
 import traceback
 from enum import Enum
@@ -96,6 +97,104 @@ def _dumps(
     return json.dumps(ret, indent=indent) if base else ret
 
 
+# ─────────────────────────────────────────────────────────────────────────────
+#  strip doc-lines that describe “hidden” parameters
+# ─────────────────────────────────────────────────────────────────────────────
+import re
+from textwrap import dedent
+
+_PARAM_LINE_RX = re.compile(
+    r"""
+    ^
+    (?P<indent>\s*)                  #     any amount of leading WS
+    (?P<names>[^\s:]+(?:\s*,\s*[^\s:]+)*)   # 1 or more names (a, b, …)
+    (\s*\([^)]*\))?                 #     optional "(type)"
+    \s*:
+    """,
+    re.VERBOSE,
+)
+
+
+def _strip_hidden_params_from_doc(doc: str, hidden: set[str]) -> str:
+    """
+    Remove *parameter documentation blocks* whose parameter name is in
+    **hidden** from a Google- or NumPy-style docstring.
+
+    We look only inside the “Args:” or “Parameters” section; everything
+    else is kept verbatim.
+    """
+    if not doc or not hidden:
+        return doc
+
+    lines = dedent(doc).splitlines()
+    out: list[str] = []
+
+    inside_param_section = False
+    skip_block = False
+    current_indent = 0
+
+    for ln in lines:
+        stripped = ln.lstrip()
+
+        # ── detect section headers ────────────────────────────────────────
+        if stripped.lower() in ("args:", "parameters"):
+            inside_param_section = True
+            skip_block = False
+            out.append(ln)
+            continue
+        if inside_param_section and not stripped:
+            # blank line inside section
+            out.append(ln)
+            continue
+        if inside_param_section and not stripped.startswith(" "):
+            # left the section
+            inside_param_section = False
+            skip_block = False
+
+        if inside_param_section:
+            m = _PARAM_LINE_RX.match(ln)
+            if m:
+                # Are *any* of the listed names hidden?
+                names = {n.strip() for n in m.group("names").split(",")}
+                if names & hidden:
+                    # start skipping this parameter-block
+                    skip_block = True
+                    current_indent = len(m.group("indent"))
+                    continue  # swallow the parameter line itself
+            if skip_block:
+                # keep skipping as long as the line is *more indented*
+                indent = len(ln) - len(stripped)
+                if indent > current_indent:
+                    continue
+                # description block ended
+                skip_block = False
+
+        if not skip_block:
+            out.append(ln)
+
+    # normalise consecutive blank lines
+    cleaned: list[str] = []
+    prev_blank = False
+    for ln in out:
+        blank = not ln.strip()
+        if blank and prev_blank:
+            continue
+        cleaned.append(ln)
+        prev_blank = blank
+
+    if hidden:
+        pat = re.compile(
+            r"^\s*(?:"
+            + "|".join(re.escape(name) for name in hidden)
+            + r")\s*:.*(?:\n\s+.*)*",
+            flags=re.MULTILINE,
+        )
+        cleaned = pat.sub("", "\n".join(cleaned))
+        cleaned = re.sub(r"\n{3,}", "\n\n", cleaned)  # collapse big gaps
+
+    return "\n".join(cleaned).rstrip()
+
+
 def annotation_to_schema(ann: Any) -> Dict[str, Any]:
     """Convert a Python type annotation into an OpenAI-compatible JSON-Schema
     fragment, including full support for Pydantic BaseModel subclasses.
@@ -152,15 +251,39 @@ def annotation_to_schema(ann: Any) -> Dict[str, Any]:
 
 
 def method_to_schema(bound_method):
+    """
+    Convert **bound_method** into an OpenAI-compatible *function*-tool schema.
+    """
+
     sig = inspect.signature(bound_method)
     hints = get_type_hints(bound_method)
-    props, required = {}, []
+
+    props, required, hidden = {}, [], set()
+
     for name, param in sig.parameters.items():
+        # Determine whether *name* is **hidden** (never exposed to the LLM)
+        is_hidden = (
+            name.startswith("_") and param.default is not inspect._empty
+        ) or name in (
+            "parent_chat_context",
+            "clarification_up_q",
+            "clarification_down_q",
+        )
+
+        if is_hidden:
+            hidden.add(name)
+            continue  # do NOT surface to the model
+
         ann = hints.get(name, str)
         props[name] = annotation_to_schema(ann)
         if param.default is inspect._empty:
             required.append(name)
 
+    # ── scrub the docstring so hidden args disappear from “Args:”/“Parameters” ──
+    raw_doc = bound_method.__doc__ or ""
+    cleaned_doc = _strip_hidden_params_from_doc(raw_doc, hidden)
+
+    # … remainder is unchanged …
     if hasattr(bound_method, "__self__") and hasattr(
         bound_method.__self__,
         "__class__",
@@ -177,7 +300,7 @@ def method_to_schema(bound_method):
         "type": "function",
         "function": {
             "name": tool_name,
-            "description": (bound_method.__doc__ or "").strip(),
+            "description": cleaned_doc.strip(),
             "parameters": {
                 "type": "object",
                 "properties": props,
@@ -322,11 +445,14 @@ async def _async_tool_use_loop_inner(
         so the assistant can pivot instantly.  When *False* the loop waits
         for the model to finish (legacy behaviour).
 
-
     propagate_chat_context : ``bool``, default ``True``
         If *True*, the entire conversation state of **this** loop is
         threaded into any child tool that accepts a
         ``parent_chat_context`` keyword argument.
+        If *True*, the entire conversation state of **this** loop is threaded
+        into any child tool via the *internal-only* ``parent_chat_context``
+        argument.  This parameter is added automatically and is **not**
+        exposed to the LLM.
 
     parent_chat_context : ``list[dict] | None``
         Nested chat structure passed from an **outer** loop.  When
@@ -388,7 +514,7 @@ async def _async_tool_use_loop_inner(
             )
 
     # ── *single* authoritative implementation of "task finished" handling ──
-    async def _process_completed_task(task: asyncio.Task) -> None:
+    async def _process_completed_task(task: asyncio.Task) -> bool:
         """
         Deal with a finished tool *task* exactly once:
 
@@ -475,7 +601,7 @@ async def _async_tool_use_loop_inner(
                 }
                 if h_up_q is not None:
                     clarification_channels[call_id] = (h_up_q, h_down_q)
-                return
+                return False  # ⬅️  no LLM turn required
 
             # ───────────────────────────────────────────────────────────────
             #  Normal (non-handle) result – unchanged path
@@ -538,6 +664,9 @@ async def _async_tool_use_loop_inner(
             raise RuntimeError(
                 "Aborted after too many consecutive tool failures.",
             )
+
+        # successful (or failed) *final* result → LLM may need to react
+        return True
 
     if parent_chat_context:
         sys_msg = {
@@ -804,16 +933,15 @@ async def _async_tool_use_loop_inner(
                     llm_turn_required = True
                     continue
 
+                needs_turn = False
                 for task in done:  # finished tool(s)
-                    await _process_completed_task(task)
+                    if await _process_completed_task(task):
+                        needs_turn = True
 
-                # 🔄  A tool completed but others are still running.
-                #     Give the LLM an immediate turn so it can act on the
-                #     new information (e.g. pass a clarification answer
-                #     back to the child tool) before we re-enter the
-                #     “wait for pending” gate.
+                # Other tools may still be running.
                 if pending:
-                    llm_turn_required = True
+                    if needs_turn:  # only when something new
+                        llm_turn_required = True
                     continue  # jump to top-of-loop
 
             # ── B: wait for remaining tools before asking the LLM again,
@@ -1152,14 +1280,15 @@ async def _async_tool_use_loop_inner(
                         cancel_waiter,
                         return_exceptions=True,
                     )
-
                     # — handle each newly-finished task exactly as branch A does
+                    needs_turn = False
                     for task in done & pending_snapshot:
-                        await _process_completed_task(task)
+                        if await _process_completed_task(task):
+                            needs_turn = True
 
                     # …then restart the main loop so the model sees the new info
-                    # 👇 make sure the assistant gets an immediate turn
-                    llm_turn_required = True
+                    if needs_turn:  # assistant speaks only if needed
+                        llm_turn_required = True
                     continue
 
                 # 1️⃣ user interjected → restart immediately
@@ -1311,7 +1440,7 @@ async def _async_tool_use_loop_inner(
                                 "name": pretty_name,
                                 "content": finished,
                             }
-                            _insert_after_assistant(asst_msg, tool_msg)
+                            _insert_after_assistant(info["assistant_msg"], tool_msg)
                             if log_steps:
                                 LOGGER.info(
                                     f"↩️  {pretty_name} answered immediately (already finished)",
@@ -1604,9 +1733,9 @@ async def _async_tool_use_loop_inner(
                     # ── per-call clarification queues (optional) ─────────
                     clar_up_q: Optional[asyncio.Queue[str]] = None
                     clar_down_q: Optional[asyncio.Queue[str]] = None
-                    if sig_accepts_clar_qs and (
-                        "clarification_up_q" in args or "clarification_down_q" in args
-                    ):
+                    # Always provide queues when the tool supports them – the LLM
+                    # never passes them explicitly anymore.
+                    if sig_accepts_clar_qs:
                         clar_up_q = asyncio.Queue()
                         clar_down_q = asyncio.Queue()
                         extra_kwargs["clarification_up_q"] = clar_up_q
@@ -1764,9 +1893,28 @@ class SteerableToolHandle(ABC):
         pass
 
     @abstractmethod
-    @unify.traced
+    async def interject(self, message: str) -> None:
+        """Inject an additional *user* turn into the running conversation."""
+
+    @abstractmethod
+    def stop(self) -> None:
+        """Politely ask the loop to shut down (gracefully)."""
+
+    @abstractmethod
+    def pause(self) -> None:
+        """Temporarily freeze the outer loop (tools keep running)."""
+
+    @abstractmethod
+    def resume(self) -> None:
+        """Un-freeze a loop that was paused with :pyfunc:`pause`."""
+
+    @abstractmethod
+    def done(self) -> bool:
+        """Flag for whether or not this task is done."""
+
+    @abstractmethod
     async def result(self) -> str:
-        """Wait for the assistant's *final* reply."""
+        """Wait for the assistant’s *final* reply."""
 
 
 class AsyncToolUseLoopHandle(SteerableToolHandle):
@@ -1792,34 +1940,28 @@ class AsyncToolUseLoopHandle(SteerableToolHandle):
         self._pause_event.set()
 
     # -- public API -----------------------------------------------------------
-    @unify.traced
+    @functools.wraps(SteerableToolHandle.interject, updated=())
     async def interject(self, message: str) -> None:
-        """Inject an additional *user* turn into the running conversation."""
         await self._queue.put(message)
 
-    @unify.traced
+    @functools.wraps(SteerableToolHandle.stop, updated=())
     def stop(self) -> None:
-        """Politely ask the loop to shut down (gracefully)."""
         self._cancel_event.set()
 
-    @unify.traced
+    @functools.wraps(SteerableToolHandle.pause, updated=())
     def pause(self) -> None:
-        """Temporarily freeze the outer loop (tools keep running)."""
         self._pause_event.clear()
 
-    @unify.traced
+    @functools.wraps(SteerableToolHandle.resume, updated=())
     def resume(self) -> None:
-        """Un-freeze a loop that was paused with :pyfunc:`pause`."""
         self._pause_event.set()
 
-    # Optional helpers --------------------------------------------------------
-    @unify.traced
+    @functools.wraps(SteerableToolHandle.done, updated=())
     def done(self) -> bool:
         return self._task.done()
 
-    @unify.traced
+    @functools.wraps(SteerableToolHandle.result, updated=())
     async def result(self) -> str:
-        """Wait for the assistant’s *final* reply."""
         return await self._task
 
 

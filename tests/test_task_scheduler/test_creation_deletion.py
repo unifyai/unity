@@ -1,0 +1,47 @@
+import pytest
+from tests.helpers import _handle_project
+from unity.task_scheduler.task_scheduler import TaskScheduler
+from unity.task_scheduler.types.priority import Priority
+from unity.task_scheduler.types.status import Status
+
+
+@_handle_project
+@pytest.mark.unit
+def test_create_task():
+    task_scheduler = TaskScheduler()
+    task_scheduler._create_task(
+        name="Promote Jeff Smith",
+        description="Send an email to Jeff Smith, kindly congratulating him and explaining that he has been promoted from sales rep to sales manager.",
+    )
+    task_list = task_scheduler._search()
+    assert task_list == [
+        {
+            "name": "Promote Jeff Smith",
+            "description": "Send an email to Jeff Smith, kindly congratulating him and explaining that he has been promoted from sales rep to sales manager.",
+            "status": Status.active,
+            "schedule": {"prev_task": None, "next_task": None},
+            "deadline": None,
+            "repeat": None,
+            "priority": Priority.normal,
+            "task_id": 0,
+        },
+    ]
+
+
+@_handle_project
+@pytest.mark.unit
+def test_delete_task():
+    task_scheduler = TaskScheduler()
+
+    # create
+    task_scheduler._create_task(
+        name="Promote Jeff Smith",
+        description="Send an email to Jeff Smith, kindly congratulating him and explaining that he has been promoted from sales rep to sales manager.",
+    )
+    task_list = task_scheduler._search()
+    assert len(task_list) == 1
+
+    # delete
+    task_scheduler._delete_task(task_id=0)
+    task_list = task_scheduler._search()
+    assert task_list == []
