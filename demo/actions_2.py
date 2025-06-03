@@ -29,8 +29,8 @@ class SendEmailAction(BaseModel):
 
 
 class CreateCommunicationTask(BaseModel):
-    contact_name: str = Field(..., description="contact name")
-    contact_number: str = Field(..., description="contact number with country code")
+    contact_name: str = Field(..., description="contact name, MUST be provided")
+    contact_number: str = Field(..., description="contact number with country code, MUST be provided")
     detailed_task_description: str = Field(
         ...,
         description="very detailed description of the task",

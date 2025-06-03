@@ -40,9 +40,9 @@ class EventManager:
     async def collect_events(self):
         print("collecting...")
         while True:
-            print(self.topic_to_subs)
+            # print(self.topic_to_subs)
             event = await self.events_queue.get()
-            print(event)
+            print("EVENT MANAGER:", event)
             if event["topic"] == "call_process":
                 print("recieved call event")
                 # handle messages going to the call process
