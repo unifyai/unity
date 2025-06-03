@@ -150,7 +150,7 @@ async def _dispatch(
     ) and not raw.endswith("?")
 
     if heuristic_store:
-        handle = km.store(raw, return_reasoning_steps=show_steps)
+        handle = km.store(raw, _return_reasoning_steps=show_steps)
         return "store", handle, None
 
     llm = unify.Unify("gpt-4o@openai", response_format=_IntentResp)
@@ -158,11 +158,11 @@ async def _dispatch(
     intent = _IntentResp.model_validate_json(intent_json)
 
     if intent.action == "store":
-        handle = km.store(intent.cleaned_text, return_reasoning_steps=show_steps)
+        handle = km.store(intent.cleaned_text, _return_reasoning_steps=show_steps)
         return "store", handle, None
 
     # Retrieval path
-    handle = km.retrieve(intent.cleaned_text, return_reasoning_steps=show_steps)
+    handle = km.retrieve(intent.cleaned_text, _return_reasoning_steps=show_steps)
     return "retrieve", handle, None
 
 
@@ -231,7 +231,7 @@ async def _handle_interruptions(
         # Get the result from the completed task
         result = answer_task.result()
 
-        # If we have a tuple (for return_reasoning_steps=True), extract just the answer
+        # If we have a tuple (for _return_reasoning_steps=True), extract just the answer
         if isinstance(result, tuple) and len(result) >= 1:
             result = result[0]
 

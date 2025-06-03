@@ -335,7 +335,7 @@ async def _dispatch(
     *,
     show_steps: bool,
 ) -> Tuple[str, str, List | None]:
-    handle = tm.ask(raw.strip(), return_reasoning_steps=show_steps)
+    handle = tm.ask(raw.strip(), _return_reasoning_steps=show_steps)
 
     # Create a task for the result
     answer_task = asyncio.create_task(handle.result())

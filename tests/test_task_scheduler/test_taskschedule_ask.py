@@ -186,7 +186,7 @@ async def test_ask_semantic_with_llm_judgement(
     try:
         handle = ts_scenario.ask(
             text=question,
-            return_reasoning_steps=True,
+            _return_reasoning_steps=True,
         )
         candidate, steps = await handle.result()
         expected = _answer_semantic(ts_scenario, question)
@@ -204,7 +204,7 @@ async def test_ask_with_interjection(ts_scenario: TaskScheduler) -> None:
         # 1) Initial question ⇢ active task name
         handle = ts_scenario.ask(
             text="Which task is currently active?",
-            return_reasoning_steps=True,
+            _return_reasoning_steps=True,
         )
 
         # 2) Mid-conversation interjection ⇢ queued-task count
