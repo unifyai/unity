@@ -129,7 +129,7 @@ class TaskListManager(BaseTaskListManager):
             parent_chat_context=parent_chat_context,
             log_steps=log_tool_steps,
         )
-        if return_reasoning_steps:
+        if _return_reasoning_steps:
             # Wrap the handle.result() to return both answer and reasoning steps
             original_result = handle.result
 
@@ -189,7 +189,7 @@ class TaskListManager(BaseTaskListManager):
             parent_chat_context=parent_chat_context,
             log_steps=log_tool_steps,
         )
-        if return_reasoning_steps:
+        if _return_reasoning_steps:
             # Wrap the handle.result() to return both answer and reasoning steps
             original_result = handle.result
 
