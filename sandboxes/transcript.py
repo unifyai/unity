@@ -94,7 +94,7 @@ _ID_BY_NAME: Dict[str, int] = {}
 def _seed_fixed(tm: TranscriptManager) -> None:
     "Populate contacts and a rich set of exchanges."
     for idx, c in enumerate(_CONTACTS):
-        tm.create_contact(**c)
+        tm._contact_manager._create_contact(**c)
         _ID_BY_NAME[c["first_name"].lower()] = idx
 
     base = datetime(2025, 4, 20, 9, 0, tzinfo=timezone.utc)
