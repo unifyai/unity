@@ -154,7 +154,7 @@ class SimulatedTaskListManager(BaseTaskListManager):
             self._llm,
             text,
             mode="ask",
-            return_reasoning_steps=return_reasoning_steps,
+            return_reasoning_steps=_return_reasoning_steps,
             clarification_up_q=clarification_up_q,
             clarification_down_q=clarification_down_q,
         )
@@ -181,7 +181,7 @@ class SimulatedTaskListManager(BaseTaskListManager):
             self._llm,
             text,
             mode="update",
-            return_reasoning_steps=return_reasoning_steps,
+            return_reasoning_steps=_return_reasoning_steps,
             clarification_up_q=clarification_up_q,
             clarification_down_q=clarification_down_q,
         )

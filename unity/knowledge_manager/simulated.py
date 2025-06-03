@@ -142,7 +142,7 @@ class SimulatedKnowledgeManager(BaseKnowledgeManager):
         return _SimulatedKnowledgeHandle(
             self._llm,
             text,
-            return_reasoning_steps=return_reasoning_steps,
+            return_reasoning_steps=_return_reasoning_steps,
             clarification_up_q=clarification_up_q,
             clarification_down_q=clarification_down_q,
         )
@@ -167,7 +167,7 @@ class SimulatedKnowledgeManager(BaseKnowledgeManager):
         return _SimulatedKnowledgeHandle(
             self._llm,
             text,
-            return_reasoning_steps=return_reasoning_steps,
+            return_reasoning_steps=_return_reasoning_steps,
             clarification_up_q=clarification_up_q,
             clarification_down_q=clarification_down_q,
         )
