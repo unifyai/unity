@@ -9,7 +9,11 @@ from ..common.embed_utils import EMBED_MODEL, ensure_vector_column
 from ..contact_manager.contact_manager import ContactManager
 from .types.message import Message
 from .types.message_exchange_summary import MessageExchangeSummary
-from ..common.llm_helpers import start_async_tool_use_loop, SteerableToolHandle
+from ..common.llm_helpers import (
+    start_async_tool_use_loop,
+    SteerableToolHandle,
+    methods_to_tool_dict,
+)
 from ..events.event_bus import EventBus, Event
 from .base import BaseTranscriptManager
 
@@ -30,13 +34,14 @@ class TranscriptManager(BaseTranscriptManager):
             traced=traced,
         )
 
-        self._tools = {
-            self.summarize.__name__: self.summarize,
-            self._contact_manager._search_contacts.__name__: self._contact_manager._search_contacts,
-            self._search_messages.__name__: self._search_messages,
-            self._search_summaries.__name__: self._search_summaries,
-            self._nearest_messages.__name__: self._nearest_messages,
-        }
+        self._tools = methods_to_tool_dict(
+            self.summarize,
+            self._contact_manager._search_contacts,
+            self._search_messages,
+            self._search_summaries,
+            self._nearest_messages,
+            include_class_name=False,
+        )
 
         ctxs = unify.get_active_context()
         read_ctx, write_ctx = ctxs["read"], ctxs["write"]
