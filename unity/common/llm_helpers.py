@@ -657,9 +657,6 @@ async def _async_tool_use_loop_inner(
 
         await _to_event_bus(tool_msg)
 
-        # successful (or failed) *final* result → LLM may need to react
-        return True
-
         # 6️⃣  failure guard -------------------------------------------------
         if consecutive_failures >= max_consecutive_failures:
             if log_steps:
@@ -667,6 +664,9 @@ async def _async_tool_use_loop_inner(
             raise RuntimeError(
                 "Aborted after too many consecutive tool failures.",
             )
+        
+        # successful (or failed) *final* result → LLM may need to react
+        return True
 
     if parent_chat_context:
         sys_msg = {
