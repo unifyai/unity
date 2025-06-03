@@ -13,6 +13,7 @@ from ..common.llm_helpers import (
     AsyncToolUseLoopHandle,
     SteerableToolHandle,
     start_async_tool_use_loop,
+    methods_to_tool_dict,
 )
 from ..events.event_bus import EventBus
 
@@ -71,25 +72,27 @@ class TaskManager:
             self._planner = ToolLoopPlanner(planner_steps)
 
         # static, always-present tools -------------------------------------------------
-        self._static_passive_tools: Dict[str, Callable] = {
+        self._static_passive_tools: Dict[str, Callable] = methods_to_tool_dict(
             # contact
-            f"{self._contact_manager.__class__.__name__}_ask": self._contact_manager.ask,
+            self._contact_manager.ask,
             # transcript
-            f"{self._transcript_manager.__class__.__name__}_ask": self._transcript_manager.ask,
+            self._transcript_manager.ask,
             # knowledge
-            f"{self._knowledge_manager.__class__.__name__}_retrieve": self._knowledge_manager.retrieve,
+            self._knowledge_manager.retrieve,
             # task-list
-            f"{self._task_scheduler.__class__.__name__}_ask": self._task_scheduler.ask,
-        }
+            self._task_scheduler.ask,
+            include_class_name=True,
+        )
 
-        self._static_active_tools: Dict[str, Callable] = {
+        self._static_active_tools: Dict[str, Callable] = methods_to_tool_dict(
             # transcript
-            f"{self._transcript_manager.__class__.__name__}_summarize": self._transcript_manager.summarize,
+            self._transcript_manager.summarize,
             # knowledge
-            f"{self._knowledge_manager.__class__.__name__}_store": self._knowledge_manager.store,
+            self._knowledge_manager.store,
             # task-list
-            f"{self._task_scheduler.__class__.__name__}_update": self._task_scheduler.update,
-        }
+            self._task_scheduler.update,
+            include_class_name=True,
+        )
 
         # ---------- planner wrappers --------------------------------------------------
         self._wrap_planner_entrypoints()
