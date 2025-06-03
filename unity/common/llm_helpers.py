@@ -41,6 +41,13 @@ _MANAGEMENT_METHOD_NAMES: set[str] = {
 }
 
 
+def methods_to_tool_dict(*methods: Tuple[Callable]) -> Dict[str, Callable]:
+    return {
+        f"{m.__self__.__class__.__name__}_{m.__name__}".replace("__", "_"): m
+        for m in methods
+    }
+
+
 def _discover_custom_public_methods(handle) -> dict[str, Callable]:
     """
     Return a mapping ``name → bound_method`` of *public* callables on *handle*:
