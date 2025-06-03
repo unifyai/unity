@@ -1,16 +1,18 @@
-# unity/task_list_manager/simulated_task_list_manager.py
+# unity/task_scheduler/simulated_task_scheduler.py
 import asyncio
 import json
 import os
 import threading
+import functools
 from typing import List, Optional
 
 import unify
 
 from ..common.llm_helpers import SteerableToolHandle
+from .base import BaseTaskScheduler
 
 
-class _SimulatedTaskListHandle(SteerableToolHandle):
+class _SimulatedTaskScheduleHandle(SteerableToolHandle):
     """A minimal, LLM-backed handle for ask/update interactions."""
 
     def __init__(
@@ -19,7 +21,7 @@ class _SimulatedTaskListHandle(SteerableToolHandle):
         initial_text: str,
         *,
         mode: str,
-        return_reasoning_steps: bool = False,
+        _return_reasoning_steps: bool = False,
         clarification_up_q: asyncio.Queue[str] | None = None,
         clarification_down_q: asyncio.Queue[str] | None = None,
     ) -> None:
@@ -106,9 +108,9 @@ class _SimulatedTaskListHandle(SteerableToolHandle):
         return {}
 
 
-class SimulatedTaskListManager:
+class SimulatedTaskScheduler(BaseTaskScheduler):
     """
-    Drop-in replacement for TaskListManager where the underlying data is
+    Drop-in replacement for TaskScheduler where the underlying data is
     entirely imaginary – useful for offline demos or unit tests that only
     need the conversational surface.
     """
@@ -133,22 +135,26 @@ class SimulatedTaskListManager:
     # ------------------------------------------------------------------ #
     #  ask                                                               #
     # ------------------------------------------------------------------ #
+    @functools.wraps(BaseTaskScheduler.ask, updated=())
     def ask(
         self,
         text: str,
         *,
-        return_reasoning_steps: bool = False,
+        _return_reasoning_steps: bool = False,
         log_tool_steps: bool = False,  # Ignored – we do not expose tools
         parent_chat_context: list[dict] | None = None,  # Unused – synthetic
         clarification_up_q: asyncio.Queue[str] | None = None,
         clarification_down_q: asyncio.Queue[str] | None = None,
     ) -> SteerableToolHandle:
-        # Re-use shared, memory-retaining client
-        return _SimulatedTaskListHandle(
+        if parent_chat_context:
+            self._llm._system_message += (
+                f"\nCalling chat context:{json.dumps(parent_chat_context, indent=4)}"
+            )
+        return _SimulatedTaskScheduleHandle(
             self._llm,
             text,
             mode="ask",
-            return_reasoning_steps=return_reasoning_steps,
+            return_reasoning_steps=_return_reasoning_steps,
             clarification_up_q=clarification_up_q,
             clarification_down_q=clarification_down_q,
         )
@@ -156,22 +162,26 @@ class SimulatedTaskListManager:
     # ------------------------------------------------------------------ #
     #  update                                                            #
     # ------------------------------------------------------------------ #
+    @functools.wraps(BaseTaskScheduler.update, updated=())
     def update(
         self,
         text: str,
         *,
-        return_reasoning_steps: bool = False,
+        _return_reasoning_steps: bool = False,
         log_tool_steps: bool = False,  # Ignored – no tools here
         parent_chat_context: list[dict] | None = None,
         clarification_up_q: asyncio.Queue[str] | None = None,
         clarification_down_q: asyncio.Queue[str] | None = None,
     ) -> SteerableToolHandle:
-        # Same shared client – keeps the evolving fictitious task state
-        return _SimulatedTaskListHandle(
+        if parent_chat_context:
+            self._llm._system_message += (
+                f"\nCalling chat context:{json.dumps(parent_chat_context, indent=4)}"
+            )
+        return _SimulatedTaskScheduleHandle(
             self._llm,
             text,
             mode="update",
-            return_reasoning_steps=return_reasoning_steps,
+            return_reasoning_steps=_return_reasoning_steps,
             clarification_up_q=clarification_up_q,
             clarification_down_q=clarification_down_q,
         )

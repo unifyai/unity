@@ -2,6 +2,7 @@ import asyncio
 import enum
 import logging
 from typing import Any, Awaitable, Callable, Dict, List, Optional, Type
+import functools
 import os
 import json
 import copy
@@ -185,8 +186,8 @@ class ToolLoopPlan(BasePlan):
         finally:
             self._completion_event.set()
 
+    @functools.wraps(BasePlan.result, updated=())
     async def result(self) -> str:
-        """Waits for the plan to complete and returns its final result string."""
         await self._completion_event.wait()
         if self._error_str:
             return f"Error: {self._error_str}"
@@ -196,8 +197,8 @@ class ToolLoopPlan(BasePlan):
             else "Plan did not produce a result or was stopped."
         )
 
+    @functools.wraps(BasePlan.done, updated=())
     def done(self) -> bool:
-        """Returns True if the plan has completed, stopped, or encountered an error."""
         return self._state in (
             _PlanState.COMPLETED,
             _PlanState.STOPPED,
@@ -228,8 +229,8 @@ class ToolLoopPlan(BasePlan):
         return False
 
     # --- Public Control Methods ---
+    @functools.wraps(BasePlan.stop, updated=())
     async def stop(self) -> str:
-        """Stops the execution of the current plan."""
         if not self._is_valid_method("stop"):
             raise RuntimeError(
                 f"Plan {self._task_id} cannot be stopped in state {self._state.name}.",
@@ -249,8 +250,8 @@ class ToolLoopPlan(BasePlan):
             self._result_str = f"Plan {self._task_id} was stopped."
         return self._result_str
 
+    @functools.wraps(BasePlan.pause, updated=())
     async def pause(self) -> str:
-        """Pauses the execution of the current plan."""
         if not self._is_valid_method("pause"):
             raise RuntimeError(
                 f"Plan {self._task_id} cannot be paused in state {self._state.name}.",
@@ -279,8 +280,8 @@ class ToolLoopPlan(BasePlan):
 
         return f"Plan {self._task_id} paused."
 
+    @functools.wraps(BasePlan.resume, updated=())
     async def resume(self) -> str:
-        """Resumes a paused plan."""
         if not self._is_valid_method("resume"):
             raise RuntimeError(
                 f"Plan {self._task_id} cannot be resumed in state {self._state.name}.",
@@ -320,8 +321,8 @@ class ToolLoopPlan(BasePlan):
 
         return f"Plan {self._task_id} resuming."
 
+    @functools.wraps(BasePlan.interject, updated=())
     async def interject(self, message: str) -> str:
-        """Sends an interjection to the running plan's internal tool loop."""
         if not self._is_valid_method("interject"):
             raise RuntimeError(
                 f"Plan {self._task_id} cannot be interjected in state {self._state.name}.",
@@ -332,8 +333,8 @@ class ToolLoopPlan(BasePlan):
         await self._loop_handle.interject(message)
         return f"Interjection '{message}' sent to plan {self._task_id}."
 
+    @functools.wraps(BasePlan.ask, updated=())
     async def ask(self, question: str) -> str:
-        """Asks a question about the current state of the plan."""
         if not self._is_valid_method("ask"):
             raise RuntimeError(
                 f"Cannot ask question for plan {self._task_id} in state {self._state.name}.",
@@ -370,10 +371,8 @@ class ToolLoopPlan(BasePlan):
             return f"Error answering question: {e}"
 
     @property
+    @functools.wraps(BasePlan.valid_tools, updated=())
     def valid_tools(self) -> Dict[str, Callable[..., Awaitable[Any]]]:
-        """
-        Returns a dictionary of currently available public methods on this plan handle.
-        """
         tools = {}
         for method_name in ["stop", "pause", "resume", "interject", "ask"]:
             if self._is_valid_method(method_name):

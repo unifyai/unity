@@ -142,3 +142,25 @@ async def test_simulated_tm_summarize():
     summary = await tm.summarize(exchange_ids=99, guidance=guidance)
 
     assert isinstance(summary, str) and summary.strip(), "Summary should not be empty"
+
+
+# ────────────────────────────────────────────────────────────────────────────
+# 7.  Doc-string inheritance                                                 #
+# ────────────────────────────────────────────────────────────────────────────
+def test_simulated_cm_docstrings_match_base():
+    """
+    Public methods in SimulatedTranscriptManager should copy the real
+    BaseTranscriptManager doc-strings one-for-one (via functools.wraps).
+    """
+    from unity.transcript_manager.base import BaseTranscriptManager
+    from unity.transcript_manager.simulated import SimulatedTranscriptManager
+
+    assert (
+        SimulatedTranscriptManager.ask.__doc__.strip()
+        == BaseTranscriptManager.ask.__doc__.strip()
+    ), ".store doc-string was not copied correctly"
+
+    assert (
+        SimulatedTranscriptManager.summarize.__doc__.strip()
+        == BaseTranscriptManager.summarize.__doc__.strip()
+    ), ".retrieve doc-string was not copied correctly"

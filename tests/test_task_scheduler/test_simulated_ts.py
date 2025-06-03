@@ -1,12 +1,12 @@
-# tests/test_simulated_task_list_manager.py
+# tests/test_simulated_task_scheduler.py
 from __future__ import annotations
 
 import asyncio
 import pytest
 
-from unity.task_list_manager.simulated import (
-    SimulatedTaskListManager,
-    _SimulatedTaskListHandle,
+from unity.task_scheduler.simulated import (
+    SimulatedTaskScheduler,
+    _SimulatedTaskScheduleHandle,
 )
 
 # helper used by the simulated-planner tests – keeps each test in its own
@@ -19,9 +19,9 @@ from tests.helpers import _handle_project
 # ────────────────────────────────────────────────────────────────────────────
 @pytest.mark.asyncio
 @_handle_project
-async def test_start_and_ask_simulated_tlm():
-    tlm = SimulatedTaskListManager("Demo list for unit-tests.")
-    handle = tlm.ask("What are my open tasks today?")
+async def test_start_and_ask_simulated_ts():
+    ts = SimulatedTaskScheduler("Demo list for unit-tests.")
+    handle = ts.ask("What are my open tasks today?")
     answer = await handle.result()
     assert isinstance(answer, str) and answer.strip(), "Answer should be non-empty"
 
@@ -31,24 +31,24 @@ async def test_start_and_ask_simulated_tlm():
 # ────────────────────────────────────────────────────────────────────────────
 @pytest.mark.asyncio
 @_handle_project
-async def test_interject_simulated_tlm(monkeypatch):
+async def test_interject_simulated_ts(monkeypatch):
     # Count how many times the handle's .interject method is invoked
     counts = {"interject": 0}
-    original_interject = _SimulatedTaskListHandle.interject
+    original_interject = _SimulatedTaskScheduleHandle.interject
 
     def wrapped(self, message: str) -> str:  # type: ignore[override]
         counts["interject"] += 1
         return original_interject(self, message)
 
     monkeypatch.setattr(
-        _SimulatedTaskListHandle,
+        _SimulatedTaskScheduleHandle,
         "interject",
         wrapped,
         raising=True,
     )
 
-    tlm = SimulatedTaskListManager("Demo list")
-    handle = tlm.ask("Give me a summary of all tasks.")
+    ts = SimulatedTaskScheduler("Demo list")
+    handle = ts.ask("Give me a summary of all tasks.")
     # Send a follow-up while it is “running”
     await asyncio.sleep(0.05)
     reply = handle.interject("Also include any deadlines, please.")
@@ -63,9 +63,9 @@ async def test_interject_simulated_tlm(monkeypatch):
 # ────────────────────────────────────────────────────────────────────────────
 @pytest.mark.asyncio
 @_handle_project
-async def test_stop_simulated_tlm():
-    tlm = SimulatedTaskListManager()
-    handle = tlm.ask("Produce a very long report about my tasks.")
+async def test_stop_simulated_ts():
+    ts = SimulatedTaskScheduler()
+    handle = ts.ask("Produce a very long report about my tasks.")
     await asyncio.sleep(0.05)  # let the background thread spin up
     handle.stop()
 
@@ -80,13 +80,13 @@ async def test_stop_simulated_tlm():
 # ────────────────────────────────────────────────────────────────────────────
 @pytest.mark.asyncio
 @_handle_project
-async def test_tlm_requests_clarification():
-    tlm = SimulatedTaskListManager()
+async def test_ts_requests_clarification():
+    ts = SimulatedTaskScheduler()
 
     up_q: asyncio.Queue[str] = asyncio.Queue()
     down_q: asyncio.Queue[str] = asyncio.Queue()
 
-    handle = tlm.ask(
+    handle = ts.ask(
         "Please prioritise everything appropriately.",
         clarification_up_q=up_q,
         clarification_down_q=down_q,
@@ -111,14 +111,14 @@ async def test_tlm_requests_clarification():
 # ────────────────────────────────────────────────────────────────────────────
 @pytest.mark.asyncio
 @_handle_project
-async def test_tlm_stateful_memory_serial_asks():
+async def test_ts_stateful_memory_serial_asks():
     """
     Two consecutive .ask() calls should share the same conversation context.
     """
-    tlm = SimulatedTaskListManager()
+    ts = SimulatedTaskScheduler()
 
     # 1) Ask for a unique codename – any non-empty string
-    h1 = tlm.ask(
+    h1 = ts.ask(
         "Please invent a codename for our secret task-force. "
         "Respond with only the codename.",
     )
@@ -126,7 +126,7 @@ async def test_tlm_stateful_memory_serial_asks():
     assert codename, "Codename should not be empty"
 
     # 2) Ask what codename was suggested
-    h2 = tlm.ask("Great. What codename did you propose earlier?")
+    h2 = ts.ask("Great. What codename did you propose earlier?")
     answer2 = (await h2.result()).lower()
 
     assert codename.lower() in answer2, "LLM should recall the previous codename"
@@ -137,21 +137,43 @@ async def test_tlm_stateful_memory_serial_asks():
 # ────────────────────────────────────────────────────────────────────────────
 @pytest.mark.asyncio
 @_handle_project
-async def test_tlm_stateful_update_then_ask():
+async def test_ts_stateful_update_then_ask():
     """
     An .update() call should influence subsequent .ask() calls.
     """
-    tlm = SimulatedTaskListManager()
+    ts = SimulatedTaskScheduler()
     task_name = "Draft Budget FY26"
 
     # 1) Tell the manager to add a new high-priority task
-    h_upd = tlm.update(
+    h_upd = ts.update(
         f"Please create a new task called '{task_name}' with high priority.",
     )
     _ = await h_upd.result()  # we don't assert its exact wording
 
     # 2) Ask about high-priority tasks – should mention the one we just added
-    h_q = tlm.ask("Which tasks are high priority right now?")
+    h_q = ts.ask("Which tasks are high priority right now?")
     answer = (await h_q.result()).lower()
 
     assert "budget" in answer, "Answer should reference the task added via update"
+
+
+# ────────────────────────────────────────────────────────────────────────────
+# 7.  Doc-string inheritance                                                 #
+# ────────────────────────────────────────────────────────────────────────────
+def test_simulated_cm_docstrings_match_base():
+    """
+    Public methods in SimulatedContactManager should copy the real
+    BaseContactManager doc-strings one-for-one (via functools.wraps).
+    """
+    from unity.task_scheduler.base import BaseTaskScheduler
+    from unity.task_scheduler.simulated import SimulatedTaskScheduler
+
+    assert (
+        SimulatedTaskScheduler.ask.__doc__.strip()
+        == BaseTaskScheduler.ask.__doc__.strip()
+    ), ".store doc-string was not copied correctly"
+
+    assert (
+        SimulatedTaskScheduler.update.__doc__.strip()
+        == BaseTaskScheduler.update.__doc__.strip()
+    ), ".retrieve doc-string was not copied correctly"
