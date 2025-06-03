@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import pytest
+import functools
 
 from unity.transcript_manager.simulated import (
     SimulatedTranscriptManager,
@@ -33,6 +34,7 @@ async def test_interject_simulated_tm(monkeypatch):
     counts = {"interject": 0}
     original_interject = _SimulatedTranscriptHandle.interject
 
+    @functools.wraps(original_interject)
     def wrapped(self, message: str) -> str:  # type: ignore[override]
         counts["interject"] += 1
         return original_interject(self, message)
@@ -164,3 +166,81 @@ def test_simulated_cm_docstrings_match_base():
         SimulatedTranscriptManager.summarize.__doc__.strip()
         == BaseTranscriptManager.summarize.__doc__.strip()
     ), ".retrieve doc-string was not copied correctly"
+
+
+# ────────────────────────────────────────────────────────────────────────────
+# 8.  Pause → Resume round-trip + valid_tools                                #
+# ────────────────────────────────────────────────────────────────────────────
+@pytest.mark.asyncio
+@_handle_project
+async def test_pause_and_resume_simulated_tm(monkeypatch):
+    """
+    Ensure a `_SimulatedTranscriptHandle` can be paused and resumed and that
+    `valid_tools` flips correctly between the two states.
+    """
+    counts = {"pause": 0, "resume": 0}
+
+    # --- patch pause -------------------------------------------------------
+    orig_pause = _SimulatedTranscriptHandle.pause
+
+    @functools.wraps(orig_pause)
+    def _patched_pause(self):  # type: ignore[override]
+        counts["pause"] += 1
+        return orig_pause(self)
+
+    monkeypatch.setattr(
+        _SimulatedTranscriptHandle,
+        "pause",
+        _patched_pause,
+        raising=True,
+    )
+
+    # --- patch resume ------------------------------------------------------
+    orig_resume = _SimulatedTranscriptHandle.resume
+
+    @functools.wraps(orig_resume)
+    def _patched_resume(self):  # type: ignore[override]
+        counts["resume"] += 1
+        return orig_resume(self)
+
+    monkeypatch.setattr(
+        _SimulatedTranscriptHandle,
+        "resume",
+        _patched_resume,
+        raising=True,
+    )
+
+    tm = SimulatedTranscriptManager()
+    handle = tm.ask("List unread DMs.")
+
+    # Initially, pause should be available and resume absent.
+    tools_initial = handle.valid_tools
+    assert "pause" in tools_initial and "resume" not in tools_initial
+
+    # Pause the handle.
+    pause_reply = handle.pause()
+    assert "pause" in pause_reply.lower()
+
+    tools_paused = handle.valid_tools
+    assert "resume" in tools_paused and "pause" not in tools_paused
+
+    # Start result() – it should block while paused.
+    res_task = asyncio.create_task(handle.result())
+    await asyncio.sleep(0.1)
+    assert not res_task.done(), "result() must wait while paused"
+
+    # Resume and ensure execution proceeds.
+    resume_reply = handle.resume()
+    assert "resume" in resume_reply.lower() or "running" in resume_reply.lower()
+
+    tools_running = handle.valid_tools
+    assert "pause" in tools_running and "resume" not in tools_running
+
+    answer = await asyncio.wait_for(res_task, timeout=30)
+    assert isinstance(answer, str) and answer.strip()
+
+    # Each steering method should have been called exactly once.
+    assert counts == {
+        "pause": 1,
+        "resume": 1,
+    }, "pause/resume should each be called once"
