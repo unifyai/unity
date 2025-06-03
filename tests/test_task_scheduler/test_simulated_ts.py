@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import asyncio
 import pytest
+import functools
 
 from unity.task_scheduler.simulated import (
     SimulatedTaskScheduler,
@@ -36,6 +37,7 @@ async def test_interject_simulated_ts(monkeypatch):
     counts = {"interject": 0}
     original_interject = _SimulatedTaskScheduleHandle.interject
 
+    @functools.wraps(original_interject)
     def wrapped(self, message: str) -> str:  # type: ignore[override]
         counts["interject"] += 1
         return original_interject(self, message)
@@ -177,3 +179,82 @@ def test_simulated_cm_docstrings_match_base():
         SimulatedTaskScheduler.update.__doc__.strip()
         == BaseTaskScheduler.update.__doc__.strip()
     ), ".retrieve doc-string was not copied correctly"
+
+
+# ────────────────────────────────────────────────────────────────────────────
+# 8.  Pause → Resume round-trip + valid_tools                                #
+# ────────────────────────────────────────────────────────────────────────────
+@pytest.mark.asyncio
+@_handle_project
+async def test_pause_and_resume_simulated_ts(monkeypatch):
+    """
+    Verify that a `_SimulatedTaskScheduleHandle` may be paused and resumed and
+    that `valid_tools` updates correspondingly.
+    """
+    counts = {"pause": 0, "resume": 0}
+
+    # --- patch pause -------------------------------------------------------
+    orig_pause = _SimulatedTaskScheduleHandle.pause
+
+    @functools.wraps(orig_pause)
+    def _patched_pause(self):
+        counts["pause"] += 1
+        return orig_pause(self)
+
+    monkeypatch.setattr(
+        _SimulatedTaskScheduleHandle,
+        "pause",
+        _patched_pause,
+        raising=True,
+    )
+
+    # --- patch resume ------------------------------------------------------
+    orig_resume = _SimulatedTaskScheduleHandle.resume
+
+    @functools.wraps(orig_resume)
+    def _patched_resume(self):
+        counts["resume"] += 1
+        return orig_resume(self)
+
+    monkeypatch.setattr(
+        _SimulatedTaskScheduleHandle,
+        "resume",
+        _patched_resume,
+        raising=True,
+    )
+
+    ts = SimulatedTaskScheduler()
+    handle = ts.ask("List tomorrow's tasks.")
+
+    # Initially: "pause" should be present, "resume" absent.
+    tools_initial = handle.valid_tools
+    assert "pause" in tools_initial and "resume" not in tools_initial
+
+    # Pause execution
+    pause_reply = handle.pause()
+    assert "pause" in pause_reply.lower()
+
+    # After pausing: "resume" should be present, "pause" absent.
+    tools_paused = handle.valid_tools
+    assert "resume" in tools_paused and "pause" not in tools_paused
+
+    # Kick off result() while paused – it must await.
+    res_task = asyncio.create_task(handle.result())
+    await asyncio.sleep(0.1)
+    assert not res_task.done(), "result() should block while the handle is paused"
+
+    # Resume and ensure result() now completes.
+    resume_reply = handle.resume()
+    assert "resume" in resume_reply.lower() or "running" in resume_reply.lower()
+
+    tools_running = handle.valid_tools
+    assert "pause" in tools_running and "resume" not in tools_running
+
+    answer = await asyncio.wait_for(res_task, timeout=30)
+    assert isinstance(answer, str) and answer.strip()
+
+    # Exactly one pause and one resume invocation expected.
+    assert counts == {
+        "pause": 1,
+        "resume": 1,
+    }, "pause/resume should each be called once"
