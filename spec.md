@@ -90,7 +90,7 @@ The `ComsManager` is able to ask general questions, which the `KnowledgeManager`
 
 ## TaskManager
 
-Listens to the Transcript Queue, and for every new segment that arrives, the manager checks if the new segment is requesting a new task to be triggered or an existing task to be modified. This is combined with the prior context of the conversation as well. The manager also has access to the `TranscriptManager`, which it can use if the fixed context window provided isn't enough for full clarity (ie "Could you start working on the task I mentioned last week?"). For every segment of dialogue which **is** deemed to represent a task-related request, the manager parses the dialogue and extracts a clean and clearly written request, sends the update to the TaskListManager to update the flat set of tasks (name + description) stored on the user account (if needed), potentially including pending tasks and scheduled tasks. Then, if (a) a *new* task is requested to start *immediately* or (b) a *change* is requested for a task *currently* underway, then also publuish the task request on the Task Queue (for the active `Planner` to receive, and either trigger a new task or update a live one).
+Listens to the Transcript Queue, and for every new segment that arrives, the manager checks if the new segment is requesting a new task to be triggered or an existing task to be modified. This is combined with the prior context of the conversation as well. The manager also has access to the `TranscriptManager`, which it can use if the fixed context window provided isn't enough for full clarity (ie "Could you start working on the task I mentioned last week?"). For every segment of dialogue which **is** deemed to represent a task-related request, the manager parses the dialogue and extracts a clean and clearly written request, sends the update to the TaskScheduler to update the flat set of tasks (name + description) stored on the user account (if needed), potentially including pending tasks and scheduled tasks. Then, if (a) a *new* task is requested to start *immediately* or (b) a *change* is requested for a task *currently* underway, then also publuish the task request on the Task Queue (for the active `Planner` to receive, and either trigger a new task or update a live one).
 
 ### Tools
 
@@ -100,11 +100,11 @@ The `TaskManager` can send text-based queries to the `TranscriptManager.ask`, as
 
 #### Probe Task List
 
-If changes are requested in the transcript, then the manager can send text-based queries to the `TaskListManager.ask`, asking anything related to the set of active, completed, pending and scheduled tasks.
+If changes are requested in the transcript, then the manager can send text-based queries to the `TaskScheduler.ask`, asking anything related to the set of active, completed, pending and scheduled tasks.
 
 #### Update Task List
 
-If changes are requested in the transcript, then the manager can send text-based commands to the `TaskListManager.update`, asking the manager to update the task list in a specific manner.
+If changes are requested in the transcript, then the manager can send text-based commands to the `TaskScheduler.update`, asking the manager to update the task list in a specific manner.
 
 ### Subscribed To
 
@@ -119,7 +119,7 @@ Every time the user sends a message or ends their turn during a call, the `trans
 If (a) a *new task* is requested to start *now* OR (b) *changes* are required for an *active* task, then the text-based task update is published on the task queue, for the planner to either (a) initiate the new task or (b) modify the active task.
 
 
-## TaskListManager
+## TaskScheduler
 
 Manages all searches and updates across the list of tasks stored in the user account, for *this* assistant. Receives text-based questions and update requests, and uses the available tools to search and update the task list stored in the backend.
 
@@ -153,7 +153,7 @@ Combine multiple tasks into a single task
 
 #### TaskManager
 
-The `TaskManager` is able to ask general questions and submit general requests, both in plain text form, which the `TaskListManager` must then answer and/or perform for the task manager.
+The `TaskManager` is able to ask general questions and submit general requests, both in plain text form, which the `TaskScheduler` must then answer and/or perform for the task manager.
 
 
 ## Planner

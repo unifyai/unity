@@ -1,4 +1,4 @@
-# unity/task_list_manager/simulated_task_list_manager.py
+# unity/task_scheduler/simulated_task_scheduler.py
 import asyncio
 import json
 import os
@@ -9,10 +9,10 @@ from typing import List, Optional
 import unify
 
 from ..common.llm_helpers import SteerableToolHandle
-from .base import BaseTaskListManager
+from .base import BaseTaskScheduler
 
 
-class _SimulatedTaskListHandle(SteerableToolHandle):
+class _SimulatedTaskScheduleHandle(SteerableToolHandle):
     """A minimal, LLM-backed handle for ask/update interactions."""
 
     def __init__(
@@ -108,9 +108,9 @@ class _SimulatedTaskListHandle(SteerableToolHandle):
         return {}
 
 
-class SimulatedTaskListManager(BaseTaskListManager):
+class SimulatedTaskScheduler(BaseTaskScheduler):
     """
-    Drop-in replacement for TaskListManager where the underlying data is
+    Drop-in replacement for TaskScheduler where the underlying data is
     entirely imaginary – useful for offline demos or unit tests that only
     need the conversational surface.
     """
@@ -135,7 +135,7 @@ class SimulatedTaskListManager(BaseTaskListManager):
     # ------------------------------------------------------------------ #
     #  ask                                                               #
     # ------------------------------------------------------------------ #
-    @functools.wraps(BaseTaskListManager.ask, updated=())
+    @functools.wraps(BaseTaskScheduler.ask, updated=())
     def ask(
         self,
         text: str,
@@ -150,7 +150,7 @@ class SimulatedTaskListManager(BaseTaskListManager):
             self._llm._system_message += (
                 f"\nCalling chat context:{json.dumps(parent_chat_context, indent=4)}"
             )
-        return _SimulatedTaskListHandle(
+        return _SimulatedTaskScheduleHandle(
             self._llm,
             text,
             mode="ask",
@@ -162,7 +162,7 @@ class SimulatedTaskListManager(BaseTaskListManager):
     # ------------------------------------------------------------------ #
     #  update                                                            #
     # ------------------------------------------------------------------ #
-    @functools.wraps(BaseTaskListManager.update, updated=())
+    @functools.wraps(BaseTaskScheduler.update, updated=())
     def update(
         self,
         text: str,
@@ -177,7 +177,7 @@ class SimulatedTaskListManager(BaseTaskListManager):
             self._llm._system_message += (
                 f"\nCalling chat context:{json.dumps(parent_chat_context, indent=4)}"
             )
-        return _SimulatedTaskListHandle(
+        return _SimulatedTaskScheduleHandle(
             self._llm,
             text,
             mode="update",
