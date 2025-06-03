@@ -318,3 +318,60 @@ async def test_duplicate_tool_calls_are_optionally_pruned() -> None:  # noqa: D4
         "tool",
         "assistant",
     ]
+
+
+# --------------------------------------------------------------------------- #
+#  NO-TOOLS FLOWS                                                             #
+# --------------------------------------------------------------------------- #
+
+
+@pytest.mark.asyncio
+@_handle_project
+async def test_no_tools_with_system_message() -> None:
+    """
+    Verify that the loop completes correctly when **no** tools are available
+    and the conversation starts with a system prompt:
+
+        system → user → assistant
+    """
+    client = new_client()  # ← already includes the system message
+
+    answer = await llmh.start_async_tool_use_loop(
+        client,
+        message="Just reply with a friendly greeting – no tools are available.",
+        tools={},  # ← empty tool-kit
+    ).result()
+
+    # The assistant must answer directly and never insert any tool messages.
+    assert answer.strip(), "Assistant reply should not be empty."
+    assert count_tool_messages(client) == 0
+    assert [m["role"] for m in client.messages] == [
+        "system",
+        "user",
+        "assistant",
+    ]
+
+
+@pytest.mark.asyncio
+@_handle_project
+async def test_no_tools_without_system_message() -> None:
+    """
+    Same as above, but without a leading system message, giving the flow:
+
+        user → assistant
+    """
+    client = unify.AsyncUnify(MODEL_NAME)
+    client.set_traced(True)
+
+    answer = await llmh.start_async_tool_use_loop(
+        client,
+        message="Say hello back to me – there are no tools at all.",
+        tools={},  # ← still an empty tool-kit
+    ).result()
+
+    assert answer.strip(), "Assistant reply should not be empty."
+    assert count_tool_messages(client) == 0
+    assert [m["role"] for m in client.messages] == [
+        "user",
+        "assistant",
+    ]
