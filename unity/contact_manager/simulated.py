@@ -32,7 +32,7 @@ class _SimulatedContactHandle(SteerableToolHandle):
     ):
         self._llm = llm
         self._initial = initial_text
-        self._want_steps = return_reasoning_steps
+        self._want_steps = _return_reasoning_steps
         self._clar_up_q = clarification_up_q
         self._clar_down_q = clarification_down_q
         self._needs_clar = self._clar_up_q is not None and self._clar_down_q is not None
