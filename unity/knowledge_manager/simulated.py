@@ -51,6 +51,7 @@ class _SimulatedKnowledgeHandle(SteerableToolHandle):
         self._cancelled = False
         self._answer: str | None = None
         self._messages: List[Dict[str, Any]] = []
+        self._paused = False
 
     # --------------------------------------------------------------------- #
     # SteerableToolHandle API
@@ -58,6 +59,10 @@ class _SimulatedKnowledgeHandle(SteerableToolHandle):
     async def result(self):
         if self._cancelled:
             raise asyncio.CancelledError()
+
+        # honour pauses injected by an outer loop
+        while self._paused and not self._cancelled:
+            await asyncio.sleep(0.05)
 
         if not self._done_event.is_set():
             if self._needs_clar:
@@ -88,12 +93,32 @@ class _SimulatedKnowledgeHandle(SteerableToolHandle):
         self._done_event.set()
         return "Stopped."
 
-    def done(self) -> bool:  # type: ignore[override]
+    def pause(self) -> str:
+        if self._paused:
+            return "Already paused."
+        self._paused = True
+        return "Paused."
+
+    def resume(self) -> str:
+        if not self._paused:
+            return "Already running."
+        self._paused = False
+        return "Resumed."
+
+    def done(self) -> bool:
         return self._done_event.is_set()
 
     @property
     def valid_tools(self):
-        return {}
+        tools = {
+            self.interject.__name__: self.interject,
+            self.stop.__name__: self.stop,
+        }
+        if self._paused:
+            tools[self.resume.__name__] = self.resume
+        else:
+            tools[self.pause.__name__] = self.pause
+        return tools
 
 
 # ─────────────────────────────────────────────────────────────────────────────
