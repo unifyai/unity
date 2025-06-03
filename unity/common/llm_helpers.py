@@ -294,7 +294,7 @@ def method_to_schema(bound_method):
         prefix = f"{parts[-2]}_" if len(parts) > 1 else ""
     else:
         prefix = ""
-    tool_name = f"{prefix}{bound_method.__name__}"
+    tool_name = f"{prefix}{bound_method.__name__}".replace("__", "_")
 
     return {
         "type": "function",
