@@ -8,7 +8,11 @@ import unify
 from .types.contact import Contact
 from .base import BaseContactManager
 from ..events.event_bus import EventBus
-from ..common.llm_helpers import start_async_tool_use_loop, SteerableToolHandle
+from ..common.llm_helpers import (
+    start_async_tool_use_loop,
+    SteerableToolHandle,
+    methods_to_tool_dict,
+)
 from .sys_msgs import ASK_CONTACTS, UPDATE_CONTACTS
 
 
@@ -29,14 +33,16 @@ class ContactManager(BaseContactManager):
         self._ctx = event_bus.ctxs["Contacts"]
 
         # Define tools for ask and update methods
-        self._ask_tools: Dict[str, Callable] = {
-            self._search_contacts.__name__: self._search_contacts,
-        }
-        self._update_tools: Dict[str, Callable] = {
-            self._create_contact.__name__: self._create_contact,
-            self._update_contact.__name__: self._update_contact,
-            self._search_contacts.__name__: self._search_contacts,
-        }
+        self._ask_tools: Dict[str, Callable] = methods_to_tool_dict(
+            self._search_contacts,
+            include_class_name=False,
+        )
+        self._update_tools: Dict[str, Callable] = methods_to_tool_dict(
+            self._create_contact,
+            self._update_contact,
+            self._search_contacts,
+            include_class_name=False,
+        )
         # Add tracing
         if traced:
             self = unify.traced(self)
