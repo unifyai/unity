@@ -1,6 +1,7 @@
 import os
 import json
 import asyncio
+import functools
 from typing import List, Dict, Optional, Union, Callable
 
 import unify
@@ -10,9 +11,10 @@ from .types.message import Message
 from .types.message_exchange_summary import MessageExchangeSummary
 from ..common.llm_helpers import start_async_tool_use_loop, SteerableToolHandle
 from ..events.event_bus import EventBus, Event
+from .base import BaseTranscriptManager
 
 
-class TranscriptManager:
+class TranscriptManager(BaseTranscriptManager):
 
     # Vector embedding column names
     _VEC_MSG = "content_emb"
@@ -56,48 +58,16 @@ class TranscriptManager:
 
     # English-Text Question
 
+    @functools.wraps(BaseTranscriptManager.ask, updated=())
     def ask(
         self,
         text: str,
         *,
-        return_reasoning_steps: bool = False,
+        _return_reasoning_steps: bool = False,
         parent_chat_context: list[dict] | None = None,
         clarification_up_q: asyncio.Queue[str] | None = None,
         clarification_down_q: asyncio.Queue[str] | None = None,
-    ) -> "SteerableToolHandle":
-        """
-        Ask any question as a text command, and use the tools available (the private methods of this class) to perform the action.
-
-        Args:
-            text (str): The text-based question to answer.
-            return_reasoning_steps (bool): Whether to return the reasoning steps along with the answer.
-            parent_chat_context (list[dict]): A list of parent context messages to pass down into the tool use loop.
-            clarification_up_q (asyncio.Queue[str]): A queue to send clarification questions up to the caller.
-            clarification_down_q (asyncio.Queue[str]): A queue to send clarification answers down to the model.
-
-        Returns:
-            AsyncToolLoopHandle: A handle to the running conversation that supports:
-                - await handle.result(): Get the final answer when ready
-                - await handle.interject(message): Add a new user message mid-conversation
-                - handle.stop(): Gracefully terminate the conversation
-
-        Usage:
-            # Synchronous call that returns a handle immediately:
-            handle = transcript_manager.ask("Find recent emails from John")
-
-            # To get the final answer (must be awaited):
-            answer = await handle.result()
-
-            # If return_reasoning_steps=True:
-            handle = transcript_manager.ask("Find emails from John", return_reasoning_steps=True)
-            answer, reasoning_steps = await handle.result()
-
-            # To add clarification mid-conversation:
-            await handle.interject("I meant John Smith specifically")
-
-            # To stop the conversation early:
-            handle.stop()
-        """
+    ) -> SteerableToolHandle:
         from unity.transcript_manager.sys_msgs import ANSWER
 
         # ── 0.  Build LLM client ───────────────────────────────────────────
@@ -134,7 +104,7 @@ class TranscriptManager:
         )
 
         # ── 3.  Optionally wrap .result() to expose reasoning  ────────────
-        if return_reasoning_steps:
+        if _return_reasoning_steps:
             original_result = handle.result
 
             async def wrapped_result():
@@ -147,6 +117,7 @@ class TranscriptManager:
 
     # Summarize Exchange(s)
 
+    @functools.wraps(BaseTranscriptManager.summarize, updated=())
     async def summarize(
         self,
         *,

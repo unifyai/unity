@@ -1,5 +1,5 @@
 import pytest
-from unity.task_list_manager.task_list_manager import TaskListManager
+from unity.task_scheduler.task_scheduler import TaskScheduler
 from tests.helpers import _handle_project
 
 
@@ -7,8 +7,8 @@ from tests.helpers import _handle_project
 @pytest.mark.requires_real_unify
 @_handle_project
 def test_tasklist_embedding_search():
-    # Start the TaskListManager thread
-    manager = TaskListManager()
+    # Start the TaskScheduler thread
+    manager = TaskScheduler()
 
     # Create two tasks semantically related to "searching LinkedIn for contacts"
     id1 = manager._create_task(

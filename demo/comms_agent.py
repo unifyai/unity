@@ -119,6 +119,7 @@ class CommsAgent:
                             "call.py",
                             "dev",
                             self.user_phone_call_number,  # "console" if a local call is needed
+                            self.assistant_number,
                             # to_number,
                         )
                         self.call_mode = True

@@ -4,11 +4,12 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import functools
 import threading
 from typing import List, Dict, Any
 
 import unify
-
+from .base import BaseContactManager
 from ..common.llm_helpers import SteerableToolHandle
 
 
@@ -99,7 +100,7 @@ class _SimulatedContactHandle(SteerableToolHandle):
 # ─────────────────────────────────────────────────────────────────────────────
 # Public simulated manager
 # ─────────────────────────────────────────────────────────────────────────────
-class SimulatedContactManager:
+class SimulatedContactManager(BaseContactManager):
     """
     Drop-in replacement for ContactManager with imaginary data and
     stateful LLM memory.
@@ -125,20 +126,24 @@ class SimulatedContactManager:
     # --------------------------------------------------------------------- #
     # ask                                                                   #
     # --------------------------------------------------------------------- #
+    @functools.wraps(BaseContactManager.ask, updated=())
     def ask(
         self,
         text: str,
         *,
-        return_reasoning_steps: bool = False,
+        _return_reasoning_steps: bool = False,
         parent_chat_context: list[dict] | None = None,
         clarification_up_q: asyncio.Queue[str] | None = None,
         clarification_down_q: asyncio.Queue[str] | None = None,
     ) -> SteerableToolHandle:
-        # parent_chat_context is ignored – state is kept by self._llm
+        if parent_chat_context:
+            self._llm._system_message += (
+                f"\nCalling chat context:{json.dumps(parent_chat_context, indent=4)}"
+            )
         return _SimulatedContactHandle(
             self._llm,
             text,
-            return_reasoning_steps=return_reasoning_steps,
+            return_reasoning_steps=_return_reasoning_steps,
             clarification_up_q=clarification_up_q,
             clarification_down_q=clarification_down_q,
         )
@@ -146,19 +151,24 @@ class SimulatedContactManager:
     # --------------------------------------------------------------------- #
     # update                                                                #
     # --------------------------------------------------------------------- #
+    @functools.wraps(BaseContactManager.update, updated=())
     def update(
         self,
         text: str,
         *,
-        return_reasoning_steps: bool = False,
+        _return_reasoning_steps: bool = False,
         parent_chat_context: list[dict] | None = None,
         clarification_up_q: asyncio.Queue[str] | None = None,
         clarification_down_q: asyncio.Queue[str] | None = None,
     ) -> SteerableToolHandle:
+        if parent_chat_context:
+            self._llm._system_message += (
+                f"\nCalling chat context:{json.dumps(parent_chat_context, indent=4)}"
+            )
         return _SimulatedContactHandle(
             self._llm,
             text,
-            return_reasoning_steps=return_reasoning_steps,
+            return_reasoning_steps=_return_reasoning_steps,
             clarification_up_q=clarification_up_q,
             clarification_down_q=clarification_down_q,
         )

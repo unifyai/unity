@@ -46,7 +46,7 @@ class TaskManager:
         if simulated:
             from ..knowledge_manager.simulated import SimulatedKnowledgeManager
             from ..planner.simulated import SimulatedPlanner
-            from ..task_list_manager.simulated import SimulatedTaskListManager
+            from ..task_scheduler.simulated import SimulatedTaskScheduler
             from ..transcript_manager.simulated import SimulatedTranscriptManager
             from ..contact_manager.simulated import SimulatedContactManager
 
@@ -54,12 +54,12 @@ class TaskManager:
             self._contact_manager = SimulatedContactManager()
             self._transcript_manager = SimulatedTranscriptManager()
             self._knowledge_manager = SimulatedKnowledgeManager()
-            self._task_list_manager = SimulatedTaskListManager()
+            self._task_scheduler = SimulatedTaskScheduler()
             self._planner = SimulatedPlanner(planner_steps)
         else:
             from ..knowledge_manager.knowledge_manager import KnowledgeManager
             from ..planner.tool_loop_planner import ToolLoopPlanner
-            from ..task_list_manager.task_list_manager import TaskListManager
+            from ..task_scheduler.task_scheduler import TaskScheduler
             from ..transcript_manager.transcript_manager import TranscriptManager
             from ..contact_manager.contact_manager import ContactManager
 
@@ -67,7 +67,7 @@ class TaskManager:
             self._contact_manager = ContactManager(self._event_bus)
             self._transcript_manager = TranscriptManager(self._event_bus)
             self._knowledge_manager = KnowledgeManager()
-            self._task_list_manager = TaskListManager()
+            self._task_scheduler = TaskScheduler()
             self._planner = ToolLoopPlanner(planner_steps)
 
         # static, always-present tools -------------------------------------------------
@@ -79,7 +79,7 @@ class TaskManager:
             # knowledge
             f"{self._knowledge_manager.__class__.__name__}_retrieve": self._knowledge_manager.retrieve,
             # task-list
-            f"{self._task_list_manager.__class__.__name__}_ask": self._task_list_manager.ask,
+            f"{self._task_scheduler.__class__.__name__}_ask": self._task_scheduler.ask,
         }
 
         self._static_active_tools: Dict[str, Callable] = {
@@ -88,7 +88,7 @@ class TaskManager:
             # knowledge
             f"{self._knowledge_manager.__class__.__name__}_store": self._knowledge_manager.store,
             # task-list
-            f"{self._task_list_manager.__class__.__name__}_update": self._task_list_manager.update,
+            f"{self._task_scheduler.__class__.__name__}_update": self._task_scheduler.update,
         }
 
         # ---------- planner wrappers --------------------------------------------------

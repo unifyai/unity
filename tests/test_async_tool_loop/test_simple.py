@@ -222,6 +222,7 @@ async def test_aborts_after_too_many_failures():
             message=("Please run the launch tool."),
             tools={"launch": launch},
             max_consecutive_failures=1,  # abort after the very first failure
+            raise_on_limit=True,
         ).result()
 
 

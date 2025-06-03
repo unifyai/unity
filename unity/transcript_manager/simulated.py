@@ -5,11 +5,13 @@ import asyncio
 import json
 import os
 import threading
+import functools
 from typing import List, Optional, Union, Dict, Any
 
 import unify
 
 from ..common.llm_helpers import SteerableToolHandle
+from .base import BaseTranscriptManager
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -100,7 +102,7 @@ class _SimulatedTranscriptHandle(SteerableToolHandle):
 # ─────────────────────────────────────────────────────────────────────────────
 # Public Simulated Manager
 # ─────────────────────────────────────────────────────────────────────────────
-class SimulatedTranscriptManager:
+class SimulatedTranscriptManager(BaseTranscriptManager):
     """
     Lightweight, fake implementation of TranscriptManager that only uses an
     LLM to invent plausible answers.  Suitable for offline demos and tests
@@ -130,20 +132,24 @@ class SimulatedTranscriptManager:
     # --------------------------------------------------------------------- #
     # ask                                                                   #
     # --------------------------------------------------------------------- #
+    @functools.wraps(BaseTranscriptManager.ask, updated=())
     def ask(
         self,
         text: str,
         *,
-        return_reasoning_steps: bool = False,
+        _return_reasoning_steps: bool = False,
         parent_chat_context: list[dict] | None = None,
         clarification_up_q: asyncio.Queue[str] | None = None,
         clarification_down_q: asyncio.Queue[str] | None = None,
     ) -> SteerableToolHandle:
-        # we reuse the shared, stateful client
+        if parent_chat_context:
+            self._llm._system_message += (
+                f"\nCalling chat context:{json.dumps(parent_chat_context, indent=4)}"
+            )
         return _SimulatedTranscriptHandle(
             self._llm,
             text,
-            return_reasoning_steps=return_reasoning_steps,
+            return_reasoning_steps=_return_reasoning_steps,
             clarification_up_q=clarification_up_q,
             clarification_down_q=clarification_down_q,
         )
@@ -151,6 +157,7 @@ class SimulatedTranscriptManager:
     # --------------------------------------------------------------------- #
     # summarize                                                             #
     # --------------------------------------------------------------------- #
+    @functools.wraps(BaseTranscriptManager.summarize, updated=())
     async def summarize(
         self,
         *,
@@ -160,10 +167,10 @@ class SimulatedTranscriptManager:
         clarification_up_q: asyncio.Queue[str] | None = None,
         clarification_down_q: asyncio.Queue[str] | None = None,
     ) -> str:
-        """
-        Synthetically summarise the given exchange IDs.  All content is
-        invented; we simply echo back a plausible summary paragraph.
-        """
+        if parent_chat_context:
+            self._llm._system_message += (
+                f"\nCalling chat context:{json.dumps(parent_chat_context, indent=4)}"
+            )
         if not isinstance(exchange_ids, list):
             exchange_ids = [exchange_ids]
 
