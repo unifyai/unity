@@ -89,7 +89,11 @@ class TranscriptManager(BaseTranscriptManager):
         if clarification_up_q is not None or clarification_down_q is not None:
 
             async def request_clarification(question: str) -> str:
-                """Query the user for more information, and wait for the reply."""
+                """
+                Query the user for more information about their question, and wait for the reply.
+                Especially useful if their question feels incomplete, and more clarifying details would be useful.
+                Please use this tool liberally if you're unsure, it's always better to ask than to do the wrong thing.
+                """
                 if clarification_up_q is None or clarification_down_q is None:
                     raise RuntimeError(
                         "TranscriptManager.ask was called without both "
