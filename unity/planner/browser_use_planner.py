@@ -50,16 +50,12 @@ class BrowserUsePlan(BasePlan):
     def __init__(
         self,
         task_description: str,
-        initial_client: AsyncUnify,
         tools: Dict[str, Callable[..., Awaitable[str]]],
-        base_system_prompt: Optional[str],
         clarification_up_q: Optional[asyncio.Queue[str]] = None,
         clarification_down_q: Optional[asyncio.Queue[str]] = None,
     ):
         self._task_description = task_description
-        self._client = initial_client  # LLM client for the main tool loop
         self._tools = tools  # Tools available to the main tool loop
-        self._base_system_prompt = base_system_prompt
         self._parent_chat_context_on_pause: Optional[List[dict]] = []
         # Clarification queues for interaction with the entity that started this plan
         self._clar_up_q_internal: asyncio.Queue[str] = (
@@ -78,17 +74,17 @@ class BrowserUsePlan(BasePlan):
         self._completion_event = asyncio.Event()  # Signals plan completion/stop/error
         self._task_id = str(uuid.uuid4())  # Unique ID for this plan instance
 
+        self._plan_client = AsyncUnify(
+            "o4-mini@openai",
+            cache=json.loads(os.environ.get("UNIFY_CACHE", "true")),
+            traced=json.loads(os.environ.get("UNIFY_TRACED", "true")),
+        )
+        self._plan_client.set_system_message("You are a helpful web-Browser assistant.")
         self._ask_client = unify.AsyncUnify(
             "o4-mini@openai",
             cache=json.loads(os.environ.get("UNIFY_CACHE", "true")),
             traced=json.loads(os.environ.get("UNIFY_TRACED", "true")),
-            stateful=True,
         )
-        self._ask_system_prompt = (
-            "You are answering questions about an ongoing automated web Browse task. "
-            "The main task's chat history will be provided. Answer concisely based on this history."
-        )
-        self._ask_client.set_system_message(self._ask_system_prompt)
 
         self._start_internal_loop()
 
@@ -112,7 +108,7 @@ class BrowserUsePlan(BasePlan):
             logger.info(
                 f"BrowserUsePlan {self._task_id}: LLM (internal loop) requesting clarification: '{question}'",
             )
-            await self.clarification_questions.put(question)
+            await self._clar_up_q_internal.put(question)
             answer = await self._clar_down_q_internal.get()
             logger.info(
                 f"BrowserUsePlan {self._task_id}: User (via plan) provided clarification: '{answer}'",
@@ -130,7 +126,7 @@ class BrowserUsePlan(BasePlan):
         )
 
         self._loop_handle = start_async_tool_use_loop(
-            client=self._client,
+            client=self._plan_client,
             message=self._task_description,
             tools=current_tools,
             parent_chat_context=self._parent_chat_context_on_pause,
@@ -192,13 +188,12 @@ class BrowserUsePlan(BasePlan):
         )
 
     @property
-    def clarification_questions(self) -> asyncio.Queue[str]:
-        """Queue for this plan to send clarification questions upwards."""
+    def clarification_up_q(self) -> Optional[asyncio.Queue[str]]:
         return self._clar_up_q_internal
 
-    async def answer_clarification(self, answer: str) -> None:
-        """Method for the caller of this plan to provide answers to clarifications."""
-        await self._clar_down_q_internal.put(answer)
+    @property
+    def clarification_down_q(self) -> Optional[asyncio.Queue[str]]:
+        return self._clar_down_q_internal
 
     def _is_valid_method(self, name: str) -> bool:
         """Checks if a control method is valid in the current plan state."""
@@ -253,8 +248,10 @@ class BrowserUsePlan(BasePlan):
         )
         self._state = _BrowserPlannerState.PAUSED
 
-        if self._client and self._client.messages:
-            self._parent_chat_context_on_pause = copy.deepcopy(self._client.messages)
+        if self._plan_client and self._plan_client.messages:
+            self._parent_chat_context_on_pause = copy.deepcopy(
+                self._plan_client.messages
+            )
         else:
             self._parent_chat_context_on_pause = []
         logger.info(
@@ -287,24 +284,12 @@ class BrowserUsePlan(BasePlan):
                 f"BrowserUsePlan {self._task_id}: Resuming without a saved parent context.",
             )
 
-        self._client = AsyncUnify(
-            "o4-mini@openai",
-            cache=json.loads(os.environ.get("UNIFY_CACHE", "true")),
-            traced=json.loads(os.environ.get("UNIFY_TRACED", "true")),
-        )
-        if self._base_system_prompt:
-            self._client.set_system_message(self._base_system_prompt)
-
         if self._parent_chat_context_on_pause:
             messages_to_load = self._parent_chat_context_on_pause
-            if (
-                self._base_system_prompt
-                and messages_to_load
-                and messages_to_load[0].get("role") == "system"
-            ):
+            if messages_to_load and messages_to_load[0].get("role") == "system":
                 messages_to_load = messages_to_load[1:]
             if messages_to_load:
-                self._client.append_messages(messages_to_load)
+                self._plan_client.append_messages(messages_to_load)
 
         self._task_description = "The task was paused. Please review the history and determine the next best action or tool call."
         self._start_internal_loop()
@@ -336,10 +321,10 @@ class BrowserUsePlan(BasePlan):
         current_context_to_share = []
         if (
             self._state == _BrowserPlannerState.RUNNING
-            and self._client
-            and self._client.messages
+            and self._plan_client
+            and self._plan_client.messages
         ):
-            current_context_to_share = copy.deepcopy(self._client.messages)
+            current_context_to_share = copy.deepcopy(self._plan_client.messages)
         elif (
             self._state == _BrowserPlannerState.PAUSED
             and self._parent_chat_context_on_pause
@@ -350,7 +335,10 @@ class BrowserUsePlan(BasePlan):
             return "No context available to answer the question."
 
         self._ask_client.reset_messages()
-        self._ask_client.set_system_message(self._ask_system_prompt)
+        self._ask_client.set_system_message(
+            "You are answering questions about an ongoing automated web Browse task. "
+            "The main task's chat history will be provided. Answer concisely based on this history."
+        )
         self._ask_client.append_message(
             {
                 "role": "system",
@@ -378,24 +366,14 @@ class BrowserUsePlan(BasePlan):
                 tools[method_name] = getattr(self, method_name)
         return tools
 
-    def __dir__(self):
-        """Ensures that `dir(plan_handle)` includes conditionally available methods."""
-        default_attrs = set(super().__dir__())
-        exposed_methods = set(self.valid_tools.keys())
-        exposed_methods.add("clarification_questions")
-        exposed_methods.add("answer_clarification")
-        return sorted(list(default_attrs.union(exposed_methods)))
-
 
 class BrowserUsePlanner(BasePlanner[BrowserUsePlan]):
     def __init__(
         self,
-        base_system_prompt: str | None = "You are a helpful web-Browser assistant.",
         headless: bool = True,
         disable_browser_security: bool = False,
     ):
         super().__init__()
-        self._base_system_prompt = base_system_prompt
         self._browser = Browser(
             config=BrowserConfig(
                 disable_security=disable_browser_security,
@@ -532,20 +510,9 @@ class BrowserUsePlanner(BasePlanner[BrowserUsePlan]):
         """
         logger.info(f"BrowserUsePlanner: Planning task: '{task_description}'")
 
-        plan_client = AsyncUnify(
-            "o4-mini@openai",
-            cache=json.loads(os.environ.get("UNIFY_CACHE", "true")),
-            traced=json.loads(os.environ.get("UNIFY_TRACED", "true")),
-        )
-
-        if self._base_system_prompt:
-            plan_client.set_system_message(self._base_system_prompt)
-
         plan = BrowserUsePlan(
             task_description=task_description,
-            initial_client=plan_client,
             tools=self._get_tools(),
-            base_system_prompt=self._base_system_prompt,
             clarification_up_q=clarification_up_q,
             clarification_down_q=clarification_down_q,
         )
