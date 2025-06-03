@@ -51,7 +51,7 @@ class ScenarioBuilder:
         sched = Schedule(  # Scheduled
             prev_task=None,
             next_task=None,
-            start_time=datetime(2025, 6, 1, 9, 0, tzinfo=timezone.utc).isoformat(),
+            start_time=datetime(2050, 6, 1, 9, 0, tzinfo=timezone.utc).isoformat(),
         )
         self.ts._create_task(
             name="Client meeting",
