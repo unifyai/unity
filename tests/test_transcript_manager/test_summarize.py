@@ -14,7 +14,7 @@ async def test_summarize_uses_parent_context(tm_scenario: TranscriptManager):
     Guidance references an *earlier* agreement only present in parent ctx.
     The summary must therefore obey that agreement without asking.
     """
-    tm = tm_scenario
+    tm, _ = tm_scenario
     parent_ctx = [
         {"role": "user", "content": "When we mention Carlos, call him 'Alpha'."},
         {"role": "assistant", "content": "Understood – Carlos → Alpha."},
@@ -37,7 +37,7 @@ async def test_summarize_requests_clarification(tm_scenario: TranscriptManager):
     Ambiguous guidance + no parent context → summarize should ask a
     clarification, then incorporate the answer.
     """
-    tm = tm_scenario
+    tm, _ = tm_scenario
 
     up_q: asyncio.Queue[str] = asyncio.Queue()
     down_q: asyncio.Queue[str] = asyncio.Queue()
