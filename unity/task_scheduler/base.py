@@ -7,7 +7,7 @@ from typing import Any, Dict, List, Optional
 from ..common.llm_helpers import SteerableToolHandle
 
 
-class BaseTaskListManager(ABC):
+class BaseTaskScheduler(ABC):
     """
     *Public* contract that every concrete **task-list-manager** must satisfy.
 

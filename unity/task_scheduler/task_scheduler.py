@@ -15,11 +15,11 @@ from .types.schedule import Schedule
 from .types.status import Status
 from .types.task import Task
 from .sys_msgs import ASK
-from .base import BaseTaskListManager
+from .base import BaseTaskScheduler
 import json
 
 
-class TaskListManager(BaseTaskListManager):
+class TaskScheduler(BaseTaskScheduler):
 
     _VEC_TASK = "task_emb"
 
@@ -71,7 +71,7 @@ class TaskListManager(BaseTaskListManager):
         read_ctx, write_ctx = ctxs["read"], ctxs["write"]
         assert (
             read_ctx == write_ctx
-        ), "read and write contexts must be the same when instantiating a TaskListManager."
+        ), "read and write contexts must be the same when instantiating a TaskScheduler."
         self._ctx = f"{read_ctx}/Tasks" if read_ctx else "Tasks"
 
         if self._ctx not in unify.get_contexts():
@@ -85,7 +85,7 @@ class TaskListManager(BaseTaskListManager):
 
     # English-Text question
 
-    @functools.wraps(BaseTaskListManager.ask, updated=())
+    @functools.wraps(BaseTaskScheduler.ask, updated=())
     def ask(
         self,
         text: str,
@@ -143,7 +143,7 @@ class TaskListManager(BaseTaskListManager):
 
     # English-Text update request
 
-    @functools.wraps(BaseTaskListManager.update, updated=())
+    @functools.wraps(BaseTaskScheduler.update, updated=())
     def update(
         self,
         text: str,

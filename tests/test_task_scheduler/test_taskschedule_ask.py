@@ -1,5 +1,5 @@
 """
-Integration tests for TaskListManager.ask
+Integration tests for TaskScheduler.ask
 ================================================
 
 Identical content moved from test_ask.py to avoid module-name collision with
@@ -19,9 +19,9 @@ import os
 import pytest
 import unify
 
-from unity.task_list_manager.task_list_manager import TaskListManager
-from unity.task_list_manager.types.priority import Priority
-from unity.task_list_manager.types.schedule import Schedule
+from unity.task_scheduler.task_scheduler import TaskScheduler
+from unity.task_scheduler.types.priority import Priority
+from unity.task_scheduler.types.schedule import Schedule
 from unity.common.llm_helpers import _dumps
 from tests.assertion_helpers import assertion_failed
 
@@ -30,19 +30,19 @@ class ScenarioBuilder:
     """Populate Unify with a small, meaningful task list."""
 
     def __init__(self) -> None:
-        self.tlm = TaskListManager()
+        self.ts = TaskScheduler()
         self._seed_tasks()
 
     def _seed_tasks(self) -> None:
         """Create five tasks with various states for robust querying."""
 
-        self.tlm._create_task(  # Active
+        self.ts._create_task(  # Active
             name="Write quarterly report",
             description="Compile and draft the Q2 report for management.",
             status="active",
         )
 
-        self.tlm._create_task(  # Queued
+        self.ts._create_task(  # Queued
             name="Prepare slide deck",
             description="Create slides for the upcoming board meeting.",
             status="queued",
@@ -53,20 +53,20 @@ class ScenarioBuilder:
             next_task=None,
             start_time=datetime(2025, 6, 1, 9, 0, tzinfo=timezone.utc).isoformat(),
         )
-        self.tlm._create_task(
+        self.ts._create_task(
             name="Client meeting",
             description="Meet with ABC Corp for contract renewal.",
             status="scheduled",
             schedule=sched,
         )
 
-        self.tlm._create_task(  # Paused
+        self.ts._create_task(  # Paused
             name="Deploy new release",
             description="Roll out version 2.0 to production servers.",
             status="paused",
         )
 
-        self.tlm._create_task(  # High-priority queued
+        self.ts._create_task(  # High-priority queued
             name="Hotfix security vulnerability",
             description="Apply CVE-2025-1234 patch to all services.",
             status="queued",
@@ -77,9 +77,9 @@ class ScenarioBuilder:
 # ---------------- Ground-truth helpers ---------------- #
 
 
-def _answer_semantic(tlm: TaskListManager, question: str) -> str:
+def _answer_semantic(ts: TaskScheduler, question: str) -> str:
     q = question.lower()
-    tasks = tlm._search()
+    tasks = ts._search()
 
     if "currently active" in q:
         return next(t for t in tasks if t["status"] == "active")["name"]
@@ -169,10 +169,10 @@ def setup_session_context():
 
 
 @pytest.fixture(scope="session")
-def tlm_scenario(
+def ts_scenario(
     setup_session_context,
-) -> TaskListManager:  # noqa: D401 – fixture, not function
-    return ScenarioBuilder().tlm
+) -> TaskScheduler:  # noqa: D401 – fixture, not function
+    return ScenarioBuilder().ts
 
 
 @pytest.mark.eval
@@ -181,15 +181,15 @@ def tlm_scenario(
 @pytest.mark.timeout(180)
 async def test_ask_semantic_with_llm_judgement(
     question: str,
-    tlm_scenario: TaskListManager,
+    ts_scenario: TaskScheduler,
 ) -> None:
     try:
-        handle = tlm_scenario.ask(
+        handle = ts_scenario.ask(
             text=question,
             return_reasoning_steps=True,
         )
         candidate, steps = await handle.result()
-        expected = _answer_semantic(tlm_scenario, question)
+        expected = _answer_semantic(ts_scenario, question)
         _llm_assert_correct(question, expected, candidate, steps)
     except Exception as exc:
         raise exc
@@ -198,11 +198,11 @@ async def test_ask_semantic_with_llm_judgement(
 @pytest.mark.eval
 @pytest.mark.asyncio
 @pytest.mark.timeout(180)
-async def test_ask_with_interjection(tlm_scenario: TaskListManager) -> None:
+async def test_ask_with_interjection(ts_scenario: TaskScheduler) -> None:
     """Ask a question, interject with a follow-up, and ensure the final answer covers both."""
     try:
         # 1) Initial question ⇢ active task name
-        handle = tlm_scenario.ask(
+        handle = ts_scenario.ask(
             text="Which task is currently active?",
             return_reasoning_steps=True,
         )
@@ -213,10 +213,10 @@ async def test_ask_with_interjection(tlm_scenario: TaskListManager) -> None:
         # 3) Await combined answer
         answer, steps = await handle.result()
         active_task = _answer_semantic(
-            tlm_scenario,
+            ts_scenario,
             QUESTIONS[0],
         )  # "Write quarterly report"
-        queued_cnt = _answer_semantic(tlm_scenario, QUESTIONS[1])  # e.g. "2"
+        queued_cnt = _answer_semantic(ts_scenario, QUESTIONS[1])  # e.g. "2"
 
         # 4) Assert presence of both pieces of information
         assert active_task.lower() in answer.lower(), assertion_failed(
@@ -238,11 +238,11 @@ async def test_ask_with_interjection(tlm_scenario: TaskListManager) -> None:
 @pytest.mark.eval
 @pytest.mark.asyncio
 @pytest.mark.timeout(180)
-async def test_ask_stop(tlm_scenario: TaskListManager) -> None:
+async def test_ask_stop(ts_scenario: TaskScheduler) -> None:
     """Test that we can stop the conversation mid-way."""
     try:
         # Start with a request that would take some time to complete
-        handle = tlm_scenario.ask(
+        handle = ts_scenario.ask(
             text="List all tasks, then summarize each one in detail.",
         )
 

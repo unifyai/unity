@@ -1,5 +1,5 @@
 """
-Complex English-text integration tests for TaskListManager.update
+Complex English-text integration tests for TaskScheduler.update
 ===============================================================
 
 Each test seeds a project with a small set of tasks, issues a human-like
@@ -16,9 +16,9 @@ import os
 
 import pytest
 import unify
-from unity.task_list_manager.task_list_manager import TaskListManager
-from unity.task_list_manager.types.priority import Priority
-from unity.task_list_manager.types.schedule import Schedule
+from unity.task_scheduler.task_scheduler import TaskScheduler
+from unity.task_scheduler.types.priority import Priority
+from unity.task_scheduler.types.schedule import Schedule
 
 
 # --------------------------------------------------------------------------- #
@@ -26,26 +26,26 @@ from unity.task_list_manager.types.schedule import Schedule
 # --------------------------------------------------------------------------- #
 
 
-def _seed_basic_tasks(tlm: TaskListManager) -> List[int]:
+def _seed_basic_tasks(ts: TaskScheduler) -> List[int]:
     """Return list of task-ids in creation order."""
 
     ids = []
     ids.append(
-        tlm._create_task(
+        ts._create_task(
             name="Write quarterly report",
             description="Draft the Q2 report (send email to finance).",
             status="active",
         ),
     )
     ids.append(
-        tlm._create_task(
+        ts._create_task(
             name="Prepare slide deck",
             description="Create slides for the board meeting. Email once done.",
             status="queued",
         ),
     )
     ids.append(
-        tlm._create_task(
+        ts._create_task(
             name="Client follow-up email",
             description="Send email to prospective client about proposal.",
             status="queued",
@@ -74,39 +74,39 @@ def basic_task_scenario(setup_session_context):
     """
     Snapshot task state before each test that uses basic_task_scenario and restore after.
     """
-    tlm = TaskListManager()
-    ids = _seed_basic_tasks(tlm)
-    snapshot = tlm._search()
-    yield tlm, ids
-    new_snapshot = tlm._search()
+    ts = TaskScheduler()
+    ids = _seed_basic_tasks(ts)
+    snapshot = ts._search()
+    yield ts, ids
+    new_snapshot = ts._search()
     for t_original, t_new in zip(snapshot, new_snapshot):
         if t_original["name"] != t_new["name"]:
-            tlm._update_task_name(
+            ts._update_task_name(
                 task_id=t_original["task_id"],
                 new_name=t_original["name"],
             )
         if t_original["description"] != t_new["description"]:
-            tlm._update_task_description(
+            ts._update_task_description(
                 task_id=t_original["task_id"],
                 new_description=t_original["description"],
             )
         if t_original["status"] != t_new["status"]:
-            tlm._update_task_status(
+            ts._update_task_status(
                 task_ids=[t_original["task_id"]],
                 new_status=t_original["status"],
             )
         if t_original["priority"] != t_new["priority"]:
-            tlm._update_task_priority(
+            ts._update_task_priority(
                 task_id=t_original["task_id"],
                 new_priority=t_original["priority"],
             )
         if t_original["deadline"] != t_new["deadline"]:
-            tlm._update_task_deadline(
+            ts._update_task_deadline(
                 task_id=t_original["task_id"],
                 new_deadline=t_original["deadline"],
             )
         if t_original["repeat"] != t_new["repeat"]:
-            tlm._update_task_repetition(
+            ts._update_task_repetition(
                 task_id=t_original["task_id"],
                 new_repeat=t_original["repeat"],
             )
@@ -121,16 +121,16 @@ def basic_task_scenario(setup_session_context):
 @pytest.mark.asyncio
 @pytest.mark.timeout(240)
 async def test_update_reorder_queue(basic_task_scenario):
-    tlm, ids = basic_task_scenario
+    ts, ids = basic_task_scenario
 
-    assert [t.task_id for t in tlm._get_task_queue()] == ids  # initial order
+    assert [t.task_id for t in ts._get_task_queue()] == ids  # initial order
 
-    handle = tlm.update(
+    handle = ts.update(
         text="Could you do Client follow-up email after Write quarterly report?",
     )
     await handle.result()
 
-    queue = [t.task_id for t in tlm._get_task_queue()]
+    queue = [t.task_id for t in ts._get_task_queue()]
     # expected order: 0 (report) -> 2 (follow-up) -> 1 (slides)
     assert queue == [ids[0], ids[2], ids[1]]
 
@@ -144,12 +144,12 @@ async def test_update_reorder_queue(basic_task_scenario):
 @pytest.mark.asyncio
 @pytest.mark.timeout(240)
 async def test_update_cancel_email_tasks(basic_task_scenario):  # FIXME
-    tlm, ids = basic_task_scenario
+    ts, ids = basic_task_scenario
 
-    handle = tlm.update(text="Please cancel all tasks related to sending emails.")
+    handle = ts.update(text="Please cancel all tasks related to sending emails.")
     await handle.result()
 
-    tasks = tlm._search()
+    tasks = ts._search()
     for t in tasks:
         if "email" in t["description"].lower():
             assert t["status"] == "cancelled"
@@ -173,26 +173,26 @@ def _next_weekday(dt: datetime, weekday: int) -> datetime:
 @pytest.mark.asyncio
 @pytest.mark.timeout(240)
 async def test_update_lower_priority_next_monday(basic_task_scenario):
-    tlm, ids = basic_task_scenario
+    ts, ids = basic_task_scenario
 
     # create one scheduled next Monday with high priority
     base = datetime.now(timezone.utc)
     next_mon = _next_weekday(base, 0).replace(hour=9, minute=0, second=0, microsecond=0)
 
     sched = Schedule(start_time=next_mon.isoformat(), prev_task=None, next_task=None)
-    tlm._create_task(
+    ts._create_task(
         name="Send KPI report",
         description="Automated email of KPIs to leadership.",
         schedule=sched,
         priority=Priority.high,
     )
 
-    handle = tlm.update(
+    handle = ts.update(
         text="Please lower the priority of all tasks which are scheduled for next Monday.",
     )
     await handle.result()
 
-    task = tlm._search(filter="'KPI report' in name")[0]
+    task = ts._search(filter="'KPI report' in name")[0]
     assert task["priority"] == Priority.normal
 
 
@@ -205,21 +205,21 @@ async def test_update_lower_priority_next_monday(basic_task_scenario):
 @pytest.mark.asyncio
 @pytest.mark.timeout(240)
 async def test_update_bulk_description_replace(basic_task_scenario):
-    tlm, ids = basic_task_scenario
+    ts, ids = basic_task_scenario
 
-    tlm._create_task(
+    ts._create_task(
         name="Arrange viewing",
         description="Contact the estate agent to arrange the viewing.",
     )
-    tlm._create_task(
+    ts._create_task(
         name="Send brochure",
         description="Email the estate agent the sales brochure.",
     )
 
-    handle = tlm.update(
+    handle = ts.update(
         text="Please update all task descriptions to refer to Mr. Smith instead of 'the estate agent'.",
     )
     await handle.result()
 
-    for t in tlm._search(filter="'Mr. Smith' in description"):
+    for t in ts._search(filter="'Mr. Smith' in description"):
         assert re.search(r"Mr\.\s?Smith", t["description"]) is not None
