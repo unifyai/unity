@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import pytest
+import functools
 
 from unity.knowledge_manager.simulated import (
     SimulatedKnowledgeManager,
@@ -33,6 +34,7 @@ async def test_interject_simulated_km(monkeypatch):
     calls = {"interject": 0}
     orig = _SimulatedKnowledgeHandle.interject
 
+    @functools.wraps(orig)
     def wrapped(self, msg: str) -> str:  # type: ignore[override]
         calls["interject"] += 1
         return orig(self, msg)
@@ -157,3 +159,81 @@ def test_simulated_km_docstrings_match_real():
         SimulatedKnowledgeManager.retrieve.__doc__.strip()
         == BaseKnowledgeManager.retrieve.__doc__.strip()
     ), ".retrieve doc-string was not copied correctly"
+
+
+# ────────────────────────────────────────────────────────────────────────────
+# 8.  Pause → Resume round-trip + valid_tools                                #
+# ────────────────────────────────────────────────────────────────────────────
+@pytest.mark.asyncio
+@_handle_project
+async def test_pause_and_resume_simulated_km(monkeypatch):
+    """
+    Ensure a `_SimulatedKnowledgeHandle` can be paused and resumed and that
+    its `valid_tools` property flips appropriately.
+    """
+    counts = {"pause": 0, "resume": 0}
+
+    # --- patch pause -------------------------------------------------------
+    orig_pause = _SimulatedKnowledgeHandle.pause
+
+    @functools.wraps(orig_pause)
+    def _patched_pause(self):  # type: ignore[override]
+        counts["pause"] += 1
+        return orig_pause(self)
+
+    monkeypatch.setattr(
+        _SimulatedKnowledgeHandle,
+        "pause",
+        _patched_pause,
+        raising=True,
+    )
+
+    # --- patch resume ------------------------------------------------------
+    orig_resume = _SimulatedKnowledgeHandle.resume
+
+    @functools.wraps(orig_resume)
+    def _patched_resume(self):  # type: ignore[override]
+        counts["resume"] += 1
+        return orig_resume(self)
+
+    monkeypatch.setattr(
+        _SimulatedKnowledgeHandle,
+        "resume",
+        _patched_resume,
+        raising=True,
+    )
+
+    km = SimulatedKnowledgeManager()
+    handle = km.retrieve("Summarise everything we know about quantum gravity.")
+
+    # Before pausing: pause should be available, resume not.
+    tools_initial = handle.valid_tools
+    assert "pause" in tools_initial and "resume" not in tools_initial
+
+    # Pause the handle
+    pause_msg = handle.pause()
+    assert "paused" in pause_msg.lower()
+
+    # After pausing: resume should be available, pause not.
+    tools_paused = handle.valid_tools
+    assert "resume" in tools_paused and "pause" not in tools_paused
+
+    # Start result() while still paused – it should await
+    res_task = asyncio.create_task(handle.result())
+    await asyncio.sleep(0.1)
+    assert not res_task.done(), "result() must block while paused"
+
+    # Resume execution
+    resume_msg = handle.resume()
+    assert "resume" in resume_msg.lower() or "running" in resume_msg.lower()
+
+    # After resuming: pause available again, resume gone.
+    tools_running = handle.valid_tools
+    assert "pause" in tools_running and "resume" not in tools_running
+
+    # Now result() should finish
+    answer = await asyncio.wait_for(res_task, timeout=30)
+    assert isinstance(answer, str) and answer.strip()
+
+    # Each steering method must have been invoked exactly once
+    assert counts == {"pause": 1, "resume": 1}, "pause/resume must each be called once"

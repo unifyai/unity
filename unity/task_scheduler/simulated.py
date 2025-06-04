@@ -28,7 +28,7 @@ class _SimulatedTaskScheduleHandle(SteerableToolHandle):
         self._llm = llm
         self._initial_text = initial_text
         self._mode = mode  # "ask" | "update"
-        self._ret_steps = return_reasoning_steps
+        self._ret_steps = _return_reasoning_steps
         self._clar_up_q = clarification_up_q
         self._clar_down_q = clarification_down_q
         self._needs_clar = self._clar_up_q is not None and self._clar_down_q is not None
@@ -50,6 +50,7 @@ class _SimulatedTaskScheduleHandle(SteerableToolHandle):
         self._cancelled = False
         self._answer: Optional[str] = None
         self._messages: List[dict] = []
+        self._paused = False
 
     # ──────────────────────────────────────────────────────────────────────
     # Public API required by SteerableToolHandle
@@ -58,6 +59,9 @@ class _SimulatedTaskScheduleHandle(SteerableToolHandle):
         """Return the LLM answer (or raise if stopped)."""
         if self._cancelled:
             raise asyncio.CancelledError()
+
+        while self._paused and not self._cancelled:
+            await asyncio.sleep(0.05)
 
         if not self._done_event.is_set():
             # Wait for clarification answer if required
@@ -98,14 +102,32 @@ class _SimulatedTaskScheduleHandle(SteerableToolHandle):
         self._done_event.set()
         return "Stopped."
 
-    # The orchestrator checks this in the stop-test.
-    def done(self) -> bool:  # type: ignore[override]  # (property in abc)
+    def pause(self) -> str:
+        if self._paused:
+            return "Already paused."
+        self._paused = True
+        return "Paused."
+
+    def resume(self) -> str:
+        if not self._paused:
+            return "Already running."
+        self._paused = False
+        return "Resumed."
+
+    def done(self) -> bool:
         return self._done_event.is_set()
 
-    # Allow outer orchestration to discover zero tools
     @property
     def valid_tools(self):
-        return {}
+        tools = {
+            self.interject.__name__: self.interject,
+            self.stop.__name__: self.stop,
+        }
+        if self._paused:
+            tools[self.resume.__name__] = self.resume
+        else:
+            tools[self.pause.__name__] = self.pause
+        return tools
 
 
 class SimulatedTaskScheduler(BaseTaskScheduler):
@@ -154,7 +176,7 @@ class SimulatedTaskScheduler(BaseTaskScheduler):
             self._llm,
             text,
             mode="ask",
-            return_reasoning_steps=_return_reasoning_steps,
+            _return_reasoning_steps=_return_reasoning_steps,
             clarification_up_q=clarification_up_q,
             clarification_down_q=clarification_down_q,
         )
@@ -181,7 +203,7 @@ class SimulatedTaskScheduler(BaseTaskScheduler):
             self._llm,
             text,
             mode="update",
-            return_reasoning_steps=_return_reasoning_steps,
+            _return_reasoning_steps=_return_reasoning_steps,
             clarification_up_q=clarification_up_q,
             clarification_down_q=clarification_down_q,
         )

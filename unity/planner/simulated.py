@@ -23,6 +23,7 @@ class SimulatedPlan(BasePlan):
         steps: int,
         clarification_up_q: asyncio.Queue[str] | None = None,
         clarification_down_q: asyncio.Queue[str] | None = None,
+        request_clarification: bool = False,
     ) -> None:
         """
         Initialize a simulated plan.
@@ -35,10 +36,7 @@ class SimulatedPlan(BasePlan):
         self._steps = steps
         self._clarification_up_q = clarification_up_q
         self._clarification_down_q = clarification_down_q
-        self._request_clarification: bool = (
-            self._clarification_up_q is not None
-            and self._clarification_down_q is not None
-        )
+        self._request_clarification = request_clarification
 
         # step-counting
         self._step_count = 0
@@ -253,7 +251,7 @@ class SimulatedPlan(BasePlan):
 
 class SimulatedPlanner(BasePlanner[SimulatedPlan]):
 
-    def __init__(self, steps) -> None:
+    def __init__(self, steps, request_clarification: bool = False) -> None:
         """
         Initialize a simulated planner.
 
@@ -262,6 +260,7 @@ class SimulatedPlanner(BasePlanner[SimulatedPlan]):
         """
         super().__init__()
         self._steps = steps
+        self._request_clarification = request_clarification
 
     def _make_plan(
         self,
@@ -275,4 +274,5 @@ class SimulatedPlanner(BasePlanner[SimulatedPlan]):
             self._steps,
             clarification_up_q=clarification_up_q,
             clarification_down_q=clarification_down_q,
+            request_clarification=self._request_clarification,
         )

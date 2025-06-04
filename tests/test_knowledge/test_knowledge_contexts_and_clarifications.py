@@ -127,7 +127,7 @@ async def test_retrieve_uses_parent_context():
     handle = km.retrieve(
         "When was Alpha born?",
         parent_chat_context=parent_ctx,
-        return_reasoning_steps=True,
+        _return_reasoning_steps=True,
     )
     answer, reasoning = await handle.result()
     assert _contains(answer, "1990"), assertion_failed(
