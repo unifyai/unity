@@ -46,7 +46,7 @@ def test_list_tables():
     assert len(tables) == 1
     assert "MyFirstTable" in tables
     knowledge_manager._create_table("MySecondTable")
-    tables = knowledge_manager._list_tables()
+    tables = knowledge_manager._list_tables(include_columns=False)
     assert len(tables) == 2
     assert tables == {
         "MyFirstTable": {"description": None},
