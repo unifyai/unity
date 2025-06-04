@@ -50,8 +50,8 @@ async def test_start_and_ask_simulated_plan(monkeypatch):
         client=client,
         message="begin",
         tools={"plan": planner.plan},
-        # max_steps=20,
-        # timeout=120,
+        max_steps=20,
+        timeout=120,
     )
     await asyncio.sleep(5)
     await handle.interject("ask")
