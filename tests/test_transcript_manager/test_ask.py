@@ -363,12 +363,13 @@ async def test_ask_requests_clarification_when_context_missing(
     ebus: EventBus = tm._event_bus
 
     # ── 1.  Seed a short "basketball" conversation on 2025-05-20 ───────────
-    t_conv = datetime(2025, 5, 20, 18, 0, tzinfo=timezone.utc)
+    t_conv_basketball = datetime(2025, 5, 20, 18, 0, tzinfo=timezone.utc)
+    t_conv_holiday = datetime(2025, 5, 25, 20, 0, tzinfo=timezone.utc)
     dan, julia = _ID_BY_NAME["dan"], _ID_BY_NAME["julia"]
 
     for s, r, txt in [
         (dan, julia, "Did you catch the **basketball** game last night?"),
-        (julia, dan, "Absolutely – great chat!"),
+        (julia, dan, "Absolutely – it was great!"),
     ]:
         await ebus.publish(
             Event(
@@ -378,9 +379,28 @@ async def test_ask_requests_clarification_when_context_missing(
                     medium="phone_call",
                     sender_id=s,
                     receiver_id=r,
-                    timestamp=t_conv.isoformat(),
+                    timestamp=t_conv_basketball.isoformat(),
                     content=txt,
                     exchange_id=123,
+                ),
+            ),
+        )
+    ebus.join_published()
+    for s, r, txt in [
+        (dan, julia, "When are you next going on holiday?"),
+        (julia, dan, "I'm hoping to go in August, but lets see what my boss says."),
+    ]:
+        await ebus.publish(
+            Event(
+                type="Messages",
+                timestamp=datetime.now(UTC).isoformat(),
+                payload=Message(
+                    medium="email",
+                    sender_id=s,
+                    receiver_id=r,
+                    timestamp=t_conv_holiday.isoformat(),
+                    content=txt,
+                    exchange_id=321,
                 ),
             ),
         )
