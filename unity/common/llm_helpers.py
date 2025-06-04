@@ -992,7 +992,7 @@ async def _async_tool_use_loop_inner(
                 fn.__doc__ = existing.strip() if existing else doc
                 fn.__name__ = func_name[:64]
                 fn.__qualname__ = func_name[:64]
-                dynamic_tools[key] = fn
+                dynamic_tools[key.lstrip("_")] = fn
 
             for _task in list(pending):
                 info = task_info[_task]
