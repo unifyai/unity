@@ -80,8 +80,8 @@ class TaskScheduler(BaseTaskScheduler):
         # ID of the *single* task that is allowed to be in the **active**
         # state at any moment.  This will be maintained by a forthcoming
         # tool; until then it may legitimately stay as ``None``.
-        self._active_task: Optional[int] = None
-        self._primed_task: Optional[int] = None
+        self._active_task: Optional[Dict[str, Any]] = None
+        self._primed_task: Optional[Dict[str, Any]] = None
 
         # Internal monotonically-increasing task-id counter.  We keep it local
         # to the manager to avoid an expensive scan across *all* logs every
@@ -236,16 +236,18 @@ class TaskScheduler(BaseTaskScheduler):
         else:
             ids = list(task_ids)
 
-        if self._active_task in ids:
+        active_task_id = self._active_task["task_id"]
+        if active_task_id in ids:
             raise RuntimeError(
-                f"Operation not permitted on the active task (task_id={self._active_task})",
+                f"Operation not permitted on the active task (task_id={active_task_id})",
             )
 
     def _get_logs_by_task_ids(
         self,
         *,
         task_ids: Union[int, List[int]],
-    ) -> List[unify.Log]:
+        return_ids_only: bool = True,
+    ) -> List[Union[int, unify.Log]]:
         """
         Get the log for the specified task id.
 
@@ -262,7 +264,7 @@ class TaskScheduler(BaseTaskScheduler):
         log_ids = unify.get_logs(
             context=self._ctx,
             filter=f"task_id in {task_ids}",
-            return_ids_only=True,
+            return_ids_only=return_ids_only,
         )
         assert (
             not singular or len(log_ids) == 1
@@ -344,7 +346,7 @@ class TaskScheduler(BaseTaskScheduler):
             # tool that is not part of this commit.
             if future_start:
                 status = Status.scheduled
-            elif self._active_task is None:
+            elif self._active_task is None and self._primed_task is None:
                 # this goes to the top of the queue, in "primed" state
                 status = Status.primed
             else:
@@ -387,9 +389,6 @@ class TaskScheduler(BaseTaskScheduler):
         next_id = self._next_id
         self._next_id += 1
 
-        if status == Status.primed:
-            self._primed_task = next_id
-
         # ------------------  assemble payload  ------------------ #
         task_details = {
             "name": name,
@@ -399,13 +398,16 @@ class TaskScheduler(BaseTaskScheduler):
             "deadline": deadline,
             "repeat": [r.model_dump() for r in repeat] if repeat else None,
             "priority": priority,
+            "task_id": next_id,
         }
+
+        if status == Status.primed:
+            self._primed_task = task_details
 
         # ------------------  write log immediately  ------------------ #
         unify.log(
             context=self._ctx,
             **task_details,
-            task_id=next_id,
             new=True,
         )
 
@@ -500,21 +502,25 @@ class TaskScheduler(BaseTaskScheduler):
         """
 
         # ----------------  helpers  ---------------- #
-        def _get_task_row(tid: int) -> Optional[dict]:
+        def _get_task_by_task_id(tid: int) -> Optional[dict]:
             """Fetch exactly one task row by id or return None."""
             rows = self._search(filter=f"task_id == {tid}", limit=1)
             return rows[0] if rows else None
 
         # ----------------  starting node  ---------------- #
-        start_row: Optional[dict] = None
+        start_task: Optional[dict] = None
 
         if task_id is None:
-            raise Exception("Not yet supported.")
+            if self._primed_task:
+                start_task = self._primed_task
+                task_id = start_task["task_id"]
+            else:
+                raise Exception("Not yet supported.")
 
-        if start_row is None and task_id is not None:
-            start_row = _get_task_row(task_id)
+        if start_task is None and task_id is not None:
+            start_task = _get_task_by_task_id(task_id)
 
-        if start_row is None:
+        if start_task is None:
             # fall back to queue head: node with no prev_task and non-terminal status
             head_candidates = self._search(
                 filter=(
@@ -527,21 +533,21 @@ class TaskScheduler(BaseTaskScheduler):
             assert (
                 len(head_candidates) == 1
             ), f"Multiple heads detected: {head_candidates}"
-            start_row = head_candidates[0]
+            start_task = head_candidates[0]
 
         # ----------  not in queue yet? return empty list  ---------- #
-        if start_row is not None and start_row["schedule"] is None:
+        if start_task is not None and start_task["schedule"] is None:
             # Task exists but has no schedule pointers; therefore the
             # queue is currently empty.
             return []
 
         # ----------------  walk backwards to head  ---------------- #
-        cur = start_row
+        cur = start_task
         while True:
             prev_id = self._sched_prev(cur["schedule"])
             if prev_id is None:
                 break
-            prev_row = _get_task_row(prev_id)
+            prev_row = _get_task_by_task_id(prev_id)
             if prev_row is None:
                 break  # broken link – treat cur as head
             cur = prev_row  # keep walking
@@ -563,7 +569,7 @@ class TaskScheduler(BaseTaskScheduler):
                 break
 
             # fetch the next node lazily
-            cur = _get_task_row(nxt_id)
+            cur = _get_task_by_task_id(nxt_id)
             # guard against broken links (missing row)
             if cur is None:
                 break
@@ -634,11 +640,32 @@ class TaskScheduler(BaseTaskScheduler):
 
             updates_per_log[tid] = {"schedule": sched_payload}
 
+        # Re-primed
+        prime_swap_needed = False
+        if self._primed_task is not None:
+            orig_primed_tid = self._primed_task["task_id"]
+            if orig_primed_tid in original:
+                assert (
+                    orig_primed_tid == original[0]
+                ), "Primed task should be at the front of the queue."
+                prime_swap_needed = new[0] != orig_primed_tid
+
         # Persist
-        for tid, payload in updates_per_log.items():
-            log_ids = self._get_logs_by_task_ids(task_ids=tid)
+        _task_id_to_task = dict()
+        for i, (tid, payload) in enumerate(updates_per_log.items()):
+            if prime_swap_needed:
+                if i == 0:
+                    payload = {**payload, "status": Status.primed}
+                elif tid == orig_primed_tid:
+                    payload = {**payload, "status": Status.queued}
+            if tid == orig_primed_tid:
+                self._primed_task = {**self._primed_task, **payload}
+            logs = self._get_logs_by_task_ids(task_ids=tid, return_ids_only=False)
+            assert len(logs) == 1, "Task IDs should be unique"
+            log = logs[0]
+            _task_id_to_task[tid] = log
             unify.update_logs(
-                logs=log_ids,
+                logs=log.id,
                 context=self._ctx,
                 entries=payload,
                 overwrite=True,
