@@ -57,10 +57,10 @@ class BrowserUsePlan(BasePlan):
         clarification_down_q: Optional[asyncio.Queue[str]] = None,
         main_event_loop: Optional[asyncio.AbstractEventLoop] = None,
     ):
-        self._task_description = task_description
-        self._tools = tools  # Tools available to the main tool loop
-        self._parent_chat_context_on_pause: Optional[List[dict]] = []
-        # Clarification queues for interaction with the entity that started this plan
+        self._initial_task_description = task_description
+        self._tools = tools
+        self._parent_chat_context_on_pause: Optional[List[dict]] = None
+
         self._clar_up_q_internal: asyncio.Queue[str] = (
             clarification_up_q or asyncio.Queue()
         )
@@ -69,64 +69,52 @@ class BrowserUsePlan(BasePlan):
         )
 
         self._state: _BrowserPlannerState = _BrowserPlannerState.IDLE
-        self._loop_handle: Optional[SteerableToolHandle] = (
-            None  # Handle for the underlying async tool loop
-        )
-        self._result_str: Optional[str] = None  # Final result of the plan
-        self._error_str: Optional[str] = None  # Error message if the plan failed
-        self._completion_event = asyncio.Event()  # Signals plan completion/stop/error
-        self._task_id = str(uuid.uuid4())  # Unique ID for this plan instance
+        self._loop_handle: Optional[SteerableToolHandle] = None
+        self._result_str: Optional[str] = None
+        self._error_str: Optional[str] = None
+
+        self._overall_plan_completion_event = asyncio.Event()  # For the final result()
+        self._resume_requested_event = asyncio.Event()  # To signal resume
+
+        self._task_id = str(uuid.uuid4())
         self._main_event_loop = main_event_loop
+
         self._plan_client = AsyncUnify(
             "o4-mini@openai",
             cache=json.loads(os.environ.get("UNIFY_CACHE", "true")),
             traced=json.loads(os.environ.get("UNIFY_TRACED", "true")),
         )
-        self._plan_client.set_system_message("You are a helpful web-Browser assistant.")
+
         self._ask_client = unify.AsyncUnify(
             "o4-mini@openai",
             cache=json.loads(os.environ.get("UNIFY_CACHE", "true")),
             traced=json.loads(os.environ.get("UNIFY_TRACED", "true")),
         )
 
+        if not self._main_event_loop:
+            try:
+                self._main_event_loop = asyncio.get_running_loop()
+            except RuntimeError as e:
+                logger.error(
+                    f"BrowserUsePlan {self._task_id}: Could not get running event loop and none was provided: {e}",
+                    exc_info=True,
+                )
+                self._state = _BrowserPlannerState.ERROR
+                self._error_str = f"Initialization failed: no event loop. {e}"
+                self._overall_plan_completion_event.set()  # Ensure result() doesn't hang
+                # No need to raise here, result() will return the error.
+                return
+
         logger.info(
-            f"BrowserUsePlan {self._task_id}: Scheduling async initialization on loop {self._main_event_loop}.",
+            f"BrowserUsePlan {self._task_id}: Scheduling main execution manager on loop {self._main_event_loop}.",
         )
-        future = asyncio.run_coroutine_threadsafe(
-            self._async_init_and_start_internal_loop(),
+        asyncio.run_coroutine_threadsafe(
+            self._manage_plan_execution(),
             self._main_event_loop,
         )
-        try:
-            future.result(timeout=1000)
-            logger.info(
-                f"BrowserUsePlan {self._task_id}: Async initialization completed.",
-            )
-        except Exception as e:
-            logger.error(
-                f"BrowserUsePlan {self._task_id}: Error during async part of initialization: {e}",
-                exc_info=True,
-            )
-            self._state = _BrowserPlannerState.ERROR
-            self._error_str = f"Async initialization failed: {e}"
-            self._completion_event.set()
-            raise RuntimeError(
-                f"BrowserUsePlan async initialization failed: {e}",
-            ) from e
 
-    async def _async_init_and_start_internal_loop(self):
-        """
-        Starts the internal async tool use loop that executes the plan's logic.
-        This is called once during initialization.
-        """
-        if self._state != _BrowserPlannerState.IDLE:
-            raise RuntimeError("Plan internal loop can only be started once.")
-
-        logger.info(
-            f"BrowserUsePlan {self._task_id}: Starting internal loop with description: '{self._task_description}'",
-        )
-        self._state = _BrowserPlannerState.RUNNING
-        self._completion_event.clear()
-
+    def _get_internal_tools(self) -> Dict[str, Callable[..., Awaitable[str]]]:
+        """Prepares tools for the internal LLM loop, including clarification."""
         current_tools = self._tools.copy()
 
         async def request_clarification_tool_for_llm(question: str) -> str:
@@ -134,6 +122,8 @@ class BrowserUsePlan(BasePlan):
                 f"BrowserUsePlan {self._task_id}: LLM (internal loop) requesting clarification: '{question}'",
             )
             await self._clar_up_q_internal.put(question)
+            # NOTE: This might block if the outer entity doesn't respond.
+            # Consider adding timeout or cancellation mechanisms if needed.
             answer = await self._clar_down_q_internal.get()
             logger.info(
                 f"BrowserUsePlan {self._task_id}: User (via plan) provided clarification: '{answer}'",
@@ -149,69 +139,172 @@ class BrowserUsePlan(BasePlan):
         current_tools["request_clarification_from_plan_caller"] = (
             request_clarification_tool_for_llm
         )
+        return current_tools
 
-        self._loop_handle = start_async_tool_use_loop(
-            client=self._plan_client,
-            message=self._task_description,
-            tools=current_tools,
-            parent_chat_context=self._parent_chat_context_on_pause,
-            propagate_chat_context=True,
-            interrupt_llm_with_interjections=True,
-            log_steps=False,
-            max_steps=self.MAX_STEPS,
-        )
-        asyncio.create_task(self._await_completion())
+    async def _manage_plan_execution(self):
+        """
+        Manages the lifecycle of the internal tool loop, including pause, resume,
+        and final completion. This is the primary task for the BrowserUsePlan.
+        """
+        current_task_description = self._initial_task_description
+        current_parent_chat_context = None
+        self._state = _BrowserPlannerState.IDLE  # Will become RUNNING shortly
 
-    async def _await_completion(self):
-        """
-        Waits for the internal tool loop to complete and updates plan state.
-        """
-        if not self._loop_handle:
-            return
         try:
-            self._result_str = await self._loop_handle.result()
-            if self._state == _BrowserPlannerState.RUNNING:
-                self._state = _BrowserPlannerState.COMPLETED
-            logger.info(
-                f"BrowserUsePlan {self._task_id}: Completed/Finished. Final state: {self._state.name}. Result: {self._result_str}",
-            )
-        except asyncio.CancelledError:
-            if self._state == _BrowserPlannerState.RUNNING:
-                self._state = _BrowserPlannerState.STOPPED
-            logger.info(
-                f"BrowserUsePlan {self._task_id}: Execution was cancelled. Current state: {self._state.name}",
-            )
-            if self._result_str is None:
-                self._result_str = f"Task was {self._state.name.lower()}."
-        except Exception as e:
-            self._state = _BrowserPlannerState.ERROR
-            self._error_str = str(e)
-            self._result_str = f"Task failed with error: {self._error_str}"
+            while True:  # Loop for each active (potentially resumed) execution phase
+                if (
+                    self._state == _BrowserPlannerState.STOPPED
+                    or self._state == _BrowserPlannerState.ERROR
+                ):
+                    logger.info(
+                        f"BrowserUsePlan {self._task_id}: Execution manager exiting due to state {self._state.name}",
+                    )
+                    break
+
+                self._state = _BrowserPlannerState.RUNNING
+                logger.info(
+                    f"BrowserUsePlan {self._task_id}: Starting/Resuming internal loop with description: '{current_task_description}'",
+                )
+
+                # Reset and prepare the internal Unify client
+                self._plan_client.reset_messages()
+                self._plan_client.set_system_message(
+                    "You are a helpful web-Browser assistant.",
+                )
+                if current_parent_chat_context:
+                    # Filter out the system message if it's the first one, as we set it above
+                    messages_to_load = current_parent_chat_context
+                    if messages_to_load and messages_to_load[0].get("role") == "system":
+                        # Potentially use the saved system message if different, or just skip
+                        messages_to_load = messages_to_load[1:]
+                    if messages_to_load:
+                        self._plan_client.append_messages(messages_to_load)
+
+                current_parent_chat_context = None  # Consume context
+
+                internal_tools = self._get_internal_tools()
+                self._loop_handle = start_async_tool_use_loop(
+                    client=self._plan_client,
+                    message=current_task_description,
+                    tools=internal_tools,
+                    propagate_chat_context=True,
+                    interrupt_llm_with_interjections=True,
+                    log_steps=False,
+                    max_steps=self.MAX_STEPS,
+                )
+
+                try:
+                    loop_result_str = await self._loop_handle.result()
+                    # This point is reached if the internal loop completes normally,
+                    # or if it's stopped by self._loop_handle.stop() called from pause() or stop().
+
+                    if (
+                        self._state == _BrowserPlannerState.RUNNING
+                    ):  # Normal completion of internal loop
+                        self._state = _BrowserPlannerState.COMPLETED
+                        self._result_str = loop_result_str
+                        logger.info(
+                            f"BrowserUsePlan {self._task_id}: Internal loop COMPLETED. Result: {self._result_str}",
+                        )
+                    elif self._state == _BrowserPlannerState.PAUSED:
+                        # Pause was called, loop was stopped. _result_str might be "Plan paused"
+                        logger.info(
+                            f"BrowserUsePlan {self._task_id}: Internal loop stopped for PAUSE.",
+                        )
+                        # self._result_str is not the final result yet.
+                    elif self._state == _BrowserPlannerState.STOPPED:
+                        logger.info(
+                            f"BrowserUsePlan {self._task_id}: Internal loop stopped for STOP.",
+                        )
+                        if self._result_str is None:  # stop() might set it
+                            self._result_str = f"Plan {self._task_id} was stopped."
+
+                except asyncio.CancelledError:
+                    logger.info(
+                        f"BrowserUsePlan {self._task_id}: Internal loop task was cancelled. Current state: {self._state.name}",
+                    )
+                    # If self.stop() was called, state would be STOPPED.
+                    # If _manage_plan_execution itself is cancelled.
+                    if self._state == _BrowserPlannerState.RUNNING:
+                        self._state = _BrowserPlannerState.STOPPED
+                    if self._result_str is None:
+                        self._result_str = f"Plan {self._task_id} was {self._state.name.lower()} (cancelled)."
+                except Exception as e:
+                    logger.error(
+                        f"BrowserUsePlan {self._task_id}: Internal loop failed: {e}",
+                        exc_info=True,
+                    )
+                    self._state = _BrowserPlannerState.ERROR
+                    self._error_str = str(e)
+                    self._result_str = f"Task failed with error: {self._error_str}"
+
+                self._loop_handle = (
+                    None  # Mark internal loop as finished for this phase
+                )
+
+                # Decision point after an internal loop instance concludes
+                if self._state == _BrowserPlannerState.PAUSED:
+                    logger.info(
+                        f"BrowserUsePlan {self._task_id}: Execution PAUSED, awaiting resume signal.",
+                    )
+                    await self._resume_requested_event.wait()
+                    self._resume_requested_event.clear()
+                    if (
+                        self._state == _BrowserPlannerState.STOPPED
+                    ):  # Stop might have been called while paused
+                        logger.info(
+                            f"BrowserUsePlan {self._task_id}: Stop called while paused. Terminating.",
+                        )
+                        break
+                    logger.info(f"BrowserUsePlan {self._task_id}: RESUMING execution.")
+                    current_task_description = "The task was paused and is now resumed. Please review the history and continue."
+                    current_parent_chat_context = self._parent_chat_context_on_pause
+                    self._parent_chat_context_on_pause = None  # Consume
+                    # State will be set to RUNNING at the top of the loop
+                    continue
+                else:  # COMPLETED, STOPPED, ERROR
+                    logger.info(
+                        f"BrowserUsePlan {self._task_id}: Execution ended with state {self._state.name}. Finalizing.",
+                    )
+                    break  # Exit the while True loop, plan is done.
+
+        except Exception as e:  # Catch errors in _manage_plan_execution itself
             logger.error(
-                f"BrowserUsePlan {self._task_id}: Failed with error: {e}",
+                f"BrowserUsePlan {self._task_id}: Unexpected error in _manage_plan_execution: {e}",
                 exc_info=True,
             )
+            if self._state not in [
+                _BrowserPlannerState.ERROR,
+                _BrowserPlannerState.COMPLETED,
+                _BrowserPlannerState.STOPPED,
+            ]:
+                self._state = _BrowserPlannerState.ERROR
+            if self._error_str is None:
+                self._error_str = str(e)
+            if self._result_str is None:
+                self._result_str = (
+                    f"Plan failed with unexpected error: {self._error_str}"
+                )
         finally:
-            self._completion_event.set()
+            logger.info(
+                f"BrowserUsePlan {self._task_id}: Setting overall completion event. Final state: {self._state.name}",
+            )
+            self._overall_plan_completion_event.set()
 
     @functools.wraps(BasePlan.result, updated=())
     async def result(self) -> str:
-        await self._completion_event.wait()
+        await self._overall_plan_completion_event.wait()
         if self._error_str:
             return f"Error: {self._error_str}"
         return (
             self._result_str
             if self._result_str is not None
-            else "Plan did not produce a result or was stopped."
+            else f"Plan {self._task_id} concluded without a specific result (State: {self._state.name})."
         )
 
     @functools.wraps(BasePlan.done, updated=())
     def done(self) -> bool:
-        return self._state in (
-            _BrowserPlannerState.COMPLETED,
-            _BrowserPlannerState.STOPPED,
-            _BrowserPlannerState.ERROR,
-        )
+        return self._overall_plan_completion_event.is_set()
 
     @property
     def clarification_up_q(self) -> Optional[asyncio.Queue[str]]:
@@ -227,13 +320,18 @@ class BrowserUsePlan(BasePlan):
             return self._state in (
                 _BrowserPlannerState.RUNNING,
                 _BrowserPlannerState.PAUSED,
+                _BrowserPlannerState.IDLE,
             )
         if name == "pause":
             return self._state == _BrowserPlannerState.RUNNING
         if name == "resume":
             return self._state == _BrowserPlannerState.PAUSED
         if name == "interject":
-            return self._state == _BrowserPlannerState.RUNNING
+            # Interjection should only go to an *active* internal loop handle
+            return (
+                self._state == _BrowserPlannerState.RUNNING
+                and self._loop_handle is not None
+            )
         if name == "ask":
             return self._state in (
                 _BrowserPlannerState.RUNNING,
@@ -244,125 +342,117 @@ class BrowserUsePlan(BasePlan):
     # --- Public Control Methods ---
     @functools.wraps(BasePlan.stop, updated=())
     async def stop(self) -> str:
-        try:
-            if not self._is_valid_method("stop"):
-                raise RuntimeError(
-                    f"Plan {self._task_id} cannot be stopped in state {self._state.name}.",
-                )
-            logger.info(
-                f"BrowserUsePlan {self._task_id}: Stopping. Current state: {self._state.name}",
+        if not self._is_valid_method("stop"):
+            # If already stopped/completed/errored, result() will give the status.
+            # Or, we can allow stop to be called multiple times idempotently.
+            if self.done():
+                return await self.result()
+            raise RuntimeError(
+                f"Plan {self._task_id} cannot be stopped in state {self._state.name}.",
             )
-            self._state = _BrowserPlannerState.STOPPED
-            if self._loop_handle:
-                self._loop_handle.stop()
-            else:
-                self._completion_event.set()
 
-            await self._completion_event.wait()
+        logger.info(
+            f"BrowserUsePlan {self._task_id}: Stopping. Current state: {self._state.name}",
+        )
+        previous_state = self._state
+        self._state = _BrowserPlannerState.STOPPED
+        self._result_str = f"Plan {self._task_id} was stopped."
 
-            if self._result_str is None:
-                self._result_str = f"Plan {self._task_id} was stopped."
-            return self._result_str
-        except Exception as e:
-            logger.error(
-                f"BrowserUsePlan {self._task_id}: Error during stop: {e}",
-                exc_info=True,
+        if previous_state == _BrowserPlannerState.PAUSED:
+            # If paused, _manage_plan_execution is waiting on _resume_requested_event.
+            # Set it so it can wake up, see the STOPPED state, and terminate.
+            self._resume_requested_event.set()
+
+        if self._loop_handle and not self._loop_handle.done():
+            # If there's an active internal loop, stop it.
+            # _manage_plan_execution will handle its completion.
+            self._loop_handle.stop()
+        elif (
+            previous_state == _BrowserPlannerState.IDLE
+            and not self._overall_plan_completion_event.is_set()
+        ):
+            # If called very early before _manage_plan_execution even starts its first loop,
+            # or if it somehow got stuck in IDLE, ensure overall completion is set.
+            # This case might indicate an issue in _manage_plan_execution startup.
+            logger.warning(
+                f"BrowserUsePlan {self._task_id}: Stop called in IDLE state. Forcing overall completion.",
             )
-            raise e
+            self._overall_plan_completion_event.set()
+
+        # Wait for _manage_plan_execution to fully terminate and set the event
+        await self._overall_plan_completion_event.wait()
+
+        return self._result_str
 
     @functools.wraps(BasePlan.pause, updated=())
     async def pause(self) -> str:
-        try:
-            if not self._is_valid_method("pause"):
-                raise RuntimeError(
-                    f"Plan {self._task_id} cannot be paused in state {self._state.name}.",
-                )
-            logger.info(
-                f"BrowserUsePlan {self._task_id}: Pausing. Current state: {self._state.name}",
+        if not self._is_valid_method("pause"):
+            raise RuntimeError(
+                f"Plan {self._task_id} cannot be paused in state {self._state.name}.",
             )
-            self._state = _BrowserPlannerState.PAUSED
 
-            if self._plan_client and self._plan_client.messages:
-                self._parent_chat_context_on_pause = copy.deepcopy(
-                    self._plan_client.messages,
-                )
-            else:
-                self._parent_chat_context_on_pause = []
+        logger.info(
+            f"BrowserUsePlan {self._task_id}: Pausing. Current state: {self._state.name}",
+        )
+        self._state = _BrowserPlannerState.PAUSED
+
+        # Save context from the currently active internal LLM instance
+        if self._plan_client and self._plan_client.messages:
+            self._parent_chat_context_on_pause = copy.deepcopy(
+                self._plan_client.messages,
+            )
             logger.info(
                 f"BrowserUsePlan {self._task_id}: Context saved on pause: {len(self._parent_chat_context_on_pause)} messages.",
             )
-
-            if self._loop_handle:
-                self._loop_handle.stop()
-                await self._completion_event.wait()
-            else:
-                logger.warning(
-                    f"BrowserUsePlan {self._task_id}: Pause called but no active loop_handle.",
-                )
-                self._completion_event.set()
-
-            return f"Plan {self._task_id} paused."
-        except Exception as e:
-            logger.error(
-                f"BrowserUsePlan {self._task_id}: Error during pause: {e}",
-                exc_info=True,
+        else:
+            self._parent_chat_context_on_pause = []
+            logger.info(
+                f"BrowserUsePlan {self._task_id}: No active LLM context to save on pause.",
             )
-            raise e
+
+        if self._loop_handle and not self._loop_handle.done():
+            logger.info(
+                f"BrowserUsePlan {self._task_id}: Requesting stop of current internal loop for pause.",
+            )
+            self._loop_handle.stop()
+            # _manage_plan_execution will await its completion and then wait for resume.
+        else:
+            logger.warning(
+                f"BrowserUsePlan {self._task_id}: Pause called but no active internal loop_handle to stop.",
+            )
+
+        # Pause returns quickly; the overall plan's result() is still pending.
+        return f"Plan {self._task_id} paused successfully. Awaiting resume."
 
     @functools.wraps(BasePlan.resume, updated=())
     async def resume(self) -> str:
-        try:
-            if not self._is_valid_method("resume"):
-                raise RuntimeError(
-                    f"Plan {self._task_id} cannot be resumed in state {self._state.name}.",
-                )
-            logger.info(
-                f"BrowserUsePlan {self._task_id}: Resuming. Current state: {self._state.name}",
+        if not self._is_valid_method("resume"):
+            raise RuntimeError(
+                f"Plan {self._task_id} cannot be resumed in state {self._state.name}.",
             )
 
-            if not self._parent_chat_context_on_pause:
-                logger.warning(
-                    f"BrowserUsePlan {self._task_id}: Resuming without a saved parent context.",
-                )
-
-            if self._parent_chat_context_on_pause:
-                messages_to_load = self._parent_chat_context_on_pause
-                if messages_to_load and messages_to_load[0].get("role") == "system":
-                    messages_to_load = messages_to_load[1:]
-                if messages_to_load:
-                    self._plan_client.append_messages(messages_to_load)
-
-            self._task_description = "The task was paused. Please review the history and determine the next best action or tool call."
-            self._start_internal_loop()
-
-            return f"Plan {self._task_id} resuming."
-        except Exception as e:
-            logger.error(
-                f"BrowserUsePlan {self._task_id}: Error during resume: {e}",
-                exc_info=True,
-            )
-            raise e
+        logger.info(
+            f"BrowserUsePlan {self._task_id}: Requesting resume. Current state: {self._state.name}",
+        )
+        # State will be set to RUNNING by _manage_plan_execution when it starts the new loop.
+        self._resume_requested_event.set()  # Signal _manage_plan_execution to continue
+        return f"Plan {self._task_id} is resuming."
 
     @functools.wraps(BasePlan.interject, updated=())
     async def interject(self, message: str) -> str:
-        try:
-            if not self._is_valid_method("interject"):
-                raise RuntimeError(
-                    f"Plan {self._task_id} cannot be interjected in state {self._state.name}.",
-                )
+        if not self._is_valid_method("interject"):
+            # Check current state for more accurate error.
+            if self._state != _BrowserPlannerState.RUNNING:
+                return f"Error: Plan {self._task_id} is not in RUNNING state (current: {self._state.name}), cannot interject."
             if not self._loop_handle:
-                return "Error: No active loop to interject."
-            logger.info(
-                f"BrowserUsePlan {self._task_id}: Interjecting message: '{message}'",
-            )
-            await self._loop_handle.interject(message)
-            return f"Interjection '{message}' sent to plan {self._task_id}."
-        except Exception as e:
-            logger.error(
-                f"BrowserUsePlan {self._task_id}: Error during interject: {e}",
-                exc_info=True,
-            )
-            raise e
+                return f"Error: Plan {self._task_id} is RUNNING but has no active internal loop to interject."
+            # This case should ideally not happen if state is RUNNING.
+
+        logger.info(
+            f"BrowserUsePlan {self._task_id}: Interjecting message: '{message}' into active internal loop.",
+        )
+        await self._loop_handle.interject(message)  # type: ignore
+        return f"Interjection '{message}' sent to plan {self._task_id}."
 
     @functools.wraps(BasePlan.ask, updated=())
     async def ask(self, question: str) -> str:
@@ -421,13 +511,16 @@ class BrowserUsePlan(BasePlan):
                 f"BrowserUsePlan {self._task_id}: Error during ask: {e}",
                 exc_info=True,
             )
-            raise e
+            return f"Error answering question due to LLM failure: {e}"
 
     @property
     @functools.wraps(BasePlan.valid_tools, updated=())
     def valid_tools(self) -> Dict[str, Callable[..., Awaitable[Any]]]:
         tools = {}
-        for method_name in ["stop", "pause", "resume", "interject", "ask"]:
+        # valid_tools should reflect methods callable by an external LLM on this Plan instance
+        # Their validity is checked by _is_valid_method
+        potential_tools = ["stop", "pause", "resume", "interject", "ask"]
+        for method_name in potential_tools:
             if self._is_valid_method(method_name):
                 tools[method_name] = getattr(self, method_name)
         return tools
@@ -467,23 +560,21 @@ class BrowserUsePlanner(BasePlanner[BrowserUsePlan]):
                 "without explicit loop management. Error: %s",
                 e,
             )
-            raise RuntimeError(
-                "BrowserUsePlanner must be initialized within an active asyncio event loop.",
-            ) from e
+            self._main_event_loop = None
 
     def _get_tools(self) -> Dict[str, Callable[..., Awaitable[Any]]]:
-        """Prepares and caches the tools available for the BrowserUsePlan."""
+        """Prepares and caches the tools available for the BrowserUsePlan's internal loop."""
         if self._tools_cache is None:
             self._tools_cache = self._build_tools()
         return self._tools_cache
 
     def _build_tools(self) -> Dict[str, Callable[..., Awaitable[str]]]:
         """
-        Builds a dictionary of tools that the BrowserUsePlanner can use.
+        Builds a dictionary of tools that the BrowserUsePlan's internal LLM can use.
         This involves wrapping the actions from BrowserUseController.
         """
         tools: Dict[str, Callable[..., Awaitable[str]]] = {}
-        from pydantic import BaseModel
+        from pydantic import BaseModel  # type: ignore
         import inspect
 
         for (
@@ -513,69 +604,102 @@ class BrowserUsePlanner(BasePlanner[BrowserUsePlan]):
                         browser=self._browser_context,
                         page_extraction_llm=self._extraction_llm,
                     )
-                    return (
+                    content = (
                         getattr(result, "extracted_content", None)
                         or getattr(result, "message", "")
-                        or "DONE"
+                        or (str(result) if result is not None else "")
                     )
+
+                    return (
+                        content
+                        if content
+                        else "Action completed without specific content."
+                    )
+
                 except Exception as exc:
-                    logger.exception(f"BrowserUse Tool {_action_name_inner} failed")
-                    return f"ERROR: {exc!s}"
+                    logger.exception(
+                        f"BrowserUse Tool {_action_name_inner} failed with args {kwargs}",
+                    )
+                    return f"ERROR executing tool {_action_name_inner}: {exc!s}"
 
             _make_tool_wrapper.__name__ = action_name
             _make_tool_wrapper.__qualname__ = action_name
             _make_tool_wrapper.__doc__ = description
 
-            if param_model:
-                raw_fields = (
-                    param_model.model_fields
-                    if hasattr(param_model, "model_fields")
-                    else param_model.__fields__
-                )
-                required_params: list[inspect.Parameter] = []
-                optional_params: list[inspect.Parameter] = []
+            if param_model and hasattr(
+                param_model,
+                "model_fields",
+            ):  # Check for Pydantic v2
+                fields = param_model.model_fields
+                sig_params: list[inspect.Parameter] = []
+                for fname, field_info in fields.items():
+                    is_required = field_info.is_required()
+                    default_val = (
+                        field_info.default
+                        if not is_required
+                        else inspect.Parameter.empty
+                    )
+                    # Pydantic annotation might be Optional[T], keep it that way for inspect
+                    annotation = field_info.rebuild_annotation()
 
-                def _is_required_field(field_info) -> bool:
-                    if hasattr(field_info, "is_required"):
-                        return field_info.is_required()
-                    if hasattr(field_info, "required"):
-                        return field_info.required
-                    return True
-
-                for fname, field_info_obj in raw_fields.items():
-                    annotation = getattr(field_info_obj, "annotation", Any)
-                    param_kind = inspect.Parameter.POSITIONAL_OR_KEYWORD
-                    if _is_required_field(field_info_obj):
-                        param = inspect.Parameter(
+                    sig_params.append(
+                        inspect.Parameter(
                             fname,
-                            param_kind,
-                            annotation=annotation,
-                        )
-                        required_params.append(param)
-                    else:
-                        default_val = getattr(
-                            field_info_obj,
-                            "default",
-                            inspect.Parameter.empty,
-                        )
-                        param = inspect.Parameter(
-                            fname,
-                            param_kind,
+                            inspect.Parameter.POSITIONAL_OR_KEYWORD,
                             default=default_val,
                             annotation=annotation,
-                        )
-                        optional_params.append(param)
+                        ),
+                    )
                 try:
                     _make_tool_wrapper.__signature__ = inspect.Signature(
-                        required_params + optional_params,
+                        parameters=sig_params,
                         return_annotation=str,
                     )
                 except Exception as e:
-                    logger.warning(f"Could not build signature for {action_name}: {e}")
+                    logger.warning(
+                        f"Could not build signature for {action_name} (Pydantic v2): {e}",
+                    )
+                    # Fallback signature
                     _make_tool_wrapper.__signature__ = inspect.Signature(
                         [inspect.Parameter("kwargs", inspect.Parameter.VAR_KEYWORD)],
                         return_annotation=str,
                     )
+
+            elif param_model and hasattr(param_model, "__fields__"):  # Pydantic v1
+                fields = param_model.__fields__  # type: ignore
+                sig_params = []
+                for fname, field_info in fields.items():  # type: ignore
+                    is_required = getattr(field_info, "required", True)
+                    default_val = field_info.default if not is_required else inspect.Parameter.empty  # type: ignore
+                    annotation = field_info.outer_type_  # type: ignore
+
+                    sig_params.append(
+                        inspect.Parameter(
+                            fname,
+                            inspect.Parameter.POSITIONAL_OR_KEYWORD,
+                            default=default_val,
+                            annotation=annotation,
+                        ),
+                    )
+                try:
+                    _make_tool_wrapper.__signature__ = inspect.Signature(
+                        parameters=sig_params,
+                        return_annotation=str,
+                    )
+                except Exception as e:
+                    logger.warning(
+                        f"Could not build signature for {action_name} (Pydantic v1): {e}",
+                    )
+                    _make_tool_wrapper.__signature__ = inspect.Signature(
+                        [inspect.Parameter("kwargs", inspect.Parameter.VAR_KEYWORD)],
+                        return_annotation=str,
+                    )
+            else:  # No param_model or not recognized Pydantic model
+                _make_tool_wrapper.__signature__ = inspect.Signature(
+                    [inspect.Parameter("kwargs", inspect.Parameter.VAR_KEYWORD)],
+                    return_annotation=str,
+                )
+
             tools[action_name] = _make_tool_wrapper
         return tools
 
@@ -590,6 +714,21 @@ class BrowserUsePlanner(BasePlanner[BrowserUsePlan]):
         Initiates a new plan for the given task description using browser_use tools.
         """
         logger.info(f"BrowserUsePlanner: Planning task: '{task_description}'")
+        # Ensure event loop is available for the plan
+        if not self._main_event_loop:
+            try:
+                # Attempt to get loop here if planner didn't capture one.
+                # This might be redundant if BrowserUsePlan also does this, but harmless.
+                self._main_event_loop = asyncio.get_running_loop()
+                logger.info(
+                    f"BrowserUsePlanner._make_plan captured event loop: {self._main_event_loop}",
+                )
+            except RuntimeError:
+                logger.error(
+                    "BrowserUsePlanner._make_plan: No running event loop to pass to BrowserUsePlan.",
+                )
+                # Let BrowserUsePlan handle its own loop acquisition or failure.
+
         try:
             plan = BrowserUsePlan(
                 task_description=task_description,
@@ -600,7 +739,7 @@ class BrowserUsePlanner(BasePlanner[BrowserUsePlan]):
             )
         except Exception as e:
             logger.error(f"BrowserUsePlanner: Error creating plan: {e}", exc_info=True)
-            raise e
+            raise e  # Re-raise to indicate plan creation failure
         return plan
 
     async def close(self):
