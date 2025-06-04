@@ -90,7 +90,12 @@ class KnowledgeManager(BaseKnowledgeManager):
             cache=json.loads(os.environ.get("UNIFY_CACHE", "true")),
             traced=json.loads(os.environ.get("UNIFY_TRACED", "true")),
         )
-        client.set_system_message(STORE)
+        client.set_system_message(
+            STORE.replace(
+                "{table_schemas}",
+                json.dumps(self._list_tables(), indent=4),
+            ),
+        )
 
         # ── 1.  Expose tools + a *dynamic* request_clarification helper ──
         tools = dict(self._store_tools)
@@ -146,7 +151,12 @@ class KnowledgeManager(BaseKnowledgeManager):
             cache=json.loads(os.environ.get("UNIFY_CACHE", "true")),
             traced=json.loads(os.environ.get("UNIFY_TRACED", "true")),
         )
-        client.set_system_message(RETRIEVE)
+        client.set_system_message(
+            RETRIEVE.replace(
+                "{table_schemas}",
+                json.dumps(self._list_tables(), indent=4),
+            ),
+        )
 
         # ── 1.  Expose tools + a *dynamic* request_clarification helper ──
         tools = dict(self._retrieve_tools)
