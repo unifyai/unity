@@ -39,7 +39,6 @@ async def test_start_and_ask_browser_use_plan(monkeypatch):
     @functools.wraps(original_stop)
     async def stop(self) -> str:
         stop_called["count"] += 1
-        print(f"Patched BrowserUsePlan.stop called for plan {self._task_id}")
         return await original_stop(self)
 
     monkeypatch.setattr(BrowserUsePlan, "ask", ask, raising=True)
@@ -119,7 +118,6 @@ async def test_start_and_ask_browser_use_plan(monkeypatch):
     await handle.interject("ask")
     final = await handle.result()
 
-    print(client.messages)
     assert "ask_completed" in final.strip().lower()
     assert ask_called["count"] == 1, "BrowserUsePlan.ask should be invoked once"
     assert stop_called["count"] == 1, "BrowserUsePlan.stop should be invoked once"
@@ -139,9 +137,6 @@ async def test_interject_browser_use_plan(monkeypatch):
     async def patched_interject(self, instruction: str) -> str:
         interjected_log["count"] += 1
         interjected_log["msgs"].append(instruction)
-        print(
-            f"Patched BrowserUsePlan.interject called with: '{instruction}' for plan {self._task_id}",
-        )
         return await original_interject_method(self, instruction)
 
     def patched_build_tools_for_test():
@@ -271,21 +266,16 @@ async def test_pause_and_resume_browser_use_plan(
     @functools.wraps(original_pause_method)
     async def patched_pause(self) -> str:
         counts["pause"] += 1
-        print(f"Patched BrowserUsePlan.pause called for plan {self._task_id}")
         return await original_pause_method(self)
 
     @functools.wraps(original_resume_method)
     async def patched_resume(self) -> str:
         counts["resume"] += 1
-        print(f"Patched BrowserUsePlan.resume called for plan {self._task_id}")
         return await original_resume_method(self)
 
     @functools.wraps(original_stop_method)
     async def patched_stop_after_resume(self) -> str:
         counts["stop_after_resume"] += 1
-        print(
-            f"Patched BrowserUsePlan.stop (for pause/resume test) called for plan {self._task_id}",
-        )
         return await original_stop_method(self)
 
     monkeypatch.setattr(BrowserUsePlan, "pause", patched_pause, raising=True)
@@ -370,7 +360,6 @@ async def test_pause_and_resume_browser_use_plan(
     await handle.interject("go")
 
     final = await handle.result()
-    print(f"Test (Pause/Resume): Outer LLM final response: {final}")
 
     assert "pause_resume_completed" in final.strip().lower()
     assert counts["pause"] == 1, "BrowserUsePlan.pause should be called"
@@ -378,5 +367,114 @@ async def test_pause_and_resume_browser_use_plan(
     assert (
         counts["stop_after_resume"] == 1
     ), "BrowserUsePlan.stop should be called after resume"
+
+    await planner.close()
+
+
+@pytest.mark.asyncio
+@_handle_project
+async def test_browser_use_plan_requests_clarification(monkeypatch):
+    """
+    Test that BrowserUsePlan can request and receive clarification via queues.
+    """
+    planner = BrowserUsePlanner(headless=True)
+    clarification_up_q = asyncio.Queue()
+    clarification_down_q = asyncio.Queue()
+
+    def patched_build_tools_for_clarification():
+        dummy_tools = {}
+
+        async def mock_search_google(query: str) -> str:
+            await asyncio.sleep(0.1)
+            if "Tasty Cola products" in query:
+                return "Found two main products: 'Tasty Cola Classic' and 'Tasty Cola Zero'. Please specify which one to get details for."
+            return f"Search results for '{query}'."
+
+        mock_search_google.__doc__ = "Searches Google for the query."
+
+        async def mock_extract_content(url: str) -> str:
+            await asyncio.sleep(0.1)
+            if "tastycolaclassic.com" in url:
+                return "Details for Tasty Cola Classic: The original, sugary delight since 1903."
+            if "tastycolazero.com" in url:
+                return "Details for Tasty Cola Zero: Same great taste, zero sugar, launched in 2005."
+            return f"Extracted content from '{url}'."
+
+        mock_extract_content.__doc__ = "Extracts content from the given URL."
+
+        import inspect
+
+        dummy_tools["search_google"] = mock_search_google
+        dummy_tools["search_google"].__signature__ = inspect.Signature(
+            [
+                inspect.Parameter(
+                    "query",
+                    inspect.Parameter.POSITIONAL_OR_KEYWORD,
+                    annotation=str,
+                ),
+            ],
+            return_annotation=str,
+        )
+        dummy_tools["extract_content"] = mock_extract_content
+        dummy_tools["extract_content"].__signature__ = inspect.Signature(
+            [
+                inspect.Parameter(
+                    "url",
+                    inspect.Parameter.POSITIONAL_OR_KEYWORD,
+                    annotation=str,
+                ),
+            ],
+            return_annotation=str,
+        )
+        return dummy_tools
+
+    monkeypatch.setattr(planner, "_build_tools", patched_build_tools_for_clarification)
+    if hasattr(planner, "_tools_cache"):
+        planner._tools_cache = None
+
+    task_description = (
+        "Search for 'Tasty Cola products'. "
+        "If multiple main products are found, you MUST ask for clarification on which product to focus on using the 'request_clarification_from_plan_caller' tool. "
+        "After clarification, extract content for the specified product's website (assume it's productname.com)."
+    )
+
+    plan_handle = planner.plan(
+        task_description,
+        clarification_up_q=clarification_up_q,
+        clarification_down_q=clarification_down_q,
+    )
+
+    question_from_plan = ""
+    try:
+        question_from_plan = await asyncio.wait_for(
+            clarification_up_q.get(),
+            timeout=30,
+        )
+    except asyncio.TimeoutError:
+        pytest.fail("Test (Clarification): Timed out waiting for question from plan.")
+
+    assert (
+        "which product" in question_from_plan.lower()
+        or "tasty cola classic" in question_from_plan.lower()
+        and "tasty cola zero" in question_from_plan.lower()
+    ), f"Unexpected clarification question: {question_from_plan}"
+
+    clarification_answer = "Please focus on Tasty Cola Classic."
+    await clarification_down_q.put(clarification_answer)
+
+    final_result = ""
+    try:
+        final_result = await asyncio.wait_for(plan_handle.result(), timeout=30)
+    except asyncio.TimeoutError:
+        pytest.fail(
+            "Test (Clarification): Timed out waiting for plan final result after providing clarification.",
+        )
+
+    assert "tasty cola classic" in final_result.lower()
+    assert "original, sugary delight" in final_result.lower()
+    assert (
+        "tasty cola zero" not in final_result.lower()
+        or "Details for Tasty Cola Zero" not in final_result
+    )
 
     await planner.close()
