@@ -18,8 +18,8 @@ def test_create_task():
         {
             "name": "Promote Jeff Smith",
             "description": "Send an email to Jeff Smith, kindly congratulating him and explaining that he has been promoted from sales rep to sales manager.",
-            "status": Status.active,
-            "schedule": {"prev_task": None, "next_task": None},
+            "status": Status.primed,
+            "schedule": None,
             "deadline": None,
             "repeat": None,
             "priority": Priority.normal,
