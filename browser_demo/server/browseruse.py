@@ -35,24 +35,11 @@ if not cap.isOpened():
     print("Error: Cannot open video file.")
     exit()
 
-# width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
-# height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
-# fps = cap.get(cv2.CAP_PROP_FPS) or 30.0
-
-# YUYV is commonly supported by Google Meet
-# fourcc = cv2.CAP_V4L2 + cv2.VideoWriter_fourcc(*"YUYV")
-# out = cv2.VideoWriter("/dev/video10", fourcc, fps, (width, height))
-
-# if not out.isOpened():
-#     print("Error: Cannot open virtual camera device.")
-#     exit()
 
 fps = cap.get(cv2.CAP_PROP_FPS) or 30.0
 width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
 height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
 
-# GStreamer pipeline:
-# appsrc (push frames) -> videoconvert -> video/x-raw,format=YUY2 -> v4l2sink (/dev/video10)
 pipeline_str = (
     f"appsrc name=src is-live=true block=true format=TIME "
     f"caps=video/x-raw,format=BGR,width={width},height={height},framerate={int(fps)}/1 "
@@ -88,16 +75,6 @@ pipeline.set_state(Gst.State.PLAYING)
 
 def start_camera_loop():
     def loop():
-        # print("Running...")
-        # while True:
-        #     ret, frame = cap.read()
-        #     if not ret:
-        #         cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
-        #         continue
-        #     rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2YUV_I420)
-        #     if not push_frame(rgb):
-        #         break
-        #     time.sleep(1.0 / fps)
         print("Streaming video to /dev/video10...")
         while True:
             ret, frame = cap.read()
@@ -130,8 +107,7 @@ async def main():
             "--window-size=1920,1080",
             "--start-fullscreen",
             "--use-fake-ui-for-media-stream",
-            "--enable-features=WebRtcPipeWireCamera",
-            "--enable-webrtc-pipewire-camera",
+            "--enable-features=WebRtcV4L2VideoCapture",
         ],
         permissions=["microphone", "camera"],
     )
@@ -154,19 +130,6 @@ async def main():
             sd.play(data, samplerate, device=virtual_sink)
             sd.wait()
             continue
-        # elif action == "play video":
-        #     # Play sample video
-        #     while True:
-        #         ret, frame = cap.read()
-        #         if not ret:
-        #             break
-        #         rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-        #         if not push_frame(rgb):
-        #             print("Failed to push frame.")
-        #             break
-
-        #     cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
-        #     continue
 
         agent.add_new_task(action)
         result = await agent.run()
@@ -175,7 +138,6 @@ async def main():
     await agent.close()
     await browser.close()
     pipeline.set_state(Gst.State.NULL)
-    # out.release()
     cap.release()
 
 

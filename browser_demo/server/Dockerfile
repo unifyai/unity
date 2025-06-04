@@ -42,6 +42,7 @@ RUN apt-get update && apt-get install -y \
     pkg-config \
     build-essential \
     cmake \
+    v4l-utils \
     libspa-0.2-modules \
     libcamera0.0.3 \
     libcamera-tools \
