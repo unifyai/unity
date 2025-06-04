@@ -100,7 +100,7 @@ class CommsManager:
                 subscription_id,
             )
 
-            print(f"Starting subscription to {subscription_id}")
+            print(f"Starting subscription to {subscription_path}")
 
             streaming_pull_future = subscriber.subscribe(
                 subscription_path,
