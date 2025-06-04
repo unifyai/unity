@@ -6,7 +6,7 @@ from typing import Literal
 import openai
 
 import comms_actions
-from actions_2 import *
+from actions import *
 from events import *
 from new_terminal_helper import run_script
 
@@ -231,10 +231,10 @@ class CommsAgent:
         print(user_msg, flush=True)
 
         if self.main_user:
-            with open("prompts/non_call_sys_2.md") as f:
+            with open("prompts/non_call_sys.md") as f:
                 non_call_sys = f.read().format(name=self.user_name)
         else:
-            with open("prompts/comm_non_call_sys_2.md") as f:
+            with open("prompts/comm_non_call_sys.md") as f:
                 non_call_sys = f.read().format(main_user_name=self.user_name, other_user_name=self.contact_name)
 
         res = await client.beta.chat.completions.parse(
@@ -262,10 +262,10 @@ class CommsAgent:
         self.publish(ev)
 
         if self.main_user:
-            with open("prompts/call_sys_2.md") as f:
+            with open("prompts/call_sys.md") as f:
                 call_sys = f.read().format(name=self.user_name)
         else:
-            with open("prompts/comm_call_sys_2.md") as f:
+            with open("prompts/comm_call_sys.md") as f:
                 call_sys = f.read().format(main_user_name=self.user_name, other_user_name=self.contact_name)
 
 

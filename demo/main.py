@@ -91,7 +91,8 @@ async def main():
         os.getenv("USER_NAME", ""),
         os.getenv("ASSISTANT_NUMBER", ""),
         os.getenv("USER_NUMBER", ""),
-        os.getenv("USER_PHONE_NUMBER", ""),
+        # os.getenv("USER_PHONE_NUMBER", ""),
+        None,
         [],
         True,
     )
@@ -99,7 +100,7 @@ async def main():
     user_agent.subscribe(
         [
             os.getenv("USER_NUMBER", ""),
-            os.getenv("USER_PHONE_NUMBER", ""),
+            # os.getenv("USER_PHONE_NUMBER", ""),
             "user_agent",
         ],
     )
