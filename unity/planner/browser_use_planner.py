@@ -47,12 +47,15 @@ class BrowserUsePlan(BasePlan):
     The valid_tools property indicates which methods can be successfully called.
     """
 
+    MAX_STEPS = 100
+
     def __init__(
         self,
         task_description: str,
         tools: Dict[str, Callable[..., Awaitable[str]]],
         clarification_up_q: Optional[asyncio.Queue[str]] = None,
         clarification_down_q: Optional[asyncio.Queue[str]] = None,
+        main_event_loop: Optional[asyncio.AbstractEventLoop] = None,
     ):
         self._task_description = task_description
         self._tools = tools  # Tools available to the main tool loop
@@ -73,7 +76,7 @@ class BrowserUsePlan(BasePlan):
         self._error_str: Optional[str] = None  # Error message if the plan failed
         self._completion_event = asyncio.Event()  # Signals plan completion/stop/error
         self._task_id = str(uuid.uuid4())  # Unique ID for this plan instance
-
+        self._main_event_loop = main_event_loop
         self._plan_client = AsyncUnify(
             "o4-mini@openai",
             cache=json.loads(os.environ.get("UNIFY_CACHE", "true")),
@@ -86,9 +89,31 @@ class BrowserUsePlan(BasePlan):
             traced=json.loads(os.environ.get("UNIFY_TRACED", "true")),
         )
 
-        self._start_internal_loop()
+        logger.info(
+            f"BrowserUsePlan {self._task_id}: Scheduling async initialization on loop {self._main_event_loop}.",
+        )
+        future = asyncio.run_coroutine_threadsafe(
+            self._async_init_and_start_internal_loop(),
+            self._main_event_loop,
+        )
+        try:
+            future.result(timeout=1000)
+            logger.info(
+                f"BrowserUsePlan {self._task_id}: Async initialization completed.",
+            )
+        except Exception as e:
+            logger.error(
+                f"BrowserUsePlan {self._task_id}: Error during async part of initialization: {e}",
+                exc_info=True,
+            )
+            self._state = _BrowserPlannerState.ERROR
+            self._error_str = f"Async initialization failed: {e}"
+            self._completion_event.set()
+            raise RuntimeError(
+                f"BrowserUsePlan async initialization failed: {e}",
+            ) from e
 
-    def _start_internal_loop(self):
+    async def _async_init_and_start_internal_loop(self):
         """
         Starts the internal async tool use loop that executes the plan's logic.
         This is called once during initialization.
@@ -133,6 +158,7 @@ class BrowserUsePlan(BasePlan):
             propagate_chat_context=True,
             interrupt_llm_with_interjections=True,
             log_steps=False,
+            max_steps=self.MAX_STEPS,
         )
         asyncio.create_task(self._await_completion())
 
