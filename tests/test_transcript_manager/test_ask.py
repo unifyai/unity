@@ -16,7 +16,6 @@ from __future__ import annotations
 
 import json
 import re
-from collections import Counter
 from datetime import datetime, timezone, UTC
 from unity.events.event_bus import EventBus, Event
 from typing import List
@@ -97,10 +96,6 @@ def _answer_semantic(
         msg = next(m for m in messages if m.sender_id == cid("anne"))
         return "passport expired"
 
-    if "medium does julia use most" in q:
-        counts = Counter(m.medium for m in messages if m.sender_id == cid("julia"))
-        return counts.most_common(1)[0][0]
-
     if "how many different media has dan used" in q:
         media = {m.medium for m in messages if m.sender_id == cid("dan")}
         return str(len(media))
@@ -140,7 +135,6 @@ QUESTIONS = [
     "Did Jimmy ever tell us when he's on holiday? If so, what date?",
     "Why didn't Anne want to come with us on the trip? I forgot her excuse.",
     "What quantity did Carlos say he wanted to buy?",
-    "Which medium does Julia use most often to communicate?",
     "How many different media has Dan used so far?",
     "Give me a one-sentence summary of the last Dan-Julia phone call.",
 ]
