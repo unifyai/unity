@@ -387,8 +387,8 @@ async def _async_tool_use_loop_inner(
     propagate_chat_context: bool = True,
     parent_chat_context: Optional[list[dict]] = None,
     log_steps: bool = False,
-    max_steps: Optional[int] = None,
-    timeout: Optional[int] = None,
+    max_steps: Optional[int] = 20,
+    timeout: Optional[int] = 120,
     raise_on_limit: bool = False,
     include_class_in_dynamic_tool_names: bool = False,
 ) -> str:
@@ -2008,8 +2008,8 @@ def start_async_tool_use_loop(
     propagate_chat_context: bool = True,
     parent_chat_context: Optional[list[dict]] = None,
     log_steps: bool = False,
-    max_steps: Optional[int] = None,
-    timeout: Optional[int] = None,
+    max_steps: Optional[int] = 20,
+    timeout: Optional[int] = 120,
     raise_on_limit: bool = False,
     include_class_in_dynamic_tool_names: bool = False,
 ) -> AsyncToolUseLoopHandle:
