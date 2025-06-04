@@ -30,7 +30,7 @@ def test_create_table_w_cols():
 def test_create_table_w_desc():
     knowledge_manager = KnowledgeManager()
     knowledge_manager._create_table("MyTable", description="For storing my data.")
-    tables = knowledge_manager._list_tables()
+    tables = knowledge_manager._list_tables(include_columns=False)
     assert len(tables) == 1
     assert tables == {
         "MyTable": {"description": "For storing my data."},
