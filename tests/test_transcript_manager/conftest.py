@@ -95,7 +95,7 @@ class ScenarioBuilder:
     # --------------------------------------------------------------------- #
     async def _seed_contacts(self) -> None:
         for idx, c in enumerate(_CONTACTS):
-            self.cm.create_contact(**c)
+            self.cm._create_contact(**c)
             _ID_BY_NAME[c["first_name"].lower()] = idx
 
     # --------------------------------------------------------------------- #

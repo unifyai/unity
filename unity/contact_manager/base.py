@@ -42,7 +42,7 @@ class BaseContactManager(ABC):
         ----------
         text:
             Natural-language query – e.g. *“Show me Alice’s phone number.”*
-        return_reasoning_steps:
+        _return_reasoning_steps:
             If *True*, the final ``result`` coroutine returns a
             ``(answer, messages)`` tuple where *messages* holds the
             model’s hidden chain-of-thought.

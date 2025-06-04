@@ -26,13 +26,13 @@ class _SimulatedContactHandle(SteerableToolHandle):
         llm: unify.Unify,
         initial_text: str,
         *,
-        return_reasoning_steps: bool,
+        _return_reasoning_steps: bool,
         clarification_up_q: asyncio.Queue[str] | None,
         clarification_down_q: asyncio.Queue[str] | None,
     ):
         self._llm = llm
         self._initial = initial_text
-        self._want_steps = return_reasoning_steps
+        self._want_steps = _return_reasoning_steps
         self._clar_up_q = clarification_up_q
         self._clar_down_q = clarification_down_q
         self._needs_clar = self._clar_up_q is not None and self._clar_down_q is not None
@@ -51,6 +51,7 @@ class _SimulatedContactHandle(SteerableToolHandle):
         self._cancelled = False
         self._answer: str | None = None
         self._messages: List[Dict[str, Any]] = []
+        self._paused = False
 
     # --------------------------------------------------------------------- #
     # SteerableToolHandle implementation
@@ -58,6 +59,9 @@ class _SimulatedContactHandle(SteerableToolHandle):
     async def result(self):
         if self._cancelled:
             raise asyncio.CancelledError()
+
+        while self._paused and not self._cancelled:
+            await asyncio.sleep(0.05)
 
         if not self._done.is_set():
             if self._needs_clar:
@@ -88,13 +92,32 @@ class _SimulatedContactHandle(SteerableToolHandle):
         self._done.set()
         return "Stopped."
 
-    # orchestrator expects this
+    def pause(self) -> str:
+        if self._paused:
+            return "Already paused."
+        self._paused = True
+        return "Paused."
+
+    def resume(self) -> str:
+        if not self._paused:
+            return "Already running."
+        self._paused = False
+        return "Resumed."
+
     def done(self) -> bool:  # type: ignore[override]
         return self._done.is_set()
 
     @property
     def valid_tools(self):
-        return {}
+        tools = {
+            self.interject.__name__: self.interject,
+            self.stop.__name__: self.stop,
+        }
+        if self._paused:
+            tools[self.resume.__name__] = self.resume
+        else:
+            tools[self.pause.__name__] = self.pause
+        return tools
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -143,7 +166,7 @@ class SimulatedContactManager(BaseContactManager):
         return _SimulatedContactHandle(
             self._llm,
             text,
-            return_reasoning_steps=_return_reasoning_steps,
+            _return_reasoning_steps=_return_reasoning_steps,
             clarification_up_q=clarification_up_q,
             clarification_down_q=clarification_down_q,
         )
@@ -168,7 +191,7 @@ class SimulatedContactManager(BaseContactManager):
         return _SimulatedContactHandle(
             self._llm,
             text,
-            return_reasoning_steps=_return_reasoning_steps,
+            _return_reasoning_steps=_return_reasoning_steps,
             clarification_up_q=clarification_up_q,
             clarification_down_q=clarification_down_q,
         )

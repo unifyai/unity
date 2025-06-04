@@ -47,19 +47,18 @@ class BrowserUsePlan(BasePlan):
     The valid_tools property indicates which methods can be successfully called.
     """
 
+    MAX_STEPS = 100
+
     def __init__(
         self,
         task_description: str,
-        initial_client: AsyncUnify,
         tools: Dict[str, Callable[..., Awaitable[str]]],
-        base_system_prompt: Optional[str],
         clarification_up_q: Optional[asyncio.Queue[str]] = None,
         clarification_down_q: Optional[asyncio.Queue[str]] = None,
+        main_event_loop: Optional[asyncio.AbstractEventLoop] = None,
     ):
         self._task_description = task_description
-        self._client = initial_client  # LLM client for the main tool loop
         self._tools = tools  # Tools available to the main tool loop
-        self._base_system_prompt = base_system_prompt
         self._parent_chat_context_on_pause: Optional[List[dict]] = []
         # Clarification queues for interaction with the entity that started this plan
         self._clar_up_q_internal: asyncio.Queue[str] = (
@@ -77,22 +76,44 @@ class BrowserUsePlan(BasePlan):
         self._error_str: Optional[str] = None  # Error message if the plan failed
         self._completion_event = asyncio.Event()  # Signals plan completion/stop/error
         self._task_id = str(uuid.uuid4())  # Unique ID for this plan instance
-
+        self._main_event_loop = main_event_loop
+        self._plan_client = AsyncUnify(
+            "o4-mini@openai",
+            cache=json.loads(os.environ.get("UNIFY_CACHE", "true")),
+            traced=json.loads(os.environ.get("UNIFY_TRACED", "true")),
+        )
+        self._plan_client.set_system_message("You are a helpful web-Browser assistant.")
         self._ask_client = unify.AsyncUnify(
             "o4-mini@openai",
             cache=json.loads(os.environ.get("UNIFY_CACHE", "true")),
             traced=json.loads(os.environ.get("UNIFY_TRACED", "true")),
-            stateful=True,
         )
-        self._ask_system_prompt = (
-            "You are answering questions about an ongoing automated web Browse task. "
-            "The main task's chat history will be provided. Answer concisely based on this history."
+
+        logger.info(
+            f"BrowserUsePlan {self._task_id}: Scheduling async initialization on loop {self._main_event_loop}.",
         )
-        self._ask_client.set_system_message(self._ask_system_prompt)
+        future = asyncio.run_coroutine_threadsafe(
+            self._async_init_and_start_internal_loop(),
+            self._main_event_loop,
+        )
+        try:
+            future.result(timeout=1000)
+            logger.info(
+                f"BrowserUsePlan {self._task_id}: Async initialization completed.",
+            )
+        except Exception as e:
+            logger.error(
+                f"BrowserUsePlan {self._task_id}: Error during async part of initialization: {e}",
+                exc_info=True,
+            )
+            self._state = _BrowserPlannerState.ERROR
+            self._error_str = f"Async initialization failed: {e}"
+            self._completion_event.set()
+            raise RuntimeError(
+                f"BrowserUsePlan async initialization failed: {e}",
+            ) from e
 
-        self._start_internal_loop()
-
-    def _start_internal_loop(self):
+    async def _async_init_and_start_internal_loop(self):
         """
         Starts the internal async tool use loop that executes the plan's logic.
         This is called once during initialization.
@@ -112,7 +133,7 @@ class BrowserUsePlan(BasePlan):
             logger.info(
                 f"BrowserUsePlan {self._task_id}: LLM (internal loop) requesting clarification: '{question}'",
             )
-            await self.clarification_questions.put(question)
+            await self._clar_up_q_internal.put(question)
             answer = await self._clar_down_q_internal.get()
             logger.info(
                 f"BrowserUsePlan {self._task_id}: User (via plan) provided clarification: '{answer}'",
@@ -130,13 +151,14 @@ class BrowserUsePlan(BasePlan):
         )
 
         self._loop_handle = start_async_tool_use_loop(
-            client=self._client,
+            client=self._plan_client,
             message=self._task_description,
             tools=current_tools,
             parent_chat_context=self._parent_chat_context_on_pause,
             propagate_chat_context=True,
             interrupt_llm_with_interjections=True,
             log_steps=False,
+            max_steps=self.MAX_STEPS,
         )
         asyncio.create_task(self._await_completion())
 
@@ -192,13 +214,12 @@ class BrowserUsePlan(BasePlan):
         )
 
     @property
-    def clarification_questions(self) -> asyncio.Queue[str]:
-        """Queue for this plan to send clarification questions upwards."""
+    def clarification_up_q(self) -> Optional[asyncio.Queue[str]]:
         return self._clar_up_q_internal
 
-    async def answer_clarification(self, answer: str) -> None:
-        """Method for the caller of this plan to provide answers to clarifications."""
-        await self._clar_down_q_internal.put(answer)
+    @property
+    def clarification_down_q(self) -> Optional[asyncio.Queue[str]]:
+        return self._clar_down_q_internal
 
     def _is_valid_method(self, name: str) -> bool:
         """Checks if a control method is valid in the current plan state."""
@@ -223,151 +244,184 @@ class BrowserUsePlan(BasePlan):
     # --- Public Control Methods ---
     @functools.wraps(BasePlan.stop, updated=())
     async def stop(self) -> str:
-        if not self._is_valid_method("stop"):
-            raise RuntimeError(
-                f"Plan {self._task_id} cannot be stopped in state {self._state.name}.",
+        try:
+            if not self._is_valid_method("stop"):
+                raise RuntimeError(
+                    f"Plan {self._task_id} cannot be stopped in state {self._state.name}.",
+                )
+            logger.info(
+                f"BrowserUsePlan {self._task_id}: Stopping. Current state: {self._state.name}",
             )
-        logger.info(
-            f"BrowserUsePlan {self._task_id}: Stopping. Current state: {self._state.name}",
-        )
-        self._state = _BrowserPlannerState.STOPPED
-        if self._loop_handle:
-            self._loop_handle.stop()
-        else:
-            self._completion_event.set()
+            self._state = _BrowserPlannerState.STOPPED
+            if self._loop_handle:
+                self._loop_handle.stop()
+            else:
+                self._completion_event.set()
 
-        await self._completion_event.wait()
+            await self._completion_event.wait()
 
-        if self._result_str is None:
-            self._result_str = f"Plan {self._task_id} was stopped."
-        return self._result_str
+            if self._result_str is None:
+                self._result_str = f"Plan {self._task_id} was stopped."
+            return self._result_str
+        except Exception as e:
+            logger.error(
+                f"BrowserUsePlan {self._task_id}: Error during stop: {e}",
+                exc_info=True,
+            )
+            raise e
 
     @functools.wraps(BasePlan.pause, updated=())
     async def pause(self) -> str:
-        if not self._is_valid_method("pause"):
-            raise RuntimeError(
-                f"Plan {self._task_id} cannot be paused in state {self._state.name}.",
+        try:
+            if not self._is_valid_method("pause"):
+                raise RuntimeError(
+                    f"Plan {self._task_id} cannot be paused in state {self._state.name}.",
+                )
+            logger.info(
+                f"BrowserUsePlan {self._task_id}: Pausing. Current state: {self._state.name}",
             )
-        logger.info(
-            f"BrowserUsePlan {self._task_id}: Pausing. Current state: {self._state.name}",
-        )
-        self._state = _BrowserPlannerState.PAUSED
+            self._state = _BrowserPlannerState.PAUSED
 
-        if self._client and self._client.messages:
-            self._parent_chat_context_on_pause = copy.deepcopy(self._client.messages)
-        else:
-            self._parent_chat_context_on_pause = []
-        logger.info(
-            f"BrowserUsePlan {self._task_id}: Context saved on pause: {len(self._parent_chat_context_on_pause)} messages.",
-        )
-
-        if self._loop_handle:
-            self._loop_handle.stop()
-            await self._completion_event.wait()
-        else:
-            logger.warning(
-                f"BrowserUsePlan {self._task_id}: Pause called but no active loop_handle.",
+            if self._plan_client and self._plan_client.messages:
+                self._parent_chat_context_on_pause = copy.deepcopy(
+                    self._plan_client.messages,
+                )
+            else:
+                self._parent_chat_context_on_pause = []
+            logger.info(
+                f"BrowserUsePlan {self._task_id}: Context saved on pause: {len(self._parent_chat_context_on_pause)} messages.",
             )
-            self._completion_event.set()
 
-        return f"Plan {self._task_id} paused."
+            if self._loop_handle:
+                self._loop_handle.stop()
+                await self._completion_event.wait()
+            else:
+                logger.warning(
+                    f"BrowserUsePlan {self._task_id}: Pause called but no active loop_handle.",
+                )
+                self._completion_event.set()
+
+            return f"Plan {self._task_id} paused."
+        except Exception as e:
+            logger.error(
+                f"BrowserUsePlan {self._task_id}: Error during pause: {e}",
+                exc_info=True,
+            )
+            raise e
 
     @functools.wraps(BasePlan.resume, updated=())
     async def resume(self) -> str:
-        if not self._is_valid_method("resume"):
-            raise RuntimeError(
-                f"Plan {self._task_id} cannot be resumed in state {self._state.name}.",
-            )
-        logger.info(
-            f"BrowserUsePlan {self._task_id}: Resuming. Current state: {self._state.name}",
-        )
-
-        if not self._parent_chat_context_on_pause:
-            logger.warning(
-                f"BrowserUsePlan {self._task_id}: Resuming without a saved parent context.",
+        try:
+            if not self._is_valid_method("resume"):
+                raise RuntimeError(
+                    f"Plan {self._task_id} cannot be resumed in state {self._state.name}.",
+                )
+            logger.info(
+                f"BrowserUsePlan {self._task_id}: Resuming. Current state: {self._state.name}",
             )
 
-        self._client = AsyncUnify(
-            "o4-mini@openai",
-            cache=json.loads(os.environ.get("UNIFY_CACHE", "true")),
-            traced=json.loads(os.environ.get("UNIFY_TRACED", "true")),
-        )
-        if self._base_system_prompt:
-            self._client.set_system_message(self._base_system_prompt)
+            if not self._parent_chat_context_on_pause:
+                logger.warning(
+                    f"BrowserUsePlan {self._task_id}: Resuming without a saved parent context.",
+                )
 
-        if self._parent_chat_context_on_pause:
-            messages_to_load = self._parent_chat_context_on_pause
-            if (
-                self._base_system_prompt
-                and messages_to_load
-                and messages_to_load[0].get("role") == "system"
-            ):
-                messages_to_load = messages_to_load[1:]
-            if messages_to_load:
-                self._client.append_messages(messages_to_load)
+            if self._parent_chat_context_on_pause:
+                messages_to_load = self._parent_chat_context_on_pause
+                if messages_to_load and messages_to_load[0].get("role") == "system":
+                    messages_to_load = messages_to_load[1:]
+                if messages_to_load:
+                    self._plan_client.append_messages(messages_to_load)
 
-        self._task_description = "The task was paused. Please review the history and determine the next best action or tool call."
-        self._start_internal_loop()
+            self._task_description = "The task was paused. Please review the history and determine the next best action or tool call."
+            self._start_internal_loop()
 
-        return f"Plan {self._task_id} resuming."
+            return f"Plan {self._task_id} resuming."
+        except Exception as e:
+            logger.error(
+                f"BrowserUsePlan {self._task_id}: Error during resume: {e}",
+                exc_info=True,
+            )
+            raise e
 
     @functools.wraps(BasePlan.interject, updated=())
     async def interject(self, message: str) -> str:
-        if not self._is_valid_method("interject"):
-            raise RuntimeError(
-                f"Plan {self._task_id} cannot be interjected in state {self._state.name}.",
+        try:
+            if not self._is_valid_method("interject"):
+                raise RuntimeError(
+                    f"Plan {self._task_id} cannot be interjected in state {self._state.name}.",
+                )
+            if not self._loop_handle:
+                return "Error: No active loop to interject."
+            logger.info(
+                f"BrowserUsePlan {self._task_id}: Interjecting message: '{message}'",
             )
-        if not self._loop_handle:
-            return "Error: No active loop to interject."
-        logger.info(
-            f"BrowserUsePlan {self._task_id}: Interjecting message: '{message}'",
-        )
-        await self._loop_handle.interject(message)
-        return f"Interjection '{message}' sent to plan {self._task_id}."
+            await self._loop_handle.interject(message)
+            return f"Interjection '{message}' sent to plan {self._task_id}."
+        except Exception as e:
+            logger.error(
+                f"BrowserUsePlan {self._task_id}: Error during interject: {e}",
+                exc_info=True,
+            )
+            raise e
 
     @functools.wraps(BasePlan.ask, updated=())
     async def ask(self, question: str) -> str:
-        if not self._is_valid_method("ask"):
-            raise RuntimeError(
-                f"Cannot ask question for plan {self._task_id} in state {self._state.name}.",
-            )
-
-        logger.info(f"BrowserUsePlan {self._task_id}: Answering query: '{question}'")
-        current_context_to_share = []
-        if (
-            self._state == _BrowserPlannerState.RUNNING
-            and self._client
-            and self._client.messages
-        ):
-            current_context_to_share = copy.deepcopy(self._client.messages)
-        elif (
-            self._state == _BrowserPlannerState.PAUSED
-            and self._parent_chat_context_on_pause
-        ):
-            current_context_to_share = copy.deepcopy(self._parent_chat_context_on_pause)
-
-        if not current_context_to_share:
-            return "No context available to answer the question."
-
-        self._ask_client.reset_messages()
-        self._ask_client.set_system_message(self._ask_system_prompt)
-        self._ask_client.append_message(
-            {
-                "role": "system",
-                "content": f"Current task ({self._task_id}) chat history:\n{json.dumps(current_context_to_share, indent=2)}",
-            },
-        )
-        self._ask_client.append_message({"role": "user", "content": question})
-
         try:
-            response = await self._ask_client.generate()
-            return response.strip() if isinstance(response, str) else str(response)
+            if not self._is_valid_method("ask"):
+                raise RuntimeError(
+                    f"Cannot ask question for plan {self._task_id} in state {self._state.name}.",
+                )
+
+            logger.info(
+                f"BrowserUsePlan {self._task_id}: Answering query: '{question}'"
+            )
+            current_context_to_share = []
+            if (
+                self._state == _BrowserPlannerState.RUNNING
+                and self._plan_client
+                and self._plan_client.messages
+            ):
+                current_context_to_share = copy.deepcopy(self._plan_client.messages)
+            elif (
+                self._state == _BrowserPlannerState.PAUSED
+                and self._parent_chat_context_on_pause
+            ):
+                current_context_to_share = copy.deepcopy(
+                    self._parent_chat_context_on_pause
+                )
+
+            if not current_context_to_share:
+                return "No context available to answer the question."
+
+            self._ask_client.reset_messages()
+            self._ask_client.set_system_message(
+                "You are answering questions about an ongoing automated web Browse task. "
+                "The main task's chat history will be provided. Answer concisely based on this history.",
+            )
+            self._ask_client.append_messages(
+                [
+                    {
+                        "role": "system",
+                        "content": f"Current task ({self._task_id}) chat history:\n{json.dumps(current_context_to_share, indent=2)}",
+                    },
+                    {"role": "user", "content": question},
+                ],
+            )
+            try:
+                response = await self._ask_client.generate()
+                return response.strip() if isinstance(response, str) else str(response)
+            except Exception as e:
+                logger.error(
+                    f"BrowserUsePlan {self._task_id}: Error during ask: {e}",
+                    exc_info=True,
+                )
+                return f"Error answering question: {e}"
         except Exception as e:
             logger.error(
                 f"BrowserUsePlan {self._task_id}: Error during ask: {e}",
                 exc_info=True,
             )
-            return f"Error answering question: {e}"
+            raise e
 
     @property
     @functools.wraps(BasePlan.valid_tools, updated=())
@@ -378,24 +432,14 @@ class BrowserUsePlan(BasePlan):
                 tools[method_name] = getattr(self, method_name)
         return tools
 
-    def __dir__(self):
-        """Ensures that `dir(plan_handle)` includes conditionally available methods."""
-        default_attrs = set(super().__dir__())
-        exposed_methods = set(self.valid_tools.keys())
-        exposed_methods.add("clarification_questions")
-        exposed_methods.add("answer_clarification")
-        return sorted(list(default_attrs.union(exposed_methods)))
-
 
 class BrowserUsePlanner(BasePlanner[BrowserUsePlan]):
     def __init__(
         self,
-        base_system_prompt: str | None = "You are a helpful web-Browser assistant.",
         headless: bool = True,
         disable_browser_security: bool = False,
     ):
         super().__init__()
-        self._base_system_prompt = base_system_prompt
         self._browser = Browser(
             config=BrowserConfig(
                 disable_security=disable_browser_security,
@@ -411,6 +455,21 @@ class BrowserUsePlanner(BasePlanner[BrowserUsePlan]):
             traced=json.loads(os.environ.get("UNIFY_TRACED", "true")),
         )
         self._tools_cache: Optional[Dict[str, Callable[..., Awaitable[Any]]]] = None
+        try:
+            self._main_event_loop = asyncio.get_running_loop()
+            logger.info(
+                f"BrowserUsePlanner captured event loop: {self._main_event_loop}",
+            )
+        except RuntimeError as e:
+            logger.error(
+                "BrowserUsePlanner initialized outside of a running asyncio event loop. "
+                "This may cause issues if plans are created from non-async contexts or threads "
+                "without explicit loop management. Error: %s",
+                e,
+            )
+            raise RuntimeError(
+                "BrowserUsePlanner must be initialized within an active asyncio event loop.",
+            ) from e
 
     def _get_tools(self) -> Dict[str, Callable[..., Awaitable[Any]]]:
         """Prepares and caches the tools available for the BrowserUsePlan."""
@@ -531,30 +590,27 @@ class BrowserUsePlanner(BasePlanner[BrowserUsePlan]):
         Initiates a new plan for the given task description using browser_use tools.
         """
         logger.info(f"BrowserUsePlanner: Planning task: '{task_description}'")
-
-        plan_client = AsyncUnify(
-            "o4-mini@openai",
-            cache=json.loads(os.environ.get("UNIFY_CACHE", "true")),
-            traced=json.loads(os.environ.get("UNIFY_TRACED", "true")),
-        )
-
-        if self._base_system_prompt:
-            plan_client.set_system_message(self._base_system_prompt)
-
-        plan = BrowserUsePlan(
-            task_description=task_description,
-            initial_client=plan_client,
-            tools=self._get_tools(),
-            base_system_prompt=self._base_system_prompt,
-            clarification_up_q=clarification_up_q,
-            clarification_down_q=clarification_down_q,
-        )
+        try:
+            plan = BrowserUsePlan(
+                task_description=task_description,
+                tools=self._get_tools(),
+                clarification_up_q=clarification_up_q,
+                clarification_down_q=clarification_down_q,
+                main_event_loop=self._main_event_loop,
+            )
+        except Exception as e:
+            logger.error(f"BrowserUsePlanner: Error creating plan: {e}", exc_info=True)
+            raise e
         return plan
 
     async def close(self):
-        """Closes the browser and associated resources."""
-        logger.info("BrowserUsePlanner: Closing browser...")
-        if hasattr(self, "_browser_context") and self._browser_context:
-            await self._browser_context.close()
-        if hasattr(self, "_browser") and self._browser:
-            await self._browser.close()
+        try:
+            """Closes the browser and associated resources."""
+            logger.info("BrowserUsePlanner: Closing browser...")
+            if hasattr(self, "_browser_context") and self._browser_context:
+                await self._browser_context.close()
+            if hasattr(self, "_browser") and self._browser:
+                await self._browser.close()
+        except Exception as e:
+            logger.error(f"BrowserUsePlanner: Error during close: {e}", exc_info=True)
+            raise e

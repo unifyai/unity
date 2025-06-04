@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import functools
 import pytest
 
 from unity.contact_manager.simulated import (
@@ -33,6 +34,7 @@ async def test_interject_simulated_cm(monkeypatch):
     calls = {"interject": 0}
     orig = _SimulatedContactHandle.interject
 
+    @functools.wraps(orig)
     def wrapped(self, msg: str) -> str:  # type: ignore[override]
         calls["interject"] += 1
         return orig(self, msg)
@@ -157,3 +159,88 @@ def test_simulated_cm_docstrings_match_base():
         SimulatedContactManager.update.__doc__.strip()
         == BaseContactManager.update.__doc__.strip()
     ), ".retrieve doc-string was not copied correctly"
+
+
+# ────────────────────────────────────────────────────────────────────────────
+# 8.  Pause → Resume round-trip                                             #
+# ────────────────────────────────────────────────────────────────────────────
+@pytest.mark.asyncio
+@_handle_project
+async def test_pause_and_resume_simulated_cm(monkeypatch):
+    """
+    Verify that a `_SimulatedContactHandle` can be paused and later resumed
+    and that the *result()* coroutine blocks while the handle is paused.
+    """
+    call_counts = {"pause": 0, "resume": 0}
+
+    # --- monkey-patch pause ------------------------------------------------
+    original_pause = _SimulatedContactHandle.pause
+
+    @functools.wraps(original_pause)
+    def _patched_pause(self):  # type: ignore[override]
+        call_counts["pause"] += 1
+        return original_pause(self)
+
+    monkeypatch.setattr(
+        _SimulatedContactHandle,
+        "pause",
+        _patched_pause,
+        raising=True,
+    )
+
+    # --- monkey-patch resume ----------------------------------------------
+    original_resume = _SimulatedContactHandle.resume
+
+    @functools.wraps(original_resume)
+    def _patched_resume(self):  # type: ignore[override]
+        call_counts["resume"] += 1
+        return original_resume(self)
+
+    monkeypatch.setattr(
+        _SimulatedContactHandle,
+        "resume",
+        _patched_resume,
+        raising=True,
+    )
+
+    cm = SimulatedContactManager()
+    handle = cm.ask("Generate a short summary of all open opportunities.")
+
+    # valid_tools should start with *pause* (since the handle is running)
+    tools_initial = handle.valid_tools
+    assert "pause" in tools_initial, "pause should be offered before pausing"
+    assert "resume" not in tools_initial, "resume should NOT be offered before pausing"
+
+    # 1️⃣ Pause before awaiting the result
+    pause_msg = handle.pause()
+    assert "pause" in pause_msg.lower()
+
+    # After pausing, tools should flip: resume available, pause hidden
+    tools_after_pause = handle.valid_tools
+    assert "resume" in tools_after_pause, "resume should be offered while paused"
+    assert "pause" not in tools_after_pause, "pause should NOT be offered while paused"
+
+    # 2️⃣ Kick off result() – it should block while paused
+    res_task = asyncio.create_task(handle.result())
+    await asyncio.sleep(0.1)  # give the coroutine a moment to enter the wait-loop
+    assert not res_task.done(), "result() should block while the handle is paused"
+
+    # 3️⃣ Resume and ensure the task now completes
+    resume_msg = handle.resume()
+    assert "resume" in resume_msg.lower() or "running" in resume_msg.lower()
+
+    # After resuming, we should again expose pause and hide resume
+    tools_after_resume = handle.valid_tools
+    assert "pause" in tools_after_resume, "pause should be offered after resuming"
+    assert (
+        "resume" not in tools_after_resume
+    ), "resume should NOT be offered after resuming"
+
+    answer = await asyncio.wait_for(res_task, timeout=30)
+    assert isinstance(answer, str) and answer.strip(), "Answer should be non-empty"
+
+    # 4️⃣ Exactly one pause and one resume call must have been recorded
+    assert call_counts == {
+        "pause": 1,
+        "resume": 1,
+    }, "pause / resume should each be invoked exactly once"

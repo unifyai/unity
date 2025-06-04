@@ -9,7 +9,11 @@ import json
 from ..common.embed_utils import EMBED_MODEL, ensure_vector_column
 from ..helpers import _handle_exceptions
 from .types import ColumnType
-from ..common.llm_helpers import start_async_tool_use_loop, SteerableToolHandle
+from ..common.llm_helpers import (
+    start_async_tool_use_loop,
+    SteerableToolHandle,
+    methods_to_tool_dict,
+)
 from ..helpers import _handle_exceptions
 from .base import BaseKnowledgeManager
 
@@ -23,28 +27,34 @@ class KnowledgeManager(BaseKnowledgeManager):
         Responsible for *adding to*, *updating* and *searching through* all knowledge the assistant has stored in memory.
         """
 
-        refactor_tools = {
+        refactor_tools = methods_to_tool_dict(
             # Tables
-            self._create_table.__name__: self._create_table,
-            self._list_tables.__name__: self._list_tables,
-            self._rename_table.__name__: self._rename_table,
-            self._delete_table.__name__: self._delete_table,
+            self._create_table,
+            self._list_tables,
+            self._rename_table,
+            self._delete_table,
             # Columns
-            self._create_empty_column.__name__: self._create_empty_column,
-            self._create_derived_column.__name__: self._create_derived_column,
-            self._rename_column.__name__: self._rename_column,
-            self._delete_column.__name__: self._delete_column,
-        }
+            self._create_empty_column,
+            self._create_derived_column,
+            self._rename_column,
+            self._delete_column,
+            include_class_name=False,
+        )
 
         self._store_tools = {
             **refactor_tools,
-            self._add_data.__name__: self._add_data,
+            **methods_to_tool_dict(
+                self._add_data,
+                include_class_name=False,
+            ),
         }
 
         self._retrieve_tools = {
             **refactor_tools,
-            self._search.__name__: self._search,
-            self._nearest.__name__: self._nearest,
+            **methods_to_tool_dict(
+                self._search,
+                self._nearest,
+            ),
         }
 
         ctxs = unify.get_active_context()

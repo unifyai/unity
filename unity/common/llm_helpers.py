@@ -41,6 +41,20 @@ _MANAGEMENT_METHOD_NAMES: set[str] = {
 }
 
 
+def methods_to_tool_dict(
+    *methods: Tuple[Callable],
+    include_class_name: bool = True,
+) -> Dict[str, Callable]:
+    ret = dict()
+    for m in methods:
+        if include_class_name:
+            key = f"{m.__self__.__class__.__name__}_{m.__name__}".replace("__", "_")
+        else:
+            key = m.__name__.lstrip("_")
+        ret[key] = m
+    return ret
+
+
 def _discover_custom_public_methods(handle) -> dict[str, Callable]:
     """
     Return a mapping ``name → bound_method`` of *public* callables on *handle*:
@@ -250,7 +264,11 @@ def annotation_to_schema(ann: Any) -> Dict[str, Any]:
     return {"type": "string"}
 
 
-def method_to_schema(bound_method):
+def method_to_schema(
+    bound_method,
+    tool_name: Optional[str] = None,
+    include_class_name: bool = True,
+):
     """
     Convert **bound_method** into an OpenAI-compatible *function*-tool schema.
     """
@@ -294,7 +312,11 @@ def method_to_schema(bound_method):
         prefix = f"{parts[-2]}_" if len(parts) > 1 else ""
     else:
         prefix = ""
-    tool_name = f"{prefix}{bound_method.__name__}"
+    if tool_name is None:
+        if include_class_name:
+            tool_name = f"{prefix}{bound_method.__name__}".replace("__", "_")
+        else:
+            tool_name = bound_method.__name__.lstrip("_")
 
     return {
         "type": "function",
@@ -368,6 +390,7 @@ async def _async_tool_use_loop_inner(
     max_steps: Optional[int] = None,
     timeout: Optional[int] = None,
     raise_on_limit: bool = False,
+    include_class_in_dynamic_tool_names: bool = False,
 ) -> str:
     r"""
     Orchestrate an *interactive* "function-calling" dialogue between an LLM
@@ -681,7 +704,7 @@ async def _async_tool_use_loop_inner(
         client.append_messages([sys_msg])
 
     # ── initial prompt ───────────────────────────────────────────────────────
-    base_tools_schema = [method_to_schema(v) for v in tools.values()]
+    base_tools_schema = [method_to_schema(v, k) for k, v in tools.items()]
     msg = {"role": "user", "content": message}
     await _to_event_bus(msg)
     client.append_messages([msg])
@@ -969,7 +992,7 @@ async def _async_tool_use_loop_inner(
                 fn.__doc__ = existing.strip() if existing else doc
                 fn.__name__ = func_name[:64]
                 fn.__qualname__ = func_name[:64]
-                dynamic_tools[key] = fn
+                dynamic_tools[key.lstrip("_")] = fn
 
             for _task in list(pending):
                 info = task_info[_task]
@@ -1026,8 +1049,8 @@ async def _async_tool_use_loop_inner(
                         return {"status": "continue", "call_id": _call_id}
 
                     _reg_tool(
-                        key=f"continue_{_call_id}",
-                        func_name=f"_continue_{_fn_name}_{_call_id}",
+                        key=f"continue_{_fn_name}_{_call_id}",
+                        func_name=f"continue_{_fn_name}_{_call_id}",
                         doc=_continue_doc,
                         fn=_continue,
                     )
@@ -1043,8 +1066,8 @@ async def _async_tool_use_loop_inner(
                     return {"status": "stopped", "call_id": _call_id}
 
                 _reg_tool(
-                    key=f"stop_{_call_id}",
-                    func_name=f"_stop_{_fn_name}_{_call_id}",
+                    key=f"stop_{_fn_name}_{_call_id}",
+                    func_name=f"stop_{_fn_name}_{_call_id}",
                     doc=_stop_doc,
                     fn=_stop,
                 )
@@ -1079,8 +1102,8 @@ async def _async_tool_use_loop_inner(
                             }
 
                     _reg_tool(
-                        key=f"interject_{_call_id}",
-                        func_name=f"_interject_{_fn_name}_{_call_id}",
+                        key=f"interject_{_fn_name}_{_call_id}",
+                        func_name=f"interject_{_fn_name}_{_call_id}",
                         doc=_interject_doc,
                         fn=_interject,
                     )
@@ -1100,8 +1123,8 @@ async def _async_tool_use_loop_inner(
                         }
 
                     _reg_tool(
-                        key=f"clarify_{_call_id}",
-                        func_name=f"_clarify_{_fn_name}_{_call_id}",
+                        key=f"clarify_{_fn_name}_{_call_id}",
+                        func_name=f"clarify_{_fn_name}_{_call_id}",
                         doc=_clarify_doc,
                         fn=_clarify,
                     )
@@ -1121,8 +1144,8 @@ async def _async_tool_use_loop_inner(
                         return {"status": "paused", "call_id": _call_id}
 
                     _reg_tool(
-                        key=f"pause_{_call_id}",
-                        func_name=f"_pause_{_fn_name}_{_call_id}",
+                        key=f"pause_{_fn_name}_{_call_id}",
+                        func_name=f"pause_{_fn_name}_{_call_id}",
                         doc=_pause_doc,
                         fn=_pause,
                     )
@@ -1141,8 +1164,8 @@ async def _async_tool_use_loop_inner(
                         return {"status": "resumed", "call_id": _call_id}
 
                     _reg_tool(
-                        key=f"resume_{_call_id}",
-                        func_name=f"_resume_{_fn_name}_{_call_id}",
+                        key=f"resume_{_fn_name}_{_call_id}",
+                        func_name=f"resume_{_fn_name}_{_call_id}",
                         doc=_resume_doc,
                         fn=_resume,
                     )
@@ -1163,7 +1186,7 @@ async def _async_tool_use_loop_inner(
 
                     for meth_name, bound in public_methods.items():
                         # use the same name we’re about to give fn.__name__
-                        func_name = f"_{meth_name}_{_fn_name}_{_call_id}"
+                        func_name = f"{meth_name}_{_fn_name}_{_call_id}"
                         helper_key = func_name
 
                         # Skip if we already generated one this turn (possible when
@@ -1229,7 +1252,11 @@ async def _async_tool_use_loop_inner(
 
             # Merge helpers into the visible toolkit for the upcoming LLM step
             tmp_tools = base_tools_schema + [
-                method_to_schema(fn) for fn in dynamic_tools.values()
+                method_to_schema(
+                    fn,
+                    include_class_name=include_class_in_dynamic_tool_names,
+                )
+                for fn in dynamic_tools.values()
             ]
 
             # ── D.  Ask the LLM what to do next  ────────────────────────────
@@ -1383,7 +1410,7 @@ async def _async_tool_use_loop_inner(
                     # ── Special-case dynamic helpers ──────────────────────
                     # • continue_* → acknowledge, no scheduling
                     # • cancel_*   → cancel underlying task & purge metadata
-                    if name.startswith("_continue"):
+                    if name.startswith("continue_"):
                         call_id = "_".join(name.split("_")[-2:])
 
                         tgt_task = next(
@@ -1401,7 +1428,7 @@ async def _async_tool_use_loop_inner(
                             if tgt_task
                             else "{}"
                         )
-                        pretty_name = f"_continue {orig_fn}({arg_json})"
+                        pretty_name = f"continue {orig_fn}({arg_json})"
 
                         if tgt_task:  # still running → insert generated placeholder now
                             info = task_info[tgt_task]
@@ -1447,7 +1474,7 @@ async def _async_tool_use_loop_inner(
                                 )
                         continue  # completed handling of this _continue
 
-                    if name.startswith("_stop") and not name.startswith(
+                    if name.startswith("stop_") and not name.startswith(
                         "_stop_tasks",
                     ):
                         call_id = "_".join(name.split("_")[-2:])
@@ -1474,14 +1501,14 @@ async def _async_tool_use_loop_inner(
                             if task_to_cancel
                             else "{}"
                         )
-                        pretty_name = f"_stop   {orig_fn}({arg_json})"
+                        pretty_name = f"stop   {orig_fn}({arg_json})"
 
                         # ── gracefully shut down any *nested* async-tool loop first ──────
                         if task_to_cancel:
                             nested_handle = task_info[task_to_cancel].get("handle")
                             if nested_handle is not None:
                                 # public API call – propagates cancellation downwards
-                                nested_handle.stop()
+                                await _maybe_await(nested_handle.stop())
 
                         # ── then cancel the waiter coroutine itself ───────────────────────────
                         if task_to_cancel and not task_to_cancel.done():
@@ -1505,7 +1532,7 @@ async def _async_tool_use_loop_inner(
                         continue  # nothing else to schedule
 
                     # ── _pause helper ────────────────────────────────────────────────
-                    if name.startswith("_pause") and not name.startswith(
+                    if name.startswith("pause_") and not name.startswith(
                         "_pause_tasks",
                     ):
                         call_id = "_".join(name.split("_")[-2:])
@@ -1523,7 +1550,7 @@ async def _async_tool_use_loop_inner(
                             if tgt_task
                             else "{}"
                         )
-                        pretty_name = f"_pause {orig_fn}({arg_json})"
+                        pretty_name = f"pause {orig_fn}({arg_json})"
 
                         if tgt_task:
                             h = task_info[tgt_task].get("handle")
@@ -1545,7 +1572,7 @@ async def _async_tool_use_loop_inner(
                         continue  # helper handled, move on
 
                     # ── _resume helper ───────────────────────────────────────────────
-                    if name.startswith("_resume") and not name.startswith(
+                    if name.startswith("resume_") and not name.startswith(
                         "_resume_tasks",
                     ):
                         call_id = "_".join(name.split("_")[-2:])
@@ -1563,7 +1590,7 @@ async def _async_tool_use_loop_inner(
                             if tgt_task
                             else "{}"
                         )
-                        pretty_name = f"_resume {orig_fn}({arg_json})"
+                        pretty_name = f"resume {orig_fn}({arg_json})"
 
                         if tgt_task:
                             h = task_info[tgt_task].get("handle")
@@ -1584,7 +1611,7 @@ async def _async_tool_use_loop_inner(
                             LOGGER.info(f"▶️  {pretty_name} executed – task resumed")
                         continue  # helper handled
 
-                    if name.startswith("_clarify_"):
+                    if name.startswith("clarify_"):
                         call_id = "_".join(name.split("_")[-2:])
                         ans = args["answer"]
 
@@ -1621,7 +1648,7 @@ async def _async_tool_use_loop_inner(
                             task_info[tgt_task]["clarify_placeholder"] = tool_reply_msg
                         continue
 
-                    if name.startswith("_interject"):
+                    if name.startswith("interject_"):
                         # helper signature: {"content": "..."}
                         try:
                             payload = json.loads(call["function"]["arguments"])
@@ -1642,7 +1669,7 @@ async def _async_tool_use_loop_inner(
                         )
 
                         pretty_name = (
-                            f"_interject {task_info[tgt_task]['name']}({new_text})"
+                            f"interject {task_info[tgt_task]['name']}({new_text})"
                             if tgt_task
                             else name
                         )
@@ -1984,6 +2011,7 @@ def start_async_tool_use_loop(
     max_steps: Optional[int] = None,
     timeout: Optional[int] = None,
     raise_on_limit: bool = False,
+    include_class_in_dynamic_tool_names: bool = False,
 ) -> AsyncToolUseLoopHandle:
     """
     Kick off `_async_tool_use_loop_inner` in its own task and give the caller
@@ -2013,6 +2041,7 @@ def start_async_tool_use_loop(
             max_steps=max_steps,
             timeout=timeout,
             raise_on_limit=raise_on_limit,
+            include_class_in_dynamic_tool_names=include_class_in_dynamic_tool_names,
         ),
     )
 

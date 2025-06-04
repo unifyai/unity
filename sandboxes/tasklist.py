@@ -179,14 +179,14 @@ def _dispatch(ts: TaskScheduler, raw: str, *, show_steps: bool):
     if resp.require_update:
         handle = ts.update(
             text=resp.fixed_text,
-            return_reasoning_steps=show_steps,
+            _return_reasoning_steps=show_steps,
             log_tool_steps=show_steps,
         )
         return "update", handle
 
     handle = ts.ask(
         text=resp.fixed_text,
-        return_reasoning_steps=show_steps,
+        _return_reasoning_steps=show_steps,
         log_tool_steps=show_steps,
     )
     return "ask", handle

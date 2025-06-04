@@ -69,7 +69,7 @@ async def test_retrieve_simple_fact():
 
     handle = km.retrieve(
         "When was Adrian born?",
-        return_reasoning_steps=True,
+        _return_reasoning_steps=True,
     )
     answer, reasoning = await handle.result()
     assert _contains(answer, "1994"), assertion_failed(
@@ -98,7 +98,7 @@ async def test_round_trip_simple_fact():
 
     handle = km.retrieve(
         "When was Adrian born?",
-        return_reasoning_steps=True,
+        _return_reasoning_steps=True,
     )
     answer, reasoning = await handle.result()
     assert _contains(answer, "1994"), assertion_failed(
@@ -132,7 +132,7 @@ async def test_schema_expands_and_new_field_retrievable():
 
     handle = km.retrieve(
         "How old is Bob?",
-        return_reasoning_steps=True,
+        _return_reasoning_steps=True,
     )
     answer, reasoning = await handle.result()
     assert _contains(answer, "35"), assertion_failed(
@@ -150,7 +150,7 @@ async def test_schema_expands_and_new_field_retrievable():
 
     handle = km.retrieve(
         "How tall is Bob?",
-        return_reasoning_steps=True,
+        _return_reasoning_steps=True,
     )
     answer, reasoning = await handle.result()
     assert _contains(answer, "180"), assertion_failed(
@@ -163,7 +163,7 @@ async def test_schema_expands_and_new_field_retrievable():
 
     handle = km.retrieve(
         "What is Bob's favourite colour?",
-        return_reasoning_steps=True,
+        _return_reasoning_steps=True,
     )
     answer, reasoning = await handle.result()
     assert _contains(answer, "green"), assertion_failed(
@@ -176,7 +176,7 @@ async def test_schema_expands_and_new_field_retrievable():
 
     handle = km.retrieve(
         "How old is Bob?",
-        return_reasoning_steps=True,
+        _return_reasoning_steps=True,
     )
     answer, reasoning = await handle.result()
     assert _contains(answer, "35"), assertion_failed(
@@ -218,7 +218,7 @@ async def test_multiple_tables_and_join_like_query():
 
     handle = km.retrieve(
         "How much did Daniel pay for his purchase?",
-        return_reasoning_steps=True,
+        _return_reasoning_steps=True,
     )
     answer, reasoning = await handle.result()
     assert _contains(answer, "999"), assertion_failed(
@@ -259,7 +259,7 @@ async def test_incremental_updates_and_refactor():
 
     handle = km.retrieve(
         "What are the names of Carol's pets?",
-        return_reasoning_steps=True,
+        _return_reasoning_steps=True,
     )
     answer, reasoning = await handle.result()
     assert _contains(answer, "Fido", "Luna"), assertion_failed(
@@ -299,7 +299,7 @@ async def test_numeric_reasoning_after_multiple_points():
 
     handle = km.retrieve(
         "Which points lie in the first quadrant but have y less than 5?",
-        return_reasoning_steps=True,
+        _return_reasoning_steps=True,
     )
     answer, reasoning = await handle.result()
     assert "P" in answer or "3, 4" in answer, assertion_failed(
