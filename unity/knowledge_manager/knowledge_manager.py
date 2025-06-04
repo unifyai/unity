@@ -238,7 +238,7 @@ class KnowledgeManager(BaseKnowledgeManager):
     def _list_tables(
         self,
         *,
-        include_columns: bool = False,
+        include_columns: bool = True,
     ) -> Union[List[str], List[Dict[str, ColumnType]]]:
         """
         List the tables which are being used to store all knowledge.
