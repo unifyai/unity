@@ -206,7 +206,16 @@ class ScenarioBuilder:
                         a if i % 2 else b,
                         b if i % 2 else a,
                         start + timedelta(minutes=ex_off * 3 + i),
-                        f"Filler {ex_id}-{i} {mtype} random text.",
+                        random.choice(
+                            [
+                                "I didn't hear you, could you repeat?",
+                                "The weather is lovely today.",
+                                "Just to let you know, I'll need to leave soon.",
+                                "The football game last night was sooo good, can't believe you missed it.",
+                                "Are you even listening to what I'm saying?",
+                                "We're really talking through eachother here aren't we?",
+                            ],
+                        ),
                     ),
                 )
             await self._log(ex_id, mtype, batch)
