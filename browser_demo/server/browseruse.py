@@ -35,58 +35,76 @@ if not cap.isOpened():
     print("Error: Cannot open video file.")
     exit()
 
-fps = cap.get(cv2.CAP_PROP_FPS) or 30.0
 width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
 height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
-pipeline = Gst.parse_launch(
-    f"appsrc name=src is-live=true block=true format=TIME "
-    f"caps=video/x-raw,format=I420,width={width},height={height},framerate={int(fps)}/1 "
-    f"! videoconvert ! pipewiresink name=sink",
-)
+fps = cap.get(cv2.CAP_PROP_FPS) or 30.0
 
-sink = pipeline.get_by_name("sink")
-props = Gst.Structure.new_empty("pipewire.properties")
-props.set_value("media.name", "TestCamera")
-props.set_value("node.name", "TestCamera")
-props.set_value("node.description", "TestCamera")
-props.set_value("media.class", "Video/Source")
-props.set_value("node.virtual", True)
-props.set_value("stream.is-live", True)
-sink.set_property("stream-properties", props)
-appsrc = pipeline.get_by_name("src")
+# YUYV is commonly supported by Google Meet
+fourcc = cv2.VideoWriter_fourcc(*"YUYV")
+out = cv2.VideoWriter("/dev/video10", fourcc, fps, (width, height))
 
+if not out.isOpened():
+    print("Error: Cannot open virtual camera device.")
+    exit()
 
-def push_frame(frame):
-    data = frame.tobytes()
-    buf = Gst.Buffer.new_allocate(None, len(data), None)
-    buf.fill(0, data)
-    buf.duration = Gst.util_uint64_scale_int(1, Gst.SECOND, int(fps))
+# pipeline = Gst.parse_launch(
+#     f"appsrc name=src is-live=true block=true format=TIME "
+#     f"caps=video/x-raw,format=I420,width={width},height={height},framerate={int(fps)}/1 "
+#     f"! videoconvert ! pipewiresink name=sink",
+# )
 
-    timestamp = getattr(push_frame, "timestamp", 0)
-    buf.pts = buf.dts = buf.offset = timestamp
-    push_frame.timestamp = timestamp + buf.duration
-
-    retval = appsrc.emit("push-buffer", buf)
-    if retval != Gst.FlowReturn.OK:
-        print("Error pushing buffer:", retval)
-        return False
-    return True
+# sink = pipeline.get_by_name("sink")
+# props = Gst.Structure.new_empty("pipewire.properties")
+# props.set_value("media.name", "TestCamera")
+# props.set_value("node.name", "TestCamera")
+# props.set_value("node.description", "TestCamera")
+# props.set_value("media.class", "Video/Source")
+# props.set_value("node.virtual", True)
+# props.set_value("stream.is-live", True)
+# sink.set_property("stream-properties", props)
+# appsrc = pipeline.get_by_name("src")
 
 
-pipeline.set_state(Gst.State.PLAYING)
+# def push_frame(frame):
+#     data = frame.tobytes()
+#     buf = Gst.Buffer.new_allocate(None, len(data), None)
+#     buf.fill(0, data)
+#     buf.duration = Gst.util_uint64_scale_int(1, Gst.SECOND, int(fps))
+
+#     timestamp = getattr(push_frame, "timestamp", 0)
+#     buf.pts = buf.dts = buf.offset = timestamp
+#     push_frame.timestamp = timestamp + buf.duration
+
+#     retval = appsrc.emit("push-buffer", buf)
+#     if retval != Gst.FlowReturn.OK:
+#         print("Error pushing buffer:", retval)
+#         return False
+#     return True
+
+
+# pipeline.set_state(Gst.State.PLAYING)
 
 
 def start_camera_loop():
     def loop():
-        print("Running...")
+        # print("Running...")
+        # while True:
+        #     ret, frame = cap.read()
+        #     if not ret:
+        #         cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
+        #         continue
+        #     rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2YUV_I420)
+        #     if not push_frame(rgb):
+        #         break
+        #     time.sleep(1.0 / fps)
+        print("Streaming video to /dev/video10...")
         while True:
             ret, frame = cap.read()
             if not ret:
                 cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
                 continue
-            rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2YUV_I420)
-            if not push_frame(rgb):
-                break
+
+            out.write(frame)
             time.sleep(1.0 / fps)
 
     threading.Thread(target=loop, daemon=True).start()
@@ -109,7 +127,7 @@ async def main():
             "--window-position=0,0",
             "--window-size=1920,1080",
             "--start-fullscreen",
-            # "--use-fake-ui-for-media-stream",
+            "--use-fake-ui-for-media-stream",
             "--enable-features=WebRtcPipeWireCamera",
             "--enable-webrtc-pipewire-camera",
         ],
@@ -154,7 +172,8 @@ async def main():
 
     await agent.close()
     await browser.close()
-    pipeline.set_state(Gst.State.NULL)
+    # pipeline.set_state(Gst.State.NULL)
+    out.release()
     cap.release()
 
 

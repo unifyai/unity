@@ -21,3 +21,5 @@ Note: add `-d` for detached mode
 3. Join the Google Meet URL in the container browser. Just create a name and no login required.
 
 4. Once the user from the container browser is admitted into the Meet, input `play audio` in the interactive docker container CLI. You should be hearing the custom audio.
+
+`docker run -it -p 6080:6080 -v $(pwd):/workspace --device=/dev/video10 --group-add video --rm bu_test bash`
