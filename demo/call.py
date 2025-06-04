@@ -29,7 +29,7 @@ from pydantic_core import from_json
 load_dotenv()
 
 from events import *
-from demo.actions import AssistantOutput
+from actions import AssistantOutput
 
 events_queue = asyncio.Queue()
 chunk_queue = asyncio.Queue()
