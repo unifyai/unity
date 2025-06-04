@@ -15,7 +15,7 @@ Please extract the most important information across all of the exchanges, witho
 If you're unsure about anything, it's always best to clarify this via the `request_clarification` tool if provided. Do **not** hallucinate any details.
 """
 
-ANSWER = f"""
+ASK = f"""
 Your task is to answer the user question, and you should continue using the tools available until you are satisfied that you either have the correct answer, or you are confident it cannot be answered correctly. Firstly, you can summarize any exchange or group of exchanges, creating an overall explanatory paragraphs of said exchange(s). This tool is straightforward to use. You can also search contacts, messages and summaries (which you may or may not have created yourself). All three search tools include pagination with `offset` and `limit` to control the number of returned items and their offset in the list, and all include `filter` which accepts arbitrary Python logical expressions which evaluate to `bool`, and can include any of the relevant `Message` or `Summary` fields in the expressions (depending on the tool).
 
 As a recap, the schemas for contacts, messages and summaries are as follows:
@@ -32,12 +32,17 @@ Available tools:
 • {TranscriptManager._search_messages.__name__.lstrip("_")}(filter?, offset=0, limit=100) → List[Message] – flexible boolean filtering.
 • {TranscriptManager._search_summaries.__name__.lstrip("_")}(filter?, offset=0, limit=100) → List[MessageExchangeSummary] – flexible boolean filtering.
 • {TranscriptManager._nearest_messages.__name__.lstrip("_")}(text: str, k: int = 10) → List[Message] – returns the top-k messages semantically similar to the given text.
+• request_clarification(question: str) → str - Query the user for more information about their question, and wait for the reply. Especially useful if their question feels incomplete, and more clarifying details would be useful. Please use this tool liberally if you're unsure, it's always better to ask than to do the wrong thing.
 
-Example usage:
+Example usage, suggest first tool to invoke:
+
 # Find top-3 messages semantically similar to "banking and budgeting"
 nearest_messages(text="banking and budgeting", k=3)
 
-Some example filter expressions (`filter: str`) for the tools are as follows.
+# What was the most recent conversation?
+request_clarification(question="what conversation are you referring to, could you be more specific?")
+
+Some example filter expressions (`filter: str`) for the "search" tools are as follows.
 
 {ContactManager._search_contacts.__name__.lstrip("_")}:
 

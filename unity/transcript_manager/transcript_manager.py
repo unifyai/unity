@@ -73,7 +73,7 @@ class TranscriptManager(BaseTranscriptManager):
         clarification_up_q: asyncio.Queue[str] | None = None,
         clarification_down_q: asyncio.Queue[str] | None = None,
     ) -> SteerableToolHandle:
-        from unity.transcript_manager.sys_msgs import ANSWER
+        from unity.transcript_manager.sys_msgs import ASK
 
         # ── 0.  Build LLM client ───────────────────────────────────────────
         client = unify.AsyncUnify(
@@ -81,7 +81,7 @@ class TranscriptManager(BaseTranscriptManager):
             cache=json.loads(os.environ.get("UNIFY_CACHE", "true")),
             traced=json.loads(os.environ.get("UNIFY_TRACED", "true")),
         )
-        client.set_system_message(ANSWER)
+        client.set_system_message(ASK)
 
         # ── 1.  Expose tools + a *dynamic* request_clarification helper ──
         tools = dict(self._tools)
@@ -90,9 +90,7 @@ class TranscriptManager(BaseTranscriptManager):
 
             async def request_clarification(question: str) -> str:
                 """
-                Query the user for more information about their question, and wait for the reply.
-                Especially useful if their question feels incomplete, and more clarifying details would be useful.
-                Please use this tool liberally if you're unsure, it's always better to ask than to do the wrong thing.
+                Query the user for more information about their question, and wait for the reply. Especially useful if their question feels incomplete, and more clarifying details would be useful. Please use this tool liberally if you're unsure, it's always better to ask than to do the wrong thing.
                 """
                 if clarification_up_q is None or clarification_down_q is None:
                     raise RuntimeError(
