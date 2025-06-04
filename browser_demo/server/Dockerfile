@@ -4,7 +4,7 @@ FROM python:3.11-slim
 # Set environment variables
 ENV DEBIAN_FRONTEND=noninteractive
 ENV DISPLAY=:99
-ENV OPENAI_API_KEY="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"
+
 
 # Install system dependencies
 RUN apt-get update && apt-get install -y \
