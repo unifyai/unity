@@ -388,7 +388,7 @@ async def _async_tool_use_loop_inner(
     parent_chat_context: Optional[list[dict]] = None,
     log_steps: bool = False,
     max_steps: Optional[int] = 20,
-    timeout: Optional[int] = 120,
+    timeout: Optional[int] = 60,
     raise_on_limit: bool = False,
     include_class_in_dynamic_tool_names: bool = False,
 ) -> str:
@@ -495,7 +495,19 @@ async def _async_tool_use_loop_inner(
         been fed back into the conversation.
     """
     # ── runtime guards ────────────────────────────────────────────────────
-    start_ts = time.perf_counter()
+    # rolling timeout ----------------------------------------------------
+    last_activity_ts: float = time.perf_counter()  # reset every time
+    last_msg_count: int = len(client.messages)  # we add a message
+
+    def _reset_timeout_timer() -> None:
+        """Refresh the rolling timeout."""
+        nonlocal last_activity_ts, last_msg_count
+        last_activity_ts = time.perf_counter()
+        last_msg_count = len(client.messages)
+
+    def _append_msgs(msgs: list[dict]) -> None:
+        client.append_messages(msgs)
+        _reset_timeout_timer()
 
     assert (event_bus and event_type) or (
         not event_bus and not event_type
@@ -523,7 +535,7 @@ async def _async_tool_use_loop_inner(
             id(parent_msg),
             {"original_tool_calls": [], "results_count": 0},
         )
-        client.append_messages([tool_msg])
+        _append_msgs([tool_msg])
         insert_pos = client.messages.index(parent_msg) + 1 + meta["results_count"]
         client.messages.insert(insert_pos, client.messages.pop())
         meta["results_count"] += 1
@@ -701,13 +713,13 @@ async def _async_tool_use_loop_inner(
                 "Resolve the *next* user request in light of this."
             ),
         }
-        client.append_messages([sys_msg])
+        _append_msgs([sys_msg])
 
     # ── initial prompt ───────────────────────────────────────────────────────
     base_tools_schema = [method_to_schema(v, k) for k, v in tools.items()]
     msg = {"role": "user", "content": message}
     await _to_event_bus(msg)
-    client.append_messages([msg])
+    _append_msgs([msg])
 
     consecutive_failures = 0
     pending: Set[asyncio.Task] = set()
@@ -744,7 +756,7 @@ async def _async_tool_use_loop_inner(
             "role": "assistant",
             "content": f"🔚 Terminating early: {reason}",
         }
-        client.append_messages([notice])
+        _append_msgs([notice])
         await _to_event_bus(notice)
         if log_steps:
             LOGGER.info(f"⏹️  Early exit – {reason}")
@@ -806,7 +818,7 @@ async def _async_tool_use_loop_inner(
                         continue  # top-of-loop, still paused
 
             # 0-α. **Global timeout**
-            if timeout is not None and time.perf_counter() - start_ts > timeout:
+            if timeout is not None and time.perf_counter() - last_activity_ts > timeout:
                 if raise_on_limit:
                     raise asyncio.TimeoutError(
                         f"Loop exceeded {timeout}s wall-clock limit",
@@ -841,7 +853,7 @@ async def _async_tool_use_loop_inner(
                 llm_turn_required = True
                 msg = {"role": "user", "content": extra}
                 await _to_event_bus(msg)
-                client.append_messages([msg])
+                _append_msgs([msg])
 
             # ── A.  Wait for tool completion OR cancellation  ───────────────
             # If a child just asked for clarification we also want to give
@@ -871,7 +883,7 @@ async def _async_tool_use_loop_inner(
                 # ── honour global *timeout* while we wait for tools ───────────
                 wait_timeout: Optional[float] = None
                 if timeout is not None:
-                    wait_timeout = timeout - (time.perf_counter() - start_ts)
+                    wait_timeout = timeout - (time.perf_counter() - last_activity_ts)
                     # already exceeded?
                     if wait_timeout <= 0:
                         if raise_on_limit:
@@ -1358,7 +1370,7 @@ async def _async_tool_use_loop_inner(
             msg = client.messages[-1]
 
             # ── timeout guard (post-LLM) ───────────────────────────────
-            if timeout is not None and time.perf_counter() - start_ts > timeout:
+            if timeout is not None and time.perf_counter() - last_activity_ts > timeout:
                 if raise_on_limit:
                     raise asyncio.TimeoutError(
                         f"Loop exceeded {timeout}s wall-clock limit",
@@ -1866,7 +1878,7 @@ async def _async_tool_use_loop_inner(
                 continue
 
             # ── timeout guard (final turn) ──────────────────────────────────
-            if timeout is not None and time.perf_counter() - start_ts > timeout:
+            if timeout is not None and time.perf_counter() - last_activity_ts > timeout:
                 if raise_on_limit:
                     raise asyncio.TimeoutError(
                         f"Loop exceeded {timeout}s wall-clock limit",
@@ -2009,7 +2021,7 @@ def start_async_tool_use_loop(
     parent_chat_context: Optional[list[dict]] = None,
     log_steps: bool = False,
     max_steps: Optional[int] = 20,
-    timeout: Optional[int] = 120,
+    timeout: Optional[int] = 60,
     raise_on_limit: bool = False,
     include_class_in_dynamic_tool_names: bool = False,
 ) -> AsyncToolUseLoopHandle:
