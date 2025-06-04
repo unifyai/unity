@@ -279,6 +279,7 @@ async def entrypoint(ctx: agents.JobContext):
 
 if __name__ == "__main__":
     # Extract phone numbers before passing to agents.cli
+    print(sys.argv)
     from_number = ""
     assistant_number = ""
     to_number = ""
@@ -286,6 +287,7 @@ if __name__ == "__main__":
         # Remove phone numbers from sys.argv to prevent them from being passed to agents.cli
         from_number = sys.argv[2]
         assistant_number = sys.argv[3]
+        outbound = sys.argv[4]
         sys.argv = sys.argv[:2]  # Keep only script name and "dev" command
 
     # Store phone numbers in environment variables to be accessed by entrypoint
@@ -296,6 +298,6 @@ if __name__ == "__main__":
     agents.cli.run_app(
         agents.WorkerOptions(
             entrypoint_fnc=entrypoint,
-            agent_name=agent_name,
+            agent_name=agent_name if not outbound else "",
         ),
     )
