@@ -283,7 +283,8 @@ if __name__ == "__main__":
     from_number = ""
     assistant_number = ""
     to_number = ""
-    if len(sys.argv) > 3:
+    outbound = ""
+    if len(sys.argv) > 4:
         # Remove phone numbers from sys.argv to prevent them from being passed to agents.cli
         from_number = sys.argv[2]
         assistant_number = sys.argv[3]
