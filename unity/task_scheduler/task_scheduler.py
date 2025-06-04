@@ -81,6 +81,7 @@ class TaskScheduler(BaseTaskScheduler):
         # state at any moment.  This will be maintained by a forthcoming
         # tool; until then it may legitimately stay as ``None``.
         self._active_task: Optional[int] = None
+        self._primed_task: Optional[int] = None
 
         # Internal monotonically-increasing task-id counter.  We keep it local
         # to the manager to avoid an expensive scan across *all* logs every
@@ -354,8 +355,15 @@ class TaskScheduler(BaseTaskScheduler):
         if status == Status.active:
             raise ValueError(
                 "Tasks cannot be created directly in the 'active' state; "
-                "create them as 'queued' or 'scheduled' and use the "
+                "create them as 'primed', 'queued', 'scheduled' and use the "
                 "activation tool later.",
+            )
+
+        if status == Status.primed and self._active_task is not None:
+            raise ValueError(
+                "Tasks cannot be created in the 'primed' state when there is an 'active' task "
+                "create them as 'queued' or 'scheduled', or stop the active task before setting "
+                "this one as 'primed'.",
             )
 
         if status == Status.scheduled and not future_start:
@@ -378,6 +386,9 @@ class TaskScheduler(BaseTaskScheduler):
 
         next_id = self._next_id
         self._next_id += 1
+
+        if status == Status.primed:
+            self._primed_task = next_id
 
         # ------------------  assemble payload  ------------------ #
         task_details = {
