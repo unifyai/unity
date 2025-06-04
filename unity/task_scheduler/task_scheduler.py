@@ -291,16 +291,12 @@ class TaskScheduler(BaseTaskScheduler):
         Behaviour
         ---------
         • If *status* is **omitted** the method decides:
-            – **active**     when no active task exists *and* either
-                             no schedule is given or its start_time ≤ now.
-            – **queued**     when an active task already exists.
             – **scheduled**  when a schedule.start_time > now.
+            – **queued**     otherwise.
 
-        • If the caller supplies an explicit *status* we validate that it
-          does not conflict with the current state (e.g. no 2nd active).
+        • If the caller supplies an explicit *status* we validate it
 
-        • New queued / active tasks are appended (tail) or prepended (head)
-          by re-using `_update_task_queue`.
+        • New queued tasks are appended (tail) by re-using `_update_task_queue`.
 
         • Tasks whose `start_time` is in the future are **not** placed
           in the active queue.
@@ -345,7 +341,14 @@ class TaskScheduler(BaseTaskScheduler):
             # New tasks can only ever begin their life as **scheduled** or
             # **queued**. Promotion to *active* is handled by a dedicated
             # tool that is not part of this commit.
-            status = Status.scheduled if future_start else Status.queued
+            if future_start:
+                status = Status.scheduled
+            elif self._active_task is None:
+                # this goes to the top of the queue, in "primed" state
+                status = Status.primed
+            else:
+                # this goes to be back of the queue
+                status = Status.queued
 
         # ------------------  conflict checks  ------------------ #
         if status == Status.active:
@@ -396,16 +399,12 @@ class TaskScheduler(BaseTaskScheduler):
         )
 
         # ------------------  queue insertion (if relevant)  ---------- #
-        if status in (Status.active, Status.queued):
+        if status == Status.queued:
             original_q = [t.task_id for t in self._get_task_queue()]
 
             # Only insert if the new task isn't already in that list
             if next_id not in original_q:
-                new_q = (
-                    [next_id] + original_q  # prepend for active
-                    if status == Status.active
-                    else original_q + [next_id]  # append for queued
-                )
+                new_q = original_q + [next_id]
                 self._update_task_queue(original=original_q, new=new_q)
 
         return next_id
