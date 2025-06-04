@@ -30,7 +30,14 @@ You do not have access to the schema used for knowledge storage, so you won't be
 You just need to explain your knowledge storage/retrieval needs in very clear english, and the knowledge manager will handle your english language request.
 """
 
-STORE = """
+SCHEMA = """
+\n\nAvoid creating *new* tables unless this is really necessary (the data format is different than the existing table schemas). It's better to migrate and/or modify existing tables where possible (renaming tables/columns, adding/removing columns, or creating/updating derived columns etc). Creating new tables is the right decision if the data takes on a different format. The existing tables and their respective schemas are given below:
+
+{table_schemas}
+"""
+
+STORE = (
+    """
 Your task is to **store** the knowledge provided by the user. Continue using the available tools until the information is persisted in the *clearest, most future-proof* way possible. Feel free to restructure existing tables as you go – the schema is expected to evolve.
 
 Information is kept in *tables*; each table has *columns* with fixed data types. You may create, rename, or delete tables/columns, but once a column exists its data type is immutable and values written to it must respect that type.
@@ -54,8 +61,11 @@ Be proactive: a clean schema today means easier retrieval tomorrow. If a better 
 
 If you're unsure about anything, it's always best to clarify this via the `request_clarification` tool if provided. Do **not** hallucinate any details.
 """
+    + SCHEMA
+)
 
-RETRIEVE = """
+RETRIEVE = (
+    """
 Your task is to retrieve the information requested by the user, and you should continue using the tools available until you are satisfied that you have retrieved *all* relevant information. Make any structural changes to the existing tables as needed in order to accommodate this request.
 
 Information is stored in tables, and each table has columns of a certain data type.
@@ -77,3 +87,5 @@ If this retrieval request could be handled better with an improved schema, then 
 
 If you're unsure about anything, it's always best to clarify this via the `request_clarification` tool if provided. Do **not** hallucinate any details.
 """
+    + SCHEMA
+)
