@@ -39,7 +39,7 @@ class ScenarioBuilder:
         self.ts._create_task(  # Active
             name="Write quarterly report",
             description="Compile and draft the Q2 report for management.",
-            status="active",
+            status="primed",
         )
 
         self.ts._create_task(  # Queued
@@ -81,8 +81,8 @@ def _answer_semantic(ts: TaskScheduler, question: str) -> str:
     q = question.lower()
     tasks = ts._search()
 
-    if "currently active" in q:
-        return next(t for t in tasks if t["status"] == "active")["name"]
+    if "currently primed" in q:
+        return next(t for t in tasks if t["status"] == "primed")["name"]
 
     if "tasks are queued" in q:
         return str(sum(1 for t in tasks if t["status"] == "queued"))
@@ -99,7 +99,7 @@ def _answer_semantic(ts: TaskScheduler, question: str) -> str:
 
 
 QUESTIONS = [
-    "Which task is currently active?",
+    "Which task is currently primed?",
     "How many tasks are queued at the moment?",
     "When is the client meeting scheduled for?",
     "What is the priority level of the hotfix task?",
@@ -201,9 +201,9 @@ async def test_ask_semantic_with_llm_judgement(
 async def test_ask_with_interjection(ts_scenario: TaskScheduler) -> None:
     """Ask a question, interject with a follow-up, and ensure the final answer covers both."""
     try:
-        # 1) Initial question ⇢ active task name
+        # 1) Initial question ⇢ primed task name
         handle = ts_scenario.ask(
-            text="Which task is currently active?",
+            text="Which task is currently primed?",
             _return_reasoning_steps=True,
         )
 
@@ -212,15 +212,15 @@ async def test_ask_with_interjection(ts_scenario: TaskScheduler) -> None:
 
         # 3) Await combined answer
         answer, steps = await handle.result()
-        active_task = _answer_semantic(
+        primed_task = _answer_semantic(
             ts_scenario,
             QUESTIONS[0],
         )  # "Write quarterly report"
         queued_cnt = _answer_semantic(ts_scenario, QUESTIONS[1])  # e.g. "2"
 
         # 4) Assert presence of both pieces of information
-        assert active_task.lower() in answer.lower(), assertion_failed(
-            f"Answer containing active task '{active_task}'",
+        assert primed_task.lower() in answer.lower(), assertion_failed(
+            f"Answer containing primed task '{primed_task}'",
             answer,
             steps,
             "Active task not mentioned in combined answer",
