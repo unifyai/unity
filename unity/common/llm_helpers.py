@@ -1508,7 +1508,7 @@ async def _async_tool_use_loop_inner(
                             nested_handle = task_info[task_to_cancel].get("handle")
                             if nested_handle is not None:
                                 # public API call – propagates cancellation downwards
-                                nested_handle.stop()
+                                await _maybe_await(nested_handle.stop())
 
                         # ── then cancel the waiter coroutine itself ───────────────────────────
                         if task_to_cancel and not task_to_cancel.done():
