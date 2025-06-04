@@ -47,8 +47,6 @@ class TaskScheduler(BaseTaskScheduler):
             self._search,
             self._search_similar,
             self._get_task_queue,
-            self._get_active_task,
-            self._get_paused_task,
             include_class_name=False,  # redundant, all same class (this one)
         )
 
@@ -338,8 +336,6 @@ class TaskScheduler(BaseTaskScheduler):
         if status is not None and isinstance(status, str):
             status = Status(status)
 
-        active_task = self._get_active_task()
-
         # figure out if schedule is "future"
         future_start = False
         if schedule and schedule.start_time:
@@ -503,10 +499,7 @@ class TaskScheduler(BaseTaskScheduler):
         start_row: Optional[dict] = None
 
         if task_id is None:
-            active = self._get_active_task()
-            if active:
-                start_row = active
-                task_id = active["task_id"]
+            raise Exception("Not yet supported.")
 
         if start_row is None and task_id is not None:
             start_row = _get_task_row(task_id)
