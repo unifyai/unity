@@ -20,6 +20,8 @@ from .types.status import Status
 from .types.task import Task
 from .sys_msgs import ASK
 from .base import BaseTaskScheduler
+from ..planner.base import BasePlanner
+from ..planner.simulated import SimulatedPlanner
 import json
 
 
@@ -27,7 +29,12 @@ class TaskScheduler(BaseTaskScheduler):
 
     _VEC_TASK = "task_emb"
 
-    def __init__(self, *, traced: bool = True) -> None:
+    def __init__(
+        self,
+        *,
+        planner: Optional[BasePlanner] = None,
+        traced: bool = True,
+    ) -> None:
         """
         Responsible for managing the list of tasks, updating the names, descriptions, schedules, repeating pattern and status of all tasks.
 
@@ -49,12 +56,9 @@ class TaskScheduler(BaseTaskScheduler):
         self._update_tools = {
             **self._ask_tools,
             **methods_to_tool_dict(
-                # Creation / deletion
+                # Creation / deletion / cancellation
                 self._create_task,
                 self._delete_task,
-                # Status transitions
-                self._pause,
-                self._continue,
                 self._cancel_tasks,
                 # Queue manipulation
                 self._update_task_queue,
@@ -69,6 +73,16 @@ class TaskScheduler(BaseTaskScheduler):
                 include_class_name=False,  # redundant, all same class (this one)
             ),
         }
+
+        # active task
+        if planner is None:
+            self._planner = SimulatedPlanner(1)
+        else:
+            self._planner = planner
+        # ID of the *single* task that is allowed to be in the **active**
+        # state at any moment.  This will be maintained by a forthcoming
+        # tool; until then it may legitimately stay as ``None``.
+        self._active_task: Optional[int] = None
 
         # Internal monotonically-increasing task-id counter.  We keep it local
         # to the manager to avoid an expensive scan across *all* logs every
@@ -209,6 +223,25 @@ class TaskScheduler(BaseTaskScheduler):
 
         return handle
 
+    def _ensure_not_active_task(self, task_ids: Union[int, List[int]]) -> None:
+        """
+        Raise **RuntimeError** if *task_ids* contains the current
+        ``self._active_task``.  When ``self._active_task`` is *None* the
+        check is a cheap no-op.
+        """
+        if self._active_task is None:
+            return
+
+        if isinstance(task_ids, int):
+            ids = [task_ids]
+        else:
+            ids = list(task_ids)
+
+        if self._active_task in ids:
+            raise RuntimeError(
+                f"Operation not permitted on the active task (task_id={self._active_task})",
+            )
+
     def _get_logs_by_task_ids(
         self,
         *,
@@ -313,19 +346,18 @@ class TaskScheduler(BaseTaskScheduler):
             future_start = _parse_iso(schedule.start_time) > datetime.now(timezone.utc)
 
         if status is None:
-            if future_start:
-                status = Status.scheduled
-            elif active_task is None:
-                status = Status.active
-            else:
-                status = Status.queued
+            # New tasks can only ever begin their life as **scheduled** or
+            # **queued**. Promotion to *active* is handled by a dedicated
+            # tool that is not part of this commit.
+            status = Status.scheduled if future_start else Status.queued
 
         # ------------------  conflict checks  ------------------ #
-        if status == Status.active and active_task is not None:
-            raise ValueError("An active task already exists")
-
-        if status == Status.active and future_start:
-            raise ValueError("Cannot mark task as active with a future start_time")
+        if status == Status.active:
+            raise ValueError(
+                "Tasks cannot be created directly in the 'active' state; "
+                "create them as 'queued' or 'scheduled' and use the "
+                "activation tool later.",
+            )
 
         if status == Status.scheduled and not future_start:
             raise ValueError("Scheduled tasks require a future start_time")
@@ -398,73 +430,12 @@ class TaskScheduler(BaseTaskScheduler):
         Returns:
             Dict[str, str]: Whether the task was deleted or not.
         """
+        self._ensure_not_active_task(task_id)
         # ToDo: replace with single API call once this task [https://app.clickup.com/t/86c3c1awp] is done
         log_id = self._get_logs_by_task_ids(task_ids=task_id)
         unify.delete_logs(
             context=self._ctx,
             logs=log_id,
-        )
-
-    # Pause / Continue Active Task
-
-    def _get_paused_task(self) -> Optional[Task]:
-        """
-        Get the currently paused task, if any.
-
-        Returns:
-            Optional[Task]: The complete Task object of the paused task, or None if no task is paused.
-        """
-        paused_tasks = self._search(filter="status == 'paused'")
-        assert (
-            len(paused_tasks) <= 1
-        ), f"More than one paused task found: {paused_tasks}"
-        if not paused_tasks:
-            return
-        return paused_tasks[0]
-
-    def _get_active_task(self) -> Optional[Task]:
-        """
-        Get the currently active task, if any.
-
-        Returns:
-            Optional[Task]: The complete Task object of the active task, or None if no task is active.
-        """
-        active_tasks = self._search(filter="status == 'active'")
-        assert (
-            len(active_tasks) <= 1
-        ), f"More than one active task found: {active_tasks}"
-        if not active_tasks:
-            return
-        return active_tasks[0]
-
-    def _pause(self) -> Optional[Dict[str, str]]:
-        """
-        Pause the currently active task, if any.
-
-        Returns:
-            Optional[Dict[str, str]]: The result of updating the task status, or None if no active task.
-        """
-        active_task = self._get_active_task()
-        if not active_task:
-            return
-        return self._update_task_status(
-            task_ids=active_task["task_id"],
-            new_status="paused",
-        )
-
-    def _continue(self) -> Optional[Dict[str, str]]:
-        """
-        Continue the currently paused task, if any.
-
-        Returns:
-            Optional[Dict[str, str]]: The result of updating the task status, or None if no paused task.
-        """
-        paused_task = self._get_paused_task()
-        if not paused_task:
-            return
-        return self._update_task_status(
-            task_ids=paused_task["task_id"],
-            new_status="active",
         )
 
     # Cancel Task(s)
@@ -476,6 +447,7 @@ class TaskScheduler(BaseTaskScheduler):
         Args:
             task_ids (List[int]): The ids of the tasks to cancel.
         """
+        self._ensure_not_active_task(task_ids)
         completed_tasks = self._search(filter="status == 'completed'")
         completed_task_ids = [lg["task_id"] for lg in completed_tasks]
         assert not set(task_ids).intersection(
@@ -618,6 +590,9 @@ class TaskScheduler(BaseTaskScheduler):
         list stays consistent, using `None` for the head's `prev_task`
         and the tail's `next_task`.
         """
+        # The active task may **never** be reordered or touched here.
+        self._ensure_not_active_task(original)
+        self._ensure_not_active_task(new)
         # -------  sanity checks  -------
         assert len(set(original)) == len(
             original,
@@ -684,6 +659,7 @@ class TaskScheduler(BaseTaskScheduler):
         Returns:
             Dict[str, str]: Whether the task was updated or not.
         """
+        self._ensure_not_active_task(task_id)
         # ToDo: replace with single API call once this task [https://app.clickup.com/t/86c3c1y63] is done
         log_id = self._get_logs_by_task_ids(task_ids=task_id)
         return unify.update_logs(
@@ -709,6 +685,7 @@ class TaskScheduler(BaseTaskScheduler):
         Returns:
             Dict[str, str]: Whether the task was updated or not.
         """
+        self._ensure_not_active_task(task_id)
         # ToDo: replace with single API call once this task [https://app.clickup.com/t/86c3c1y63] is done
         log_id = self._get_logs_by_task_ids(task_ids=task_id)
         return unify.update_logs(
@@ -736,6 +713,16 @@ class TaskScheduler(BaseTaskScheduler):
         Returns:
             Dict[str, str]: Whether the task(s) were updated or not.
         """
+        # 1. Forbid making anything *active*
+        if str(new_status) == Status.active.value:
+            raise ValueError(
+                "Direct status changes to 'active' are not allowed; "
+                "use the dedicated activation tool.",
+            )
+
+        # 2. Forbid touching the existing active task
+        self._ensure_not_active_task(task_ids)
+
         # ToDo: replace with single API call once this task [https://app.clickup.com/t/86c3c1y63] is done
         log_ids = self._get_logs_by_task_ids(task_ids=task_ids)
         return unify.update_logs(
@@ -760,6 +747,7 @@ class TaskScheduler(BaseTaskScheduler):
         ``prev_task`` / ``next_task`` set to ``None`` so that the task is
         *not* implicitly inserted into the runnable queue.
         """
+        self._ensure_not_active_task(task_id)
         log_id = self._get_logs_by_task_ids(task_ids=task_id)
 
         # Coerce to ISO-8601 string (Unify stores plain serialisable values)
@@ -802,6 +790,7 @@ class TaskScheduler(BaseTaskScheduler):
         Returns:
             Dict[str, str]: Whether the task was updated or not.
         """
+        self._ensure_not_active_task(task_id)
         log_id = self._get_logs_by_task_ids(task_ids=task_id)
         return unify.update_logs(
             logs=log_id,
@@ -826,6 +815,7 @@ class TaskScheduler(BaseTaskScheduler):
         Returns:
             Dict[str, str]: Whether the task was updated or not.
         """
+        self._ensure_not_active_task(task_id)
         log_id = self._get_logs_by_task_ids(task_ids=task_id)
         return unify.update_logs(
             logs=log_id,
@@ -850,6 +840,7 @@ class TaskScheduler(BaseTaskScheduler):
         Returns:
             Dict[str, str]: Whether the task was updated or not.
         """
+        self._ensure_not_active_task(task_id)
         log_id = self._get_logs_by_task_ids(task_ids=task_id)
         return unify.update_logs(
             logs=log_id,

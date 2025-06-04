@@ -36,13 +36,14 @@ class CommTask:
 # task status update
 #
 
+
 class WhatsappQueue:
     def __init__(self):
         self.queue = asyncio.Queue()
 
     def add_message_task(self, mt):
         self.queue.put_nowait(mt)
-    
+
     async def run(self):
         while True:
             task = await self.queue.get()
@@ -61,7 +62,7 @@ class CommsAgent:
         main_user_agent: bool = False,
         agent_id: str = None,
         contact_name: str = None,
-        contact_number: str = None
+        contact_number: str = None,
     ):
 
         self.main_user = main_user_agent
@@ -120,7 +121,7 @@ class CommsAgent:
                             "dev",
                             self.user_phone_call_number,  # "console" if a local call is needed
                             self.assistant_number,
-                            "--outbound" if new_event.get("outbound") else ""
+                            "--outbound" if new_event.get("outbound") else "",
                         )
                         self.call_mode = True
                         ONGOING_CALL = True
@@ -177,8 +178,6 @@ class CommsAgent:
                     for action in t.actions:
                         # take actions
 
-
-
                         # should be referenced in a set to avoid being garbage collected
                         # (i think)
                         if isinstance(action, SendCallAction):
@@ -186,7 +185,9 @@ class CommsAgent:
                         # TODO: add sms
                         if isinstance(action, SendWhatsAppMessageAction):
                             print(action)
-                            self.whatsapp_queue.add_message_task(self.send_whatsapp(action.message))
+                            self.whatsapp_queue.add_message_task(
+                                self.send_whatsapp(action.message),
+                            )
                         elif isinstance(action, CreateCommunicationTask):
                             print(action)
                             self.create_communication_task(
@@ -235,7 +236,10 @@ class CommsAgent:
                 non_call_sys = f.read().format(name=self.user_name)
         else:
             with open("prompts/comm_non_call_sys.md") as f:
-                non_call_sys = f.read().format(main_user_name=self.user_name, other_user_name=self.contact_name)
+                non_call_sys = f.read().format(
+                    main_user_name=self.user_name,
+                    other_user_name=self.contact_name,
+                )
 
         res = await client.beta.chat.completions.parse(
             model="gpt-4.1",
@@ -266,8 +270,10 @@ class CommsAgent:
                 call_sys = f.read().format(name=self.user_name)
         else:
             with open("prompts/comm_call_sys.md") as f:
-                call_sys = f.read().format(main_user_name=self.user_name, other_user_name=self.contact_name)
-
+                call_sys = f.read().format(
+                    main_user_name=self.user_name,
+                    other_user_name=self.contact_name,
+                )
 
         user_msg = self.get_user_agent_prompt()
         print(user_msg)
@@ -313,8 +319,8 @@ class CommsAgent:
         )
         if status:
             event = WhatsappMessageSentEvent(
-                                    content=msg,
-                                ).to_dict()
+                content=msg,
+            ).to_dict()
             if self.call_mode:
                 self.events_queue.put_nowait(event)
             else:
@@ -326,7 +332,7 @@ class CommsAgent:
             to_number=self.user_number,
             message=msg,
         )
-    
+
     async def send_call(self):
         print(self.assistant_number, self.user_phone_call_number)
         event = PhoneCallInitiatedEvent().to_dict()
@@ -334,7 +340,7 @@ class CommsAgent:
         self.events_queue.put_nowait(event)
         await comms_actions.send_call(
             self.assistant_number,
-            self.user_phone_call_number
+            self.user_phone_call_number,
         )
 
     def create_communication_task(
@@ -483,19 +489,19 @@ class CommsAgent:
             str(Event.from_dict(e)) for e in self.inflight_events
         )
 
-#         if self.running_tasks:
-#             task_status_str = ""
-#             for task in self.running_tasks:
-#                 task_status_str += (
-#                     f"""
-# TASK: {task.task_description}
-# TASK ID: {task.task_id}
-# TASK STATUS: {task.status}
-# """
-#                     + f"RUN BY AGENT: {task.agent_id}\n"
-#                 )
-#         else:
-#             task_status_str = "No Tasks are running"  # TODO
+        #         if self.running_tasks:
+        #             task_status_str = ""
+        #             for task in self.running_tasks:
+        #                 task_status_str += (
+        #                     f"""
+        # TASK: {task.task_description}
+        # TASK ID: {task.task_id}
+        # TASK STATUS: {task.status}
+        # """
+        #                     + f"RUN BY AGENT: {task.agent_id}\n"
+        #                 )
+        #         else:
+        #             task_status_str = "No Tasks are running"  # TODO
         user_msg = f"""Events Stream:
 ** PAST EVENTS **
 {past_events_str.strip()}

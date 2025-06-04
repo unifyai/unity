@@ -13,11 +13,9 @@ class SendWhatsAppMessageAction(BaseModel):
     message: str
 
 
-
 class SendSMSMessageAction(BaseModel):
     type: Literal["sms"]
     message: str
-
 
 
 class SendEmailAction(BaseModel):
@@ -28,7 +26,10 @@ class SendEmailAction(BaseModel):
 
 class CreateCommunicationTask(BaseModel):
     contact_name: str = Field(..., description="contact name, MUST be provided")
-    contact_number: str = Field(..., description="contact number with country code, MUST be provided")
+    contact_number: str = Field(
+        ...,
+        description="contact number with country code, MUST be provided",
+    )
     detailed_task_description: str = Field(
         ...,
         description="very detailed description of the task",

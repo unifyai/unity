@@ -373,7 +373,7 @@ class BrowserUsePlan(BasePlan):
                 )
 
             logger.info(
-                f"BrowserUsePlan {self._task_id}: Answering query: '{question}'"
+                f"BrowserUsePlan {self._task_id}: Answering query: '{question}'",
             )
             current_context_to_share = []
             if (
@@ -387,7 +387,7 @@ class BrowserUsePlan(BasePlan):
                 and self._parent_chat_context_on_pause
             ):
                 current_context_to_share = copy.deepcopy(
-                    self._parent_chat_context_on_pause
+                    self._parent_chat_context_on_pause,
                 )
 
             if not current_context_to_share:
