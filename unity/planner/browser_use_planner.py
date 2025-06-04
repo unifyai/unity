@@ -363,16 +363,17 @@ class BrowserUsePlan(BasePlan):
         self._ask_client.reset_messages()
         self._ask_client.set_system_message(
             "You are answering questions about an ongoing automated web Browse task. "
-            "The main task's chat history will be provided. Answer concisely based on this history."
+            "The main task's chat history will be provided. Answer concisely based on this history.",
         )
-        self._ask_client.append_message(
-            {
-                "role": "system",
-                "content": f"Current task ({self._task_id}) chat history:\n{json.dumps(current_context_to_share, indent=2)}",
-            },
+        self._ask_client.append_messages(
+            [
+                {
+                    "role": "system",
+                    "content": f"Current task ({self._task_id}) chat history:\n{json.dumps(current_context_to_share, indent=2)}",
+                },
+                {"role": "user", "content": question},
+            ],
         )
-        self._ask_client.append_message({"role": "user", "content": question})
-
         try:
             response = await self._ask_client.generate()
             return response.strip() if isinstance(response, str) else str(response)
@@ -415,6 +416,21 @@ class BrowserUsePlanner(BasePlanner[BrowserUsePlan]):
             traced=json.loads(os.environ.get("UNIFY_TRACED", "true")),
         )
         self._tools_cache: Optional[Dict[str, Callable[..., Awaitable[Any]]]] = None
+        try:
+            self._main_event_loop = asyncio.get_running_loop()
+            logger.info(
+                f"BrowserUsePlanner captured event loop: {self._main_event_loop}",
+            )
+        except RuntimeError as e:
+            logger.error(
+                "BrowserUsePlanner initialized outside of a running asyncio event loop. "
+                "This may cause issues if plans are created from non-async contexts or threads "
+                "without explicit loop management. Error: %s",
+                e,
+            )
+            raise RuntimeError(
+                "BrowserUsePlanner must be initialized within an active asyncio event loop.",
+            ) from e
 
     def _get_tools(self) -> Dict[str, Callable[..., Awaitable[Any]]]:
         """Prepares and caches the tools available for the BrowserUsePlan."""
