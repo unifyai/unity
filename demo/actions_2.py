@@ -11,15 +11,13 @@ from pydantic import BaseModel, Field
 class SendWhatsAppMessageAction(BaseModel):
     type: Literal["whatsapp"]
     message: str
-    from_number: str
-    to_number: str
+
 
 
 class SendSMSMessageAction(BaseModel):
     type: Literal["sms"]
     message: str
-    from_number: str
-    to_number: str
+
 
 
 class SendEmailAction(BaseModel):
@@ -66,8 +64,6 @@ class AskUserAgent(BaseModel):
 
 class SendCallAction(BaseModel):
     type: Literal["call"]
-    from_number: str
-    to_number: str
 
 
 # -------- discriminated union --------

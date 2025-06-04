@@ -120,7 +120,7 @@ class CommsAgent:
                             "dev",
                             self.user_phone_call_number,  # "console" if a local call is needed
                             self.assistant_number,
-                            # to_number,
+                            "--outbound" if new_event.get("outbound") else ""
                         )
                         self.call_mode = True
                         ONGOING_CALL = True
@@ -177,13 +177,12 @@ class CommsAgent:
                     for action in t.actions:
                         # take actions
 
-                        events_map = {
-                            "whatsapp": WhatsappMessageSentEvent,
-                            "sms": SMSMessageSentEvent,
-                        }
+
 
                         # should be referenced in a set to avoid being garbage collected
                         # (i think)
+                        if isinstance(action, SendCallAction):
+                            asyncio.create_task(self.send_call())
                         # TODO: add sms
                         if isinstance(action, SendWhatsAppMessageAction):
                             print(action)
@@ -262,6 +261,14 @@ class CommsAgent:
         ev = {"topic": "call_process", "type": "start_gen"}
         self.publish(ev)
 
+        if self.main_user:
+            with open("prompts/call_sys_2.md") as f:
+                call_sys = f.read().format(name=self.user_name)
+        else:
+            with open("prompts/comm_call_sys_2.md") as f:
+                call_sys = f.read().format(main_user_name=self.user_name, other_user_name=self.contact_name)
+
+
         user_msg = self.get_user_agent_prompt()
         print(user_msg)
 
@@ -318,6 +325,16 @@ class CommsAgent:
             from_number=self.assistant_number,
             to_number=self.user_number,
             message=msg,
+        )
+    
+    async def send_call(self):
+        print(self.assistant_number, self.user_phone_call_number)
+        event = PhoneCallInitiatedEvent().to_dict()
+        event["outbound"] = True
+        self.events_queue.put_nowait(event)
+        await comms_actions.send_call(
+            self.assistant_number,
+            self.user_phone_call_number
         )
 
     def create_communication_task(
@@ -466,19 +483,19 @@ class CommsAgent:
             str(Event.from_dict(e)) for e in self.inflight_events
         )
 
-        if self.running_tasks:
-            task_status_str = ""
-            for task in self.running_tasks:
-                task_status_str += (
-                    f"""
-TASK: {task.task_description}
-TASK ID: {task.task_id}
-TASK STATUS: {task.status}
-"""
-                    + f"RUN BY AGENT: {task.agent_id}\n"
-                )
-        else:
-            task_status_str = "No Tasks are running"  # TODO
+#         if self.running_tasks:
+#             task_status_str = ""
+#             for task in self.running_tasks:
+#                 task_status_str += (
+#                     f"""
+# TASK: {task.task_description}
+# TASK ID: {task.task_id}
+# TASK STATUS: {task.status}
+# """
+#                     + f"RUN BY AGENT: {task.agent_id}\n"
+#                 )
+#         else:
+#             task_status_str = "No Tasks are running"  # TODO
         user_msg = f"""Events Stream:
 ** PAST EVENTS **
 {past_events_str.strip()}
