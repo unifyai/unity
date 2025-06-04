@@ -29,7 +29,7 @@ async def test_ts_ask_uses_parent_context():
     ts._create_task(
         name="Hotfix security vulnerability",
         description="Apply CVE-2025-1234 patch to all services.",
-        status="queued",
+        status="primed",
         priority="high",
     )
 
@@ -70,8 +70,8 @@ async def test_ts_ask_requests_clarification():
     ts._create_task(
         name="Prepare slide deck",
         description="Create slides for the upcoming board meeting.",
-        status="queued",
-        priority="normal",
+        status="primed",
+        priority="high",
     )
     ts._create_task(
         name="Hotfix security vulnerability",
@@ -84,7 +84,7 @@ async def test_ts_ask_requests_clarification():
 
     # run ask in background (loop starts immediately)
     handle = ts.ask(
-        "What is the description of the queued task?",
+        "What is the description of the high priority task?",
         clarification_up_q=up_q,
         clarification_down_q=down_q,
     )
@@ -121,7 +121,7 @@ async def test_ts_update_uses_parent_context():  # FIXME: flaky
     tid = ts._create_task(
         name="Hotfix security vulnerability",
         description="Apply CVE-2025-1234 patch to all services.",
-        status="queued",
+        status="primed",
         priority="high",
     )
 
@@ -160,12 +160,18 @@ async def test_ts_update_requests_clarification():
     tid_deck = ts._create_task(
         name="Prepare slide deck",
         description="Create slides for the upcoming board meeting.",
-        status="queued",
+        status="primed",
         priority="normal",
     )
     ts._create_task(
         name="Write quarterly report",
         description="Compile and draft the Q2 report.",
+        status="queued",
+        priority="normal",
+    )
+    ts._create_task(
+        name="Interview candidate",
+        description="Interview the recent sales applicant.",
         status="queued",
         priority="normal",
     )
