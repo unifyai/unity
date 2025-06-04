@@ -91,7 +91,10 @@ async def test_ts_ask_requests_clarification():
 
     # expect a clarification question
     question = await asyncio.wait_for(up_q.get(), timeout=30)
-    assert _contains(question, "queued"), "No clarification question"
+    assert _contains(question.lower(), "high") and _contains(
+        question.lower(),
+        "priority",
+    ), "No clarification question"
 
     # user clarifies we mean the hotfix
     await down_q.put("I mean the Hotfix task.")
