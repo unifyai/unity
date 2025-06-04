@@ -334,7 +334,7 @@ class AskUserAgentEvent(Event):
 
     def __str__(self):
         return f"""[AGENT {self.agent_id} NEEDS SOME CLARIFICATION REGARDING THE FOLLOWING QUERY FOR TASK {self.task_id} @ {self.fmt_timestamp}]
-        {self.query}"""
+{self.query}"""
 
 
 class UserAgentResponseEvent(Event):
