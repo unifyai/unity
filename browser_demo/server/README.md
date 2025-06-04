@@ -26,7 +26,7 @@ Note: add `-d` for detached mode
 
 Note: Unless you're on Ubuntu, else try this on VM
 
-1. Start the VM instance (only 1 in the Unity project on GCP).
+1. Start the VM instance (only 1 in the Unity project on GCP). SSH into the VM.
 
 Note: Please stop the instance if not in use.
 
