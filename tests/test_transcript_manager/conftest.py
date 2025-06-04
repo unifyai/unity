@@ -193,7 +193,12 @@ class ScenarioBuilder:
         """Adds irrelevant chatter so filtering matters."""
         random.seed(12345)
         media = ["email", "phone_call", "sms_message", "whatsapp_message"]
-        start = datetime(2025, 4, 24, tzinfo=timezone.utc)
+        start = datetime(
+            2024,
+            random.randint(1, 12),
+            random.randint(1, 28),
+            tzinfo=timezone.utc,
+        )
 
         for ex_off in range(exchanges):
             ex_id = 10 + ex_off
