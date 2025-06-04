@@ -443,7 +443,7 @@ class CommsAgent:
         if not self.event_manager:
             raise Exception("Set an event manager first.")
         for topic in topics:
-            self.event_manager.topic_to_subs[topic].append(self)
+            self.event_manager.topic_to_subs[topic].add(self)
 
     def set_event_manager(self, event_manager):
         self.event_manager = event_manager
