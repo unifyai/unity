@@ -25,7 +25,7 @@ def _programmatic_contact_check(
     else:
         filter_str = f"{identifier_key} == '{identifier_value}'"
 
-    retrieved_contacts = contact_manager._get_contacts(filter=filter_str)
+    retrieved_contacts = contact_manager._search_contacts(filter=filter_str)
 
     assert (
         len(retrieved_contacts) >= 1
@@ -144,7 +144,7 @@ async def test_update_existing_contact_details(
     alice_email_key = "alice_alice.smith@example.com"
     alice_smith_id = id_map.get(alice_email_key)
     if alice_smith_id is None:
-        results = cm._get_contacts(
+        results = cm._search_contacts(
             filter="email_address == 'alice.smith@example.com'",
         )
         assert results, "Alice Smith not found for test setup"
@@ -187,7 +187,7 @@ async def test_update_with_parent_context_identification(
     )
     charlie_id = id_map.get(charlie_email_key)
     if charlie_id is None:
-        results = cm._get_contacts(filter="email_address == 'goodgrief@example.org'")
+        results = cm._search_contacts(filter="email_address == 'goodgrief@example.org'")
         assert results, "Charlie Brown not found for test setup"
         charlie_id = results[0].contact_id
 
@@ -274,7 +274,7 @@ async def test_update_with_clarification_needed(
         {"first_name": "Alice", "surname": "Wonderland"},
     )
     # Optionally check that Alice Smith's surname wasn't changed
-    alice_smith_contacts = cm._get_contacts(
+    alice_smith_contacts = cm._search_contacts(
         filter="email_address == 'alice.smith@example.com'",
     )
     assert alice_smith_contacts, "Alice Smith not found post-test"
@@ -329,7 +329,7 @@ async def test_update_stop_operation(
     assert handle.done()
 
     await asyncio.sleep(0.2)
-    prof_x_search = cm._get_contacts(filter="email_address == 'prox@xmen.com'")
+    prof_x_search = cm._search_contacts(filter="email_address == 'prox@xmen.com'")
     assert (
         len(prof_x_search) == 0
     ), "Contact should ideally not be created if stopped early."
