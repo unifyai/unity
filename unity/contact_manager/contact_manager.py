@@ -35,13 +35,13 @@ class ContactManager(BaseContactManager):
 
         # Define tools for ask and update methods
         self._ask_tools: Dict[str, Callable] = methods_to_tool_dict(
-            self._get_contacts,
+            self._search_contacts,
             include_class_name=False,
         )
         self._update_tools: Dict[str, Callable] = methods_to_tool_dict(
             self._create_contact,
             self._update_contact,
-            self._get_contacts,
+            self._search_contacts,
             include_class_name=False,
         )
         # Add tracing
@@ -309,7 +309,7 @@ class ContactManager(BaseContactManager):
         )
         return contact_id
 
-    def _get_contacts(
+    def _search_contacts(
         self,
         *,
         filter: Optional[str] = None,
@@ -317,7 +317,7 @@ class ContactManager(BaseContactManager):
         limit: int = 100,
     ) -> List[Contact]:
         """
-        Retrieve contact details, based on flexible filtering for first name, surname, email address, WhatsApp number, phone number, or anything else. If no filter is applied, then *all* tasks are returned.
+        Retrieve contact details, based on flexible filtering for first name, surname, email address, WhatsApp number, phone number, or anything else.
 
         Args:
             filter (Optional[str]): The filter to apply to the contacts.
