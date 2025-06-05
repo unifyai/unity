@@ -125,12 +125,12 @@ def paint_overlay(page: Page, boxes: list[dict]) -> None:
         pass  # page might be in navigation / sandbox – ignore
 
 
-def launch_persistent(pw) -> BrowserContext:
+def launch_persistent(pw, headless: bool = False) -> BrowserContext:
     """Create a persistent context so new pages open as real tabs."""
     tmp_profile = Path(mkdtemp(prefix="pw_profile_"))
     ctx = pw.chromium.launch_persistent_context(
         tmp_profile,
-        headless=False,
+        headless=headless,
         args=[
             "--disable-blink-features=AutomationControlled",
             "--disable-features=IsolateOrigins,site-per-process",

@@ -16,6 +16,7 @@ class Controller(threading.Thread):
         *,
         daemon: bool = True,
         session_connect_url: str | None = None,
+        headless: bool = False,
     ) -> None:
         super().__init__(daemon=daemon)
         self._redis_client = redis.Redis(host="localhost", port=6379, db=0)
@@ -29,6 +30,7 @@ class Controller(threading.Thread):
             start_url="https://www.google.com/",
             refresh_interval=0.4,
             session_connect_url=self.session_connect_url,
+            headless=headless,
         )
         self._browser_open = False
         self._stop_event = threading.Event()
