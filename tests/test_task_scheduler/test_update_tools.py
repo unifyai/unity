@@ -17,7 +17,7 @@ def test_update_task_name():
         name="Promote Jeff Smith",
         description="Send an email to Jeff Smith, kindly congratulating him and explaining that he has been promoted from sales rep to sales manager.",
     )
-    task_list = task_scheduler._search()
+    task_list = task_scheduler._get_tasks()
     assert task_list[0]["name"] == "Promote Jeff Smith"
 
     # rename
@@ -25,7 +25,7 @@ def test_update_task_name():
         task_id=0,
         new_name="Give Jeff Smith a promotion",
     )
-    task_list = task_scheduler._search()
+    task_list = task_scheduler._get_tasks()
     assert task_list[0]["name"] == "Give Jeff Smith a promotion"
 
 
@@ -39,7 +39,7 @@ def test_update_task_description():
         name="Promote Jeff Smith",
         description="Send an email to Jeff Smith, kindly congratulating him and explaining that he has been promoted from sales rep to sales manager.",
     )
-    task_list = task_scheduler._search()
+    task_list = task_scheduler._get_tasks()
     assert (
         task_list[0]["description"]
         == "Send an email to Jeff Smith, kindly congratulating him and explaining that he has been promoted from sales rep to sales manager."
@@ -50,7 +50,7 @@ def test_update_task_description():
         task_id=0,
         new_description="Call Jeff Smith, kindly congratulating him and explaining that he has been promoted from sales rep to sales manager.",
     )
-    task_list = task_scheduler._search()
+    task_list = task_scheduler._get_tasks()
     assert (
         task_list[0]["description"]
         == "Call Jeff Smith, kindly congratulating him and explaining that he has been promoted from sales rep to sales manager."
@@ -67,7 +67,7 @@ def test_update_task_status():
         name="Promote Jeff Smith",
         description="Send an email to Jeff Smith, kindly congratulating him and explaining that he has been promoted from sales rep to sales manager.",
     )
-    task_list = task_scheduler._search()
+    task_list = task_scheduler._get_tasks()
     assert (
         task_list[0]["description"]
         == "Send an email to Jeff Smith, kindly congratulating him and explaining that he has been promoted from sales rep to sales manager."
@@ -78,7 +78,7 @@ def test_update_task_status():
         task_ids=0,
         new_status=Status.cancelled,
     )
-    task_list = task_scheduler._search()
+    task_list = task_scheduler._get_tasks()
     assert task_list[0]["status"] == "cancelled"
 
 
@@ -95,7 +95,7 @@ def test_update_task_start_at():
     start = (datetime.now(timezone.utc) + timedelta(days=1)).isoformat()
     ts._update_task_start_at(task_id=0, new_start_at=start)
 
-    task_list = ts._search()
+    task_list = ts._get_tasks()
     assert task_list[0]["schedule"]["start_time"] == start
 
 
@@ -112,7 +112,7 @@ def test_update_task_deadline():
     deadline = (datetime.now(timezone.utc) + timedelta(days=30)).isoformat()
     ts._update_task_deadline(task_id=0, new_deadline=deadline)
 
-    task_list = ts._search()
+    task_list = ts._get_tasks()
     assert task_list[0]["deadline"] == deadline
 
 
@@ -129,7 +129,7 @@ def test_update_task_repetition():
     rule = RepeatPattern(frequency=Frequency.WEEKLY, interval=1, weekdays=[Weekday.MO])
     ts._update_task_repetition(task_id=0, new_repeat=[rule])
 
-    task_list = ts._search()
+    task_list = ts._get_tasks()
     # The manager stores *.model_dump()* (a plain dict) so compare like-for-like
     assert task_list[0]["repeat"] == [rule.model_dump()]
 
@@ -146,5 +146,5 @@ def test_update_task_priority():
 
     ts._update_task_priority(task_id=0, new_priority=Priority.high)
 
-    task_list = ts._search()
+    task_list = ts._get_tasks()
     assert task_list[0]["priority"] == Priority.high
