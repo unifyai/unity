@@ -978,7 +978,10 @@ class TaskScheduler(BaseTaskScheduler):
         Apply the filter to the the list of tasks, and return the results following the filter. If no filter is applied, then *all* tasks are returned.
 
         Args:
-            filter (Optional[str]): Arbitrary Python logical expressions which evaluate to `bool`, with column names expressed as standard variables. For example, a filter expression of "'email'in description and priority == 'normal'" would be a valid. The expression just needs to be valid Python with the column names as variables.
+            filter (Optional[str]): Arbitrary Python logical expressions which evaluate to `bool`, with column names expressed as standard variables.
+            The expression **needs** to be a valid Python expression (ie. it should be able to be evaluated by the python interpreter) with the column names as variables.
+            Supported data types are: str, int, float, bool, list, dict, datetime, time, timedelta, None (and their associated methods).
+            Object notation is not supported (eg: a.b). Use index notation instead (a['b'], a[0], etc..).
             offset (int): The offset to start the search from, in the paginated result.
             limit (int): The number of rows to return, in the paginated result.
 
