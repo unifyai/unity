@@ -51,7 +51,8 @@ def _answer_semantic(
 
     if _is_summary_q(question):
         # return the *two utterances* that form the last Dan–Julia phone call.
-        last_call = sorted(
+        NAME_BY_ID = {v: k.capitalize() for k, v in _ID_BY_NAME.items()}
+        last_call_messages = sorted(
             (
                 m
                 for m in messages
@@ -60,7 +61,25 @@ def _answer_semantic(
             ),
             key=lambda m: m.timestamp,
         )[-2:]
-        return "\n".join(m.content for m in last_call)
+        dialogue_date_str = ""
+        if last_call_messages:
+            # Let's use the date of the first message in the snippet
+            try:
+                dialogue_timestamp_iso = last_call_messages[0].timestamp
+                dialogue_date = datetime.fromisoformat(
+                    dialogue_timestamp_iso.replace("Z", "+00:00"),
+                ).strftime(
+                    "%B %d, %Y",
+                )  # Format as "April 26, 2025"
+                dialogue_date_str = f"Dialogue from {dialogue_date}:\n"
+            except ValueError:
+                dialogue_date_str = ""  # Fallback if parsing fails
+        # Construct dialogue with speaker names
+        dialogue_with_speakers = []
+        for m in last_call_messages:
+            sender_name = NAME_BY_ID.get(m.sender_id, f"Unknown({m.sender_id})")
+            dialogue_with_speakers.append(f"{sender_name}: {m.content}")
+        return dialogue_date_str + "\n".join(dialogue_with_speakers)
 
     if "quantity" in q and "carlos" in q:
         return "200"
@@ -136,7 +155,7 @@ QUESTIONS = [
     "Why didn't Anne want to come with us on the trip? I forgot her excuse.",
     "What quantity did Carlos say he wanted to buy?",
     "How many different media has Dan used so far?",
-    "Give me a one-sentence summary of the last Dan-Julia phone call.",
+    "Give me a one-sentence summary of the last Dan-Julia phone call. Do not omit any crucial facts or introduce false information. ",
 ]
 
 
@@ -164,9 +183,11 @@ def _llm_assert_correct(
             "You are a meticulous but fair summary evaluator. "
             "You will be given the *source dialogue* of a short phone call and a candidate **one-sentence** summary. "
             "Your task is to decide whether the summary accurately conveys the main intent and key factual points. "
-            "Minor stylistic or tense differences, re-ordering, shortened wording, or inclusion of obviously correct contextual details are acceptable. "
-            "Mark correct⇢true unless the summary is missing a crucial fact, introduces a contradiction, or otherwise misrepresents the dialogue. "
-            'Respond ONLY with valid JSON of the form {"correct": true} or {"correct": false}. '
+            "A good one-sentence summary will often synthesize information from multiple utterances into a coherent statement, potentially reflecting the implied outcome or joint understanding if reasonably inferred from the dialogue. "
+            "For example, if the dialogue discusses 'planning to do X' or 'working on X', the summary can state that the conversation was about 'planning X' or 'addressing X'. "
+            "Minor stylistic or tense differences, re-ordering, shortened wording, or inclusion of obviously correct contextual details are also acceptable. "
+            "The crucial factors are that the summary does not omit key topics discussed and does not introduce information that contradicts or is unsupported by the dialogue's intent. "
+            'Respond ONLY with valid JSON of the form {"correct": true} or {"correct": false}. If false, explain why. '
         )
         payload = _dumps(
             {"dialogue": expected, "summary": candidate},
