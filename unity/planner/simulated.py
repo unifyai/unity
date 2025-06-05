@@ -21,6 +21,7 @@ class SimulatedPlan(BasePlan):
         self,
         task: str,
         steps: int,
+        parent_chat_context: list[dict] | None = None,
         clarification_up_q: asyncio.Queue[str] | None = None,
         clarification_down_q: asyncio.Queue[str] | None = None,
         request_clarification: bool = False,
@@ -34,6 +35,7 @@ class SimulatedPlan(BasePlan):
         """
         self._task = task
         self._steps = steps
+        self._parent_chat_context = parent_chat_context
         self._clarification_up_q = clarification_up_q
         self._clarification_down_q = clarification_down_q
         self._request_clarification = request_clarification
@@ -85,10 +87,12 @@ class SimulatedPlan(BasePlan):
         try:
             self._ask_simulator.set_system_message(
                 f"You should pretend you are completing the following task:\n{task}\n"
+                f"The conversation thus far of the calling process is:\n{self._parent_chat_context}\n"
                 "Come up with imaginary answers to the user questions about the task",
             )
             self._interject_simulator.set_system_message(
                 f"You should pretend you are completing the following task:\n{task}\n"
+                f"The conversation thus far of the calling process is:\n{self._parent_chat_context}\n"
                 "Come up with imaginary responses to the user requests to steer the task behaviour.",
             )
 
@@ -266,12 +270,14 @@ class SimulatedPlanner(BasePlanner[SimulatedPlan]):
         self,
         task_description: str,
         *,
+        parent_chat_context: list[dict] | None = None,
         clarification_up_q: Optional[asyncio.Queue[str]] = None,
         clarification_down_q: Optional[asyncio.Queue[str]] = None,
     ) -> SimulatedPlan:
         return SimulatedPlan(
             task_description,
             self._steps,
+            parent_chat_context=parent_chat_context,
             clarification_up_q=clarification_up_q,
             clarification_down_q=clarification_down_q,
             request_clarification=self._request_clarification,

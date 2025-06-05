@@ -63,7 +63,14 @@ class BaseTaskScheduler(ABC):
         """
 
     @abstractmethod
-    def start_task() -> SteerableToolHandle:
+    def start_task(
+        self,
+        task_id: int,
+        *,
+        parent_chat_context: Optional[List[Dict[str, Any]]] = None,
+        clarification_up_q: Optional[asyncio.Queue[str]] = None,
+        clarification_down_q: Optional[asyncio.Queue[str]] = None,
+    ) -> SteerableToolHandle:
         """
         Start execution of *task_id* and return a steerable handle.
 

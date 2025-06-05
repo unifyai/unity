@@ -226,7 +226,14 @@ class TaskScheduler(BaseTaskScheduler):
     # Start Task
 
     @functools.wraps(BaseTaskScheduler.start_task, updated=())
-    def start_task(self, *, task_id: int) -> SteerableToolHandle:
+    def start_task(
+        self,
+        task_id: int,
+        *,
+        parent_chat_context: list[dict] | None = None,
+        clarification_up_q: asyncio.Queue[str] | None = None,
+        clarification_down_q: asyncio.Queue[str] | None = None,
+    ) -> SteerableToolHandle:
         # 0. sanity
         if self._active_task is not None:
             raise RuntimeError("Another task is already running – stop it first.")
@@ -245,6 +252,9 @@ class TaskScheduler(BaseTaskScheduler):
             self._planner,
             task_id=task_id,
             scheduler=self,
+            parent_chat_context=parent_chat_context,
+            clarification_up_q=clarification_up_q,
+            clarification_down_q=clarification_down_q,
         )
         self._active_task = {"task_id": task_id, "handle": handle}
 
