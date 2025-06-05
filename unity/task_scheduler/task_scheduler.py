@@ -44,8 +44,8 @@ class TaskScheduler(BaseTaskScheduler):
 
         # Query-only helpers – safe, read-only operations
         self._ask_tools = methods_to_tool_dict(
-            self._get_tasks,
-            self._search,
+            self._search_tasks,
+            self._nearest_tasks,
             self._get_task_queue,
             include_class_name=False,  # redundant, all same class (this one)
         )
@@ -456,7 +456,7 @@ class TaskScheduler(BaseTaskScheduler):
             task_ids (List[int]): The ids of the tasks to cancel.
         """
         self._ensure_not_active_task(task_ids)
-        completed_tasks = self._get_tasks(filter="status == 'completed'")
+        completed_tasks = self._search_tasks(filter="status == 'completed'")
         completed_task_ids = [lg["task_id"] for lg in completed_tasks]
         assert not set(task_ids).intersection(
             set(completed_task_ids),
@@ -504,7 +504,7 @@ class TaskScheduler(BaseTaskScheduler):
         # ----------------  helpers  ---------------- #
         def _get_task_by_task_id(tid: int) -> Optional[dict]:
             """Fetch exactly one task row by id or return None."""
-            rows = self._get_tasks(filter=f"task_id == {tid}", limit=1)
+            rows = self._search_tasks(filter=f"task_id == {tid}", limit=1)
             return rows[0] if rows else None
 
         # ----------------  starting node  ---------------- #
@@ -522,7 +522,7 @@ class TaskScheduler(BaseTaskScheduler):
 
         if start_task is None:
             # fall back to queue head: node with no prev_task and non-terminal status
-            head_candidates = self._get_tasks(
+            head_candidates = self._search_tasks(
                 filter=(
                     "schedule is not None and \n                    status not in ('completed','cancelled','failed', 'scheduled') and \n                    schedule.get('prev_task') is None"
                 ),
@@ -613,7 +613,7 @@ class TaskScheduler(BaseTaskScheduler):
 
         # -------  gather existing logs  -------
         existing_logs = {
-            t["task_id"]: t for t in self._get_tasks() if t["schedule"] is not None
+            t["task_id"]: t for t in self._search_tasks() if t["schedule"] is not None
         }
 
         updates_per_log: Dict[int, Dict[str, Any]] = {}
@@ -785,7 +785,7 @@ class TaskScheduler(BaseTaskScheduler):
             new_start_at = new_start_at.isoformat()
 
         # Fetch the current task row to preserve linkage information if present
-        current_rows = self._get_tasks(filter=f"task_id == {task_id}", limit=1)
+        current_rows = self._search_tasks(filter=f"task_id == {task_id}", limit=1)
         current_sched = current_rows[0].get("schedule") if current_rows else None
         if current_sched is None:
             current_sched = {}
@@ -894,7 +894,7 @@ class TaskScheduler(BaseTaskScheduler):
             derived_expr=expr,
         )
 
-    def _search(
+    def _nearest_tasks(
         self,
         *,
         text: str,
@@ -922,7 +922,7 @@ class TaskScheduler(BaseTaskScheduler):
             )
         ]
 
-    def _get_tasks(
+    def _search_tasks(
         self,
         *,
         filter: Optional[str] = None,
