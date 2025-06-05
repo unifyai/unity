@@ -13,9 +13,7 @@ from unity.common.llm_helpers import (
     SteerableToolHandle,
 )
 from .base import BasePlan, BasePlanner
-from unity.controller.controller import (
-    Controller,
-)
+from unity.controller.controller import Controller
 from unify import AsyncUnify
 import unify
 
@@ -31,8 +29,11 @@ if not logger.hasHandlers():
 class ComsManager:
     async def communicate(self, description: str) -> str:
         logger.info(f"Dummy ComsManager.communicate called with: {description}")
-        await asyncio.sleep(0.1)
+        await asyncio.sleep(0.1)  # Simulate async work
         return f"Communication task initiated for: {description}"
+
+    async def stop(self):
+        logger.info("Dummy ComsManager: Stopping")
 
 
 class _PlanState(enum.Enum):
@@ -48,27 +49,23 @@ class ToolLoopPlan(BasePlan):
     """
     Represents an active plan being executed by the ToolLoopPlanner.
     Inherits from SteerableToolHandle to provide a consistent interface for interaction.
-    Methods like stop, pause, resume, interject, ask are always public,
-    but will raise errors if called in an invalid state.
-    The valid_tools property indicates which methods can be successfully called.
     """
+
+    MAX_STEPS = 100
 
     def __init__(
         self,
         task_description: str,
-        initial_client: AsyncUnify,
         tools: Dict[str, Callable[..., Awaitable[Any]]],
-        base_system_prompt: Optional[str],
         clarification_up_q: Optional[asyncio.Queue[str]] = None,
         clarification_down_q: Optional[asyncio.Queue[str]] = None,
+        main_event_loop: Optional[asyncio.AbstractEventLoop] = None,
     ):
-        self._task_description = task_description
-        self._client = initial_client  # LLM client for the main tool loop
-        self._tools = tools  # Tools available to the main tool loop
-        self._base_system_prompt = base_system_prompt
-        self._parent_chat_context_on_pause: Optional[List[dict]] = []
+        self._initial_task_description = task_description
 
-        # Clarification queues for interaction with the entity that started this plan
+        self._tools = tools
+        self._parent_chat_context_on_pause: Optional[List[dict]] = None
+
         self._clar_up_q_internal: asyncio.Queue[str] = (
             clarification_up_q or asyncio.Queue()
         )
@@ -77,56 +74,57 @@ class ToolLoopPlan(BasePlan):
         )
 
         self._state: _PlanState = _PlanState.IDLE
-        self._loop_handle: Optional[SteerableToolHandle] = (
-            None  # Handle for the underlying async tool loop
+        self._loop_handle: Optional[SteerableToolHandle] = None
+        self._result_str: Optional[str] = None
+        self._error_str: Optional[str] = None
+
+        self._overall_plan_completion_event = asyncio.Event()  # For the final result()
+        self._resume_requested_event = asyncio.Event()  # To signal resume
+
+        self._task_id = str(uuid.uuid4())
+        self._main_event_loop = main_event_loop
+
+        self._plan_client = AsyncUnify(
+            "o4-mini@openai",
+            cache=json.loads(os.environ.get("UNIFY_CACHE", "true")),
+            traced=json.loads(os.environ.get("UNIFY_TRACED", "true")),
         )
-        self._result_str: Optional[str] = None  # Final result of the plan
-        self._error_str: Optional[str] = None  # Error message if the plan failed
-        self._completion_event = asyncio.Event()  # Signals plan completion/stop/error
-        self._task_id = str(uuid.uuid4())  # Unique ID for this plan instance
 
         self._ask_client = unify.AsyncUnify(
             "o4-mini@openai",
             cache=json.loads(os.environ.get("UNIFY_CACHE", "true")),
             traced=json.loads(os.environ.get("UNIFY_TRACED", "true")),
-            stateful=True,
         )
-        self._ask_system_prompt = (
-            "You are answering questions about an ongoing automated task. "
-            "The main task's chat history will be provided. Answer concisely based on this history."
-        )
-        self._ask_client.set_system_message(self._ask_system_prompt)
 
-        self._start_internal_loop()
-
-    def _start_internal_loop(self):
-        """
-        Starts the internal async tool use loop that executes the plan's logic.
-        This is called once during initialization or resume.
-        """
-        if (
-            self._state == _PlanState.RUNNING
-            and self._loop_handle
-            and not self._loop_handle.done()
-        ):
-            logger.warning(
-                f"ToolLoopPlan {self._task_id}: Attempted to start internal loop while already running.",
-            )
-            return
+        if not self._main_event_loop:
+            try:
+                self._main_event_loop = asyncio.get_running_loop()
+            except RuntimeError as e:
+                logger.error(
+                    f"ToolLoopPlan {self._task_id}: Could not get running event loop and none was provided: {e}",
+                    exc_info=True,
+                )
+                self._state = _PlanState.ERROR
+                self._error_str = f"Initialization failed: no event loop. {e}"
+                self._overall_plan_completion_event.set()
+                return
 
         logger.info(
-            f"ToolLoopPlan {self._task_id}: Starting internal loop with description: '{self._task_description}'",
+            f"ToolLoopPlan {self._task_id}: Scheduling main execution manager on loop {self._main_event_loop}.",
         )
-        self._state = _PlanState.RUNNING
-        self._completion_event.clear()
+        asyncio.run_coroutine_threadsafe(
+            self._manage_plan_execution(),
+            self._main_event_loop,
+        )
 
+    def _get_internal_tools(self) -> Dict[str, Callable[..., Awaitable[Any]]]:
         current_tools = self._tools.copy()
 
         async def request_clarification_tool_for_llm(question: str) -> str:
             logger.info(
                 f"ToolLoopPlan {self._task_id}: LLM (internal loop) requesting clarification: '{question}'",
             )
-            await self.clarification_questions.put(question)
+            await self._clar_up_q_internal.put(question)
             answer = await self._clar_down_q_internal.get()
             logger.info(
                 f"ToolLoopPlan {self._task_id}: User (via plan) provided clarification: '{answer}'",
@@ -142,112 +140,201 @@ class ToolLoopPlan(BasePlan):
         current_tools["request_clarification_from_plan_caller"] = (
             request_clarification_tool_for_llm
         )
+        return current_tools
 
-        self._loop_handle = start_async_tool_use_loop(
-            client=self._client,
-            message=self._task_description,
-            tools=current_tools,
-            parent_chat_context=None,
-            propagate_chat_context=True,
-            interrupt_llm_with_interjections=True,
-            log_steps=False,
-        )
-        asyncio.create_task(self._await_completion())
+    async def _manage_plan_execution(self):
+        current_task_description = self._initial_task_description
+        current_parent_chat_context = None
+        self._state = _PlanState.IDLE
 
-    async def _await_completion(self):
-        """
-        Waits for the internal tool loop to complete and updates plan state.
-        """
-        if not self._loop_handle:
-            return
         try:
-            self._result_str = await self._loop_handle.result()
-            if self._state == _PlanState.RUNNING:
-                self._state = _PlanState.COMPLETED
-            logger.info(
-                f"ToolLoopPlan {self._task_id}: Completed/Finished. Final state: {self._state.name}. Result: {self._result_str}",
-            )
-        except asyncio.CancelledError:
-            if self._state == _PlanState.RUNNING:
-                self._state = _PlanState.STOPPED
-            logger.info(
-                f"ToolLoopPlan {self._task_id}: Execution was cancelled. Current state: {self._state.name}",
-            )
-            if self._result_str is None:
-                self._result_str = f"Task was {self._state.name.lower()}."
+            while True:
+                if self._state == _PlanState.STOPPED or self._state == _PlanState.ERROR:
+                    logger.info(
+                        f"ToolLoopPlan {self._task_id}: Execution manager exiting due to state {self._state.name}",
+                    )
+                    break
+
+                self._state = _PlanState.RUNNING
+                logger.info(
+                    f"ToolLoopPlan {self._task_id}: Starting/Resuming internal loop with description: '{current_task_description}'",
+                )
+
+                self._plan_client.reset_messages()
+                self._plan_client.reset_system_message()
+                self._plan_client.set_system_message(
+                    "You are a helpful web browser assistant. Use the available tools to complete the user's request.",
+                )
+
+                if current_parent_chat_context:
+                    self._plan_client.append_messages(current_parent_chat_context)
+
+                current_parent_chat_context = None
+
+                internal_tools = self._get_internal_tools()
+                self._loop_handle = start_async_tool_use_loop(
+                    client=self._plan_client,
+                    message=current_task_description,
+                    tools=internal_tools,
+                    propagate_chat_context=True,
+                    interrupt_llm_with_interjections=True,
+                    log_steps=False,
+                    max_steps=self.MAX_STEPS,
+                )
+
+                try:
+                    loop_result_str = await self._loop_handle.result()
+                    if self._state == _PlanState.RUNNING:
+                        self._state = _PlanState.COMPLETED
+                        self._result_str = loop_result_str
+                        logger.info(
+                            f"ToolLoopPlan {self._task_id}: Internal loop COMPLETED. Result: {self._result_str}",
+                        )
+                    elif self._state == _PlanState.PAUSED:
+                        logger.info(
+                            f"ToolLoopPlan {self._task_id}: Internal loop stopped for PAUSE.",
+                        )
+                    elif self._state == _PlanState.STOPPED:
+                        logger.info(
+                            f"ToolLoopPlan {self._task_id}: Internal loop stopped for STOP.",
+                        )
+                        if self._result_str is None:
+                            self._result_str = f"Plan {self._task_id} was stopped."
+                except asyncio.CancelledError:
+                    logger.info(
+                        f"ToolLoopPlan {self._task_id}: Internal loop task was cancelled. Current state: {self._state.name}",
+                    )
+                    if self._state == _PlanState.RUNNING:
+                        self._state = _PlanState.STOPPED
+                    if self._result_str is None:
+                        self._result_str = f"Plan {self._task_id} was {self._state.name.lower()} (cancelled)."
+                except Exception as e:
+                    logger.error(
+                        f"ToolLoopPlan {self._task_id}: Internal loop failed: {e}",
+                        exc_info=True,
+                    )
+                    self._state = _PlanState.ERROR
+                    self._error_str = str(e)
+                    self._result_str = f"Task failed with error: {self._error_str}"
+
+                self._loop_handle = None
+
+                if self._state == _PlanState.PAUSED:
+                    logger.info(
+                        f"ToolLoopPlan {self._task_id}: Execution PAUSED, awaiting resume signal.",
+                    )
+                    await self._resume_requested_event.wait()
+                    self._resume_requested_event.clear()
+                    if self._state == _PlanState.STOPPED:
+                        logger.info(
+                            f"ToolLoopPlan {self._task_id}: Stop called while paused. Terminating.",
+                        )
+                        break
+                    logger.info(f"ToolLoopPlan {self._task_id}: RESUMING execution.")
+                    current_task_description = "The task was paused and is now resumed. Please review the history and continue."
+                    current_parent_chat_context = self._parent_chat_context_on_pause
+                    self._parent_chat_context_on_pause = None
+                    continue
+                else:
+                    logger.info(
+                        f"ToolLoopPlan {self._task_id}: Execution ended with state {self._state.name}. Finalizing.",
+                    )
+                    break
         except Exception as e:
-            self._state = _PlanState.ERROR
-            self._error_str = str(e)
-            self._result_str = f"Task failed with error: {self._error_str}"
             logger.error(
-                f"ToolLoopPlan {self._task_id}: Failed with error: {e}",
+                f"ToolLoopPlan {self._task_id}: Unexpected error in _manage_plan_execution: {e}",
                 exc_info=True,
             )
+            if self._state not in [
+                _PlanState.ERROR,
+                _PlanState.COMPLETED,
+                _PlanState.STOPPED,
+            ]:
+                self._state = _PlanState.ERROR
+            if self._error_str is None:
+                self._error_str = str(e)
+            if self._result_str is None:
+                self._result_str = (
+                    f"Plan failed with unexpected error: {self._error_str}"
+                )
         finally:
-            self._completion_event.set()
+            logger.info(
+                f"ToolLoopPlan {self._task_id}: Setting overall completion event. Final state: {self._state.name}",
+            )
+            self._overall_plan_completion_event.set()
 
     @functools.wraps(BasePlan.result, updated=())
     async def result(self) -> str:
-        await self._completion_event.wait()
+        await self._overall_plan_completion_event.wait()
         if self._error_str:
             return f"Error: {self._error_str}"
         return (
             self._result_str
             if self._result_str is not None
-            else "Plan did not produce a result or was stopped."
+            else f"Plan {self._task_id} concluded without a specific result (State: {self._state.name})."
         )
 
     @functools.wraps(BasePlan.done, updated=())
     def done(self) -> bool:
-        return self._state in (
-            _PlanState.COMPLETED,
-            _PlanState.STOPPED,
-            _PlanState.ERROR,
-        )
+        return self._overall_plan_completion_event.is_set()
 
     @property
-    def clarification_questions(self) -> asyncio.Queue[str]:
+    def clarification_up_q(self) -> asyncio.Queue[str]:
         """Queue for this plan to send clarification questions upwards."""
         return self._clar_up_q_internal
 
-    async def answer_clarification(self, answer: str) -> None:
-        """Method for the caller of this plan to provide answers to clarifications."""
-        await self._clar_down_q_internal.put(answer)
+    @property
+    def clarification_down_q(self) -> asyncio.Queue[str]:
+        return self._clar_down_q_internal
 
     def _is_valid_method(self, name: str) -> bool:
-        """Checks if a control method is valid in the current plan state."""
         if name == "stop":
-            return self._state in (_PlanState.RUNNING, _PlanState.PAUSED)
+            return self._state in (
+                _PlanState.RUNNING,
+                _PlanState.PAUSED,
+                _PlanState.IDLE,
+            )
         if name == "pause":
             return self._state == _PlanState.RUNNING
         if name == "resume":
             return self._state == _PlanState.PAUSED
         if name == "interject":
-            return self._state == _PlanState.RUNNING
+            return self._state == _PlanState.RUNNING and self._loop_handle is not None
         if name == "ask":
             return self._state in (_PlanState.RUNNING, _PlanState.PAUSED)
         return False
 
-    # --- Public Control Methods ---
     @functools.wraps(BasePlan.stop, updated=())
     async def stop(self) -> str:
         if not self._is_valid_method("stop"):
+            if self.done():
+                return await self.result()
             raise RuntimeError(
                 f"Plan {self._task_id} cannot be stopped in state {self._state.name}.",
             )
+
         logger.info(
             f"ToolLoopPlan {self._task_id}: Stopping. Current state: {self._state.name}",
         )
+        previous_state = self._state
         self._state = _PlanState.STOPPED
-        if self._loop_handle:
+        self._result_str = f"Plan {self._task_id} was stopped."
+
+        if previous_state == _PlanState.PAUSED:
+            self._resume_requested_event.set()
+
+        if self._loop_handle and not self._loop_handle.done():
             self._loop_handle.stop()
-        else:
-            self._completion_event.set()
+        elif (
+            previous_state == _PlanState.IDLE
+            and not self._overall_plan_completion_event.is_set()
+        ):
+            logger.warning(
+                f"ToolLoopPlan {self._task_id}: Stop called in IDLE state. Forcing overall completion.",
+            )
+            self._overall_plan_completion_event.set()
 
-        await self._completion_event.wait()
-
-        if self._result_str is None:
-            self._result_str = f"Plan {self._task_id} was stopped."
+        await self._overall_plan_completion_event.wait()
         return self._result_str
 
     @functools.wraps(BasePlan.pause, updated=())
@@ -261,24 +348,30 @@ class ToolLoopPlan(BasePlan):
         )
         self._state = _PlanState.PAUSED
 
-        if self._client and self._client.messages:
-            self._parent_chat_context_on_pause = copy.deepcopy(self._client.messages)
+        if self._plan_client and self._plan_client.messages:
+            self._parent_chat_context_on_pause = copy.deepcopy(
+                self._plan_client.messages,
+            )
+            logger.info(
+                f"ToolLoopPlan {self._task_id}: Context saved on pause: {len(self._parent_chat_context_on_pause)} messages.",
+            )
         else:
             self._parent_chat_context_on_pause = []
-        logger.info(
-            f"ToolLoopPlan {self._task_id}: Context saved on pause: {len(self._parent_chat_context_on_pause)} messages.",
-        )
+            logger.info(
+                f"ToolLoopPlan {self._task_id}: No active LLM context to save on pause.",
+            )
 
-        if self._loop_handle:
+        if self._loop_handle and not self._loop_handle.done():
+            logger.info(
+                f"ToolLoopPlan {self._task_id}: Requesting stop of current internal loop for pause.",
+            )
             self._loop_handle.stop()
-            await self._completion_event.wait()
         else:
             logger.warning(
-                f"ToolLoopPlan {self._task_id}: Pause called but no active loop_handle.",
+                f"ToolLoopPlan {self._task_id}: Pause called but no active internal loop_handle to stop.",
             )
-            self._completion_event.set()
 
-        return f"Plan {self._task_id} paused."
+        return f"Plan {self._task_id} paused successfully. Awaiting resume."
 
     @functools.wraps(BasePlan.resume, updated=())
     async def resume(self) -> str:
@@ -287,50 +380,23 @@ class ToolLoopPlan(BasePlan):
                 f"Plan {self._task_id} cannot be resumed in state {self._state.name}.",
             )
         logger.info(
-            f"ToolLoopPlan {self._task_id}: Resuming. Current state: {self._state.name}",
+            f"ToolLoopPlan {self._task_id}: Requesting resume. Current state: {self._state.name}",
         )
-
-        if (
-            not self._parent_chat_context_on_pause
-        ):  # Check if there's context to resume with
-            logger.warning(
-                f"ToolLoopPlan {self._task_id}: Resuming without a saved parent context.",
-            )
-
-        self._client = AsyncUnify(
-            "o4-mini@openai",
-            cache=json.loads(os.environ.get("UNIFY_CACHE", "true")),
-            traced=json.loads(os.environ.get("UNIFY_TRACED", "true")),
-        )
-        if self._base_system_prompt:
-            self._client.set_system_message(self._base_system_prompt)
-
-        if self._parent_chat_context_on_pause:
-            messages_to_load = self._parent_chat_context_on_pause
-            if (
-                self._base_system_prompt
-                and messages_to_load
-                and messages_to_load[0].get("role") == "system"
-            ):
-                messages_to_load = messages_to_load[1:]
-            if messages_to_load:
-                self._client.append_messages(messages_to_load)
-
-        self._task_description = "The task was paused. Please review the history and determine the next best action or tool call."
-        self._start_internal_loop()
-
-        return f"Plan {self._task_id} resuming."
+        self._resume_requested_event.set()
+        return f"Plan {self._task_id} is resuming."
 
     @functools.wraps(BasePlan.interject, updated=())
     async def interject(self, message: str) -> str:
         if not self._is_valid_method("interject"):
-            raise RuntimeError(
-                f"Plan {self._task_id} cannot be interjected in state {self._state.name}.",
-            )
-        if not self._loop_handle:
-            return "Error: No active loop to interject."
-        logger.info(f"ToolLoopPlan {self._task_id}: Interjecting message: '{message}'")
-        await self._loop_handle.interject(message)
+            if self._state != _PlanState.RUNNING:
+                return f"Error: Plan {self._task_id} is not in RUNNING state (current: {self._state.name}), cannot interject."
+            if not self._loop_handle:  # Should not happen if RUNNING
+                return f"Error: Plan {self._task_id} is RUNNING but has no active internal loop to interject."
+
+        logger.info(
+            f"ToolLoopPlan {self._task_id}: Interjecting message: '{message}' into active internal loop.",
+        )
+        await self._loop_handle.interject(message)  # type: ignore
         return f"Interjection '{message}' sent to plan {self._task_id}."
 
     @functools.wraps(BasePlan.ask, updated=())
@@ -342,83 +408,91 @@ class ToolLoopPlan(BasePlan):
 
         logger.info(f"ToolLoopPlan {self._task_id}: Answering query: '{question}'")
         current_context_to_share = []
-        if self._state == _PlanState.RUNNING and self._client and self._client.messages:
-            current_context_to_share = copy.deepcopy(self._client.messages)
+        if (
+            self._state == _PlanState.RUNNING
+            and self._plan_client
+            and self._plan_client.messages
+        ):
+            current_context_to_share = copy.deepcopy(self._plan_client.messages)
         elif self._state == _PlanState.PAUSED and self._parent_chat_context_on_pause:
             current_context_to_share = copy.deepcopy(self._parent_chat_context_on_pause)
 
         if not current_context_to_share:
-            return "No context available to answer the question."
+            return "No context available to answer the question for the current plan state."
 
+        # Ensure _ask_client uses its own separate message history for each ask
         self._ask_client.reset_messages()
-        self._ask_client.set_system_message(self._ask_system_prompt)
-        self._ask_client.append_message(
-            {
-                "role": "system",
-                "content": f"Current task ({self._task_id}) chat history:\n{json.dumps(current_context_to_share, indent=2)}",
-            },
+        self._ask_client.reset_system_message()
+        self._ask_client.set_system_message(
+            "You are answering questions about an ongoing automated task. "
+            "The main task's chat history will be provided. Answer concisely based on this history.",
         )
-        self._ask_client.append_message({"role": "user", "content": question})
+        self._ask_client.append_messages(
+            [
+                {
+                    "role": "system",
+                    "content": f"Current task ({self._task_id}, state: {self._state.name}) chat history:\n{json.dumps(current_context_to_share, indent=2)}",
+                },
+                {"role": "user", "content": question},
+            ],
+        )
 
         try:
             response = await self._ask_client.generate()
             return response.strip() if isinstance(response, str) else str(response)
         except Exception as e:
             logger.error(
-                f"ToolLoopPlan {self._task_id}: Error during ask: {e}",
+                f"ToolLoopPlan {self._task_id}: Error during LLM call for ask: {e}",
                 exc_info=True,
             )
-            return f"Error answering question: {e}"
+            return f"Error answering question due to LLM failure: {e}"
 
     @property
     @functools.wraps(BasePlan.valid_tools, updated=())
     def valid_tools(self) -> Dict[str, Callable[..., Awaitable[Any]]]:
         tools = {}
-        for method_name in ["stop", "pause", "resume", "interject", "ask"]:
+        potential_tools = ["stop", "pause", "resume", "interject", "ask"]
+        for method_name in potential_tools:
             if self._is_valid_method(method_name):
                 tools[method_name] = getattr(self, method_name)
         return tools
-
-    def __dir__(self):
-        """Ensures that `dir(plan_handle)` includes conditionally available methods."""
-        default_attrs = set(super().__dir__())
-        exposed_methods = set(self.valid_tools.keys())
-        exposed_methods.add("clarification_questions")
-        exposed_methods.add("answer_clarification")
-        return sorted(list(default_attrs.union(exposed_methods)))
 
 
 class ToolLoopPlanner(BasePlanner[ToolLoopPlan]):
     def __init__(
         self,
-        base_system_prompt: str = "You are a helpful assistant. Use the available tools to complete the user's request. Prioritize completing the primary request.",
+        session_connect_url: Optional[str] = None,
+        headless: bool = False,
     ):
         super().__init__()
-        self._base_system_prompt = base_system_prompt
-        self._controller = Controller()
+        self._controller = Controller(
+            session_connect_url=session_connect_url,
+            headless=headless,
+        )
         if not self._controller.is_alive():
             self._controller.start()
         self._coms_manager = ComsManager()
-
         self._tools_cache: Optional[Dict[str, Callable[..., Awaitable[Any]]]] = None
+        self._main_event_loop: Optional[asyncio.AbstractEventLoop] = None
+        try:
+            self._main_event_loop = asyncio.get_running_loop()
+        except RuntimeError:
+            logger.warning(
+                "ToolLoopPlanner initialized outside of a running asyncio event loop.",
+            )
 
     def _get_tools(self) -> Dict[str, Callable[..., Awaitable[Any]]]:
-        """Prepares and caches the tools available for the ToolLoopPlan."""
         if self._tools_cache is None:
             self._tools_cache = self._build_tools()
         return self._tools_cache
 
     def _build_tools(self) -> Dict[str, Callable[..., Awaitable[Any]]]:
-        """
-        Builds a dictionary of tools that the ToolLoopPlanner can use.
-        This includes tools from the controller and communications manager.
-        """
-
-        async def act_tool(action: str) -> str:
+        # This remains the same as it defines tools for the *internal* loop
+        async def act(action: str) -> str:
             logger.info(f"Planner: Calling Controller.act with '{action}'")
             result = await self._controller.act(action)
             if isinstance(result, list):
-                res_str = ", ".join(result)
+                res_str = ", ".join(map(str, result))
                 return (
                     f"Executed actions: {res_str}"
                     if result
@@ -430,7 +504,7 @@ class ToolLoopPlanner(BasePlanner[ToolLoopPlan]):
                 else "No action taken by controller."
             )
 
-        async def observe_tool(query: str, response_format_str: str = "str") -> str:
+        async def observe(query: str, response_format_str: str = "str") -> str:
             logger.info(
                 f"Planner: Calling Controller.observe with query '{query}', format '{response_format_str}'",
             )
@@ -447,23 +521,59 @@ class ToolLoopPlanner(BasePlanner[ToolLoopPlan]):
             )
             return str(result)
 
-        async def communicate_tool(description: str) -> str:
+        async def communicate(description: str) -> str:
             logger.info(
                 f"Planner: Calling ComsManager.communicate with '{description}'",
             )
             return await self._coms_manager.communicate(description)
 
-        act_tool.__name__ = "act_tool"
-        act_tool.__qualname__ = "act_tool"
-        observe_tool.__name__ = "observe_tool"
-        observe_tool.__qualname__ = "observe_tool"
-        communicate_tool.__name__ = "communicate_tool"
-        communicate_tool.__qualname__ = "communicate_tool"
+        act.__doc__ = "Performs a specified action using the system controller. Input is the action description."
+        observe.__doc__ = "Observes the system or environment based on a query. Specify 'response_format_str' as 'str', 'bool', 'int', or 'float'."
+        communicate.__doc__ = "Communicates a message or instruction externally."
+
+        import inspect
+
+        act.__signature__ = inspect.Signature(
+            [
+                inspect.Parameter(
+                    "action",
+                    inspect.Parameter.POSITIONAL_OR_KEYWORD,
+                    annotation=str,
+                ),
+            ],
+            return_annotation=str,
+        )
+        observe.__signature__ = inspect.Signature(
+            [
+                inspect.Parameter(
+                    "query",
+                    inspect.Parameter.POSITIONAL_OR_KEYWORD,
+                    annotation=str,
+                ),
+                inspect.Parameter(
+                    "response_format_str",
+                    inspect.Parameter.POSITIONAL_OR_KEYWORD,
+                    annotation=str,
+                    default="str",
+                ),
+            ],
+            return_annotation=str,
+        )
+        communicate.__signature__ = inspect.Signature(
+            [
+                inspect.Parameter(
+                    "description",
+                    inspect.Parameter.POSITIONAL_OR_KEYWORD,
+                    annotation=str,
+                ),
+            ],
+            return_annotation=str,
+        )
 
         return {
-            "act_tool": act_tool,
-            "observe_tool": observe_tool,
-            "communicate_tool": communicate_tool,
+            "act": act,
+            "observe": observe,
+            "communicate": communicate,
         }
 
     def _make_plan(
@@ -473,26 +583,31 @@ class ToolLoopPlanner(BasePlanner[ToolLoopPlan]):
         clarification_up_q: Optional[asyncio.Queue[str]] = None,
         clarification_down_q: Optional[asyncio.Queue[str]] = None,
     ) -> ToolLoopPlan:
-        """
-        Initiates a new plan for the given task description.
-        Renamed from 'start' to 'plan'.
-        """
         logger.info(f"ToolLoopPlanner: Planning task: '{task_description}'")
 
-        plan_client = AsyncUnify(
-            "o4-mini@openai",
-            cache=json.loads(os.environ.get("UNIFY_CACHE", "true")),
-            traced=json.loads(os.environ.get("UNIFY_TRACED", "true")),
-        )
-        if self._base_system_prompt:
-            plan_client.set_system_message(self._base_system_prompt)
+        if not self._main_event_loop:
+            try:
+                self._main_event_loop = asyncio.get_running_loop()
+                logger.info(
+                    f"ToolLoopPlanner._make_plan captured event loop: {self._main_event_loop}",
+                )
+            except RuntimeError:
+                logger.error(
+                    "ToolLoopPlanner._make_plan: No running event loop to pass to ToolLoopPlan.",
+                )
 
         plan = ToolLoopPlan(
             task_description=task_description,
-            initial_client=plan_client,
             tools=self._get_tools(),
-            base_system_prompt=self._base_system_prompt,
             clarification_up_q=clarification_up_q,
             clarification_down_q=clarification_down_q,
+            main_event_loop=self._main_event_loop,
         )
         return plan
+
+    async def close(self):
+        logger.info("ToolLoopPlanner: Closing resources...")
+        if self._controller:
+            self._controller.stop()
+        if self._coms_manager:
+            await self._coms_manager.stop()
