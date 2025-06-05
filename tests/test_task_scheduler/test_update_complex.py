@@ -76,9 +76,9 @@ def basic_task_scenario(setup_session_context):
     """
     ts = TaskScheduler()
     ids = _seed_basic_tasks(ts)
-    snapshot = ts._get_tasks()
+    snapshot = ts._search_tasks()
     yield ts, ids
-    new_snapshot = ts._get_tasks()
+    new_snapshot = ts._search_tasks()
     for t_original, t_new in zip(snapshot, new_snapshot):
         if t_original["name"] != t_new["name"]:
             ts._update_task_name(

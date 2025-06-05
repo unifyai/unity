@@ -139,7 +139,7 @@ async def test_ts_update_uses_parent_context():  # FIXME: flaky
         parent_chat_context=parent_ctx,
     ).result()
 
-    row = ts._get_tasks(filter=f"task_id == {tid}", limit=1)[0]
+    row = ts._search_tasks(filter=f"task_id == {tid}", limit=1)[0]
     assert row["status"] == "completed", assertion_failed(
         "Task status 'completed'",
         json.dumps(row, indent=2),
@@ -198,7 +198,7 @@ async def test_ts_update_requests_clarification():
 
     await asyncio.wait_for(task, timeout=30)
 
-    row = ts._get_tasks(filter=f"task_id == {tid_deck}", limit=1)[0]
+    row = ts._search_tasks(filter=f"task_id == {tid_deck}", limit=1)[0]
     assert row["priority"] == "high", assertion_failed(
         "Task priority 'high'",
         json.dumps(row, indent=2),
