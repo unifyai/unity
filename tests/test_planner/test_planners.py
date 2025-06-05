@@ -178,9 +178,6 @@ async def test_interject_plan(monkeypatch, planner_and_plan_types):
                 async def specific_dummy_tool(**kwargs):
                     if "extract" in name_closure.lower():
                         await asyncio.sleep(5)
-                        print(
-                            f"Extracting content for {name_closure} with kwargs: {kwargs}",
-                        )
                         if "github.com" in kwargs.get("kwargs", ""):
                             return (
                                 "Extracted content from https://github.com/unifyai/unify/tree/main: "
