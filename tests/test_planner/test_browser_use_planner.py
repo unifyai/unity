@@ -1,3 +1,4 @@
+from typing import Tuple, Type
 import pytest
 import asyncio
 import functools
@@ -6,7 +7,9 @@ import os
 import json
 
 from unity.common.llm_helpers import start_async_tool_use_loop
+from unity.planner.base import BasePlanner, BasePlan
 from unity.planner.browser_use_planner import BrowserUsePlanner, BrowserUsePlan
+from unity.planner.tool_loop_planner import ToolLoopPlanner, ToolLoopPlan
 from tests.helpers import _handle_project
 
 
@@ -21,15 +24,29 @@ def make_client(system_message: str):
     return client
 
 
+PlannerFixture = Tuple[Type[BasePlanner], Type[BasePlan], dict]
+
+
+@pytest.fixture(
+    params=[
+        (BrowserUsePlanner, BrowserUsePlan, {"headless": True}),
+        (ToolLoopPlanner, ToolLoopPlan, {"headless": True}),
+    ],
+)
+def planner_and_plan_types(request) -> PlannerFixture:
+    return request.param
+
+
 @pytest.mark.asyncio
 @_handle_project
-async def test_start_and_ask_browser_use_plan(monkeypatch):
-    planner = BrowserUsePlanner(headless=True)
+async def test_start_and_ask_browser_use_plan(monkeypatch, planner_and_plan_types):
+    planner_class, plan_class, planner_kwargs = planner_and_plan_types
+    planner = planner_class(**planner_kwargs)
 
     ask_called = {"count": 0}
     stop_called = {"count": 0}
-    original_ask = BrowserUsePlan.ask
-    original_stop = BrowserUsePlan.stop
+    original_ask = plan_class.ask
+    original_stop = plan_class.stop
 
     @functools.wraps(original_ask)
     async def ask(self, question: str) -> str:
@@ -41,8 +58,8 @@ async def test_start_and_ask_browser_use_plan(monkeypatch):
         stop_called["count"] += 1
         return await original_stop(self)
 
-    monkeypatch.setattr(BrowserUsePlan, "ask", ask, raising=True)
-    monkeypatch.setattr(BrowserUsePlan, "stop", stop, raising=True)
+    monkeypatch.setattr(plan_class, "ask", ask, raising=True)
+    monkeypatch.setattr(plan_class, "stop", stop, raising=True)
 
     def patched_build_tools_for_test():
         dummy_tools = {}
@@ -127,11 +144,12 @@ async def test_start_and_ask_browser_use_plan(monkeypatch):
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_interject_browser_use_plan(monkeypatch):
-    planner = BrowserUsePlanner(headless=True)
+async def test_interject_browser_use_plan(monkeypatch, planner_and_plan_types):
+    planner_class, plan_class, planner_kwargs = planner_and_plan_types
+    planner = planner_class(**planner_kwargs)
 
     interjected_log = {"count": 0, "msgs": []}
-    original_interject_method = BrowserUsePlan.interject
+    original_interject_method = plan_class.interject
 
     @functools.wraps(original_interject_method)
     async def patched_interject(self, instruction: str) -> str:
@@ -215,7 +233,7 @@ async def test_interject_browser_use_plan(monkeypatch):
         planner._tools_cache = None
 
     monkeypatch.setattr(planner, "_build_tools", patched_build_tools_for_test)
-    monkeypatch.setattr(BrowserUsePlan, "interject", patched_interject, raising=True)
+    monkeypatch.setattr(plan_class, "interject", patched_interject, raising=True)
 
     system = (
         "You are an automated test assistant. Your responses must be precise.\n"
@@ -255,13 +273,15 @@ async def test_interject_browser_use_plan(monkeypatch):
 @_handle_project
 async def test_pause_and_resume_browser_use_plan(
     monkeypatch,
+    planner_and_plan_types,
 ):
-    planner = BrowserUsePlanner(headless=True)
+    planner_class, plan_class, planner_kwargs = planner_and_plan_types
+    planner = planner_class(**planner_kwargs)
 
     counts = {"pause": 0, "resume": 0, "stop_after_resume": 0}
-    original_pause_method = BrowserUsePlan.pause
-    original_resume_method = BrowserUsePlan.resume
-    original_stop_method = BrowserUsePlan.stop
+    original_pause_method = plan_class.pause
+    original_resume_method = plan_class.resume
+    original_stop_method = plan_class.stop
 
     @functools.wraps(original_pause_method)
     async def patched_pause(self) -> str:
@@ -278,9 +298,9 @@ async def test_pause_and_resume_browser_use_plan(
         counts["stop_after_resume"] += 1
         return await original_stop_method(self)
 
-    monkeypatch.setattr(BrowserUsePlan, "pause", patched_pause, raising=True)
-    monkeypatch.setattr(BrowserUsePlan, "resume", patched_resume, raising=True)
-    monkeypatch.setattr(BrowserUsePlan, "stop", patched_stop_after_resume, raising=True)
+    monkeypatch.setattr(plan_class, "pause", patched_pause, raising=True)
+    monkeypatch.setattr(plan_class, "resume", patched_resume, raising=True)
+    monkeypatch.setattr(plan_class, "stop", patched_stop_after_resume, raising=True)
 
     def patched_build_tools_for_test():
         dummy_tools: dict[str, callable] = {}
@@ -373,11 +393,15 @@ async def test_pause_and_resume_browser_use_plan(
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_browser_use_plan_requests_clarification(monkeypatch):
+async def test_browser_use_plan_requests_clarification(
+    monkeypatch,
+    planner_and_plan_types,
+):
     """
     Test that BrowserUsePlan can request and receive clarification via queues.
     """
-    planner = BrowserUsePlanner(headless=True)
+    planner_class, plan_class, planner_kwargs = planner_and_plan_types
+    planner = planner_class(**planner_kwargs)
     clarification_up_q = asyncio.Queue()
     clarification_down_q = asyncio.Queue()
 
