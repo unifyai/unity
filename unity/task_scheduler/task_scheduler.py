@@ -535,11 +535,11 @@ class TaskScheduler(BaseTaskScheduler):
             ), f"Multiple heads detected: {head_candidates}"
             start_task = head_candidates[0]
 
-        # ----------  not in queue yet? return empty list  ---------- #
+        # not in queue yet? return list with only start task
         if start_task is not None and start_task["schedule"] is None:
             # Task exists but has no schedule pointers; therefore the
-            # queue is currently empty.
-            return []
+            # queue only has one item (the start task).
+            return [Task(**start_task)]
 
         # ----------------  walk backwards to head  ---------------- #
         cur = start_task
