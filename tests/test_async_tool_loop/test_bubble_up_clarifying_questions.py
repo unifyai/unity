@@ -165,12 +165,12 @@ async def test_clarification_bubbles_up_two_tiers() -> None:
     # 6️⃣ assistant forwards the answer via `_clarify_send_email…` ------------
     m5 = outer_client.messages[5]
     assert m5["role"] == "assistant"
-    assert m5["tool_calls"][0]["function"]["name"].startswith("_clarify_send_email")
+    assert m5["tool_calls"][0]["function"]["name"].startswith("clarify_send_email")
 
     # 7️⃣ final tool message contains the real result -------------------------
     final_tool = outer_client.messages[6]
     assert final_tool["role"] == "tool"
-    assert final_tool["name"].startswith("_clarify_send_email")
+    assert final_tool["name"].startswith("clarify_send_email")
     assert "Email sent" in final_tool["content"]
 
     # 8️⃣ assistant wraps up ---------------------------------------------------

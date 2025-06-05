@@ -34,7 +34,7 @@ def _seed_basic_tasks(ts: TaskScheduler) -> List[int]:
         ts._create_task(
             name="Write quarterly report",
             description="Draft the Q2 report (send email to finance).",
-            status="active",
+            status="primed",
         ),
     )
     ids.append(
@@ -76,9 +76,9 @@ def basic_task_scenario(setup_session_context):
     """
     ts = TaskScheduler()
     ids = _seed_basic_tasks(ts)
-    snapshot = ts._search()
+    snapshot = ts._search_tasks()
     yield ts, ids
-    new_snapshot = ts._search()
+    new_snapshot = ts._search_tasks()
     for t_original, t_new in zip(snapshot, new_snapshot):
         if t_original["name"] != t_new["name"]:
             ts._update_task_name(
@@ -126,7 +126,7 @@ async def test_update_reorder_queue(basic_task_scenario):
     assert [t.task_id for t in ts._get_task_queue()] == ids  # initial order
 
     handle = ts.update(
-        text="Could you do Client follow-up email after Write quarterly report?",
+        text="Could you update the queue order so that you write the client follow-up email *after* you write the quarterly report? Both tasks are already assigned, you just need to update their scheduling order.",
     )
     await handle.result()
 
@@ -149,7 +149,7 @@ async def test_update_cancel_email_tasks(basic_task_scenario):  # FIXME
     handle = ts.update(text="Please cancel all tasks related to sending emails.")
     await handle.result()
 
-    tasks = ts._search()
+    tasks = ts._get_tasks()
     for t in tasks:
         if "email" in t["description"].lower():
             assert t["status"] == "cancelled"
@@ -192,7 +192,7 @@ async def test_update_lower_priority_next_monday(basic_task_scenario):
     )
     await handle.result()
 
-    task = ts._search(filter="'KPI report' in name")[0]
+    task = ts._get_tasks(filter="'KPI report' in name")[0]
     assert task["priority"] == Priority.normal
 
 
@@ -221,5 +221,5 @@ async def test_update_bulk_description_replace(basic_task_scenario):
     )
     await handle.result()
 
-    for t in ts._search(filter="'Mr. Smith' in description"):
+    for t in ts._get_tasks(filter="'Mr. Smith' in description"):
         assert re.search(r"Mr\.\s?Smith", t["description"]) is not None
