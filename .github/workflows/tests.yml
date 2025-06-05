@@ -17,7 +17,7 @@ jobs:
       run: |
         sudo apt-get update
         sudo apt-get install -y portaudio19-dev libnss3-dev libatk-bridge2.0-dev libdrm2 libxkbcommon0 libgtk-3-dev libgbm-dev
-        # Install Playwright system dependencies
+        # Install Playwright system dependencies for Ubuntu
         sudo apt-get install -y libasound2t64 libatspi2.0-0 libdrm2 libgtk-3-0 libnspr4 libnss3 libwayland-client0 libxcomposite1 libxdamage1 libxrandr2 xvfb
 
     - name: Install uv
@@ -62,8 +62,8 @@ jobs:
       run: |
         sudo apt-get update
         sudo apt-get install -y portaudio19-dev libnss3-dev libatk-bridge2.0-dev libdrm2 libxkbcommon0 libgtk-3-dev libgbm-dev
-        # Install Playwright system dependencies
-        sudo apt-get install -y libasound2 libatspi2.0-0 libdrm2 libgtk-3-0 libnspr4 libnss3 libwayland-client0 libxcomposite1 libxdamage1 libxrandr2 xvfb
+        # Install Playwright system dependencies for Ubuntu
+        sudo apt-get install -y libasound2t64 libatspi2.0-0 libdrm2 libgtk-3-0 libnspr4 libnss3 libwayland-client0 libxcomposite1 libxdamage1 libxrandr2 xvfb
 
     - name: Install uv
       run: pip install uv
