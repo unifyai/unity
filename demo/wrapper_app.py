@@ -18,7 +18,6 @@
 
 import os
 import time
-import subprocess
 import signal
 from flask import Flask, jsonify
 from new_terminal_helper import run_script, terminate_process
@@ -100,6 +99,7 @@ class UnityServiceManager:
 # Initialize the service manager
 unity_manager = UnityServiceManager()
 
+
 # Endpoint 1: Start the service
 @app.route("/start", methods=["POST"])
 def start_service():
@@ -114,7 +114,7 @@ def start_service():
                 "message": "Unity service started successfully",
                 "pid": unity_manager.process.pid if unity_manager.process else None,
                 "assistant_id": os.environ.get("ASSISTANT_ID", "default"),
-            }
+            },
         )
     else:
         service_status = "failed"
@@ -151,7 +151,7 @@ def health_check():
             "wrapper_status": "healthy",
             "unity_service": unity_manager.get_status(),
             "assistant_id": os.environ.get("ASSISTANT_ID", "default"),
-        }
+        },
     )
 
 
