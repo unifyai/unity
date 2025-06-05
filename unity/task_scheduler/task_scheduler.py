@@ -22,6 +22,7 @@ from .sys_msgs import ASK
 from .base import BaseTaskScheduler
 from ..planner.base import BasePlanner
 from ..planner.simulated import SimulatedPlanner
+from .active_task import ActiveTask
 import json
 
 
@@ -68,6 +69,8 @@ class TaskScheduler(BaseTaskScheduler):
                 self._update_task_deadline,
                 self._update_task_repetition,
                 self._update_task_priority,
+                # start task
+                self._start_task,
                 include_class_name=False,  # redundant, all same class (this one)
             ),
         }
@@ -222,6 +225,9 @@ class TaskScheduler(BaseTaskScheduler):
 
         return handle
 
+    # Private Helpers #
+    # ----------------#
+
     def _ensure_not_active_task(self, task_ids: Union[int, List[int]]) -> None:
         """
         Raise **RuntimeError** if *task_ids* contains the current
@@ -271,8 +277,46 @@ class TaskScheduler(BaseTaskScheduler):
         ), f"Expected 1 log for singular task_id, but got {len(log_ids)}"
         return log_ids
 
-    # Private #
-    # --------#
+    # Private Tools #
+    # --------------#
+
+    # Start
+
+    def _start_task(self, *, task_id: int) -> SteerableToolHandle:
+        """
+        Start execution of *task_id* and return a steerable handle.
+
+        • Fails if another task is already active.
+        • Promotes the task's status to **active**.
+        • Clears the primed pointer when relevant.
+        """
+        # 0. sanity
+        if self._active_task is not None:
+            raise RuntimeError("Another task is already running – stop it first.")
+
+        rows = self._search_tasks(filter=f"task_id == {task_id}", limit=1)
+        if not rows:
+            raise ValueError(f"No task found with id={task_id}")
+
+        task_row = rows[0]
+        if task_row["status"] in ("completed", "cancelled", "failed", "active"):
+            raise ValueError(f"Task {task_id} is already {task_row['status']!r}.")
+
+        # 1. build & store the ActiveTask with scheduler-awareness
+        handle = ActiveTask(
+            task_row["description"],
+            self._planner,
+            task_id=task_id,
+            scheduler=self,
+        )
+        self._active_task = {"task_id": task_id, "handle": handle}
+
+        # 2. update status → active and clear primed pointer if needed
+        self._update_task_status(task_ids=task_id, new_status="active")
+        if self._primed_task and self._primed_task["task_id"] == task_id:
+            self._primed_task = None
+
+        return handle
 
     # Create
 

@@ -38,9 +38,9 @@ async def test_active_task_ask(monkeypatch):
     original_ask = SimulatedPlan.ask
 
     @functools.wraps(original_ask)
-    def spy_ask(self, question: str) -> str:  # type: ignore[override]
+    async def spy_ask(self, question: str) -> str:  # type: ignore[override]
         calls["ask"] += 1
-        return original_ask(self, question)
+        return await original_ask(self, question)
 
     monkeypatch.setattr(SimulatedPlan, "ask", spy_ask, raising=True)
 
