@@ -1,6 +1,7 @@
 from typing import List, Dict, Optional, Callable, Any
 import asyncio
 import functools
+from datetime import datetime, timezone
 import json
 import os
 
@@ -64,7 +65,12 @@ class ContactManager(BaseContactManager):
             cache=json.loads(os.environ.get("UNIFY_CACHE", "true")),
             traced=json.loads(os.environ.get("UNIFY_TRACED", "true")),
         )
-        client.set_system_message(ASK_CONTACTS)
+        client.set_system_message(
+            ASK_CONTACTS.replace(
+                "<datetime>",
+                datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC"),
+            ),
+        )
 
         tools = dict(self._ask_tools)
         if clarification_up_q is not None and clarification_down_q is not None:
@@ -112,7 +118,12 @@ class ContactManager(BaseContactManager):
             cache=json.loads(os.environ.get("UNIFY_CACHE", "true")),
             traced=json.loads(os.environ.get("UNIFY_TRACED", "true")),
         )
-        client.set_system_message(UPDATE_CONTACTS)
+        client.set_system_message(
+            UPDATE_CONTACTS.replace(
+                "<datetime>",
+                datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC"),
+            ),
+        )
 
         tools = dict(self._update_tools)
         if clarification_up_q is not None and clarification_down_q is not None:
