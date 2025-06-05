@@ -205,7 +205,7 @@ async def test_stop_nested_loop_calls_stop(monkeypatch):
     # C. Optional sanity – a tool message that confirms stoplation.
     assert any(
         m.get("role") == "tool"
-        and "_stop" in (m.get("name") or "")
+        and "stop" in (m.get("name") or "")
         and "stopped successfully" in (m.get("content") or "").lower()
         for m in client.messages
     ), "No tool-message indicates the stoplation happened"
@@ -327,7 +327,7 @@ async def test_interject_nested_handle(monkeypatch):
             for m in msgs
             if m.get("tool_calls")
             and any(
-                call["function"]["name"].startswith("_interject_outer_tool_call_")
+                call["function"]["name"].startswith("interject_outer_tool_call_")
                 for call in m["tool_calls"]
             )
         ),
@@ -341,7 +341,7 @@ async def test_interject_nested_handle(monkeypatch):
     interj_call = next(
         call
         for call in interject_call_msg["tool_calls"]
-        if call["function"]["name"].startswith("_interject_outer_tool_call_")
+        if call["function"]["name"].startswith("interject_outer_tool_call_")
     )
     assert json.loads(interj_call["function"]["arguments"]) == {"content": "dogs"}
 
@@ -351,14 +351,14 @@ async def test_interject_nested_handle(monkeypatch):
             m
             for m in msgs
             if m["role"] == "tool"
-            and m["name"].startswith("_interject outer_tool")
+            and m["name"].startswith("interject outer_tool")
             and 'Guidance "dogs" forwarded to the running tool.' in m["content"]
         ),
         None,
     )
     assert (
         interject_response_msg is not None
-    ), "Tool response from _interject helper not found"
+    ), "Tool response from interject helper not found"
 
     # f) Finally, the assistant's last message must be "outer done"
     assert msgs[-1]["role"] == "assistant"
@@ -852,7 +852,7 @@ async def test_dynamic_handle_public_method():
     client.set_system_message(
         "1️⃣  Call `long_compute`.\n"
         "2️⃣  When the *user* asks **progress?**, call the helper whose name "
-        "starts with `_ask_` exactly once.\n"
+        "starts with `ask_` exactly once.\n"
         "3️⃣  Wait for the computation to finish, then answer **only** with 'all done'",
     )
 
@@ -876,6 +876,6 @@ async def test_dynamic_handle_public_method():
 
     # Optional: sanity-check that a tool-message from `_ask_…` is present
     assert any(
-        m.get("role") == "tool" and "_ask_" in (m.get("name") or "")
+        m.get("role") == "tool" and "ask_" in (m.get("name") or "")
         for m in client.messages
-    ), "No tool-message from the `_ask_…` helper found"
+    ), "No tool-message from the `ask_…` helper found"

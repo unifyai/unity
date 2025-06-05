@@ -1,6 +1,7 @@
 import os
 import json
 import asyncio
+from datetime import datetime, timezone
 import functools
 from typing import List, Dict, Optional, Union, Callable
 
@@ -81,7 +82,12 @@ class TranscriptManager(BaseTranscriptManager):
             cache=json.loads(os.environ.get("UNIFY_CACHE", "true")),
             traced=json.loads(os.environ.get("UNIFY_TRACED", "true")),
         )
-        client.set_system_message(ASK)
+        client.set_system_message(
+            ASK.replace(
+                "<datetime>",
+                datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC"),
+            ),
+        )
 
         # ── 1.  Expose tools + a *dynamic* request_clarification helper ──
         tools = dict(self._tools)
@@ -159,7 +165,13 @@ class TranscriptManager(BaseTranscriptManager):
             traced=json.loads(os.environ.get("UNIFY_TRACED", "true")),
         )
         client.set_system_message(
-            SUMMARIZE.replace("{guidance}", f"\n{guidance}\n" if guidance else ""),
+            SUMMARIZE.replace(
+                "<guidance>",
+                f"\n{guidance}\n" if guidance else "",
+            ).replace(
+                "<datetime>",
+                datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC"),
+            ),
         )
 
         # ── 1.  Collect raw messages → JSON blob for the prompt ────────────

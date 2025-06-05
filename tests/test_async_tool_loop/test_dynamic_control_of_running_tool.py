@@ -174,8 +174,8 @@ async def test_functional_tool_pause_extends_wall_clock(client):
     """
     * The assistant must…
         1️⃣  call `pausable_fn`;
-        2️⃣  when the *user* says **hold**, invoke the `_pause_…` helper;
-        3️⃣  when the *user* says **go**,   invoke the `_resume_…` helper;
+        2️⃣  when the *user* says **hold**, invoke the `pause_…` helper;
+        3️⃣  when the *user* says **go**,   invoke the `resume_…` helper;
         4️⃣  when the tool finishes, reply with **done**.
     * We measure wall-clock time: because the loop is paused for ~2 s in the
       middle, total duration must be ≥ 2 s + the tool's own 1-second workload.
@@ -194,9 +194,9 @@ async def test_functional_tool_pause_extends_wall_clock(client):
     client.set_system_message(
         "1️⃣ Call `pausable_fn`.\n"
         "2️⃣ When the user says **hold**, call the helper whose name starts "
-        "with `_pause_`.\n"
+        "with `pause_`.\n"
         "3️⃣ When the user says **go**,   call the helper whose name starts "
-        "with `_resume_`.\n"
+        "with `resume_`.\n"
         "4️⃣ Once the tool finishes, reply with **done**.",
     )
 
@@ -232,7 +232,7 @@ async def test_functional_tool_pause_resume_helpers_called_once(client):
     """
     Same scenario as above but we *count* helper invocations in the chat log.
 
-    • Exactly one `_pause_…` and one `_resume_…` tool-call must appear.
+    • Exactly one `pause_…` and one `resume_…` tool-call must appear.
     """
 
     async def pausable_fn(*, pause_event: asyncio.Event) -> str:
@@ -246,8 +246,8 @@ async def test_functional_tool_pause_resume_helpers_called_once(client):
 
     client.set_system_message(
         "1️⃣ Call `pausable_fn`.\n"
-        "2️⃣ If the user says **freeze**, call `_pause_…` *once*.\n"
-        "3️⃣ If the user then says **unfreeze**, call `_resume_…` *once*.\n"
+        "2️⃣ If the user says **freeze**, call `pause_…` *once*.\n"
+        "3️⃣ If the user then says **unfreeze**, call `resume_…` *once*.\n"
         "4️⃣ When the tool finishes, reply with **all done**.",
     )
 
@@ -268,9 +268,9 @@ async def test_functional_tool_pause_resume_helpers_called_once(client):
     msgs = client.messages
 
     # helper counters -----------------------------------------------------
-    pause_calls = _assistant_calls_prefix(msgs, "_pause")
-    resume_calls = _assistant_calls_prefix(msgs, "_resume")
+    pause_calls = _assistant_calls_prefix(msgs, "pause")
+    resume_calls = _assistant_calls_prefix(msgs, "resume")
 
     assert "all done" in final.strip().lower()
-    assert pause_calls == 1, f"expected exactly 1 _pause_ helper, got {pause_calls}"
-    assert resume_calls == 1, f"expected exactly 1 _resume_ helper, got {resume_calls}"
+    assert pause_calls == 1, f"expected exactly 1 pause_ helper, got {pause_calls}"
+    assert resume_calls == 1, f"expected exactly 1 resume_ helper, got {resume_calls}"

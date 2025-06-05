@@ -44,8 +44,8 @@ class TaskScheduler(BaseTaskScheduler):
 
         # Query-only helpers – safe, read-only operations
         self._ask_tools = methods_to_tool_dict(
-            self._search,
-            self._search_similar,
+            self._search_tasks,
+            self._nearest_tasks,
             self._get_task_queue,
             include_class_name=False,  # redundant, all same class (this one)
         )
@@ -124,7 +124,7 @@ class TaskScheduler(BaseTaskScheduler):
         )
         client.set_system_message(
             ASK.replace(
-                "{datetime}",
+                "<datetime>",
                 datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC"),
             ),
         )
@@ -184,7 +184,7 @@ class TaskScheduler(BaseTaskScheduler):
         )
         client.set_system_message(
             UPDATE.replace(
-                "{datetime}",
+                "<datetime>",
                 datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC"),
             ),
         )
@@ -456,7 +456,7 @@ class TaskScheduler(BaseTaskScheduler):
             task_ids (List[int]): The ids of the tasks to cancel.
         """
         self._ensure_not_active_task(task_ids)
-        completed_tasks = self._search(filter="status == 'completed'")
+        completed_tasks = self._search_tasks(filter="status == 'completed'")
         completed_task_ids = [lg["task_id"] for lg in completed_tasks]
         assert not set(task_ids).intersection(
             set(completed_task_ids),
@@ -504,7 +504,7 @@ class TaskScheduler(BaseTaskScheduler):
         # ----------------  helpers  ---------------- #
         def _get_task_by_task_id(tid: int) -> Optional[dict]:
             """Fetch exactly one task row by id or return None."""
-            rows = self._search(filter=f"task_id == {tid}", limit=1)
+            rows = self._search_tasks(filter=f"task_id == {tid}", limit=1)
             return rows[0] if rows else None
 
         # ----------------  starting node  ---------------- #
@@ -522,7 +522,7 @@ class TaskScheduler(BaseTaskScheduler):
 
         if start_task is None:
             # fall back to queue head: node with no prev_task and non-terminal status
-            head_candidates = self._search(
+            head_candidates = self._search_tasks(
                 filter=(
                     "schedule is not None and \n                    status not in ('completed','cancelled','failed', 'scheduled') and \n                    schedule.get('prev_task') is None"
                 ),
@@ -535,11 +535,11 @@ class TaskScheduler(BaseTaskScheduler):
             ), f"Multiple heads detected: {head_candidates}"
             start_task = head_candidates[0]
 
-        # ----------  not in queue yet? return empty list  ---------- #
+        # not in queue yet? return list with only start task
         if start_task is not None and start_task["schedule"] is None:
             # Task exists but has no schedule pointers; therefore the
-            # queue is currently empty.
-            return []
+            # queue only has one item (the start task).
+            return [Task(**start_task)]
 
         # ----------------  walk backwards to head  ---------------- #
         cur = start_task
@@ -613,7 +613,7 @@ class TaskScheduler(BaseTaskScheduler):
 
         # -------  gather existing logs  -------
         existing_logs = {
-            t["task_id"]: t for t in self._search() if t["schedule"] is not None
+            t["task_id"]: t for t in self._search_tasks() if t["schedule"] is not None
         }
 
         updates_per_log: Dict[int, Dict[str, Any]] = {}
@@ -785,7 +785,7 @@ class TaskScheduler(BaseTaskScheduler):
             new_start_at = new_start_at.isoformat()
 
         # Fetch the current task row to preserve linkage information if present
-        current_rows = self._search(filter=f"task_id == {task_id}", limit=1)
+        current_rows = self._search_tasks(filter=f"task_id == {task_id}", limit=1)
         current_sched = current_rows[0].get("schedule") if current_rows else None
         if current_sched is None:
             current_sched = {}
@@ -894,14 +894,14 @@ class TaskScheduler(BaseTaskScheduler):
             derived_expr=expr,
         )
 
-    def _search_similar(
+    def _nearest_tasks(
         self,
         *,
         text: str,
         k: int = 5,
     ) -> List[Dict[str, Any]]:
         """
-        Find tasks semantically similar to the provided text.
+        Find tasks semantically similar to the provided text. This is *always* the best option if you want to search based on the *topic* on *concept* of the task, without resorting to brittle string-based matching provided by the 'filter' tool.
 
         Args:
             text (str): The text to find similar tasks to.
@@ -922,7 +922,7 @@ class TaskScheduler(BaseTaskScheduler):
             )
         ]
 
-    def _search(
+    def _search_tasks(
         self,
         *,
         filter: Optional[str] = None,
@@ -930,7 +930,7 @@ class TaskScheduler(BaseTaskScheduler):
         limit: int = 100,
     ) -> List[Dict[str, Any]]:
         """
-        Apply the filter to the the list of tasks, and return the results following the filter.
+        Apply the filter to the the list of tasks, and return the results following the filter. If no filter is applied, then *all* tasks are returned.
 
         Args:
             filter (Optional[str]): Arbitrary Python logical expressions which evaluate to `bool`, with column names expressed as standard variables. For example, a filter expression of "'email'in description and priority == 'normal'" would be a valid. The expression just needs to be valid Python with the column names as variables.

@@ -40,6 +40,8 @@ Workflow:
 4. Formulate a concise and helpful answer from the retrieved contact information.
 5. If the user's criteria are ambiguous (e.g., "Find John") and could match multiple contacts, use the 'request_clarification' tool to ask for more specific details (like surname or email) before attempting a search. Example clarification: "I found several contacts named John. Could you please provide a last name or email address to help me narrow it down?"
 6. If no contacts match the criteria, inform the user. Do not hallucinate information. If a search yields an error, report that an issue occurred.
+
+If helpful, the current date and time is <datetime>.
 """
 
 # System prompt for the 'update' method
@@ -90,4 +92,6 @@ Important Considerations:
 - When parsing names for `create_contact`, "First Last" usually means `first_name="First"`, `surname="Last"`. "First M. Last" could be `first_name="First M."`, `surname="Last"`. Use best judgment.
 - Always confirm the outcome of create/update operations in your final response.
 - Do not make up information. If a tool call results in an error (which will be returned as a string in the 'content' of the tool result), relay this issue to the user or ask for clarification.
+
+If helpful, the current date and time is <datetime>.
 """

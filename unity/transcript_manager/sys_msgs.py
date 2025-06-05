@@ -9,10 +9,12 @@ from ..transcript_manager.transcript_manager import TranscriptManager
 
 SUMMARIZE = """
 You will be given a series of exchanges, and you need to summarize these exchanges, based on the following guidance.
-{guidance}
+<guidance>
 Please extract the most important information across all of the exchanges, without preferential treatment to any one of them.
 
 If you're unsure about anything, it's always best to clarify this via the `request_clarification` tool if provided. Do **not** hallucinate any details.
+
+If helpful, the current date and time is <datetime>.
 """
 
 ASK = f"""
@@ -69,4 +71,6 @@ Some example filter expressions (`filter: str`) for the "search" tools are as fo
 Remember that while filter-based search is useful for exact matches, the `nearest_messages` tool is more effective for finding semantically related content when you don't know the exact wording.
 
 If you're unsure about anything, it's always best to clarify this via the `request_clarification` tool if provided. Do **not** hallucinate any details.
+
+If helpful, the current date and time is <datetime>.
 """

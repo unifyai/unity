@@ -47,7 +47,9 @@ async def test_store_uses_parent_context():
     await handle.result()
 
     # the raw knowledge dump should contain Alpha but NOT Carlos
-    all_data_json = json.dumps(km._search())  # private helper OK for assertions
+    all_data_json = json.dumps(
+        km._search_knowledge(),
+    )  # private helper OK for assertions
     assert "Alpha" in all_data_json and "Carlos" not in all_data_json, assertion_failed(
         "Row mentioning 'Alpha' but not 'Carlos'",
         all_data_json,
@@ -88,7 +90,7 @@ async def test_store_requests_clarification():
 
     # ➌ wait for completion and verify the data was stored correctly
     await handle.result()
-    data_json = json.dumps(km._search())
+    data_json = json.dumps(km._search_knowledge())
     assert _contains(data_json, "Rodriguez", "1990"), assertion_failed(
         "Row containing surname 'Rodriguez' and birth year '1990'",
         data_json,
@@ -135,7 +137,7 @@ async def test_retrieve_uses_parent_context():
         answer,
         reasoning,
         "Parent-context mapping not respected",
-        {"Knowledge Data": km._search()},
+        {"Knowledge Data": km._search_knowledge()},
     )
 
 
@@ -184,5 +186,5 @@ async def test_retrieve_requests_clarification():
         "Answer containing '1985' (Alex Lee)",
         answer,
         "Clarification flow failed",
-        {"Knowledge Data": km._search()},
+        {"Knowledge Data": km._search_knowledge()},
     )
