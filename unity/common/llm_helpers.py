@@ -1934,19 +1934,19 @@ class SteerableToolHandle(ABC):
         pass
 
     @abstractmethod
-    async def interject(self, message: str) -> None:
+    async def interject(self, message: str) -> Optional[str]:
         """Inject an additional *user* turn into the running conversation."""
 
     @abstractmethod
-    def stop(self) -> None:
+    def stop(self) -> Optional[str]:
         """Politely ask the loop to shut down (gracefully)."""
 
     @abstractmethod
-    def pause(self) -> None:
+    def pause(self) -> Optional[str]:
         """Temporarily freeze the outer loop (tools keep running)."""
 
     @abstractmethod
-    def resume(self) -> None:
+    def resume(self) -> Optional[str]:
         """Un-freeze a loop that was paused with :pyfunc:`pause`."""
 
     @abstractmethod
