@@ -22,6 +22,40 @@ from tests.helpers import _handle_project
 
 
 # --------------------------------------------------------------------------- #
+#  0. Ask                                                                   //
+# --------------------------------------------------------------------------- #
+
+
+@pytest.mark.asyncio
+@_handle_project
+async def test_active_task_ask(monkeypatch):
+    """
+    `ActiveTask.ask` should forward to the wrapped plan exactly once.
+    """
+    planner = SimulatedPlanner(steps=1)
+    calls: Dict[str, int] = {"ask": 0}
+
+    original_ask = SimulatedPlan.ask
+
+    @functools.wraps(original_ask)
+    def spy_ask(self, question: str) -> str:  # type: ignore[override]
+        calls["ask"] += 1
+        return original_ask(self, question)
+
+    monkeypatch.setattr(SimulatedPlan, "ask", spy_ask, raising=True)
+
+    task = ActiveTask("Analyse new product launch performance.", planner)
+
+    # Trigger a single ask call that should propagate to the plan.
+    await task.ask("Do we have any early metrics?")
+    # Give the background worker a beat and await completion.
+    await asyncio.sleep(0.2)
+    await task.result()
+
+    assert calls["ask"] == 1, "ask must be called exactly once"
+
+
+# --------------------------------------------------------------------------- #
 #  1. Interjection                                                          //
 # --------------------------------------------------------------------------- #
 
