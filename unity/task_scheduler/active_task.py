@@ -100,6 +100,7 @@ class ActiveTask(BasePlan):
             self._scheduler._update_task_status(  # type: ignore[attr-defined]
                 task_ids=self._task_id,
                 new_status=new_status,
+                allow_active=True,
             )
 
     def _clear_active_pointer(self) -> None:

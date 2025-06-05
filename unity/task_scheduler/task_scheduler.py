@@ -258,8 +258,12 @@ class TaskScheduler(BaseTaskScheduler):
         )
         self._active_task = {"task_id": task_id, "handle": handle}
 
-        # 2. update status → active and clear primed pointer if needed
-        self._update_task_status(task_ids=task_id, new_status="active")
+        # 2. Promote status → active and clear primed pointer if needed
+        self._update_task_status(
+            task_ids=task_id,
+            new_status="active",
+            allow_active=True,
+        )
         if self._primed_task and self._primed_task["task_id"] == task_id:
             self._primed_task = None
 
@@ -778,6 +782,7 @@ class TaskScheduler(BaseTaskScheduler):
         *,
         task_ids: Union[int, List[int]],
         new_status: str,
+        allow_active: bool = False,
     ) -> Dict[str, str]:
         """
         Update the status for the specified task(s).
@@ -789,15 +794,16 @@ class TaskScheduler(BaseTaskScheduler):
         Returns:
             Dict[str, str]: Whether the task(s) were updated or not.
         """
-        # 1. Forbid making anything *active*
-        if str(new_status) == Status.active.value:
+        # 1. Forbid making anything *active* (unless explicitly allowed)
+        if str(new_status) == Status.active.value and not allow_active:
             raise ValueError(
                 "Direct status changes to 'active' are not allowed; "
                 "use the dedicated activation tool.",
             )
 
         # 2. Forbid touching the existing active task
-        self._ensure_not_active_task(task_ids)
+        if not allow_active:
+            self._ensure_not_active_task(task_ids)
 
         # ToDo: replace with single API call once this task [https://app.clickup.com/t/86c3c1y63] is done
         log_ids = self._get_logs_by_task_ids(task_ids=task_ids)
