@@ -126,7 +126,7 @@ async def test_update_reorder_queue(basic_task_scenario):
     assert [t.task_id for t in ts._get_task_queue()] == ids  # initial order
 
     handle = ts.update(
-        text="Could you do Client follow-up email after Write quarterly report?",
+        text="Could you update the queue order so that you write the client follow-up email *after* you write the quarterly report? Both tasks are already assigned, you just need to update their scheduling order.",
     )
     await handle.result()
 
