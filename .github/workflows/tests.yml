@@ -62,6 +62,9 @@ jobs:
         # 2) your real Unify package from GitHub
         uv pip install git+https://github.com/unifyai/unify
 
+        # 3) install playwright browsers
+        .unity/bin/playwright install
+
     - name: Run unit tests
       run: .unity/bin/python -m pytest --timeout=120 -p no:warnings -vv .
       env:
