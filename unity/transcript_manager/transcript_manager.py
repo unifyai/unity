@@ -37,7 +37,7 @@ class TranscriptManager(BaseTranscriptManager):
 
         self._tools = methods_to_tool_dict(
             self.summarize,
-            self._contact_manager._search_contacts,
+            self._contact_manager._get_contacts,
             self._search_messages,
             self._search_summaries,
             self._nearest_messages,
