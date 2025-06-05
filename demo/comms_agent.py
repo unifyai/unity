@@ -8,7 +8,7 @@ import openai
 import comms_actions
 from actions import *
 from events import *
-from new_terminal_helper import run_script
+from new_terminal_helper import run_script, terminate_process
 
 client = openai.AsyncOpenAI(api_key=os.environ["OPENAI_API_KEY"])
 
@@ -390,9 +390,9 @@ class CommsAgent:
         self.curr_task_id += 1
         print("created task")
         contact_comms_agent.attach_task(task)
-        self.contact_num_to_comm_agent[contact_number.replace(" ", "")] = (
-            contact_comms_agent
-        )
+        self.contact_num_to_comm_agent[
+            contact_number.replace(" ", "")
+        ] = contact_comms_agent
         self.attach_task(task)
         print("attached tasks")
 
@@ -443,7 +443,8 @@ class CommsAgent:
             },
         )
 
-    async def wait_for_seconds_or_next_event(self, time: int): ...
+    async def wait_for_seconds_or_next_event(self, time: int):
+        ...
 
     def subscribe(self, topics):
         if not self.event_manager:
@@ -511,6 +512,20 @@ class CommsAgent:
 
     def publish(self, event: dict):
         self.event_manager.publish(event)
+
+    def cleanup(self):
+        """Clean up any running call processes"""
+        if hasattr(self, "call_proc") and self.call_proc:
+            print(f"Terminating call process for agent {self.agent_id}")
+            try:
+                terminate_process(self.call_proc)
+                self.call_proc = None
+                self.call_mode = False
+                global ONGOING_CALL
+                ONGOING_CALL = False
+                print(f"Call process terminated for agent {self.agent_id}")
+            except Exception as e:
+                print(f"Error terminating call process for agent {self.agent_id}: {e}")
 
     def handle_event(self, event: dict):
         global ONGOING_CALL

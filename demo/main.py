@@ -5,6 +5,7 @@
 import os
 import asyncio
 import json
+import signal
 from collections import defaultdict
 
 from dotenv import load_dotenv
@@ -15,6 +16,7 @@ from comms_agent import CommsAgent
 from comms_manager import CommsManager
 
 # globals
+user_agent = None
 
 
 class EventManager:
@@ -79,13 +81,36 @@ class EventManager:
         self.events_queue.put_nowait(event)
 
 
+def signal_handler(signum, frame):
+    """Handle shutdown signals gracefully"""
+    print(f"Received signal {signum}, shutting down gracefully...")
+
+    # Clean up any running call processes
+    global user_agent
+    if user_agent:
+        # Clean up main user agent call process
+        user_agent.cleanup()
+
+        # Clean up all comm agents' call processes
+        if hasattr(user_agent, "contact_num_to_comm_agent"):
+            for comm_agent in user_agent.contact_num_to_comm_agent.values():
+                comm_agent.cleanup()
+
+
 def loop_exception_handler(loop, context):
     print("Error:", context.get("message"), context.get("exception"))
 
 
 async def main():
+    global user_agent
+
     loop = asyncio.get_running_loop()
     # loop.set_exception_handler(loop_exception_handler)
+
+    # Set up signal handlers
+    signal.signal(signal.SIGTERM, signal_handler)
+    signal.signal(signal.SIGINT, signal_handler)
+
     event_manager = EventManager()
     user_agent = CommsAgent(
         os.getenv("USER_NAME", ""),
