@@ -14,7 +14,11 @@ jobs:
         python-version: '3.11'
 
     - name: Install system dependencies
-      run: sudo apt-get update && sudo apt-get install -y portaudio19-dev
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y portaudio19-dev libnss3-dev libatk-bridge2.0-dev libdrm2 libxkbcommon0 libgtk-3-dev libgbm-dev
+        # Install Playwright system dependencies
+        sudo apt-get install -y libasound2t64 libatspi2.0-0 libdrm2 libgtk-3-0 libnspr4 libnss3 libwayland-client0 libxcomposite1 libxdamage1 libxrandr2 xvfb
 
     - name: Install uv
       run: pip install uv
@@ -24,14 +28,19 @@ jobs:
         uv venv --python 3.11 .unity
         source .unity/bin/activate
 
-        # 1) Create filtered requirements file and install dependencies
-        grep -vE '^\s*-e\s+\.\./unify' requirements.txt > temp_requirements.txt
+        # 1) Create filtered requirements file but install playwright separately first
+        grep -vE '^\s*-e\s+\.\./unify|^playwright' requirements.txt > temp_requirements.txt
+        
+        # 2) Install playwright explicitly to ensure proper installation
+        uv pip install playwright
+        
+        # 3) Install remaining dependencies
         uv pip install -r temp_requirements.txt
 
-        # 2) your real Unify package from GitHub
+        # 4) Unify package from GitHub
         uv pip install git+https://github.com/unifyai/unify
 
-        # 3) cleanup
+        # 5) cleanup
         rm temp_requirements.txt
 
     - name: Run black check
@@ -50,7 +59,11 @@ jobs:
         python-version: '3.11'
 
     - name: Install system dependencies
-      run: sudo apt-get update && sudo apt-get install -y portaudio19-dev
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y portaudio19-dev libnss3-dev libatk-bridge2.0-dev libdrm2 libxkbcommon0 libgtk-3-dev libgbm-dev
+        # Install Playwright system dependencies
+        sudo apt-get install -y libasound2 libatspi2.0-0 libdrm2 libgtk-3-0 libnspr4 libnss3 libwayland-client0 libxcomposite1 libxdamage1 libxrandr2 xvfb
 
     - name: Install uv
       run: pip install uv
@@ -60,17 +73,22 @@ jobs:
         uv venv --python 3.11 .unity
         source .unity/bin/activate
 
-        # 1) Create filtered requirements file and install dependencies
-        grep -vE '^\s*-e\s+\.\./unify' requirements.txt > temp_requirements.txt
+        # 1) Create filtered requirements file but install playwright separately first
+        grep -vE '^\s*-e\s+\.\./unify|^playwright' requirements.txt > temp_requirements.txt
+        
+        # 2) Install playwright explicitly to ensure proper installation
+        uv pip install playwright
+        
+        # 3) Install playwright browsers
+        python -m playwright install
+        
+        # 4) Install remaining dependencies
         uv pip install -r temp_requirements.txt
 
-        # 2) your real Unify package from GitHub
+        # 5) your real Unify package from GitHub
         uv pip install git+https://github.com/unifyai/unify
 
-        # 3) install playwright browsers
-        python -m playwright install
-
-        # 4) cleanup
+        # 6) cleanup
         rm temp_requirements.txt
 
     - name: Run unit tests
