@@ -45,7 +45,7 @@ class ActiveTask(BasePlan):
 
     @functools.wraps(BasePlan.interject, updated=())
     async def interject(self, message: str) -> None:
-        await asyncio.to_thread(self._plan.interject, message)
+        await self._plan.interject(message)
 
     @functools.wraps(BasePlan.stop, updated=())
     def stop(self) -> Optional[str]:
