@@ -188,7 +188,7 @@ async def test_update_lower_priority_next_monday(basic_task_scenario):
     )
 
     handle = ts.update(
-        text="Please lower the priority of all tasks which are scheduled for next Monday.",
+        text="Please lower the priority of all tasks to 'normal' which are scheduled for next Monday.",
     )
     await handle.result()
 
