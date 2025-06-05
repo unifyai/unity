@@ -31,7 +31,7 @@ def test_create_derived_column():
         column_name="distance",
         equation="({x}**2 + {y}**2)**0.5",
     )
-    data = knowledge_manager._search()
+    data = knowledge_manager._search_knowledge()
     assert data == {
         "MyTable": [
             {"x": 3, "y": 4, "distance": (3**2 + 4**2) ** 0.5},
@@ -50,7 +50,7 @@ def test_delete_column():
         data=[{"x": 1, "y": 2}, {"x": 3, "y": 4}],
     )
     knowledge_manager._delete_column(table="MyTable", column_name="x")
-    data = knowledge_manager._search()
+    data = knowledge_manager._search_knowledge()
     assert data == {
         "MyTable": [
             {"y": 4},
@@ -74,7 +74,7 @@ def test_delete_empty_column():
     knowledge_manager._delete_column(table="MyTable", column_name="x")
     tables = knowledge_manager._list_tables(include_columns=True)
     assert tables == {"MyTable": {"description": None, "columns": {}}}
-    data = knowledge_manager._search()
+    data = knowledge_manager._search_knowledge()
     assert data == {"MyTable": []}
 
 
@@ -88,7 +88,7 @@ def test_rename_column():
         data=[{"x": 1, "y": 2}, {"x": 3, "y": 4}],
     )
     knowledge_manager._rename_column(table="MyTable", old_name="x", new_name="X")
-    data = knowledge_manager._search()
+    data = knowledge_manager._search_knowledge()
 
     # Assert the exact structure and order of keys
     assert list(data.keys()) == ["MyTable"]
