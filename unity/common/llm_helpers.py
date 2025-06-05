@@ -497,7 +497,9 @@ async def _async_tool_use_loop_inner(
     # ── runtime guards ────────────────────────────────────────────────────
     # rolling timeout ----------------------------------------------------
     last_activity_ts: float = time.perf_counter()  # reset every time
-    last_msg_count: int = 0 if not client.messages else len(client.messages)  # we add a message
+    last_msg_count: int = (
+        0 if not client.messages else len(client.messages)
+    )  # we add a message
 
     def _reset_timeout_timer() -> None:
         """Refresh the rolling timeout."""
