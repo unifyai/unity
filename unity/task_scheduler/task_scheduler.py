@@ -124,7 +124,7 @@ class TaskScheduler(BaseTaskScheduler):
         )
         client.set_system_message(
             ASK.replace(
-                "{datetime}",
+                "<datetime>",
                 datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC"),
             ),
         )
@@ -184,7 +184,7 @@ class TaskScheduler(BaseTaskScheduler):
         )
         client.set_system_message(
             UPDATE.replace(
-                "{datetime}",
+                "<datetime>",
                 datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC"),
             ),
         )
