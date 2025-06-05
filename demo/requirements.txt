@@ -1,5 +1,5 @@
 # Core Python dependencies
-python-dotenv>=1.0.0
+python-dotenv==1.0.0
 
 # OpenAI for LLM functionality
 openai>=1.0.0
@@ -31,3 +31,9 @@ pyaudio>=0.2.11
 
 # Twilio for SMS/WhatsApp (sample.py)
 twilio>=8.0.0
+
+Flask==2.3.3
+requests==2.31.0
+asyncio
+# Add any other dependencies your main.py needs
+# For example, if you use specific libraries for CommsAgent/CommsManager
