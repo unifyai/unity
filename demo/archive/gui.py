@@ -34,8 +34,7 @@ import subprocess, sys
 
 
 # will build this out later
-class EmailMessage:
-    ...
+class EmailMessage: ...
 
 
 class Message(HorizontalGroup):
