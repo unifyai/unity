@@ -31,6 +31,7 @@ class Controller(threading.Thread):
             session_connect_url=self.session_connect_url,
         )
         self._browser_open = False
+        self._stop_event = threading.Event()
 
         # Cached data for LLM observation queries
         self._observe_ctx: dict[str, Any] = {}
@@ -45,6 +46,8 @@ class Controller(threading.Thread):
             self._browser_open = True
 
         for msg in self._pubsub_browser_state.listen():
+            if self._stop_event.is_set():
+                break
             if msg.get("type") != "message":
                 continue
             data = msg.get("data")
@@ -73,6 +76,13 @@ class Controller(threading.Thread):
                     "history": browser_state.get("history", []),
                 }
                 self._last_shot = browser_state.get("screenshot", b"")
+
+    def stop(self) -> None:
+        """Signal the controller thread to stop."""
+        self._stop_event.set()
+        # Close pubsub connections to break out of the listen loop
+        self._pubsub_browser_state.close()
+        self._pubsub_text_action.close()
 
     # ------------------------------------------------------------------
     # Internal helper – perform one or more low-level primitives (in order)
