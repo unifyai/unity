@@ -1,6 +1,7 @@
 import os
 import asyncio
 import unify
+from datetime import datetime, timezone
 import functools
 import requests
 from typing import Any, Dict, List, Optional, Union
@@ -92,8 +93,11 @@ class KnowledgeManager(BaseKnowledgeManager):
         )
         client.set_system_message(
             STORE.replace(
-                "{table_schemas}",
+                "<table_schemas>",
                 json.dumps(self._list_tables(), indent=4),
+            ).replace(
+                "<datetime>",
+                datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC"),
             ),
         )
 
@@ -153,8 +157,11 @@ class KnowledgeManager(BaseKnowledgeManager):
         )
         client.set_system_message(
             RETRIEVE.replace(
-                "{table_schemas}",
+                "<table_schemas>",
                 json.dumps(self._list_tables(), indent=4),
+            ).replace(
+                "<datetime>",
+                datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC"),
             ),
         )
 
