@@ -30,7 +30,7 @@ class BasePlan(SteerableToolHandle, ABC):
     # ───────────────────────────── Public API ───────────────────────────── #
 
     @abstractmethod
-    def ask(self, question: str) -> str:
+    async def ask(self, question: str) -> str:
         """
         Ask any question about the live (ongoing and active) task being worked on.
         """

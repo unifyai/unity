@@ -192,11 +192,11 @@ class SimulatedPlan(BasePlan):
         return msg
 
     @functools.wraps(BasePlan.interject, updated=())
-    def interject(self, instruction: str) -> str:
+    async def interject(self, instruction: str) -> None:
         if not self._task:
             raise Exception("No tasks are currently being performed.")
         self._count_step()
-        return self._interject_simulator.generate(instruction)
+        await asyncio.to_thread(self._interject_simulator.generate, instruction)
 
     @functools.wraps(BasePlan.pause, updated=())
     def pause(self) -> str:
@@ -221,11 +221,11 @@ class SimulatedPlan(BasePlan):
         return f"Resumed task '{self._task}'."
 
     @functools.wraps(BasePlan.ask, updated=())
-    def ask(self, question: str) -> str:
+    async def ask(self, question: str) -> str:
         if not self._task:
             raise Exception("No tasks are currently being performed.")
         self._count_step()
-        return self._ask_simulator.generate(question)
+        return await asyncio.to_thread(self._ask_simulator.generate, question)
 
     @functools.wraps(BasePlan.done, updated=())
     def done(self) -> bool:
