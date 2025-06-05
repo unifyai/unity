@@ -42,9 +42,6 @@ class BrowserUsePlan(BasePlan):
     """
     Represents an active plan being executed by the BrowserUsePlanner.
     Inherits from SteerableToolHandle to provide a consistent interface for interaction.
-    Methods like stop, pause, resume, interject, ask are always public,
-    but will raise errors if called in an invalid state.
-    The valid_tools property indicates which methods can be successfully called.
     """
 
     MAX_STEPS = 100
@@ -168,17 +165,12 @@ class BrowserUsePlan(BasePlan):
 
                 # Reset and prepare the internal Unify client
                 self._plan_client.reset_messages()
+                self._plan_client.reset_system_message()
                 self._plan_client.set_system_message(
-                    "You are a helpful web-Browser assistant.",
+                    "You are a helpful web browser assistant. Use the available tools to complete the user's request",
                 )
                 if current_parent_chat_context:
-                    # Filter out the system message if it's the first one, as we set it above
-                    messages_to_load = current_parent_chat_context
-                    if messages_to_load and messages_to_load[0].get("role") == "system":
-                        # Potentially use the saved system message if different, or just skip
-                        messages_to_load = messages_to_load[1:]
-                    if messages_to_load:
-                        self._plan_client.append_messages(messages_to_load)
+                    self._plan_client.append_messages(current_parent_chat_context)
 
                 current_parent_chat_context = None  # Consume context
 
