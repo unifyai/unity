@@ -16,7 +16,7 @@ class Task(BaseModel):
     status: Status = Field(
         description="Current state of the task (e.g., queued, active, completed)",
     )
-    schedule: Schedule = Field(
+    schedule: Optional[Schedule] = Field(
         description="Information about task scheduling, including adjacent tasks in the queue and ideal start time",
     )
     deadline: Optional[str] = Field(

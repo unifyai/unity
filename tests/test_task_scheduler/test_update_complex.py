@@ -34,7 +34,7 @@ def _seed_basic_tasks(ts: TaskScheduler) -> List[int]:
         ts._create_task(
             name="Write quarterly report",
             description="Draft the Q2 report (send email to finance).",
-            status="active",
+            status="primed",
         ),
     )
     ids.append(
