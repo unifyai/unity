@@ -14,7 +14,7 @@ def test_create_contact():
     contact_manager._create_contact(
         first_name="Dan",
     )
-    contacts = contact_manager._search_contacts()
+    contacts = contact_manager._get_contacts()
     assert len(contacts) == 1
     contact = contacts[0]
     assert contact.model_dump() == {
@@ -40,7 +40,7 @@ def test_update_contact():
     )
 
     # check
-    contacts = contact_manager._search_contacts()
+    contacts = contact_manager._get_contacts()
     assert len(contacts) == 1
     contact = contacts[0]
     assert contact.model_dump() == {
@@ -59,7 +59,7 @@ def test_update_contact():
     )
 
     # check
-    contacts = contact_manager._search_contacts()
+    contacts = contact_manager._get_contacts()
     assert len(contacts) == 1
     contact = contacts[0]
     assert contact.model_dump() == {
@@ -83,7 +83,7 @@ def test_create_contacts():
     contact_manager._create_contact(
         first_name="Dan",
     )
-    contacts = contact_manager._search_contacts()
+    contacts = contact_manager._get_contacts()
     assert len(contacts) == 1
     contact = contacts[0]
     assert contact.model_dump() == {
@@ -99,7 +99,7 @@ def test_create_contacts():
     contact_manager._create_contact(
         first_name="Tom",
     )
-    contacts = contact_manager._search_contacts()
+    contacts = contact_manager._get_contacts()
     assert len(contacts) == 2
     contact = contacts[0]
     assert contact.model_dump() == {

@@ -30,7 +30,7 @@ As a recap, the schemas for contacts, messages and summaries are as follows:
 
 Available tools:
 • {TranscriptManager.summarize.__name__}(exchange_ids, guidance?): summarise one or more exchanges.
-• {ContactManager._search_contacts.__name__.lstrip("_")}(filter?, offset=0, limit=100) → List[Contact] – flexible boolean filtering.
+• {ContactManager._get_contacts.__name__.lstrip("_")}(filter?, offset=0, limit=100) → List[Contact] – flexible boolean filtering.
 • {TranscriptManager._search_messages.__name__.lstrip("_")}(filter?, offset=0, limit=100) → List[Message] – flexible boolean filtering.
 • {TranscriptManager._search_summaries.__name__.lstrip("_")}(filter?, offset=0, limit=100) → List[MessageExchangeSummary] – flexible boolean filtering.
 • {TranscriptManager._nearest_messages.__name__.lstrip("_")}(text: str, k: int = 10) → List[Message] – returns the top-k messages semantically similar to the given text.
@@ -46,7 +46,7 @@ request_clarification(question="what conversation are you referring to, could yo
 
 Some example filter expressions (`filter: str`) for the "search" tools are as follows.
 
-{ContactManager._search_contacts.__name__.lstrip("_")}:
+{ContactManager._get_contacts.__name__.lstrip("_")}:
 
 - Sender's first name is John:  `filter="first_name == 'John'"`
 - email address is gmail: `filter="'@gmail' in email"`
