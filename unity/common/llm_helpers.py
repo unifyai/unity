@@ -18,6 +18,7 @@ from typing import (
     get_origin,
     get_args,
     Callable,
+    Awaitable,
 )
 
 import unify
@@ -672,7 +673,16 @@ async def _async_tool_use_loop_inner(
                     )
 
                 # 1️⃣ spawn the nested waiter
-                nested_task = asyncio.create_task(raw.result())
+                #
+                # ⤷ `handle.result` can now be **sync OR async**:
+                #    • async ⇒ use the coroutine directly,
+                #    • sync  ⇒ run it in a worker-thread so the event-loop never blocks.
+                if inspect.iscoroutinefunction(raw.result):
+                    nested_coro = raw.result()  # already a coroutine
+                else:
+                    nested_coro = asyncio.to_thread(raw.result)  # turn sync → coroutine
+
+                nested_task = asyncio.create_task(nested_coro)
                 pending.add(nested_task)
 
                 # 2️⃣ insert / update a single placeholder
@@ -1193,7 +1203,7 @@ async def _async_tool_use_loop_inner(
 
                         async def _interject(content: str) -> Dict[str, str]:
                             # nested async-tool loop: delegate to its public API
-                            await handle.interject(content)  # type: ignore[arg-type]
+                            await _maybe_await(handle.interject(content))
                             return {
                                 "status": "interjected",
                                 "call_id": _call_id,
@@ -2052,27 +2062,27 @@ class SteerableToolHandle(ABC):
         pass
 
     @abstractmethod
-    async def interject(self, message: str) -> Optional[str]:
+    def interject(self, message: str) -> Awaitable[Optional[str]] | Optional[str]:
         """Inject an additional *user* turn into the running conversation."""
 
     @abstractmethod
-    def stop(self) -> Optional[str]:
+    def stop(self) -> Awaitable[Optional[str]] | Optional[str]:
         """Politely ask the loop to shut down (gracefully)."""
 
     @abstractmethod
-    def pause(self) -> Optional[str]:
+    def pause(self) -> Awaitable[Optional[str]] | Optional[str]:
         """Temporarily freeze the outer loop (tools keep running)."""
 
     @abstractmethod
-    def resume(self) -> Optional[str]:
+    def resume(self) -> Awaitable[Optional[str]] | Optional[str]:
         """Un-freeze a loop that was paused with :pyfunc:`pause`."""
 
     @abstractmethod
-    def done(self) -> bool:
+    def done(self) -> Awaitable[bool] | bool:
         """Flag for whether or not this task is done."""
 
     @abstractmethod
-    async def result(self) -> str:
+    def result(self) -> Awaitable[str] | str:
         """Wait for the assistant’s *final* reply."""
 
 
