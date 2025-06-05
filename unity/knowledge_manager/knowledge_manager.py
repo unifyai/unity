@@ -53,8 +53,8 @@ class KnowledgeManager(BaseKnowledgeManager):
         self._retrieve_tools = {
             **refactor_tools,
             **methods_to_tool_dict(
-                self._search,
-                self._nearest,
+                self._search_knowledge,
+                self._nearest_knowledge,
             ),
         }
 
@@ -470,7 +470,7 @@ class KnowledgeManager(BaseKnowledgeManager):
         context = f"{self._ctx}/{table}"
         ensure_vector_column(context, embed_column=column, source_column=source)
 
-    def _nearest(
+    def _nearest_knowledge(
         self,
         *,
         tables: List[str],
@@ -532,7 +532,7 @@ class KnowledgeManager(BaseKnowledgeManager):
 
     # Search
 
-    def _search(
+    def _search_knowledge(
         self,
         *,
         filter: Optional[str] = None,
