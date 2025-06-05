@@ -10,6 +10,7 @@ from ..common.llm_helpers import (
     start_async_tool_use_loop,
     SteerableToolHandle,
     methods_to_tool_dict,
+    ToolSpec,
 )
 from .types.status import Status
 from .types.priority import Priority
@@ -70,7 +71,7 @@ class TaskScheduler(BaseTaskScheduler):
                 self._update_task_repetition,
                 self._update_task_priority,
                 # start task
-                self._start_task,
+                ToolSpec(fn=self._start_task, max_concurrent=1),
                 include_class_name=False,  # redundant, all same class (this one)
             ),
         }
