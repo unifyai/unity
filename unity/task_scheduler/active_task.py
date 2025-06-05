@@ -3,7 +3,6 @@ import functools
 from typing import Optional, Dict, Callable, TYPE_CHECKING
 
 from ..planner.base import BasePlanner, BasePlan
-from ..planner.simulated import SimulatedPlanner
 
 if TYPE_CHECKING:
     from .task_scheduler import TaskScheduler
@@ -13,12 +12,15 @@ class ActiveTask(BasePlan):
 
     def __init__(
         self,
-        description: str,
-        planner: Optional[BasePlanner] = SimulatedPlanner(1),
+        task_description: str,
+        planner: BasePlanner,
         *,
-        task_id: Optional[int] = None,
-        scheduler: Optional["TaskScheduler"] = None,
-    ) -> None:
+        task_id: int,
+        scheduler: "TaskScheduler",
+        parent_chat_context: list[dict] | None = None,
+        clarification_up_q: asyncio.Queue[str] | None = None,
+        clarification_down_q: asyncio.Queue[str] | None = None,
+    ):
         """
         Thin wrapper that:
         • exposes the underlying plan's steer-controls and\
@@ -34,8 +36,12 @@ class ActiveTask(BasePlan):
             When provided, every lifecycle transition (pause/resume/stop/finish)
             is mirrored back into the task list via ``scheduler._update_task_status``.
         """
-
-        self._plan = planner.plan(description)
+        self._plan = planner.plan(
+            task_description,
+            parent_chat_context=parent_chat_context,
+            clarification_up_q=clarification_up_q,
+            clarification_down_q=clarification_down_q,
+        )
         self._scheduler: Optional["TaskScheduler"] = scheduler
         self._task_id: Optional[int] = task_id
 
