@@ -39,7 +39,7 @@ def planner_and_plan_types(request) -> PlannerFixture:
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_start_and_ask_browser_use_plan(monkeypatch, planner_and_plan_types):
+async def test_start_and_ask_plan(monkeypatch, planner_and_plan_types):
     planner_class, plan_class, planner_kwargs = planner_and_plan_types
     planner = planner_class(**planner_kwargs)
 
@@ -144,7 +144,7 @@ async def test_start_and_ask_browser_use_plan(monkeypatch, planner_and_plan_type
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_interject_browser_use_plan(monkeypatch, planner_and_plan_types):
+async def test_interject_plan(monkeypatch, planner_and_plan_types):
     planner_class, plan_class, planner_kwargs = planner_and_plan_types
     planner = planner_class(**planner_kwargs)
 
@@ -271,7 +271,7 @@ async def test_interject_browser_use_plan(monkeypatch, planner_and_plan_types):
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_pause_and_resume_browser_use_plan(
+async def test_pause_and_resume_plan(
     monkeypatch,
     planner_and_plan_types,
 ):
@@ -393,7 +393,7 @@ async def test_pause_and_resume_browser_use_plan(
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_browser_use_plan_requests_clarification(
+async def test_plan_requests_clarification(
     monkeypatch,
     planner_and_plan_types,
 ):
