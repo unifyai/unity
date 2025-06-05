@@ -165,11 +165,13 @@ def signal_handler(signum, frame):
 signal.signal(signal.SIGTERM, signal_handler)
 signal.signal(signal.SIGINT, signal_handler)
 
-if __name__ == "__main__":
-    # Optionally auto-start the Unity service when wrapper starts
-    auto_start = os.environ.get("AUTO_START_UNITY", "false").lower() == "true"
-    if auto_start:
-        print("Auto-starting Unity service...")
-        unity_manager.start_unity_service()
+# Auto-start Unity service if configured
+auto_start = os.environ.get("AUTO_START_UNITY", "false").lower() == "true"
+if auto_start:
+    print("Auto-starting Unity service...")
+    unity_manager.start_unity_service()
 
-    app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 8000)))
+if __name__ == "__main__":
+    # Only run in development mode if called directly
+    print("Running in development mode...")
+    app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 8000)), debug=True)

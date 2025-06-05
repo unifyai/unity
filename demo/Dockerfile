@@ -52,5 +52,5 @@ EXPOSE 8000
 # Set environment variables
 ENV PYTHONPATH=/app
 
-# Run the wrapper app by default
-CMD ["python", "wrapper_app.py"]
+# Use Gunicorn for production WSGI server
+CMD ["gunicorn", "--bind", "0.0.0.0:8000", "--workers", "1", "--timeout", "120", "wrapper_app:app"]
