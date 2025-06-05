@@ -79,16 +79,47 @@ _MANAGEMENT_METHOD_NAMES: set[str] = {
 
 
 def methods_to_tool_dict(
-    *methods: Tuple[Callable],
+    *methods: Tuple[Union[Callable, "ToolSpec"]],
     include_class_name: bool = True,
-) -> Dict[str, Callable]:
-    ret = dict()
+) -> Dict[str, Union[Callable, "ToolSpec"]]:
+    """
+    Build the ``{name → tool}`` mapping from a list of *bound* methods **or**
+    :class:`ToolSpec` instances.
+
+    When a ``ToolSpec`` is given we keep its metadata (`max_concurrent`, …)
+    but replace ``fn`` with the *bound* method so calls execute on the correct
+    object.
+    """
+
+    ret: Dict[str, Union[Callable, ToolSpec]] = {}
     for m in methods:
-        if include_class_name:
-            key = f"{m.__self__.__class__.__name__}_{m.__name__}".replace("__", "_")
+        # ── unwrap, but remember whether we saw a ToolSpec ─────────────────
+        if isinstance(m, ToolSpec):
+            spec = m
+            fn: Callable = spec.fn
+        else:  # plain callable
+            spec = None
+            fn = m
+
+        # ── derive a sensible key (className_method or plain method) ───────
+        if (
+            include_class_name
+            and hasattr(fn, "__self__")
+            and hasattr(
+                fn.__self__,
+                "__class__",
+            )
+        ):
+            key = f"{fn.__self__.__class__.__name__}_{fn.__name__}".replace("__", "_")
         else:
-            key = m.__name__.lstrip("_")
-        ret[key] = m
+            key = fn.__name__.lstrip("_")
+
+        # ── store ----------------------------------------------------------------
+        if spec is None:
+            ret[key] = fn
+        else:
+            # Preserve the metadata but *bind* the function correctly.
+            ret[key] = ToolSpec(fn=fn, max_concurrent=spec.max_concurrent)
     return ret
 
 
