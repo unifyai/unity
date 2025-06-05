@@ -22,10 +22,47 @@ from typing import (
 
 import unify
 from ..constants import LOGGER
+from dataclasses import dataclass
 from ..events.event_bus import EventBus, Event
 
 
 TYPE_MAP = {str: "string", int: "integer", float: "number", bool: "boolean"}
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 0.  metadata wrapper - lets us attach `max_concurrent` to a tool
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+@dataclass(slots=True)
+class ToolSpec:
+    """
+    Wrap the real *callable* together with optional metadata.
+
+    Only ``max_concurrent`` is required today but we deliberately keep this
+    extensible – adding cost caps, rate limits, auth scopes, … later will not
+    change any external API.
+    """
+
+    fn: Callable
+    max_concurrent: Optional[int] = None  # «None» ⇒ unlimited
+
+    # Let a ToolSpec be invoked like the underlying callable (nice for tests)
+    def __call__(self, *a, **kw):  # pragma: no cover
+        return self.fn(*a, **kw)
+
+
+def _normalise_tools(
+    raw: Dict[str, Union[Callable, "ToolSpec"]],
+) -> Dict[str, "ToolSpec"]:
+    """
+    Accept the *legacy* ``dict[name → callable]`` or the new
+    ``dict[name → ToolSpec]`` and always return a *uniform*
+    ``dict[name → ToolSpec]``.
+    """
+    out: Dict[str, ToolSpec] = {}
+    for n, v in raw.items():
+        out[n] = v if isinstance(v, ToolSpec) else ToolSpec(fn=v)
+    return out
 
 
 # Dynamic-handle helpers ––––––––––––––––––––––––––––––––––––––––––––––––––––––
@@ -374,7 +411,7 @@ def _chat_context_repr(
 async def _async_tool_use_loop_inner(
     client: unify.AsyncUnify,
     message: str,
-    tools: Dict[str, Callable],
+    tools: Dict[str, Union[Callable, ToolSpec]],
     event_type: Optional[str] = None,
     event_bus: Optional[EventBus] = None,
     *,
@@ -718,7 +755,23 @@ async def _async_tool_use_loop_inner(
         _append_msgs([sys_msg])
 
     # ── initial prompt ───────────────────────────────────────────────────────
-    base_tools_schema = [method_to_schema(v, k) for k, v in tools.items()]
+    # ── 0-b. Coerce tools → ToolSpec & helper lambdas ───────────────────────
+    #
+    # • «norm_tools» holds the *canonical* mapping name → ToolSpec
+    # • helper for the active-count of one tool (cheap O(#pending))
+    # • helper that answers “may we launch / advertise *this* tool right now?”
+    #   by comparing the live count with max_concurrent.
+    # -----------------------------------------------------------------------
+
+    norm_tools: Dict[str, ToolSpec] = _normalise_tools(tools)
+
+    def _active_count(t_name: str) -> int:
+        return sum(1 for _t, _inf in task_info.items() if _inf["name"] == t_name)
+
+    def _can_offer_tool(t_name: str) -> bool:
+        lim = norm_tools[t_name].max_concurrent
+        return lim is None or _active_count(t_name) < lim
+
     msg = {"role": "user", "content": message}
     await _to_event_bus(msg)
     _append_msgs([msg])
@@ -999,6 +1052,18 @@ async def _async_tool_use_loop_inner(
 
             dynamic_tools: Dict[str, Callable] = {}
 
+            # ------------------------------------------------------------------
+            # 1.  Build the *static* part of the toolkit **fresh on every turn**
+            #     so that concurrency changes (tasks finishing, stopping, …)
+            #     are immediately reflected in what the LLM can see.
+            # ------------------------------------------------------------------
+
+            visible_base_tools_schema = [
+                method_to_schema(spec.fn, name)
+                for name, spec in norm_tools.items()
+                if _can_offer_tool(name)
+            ]
+
             # helper: register a freshly-minted coroutine as a *temporary* tool
             def _reg_tool(key: str, func_name: str, doc: str, fn: Callable) -> None:
                 # prefer the function’s own docstring if it exists, else fall back
@@ -1265,7 +1330,7 @@ async def _async_tool_use_loop_inner(
                 inf["tool_reply_msg"] = placeholder
 
             # Merge helpers into the visible toolkit for the upcoming LLM step
-            tmp_tools = base_tools_schema + [
+            tmp_tools = visible_base_tools_schema + [
                 method_to_schema(
                     fn,
                     include_class_name=include_class_in_dynamic_tool_names,
@@ -1711,11 +1776,33 @@ async def _async_tool_use_loop_inner(
                             LOGGER.info(f"💬  Interjection delivered → {new_text!r}")
                         continue  # nothing else to schedule
 
+                    # Respect *per-tool* concurrency limits  ────────────────
+                    if (
+                        name in norm_tools
+                        and norm_tools[name].max_concurrent is not None
+                        and _active_count(name) >= norm_tools[name].max_concurrent
+                    ):
+                        # Concurrency cap reached → immediately insert a
+                        # *tool-error* message and **do not** schedule.
+                        tool_msg = {
+                            "role": "tool",
+                            "tool_call_id": call["id"],
+                            "name": name,
+                            "content": (
+                                f"⚠️ Cannot start '{name}': "
+                                f"max_concurrent={norm_tools[name].max_concurrent} "
+                                "already reached. Wait for an existing call to "
+                                "finish or stop one before retrying."
+                            ),
+                        }
+                        _insert_after_assistant(msg, tool_msg)
+                        continue
+
                     # first check any dynamic helpers we generated for long-running handles
                     if name in dynamic_tools:
                         fn = dynamic_tools[name]
                     else:
-                        fn = tools[name]
+                        fn = norm_tools[name].fn
 
                     # ── build **extra** kwargs (chat context + queue) ───
                     extra_kwargs: dict = {}
