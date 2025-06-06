@@ -19,7 +19,6 @@ from ..common.llm_helpers import (
 from ..contact_manager.simulated import SimulatedContactManager
 from ..transcript_manager.simulated import SimulatedTranscriptManager
 from ..knowledge_manager.simulated import SimulatedKnowledgeManager
-from ..planner.simulated import SimulatedPlanner
 from ..task_scheduler.simulated import SimulatedTaskScheduler
 
 
@@ -34,31 +33,20 @@ class SimulatedTaskManager:
 
     # ------------------------------------------------------------------ #
 
-    def __init__(self) -> None:
+    def __init__(
+        self,
+        description: str = "nothing fixed, make up some imaginary scenario",
+    ) -> None:
         """
         Args:
-            simulated: When *True* all subordinate managers are replaced by
-                      their **simulated** counterparts which keep all state
-                      inside an LLM conversation rather than touching real
-                      storage back-ends. Defaults to *False* (real managers).
-            contact_manager: Optional custom contact manager implementation.
-                           If None, will create default based on simulated flag.
-            transcript_manager: Optional custom transcript manager implementation.
-                              If None, will create default based on simulated flag.
-            knowledge_manager: Optional custom knowledge manager implementation.
-                             If None, will create default based on simulated flag.
-            task_scheduler: Optional custom task scheduler implementation.
-                          If None, will create default based on simulated flag.
-            planner: Optional custom planner implementation.
-                    If None, will create default based on simulated flag.
+            description: A detailed description of the hypothetical scenario to simulate.
         """
 
         # ── Simulated façade (pure-LLM back-ends) ────────────────────
-        self._contact_manager = SimulatedContactManager()
-        self._transcript_manager = SimulatedTranscriptManager()
-        self._knowledge_manager = SimulatedKnowledgeManager()
-        self._planner = SimulatedPlanner()
-        self._task_scheduler = SimulatedTaskScheduler()
+        self._contact_manager = SimulatedContactManager(description=description)
+        self._transcript_manager = SimulatedTranscriptManager(description=description)
+        self._knowledge_manager = SimulatedKnowledgeManager(description=description)
+        self._task_scheduler = SimulatedTaskScheduler(description=description)
 
         #  Run-time state & tool-dict helpers
         self._current_plan = None  # type: ignore
