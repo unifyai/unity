@@ -95,7 +95,8 @@ class UnityServiceManager:
         if not self.monitoring:
             self.monitoring = True
             self.monitor_thread = threading.Thread(
-                target=self._monitor_process, daemon=True
+                target=self._monitor_process,
+                daemon=True,
             )
             self.monitor_thread.start()
 
@@ -115,7 +116,7 @@ class UnityServiceManager:
                         # Clean exit without explicit reason - likely inactivity timeout
                         self.shutdown_reason = "inactivity_timeout"
                         print(
-                            "Unity service exited cleanly - likely due to inactivity timeout"
+                            "Unity service exited cleanly - likely due to inactivity timeout",
                         )
                     elif exit_code != 0 and not self.shutdown_reason:
                         self.shutdown_reason = (
