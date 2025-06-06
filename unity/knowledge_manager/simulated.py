@@ -131,7 +131,10 @@ class SimulatedKnowledgeManager(BaseKnowledgeManager):
     single stateful LLM to invent and recall knowledge in-chat.
     """
 
-    def __init__(self, description: str = "Imaginary knowledge base.") -> None:
+    def __init__(
+        self,
+        description: str = "nothing fixed, make up some imaginary scenario",
+    ) -> None:
         self._description = description
 
         # One shared, memory-retaining LLM

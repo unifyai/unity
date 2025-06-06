@@ -130,7 +130,10 @@ class SimulatedContactManager(BaseContactManager):
     stateful LLM memory.
     """
 
-    def __init__(self, description: str = "Imaginary CRM.") -> None:
+    def __init__(
+        self,
+        description: str = "nothing fixed, make up some imaginary scenario",
+    ) -> None:
         self._description = description
 
         # Shared, stateful LLM

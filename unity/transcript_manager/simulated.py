@@ -135,7 +135,7 @@ class SimulatedTranscriptManager(BaseTranscriptManager):
 
     def __init__(
         self,
-        description: str = "Imaginary multi-channel transcript database.",
+        description: str = "nothing fixed, make up some imaginary scenario",
     ) -> None:
         self._description = description
 

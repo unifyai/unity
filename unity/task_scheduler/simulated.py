@@ -139,7 +139,10 @@ class SimulatedTaskScheduler(BaseTaskScheduler):
     need the conversational surface.
     """
 
-    def __init__(self, description: str = "You manage an imaginary task list.") -> None:
+    def __init__(
+        self,
+        description: str = "nothing fixed, make up some imaginary scenario",
+    ) -> None:
         self._description = description
 
         # One shared, *stateful* LLM for *everything*
