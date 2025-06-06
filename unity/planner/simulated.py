@@ -19,6 +19,7 @@ class SimulatedPlan(BasePlan):
 
     def __init__(
         self,
+        llm: unify.Unify,
         task: str,
         steps: int,
         parent_chat_context: list[dict] | None = None,
@@ -33,6 +34,7 @@ class SimulatedPlan(BasePlan):
             task: The task description to simulate
             steps: Number of steps before the plan completes
         """
+        self._llm = llm
         self._task = task
         self._steps = steps
         self._parent_chat_context = parent_chat_context
@@ -52,18 +54,6 @@ class SimulatedPlan(BasePlan):
         self._pause_event = threading.Event()
         self._stop_event = threading.Event()
 
-        self._ask_simulator = unify.Unify(
-            "gpt-4o@openai",
-            cache=json.loads(os.environ.get("UNIFY_CACHE", "true")),
-            traced=json.loads(os.environ.get("UNIFY_TRACED", "true")),
-            stateful=True,
-        )
-        self._interject_simulator = unify.Unify(
-            "gpt-4o@openai",
-            cache=json.loads(os.environ.get("UNIFY_CACHE", "true")),
-            traced=json.loads(os.environ.get("UNIFY_TRACED", "true")),
-            stateful=True,
-        )
         self._start()
 
     # ──────────────────────────────────────────────────────────────────────────
@@ -85,17 +75,6 @@ class SimulatedPlan(BasePlan):
             task: The task description to simulate
         """
         try:
-            self._ask_simulator.set_system_message(
-                f"You should pretend you are completing the following task:\n{task}\n"
-                f"The conversation thus far of the calling process is:\n{self._parent_chat_context}\n"
-                "Come up with imaginary answers to the user questions about the task",
-            )
-            self._interject_simulator.set_system_message(
-                f"You should pretend you are completing the following task:\n{task}\n"
-                f"The conversation thus far of the calling process is:\n{self._parent_chat_context}\n"
-                "Come up with imaginary responses to the user requests to steer the task behaviour.",
-            )
-
             while True:
 
                 if self._request_clarification:
@@ -131,11 +110,6 @@ class SimulatedPlan(BasePlan):
                 self._pause_event.wait()
                 time.sleep(0.1)
         finally:
-            self._ask_simulator.reset_messages()
-            self._ask_simulator.reset_system_message()
-            self._interject_simulator.reset_messages()
-            self._interject_simulator.reset_system_message()
-
             # reset internal state
             self._task = None
             self._paused = None
@@ -200,7 +174,11 @@ class SimulatedPlan(BasePlan):
         if not self._task:
             raise Exception("No tasks are currently being performed.")
         self._count_step()
-        await asyncio.to_thread(self._interject_simulator.generate, instruction)
+        prompt = (
+            f"Current simulated task:\n{self._task}\n\n"
+            f"User instruction to adjust the plan:\n{instruction}"
+        )
+        await asyncio.to_thread(self._llm.generate, prompt)
 
     @functools.wraps(BasePlan.pause, updated=())
     def pause(self) -> str:
@@ -229,7 +207,11 @@ class SimulatedPlan(BasePlan):
         if not self._task:
             raise Exception("No tasks are currently being performed.")
         self._count_step()
-        return await asyncio.to_thread(self._ask_simulator.generate, question)
+        prompt = (
+            f"You are working on the simulated task:\n{self._task}\n\n"
+            f"User asks: {question}"
+        )
+        return await asyncio.to_thread(self._llm.generate, prompt)
 
     @functools.wraps(BasePlan.done, updated=())
     def done(self) -> bool:
@@ -266,6 +248,19 @@ class SimulatedPlanner(BasePlanner[SimulatedPlan]):
         self._steps = steps
         self._request_clarification = request_clarification
 
+        # One shared, memory-retaining LLM for *all* plans
+        self._llm = unify.Unify(
+            "gpt-4o@openai",
+            cache=json.loads(os.environ.get("UNIFY_CACHE", "true")),
+            traced=json.loads(os.environ.get("UNIFY_TRACED", "true")),
+            stateful=True,
+        )
+        self._llm.set_system_message(
+            "You are a *simulated* planner and executor. "
+            "Invent plausible task progress and remain internally consistent "
+            "across multiple plans and calls.",
+        )
+
     def _make_plan(
         self,
         task_description: str,
@@ -275,6 +270,7 @@ class SimulatedPlanner(BasePlanner[SimulatedPlan]):
         clarification_down_q: Optional[asyncio.Queue[str]] = None,
     ) -> SimulatedPlan:
         return SimulatedPlan(
+            self._llm,
             task_description,
             self._steps,
             parent_chat_context=parent_chat_context,
