@@ -88,6 +88,18 @@ jobs:
         # 5) cleanup
         rm temp_requirements.txt
 
+     - name: Debug Python Path and Files
+      run: |
+        source .unity/bin/activate
+        echo "--- Searching for any file or directory named 'playwright' ---"
+        find . -name "playwright.py" -o -name "playwright"
+        echo "--- Current working directory ---"
+        pwd
+        echo "--- Python sys.path ---"
+        python -c "import sys; from pprint import pprint; pprint(sys.path)"
+        echo "--- Attempting to locate playwright module ---"
+        python -c "import playwright; print('Playwright module found at:', playwright.__file__)" || echo 'Failed to import playwright directly'"
+        
     - name: Run unit tests
       run: .unity/bin/python -m pytest --timeout=120 -p no:warnings -vv .
       env:
