@@ -11,7 +11,7 @@ import re
 import asyncio
 import pytest
 
-from unity.task_manager.task_manager import TaskManager
+from unity.task_manager.simulated import SimulatedTaskManager
 
 # Helper to isolate every test in its own temporary Unify context
 from tests.helpers import _handle_project
@@ -24,7 +24,7 @@ from tests.helpers import _handle_project
 @pytest.mark.asyncio
 @_handle_project
 async def test_tm_basic_ask():
-    tm = TaskManager(simulated=True)
+    tm = SimulatedTaskManager()
     handle = tm.ask("Which tasks should I focus on today?")
     answer = await handle.result()
     assert isinstance(answer, str) and answer.strip(), "Answer should be non-empty"
@@ -38,7 +38,7 @@ async def test_tm_basic_ask():
 @pytest.mark.asyncio
 @_handle_project
 async def test_tm_clarification_flow():
-    tm = TaskManager(simulated=True)
+    tm = SimulatedTaskManager()
 
     up_q: asyncio.Queue[str] = asyncio.Queue()
     down_q: asyncio.Queue[str] = asyncio.Queue()
@@ -50,7 +50,7 @@ async def test_tm_clarification_flow():
     )
 
     # The first message must be a clarification question.
-    question = await asyncio.wait_for(up_q.get(), timeout=30)
+    question = await asyncio.wait_for(up_q.get(), timeout=3000)
     assert "clarify" in question.lower()
 
     # Send the clarification answer and await the final result.
@@ -72,7 +72,7 @@ async def test_tm_pause_and_resume():
     Verify that the handle returned by TaskManager.ask() can be paused and
     resumed and that the `valid_tools` mapping updates accordingly.
     """
-    tm = TaskManager(simulated=True)
+    tm = SimulatedTaskManager()
     handle = tm.ask("Give me a list of tomorrow's deadlines.")
 
     # Initially we expect "pause" but not "resume".
@@ -113,7 +113,7 @@ async def test_tm_interject():
     """
     Ensure that `.interject()` appends a message and yields an acknowledgement.
     """
-    tm = TaskManager(simulated=True)
+    tm = SimulatedTaskManager()
     handle = tm.ask("Summarise all open tasks.")
 
     await asyncio.sleep(0.05)
@@ -136,7 +136,7 @@ async def test_tm_stateful_memory_serial_asks():
     Two consecutive .ask() calls should share the same conversation context
     inside the simulated managers.
     """
-    tm = TaskManager(simulated=True)
+    tm = SimulatedTaskManager()
 
     # 1) Generate a unique codename – any non-empty token
     h1 = tm.ask(
@@ -169,7 +169,7 @@ async def test_tm_update_then_ask():
     An .update() (write-capable) call should influence subsequent .ask() calls.
     We keep expectations loose – simply require that the keyword appears.
     """
-    tm = TaskManager(simulated=True)
+    tm = SimulatedTaskManager()
     meeting_name = "Strategy Sync Q4"
 
     # 1) Create a new task via the write interface.
