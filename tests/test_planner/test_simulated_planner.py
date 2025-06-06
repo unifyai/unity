@@ -27,7 +27,7 @@ async def test_start_and_ask_simulated_plan(monkeypatch):
     """
     Test that the outer loop can ask questions to the simulated plan via the dynamic _ask_ helper.
     """
-    planner = SimulatedPlanner(1)
+    planner = SimulatedPlanner(steps=1)
     # Count how many times ask is invoked
     ask_called = {"count": 0}
     original_ask = SimulatedPlan.ask
@@ -67,7 +67,7 @@ async def test_interject_simulated_plan(monkeypatch):
     """
     Test that the outer loop can interject instructions into the simulated plan via the `_interject_` helper.
     """
-    planner = SimulatedPlanner(1)
+    planner = SimulatedPlanner(steps=1)
     interjected = {"count": 0, "msgs": []}
     original_interject = SimulatedPlan.interject
 
@@ -108,7 +108,7 @@ async def test_pause_and_resume_simulated_plan(monkeypatch):
     """
     Test that the outer loop can pause and resume the simulated plan via `_pause_` and `_resume_` helpers.
     """
-    planner = SimulatedPlanner(2)
+    planner = SimulatedPlanner(steps=2)
     counts = {"pause": 0, "resume": 0}
     original_pause = SimulatedPlan.pause
 
@@ -160,7 +160,7 @@ async def test_stop_simulated_plan(monkeypatch):
     """
     Test that the outer loop can stop the simulated plan via `_stop_` helper.
     """
-    planner = SimulatedPlanner(1)
+    planner = SimulatedPlanner(steps=1)
     stopped = {"count": 0}
     original_stop = SimulatedPlan.stop
 

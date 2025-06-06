@@ -61,3 +61,20 @@ class BaseTaskScheduler(ABC):
 
         All parameters mirror :py:meth:`ask`.  See that method for details.
         """
+
+    @abstractmethod
+    def start_task(
+        self,
+        task_id: int,
+        *,
+        parent_chat_context: Optional[List[Dict[str, Any]]] = None,
+        clarification_up_q: Optional[asyncio.Queue[str]] = None,
+        clarification_down_q: Optional[asyncio.Queue[str]] = None,
+    ) -> SteerableToolHandle:
+        """
+        Start execution of *task_id* and return a steerable handle.
+
+        • Fails if another task is already active.
+        • Promotes the task's status to **active**.
+        • Clears the primed pointer when relevant.
+        """

@@ -12,6 +12,7 @@ import unify
 
 from ..common.llm_helpers import SteerableToolHandle
 from .base import BaseTranscriptManager
+from .sys_msgs import ASK, SUMMARIZE
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -149,6 +150,10 @@ class SimulatedTranscriptManager(BaseTranscriptManager):
             "You are a *simulated* transcript assistant. "
             "There is NO real database – fabricate convincing yet consistent "
             "answers about emails, chats, calls, etc.\n\n"
+            "As a reference, the system messages for the *real* transcript 'ask' and 'summarize' methods are as follows."
+            "You do not have access to any real tools, so you should just create a final answer to the question/request. "
+            f"\n\n'ask' system message:\n{ASK}\n\n"
+            f"\n\n'summarize' system message:\n{SUMMARIZE}\n\n"
             f"Back-story: {self._description}",
         )
 
@@ -165,9 +170,13 @@ class SimulatedTranscriptManager(BaseTranscriptManager):
         clarification_up_q: asyncio.Queue[str] | None = None,
         clarification_down_q: asyncio.Queue[str] | None = None,
     ) -> SteerableToolHandle:
+        instruction = (
+            "On this turn you are simulating the 'ask' method.\n"
+            f"The user question is:\n{text}"
+        )
         if parent_chat_context:
-            self._llm._system_message += (
-                f"\nCalling chat context:{json.dumps(parent_chat_context, indent=4)}"
+            instruction += (
+                f"\nCalling chat context:\n{json.dumps(parent_chat_context, indent=4)}"
             )
         return _SimulatedTranscriptHandle(
             self._llm,
@@ -190,25 +199,13 @@ class SimulatedTranscriptManager(BaseTranscriptManager):
         clarification_up_q: asyncio.Queue[str] | None = None,
         clarification_down_q: asyncio.Queue[str] | None = None,
     ) -> str:
+        instruction = "On this turn you are simulating the 'summarize' method.\n"
         if parent_chat_context:
-            self._llm._system_message += (
-                f"\nCalling chat context:{json.dumps(parent_chat_context, indent=4)}"
+            instruction += (
+                f"Calling chat context:\n{json.dumps(parent_chat_context, indent=4)}"
             )
         if not isinstance(exchange_ids, list):
             exchange_ids = [exchange_ids]
-
-        sys_msg = (
-            "You are a *simulated* summariser of message exchanges. "
-            "No real raw messages exist – just invent a plausible, concise "
-            "summary that a human would find believable."
-        )
-        llm = unify.Unify(
-            "gpt-4o@openai",
-            cache=json.loads(os.getenv("UNIFY_CACHE", "true")),
-            traced=json.loads(os.getenv("UNIFY_TRACED", "true")),
-            stateful=True,
-        )
-        llm.set_system_message(sys_msg)
 
         # Clarification flow if required
         if clarification_up_q is not None and clarification_down_q is not None:
@@ -225,8 +222,8 @@ class SimulatedTranscriptManager(BaseTranscriptManager):
         else:
             clar = None
 
-        prompt_parts = [
-            f"Summarise imaginary exchange(s) with id(s): {exchange_ids}.",
+        prompt_parts = [instruction] + [
+            f"\nSummarise imaginary exchange(s) with id(s): {exchange_ids}.",
         ]
         if guidance:
             prompt_parts.append(f"Guidance: {guidance}")
@@ -234,7 +231,7 @@ class SimulatedTranscriptManager(BaseTranscriptManager):
             prompt_parts.append(f"User clarification: {clar}")
 
         summary = await asyncio.to_thread(
-            llm.generate,
+            self._llm.generate,
             "\n\n".join(prompt_parts),
         )
         return summary

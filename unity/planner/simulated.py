@@ -19,8 +19,11 @@ class SimulatedPlan(BasePlan):
 
     def __init__(
         self,
+        llm: unify.Unify,
         task: str,
         steps: int,
+        timeout: float | None = None,
+        parent_chat_context: list[dict] | None = None,
         clarification_up_q: asyncio.Queue[str] | None = None,
         clarification_down_q: asyncio.Queue[str] | None = None,
         request_clarification: bool = False,
@@ -29,11 +32,18 @@ class SimulatedPlan(BasePlan):
         Initialize a simulated plan.
 
         Args:
-            task: The task description to simulate
-            steps: Number of steps before the plan completes
+            task:       The task description to simulate.
+            steps:      *(Optional)* Number of tool-invocation steps before this
+                        plan automatically completes.
+            timeout:    *(Optional)* Absolute timeout (in **seconds**) after
+                        which the plan completes, irrespective of the number of
+                        steps performed.
         """
+        self._llm = llm
         self._task = task
         self._steps = steps
+        self._timeout = timeout
+        self._parent_chat_context = parent_chat_context
         self._clarification_up_q = clarification_up_q
         self._clarification_down_q = clarification_down_q
         self._request_clarification = request_clarification
@@ -41,6 +51,8 @@ class SimulatedPlan(BasePlan):
         # step-counting
         self._step_count = 0
         self._step_lock = threading.Lock()
+        # wall-clock timeout
+        self._start_time: float | None = None
 
         # task-control primitives
         self._done_event = threading.Event()
@@ -50,18 +62,6 @@ class SimulatedPlan(BasePlan):
         self._pause_event = threading.Event()
         self._stop_event = threading.Event()
 
-        self._ask_simulator = unify.Unify(
-            "gpt-4o@openai",
-            cache=json.loads(os.environ.get("UNIFY_CACHE", "true")),
-            traced=json.loads(os.environ.get("UNIFY_TRACED", "true")),
-            stateful=True,
-        )
-        self._interject_simulator = unify.Unify(
-            "gpt-4o@openai",
-            cache=json.loads(os.environ.get("UNIFY_CACHE", "true")),
-            traced=json.loads(os.environ.get("UNIFY_TRACED", "true")),
-            stateful=True,
-        )
         self._start()
 
     # ──────────────────────────────────────────────────────────────────────────
@@ -83,15 +83,6 @@ class SimulatedPlan(BasePlan):
             task: The task description to simulate
         """
         try:
-            self._ask_simulator.set_system_message(
-                f"You should pretend you are completing the following task:\n{task}\n"
-                "Come up with imaginary answers to the user questions about the task",
-            )
-            self._interject_simulator.set_system_message(
-                f"You should pretend you are completing the following task:\n{task}\n"
-                "Come up with imaginary responses to the user requests to steer the task behaviour.",
-            )
-
             while True:
 
                 if self._request_clarification:
@@ -117,21 +108,31 @@ class SimulatedPlan(BasePlan):
 
                 # normal execution path (only reached when no clarification needed)
 
+                # honour explicit stop requests --------------------------------
                 if self._stop_event.is_set():
                     return
 
-                if self._step_count >= self._steps:
-                    self._complete(f"Completed task '{task}' in {self._steps} steps.")
+                # wall-clock timeout -------------------------------------------
+                if (
+                    self._timeout is not None
+                    and self._start_time is not None
+                    and (time.monotonic() - self._start_time) >= self._timeout
+                ):
+                    self._complete(
+                        f"Completed task '{task}' after {self._timeout} s timeout.",
+                    )
+                    return
+
+                # tool-step budget ---------------------------------------------
+                if self._steps is not None and self._step_count >= self._steps:
+                    self._complete(
+                        f"Completed task '{task}' in {self._steps} steps.",
+                    )
                     return
 
                 self._pause_event.wait()
                 time.sleep(0.1)
         finally:
-            self._ask_simulator.reset_messages()
-            self._ask_simulator.reset_system_message()
-            self._interject_simulator.reset_messages()
-            self._interject_simulator.reset_system_message()
-
             # reset internal state
             self._task = None
             self._paused = None
@@ -144,6 +145,7 @@ class SimulatedPlan(BasePlan):
         self._paused = False
         self._pause_event.set()
         self._stop_event.clear()
+        self._start_time = time.monotonic()
         self._task_thread = threading.Thread(
             target=self._run_task,
             args=(self._task,),
@@ -192,11 +194,15 @@ class SimulatedPlan(BasePlan):
         return msg
 
     @functools.wraps(BasePlan.interject, updated=())
-    def interject(self, instruction: str) -> str:
+    async def interject(self, instruction: str) -> None:
         if not self._task:
             raise Exception("No tasks are currently being performed.")
         self._count_step()
-        return self._interject_simulator.generate(instruction)
+        prompt = (
+            f"Current simulated task:\n{self._task}\n\n"
+            f"User instruction to adjust the plan:\n{instruction}"
+        )
+        await asyncio.to_thread(self._llm.generate, prompt)
 
     @functools.wraps(BasePlan.pause, updated=())
     def pause(self) -> str:
@@ -221,11 +227,15 @@ class SimulatedPlan(BasePlan):
         return f"Resumed task '{self._task}'."
 
     @functools.wraps(BasePlan.ask, updated=())
-    def ask(self, question: str) -> str:
+    async def ask(self, question: str) -> str:
         if not self._task:
             raise Exception("No tasks are currently being performed.")
         self._count_step()
-        return self._ask_simulator.generate(question)
+        prompt = (
+            f"You are working on the simulated task:\n{self._task}\n\n"
+            f"User asks: {question}"
+        )
+        return await asyncio.to_thread(self._llm.generate, prompt)
 
     @functools.wraps(BasePlan.done, updated=())
     def done(self) -> bool:
@@ -251,27 +261,54 @@ class SimulatedPlan(BasePlan):
 
 class SimulatedPlanner(BasePlanner[SimulatedPlan]):
 
-    def __init__(self, steps, request_clarification: bool = False) -> None:
+    def __init__(
+        self,
+        *,
+        steps: int | None = None,
+        timeout: float | None = None,
+        request_clarification: bool = False,
+    ) -> None:
         """
         Initialize a simulated planner.
 
         Args:
-            steps: Number of steps before plans complete
+            steps:      *(Optional)* Maximum tool steps each plan should run
+                        before auto-completion.
+            timeout:    *(Optional)* Maximum wall-clock seconds before plans
+                        auto-complete.
         """
         super().__init__()
         self._steps = steps
+        self._timeout = timeout
         self._request_clarification = request_clarification
+
+        # One shared, memory-retaining LLM for *all* plans
+        self._llm = unify.Unify(
+            "gpt-4o@openai",
+            cache=json.loads(os.environ.get("UNIFY_CACHE", "true")),
+            traced=json.loads(os.environ.get("UNIFY_TRACED", "true")),
+            stateful=True,
+        )
+        self._llm.set_system_message(
+            "You are a *simulated* planner and executor. "
+            "Invent plausible task progress and remain internally consistent "
+            "across multiple plans and calls.",
+        )
 
     def _make_plan(
         self,
         task_description: str,
         *,
+        parent_chat_context: list[dict] | None = None,
         clarification_up_q: Optional[asyncio.Queue[str]] = None,
         clarification_down_q: Optional[asyncio.Queue[str]] = None,
     ) -> SimulatedPlan:
         return SimulatedPlan(
+            self._llm,
             task_description,
             self._steps,
+            timeout=self._timeout,
+            parent_chat_context=parent_chat_context,
             clarification_up_q=clarification_up_q,
             clarification_down_q=clarification_down_q,
             request_clarification=self._request_clarification,
