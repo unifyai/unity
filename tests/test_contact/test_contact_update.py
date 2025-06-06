@@ -120,7 +120,7 @@ async def test_update_create_new_contact(
         cm,
         "email_address",
         "eve@paradise.com",
-        {"first_name": "Eve", "surname": "Adams", "phone_number": "777-000-1111"},
+        {"first_name": "Eve", "surname": "Adams", "phone_number": "7770001111"},
     )
 
 
