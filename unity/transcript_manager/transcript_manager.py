@@ -143,28 +143,6 @@ class TranscriptManager(BaseTranscriptManager):
         clarification_up_q: asyncio.Queue[str] | None = None,
         clarification_down_q: asyncio.Queue[str] | None = None,
     ) -> str:
-        """
-        Summarise one or more message exchanges and persist the resulting
-        synopsis in the `MessageExchangeSummaries` event-stream.
-
-        Parameters
-        ----------
-        exchange_ids : int | list[int]
-            One or several exchange identifiers to be summarised.
-        guidance : str | None, default ``None``
-            Additional caller instructions (tone, level of detail, …).
-        parent_chat_context : list[dict] | None
-            **Read-only** chat history forwarded to nested tool loops.
-        clarification_up_q / clarification_down_q : asyncio.Queue[str] | None
-            Queues allowing the model to request/receive extra information
-            from the human if the provided data is ambiguous.
-
-        Returns
-        -------
-        str
-            The generated summary text (also emitted on the event bus).
-        """
-
         if not isinstance(exchange_ids, list):
             exchange_ids = [exchange_ids]
 
@@ -342,7 +320,7 @@ class TranscriptManager(BaseTranscriptManager):
         ----------
         filter : str | None, default ``None``
             Expression evaluated against each
-            :class:`~unity.transcript_manager.types.message_exchange_summary.MessageExchangeSummary`
+            :class:`~MessageExchangeSummary`
             (e.g. ``"5 in exchange_ids and 'deadline' in summary"``).
         offset : int, default ``0``
             Start index for pagination.
