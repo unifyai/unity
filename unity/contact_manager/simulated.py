@@ -11,8 +11,8 @@ from typing import List, Dict, Any
 import unify
 from .base import BaseContactManager
 from .contact_manager import ContactManager
-from .sys_msgs import make_ask_contacts, make_update_contacts
-from ..common.llm_helpers import SteerableToolHandle
+from .prompt_builders import build_ask_prompt, build_update_prompt
+from ..common.llm_helpers import SteerableToolHandle, methods_to_tool_dict
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -144,12 +144,20 @@ class SimulatedContactManager(BaseContactManager):
             traced=json.loads(os.getenv("UNIFY_TRACED", "true")),
             stateful=True,
         )
-        ask_msg = make_ask_contacts(ContactManager._search_contacts)
-        upd_msg = make_update_contacts(
+        # Re-create the same tool-dicts the real manager uses, then
+        # build the *exact* same prompts via the shared builders.
+        ask_tools = methods_to_tool_dict(
+            ContactManager._search_contacts,
+            include_class_name=False,
+        )
+        upd_tools = methods_to_tool_dict(
             ContactManager._create_contact,
             ContactManager._update_contact,
             ContactManager._search_contacts,
+            include_class_name=False,
         )
+        ask_msg = build_ask_prompt(ask_tools)
+        upd_msg = build_update_prompt(upd_tools)
 
         self._llm.set_system_message(
             "You are a *simulated* contact-manager assistant. "
