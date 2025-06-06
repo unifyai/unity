@@ -113,7 +113,7 @@ class EventManager:
             current_time = asyncio.get_event_loop().time()
             if current_time - self.last_activity_time > self.INACTIVITY_TIMEOUT:
                 print(
-                    f"Inactivity timeout reached ({self.INACTIVITY_TIMEOUT}s), shutting down gracefully..."
+                    f"Inactivity timeout reached ({self.INACTIVITY_TIMEOUT}s), shutting down gracefully...",
                 )
                 await self.shutdown_gracefully()
                 break
