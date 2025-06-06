@@ -124,6 +124,18 @@ def methods_to_tool_dict(
     return ret
 
 
+def class_api_overview(cls: type) -> str:
+    """Return a Markdown list of all public callables in *cls*."""
+    blocks = []
+    for name, member in inspect.getmembers(cls, inspect.isfunction):
+        if name.startswith("_"):
+            continue  # skip dunder/private helpers
+        sig = inspect.signature(member)
+        first_line = (member.__doc__ or "").strip().split("\n", 1)[0]
+        blocks.append(f"- **`{name}{sig}`** – {first_line}")
+    return "\n".join(blocks)
+
+
 def _discover_custom_public_methods(handle) -> dict[str, Callable]:
     """
     Return a mapping ``name → bound_method`` of *public* callables on *handle*:
