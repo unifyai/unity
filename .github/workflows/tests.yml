@@ -84,7 +84,7 @@ jobs:
 
         # 4) Install the local 'unity' project in editable mode
         uv pip install -e .
-        
+
         # 5) Install unify package from GitHub
         uv pip install git+https://github.com/unifyai/unify
 
