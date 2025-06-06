@@ -375,3 +375,80 @@ async def test_no_tools_without_system_message() -> None:
         "user",
         "assistant",
     ]
+
+
+# --------------------------------------------------------------------------- #
+#  CONCURRENCY LIMIT – max_concurrent                                         #
+# --------------------------------------------------------------------------- #
+
+
+@pytest.mark.asyncio
+@_handle_project
+async def test_max_concurrent_limit_is_obeyed() -> None:  # noqa: D401
+    """Ensure the per‑tool *runtime* concurrency cap is respected.
+
+    We ask the model to run the same tool twice *in parallel*.  The limit
+    (`max_concurrent=1`) should force the second call to wait until the
+    first ends.  We tolerate the model making more than two invocations –
+    what matters is that **no overlap > 1** happens.
+    """
+
+    events: list[tuple[str, float]] = []
+
+    @unify.traced
+    async def limited(label: str) -> str:
+        events.append(("start", time.monotonic()))
+        await asyncio.sleep(0.15)
+        events.append(("end", time.monotonic()))
+        return label.upper()
+
+    limited.__name__ = "limited"
+    limited.__qualname__ = "limited"
+
+    tools = {"limited": llmh.ToolSpec(fn=limited, max_concurrent=1)}
+
+    client = new_client()
+
+    await llmh.start_async_tool_use_loop(
+        client=client,
+        message=(
+            "Invoke `limited` twice *concurrently* – once with 'one', once "
+            "with 'two' – then reply 'done'."
+        ),
+        tools=tools,
+        prune_tool_duplicates=False,
+    ).result()
+
+    starts = [t for e, t in events if e == "start"]
+    ends = [t for e, t in events if e == "end"]
+
+    # sanity: any start **must** be paired with an end
+    assert len(starts) == len(
+        ends,
+    ), "Mismatched start/end counts – tool never returned?"
+
+    # ensure we really invoked the tool at least twice (enough to test the cap)
+    assert len(starts) >= 2, "Expected the model to schedule at least two invocations."
+
+    # now compute peak concurrency
+    timeline = sorted(events, key=lambda p: p[1])
+    running = peak = 0
+    for kind, _ in timeline:
+        running += 1 if kind == "start" else -1
+        peak = max(peak, running)
+
+    assert (
+        peak == 1
+    ), "More than one instance ran concurrently despite max_concurrent=1."
+
+    # … but *never* concurrently (max overlap == 1)
+    concur = 0
+    peak = 0
+    for kind, _ in sorted(events, key=lambda p: p[1]):
+        concur += 1 if kind == "start" else -1
+        peak = max(peak, concur)
+
+    assert peak == 1, (
+        "More than one instance of the tool ran concurrently despite "
+        "max_concurrent=1."
+    )

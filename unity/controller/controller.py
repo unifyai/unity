@@ -5,7 +5,7 @@ from typing import Any, Type, Optional
 
 import redis
 
-from .playwright.worker import BrowserWorker
+from .playwright_utils.worker import BrowserWorker
 from .agent import text_to_browser_action, ask_llm
 from ..constants import LOGGER
 

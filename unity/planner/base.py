@@ -30,7 +30,7 @@ class BasePlan(SteerableToolHandle, ABC):
     # ───────────────────────────── Public API ───────────────────────────── #
 
     @abstractmethod
-    def ask(self, question: str) -> str:
+    async def ask(self, question: str) -> str:
         """
         Ask any question about the live (ongoing and active) task being worked on.
         """
@@ -69,6 +69,7 @@ class BasePlanner(Generic[PlanT], ABC):
         self,
         task_description: str,
         *,
+        parent_chat_context: list[dict] | None = None,
         clarification_up_q: Optional[asyncio.Queue[str]] = None,
         clarification_down_q: Optional[asyncio.Queue[str]] = None,
     ) -> PlanT:
@@ -87,6 +88,7 @@ class BasePlanner(Generic[PlanT], ABC):
 
         plan = self._make_plan(
             task_description,
+            parent_chat_context=parent_chat_context,
             clarification_up_q=clarification_up_q,
             clarification_down_q=clarification_down_q,
         )
@@ -98,6 +100,7 @@ class BasePlanner(Generic[PlanT], ABC):
         self,
         task_description: str,
         *,
+        parent_chat_context: list[dict] | None = None,
         clarification_up_q: Optional[asyncio.Queue[str]] = None,
         clarification_down_q: Optional[asyncio.Queue[str]] = None,
     ) -> PlanT:

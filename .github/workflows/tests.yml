@@ -14,7 +14,11 @@ jobs:
         python-version: '3.11'
 
     - name: Install system dependencies
-      run: sudo apt-get update && sudo apt-get install -y portaudio19-dev
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y portaudio19-dev libnss3-dev libatk-bridge2.0-dev libdrm2 libxkbcommon0 libgtk-3-dev libgbm-dev
+        # Install Playwright system dependencies for Ubuntu
+        sudo apt-get install -y libasound2t64 libatspi2.0-0 libdrm2 libgtk-3-0 libnspr4 libnss3 libwayland-client0 libxcomposite1 libxdamage1 libxrandr2 xvfb
 
     - name: Install uv
       run: pip install uv
@@ -24,11 +28,20 @@ jobs:
         uv venv --python 3.11 .unity
         source .unity/bin/activate
 
-        # 1) everything from requirements.txt except the local-editable entry
-        uv pip install -r <(grep -vE '^\s*-e\s+\.\./unify' requirements.txt)
+        # 1) Create filtered requirements file
+        grep -vE '^\s*-e\s+\.\./unify' requirements.txt > temp_requirements.txt
 
-        # 2) your real Unify package from GitHub
+        # 2) Install all dependencies
+        uv pip install -r temp_requirements.txt
+
+        # 3) Install playwright browsers WITH system dependencies
+        .unity/bin/python -m playwright install --with-deps
+
+        # 4) Install unify package from GitHub
         uv pip install git+https://github.com/unifyai/unify
+
+        # 5) cleanup
+        rm temp_requirements.txt
 
     - name: Run black check
       run: .unity/bin/black --check .
@@ -46,7 +59,11 @@ jobs:
         python-version: '3.11'
 
     - name: Install system dependencies
-      run: sudo apt-get update && sudo apt-get install -y portaudio19-dev
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y portaudio19-dev libnss3-dev libatk-bridge2.0-dev libdrm2 libxkbcommon0 libgtk-3-dev libgbm-dev
+        # Install Playwright system dependencies for Ubuntu
+        sudo apt-get install -y libasound2t64 libatspi2.0-0 libdrm2 libgtk-3-0 libnspr4 libnss3 libwayland-client0 libxcomposite1 libxdamage1 libxrandr2 xvfb
 
     - name: Install uv
       run: pip install uv
@@ -56,18 +73,45 @@ jobs:
         uv venv --python 3.11 .unity
         source .unity/bin/activate
 
-        # 1) everything from requirements.txt except the local-editable entry
-        uv pip install -r <(grep -vE '^\s*-e\s+\.\./unify' requirements.txt)
+        # 1) Create filtered requirements file
+        grep -vE '^\s*-e\s+\.\./unify' requirements.txt > temp_requirements.txt
 
-        # 2) your real Unify package from GitHub
+        # 2) Install all dependencies
+        uv pip install -r temp_requirements.txt
+
+        # 3) Install playwright browsers WITH system dependencies
+        .unity/bin/python -m playwright install --with-deps
+
+        # 4) Install the local 'unity' project in editable mode
+        uv pip install -e .
+
+        # 5) Install unify package from GitHub
         uv pip install git+https://github.com/unifyai/unify
 
+        # 6) cleanup
+        rm temp_requirements.txt
+
+
+    - name: Debug Playwright Import Path
+      run: |
+        source .unity/bin/activate
+        echo "--- Attempting to locate playwright module ---"
+        python -c "import playwright; print(f'Playwright location: {playwright.__file__}')"
+      continue-on-error: true
+      
     - name: Run unit tests
-      run: .unity/bin/python -m pytest --timeout=120 -p no:warnings -vv .
+      run: |
+        source .unity/bin/activate
+        echo "Searching for conflicting 'playwright' files or directories..."
+        find . -name "playwright.py" -o -name "playwright"
+        echo "Cleaning all __pycache__ directories..."
+        find . -type d -name "__pycache__" -exec rm -r {} +
+        echo "Running tests..."
+        .unity/bin/python -m pytest --timeout=120 -p no:warnings -vv .
       env:
         UNIFY_KEY: ${{ secrets.USER_API_KEY }}
         UNIFY_BASE_URL: https://api.unify.ai/v0
-        UNIFY_CACHE: false
+        UNIFY_CACHE: true
         UNIFY_TRACED: false
         OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
         FIRST_NAME: Rick
