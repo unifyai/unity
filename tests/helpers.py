@@ -29,7 +29,10 @@ def _handle_project(
 
     async def _call(fn: Callable, *a: Any, **kw: Any):
         """Call *fn* and await it if it returns an awaitable."""
-        result = unify.traced(fn)(*a, **kw)
+        if json.loads(os.environ.get("UNIFY_TRACED", "true")) == "true":
+            result = unify.traced(fn)(*a, **kw)
+        else:
+            result = fn(*a, **kw)
         if inspect.isawaitable(result):
             return await result
         return result
@@ -73,7 +76,9 @@ def _handle_project(
                 with unify.Context(ctx):
                     if json.loads(os.environ.get("UNIFY_TRACED", "true")) == "true":
                         unify.set_trace_context("Traces")
-                    unify.traced(test_fn)(*args, **kwargs)
+                        unify.traced(test_fn)(*args, **kwargs)
+                    else:
+                        test_fn(*args, **kwargs)
 
                 if delete_ctx_on_exit:
                     unify.delete_context(ctx)
