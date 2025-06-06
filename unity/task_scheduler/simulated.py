@@ -10,6 +10,8 @@ import unify
 
 from ..common.llm_helpers import SteerableToolHandle
 from .base import BaseTaskScheduler
+from .sys_msgs import ASK, UPDATE
+from ..planner.simulated import SimulatedPlanner
 
 
 class _SimulatedTaskScheduleHandle(SteerableToolHandle):
@@ -140,7 +142,7 @@ class SimulatedTaskScheduler(BaseTaskScheduler):
     def __init__(self, description: str = "You manage an imaginary task list.") -> None:
         self._description = description
 
-        # One shared, stateful LLM client
+        # One shared, *stateful* LLM for *everything*
         self._llm = unify.Unify(
             "gpt-4o@openai",
             cache=json.loads(os.getenv("UNIFY_CACHE", "true")),
@@ -149,10 +151,16 @@ class SimulatedTaskScheduler(BaseTaskScheduler):
         )
         self._llm.set_system_message(
             "You are a *simulated* task-list manager. "
-            "There is NO real database – fabricate convincing yet *consistent* "
-            "answers and confirmations over time.\n\n"
+            "No real database exists; invent plausible tasks but stay internally "
+            "consistent across turns.\n\n"
+            "As reference, here are the *real* TaskScheduler prompts:\n\n"
+            f"ASK system message:\n{ASK}\n\n"
+            f"UPDATE system message:\n{UPDATE}\n\n"
             f"Back-story: {self._description}",
         )
+
+        # Re-use a single simulated planner for every `start_task`
+        self._planner = SimulatedPlanner(steps=2)
 
     # ------------------------------------------------------------------ #
     #  ask                                                               #
@@ -168,13 +176,17 @@ class SimulatedTaskScheduler(BaseTaskScheduler):
         clarification_up_q: asyncio.Queue[str] | None = None,
         clarification_down_q: asyncio.Queue[str] | None = None,
     ) -> SteerableToolHandle:
+        instruction = (
+            "On this turn you are simulating the 'ask' method.\n"
+            f"The user question is:\n{text}"
+        )
         if parent_chat_context:
-            self._llm._system_message += (
-                f"\nCalling chat context:{json.dumps(parent_chat_context, indent=4)}"
+            instruction += (
+                f"\nCalling chat context:\n{json.dumps(parent_chat_context, indent=4)}"
             )
         return _SimulatedTaskScheduleHandle(
             self._llm,
-            text,
+            instruction,
             mode="ask",
             _return_reasoning_steps=_return_reasoning_steps,
             clarification_up_q=clarification_up_q,
@@ -195,15 +207,44 @@ class SimulatedTaskScheduler(BaseTaskScheduler):
         clarification_up_q: asyncio.Queue[str] | None = None,
         clarification_down_q: asyncio.Queue[str] | None = None,
     ) -> SteerableToolHandle:
+        instruction = (
+            "On this turn you are simulating the 'update' method.\n"
+            f"The user update request is:\n{text}"
+        )
         if parent_chat_context:
-            self._llm._system_message += (
-                f"\nCalling chat context:{json.dumps(parent_chat_context, indent=4)}"
+            instruction += (
+                f"\nCalling chat context:\n{json.dumps(parent_chat_context, indent=4)}"
             )
         return _SimulatedTaskScheduleHandle(
             self._llm,
-            text,
+            instruction,
             mode="update",
             _return_reasoning_steps=_return_reasoning_steps,
+            clarification_up_q=clarification_up_q,
+            clarification_down_q=clarification_down_q,
+        )
+
+    # ------------------------------------------------------------------ #
+    #  start_task – delegate to SimulatedPlanner.plan                     #
+    # ------------------------------------------------------------------ #
+    @functools.wraps(BaseTaskScheduler.start_task, updated=())
+    def start_task(
+        self,
+        task_id: int,
+        *,
+        parent_chat_context: list[dict] | None = None,
+        clarification_up_q: asyncio.Queue[str] | None = None,
+        clarification_down_q: asyncio.Queue[str] | None = None,
+    ) -> SteerableToolHandle:
+        """
+        In the simulated world we don't have a real DB of tasks, so we
+        fabricate a description from the *task_id* and spin up a **real**
+        `SimulatedPlan` by calling the shared `SimulatedPlanner.plan`.
+        """
+        task_description = f"Simulated task #{task_id}"
+        return self._planner.plan(
+            task_description,
+            parent_chat_context=parent_chat_context,
             clarification_up_q=clarification_up_q,
             clarification_down_q=clarification_down_q,
         )
