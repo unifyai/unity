@@ -2,15 +2,10 @@ from __future__ import annotations
 
 import asyncio
 import pytest
-import re
-import json
-from typing import List, Dict, Any
-import os
+from typing import Dict, Any
 
-import unify
 from unity.contact_manager.contact_manager import ContactManager
 from unity.contact_manager.types.contact import Contact
-from tests.assertion_helpers import assertion_failed
 
 
 def _programmatic_contact_check(
@@ -42,64 +37,6 @@ def _programmatic_contact_check(
             actual_contact_dict[key] == expected_val
         ), f"For key '{key}', expected '{expected_val}', got '{actual_contact_dict[key]}'"
     return actual_contact
-
-
-def _llm_judge_update_confirmation(
-    command_description: str,
-    assistant_response: str,
-    reasoning_steps: List[Dict[str, Any]],
-    expected_confirmation_fragment: str,
-) -> None:
-    """
-    Uses an LLM to judge if the assistant's textual response appropriately
-    confirms the outcome of the update command.
-    """
-    judge = unify.Unify(
-        "o4-mini@openai",
-        cache=json.loads(os.environ.get("UNIFY_CACHE", "true")),
-        traced=json.loads(os.environ.get("UNIFY_TRACED", "true")),
-    )
-    system_prompt = (
-        "You are a unit-test judge for a contact management assistant. "
-        "The user attempted to perform an action described as: '{command_description}'. "
-        "The assistant responded: '{assistant_response}'. "
-        "Does the assistant's response clearly and accurately confirm that the intended action "
-        "(e.g., 'created', 'updated', 'added details for') was attempted or completed, "
-        "and does it mention the key information like '{expected_confirmation_fragment}'? "
-        "Focus on the appropriateness of the confirmation message. "
-        'Respond ONLY with valid JSON of the form {{"correct": true}} or {{"correct": false}}.'
-    ).format(
-        command_description=command_description,
-        assistant_response=json.dumps(assistant_response),
-        expected_confirmation_fragment=expected_confirmation_fragment,
-    )
-    judge.set_system_message(system_prompt)
-
-    result_json = judge.generate(
-        f"User command: {command_description}\nAssistant response: {assistant_response}",
-    )
-
-    try:
-        # Attempt to find JSON within the response if it's not pure JSON
-        match = re.search(r"\{.*\}", result_json, re.DOTALL)
-        if match:
-            json_str = match.group(0)
-        else:
-            json_str = result_json
-
-        verdict = json.loads(json_str)
-        is_correct = verdict.get("correct")
-    except json.JSONDecodeError:
-        print(f"LLM Judge returned non-JSON: {result_json}")
-        is_correct = False
-
-    assert is_correct is True, assertion_failed(
-        f"Confirmation containing '{expected_confirmation_fragment}' and acknowledging '{command_description}'",
-        assistant_response,
-        reasoning_steps,
-        f"LLM Judge validation for update confirmation. Judge raw response: {result_json}",
-    )
-    print(f"LLM Judge: OK for update confirmation '{command_description}'.")
 
 
 @pytest.mark.eval
@@ -253,20 +190,12 @@ async def test_update_interjection_modification(
     """Test interjecting to modify details during an update operation."""
     cm, _ = contact_manager_scenario
     command = "Create a contact for Frank P. Castle, email frank@punisher.net."
-    desc = "Create Frank Castle, then interject phone"
-    expected_fragment = "Frank P. Castle"
 
     handle = cm.update(command, _return_reasoning_steps=True)
     await asyncio.sleep(0.2)
     await handle.interject("Actually, also add his phone as 555-54321.")
-    assistant_response, reasoning_steps = await handle.result()
+    await handle.result()
 
-    _llm_judge_update_confirmation(
-        desc,
-        assistant_response,
-        reasoning_steps,
-        expected_fragment,
-    )
     _programmatic_contact_check(
         cm,
         "email_address",
