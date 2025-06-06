@@ -32,7 +32,7 @@ if pkg_path not in sys.modules:
 # ---------------------------------------------------------------------------
 # Work around potential module conflicts from other test files
 try:
-    from unity.controller.playwright import command_runner as cr_mod  # noqa: E402
+    from unity.controller.playwright_utils import command_runner as cr_mod  # noqa: E402
 except ImportError:
     # If the import fails due to stubbing conflicts, import directly
     import importlib.util

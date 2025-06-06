@@ -59,12 +59,12 @@ class _DummyWorker:
 
 
 # ensure parent package module exists
-pkg_path = "unity.controller.playwright"
+pkg_path = "unity.controller.playwright_utils"
 if pkg_path not in sys.modules:
     sys.modules[pkg_path] = types.ModuleType("playwright_stub")
 worker_mod = types.ModuleType("worker")
 worker_mod.BrowserWorker = _DummyWorker
-sys.modules["unity.controller.playwright.worker"] = worker_mod
+sys.modules["unity.controller.playwright_utils.worker"] = worker_mod
 
 # ---------------------------------------------------------------------------
 # Imports after stubbing
