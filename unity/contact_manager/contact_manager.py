@@ -165,15 +165,20 @@ class ContactManager(BaseContactManager):
         Parameters
         ----------
         first_name : str | None
-            Given-name(s) and middle-initials.  May be *None*.
+            Contact's first name. Must start with a capital letter and can only contain
+            letters, spaces, periods and hyphens. May be *None*.
         surname : str | None
-            Family name.  May be *None*.
+            Contact's surname/family name. Must start with a capital letter and can only
+            contain letters, spaces, periods and hyphens. May be *None*.
         email_address : str | None
-            Unique email address.  Must not clash with an existing record.
+            Contact's email address. Must contain exactly one @ symbol with characters
+            on either side. Must not clash with an existing record.
         phone_number : str | None
-            Unique telephone number in international format (e.g. ``+1555123…``).
+            Contact's phone number. Can optionally start with '+' (only if explicitly
+            mentioned by the user), but must otherwise contain only digits. Must be unique.
         whatsapp_number : str | None
-            Unique WhatsApp number (if different from *phone_number*).
+            Contact's WhatsApp number. Can optionally start with '+' (only if explicitly
+            mentioned by the user), but must otherwise contain only digits. Must be unique.
 
         Returns
         -------
@@ -250,16 +255,27 @@ class ContactManager(BaseContactManager):
         whatsapp_number: Optional[str] = None,
     ) -> int:
         """
-        Modify **selected** fields of an existing contact.
+        Modify **selected** (not `None`) fields of an existing contact.
 
         Parameters
         ----------
         contact_id : int
             Target record's unique identifier.
-        first_name, surname, email_address, phone_number, whatsapp_number :
-        str | None
-            Fields to update.  Pass only the attributes that should change;
-            omitted keys remain untouched.
+        first_name : str | None
+            Contact's first name - must start with a capital letter and can only contain
+            letters, spaces, periods and hyphens.
+        surname : str | None
+            Contact's surname/family name - must start with a capital letter and can only
+            contain letters, spaces, periods and hyphens.
+        email_address : str | None
+            Contact's email address - must contain exactly one @ symbol with characters
+            on either side.
+        phone_number : str | None
+            Contact's phone number - can optionally start with '+' (only if *explicitly*
+            mentioned by the user), but must otherwise contain only digits.
+        whatsapp_number : str | None
+            Contact's WhatsApp number - can optionally start with '+' (only if *explicitly*
+            mentioned by the user), but must otherwise contain only digits.
 
         Returns
         -------
