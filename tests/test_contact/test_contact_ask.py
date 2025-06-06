@@ -76,7 +76,7 @@ def _llm_judge_contact_retrieval(
 
 # Test questions and their expected semantic content
 QUESTIONS_CONTACT_ASK = [
-    ("What is Alice Smith's phone number?", "111-222-3333"),
+    ("What is Alice Smith's phone number?", "1112223333"),
     ("Find Bob Johnson's email.", "bobbyj@example.net"),
     ("Who has the email address diana@themyscira.com?", "Diana Prince"),
     ("List all contacts with the surname Smith.", "Alice Smith"),  # Expect Alice Smith
@@ -189,7 +189,7 @@ async def test_ask_with_clarification(
         reasoning_steps,
         all_contacts,
     )
-    assert "111-222-3333" not in candidate_answer  # Phone of Alice Smith
+    assert "1112223333" not in candidate_answer  # Phone of Alice Smith
 
 
 @pytest.mark.eval
@@ -203,7 +203,7 @@ async def test_ask_interjection(
     initial_question = "Find Charlie Brown's contact details."
     interjected_question = "Also, what is Bob Johnson's phone number?"
     expected_fragment_charlie = "goodgrief@example.org"  # Charlie's email
-    expected_fragment_bob = "444-555-6666"  # Bob's phone
+    expected_fragment_bob = "4445556666"  # Bob's phone
 
     handle = cm.ask(initial_question, _return_reasoning_steps=True)
     await asyncio.sleep(0.1)  # Allow initial query to start
