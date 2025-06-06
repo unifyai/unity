@@ -131,6 +131,7 @@ steps:
     echo ""
     echo "🔍 Discovery completed successfully! Update functionality is commented out for testing."
 
+# TODO: Uncomment this when ready to update services
 # echo "$$UNITY_SERVICES" | while read -r SERVICE_NAME; do
 #   if [ -n "$$SERVICE_NAME" ]; then
 #     echo "Updating service: $$SERVICE_NAME"
