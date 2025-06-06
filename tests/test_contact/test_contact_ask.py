@@ -160,8 +160,8 @@ async def test_ask_with_clarification(
     clar_down_q = asyncio.Queue()
 
     question = "What is Alice's phone number?"
-    # We expect clarification, then provide info for Alice Wonder (phone 111-000-1111)
-    expected_phone_after_clarification = "111-000-1111"
+    # We expect clarification, then provide info for Alice Wonder (phone 1110001111)
+    expected_phone_after_clarification = "1110001111"
 
     handle = cm.ask(
         question,

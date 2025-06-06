@@ -16,7 +16,7 @@ _CONTACTS_DATA: List[Dict[str, str | None]] = [
         "first_name": "Alice",
         "surname": "Smith",
         "email_address": "alice.smith@example.com",
-        "phone_number": "111-222-3333",
+        "phone_number": "1112223333",
         "whatsapp_number": None,
     },
     {
@@ -44,7 +44,7 @@ _CONTACTS_DATA: List[Dict[str, str | None]] = [
         "first_name": "Alice",  # Another Alice for disambiguation tests
         "surname": "Wonder",
         "email_address": "alice.wonder@example.com",
-        "phone_number": "111-000-1111",
+        "phone_number": "1110001111",
     },
 ]
 
