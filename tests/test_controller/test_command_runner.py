@@ -1,85 +1,52 @@
 import types
 import sys
+import pytest
+
+# NOTE: The direct stubbing of playwright has been removed from the module level.
+# We will now use pytest's monkeypatch fixture to do this safely inside tests.
 
 # ---------------------------------------------------------------------------
-#  Stub heavy deps: redis, playwright, BrowserWorker  (same as previous file)
+#  Imports
 # ---------------------------------------------------------------------------
-
-# Stub only playwright (CommandRunner depends on it).
-plw_mod = types.ModuleType("playwright")
-plw_sync = types.ModuleType("playwright.sync_api")
-
-
-# minimal types used in CommandRunner type hints
-class _Stub:  # generic empty class
-    pass
-
-
-plw_sync.BrowserContext = _Stub
-plw_sync.Page = _Stub
-
-sys.modules["playwright"] = plw_mod
-sys.modules["playwright.sync_api"] = plw_sync
-
-# Ensure the parent package exists and has the correct structure
-pkg_path = "unity.controller.playwright"
-if pkg_path not in sys.modules:
-    # Create a proper module, not a stub with a different name
-    sys.modules[pkg_path] = types.ModuleType(pkg_path)
+from unity.controller import commands as cmd_mod
+from unity.controller.playwright_utils import command_runner as cr_mod
 
 # ---------------------------------------------------------------------------
-#  Imports after stubbing
+#  Test Fixture for Stubbing Playwright
 # ---------------------------------------------------------------------------
-# Work around potential module conflicts from other test files
-try:
-    from unity.controller.playwright_utils import command_runner as cr_mod  # noqa: E402
-except ImportError:
-    # If the import fails due to stubbing conflicts, import directly
-    import importlib.util
-    import os
 
-    # Get the actual path to the command_runner module
-    current_dir = os.path.dirname(os.path.abspath(__file__))
-    unity_root = os.path.dirname(os.path.dirname(current_dir))
-    cr_path = os.path.join(
-        unity_root,
-        "unity",
-        "controller",
-        "playwright",
-        "command_runner.py",
-    )
 
-    # Ensure the parent package structure exists in sys.modules
-    parent_pkg = "unity.controller.playwright"
-    if parent_pkg not in sys.modules or not hasattr(
-        sys.modules[parent_pkg],
-        "__path__",
-    ):
-        # Create a proper package module
-        pkg_mod = types.ModuleType(parent_pkg)
-        pkg_mod.__path__ = [
-            os.path.join(unity_root, "unity", "controller", "playwright"),
-        ]
-        pkg_mod.__package__ = parent_pkg
-        sys.modules[parent_pkg] = pkg_mod
+@pytest.fixture(autouse=True)
+def stub_playwright(monkeypatch):
+    """
+    This fixture automatically stubs the playwright dependency for all tests in this file.
+    Monkeypatch ensures the changes are isolated and reverted after each test.
+    """
 
-    # Load the module with proper parent package context
-    spec = importlib.util.spec_from_file_location(
-        f"{parent_pkg}.command_runner",
-        cr_path,
-        submodule_search_locations=[
-            os.path.join(unity_root, "unity", "controller", "playwright"),
-        ],
-    )
-    cr_mod = importlib.util.module_from_spec(spec)
-    cr_mod.__package__ = parent_pkg
-    sys.modules[f"{parent_pkg}.command_runner"] = cr_mod
-    spec.loader.exec_module(cr_mod)
+    # Create a generic empty class for stubbing types
+    class _Stub:
+        pass
 
-from unity.controller import commands as cmd_mod  # noqa: E402
+    # Create fake module objects
+    plw_mod = types.ModuleType("playwright")
+    plw_sync = types.ModuleType("playwright.sync_api")
+
+    # Assign stubbed types
+    plw_sync.BrowserContext = _Stub
+    plw_sync.Page = _Stub
+
+    # Use monkeypatch to safely replace the modules in sys.modules
+    monkeypatch.setitem(sys.modules, "playwright", plw_mod)
+    monkeypatch.setitem(sys.modules, "playwright.sync_api", plw_sync)
+
+    # Ensure the parent package for the runner exists if needed (though often not necessary with proper structure)
+    pkg_path = "unity.controller.playwright_utils"
+    if pkg_path not in sys.modules:
+        monkeypatch.setitem(sys.modules, pkg_path, types.ModuleType(pkg_path))
+
 
 # ---------------------------------------------------------------------------
-#  Test CommandRunner scroll-speed parsing
+#  Dummy Classes for Browser Simulation
 # ---------------------------------------------------------------------------
 
 
