@@ -50,7 +50,7 @@ async def test_update_create_new_contact(
         "Add a new contact: Eve Adams, email eve@paradise.com, phone 777-000-1111."
     )
 
-    handle = cm.update(command, _return_reasoning_steps=True)
+    handle = cm.update(command)
     await handle.result()
 
     _programmatic_contact_check(
@@ -81,7 +81,7 @@ async def test_update_existing_contact_details(
 
     command = f"Update contact ID {alice_smith_id}: change her phone to 1231231234 and add WhatsApp +11231231234."
 
-    handle = cm.update(command, _return_reasoning_steps=True)
+    handle = cm.update(command)
     await handle.result()
 
     _programmatic_contact_check(
@@ -124,7 +124,6 @@ async def test_update_with_parent_context_identification(
     handle = cm.update(
         command,
         parent_chat_context=parent_ctx,
-        _return_reasoning_steps=True,
     )
     await handle.result()
 
@@ -154,7 +153,6 @@ async def test_update_with_clarification_needed(
         command,
         clarification_up_q=clar_up_q,
         clarification_down_q=clar_down_q,
-        _return_reasoning_steps=True,
     )
 
     await asyncio.wait_for(
@@ -191,7 +189,7 @@ async def test_update_interjection_modification(
     cm, _ = contact_manager_scenario
     command = "Create a contact for Frank P. Castle, email frank@punisher.net."
 
-    handle = cm.update(command, _return_reasoning_steps=True)
+    handle = cm.update(command)
     await asyncio.sleep(0.2)
     await handle.interject("Actually, also add his phone as 555-54321.")
     await handle.result()

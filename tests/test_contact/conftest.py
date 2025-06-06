@@ -23,7 +23,7 @@ _CONTACTS_DATA: List[Dict[str, str | None]] = [
         "first_name": "Bob",
         "surname": "Johnson",
         "email_address": "bobbyj@example.net",
-        "phone_number": "444-555-6666",
+        "phone_number": "4445556666",
         "whatsapp_number": "+14445556666",
     },
     {
@@ -37,7 +37,7 @@ _CONTACTS_DATA: List[Dict[str, str | None]] = [
         "first_name": "Diana",
         "surname": "Prince",
         "email_address": "diana@themyscira.com",
-        "phone_number": "777-888-9999",
+        "phone_number": "7778889999",
         "whatsapp_number": "+17778889999",
     },
     {
