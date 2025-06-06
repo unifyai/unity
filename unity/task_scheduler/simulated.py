@@ -160,7 +160,7 @@ class SimulatedTaskScheduler(BaseTaskScheduler):
         )
 
         # Re-use a single simulated planner for every `start_task`
-        self._planner = SimulatedPlanner(steps=2)
+        self._planner = SimulatedPlanner(timeout=20)
 
     # ------------------------------------------------------------------ #
     #  ask                                                               #

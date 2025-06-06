@@ -75,7 +75,7 @@ class TaskScheduler(BaseTaskScheduler):
 
         # active task
         if planner is None:
-            self._planner = SimulatedPlanner(1)
+            self._planner = SimulatedPlanner(timeout=20)
         else:
             self._planner = planner
         # ID of the *single* task that is allowed to be in the **active**
