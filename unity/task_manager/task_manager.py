@@ -29,7 +29,7 @@ class TaskManager:
 
     # ------------------------------------------------------------------ #
 
-    def __init__(self, planner_steps: int = 2, *, simulated: bool = False) -> None:
+    def __init__(self, *, simulated: bool = False) -> None:
         """
         Args:
             planner_steps:   How many "steps" a simulated plan should take before
@@ -63,11 +63,10 @@ class TaskManager:
             self._transcript_manager = TranscriptManager(self._event_bus)
             self._knowledge_manager = KnowledgeManager()
             self._task_scheduler = TaskScheduler()
-            self._planner = ToolLoopPlanner(planner_steps)
+            self._planner = ToolLoopPlanner()
 
         #  Run-time state & tool-dict helpers
         self._current_plan = None  # type: ignore
-        self._planner_steps = planner_steps
 
         # These two dicts are rebuilt lazily before every ask/request
         self._passive_tools: Dict[str, Callable] = {}
