@@ -7,6 +7,7 @@ from typing import List, Dict, Optional, Union, Callable
 
 import unify
 from ..common.embed_utils import EMBED_MODEL, ensure_vector_column
+from ..contact_manager.base import BaseContactManager
 from ..contact_manager.contact_manager import ContactManager
 from .types.message import Message
 from .types.message_exchange_summary import MessageExchangeSummary
@@ -25,15 +26,24 @@ class TranscriptManager(BaseTranscriptManager):
     _VEC_MSG = "content_emb"
     _VEC_SUM = "summary_emb"
 
-    def __init__(self, event_bus: EventBus, *, traced: bool = True) -> None:
+    def __init__(
+        self,
+        event_bus: EventBus,
+        *,
+        traced: bool = True,
+        contact_manager: Optional[BaseContactManager] = None,
+    ) -> None:
         """
         Responsible for *searching through* the full transcripts across all communcation channels exposed to the assistant.
         """
         self._event_bus = event_bus
-        self._contact_manager = ContactManager(
-            event_bus=event_bus,
-            traced=traced,
-        )
+        if contact_manager is not None:
+            self._contact_manager = contact_manager
+        else:
+            self._contact_manager = ContactManager(
+                event_bus=event_bus,
+                traced=traced,
+            )
 
         self._tools = methods_to_tool_dict(
             self.summarize,
