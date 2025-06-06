@@ -2,7 +2,7 @@ import os
 import json
 import asyncio
 import functools
-from typing import List, Dict, Optional, Union, Callable
+from typing import List, Dict, Optional, Union, Callable, Any
 
 import unify
 from ..common.embed_utils import EMBED_MODEL, ensure_vector_column
@@ -139,22 +139,30 @@ class TranscriptManager(BaseTranscriptManager):
         *,
         exchange_ids: Union[int, List[int]],
         guidance: Optional[str] = None,
-        parent_chat_context: list[dict] | None = None,
+        parent_chat_context: Optional[List[Dict[str, Any]]] = None,
         clarification_up_q: asyncio.Queue[str] | None = None,
         clarification_down_q: asyncio.Queue[str] | None = None,
     ) -> str:
         """
-        Summarize the email thread, phone call, or a time-clustered text exchange, save the summary in the backend, and also return it.
+        Summarise one or more message exchanges and persist the resulting
+        synopsis in the `MessageExchangeSummaries` event-stream.
 
-        Args:
-            exchange_ids (int): The ids of the exchanges to summarize.
-            guidance (Optional[str]): Optional guidance for the summarization.
-            parent_chat_context (list[dict]): A list of parent context messages to pass down into the tool use loop.
-            clarification_up_q (asyncio.Queue[str]): A queue to send clarification questions up to the caller.
-            clarification_down_q (asyncio.Queue[str]): A queue to send clarification answers down to the model.
+        Parameters
+        ----------
+        exchange_ids : int | list[int]
+            One or several exchange identifiers to be summarised.
+        guidance : str | None, default ``None``
+            Additional caller instructions (tone, level of detail, …).
+        parent_chat_context : list[dict] | None
+            **Read-only** chat history forwarded to nested tool loops.
+        clarification_up_q / clarification_down_q : asyncio.Queue[str] | None
+            Queues allowing the model to request/receive extra information
+            from the human if the provided data is ambiguous.
 
-        Returns:
-            str: The summary of the exchanges.
+        Returns
+        -------
+        str
+            The generated summary text (also emitted on the event bus).
         """
 
         if not isinstance(exchange_ids, list):
@@ -226,14 +234,20 @@ class TranscriptManager(BaseTranscriptManager):
         k: int = 10,
     ) -> List[Message]:
         """
-        Find messages semantically similar to the provided text using vector embeddings.
+        Return the *k* transcript messages whose **content** embedding is
+        *closest* to the embedding of **text** (cosine similarity).
 
-        Args:
-            text (str): The text to find similar messages to.
-            k (int): The number of similar messages to return.
+        Parameters
+        ----------
+        text : str
+            Free-form query text to embed.
+        k : int, default ``10``
+            Number of neighbours to return.
 
-        Returns:
-            List[Message]: A list of messages semantically similar to the provided text.
+        Returns
+        -------
+        list[Message]
+            Messages sorted by **ascending** cosine distance (best match first).
         """
         ensure_vector_column(self._transcripts_ctx, self._VEC_MSG, "content")
         logs = unify.get_logs(
@@ -252,14 +266,20 @@ class TranscriptManager(BaseTranscriptManager):
         k: int = 10,
     ) -> List[MessageExchangeSummary]:
         """
-        Find summaries semantically similar to the provided text using vector embeddings.
+        Retrieve the *k* stored summaries whose **summary text** embedding is
+        closest to the embedding of **text**.
 
-        Args:
-            text (str): The text to find similar summaries to.
-            k (int): The number of similar summaries to return.
+        Parameters
+        ----------
+        text : str
+            Query text.
+        k : int, default ``10``
+            How many nearest summaries to return.
 
-        Returns:
-            List[MessageExchangeSummary]: A list of summaries semantically similar to the provided text.
+        Returns
+        -------
+        list[MessageExchangeSummary]
+            Summaries ordered by similarity (*lowest* cosine distance first).
         """
 
         ensure_vector_column(self._transcripts_ctx, self._VEC_MSG, "content")
@@ -278,17 +298,26 @@ class TranscriptManager(BaseTranscriptManager):
         filter: Optional[str] = None,
         offset: int = 0,
         limit: int = 100,
-    ) -> List[Dict[str, str]]:
+    ) -> List[Message]:
         """
-        Retrieve messages from the transcript history, based on flexible filtering for a specific sender, group of senders, receiver, group of receivers, medium, set of mediums, timestamp range, message length, messages containing a phrase, not containing a phrase, or anything else.
+        Fetch **raw transcript messages** matching an arbitrary Python
+        boolean *filter*.
 
-        Args:
-            filter (Optional[str]): The filter to apply to the messages.
-            offset (int): The offset to start the retrieval from.
-            limit (int): The maximum number of messages to retrieve.
+        Parameters
+        ----------
+        filter : str | None, default ``None``
+            Expression evaluated against each :class:`Message`
+            (e.g. ``"medium == 'email' and 'urgent' in content"``).
+            ``None`` selects *all* messages.
+        offset : int, default ``0``
+            Zero-based index of the first result.
+        limit : int, default ``100``
+            Maximum number of messages to return.
 
-        Returns:
-            List[Dict[str, str]]: A list of messages.
+        Returns
+        -------
+        list[Message]
+            Matching messages in creation order.
         """
         logs = unify.get_logs(
             context=self._transcripts_ctx,
@@ -304,17 +333,26 @@ class TranscriptManager(BaseTranscriptManager):
         filter: Optional[str] = None,
         offset: int = 0,
         limit: int = 100,
-    ) -> List[Dict[str, str]]:
+    ) -> List[MessageExchangeSummary]:
         """
-        Retrieve summaries from the transcript history, based on flexible filtering for a specific exchange id, group of exchange ids, medium, set of mediums, timestamp range, summary length, summaries containing a phrase, not containing a phrase, or anything else.
+        Retrieve persisted **exchange summaries** selected by an arbitrary
+        Python boolean *filter*.
 
-        Args:
-            filter (Optional[str]): The filter to apply to the summaries.
-            offset (int): The offset to start the retrieval from.
-            limit (int): The maximum number of summaries to retrieve.
+        Parameters
+        ----------
+        filter : str | None, default ``None``
+            Expression evaluated against each
+            :class:`~unity.transcript_manager.types.message_exchange_summary.MessageExchangeSummary`
+            (e.g. ``"5 in exchange_ids and 'deadline' in summary"``).
+        offset : int, default ``0``
+            Start index for pagination.
+        limit : int, default ``100``
+            Maximum number of summaries to return.
 
-        Returns:
-            List[Dict[str, str]]: A list of exchange summaries.
+        Returns
+        -------
+        list[MessageExchangeSummary]
+            Summaries satisfying the filter in creation order.
         """
         logs = unify.get_logs(
             context=self._summaries_ctx,
