@@ -92,6 +92,13 @@ jobs:
         rm temp_requirements.txt
 
 
+    - name: Debug Playwright Import Path
+      run: |
+        source .unity/bin/activate
+        echo "--- Attempting to locate playwright module ---"
+        python -c "import playwright; print(f'Playwright location: {playwright.__file__}')"
+      continue-on-error: true
+      
     - name: Run unit tests
       run: |
         source .unity/bin/activate
