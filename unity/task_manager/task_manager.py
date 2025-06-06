@@ -1,7 +1,7 @@
 # task_manager/task_manager.py
 from __future__ import annotations
 
-from typing import Callable, Dict, Optional
+from typing import Callable, Dict, Optional, List, Any
 
 import asyncio
 import json
@@ -16,6 +16,7 @@ from ..common.llm_helpers import (
     start_async_tool_use_loop,
     ToolSpec,
 )
+from ..events.event_bus import EventBus
 from ..contact_manager.base import BaseContactManager
 from ..contact_manager.contact_manager import ContactManager
 from ..transcript_manager.base import BaseTranscriptManager
@@ -26,6 +27,7 @@ from ..planner.base import BasePlanner
 from ..planner.tool_loop_planner import ToolLoopPlanner
 from ..task_scheduler.base import BaseTaskScheduler
 from ..task_scheduler.task_scheduler import TaskScheduler
+from .sys_msgs import ASK, REQUEST, START_TASK
 
 
 class TaskManager:
@@ -41,12 +43,14 @@ class TaskManager:
 
     def __init__(
         self,
+        event_bus: EventBus,
         *,
         contact_manager: Optional[BaseContactManager] = None,
         transcript_manager: Optional[BaseTranscriptManager] = None,
         knowledge_manager: Optional[BaseKnowledgeManager] = None,
         task_scheduler: Optional[BaseTaskScheduler] = None,
         planner: Optional[BasePlanner] = None,
+        traced: bool = True,
     ) -> None:
         """
         Args:
@@ -66,10 +70,17 @@ class TaskManager:
                     If None, will create default based on simulated flag.
         """
         # ── Real managers touching Unify back-ends ───────────────────
+        # Keep reference to the bus – needed by sub-managers
+        self._event_bus = event_bus
+
+        # ── contact manager ────────────────────────────────────────────
         if contact_manager is not None:
             self._contact_manager = contact_manager
         else:
-            self._contact_manager = ContactManager(self._event_bus)
+            self._contact_manager = ContactManager(
+                event_bus=event_bus,
+                traced=traced,
+            )
 
         if transcript_manager is not None:
             self._transcript_manager = transcript_manager
@@ -93,6 +104,10 @@ class TaskManager:
             self._task_scheduler = task_scheduler
         else:
             self._task_scheduler = TaskScheduler(planner=self._planner)
+
+        # ── tracing helper – mirrors other managers ────────────────────
+        if traced:
+            self = unify.traced(self)
 
         #  Run-time state & tool-dict helpers
         self._current_plan = None  # type: ignore
@@ -189,9 +204,10 @@ class TaskManager:
             traced=json.loads(os.environ.get("UNIFY_TRACED", "true")),
         )
         client.set_system_message(
-            "You are the **TaskManager.ask** interface. "
-            "You have *read-only* access to tasks, knowledge, contacts & transcripts.\n"
-            f"(UTC now: {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S')})",
+            ASK.replace(
+                "<datetime>",
+                datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC"),
+            ),
         )
 
         tools = dict(self._passive_tools)
@@ -214,8 +230,6 @@ class TaskManager:
             tools,
             parent_chat_context=parent_chat_context,
             log_steps=log_tool_steps,
-            clarification_up_q=clarification_up_q,
-            clarification_down_q=clarification_down_q,
         )
 
         if _return_reasoning_steps:
@@ -255,11 +269,11 @@ class TaskManager:
             traced=json.loads(os.environ.get("UNIFY_TRACED", "true")),
         )
         client.set_system_message(
-            "You are the **TaskManager.request** interface. "
-            "You have full read-write access to tasks, knowledge, contacts & transcripts.\n"
-            f"(UTC now: {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S')})",
+            REQUEST.replace(
+                "<datetime>",
+                datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC"),
+            ),
         )
-
         tools = dict(self._active_tools)
 
         if clarification_up_q is not None or clarification_down_q is not None:
@@ -279,8 +293,6 @@ class TaskManager:
             tools,
             parent_chat_context=parent_chat_context,
             log_steps=log_tool_steps,
-            clarification_up_q=clarification_up_q,
-            clarification_down_q=clarification_down_q,
         )
 
         if _return_reasoning_steps:
@@ -291,5 +303,102 @@ class TaskManager:
                 return answer, client.messages
 
             handle.result = _wrapped_result
+
+        return handle
+
+    # ------------------------------------------------------------------ #
+    #  start_task – new public surface (write-capable but focussed)      #
+    # ------------------------------------------------------------------ #
+    def start_task(
+        self,
+        text: str,
+        *,
+        _return_reasoning_steps: bool = False,
+        log_tool_steps: bool = False,
+        parent_chat_context: Optional[List[dict]] = None,
+        clarification_up_q: asyncio.Queue[str] | None = None,
+        clarification_down_q: asyncio.Queue[str] | None = None,
+    ):
+        """
+        Launch (activate) a task based on a *natural-language* instruction.
+        Mirrors the pattern used by `ask` / `request` but exposes a deliberately
+        tiny tool-surface: search + nearest + **_start_task_call_**.
+        """
+        self._refresh_tool_dicts()  # keeps _start_task_call_ in sync
+
+        # ---------------------------------------------------------------- #
+        #  1. Build a dedicated tool-dict for this surface                  #
+        # ---------------------------------------------------------------- #
+        # Re-wrap so that we capture the returned ActiveTask handle and
+        # remember it for future plan queries.
+        def _wrapped_start_task(
+            task_id: int,
+            *,
+            parent_chat_context=None,
+            clarification_up_q=None,
+            clarification_down_q=None,
+        ):
+            handle = self._task_scheduler.start_task(
+                task_id,
+                parent_chat_context=parent_chat_context,
+                clarification_up_q=clarification_up_q,
+                clarification_down_q=clarification_down_q,
+            )
+            self._current_plan = handle
+            return handle
+
+        _wrapped_start_task.__name__ = "_start_task_call_"
+
+        tools: Dict[str, Callable[..., Any]] = {
+            **methods_to_tool_dict(
+                self._task_scheduler._search_tasks,
+                self._task_scheduler._nearest_tasks,
+                include_class_name=False,
+            ),
+            _wrapped_start_task.__name__: _wrapped_start_task,
+        }
+
+        # optional clarification helper
+        if clarification_up_q is not None or clarification_down_q is not None:
+
+            async def request_clarification(question: str) -> str:
+                if clarification_up_q is None or clarification_down_q is None:
+                    raise RuntimeError("Clarification queues missing.")
+                await clarification_up_q.put(question)
+                return await clarification_down_q.get()
+
+            tools["request_clarification"] = request_clarification
+
+        # ---------------------------------------------------------------- #
+        #  2. Fire up the interactive loop                                 #
+        # ---------------------------------------------------------------- #
+        client = unify.AsyncUnify(
+            "o4-mini@openai",
+            cache=json.loads(os.environ.get("UNIFY_CACHE", "true")),
+            traced=json.loads(os.environ.get("UNIFY_TRACED", "true")),
+        )
+        client.set_system_message(
+            START_TASK.replace(
+                "<datetime>",
+                datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC"),
+            ),
+        )
+
+        handle = start_async_tool_use_loop(
+            client,
+            text,
+            tools,
+            parent_chat_context=parent_chat_context,
+            log_steps=log_tool_steps,
+        )
+
+        if _return_reasoning_steps:
+            orig_res = handle.result
+
+            async def _wrapped():
+                answer = await orig_res()
+                return answer, client.messages
+
+            handle.result = _wrapped
 
         return handle
