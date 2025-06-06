@@ -3,8 +3,17 @@ from __future__ import annotations
 
 from typing import Callable, Dict
 
+import asyncio
+import json
+import os
+
+import unify
+
+from datetime import datetime, timezone
+
 from ..common.llm_helpers import (
     methods_to_tool_dict,
+    start_async_tool_use_loop,
     ToolSpec,
 )
 
@@ -56,31 +65,203 @@ class TaskManager:
             self._task_scheduler = TaskScheduler()
             self._planner = ToolLoopPlanner(planner_steps)
 
-        # static, always-present tools -------------------------------------------------
-        self._passive_tools: Dict[str, Callable] = methods_to_tool_dict(
-            # contact
+        #  Run-time state & tool-dict helpers
+        self._current_plan = None  # type: ignore
+        self._planner_steps = planner_steps
+
+        # These two dicts are rebuilt lazily before every ask/request
+        self._passive_tools: Dict[str, Callable] = {}
+        self._active_tools: Dict[str, Callable] = {}
+
+    # ------------------------------------------------------------------ #
+    #  Internal: build tool dictionaries                                 #
+    # ------------------------------------------------------------------ #
+
+    def _refresh_tool_dicts(self) -> None:
+        """Re-compute passive / active tool maps based on current plan."""
+
+        # -------- base passive helpers -------------------------------- #
+        passive = methods_to_tool_dict(
             self._contact_manager.ask,
-            # transcript
             self._transcript_manager.ask,
-            # knowledge
             self._knowledge_manager.retrieve,
-            # task-list
             self._task_scheduler.ask,
             include_class_name=True,
         )
 
-        self._active_tools: Dict[str, Callable] = methods_to_tool_dict(
-            # transcript
-            self._transcript_manager.summarize,
-            # knowledge
-            self._knowledge_manager.store,
-            # task-list
-            self._task_scheduler.update,
-            # live task
-            ToolSpec(self._task_scheduler.start_task, max_concurrent=1),
-            include_class_name=True,
+        # -------- add plan.ask when a plan is alive ------------------- #
+        if self._current_plan is not None and not self._current_plan.done():
+
+            # We expose _ask_plan_call_ (Unify expects this naming)
+            async def _plan_ask_proxy(question: str):
+                return await self._current_plan.ask(question)  # type: ignore[attr-defined]
+
+            _plan_ask_proxy.__name__ = "_ask_plan_call_"
+            passive[_plan_ask_proxy.__name__] = _plan_ask_proxy
+
+        self._passive_tools = passive
+
+        # -------- build active helpers (passive + writers) ------------ #
+
+        # Wrapper to intercept start_task and remember the returned handle
+        def _wrapped_start_task(
+            task_id: int,
+            *,
+            parent_chat_context=None,
+            clarification_up_q=None,
+            clarification_down_q=None,
+        ):
+            handle = self._task_scheduler.start_task(
+                task_id,
+                parent_chat_context=parent_chat_context,
+                clarification_up_q=clarification_up_q,
+                clarification_down_q=clarification_down_q,
+            )
+            # remember the plan so that subsequent questions can use it
+            self._current_plan = handle
+            return handle
+
+        _wrapped_start_task.__name__ = "_start_task_call_"
+
+        active = {
+            **passive,  # read-only tools are also valid here
+            **methods_to_tool_dict(
+                self._transcript_manager.summarize,
+                self._knowledge_manager.store,
+                self._task_scheduler.update,
+                ToolSpec(_wrapped_start_task, max_concurrent=1),
+                include_class_name=True,
+            ),
+        }
+
+        self._active_tools = active
+
+    # ------------------------------------------------------------------ #
+    #  Public API                                                        #
+    # ------------------------------------------------------------------ #
+
+    def ask(
+        self,
+        text: str,
+        *,
+        _return_reasoning_steps: bool = False,
+        log_tool_steps: bool = False,
+        parent_chat_context: list[dict] | None = None,
+        clarification_up_q: asyncio.Queue[str] | None = None,
+        clarification_down_q: asyncio.Queue[str] | None = None,
+    ):
+        """
+        Read-only question: exposes *passive* helpers (+ plan.ask when available).
+        """
+        self._refresh_tool_dicts()
+
+        client = unify.AsyncUnify(
+            "o4-mini@openai",
+            cache=json.loads(os.environ.get("UNIFY_CACHE", "true")),
+            traced=json.loads(os.environ.get("UNIFY_TRACED", "true")),
+        )
+        client.set_system_message(
+            "You are the **TaskManager.ask** interface. "
+            "You have *read-only* access to tasks, knowledge, contacts & transcripts.\n"
+            f"(UTC now: {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S')})",
         )
 
-        # these will be (re)built whenever _current_plan changes
-        self._passive_tools: Dict[str, Callable] = {}
-        self._active_tools: Dict[str, Callable] = {}
+        tools = dict(self._passive_tools)
+
+        # optional clarification helper
+        if clarification_up_q is not None or clarification_down_q is not None:
+
+            async def request_clarification(question: str) -> str:
+                if clarification_up_q is None or clarification_down_q is None:
+                    raise RuntimeError("Clarification queues missing.")
+                await clarification_up_q.put(question)
+                return await clarification_down_q.get()
+
+            tools["request_clarification"] = request_clarification
+
+        handle = start_async_tool_use_loop(
+            client,
+            text,
+            tools,
+            parent_chat_context=parent_chat_context,
+            log_steps=log_tool_steps,
+        )
+
+        if _return_reasoning_steps:
+            original_result = handle.result
+
+            async def _wrapped_result():
+                answer = await original_result()
+                return answer, client.messages
+
+            handle.result = _wrapped_result
+
+        return handle
+
+    # ------------------------------------------------------------------ #
+    #  request  (write-capable)                                          #
+    # ------------------------------------------------------------------ #
+
+    def request(
+        self,
+        text: str,
+        *,
+        _return_reasoning_steps: bool = False,
+        log_tool_steps: bool = False,
+        parent_chat_context: list[dict] | None = None,
+        clarification_up_q: asyncio.Queue[str] | None = None,
+        clarification_down_q: asyncio.Queue[str] | None = None,
+    ):
+        """
+        Full-access entry-point – exposes every passive tool **plus** all
+        write-capable helpers and `start_task` (which unlocks plan steering).
+        """
+        self._refresh_tool_dicts()
+
+        client = unify.AsyncUnify(
+            "o4-mini@openai",
+            cache=json.loads(os.environ.get("UNIFY_CACHE", "true")),
+            traced=json.loads(os.environ.get("UNIFY_TRACED", "true")),
+        )
+        client.set_system_message(
+            "You are the **TaskManager.request** interface. "
+            "You have full read-write access to tasks, knowledge, contacts & transcripts.\n"
+            f"(UTC now: {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S')})",
+        )
+
+        tools = dict(self._active_tools)
+
+        if clarification_up_q is not None or clarification_down_q is not None:
+
+            async def request_clarification(question: str) -> str:
+                if clarification_up_q is None or clarification_down_q is None:
+                    raise RuntimeError("Clarification queues missing.")
+                await clarification_up_q.put(question)
+                return await clarification_down_q.get()
+
+            tools["request_clarification"] = request_clarification
+
+        handle = start_async_tool_use_loop(
+            client,
+            text,
+            tools,
+            parent_chat_context=parent_chat_context,
+            log_steps=log_tool_steps,
+        )
+
+        if _return_reasoning_steps:
+            original_result = handle.result
+
+            async def _wrapped_result():
+                answer = await original_result()
+                return answer, client.messages
+
+            handle.result = _wrapped_result
+
+        return handle
+
+    # ------------------------------------------------------------------ #
+    #  Back-compat alias (update → request)                              #
+    # ------------------------------------------------------------------ #
+
+    update = request  # many callers still use `.update`
