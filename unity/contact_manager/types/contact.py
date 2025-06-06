@@ -19,10 +19,10 @@ class Contact(BaseModel):
         pattern="^[^@]+@[^@]+$",
     )
     phone_number: Optional[str] = Field(
-        description="Contact's phone number - can optionally start with + but must otherwise contain only digits",
+        description="Contact's phone number - can optionally start with '+' (only if *explicitly* mentioned by the user), but must otherwise contain only digits",
         pattern="^\\+?[0-9]+$",
     )
     whatsapp_number: Optional[str] = Field(
-        description="Contact's WhatsApp number - can optionally start with + but must otherwise contain only digits",
+        description="Contact's WhatsApp number - can optionally start with '+' (only if *explicitly* mentioned by the user), but must otherwise contain only digits",
         pattern="^\\+?[0-9]+$",
     )
