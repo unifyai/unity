@@ -55,7 +55,7 @@ async def test_tm_clarification_flow():
     )
 
     # The first message must be a clarification question.
-    question = await asyncio.wait_for(up_q.get(), timeout=3000)
+    question = await asyncio.wait_for(up_q.get(), timeout=30)
     assert "research" in question.lower()
 
     # Send the clarification answer and await the final result.
