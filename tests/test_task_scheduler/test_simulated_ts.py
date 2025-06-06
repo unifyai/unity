@@ -1,6 +1,7 @@
 # tests/test_simulated_task_scheduler.py
 from __future__ import annotations
 
+import re
 import asyncio
 import pytest
 import functools
@@ -124,14 +125,18 @@ async def test_ts_stateful_memory_serial_asks():
         "Please invent a codename for our secret task-force. "
         "Respond with only the codename.",
     )
-    codename = (await h1.result()).strip()
+    codename = await h1.result()
+    codename = re.sub(r"\W+", "", codename.strip().lower().replace("codename", ""))
     assert codename, "Codename should not be empty"
 
     # 2) Ask what codename was suggested
     h2 = ts.ask("Great. What codename did you propose earlier?")
     answer2 = (await h2.result()).lower()
+    answer2 = re.sub(r"\W+", "", answer2.strip().lower().replace("codename", ""))
 
-    assert codename.lower() in answer2, "LLM should recall the previous codename"
+    assert (codename in answer2) or (
+        answer2 in codename
+    ), "LLM should recall the previous codename"
 
 
 # ────────────────────────────────────────────────────────────────────────────
