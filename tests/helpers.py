@@ -14,6 +14,8 @@ def _handle_project(
     try_reuse_prev_ctx: bool = False,
     delete_ctx_on_exit: bool = False,
 ):
+    if json.loads(os.getenv("UNIFY_DELETE_CONTEXT_ON_EXIT", "false")):
+        delete_ctx_on_exit = True
     if test_fn is None:  # called with parameters → return real decorator
         return lambda f: _handle_project(
             f,
@@ -29,7 +31,7 @@ def _handle_project(
 
     async def _call(fn: Callable, *a: Any, **kw: Any):
         """Call *fn* and await it if it returns an awaitable."""
-        if json.loads(os.environ.get("UNIFY_TRACED", "true")) == "true":
+        if json.loads(os.environ.get("UNIFY_TRACED", "true")):
             result = unify.traced(fn)(*a, **kw)
         else:
             result = fn(*a, **kw)
@@ -49,7 +51,7 @@ def _handle_project(
 
             try:
                 with unify.Context(ctx):
-                    if json.loads(os.environ.get("UNIFY_TRACED", "true")) == "true":
+                    if json.loads(os.environ.get("UNIFY_TRACED", "true")):
                         unify.set_trace_context("Traces")
                     await _call(test_fn, *args, **kwargs)
 
@@ -74,7 +76,7 @@ def _handle_project(
 
             try:
                 with unify.Context(ctx):
-                    if json.loads(os.environ.get("UNIFY_TRACED", "true")) == "true":
+                    if json.loads(os.environ.get("UNIFY_TRACED", "true")):
                         unify.set_trace_context("Traces")
                         unify.traced(test_fn)(*args, **kwargs)
                     else:

@@ -14,6 +14,7 @@ Global pytest configuration.
 
 from __future__ import annotations
 
+import json
 import os
 import sys
 import types
@@ -24,7 +25,10 @@ import pytest
 
 import unify
 
-unify.activate("UnityTests")
+unify.activate(
+    "UnityTests",
+    overwrite=json.loads(os.getenv("UNIFY_OVERWRITE_PROJECT", "false")),
+)
 
 
 # --------------------------------------------------------------------------- #
