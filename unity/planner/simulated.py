@@ -263,8 +263,8 @@ class SimulatedPlanner(BasePlanner[SimulatedPlan]):
 
     def __init__(
         self,
-        steps: int | None = None,
         *,
+        steps: int | None = None,
         timeout: float | None = None,
         request_clarification: bool = False,
     ) -> None:
