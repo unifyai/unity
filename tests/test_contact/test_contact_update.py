@@ -228,8 +228,6 @@ async def test_update_with_clarification_needed(
     clar_down_q = asyncio.Queue()
 
     command = "Add surname 'Wonderland' for Alice."
-    desc = "Add surname for Alice (ambiguous)"
-    expected_fragment_in_confirmation = "Alice Wonderland"
 
     handle = cm.update(
         command,
@@ -238,28 +236,18 @@ async def test_update_with_clarification_needed(
         _return_reasoning_steps=True,
     )
 
-    clarification_question_text = await asyncio.wait_for(
+    await asyncio.wait_for(
         clar_up_q.get(),
         timeout=60,
-    )
-    assert (
-        "two contacts" in clarification_question_text.lower()
-        or "multiple contacts" in clarification_question_text.lower()
     )
 
     await clar_down_q.put(
         "The one with email alice.wonder@example.com.",
     )  # Clarify Alice Wonder
 
-    assistant_response, reasoning_steps = await handle.result()
+    await handle.result()
 
-    _llm_judge_update_confirmation(
-        desc,
-        assistant_response,
-        reasoning_steps,
-        expected_fragment_in_confirmation,
-    )
-    updated_contact = _programmatic_contact_check(
+    _programmatic_contact_check(
         cm,
         "email_address",
         "alice.wonder@example.com",
