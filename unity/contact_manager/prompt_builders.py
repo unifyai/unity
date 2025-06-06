@@ -93,8 +93,8 @@ def build_update_prompt(tools: Dict[str, Callable]) -> str:
         • **Create** a new contact
           `{create_name}(first_name='Jane', surname='Roe', email_address='jane.roe@example.com')`
 
-        • **Update** John Doe's phone when you already know the ID is *42*
-          `{update_name}(contact_id=42, phone_number='+15551234567')`
+        • **Update** John Doe's phone '+1 55512-345-67' when you already know the ID is *42*
+          `{update_name}(contact_id=42, phone_number='+15551234567')` (note spaces and dashes removed)
 
         • **Update** a contact referred to only by name
           1 Find ID → `{search_name}(filter="first_name == 'John' and surname == 'Doe'")`
