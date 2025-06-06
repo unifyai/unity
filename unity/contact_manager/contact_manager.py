@@ -1,9 +1,9 @@
 from typing import List, Dict, Optional, Callable, Any
 import asyncio
-import functools
-from datetime import datetime, timezone
 import json
+import functools
 import os
+from .prompt_builders import build_ask_prompt, build_update_prompt
 
 import unify
 from .types.contact import Contact
@@ -14,7 +14,6 @@ from ..common.llm_helpers import (
     SteerableToolHandle,
     methods_to_tool_dict,
 )
-from .sys_msgs import make_ask_contacts, make_update_contacts
 
 
 class ContactManager(BaseContactManager):
@@ -65,13 +64,9 @@ class ContactManager(BaseContactManager):
             cache=json.loads(os.environ.get("UNIFY_CACHE", "true")),
             traced=json.loads(os.environ.get("UNIFY_TRACED", "true")),
         )
-        client.set_system_message(
-            make_ask_contacts(self._search_contacts).replace(
-                "<datetime>",
-                datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC"),
-            ),
-        )
 
+        # Build a *live* tools-dict so the prompt never hard-codes
+        # either the number of tools or their names/argspecs.
         tools = dict(self._ask_tools)
         if clarification_up_q is not None and clarification_down_q is not None:
 
@@ -85,6 +80,7 @@ class ContactManager(BaseContactManager):
 
             tools["request_clarification"] = request_clarification
 
+        client.set_system_message(build_ask_prompt(tools))
         handle = start_async_tool_use_loop(
             client,
             text,
@@ -118,16 +114,6 @@ class ContactManager(BaseContactManager):
             cache=json.loads(os.environ.get("UNIFY_CACHE", "true")),
             traced=json.loads(os.environ.get("UNIFY_TRACED", "true")),
         )
-        client.set_system_message(
-            make_update_contacts(
-                self._create_contact,
-                self._update_contact,
-                self._search_contacts,
-            ).replace(
-                "<datetime>",
-                datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC"),
-            ),
-        )
 
         tools = dict(self._update_tools)
         if clarification_up_q is not None and clarification_down_q is not None:
@@ -142,6 +128,7 @@ class ContactManager(BaseContactManager):
 
             tools["request_clarification"] = request_clarification
 
+        client.set_system_message(build_update_prompt(tools))
         handle = start_async_tool_use_loop(
             client,
             text,
