@@ -1,3 +1,5 @@
+import os
+import json
 import unify
 import functools
 import inspect
@@ -44,7 +46,8 @@ def _handle_project(
 
             try:
                 with unify.Context(ctx):
-                    unify.set_trace_context("Traces")
+                    if json.loads(os.environ.get("UNIFY_TRACED", "true")) == "true":
+                        unify.set_trace_context("Traces")
                     await _call(test_fn, *args, **kwargs)
 
                 if delete_ctx_on_exit:
@@ -68,7 +71,8 @@ def _handle_project(
 
             try:
                 with unify.Context(ctx):
-                    unify.set_trace_context("Traces")
+                    if json.loads(os.environ.get("UNIFY_TRACED", "true")) == "true":
+                        unify.set_trace_context("Traces")
                     unify.traced(test_fn)(*args, **kwargs)
 
                 if delete_ctx_on_exit:
