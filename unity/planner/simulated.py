@@ -22,6 +22,7 @@ class SimulatedPlan(BasePlan):
         llm: unify.Unify,
         task: str,
         steps: int,
+        timeout: float | None = None,
         parent_chat_context: list[dict] | None = None,
         clarification_up_q: asyncio.Queue[str] | None = None,
         clarification_down_q: asyncio.Queue[str] | None = None,
@@ -31,12 +32,17 @@ class SimulatedPlan(BasePlan):
         Initialize a simulated plan.
 
         Args:
-            task: The task description to simulate
-            steps: Number of steps before the plan completes
+            task:       The task description to simulate.
+            steps:      *(Optional)* Number of tool-invocation steps before this
+                        plan automatically completes.
+            timeout:    *(Optional)* Absolute timeout (in **seconds**) after
+                        which the plan completes, irrespective of the number of
+                        steps performed.
         """
         self._llm = llm
         self._task = task
         self._steps = steps
+        self._timeout = timeout
         self._parent_chat_context = parent_chat_context
         self._clarification_up_q = clarification_up_q
         self._clarification_down_q = clarification_down_q
@@ -45,6 +51,8 @@ class SimulatedPlan(BasePlan):
         # step-counting
         self._step_count = 0
         self._step_lock = threading.Lock()
+        # wall-clock timeout
+        self._start_time: float | None = None
 
         # task-control primitives
         self._done_event = threading.Event()
@@ -100,11 +108,26 @@ class SimulatedPlan(BasePlan):
 
                 # normal execution path (only reached when no clarification needed)
 
+                # honour explicit stop requests --------------------------------
                 if self._stop_event.is_set():
                     return
 
-                if self._step_count >= self._steps:
-                    self._complete(f"Completed task '{task}' in {self._steps} steps.")
+                # wall-clock timeout -------------------------------------------
+                if (
+                    self._timeout is not None
+                    and self._start_time is not None
+                    and (time.monotonic() - self._start_time) >= self._timeout
+                ):
+                    self._complete(
+                        f"Completed task '{task}' after {self._timeout} s timeout.",
+                    )
+                    return
+
+                # tool-step budget ---------------------------------------------
+                if self._steps is not None and self._step_count >= self._steps:
+                    self._complete(
+                        f"Completed task '{task}' in {self._steps} steps.",
+                    )
                     return
 
                 self._pause_event.wait()
@@ -122,6 +145,7 @@ class SimulatedPlan(BasePlan):
         self._paused = False
         self._pause_event.set()
         self._stop_event.clear()
+        self._start_time = time.monotonic()
         self._task_thread = threading.Thread(
             target=self._run_task,
             args=(self._task,),
@@ -237,15 +261,25 @@ class SimulatedPlan(BasePlan):
 
 class SimulatedPlanner(BasePlanner[SimulatedPlan]):
 
-    def __init__(self, steps, request_clarification: bool = False) -> None:
+    def __init__(
+        self,
+        steps: int | None = None,
+        *,
+        timeout: float | None = None,
+        request_clarification: bool = False,
+    ) -> None:
         """
         Initialize a simulated planner.
 
         Args:
-            steps: Number of steps before plans complete
+            steps:      *(Optional)* Maximum tool steps each plan should run
+                        before auto-completion.
+            timeout:    *(Optional)* Maximum wall-clock seconds before plans
+                        auto-complete.
         """
         super().__init__()
         self._steps = steps
+        self._timeout = timeout
         self._request_clarification = request_clarification
 
         # One shared, memory-retaining LLM for *all* plans
@@ -273,6 +307,7 @@ class SimulatedPlanner(BasePlanner[SimulatedPlan]):
             self._llm,
             task_description,
             self._steps,
+            timeout=self._timeout,
             parent_chat_context=parent_chat_context,
             clarification_up_q=clarification_up_q,
             clarification_down_q=clarification_down_q,
