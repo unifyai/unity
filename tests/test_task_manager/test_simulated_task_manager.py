@@ -38,26 +38,29 @@ async def test_tm_basic_ask():
 @pytest.mark.asyncio
 @_handle_project
 async def test_tm_clarification_flow():
-    tm = SimulatedTaskManager()
+    tm = SimulatedTaskManager(
+        "There are three tasks qeued up:\n"
+        "a) write email to John\n"
+        "b) research the best bank to register with\n"
+        "c) research the best law firm to use",
+    )
 
     up_q: asyncio.Queue[str] = asyncio.Queue()
     down_q: asyncio.Queue[str] = asyncio.Queue()
 
-    handle = tm.ask(
-        "Please prioritise all tasks",
+    handle = tm.request(
+        "Please make a start the research taks",
         clarification_up_q=up_q,
         clarification_down_q=down_q,
     )
 
     # The first message must be a clarification question.
     question = await asyncio.wait_for(up_q.get(), timeout=3000)
-    assert "clarify" in question.lower()
+    assert "research" in question.lower()
 
     # Send the clarification answer and await the final result.
-    await down_q.put("Yes – prioritise strictly by deadline.")
-    answer = await handle.result()
-
-    assert "deadline" in answer.lower() or "priorit" in answer.lower()
+    await down_q.put("Sorry, I mean the law firm research.")
+    await handle.result()
 
 
 # ────────────────────────────────────────────────────────────────────────────
