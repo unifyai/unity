@@ -10,6 +10,7 @@ from typing import List, Dict, Any
 import unify
 from .base import BaseKnowledgeManager
 from ..common.llm_helpers import SteerableToolHandle
+from .sys_msgs import STORE, RETRIEVE
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -144,6 +145,10 @@ class SimulatedKnowledgeManager(BaseKnowledgeManager):
             "You are a *simulated* knowledge-base manager. "
             "No real database exists – you should fabricate plausible tables, "
             "columns and rows and maintain a consistent story across turns.\n\n"
+            "As a reference, the system messages for the *real* knowledge-manager 'store' and 'retrieve' methods are as follows."
+            "You do not have access to any real tools, so you should just create a final answer to the storage/retireval request. "
+            f"\n\n'store' system message:\n{STORE}\n\n"
+            f"\n\n'retrieve' system message:\n{RETRIEVE}\n\n"
             f"Back-story: {self._description}",
         )
 
@@ -160,13 +165,17 @@ class SimulatedKnowledgeManager(BaseKnowledgeManager):
         clarification_up_q: asyncio.Queue[str] | None = None,
         clarification_down_q: asyncio.Queue[str] | None = None,
     ) -> SteerableToolHandle:
+        instruction = (
+            "On this turn you are simulating the 'store' method.\n"
+            f"The user stoage request is:\n{text}"
+        )
         if parent_chat_context:
-            self._llm._system_message += (
-                f"\nCalling chat context:{json.dumps(parent_chat_context, indent=4)}"
+            instruction += (
+                f"\nCalling chat context:\n{json.dumps(parent_chat_context, indent=4)}"
             )
         return _SimulatedKnowledgeHandle(
             self._llm,
-            text,
+            instruction,
             _return_reasoning_steps=_return_reasoning_steps,
             clarification_up_q=clarification_up_q,
             clarification_down_q=clarification_down_q,
@@ -185,9 +194,13 @@ class SimulatedKnowledgeManager(BaseKnowledgeManager):
         clarification_up_q: asyncio.Queue[str] | None = None,
         clarification_down_q: asyncio.Queue[str] | None = None,
     ) -> SteerableToolHandle:
+        instruction = (
+            "On this turn you are simulating the 'retrieve' method.\n"
+            f"The user retrieve request is:\n{text}"
+        )
         if parent_chat_context:
-            self._llm._system_message += (
-                f"\nCalling chat context:{json.dumps(parent_chat_context, indent=4)}"
+            instruction += (
+                f"\nCalling chat context:\n{json.dumps(parent_chat_context, indent=4)}"
             )
         return _SimulatedKnowledgeHandle(
             self._llm,
