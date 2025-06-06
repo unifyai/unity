@@ -1,7 +1,7 @@
 # task_manager/task_manager.py
 from __future__ import annotations
 
-from typing import Callable, Dict, Optional
+from typing import Callable, Dict
 
 import asyncio
 import json
@@ -16,19 +16,14 @@ from ..common.llm_helpers import (
     start_async_tool_use_loop,
     ToolSpec,
 )
-from ..contact_manager.base import BaseContactManager
-from ..contact_manager.contact_manager import ContactManager
-from ..transcript_manager.base import BaseTranscriptManager
-from ..transcript_manager.transcript_manager import TranscriptManager
-from ..knowledge_manager.base import BaseKnowledgeManager
-from ..knowledge_manager.knowledge_manager import KnowledgeManager
-from ..planner.base import BasePlanner
-from ..planner.tool_loop_planner import ToolLoopPlanner
-from ..task_scheduler.base import BaseTaskScheduler
-from ..task_scheduler.task_scheduler import TaskScheduler
+from ..contact_manager.simulated import SimulatedContactManager
+from ..transcript_manager.simulated import SimulatedTranscriptManager
+from ..knowledge_manager.simulated import SimulatedKnowledgeManager
+from ..planner.simulated import SimulatedPlanner
+from ..task_scheduler.simulated import SimulatedTaskScheduler
 
 
-class TaskManager:
+class SimulatedTaskManager:
     """
     Top-level façade that *can* own a maximum of *one* live plan at a time and exposes two
     different tool surfaces which include the knowledge, task list, contacts, and transcript histories:
@@ -39,15 +34,7 @@ class TaskManager:
 
     # ------------------------------------------------------------------ #
 
-    def __init__(
-        self,
-        *,
-        contact_manager: Optional[BaseContactManager] = None,
-        transcript_manager: Optional[BaseTranscriptManager] = None,
-        knowledge_manager: Optional[BaseKnowledgeManager] = None,
-        task_scheduler: Optional[BaseTaskScheduler] = None,
-        planner: Optional[BasePlanner] = None,
-    ) -> None:
+    def __init__(self) -> None:
         """
         Args:
             simulated: When *True* all subordinate managers are replaced by
@@ -65,34 +52,13 @@ class TaskManager:
             planner: Optional custom planner implementation.
                     If None, will create default based on simulated flag.
         """
-        # ── Real managers touching Unify back-ends ───────────────────
-        if contact_manager is not None:
-            self._contact_manager = contact_manager
-        else:
-            self._contact_manager = ContactManager(self._event_bus)
 
-        if transcript_manager is not None:
-            self._transcript_manager = transcript_manager
-        else:
-            self._transcript_manager = TranscriptManager(
-                self._event_bus,
-                contact_manager=self._contact_manager,
-            )
-
-        if knowledge_manager is not None:
-            self._knowledge_manager = knowledge_manager
-        else:
-            self._knowledge_manager = KnowledgeManager()
-
-        if planner is not None:
-            self._planner = planner
-        else:
-            self._planner = ToolLoopPlanner()
-
-        if task_scheduler is not None:
-            self._task_scheduler = task_scheduler
-        else:
-            self._task_scheduler = TaskScheduler(planner=self._planner)
+        # ── Simulated façade (pure-LLM back-ends) ────────────────────
+        self._contact_manager = SimulatedContactManager()
+        self._transcript_manager = SimulatedTranscriptManager()
+        self._knowledge_manager = SimulatedKnowledgeManager()
+        self._planner = SimulatedPlanner()
+        self._task_scheduler = SimulatedTaskScheduler()
 
         #  Run-time state & tool-dict helpers
         self._current_plan = None  # type: ignore
@@ -200,7 +166,6 @@ class TaskManager:
         if clarification_up_q is not None or clarification_down_q is not None:
 
             async def request_clarification(question: str) -> str:
-                """Asks the user for clarification. Use this if the user's request is ambiguous."""
                 if clarification_up_q is None or clarification_down_q is None:
                     raise RuntimeError("Clarification queues missing.")
                 await clarification_up_q.put(question)
@@ -214,8 +179,6 @@ class TaskManager:
             tools,
             parent_chat_context=parent_chat_context,
             log_steps=log_tool_steps,
-            clarification_up_q=clarification_up_q,
-            clarification_down_q=clarification_down_q,
         )
 
         if _return_reasoning_steps:
@@ -265,7 +228,6 @@ class TaskManager:
         if clarification_up_q is not None or clarification_down_q is not None:
 
             async def request_clarification(question: str) -> str:
-                """Asks the user for clarification. Use this if the user's request is ambiguous."""
                 if clarification_up_q is None or clarification_down_q is None:
                     raise RuntimeError("Clarification queues missing.")
                 await clarification_up_q.put(question)
@@ -279,8 +241,6 @@ class TaskManager:
             tools,
             parent_chat_context=parent_chat_context,
             log_steps=log_tool_steps,
-            clarification_up_q=clarification_up_q,
-            clarification_down_q=clarification_down_q,
         )
 
         if _return_reasoning_steps:
