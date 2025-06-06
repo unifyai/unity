@@ -12,7 +12,7 @@ import unify
 
 from ..common.llm_helpers import SteerableToolHandle
 from .base import BaseTranscriptManager
-from .sys_msgs import ASK, SUMMARIZE
+from .prompt_builders import build_ask_prompt, build_summarize_prompt
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -146,14 +146,17 @@ class SimulatedTranscriptManager(BaseTranscriptManager):
             traced=json.loads(os.getenv("UNIFY_TRACED", "true")),
             stateful=True,
         )
+        ask_sys = build_ask_prompt({})
+        sum_sys = build_summarize_prompt()
+
         self._llm.set_system_message(
             "You are a *simulated* transcript assistant. "
-            "There is NO real database – fabricate convincing yet consistent "
-            "answers about emails, chats, calls, etc.\n\n"
-            "As a reference, the system messages for the *real* transcript 'ask' and 'summarize' methods are as follows."
-            "You do not have access to any real tools, so you should just create a final answer to the question/request. "
-            f"\n\n'ask' system message:\n{ASK}\n\n"
-            f"\n\n'summarize' system message:\n{SUMMARIZE}\n\n"
+            "There is **no** backing datastore – create plausible yet "
+            "self-consistent answers.\n\n"
+            "For reference, here are the *real* system messages used by the "
+            "production implementation:\n"
+            f"\n\n'ask' system message:\n{ask_sys}\n\n"
+            f"\n\n'summarize' system message:\n{sum_sys}\n\n"
             f"Back-story: {self._description}",
         )
 
