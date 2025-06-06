@@ -19,6 +19,7 @@
 import os
 import time
 import signal
+import threading
 from flask import Flask, jsonify
 from new_terminal_helper import run_script, terminate_process
 
@@ -33,6 +34,9 @@ class UnityServiceManager:
     def __init__(self):
         self.process = None
         self.start_time = None
+        self.shutdown_reason = None  # Track why the service stopped
+        self.monitor_thread = None
+        self.monitoring = False
 
     def start_unity_service(self):
         """Start main.py (the Unity event manager) as a subprocess with process group"""
@@ -55,29 +59,80 @@ class UnityServiceManager:
             # Check if process is still running (didn't crash immediately)
             if self.process.poll() is None:
                 print("Unity service started successfully")
+                self.shutdown_reason = None  # Clear any previous shutdown reason
+                self._start_monitoring()
                 return True
             else:
                 print("Unity service failed to start (process exited)")
+                self.shutdown_reason = "startup_failure"
                 return False
 
         except Exception as e:
             print(f"Failed to start Unity service: {e}")
             return False
 
-    def stop_unity_service(self):
+    def stop_unity_service(self, reason="manual_stop"):
         """Stop the main.py subprocess and all its children (like call.py)"""
+        self._stop_monitoring()  # Stop monitoring first
+
         if self.process:
             try:
                 print("Stopping Unity service and all child processes...")
                 # Use the terminate_process function which handles process groups properly
                 terminate_process(self.process)
                 print("Unity service and child processes stopped")
+                self.shutdown_reason = reason
             except Exception as e:
                 print(f"Error stopping Unity service: {e}")
+                self.shutdown_reason = f"stop_error: {e}"
 
             self.process = None
             return True
         return True
+
+    def _start_monitoring(self):
+        """Start background monitoring of the Unity process"""
+        if not self.monitoring:
+            self.monitoring = True
+            self.monitor_thread = threading.Thread(
+                target=self._monitor_process, daemon=True
+            )
+            self.monitor_thread.start()
+
+    def _stop_monitoring(self):
+        """Stop background monitoring"""
+        self.monitoring = False
+
+    def _monitor_process(self):
+        """Background thread to monitor process health"""
+        while self.monitoring and self.process:
+            try:
+                # Check if process is still running
+                if self.process.poll() is not None:
+                    # Process has exited
+                    exit_code = self.process.poll()
+                    if exit_code == 0 and not self.shutdown_reason:
+                        # Clean exit without explicit reason - likely inactivity timeout
+                        self.shutdown_reason = "inactivity_timeout"
+                        print(
+                            "Unity service exited cleanly - likely due to inactivity timeout"
+                        )
+                    elif exit_code != 0 and not self.shutdown_reason:
+                        self.shutdown_reason = (
+                            f"process_crashed (exit_code: {exit_code})"
+                        )
+                        print(f"Unity service crashed with exit code: {exit_code}")
+
+                    self.monitoring = False
+                    break
+
+                # Check every 10 seconds
+                time.sleep(10)
+
+            except Exception as e:
+                print(f"Error in process monitoring: {e}")
+                self.monitoring = False
+                break
 
     def is_running(self):
         """Check if the main.py subprocess is running"""
@@ -88,12 +143,24 @@ class UnityServiceManager:
         running = self.is_running()
         uptime = time.time() - self.start_time if self.start_time and running else 0
 
-        return {
+        status = {
             "running": running,
             "uptime_seconds": uptime,
             "process_id": self.process.pid if self.process else None,
             "assistant_id": os.environ.get("ASSISTANT_ID", "default"),
+            "shutdown_reason": self.shutdown_reason,
+            "inactivity_timeout_minutes": 6,  # Document the timeout setting
         }
+
+        # Add additional context based on shutdown reason
+        if self.shutdown_reason == "inactivity_timeout":
+            status["message"] = "Service shut down due to 6 minutes of inactivity"
+        elif self.shutdown_reason == "manual_stop":
+            status["message"] = "Service stopped manually via API"
+        elif self.shutdown_reason and "process_crashed" in self.shutdown_reason:
+            status["message"] = "Service process crashed unexpectedly"
+
+        return status
 
 
 # Initialize the service manager
@@ -130,10 +197,10 @@ def stop_service():
     """Stop the Unity service"""
     global service_status
 
-    unity_manager.stop_unity_service()
+    unity_manager.stop_unity_service("manual_stop")
     service_status = "stopped"
 
-    return jsonify({"status": "stopped", "message": "Unity service stopped"})
+    return jsonify({"status": "stopped", "message": "Unity service stopped manually"})
 
 
 # Endpoint 3: Get status
@@ -158,7 +225,7 @@ def health_check():
 # Graceful shutdown handler
 def signal_handler(signum, frame):
     print("Shutting down Unity service...")
-    unity_manager.stop_unity_service()
+    unity_manager.stop_unity_service("signal_shutdown")
     exit(0)
 
 
