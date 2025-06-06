@@ -28,16 +28,19 @@ jobs:
         uv venv --python 3.11 .unity
         source .unity/bin/activate
 
-        # 1) Create filtered requirements file excluding only unify local editable install
+        # 1) Create filtered requirements file
         grep -vE '^\s*-e\s+\.\./unify' requirements.txt > temp_requirements.txt
         
         # 2) Install all dependencies
         uv pip install -r temp_requirements.txt
-
-        # 3) Unify package from GitHub
+        
+        # 3) Install playwright browsers WITH system dependencies
+        .unity/bin/python -m playwright install --with-deps
+        
+        # 4) Install unify package from GitHub
         uv pip install git+https://github.com/unifyai/unify
 
-        # 4) cleanup
+        # 5) cleanup
         rm temp_requirements.txt
 
     - name: Run black check
@@ -70,14 +73,14 @@ jobs:
         uv venv --python 3.11 .unity
         source .unity/bin/activate
 
-        # 1) Create filtered requirements file excluding only unify local editable install
+        # 1) Create filtered requirements file
         grep -vE '^\s*-e\s+\.\./unify' requirements.txt > temp_requirements.txt
         
         # 2) Install all dependencies
         uv pip install -r temp_requirements.txt
         
-        # 3) Install playwright browsers
-        python -m playwright install
+        # 3) Install playwright browsers WITH system dependencies
+        .unity/bin/python -m playwright install --with-deps
         
         # 4) Install unify package from GitHub
         uv pip install git+https://github.com/unifyai/unify
