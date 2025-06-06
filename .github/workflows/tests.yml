@@ -95,6 +95,8 @@ jobs:
     - name: Run unit tests
       run: |
         source .unity/bin/activate
+        echo "Searching for conflicting 'playwright' files or directories..."
+        find . -name "playwright.py" -o -name "playwright"
         echo "Cleaning all __pycache__ directories..."
         find . -type d -name "__pycache__" -exec rm -r {} +
         echo "Running tests..."
