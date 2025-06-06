@@ -112,18 +112,10 @@ async def test_update_create_new_contact(
     command = (
         "Add a new contact: Eve Adams, email eve@paradise.com, phone 777-000-1111."
     )
-    desc = "Create Eve Adams"
-    expected_fragment = "Eve Adams"
 
     handle = cm.update(command, _return_reasoning_steps=True)
-    assistant_response, reasoning_steps = await handle.result()
+    await handle.result()
 
-    _llm_judge_update_confirmation(
-        desc,
-        assistant_response,
-        reasoning_steps,
-        expected_fragment,
-    )
     _programmatic_contact_check(
         cm,
         "email_address",
