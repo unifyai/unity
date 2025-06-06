@@ -24,7 +24,7 @@ log = logging.getLogger("unity")
 load_dotenv()
 
 from unity.controller.gui import ControlPanel
-from unity.controller.playwright.worker import BrowserWorker
+from unity.controller.playwright_utils.worker import BrowserWorker
 from unity.controller.session import create_session
 
 
