@@ -160,16 +160,31 @@ class ContactManager(BaseContactManager):
         whatsapp_number: Optional[str] = None,
     ) -> int:
         """
-        Creates a new contact with the following contact details, as available.
+        Persist a **new** contact record.
 
-        Args:
-            first_name (str): The first name of the contact.
-            surname (str): The surname of the contact.
-            email_address (str): The email address of the contact.
-            phone_number (str): The phone number of the contact.
-            whatsapp_number (str): The WhatsApp number of the contact.
-        Returns:
-            int: The contact_id of the newly created contact.
+        Parameters
+        ----------
+        first_name : str | None
+            Given-name(s) and middle-initials.  May be *None*.
+        surname : str | None
+            Family name.  May be *None*.
+        email_address : str | None
+            Unique email address.  Must not clash with an existing record.
+        phone_number : str | None
+            Unique telephone number in international format (e.g. ``+1555123…``).
+        whatsapp_number : str | None
+            Unique WhatsApp number (if different from *phone_number*).
+
+        Returns
+        -------
+        int
+            The **integer** ``contact_id`` of the newly created record.
+
+        Raises
+        ------
+        AssertionError
+            If *all* fields are ``None`` **or** if any uniqueness constraint
+            (email / phone / WhatsApp) is violated.
         """
 
         # Prune None values
@@ -235,18 +250,29 @@ class ContactManager(BaseContactManager):
         whatsapp_number: Optional[str] = None,
     ) -> int:
         """
-        Update the contact details of a contact.
+        Modify **selected** fields of an existing contact.
 
-        Args:
-            contact_id (int): The id of the contact to update.
-            first_name (Optional[str]): The first name of the contact.
-            surname (Optional[str]): The surname of the contact.
-            email_address (Optional[str]): The email address of the contact.
-            phone_number (Optional[str]): The phone number of the contact.
-            whatsapp_number (Optional[str]): The WhatsApp number of the contact.
+        Parameters
+        ----------
+        contact_id : int
+            Target record's unique identifier.
+        first_name, surname, email_address, phone_number, whatsapp_number :
+        str | None
+            Fields to update.  Pass only the attributes that should change;
+            omitted keys remain untouched.
 
-        Returns:
-            int: The contact_id of the updated contact.
+        Returns
+        -------
+        int
+            The contact's *unchanged* ``contact_id`` on success.
+
+        Raises
+        ------
+        ValueError
+            • When *no* updatable field is provided.
+            • When *contact_id* does not exist.
+            • When the new email / phone / WhatsApp value duplicates another
+              record.
         """
         # Prune None values
         contact_details = {
@@ -308,15 +334,24 @@ class ContactManager(BaseContactManager):
         limit: int = 100,
     ) -> List[Contact]:
         """
-        Retrieve contact details, based on flexible filtering for first name, surname, email address, WhatsApp number, phone number, or anything else.
+        Retrieve **one or many** contacts matching an arbitrary Python
+        expression.
 
-        Args:
-            filter (Optional[str]): The filter to apply to the contacts.
-            offset (int): The offset to start the retrieval from.
-            limit (int): The maximum number of contacts to retrieve.
+        Parameters
+        ----------
+        filter : str | None, default ``None``
+            A boolean Python expression evaluated against each contact
+            (e.g. ``"first_name == 'John' and surname == 'Doe'"``).  *None*
+            returns **all** records.
+        offset : int, default ``0``
+            Index of the first result to return (0-based).
+        limit : int, default ``100``
+            Maximum number of records to return.
 
-        Returns:
-            List[Contact]: A list of contacts.
+        Returns
+        -------
+        list[Contact]
+            A list of Pydantic :class:`Contact` models in creation order.
         """
         logs = unify.get_logs(
             context=self._ctx,
