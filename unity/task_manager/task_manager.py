@@ -237,6 +237,7 @@ class TaskManager:
         if clarification_up_q is not None or clarification_down_q is not None:
 
             async def request_clarification(question: str) -> str:
+                """Asks the user for clarification. Use this if the user's request is ambiguous."""
                 if clarification_up_q is None or clarification_down_q is None:
                     raise RuntimeError("Clarification queues missing.")
                 await clarification_up_q.put(question)
@@ -250,6 +251,8 @@ class TaskManager:
             tools,
             parent_chat_context=parent_chat_context,
             log_steps=log_tool_steps,
+            clarification_up_q=clarification_up_q,
+            clarification_down_q=clarification_down_q,
         )
 
         if _return_reasoning_steps:
@@ -299,6 +302,7 @@ class TaskManager:
         if clarification_up_q is not None or clarification_down_q is not None:
 
             async def request_clarification(question: str) -> str:
+                """Asks the user for clarification. Use this if the user's request is ambiguous."""
                 if clarification_up_q is None or clarification_down_q is None:
                     raise RuntimeError("Clarification queues missing.")
                 await clarification_up_q.put(question)
@@ -312,6 +316,8 @@ class TaskManager:
             tools,
             parent_chat_context=parent_chat_context,
             log_steps=log_tool_steps,
+            clarification_up_q=clarification_up_q,
+            clarification_down_q=clarification_down_q,
         )
 
         if _return_reasoning_steps:
