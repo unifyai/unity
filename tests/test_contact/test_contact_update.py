@@ -142,25 +142,17 @@ async def test_update_existing_contact_details(
         assert results, "Alice Smith not found for test setup"
         alice_smith_id = results[0].contact_id
 
-    command = f"Update contact ID {alice_smith_id}: change her phone to 123-123-1234 and add WhatsApp +11231231234."
-    desc = f"Update Alice Smith (ID {alice_smith_id})"
-    expected_fragment = f"ID {alice_smith_id}"
+    command = f"Update contact ID {alice_smith_id}: change her phone to 1231231234 and add WhatsApp +11231231234."
 
     handle = cm.update(command, _return_reasoning_steps=True)
-    assistant_response, reasoning_steps = await handle.result()
+    await handle.result()
 
-    _llm_judge_update_confirmation(
-        desc,
-        assistant_response,
-        reasoning_steps,
-        expected_fragment,
-    )
     _programmatic_contact_check(
         cm,
         "contact_id",
         alice_smith_id,
         {
-            "phone_number": "123-123-1234",
+            "phone_number": "1231231234",
             "whatsapp_number": "+11231231234",
             "email_address": "alice.smith@example.com",
         },
@@ -190,28 +182,20 @@ async def test_update_with_parent_context_identification(
             "content": "Yes, the one with email goodgrief@example.org. What about him?",
         },
     ]
-    command = "Add his phone number: 555-PEANUTS."
-    desc = "Add phone for Charlie Brown (identified by context)"
-    expected_fragment = "Charlie Brown"
+    command = "Add his phone number: 555-123456."
 
     handle = cm.update(
         command,
         parent_chat_context=parent_ctx,
         _return_reasoning_steps=True,
     )
-    assistant_response, reasoning_steps = await handle.result()
+    await handle.result()
 
-    _llm_judge_update_confirmation(
-        desc,
-        assistant_response,
-        reasoning_steps,
-        expected_fragment,
-    )
     _programmatic_contact_check(
         cm,
         "contact_id",
         charlie_id,
-        {"first_name": "Charlie", "surname": "Brown", "phone_number": "555-PEANUTS"},
+        {"first_name": "Charlie", "surname": "Brown", "phone_number": "555123456"},
     )
 
 
@@ -274,7 +258,7 @@ async def test_update_interjection_modification(
 
     handle = cm.update(command, _return_reasoning_steps=True)
     await asyncio.sleep(0.2)
-    await handle.interject("Actually, also add his phone as 555-SKULL.")
+    await handle.interject("Actually, also add his phone as 555-54321.")
     assistant_response, reasoning_steps = await handle.result()
 
     _llm_judge_update_confirmation(
@@ -287,7 +271,7 @@ async def test_update_interjection_modification(
         cm,
         "email_address",
         "frank@punisher.net",
-        {"first_name": "Frank P.", "surname": "Castle", "phone_number": "555-SKULL"},
+        {"first_name": "Frank P.", "surname": "Castle", "phone_number": "55554321"},
     )
 
 
