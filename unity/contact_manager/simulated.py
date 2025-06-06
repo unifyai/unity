@@ -10,7 +10,8 @@ from typing import List, Dict, Any
 
 import unify
 from .base import BaseContactManager
-from .sys_msgs import ASK_CONTACTS, UPDATE_CONTACTS
+from .contact_manager import ContactManager
+from .sys_msgs import make_ask_contacts, make_update_contacts
 from ..common.llm_helpers import SteerableToolHandle
 
 
@@ -143,14 +144,21 @@ class SimulatedContactManager(BaseContactManager):
             traced=json.loads(os.getenv("UNIFY_TRACED", "true")),
             stateful=True,
         )
+        ask_msg = make_ask_contacts(ContactManager._search_contacts)
+        upd_msg = make_update_contacts(
+            ContactManager._create_contact,
+            ContactManager._update_contact,
+            ContactManager._search_contacts,
+        )
+
         self._llm.set_system_message(
             "You are a *simulated* contact-manager assistant. "
             "There is no real database; invent plausible contact records and "
             "keep your story consistent across turns.\n\n"
             "As a reference, the system messages for the *real* contact-manager 'ask' and 'update' methods are as follows."
             "You do not have access to any real tools, so you should just create a final answer to the question/request . "
-            f"\n\n'ask' system message:\n{ASK_CONTACTS}\n\n"
-            f"\n\n'update' system message:\n{UPDATE_CONTACTS}\n\n"
+            f"\n\n'ask' system message:\n{ask_msg}\n\n"
+            f"\n\n'update' system message:\n{upd_msg}\n\n"
             f"Back-story: {self._description}",
         )
 

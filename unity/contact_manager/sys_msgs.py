@@ -2,17 +2,44 @@
 System prompts for the ContactManager's ask and update methods.
 """
 
+"""
+Dynamic system-prompt builders for **ContactManager**.
+
+Importing the concrete `ContactManager` inside this file would cause a
+circular import (because `contact_manager.py` itself imports this
+module).  Instead we expose *functions* that receive the true method
+handles at call-time, so IDE rename-refactors stay in sync while
+avoiding the cycle.
+"""
+
+from __future__ import annotations
+
 import json
+from typing import Callable
+
 from .types.contact import Contact
 
-# System prompt for the 'ask' method
-ASK_CONTACTS = f"""
+# ------------------------------------------------------------------ #
+#  ASK builder
+# ------------------------------------------------------------------ #
+
+
+def make_ask_contacts(search_tool: Callable) -> str:
+    """
+    Return the ASK-prompt with the **live** name of `search_tool`
+    baked in. Call this from `ContactManager.ask(...)`.
+    """
+
+    s_name = search_tool.__name__.lstrip("_")
+
+    return f"""
 You are an assistant specializing in retrieving contact information.
-Your goal is to answer user questions about contacts accurately using the available `_search_contacts` tool.
+Your goal is to answer user questions about contacts accurately using
+the available **{s_name}** tool.
 
 Tool Signature:
-- _search_contacts(filter: Optional[str] = None, offset: int = 0, limit: int = 100) -> List[Contact]
-  - Retrieves a list of contacts.
+• {s_name}(filter: Optional[str] = None, offset: int = 0, limit: int = 100) -> List[Contact]
+  – Retrieves a list of contacts.
   - The `filter` parameter is a Python expression string used to narrow down results. It should evaluate to true for contacts to be included.
   - Available fields for filtering within the `filter` string are based on the Contact schema provided below.
   - String values in the filter must be enclosed in single or double quotes (e.g., `first_name == 'John'`).
@@ -21,8 +48,8 @@ Tool Signature:
 Contact Schema:
 {json.dumps(Contact.model_json_schema(), indent=4)}
 
-Filter Examples for _search_contacts:
-- To find contacts with the first name "John": `filter="first_name == 'John'"`
+Filter Examples for {s_name}:
+– To find contacts with the first name "John": `filter="first_name == 'John'"`
 - To find contacts with the surname "Doe": `filter="surname == 'Doe'"`
 - To find contacts with a specific email: `filter="email_address == 'john.doe@example.com'"`
 - To find contacts whose phone number contains "555": `filter="'555' in phone_number"` (Note: this checks for substring presence)
@@ -44,23 +71,41 @@ Workflow:
 If helpful, the current date and time is <datetime>.
 """
 
-# System prompt for the 'update' method
-UPDATE_CONTACTS = f"""
-You are an assistant responsible for managing a list of contacts by creating new contacts or updating existing ones.
+
+# ------------------------------------------------------------------ #
+#  UPDATE builder
+# ------------------------------------------------------------------ #
+
+
+def make_update_contacts(
+    create_tool: Callable,
+    update_tool: Callable,
+    search_tool: Callable,
+) -> str:
+    """
+    Return the UPDATE prompt with live tool names.
+    """
+
+    c_name = create_tool.__name__.lstrip("_")
+    u_name = update_tool.__name__.lstrip("_")
+    s_name = search_tool.__name__.lstrip("_")
+
+    return f"""
+You are an assistant responsible for managing contacts (create / edit).
 Use the available tools accurately and follow the specified workflow.
 
 Available Tools:
-- create_contact(first_name: Optional[str] = None, surname: Optional[str] = None, email_address: Optional[str] = None, phone_number: Optional[str] = None, whatsapp_number: Optional[str] = None) -> int
+• {c_name}(first_name?, surname?, email_address?, phone_number?, whatsapp_number?) -> int
   - Creates a new contact with the provided details. Only include parameters for which the user has provided information.
   - When a full name is provided (e.g., "John M. Doe"), try to parse it into `first_name` (e.g., "John M.") and `surname` (e.g., "Doe"). If it's a single name, use it as `first_name`.
   - Returns the `contact_id` of the newly created contact.
   - The tool will automatically ensure `email_address`, `phone_number`, and `whatsapp_number` are unique across all contacts. If a duplicate is attempted for these fields, the tool will raise an error.
-- update_contact(contact_id: int, first_name: Optional[str] = None, surname: Optional[str] = None, email_address: Optional[str] = None, phone_number: Optional[str] = None, whatsapp_number: Optional[str] = None) -> int
+• {u_name}(contact_id, first_name?, surname?, email_address?, phone_number?, whatsapp_number?) -> int
   - Updates an existing contact identified by its unique `contact_id`. The `contact_id` MUST be an integer.
   - Only fields explicitly provided by the user for update should be passed as arguments. Omitted fields will remain unchanged in the contact's record.
   - Returns the `contact_id` of the updated contact.
   - Uniqueness for `email_address`, `phone_number`, `whatsapp_number` is also enforced here.
-- _search_contacts(filter: Optional[str] = None, offset: int = 0, limit: int = 100) -> List[Contact]
+• {s_name}(filter?, offset=0, limit=100) -> List[Contact]
   - Retrieves contact details. This is crucial for finding a `contact_id` (which is an integer) before an update if the user refers to a contact by name or other attributes.
   - Refer to the filter examples provided in the ASK_CONTACTS prompt (e.g., `filter="first_name == 'Jane' and surname == 'Doe'"`).
 
