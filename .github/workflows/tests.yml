@@ -82,10 +82,13 @@ jobs:
         # 3) Install playwright browsers WITH system dependencies
         .unity/bin/python -m playwright install --with-deps
 
-        # 4) Install unify package from GitHub
+        # 4) Install the local 'unity' project in editable mode
+        uv pip install -e .
+        
+        # 5) Install unify package from GitHub
         uv pip install git+https://github.com/unifyai/unify
 
-        # 5) cleanup
+        # 6) cleanup
         rm temp_requirements.txt
 
     - name: Debug Python Path and Files
