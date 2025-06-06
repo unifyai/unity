@@ -14,7 +14,7 @@ from ..common.llm_helpers import (
     SteerableToolHandle,
     methods_to_tool_dict,
 )
-from .sys_msgs import ASK_CONTACTS, UPDATE_CONTACTS
+from .sys_msgs import make_ask_contacts, make_update_contacts
 
 
 class ContactManager(BaseContactManager):
@@ -66,7 +66,7 @@ class ContactManager(BaseContactManager):
             traced=json.loads(os.environ.get("UNIFY_TRACED", "true")),
         )
         client.set_system_message(
-            ASK_CONTACTS.replace(
+            make_ask_contacts(self._search_contacts).replace(
                 "<datetime>",
                 datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC"),
             ),
@@ -119,7 +119,11 @@ class ContactManager(BaseContactManager):
             traced=json.loads(os.environ.get("UNIFY_TRACED", "true")),
         )
         client.set_system_message(
-            UPDATE_CONTACTS.replace(
+            make_update_contacts(
+                self._create_contact,
+                self._update_contact,
+                self._search_contacts,
+            ).replace(
                 "<datetime>",
                 datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC"),
             ),

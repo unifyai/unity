@@ -20,6 +20,9 @@ from ..task_scheduler.types.task import Task
 # Importing the concrete scheduler lets us reference its real methods so that
 # IDE “rename symbol” refactors propagate automatically into the prompt.
 from ..task_scheduler.task_scheduler import TaskScheduler
+from ..contact_manager.contact_manager import ContactManager
+from ..transcript_manager.transcript_manager import TranscriptManager
+from ..knowledge_manager.knowledge_manager import KnowledgeManager
 
 # ──────────────────────────────────────────────────────────────────────
 #  ASK (prompt for the read-only surface)
@@ -31,9 +34,9 @@ following tools and may call them as many times as needed:
 
 • {TaskScheduler._search_tasks.__name__.lstrip('_')}(filter?, offset=0, limit=100) → List[Task]
 • {TaskScheduler._nearest_tasks.__name__.lstrip('_')}(text, k=5)                    → List[Task]
-• ContactManager.ask(text)
-• TranscriptManager.ask(text)
-• KnowledgeManager.retrieve(text)
+• {ContactManager.ask.__qualname__}(text)
+• {TranscriptManager.ask.__qualname__}(text)
+• {KnowledgeManager.retrieve.__qualname__}(text)
 • _ask_plan_call_(question)     – only available when a task is currently
   running; lets you query live progress.
 
