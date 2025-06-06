@@ -17,6 +17,10 @@ import json
 
 from ..task_scheduler.types.task import Task
 
+# Importing the concrete scheduler lets us reference its real methods so that
+# IDE “rename symbol” refactors propagate automatically into the prompt.
+from ..task_scheduler.task_scheduler import TaskScheduler
+
 # ──────────────────────────────────────────────────────────────────────
 #  ASK (prompt for the read-only surface)
 # ──────────────────────────────────────────────────────────────────────
@@ -25,8 +29,8 @@ You are a skilful assistant whose job is **answering questions** about tasks,
 contacts, transcripts or stored knowledge.  You have *read-only* access to the
 following tools and may call them as many times as needed:
 
-• search_tasks       (filter?, offset=0, limit=100) → List[Task]
-• nearest_tasks     (text, k=5)                    → List[Task]
+• {TaskScheduler._search_tasks.__name__.lstrip('_')}(filter?, offset=0, limit=100) → List[Task]
+• {TaskScheduler._nearest_tasks.__name__.lstrip('_')}(text, k=5)                    → List[Task]
 • ContactManager.ask(text)
 • TranscriptManager.ask(text)
 • KnowledgeManager.retrieve(text)
@@ -56,7 +60,10 @@ calling the tools until the user's request has been completely fulfilled,
 verifying results after each mutation.
 
 Extra mutation tools (in addition to the read-only set):
-• create_task / update_task / delete_task / cancel_tasks … (TaskScheduler)
+• {TaskScheduler._create_task.__name__.lstrip('_')} /
+  {TaskScheduler._update_task_name.__name__.lstrip('_')} /
+  {TaskScheduler._delete_task.__name__.lstrip('_')} /
+  {TaskScheduler._cancel_tasks.__name__.lstrip('_')} … (TaskScheduler)
 • create_contact / update_contact                        (ContactManager)
 • summarize(exchanges, guidance?)                        (TranscriptManager)
 • store_knowledge(text)                                  (KnowledgeManager)
@@ -83,7 +90,8 @@ START_TASK = f"""
 Your job is to **launch a task** so that it becomes the single *active* task.
 
 Tools available:
-• search_tasks(filter?) / nearest_tasks(text) – locate the correct task.
+• {TaskScheduler._search_tasks.__name__.lstrip('_')}(filter?) /
+  {TaskScheduler._nearest_tasks.__name__.lstrip('_')}(text) – locate the task.
 • _start_task_call_(task_id)                  – call **exactly once**.
 
 Important rules
