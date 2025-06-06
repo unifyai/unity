@@ -140,16 +140,46 @@ async def entrypoint(ctx: agents.JobContext):
         turn_detection=MultilingualModel(),
     )
 
-    def end_call():
-        asyncio.create_task(
-            publish_event(
-                {
-                    "topic": from_number,
-                    "to": "past",
-                    "event": PhoneCallEndedEvent().to_dict(),
-                },
-            ),
-        )
+    async def end_call():
+        print("Initiating graceful shutdown...")
+
+        # Get all running tasks except current task
+        tasks = [t for t in asyncio.all_tasks() if t is not asyncio.current_task()]
+
+        if tasks:
+            print(f"Cancelling {len(tasks)} running tasks...")
+            # Cancel all tasks
+            for task in tasks:
+                task.cancel()
+
+            # Wait for tasks to be cancelled gracefully
+            try:
+                await asyncio.gather(*tasks, return_exceptions=True)
+                print("All tasks cancelled successfully")
+            except Exception as e:
+                print(f"Error during task cancellation: {e}")
+
+        # Close the connection gracefully
+        if WRITER and not WRITER.is_closing():
+            try:
+                # Send end call event before closing connection
+                await publish_event(
+                    {
+                        "topic": from_number,
+                        "to": "past",
+                        "event": PhoneCallEndedEvent().to_dict(),
+                    },
+                )
+                print("End call event sent")
+
+                # Close the writer
+                WRITER.close()
+                await WRITER.wait_closed()
+                print("Connection closed gracefully")
+            except Exception as e:
+                print(f"Error during connection cleanup: {e}")
+
+        print("Graceful shutdown completed")
 
     # Add inactivity timeout
     INACTIVITY_TIMEOUT = 300  # 5 minutes in seconds
@@ -162,15 +192,17 @@ async def entrypoint(ctx: agents.JobContext):
             current_time = asyncio.get_event_loop().time()
             if current_time - last_activity_time > INACTIVITY_TIMEOUT:
                 print("Inactivity timeout reached, shutting down agent...")
-                await session.generate_reply(
-                    instructions="Tell the user that the call has ended due to inactivity.",
-                )
-                end_call()
+                await end_call()
+                break  # Exit the loop after shutdown
 
     # Start inactivity checker
     asyncio.create_task(check_inactivity())
 
-    ctx.room.on("participant_disconnected", end_call)
+    # Create a wrapper for the room event handler since it expects a sync function
+    def on_participant_disconnected(*args, **kwargs):
+        asyncio.create_task(end_call())
+
+    ctx.room.on("participant_disconnected", on_participant_disconnected)
 
     await session.start(
         room=ctx.room,
@@ -270,9 +302,15 @@ async def entrypoint(ctx: agents.JobContext):
                     t.add_done_callback(on_response_end)
                 elif msg["type"] == "gen_chunk" or msg["type"] == "end_gen":
                     chunk_queue.put_nowait(msg)
-            except:
-                WRITER.close()
-                await WRITER.wait_closed()
+            except Exception as e:
+                print(f"Error in collect_events: {e}")
+                if WRITER and not WRITER.is_closing():
+                    try:
+                        WRITER.close()
+                        await WRITER.wait_closed()
+                    except Exception as close_error:
+                        print(f"Error closing writer: {close_error}")
+                break  # Exit the loop on error
 
     asyncio.create_task(collect_events())
 
