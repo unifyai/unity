@@ -1,7 +1,7 @@
 # task_manager/task_manager.py
 from __future__ import annotations
 
-from typing import Callable, Dict
+from typing import Callable, Dict, Optional
 
 import asyncio
 import json
@@ -16,6 +16,11 @@ from ..common.llm_helpers import (
     start_async_tool_use_loop,
     ToolSpec,
 )
+from ..contact_manager.base import BaseContactManager
+from ..transcript_manager.base import BaseTranscriptManager
+from ..knowledge_manager.base import BaseKnowledgeManager
+from ..planner.base import BasePlanner
+from ..task_scheduler.base import BaseTaskScheduler
 
 
 class TaskManager:
@@ -29,28 +34,67 @@ class TaskManager:
 
     # ------------------------------------------------------------------ #
 
-    def __init__(self, *, simulated: bool = False) -> None:
+    def __init__(
+        self,
+        *,
+        simulated: bool = False,
+        contact_manager: Optional[BaseContactManager] = None,
+        transcript_manager: Optional[BaseTranscriptManager] = None,
+        knowledge_manager: Optional[BaseKnowledgeManager] = None,
+        task_scheduler: Optional[BaseTaskScheduler] = None,
+        planner: Optional[BasePlanner] = None,
+    ) -> None:
         """
         Args:
-            planner_steps:   How many "steps" a simulated plan should take before
-                             auto-completing (only relevant for SimulatedPlanner).
-            simulated:       When *True* all subordinate managers are replaced by
-                             their **simulated** counterparts which keep all state
-                             inside an LLM conversation rather than touching real
-                             storage back-ends.  Defaults to *False* (real managers).
+            simulated: When *True* all subordinate managers are replaced by
+                      their **simulated** counterparts which keep all state
+                      inside an LLM conversation rather than touching real
+                      storage back-ends. Defaults to *False* (real managers).
+            contact_manager: Optional custom contact manager implementation.
+                           If None, will create default based on simulated flag.
+            transcript_manager: Optional custom transcript manager implementation.
+                              If None, will create default based on simulated flag.
+            knowledge_manager: Optional custom knowledge manager implementation.
+                             If None, will create default based on simulated flag.
+            task_scheduler: Optional custom task scheduler implementation.
+                          If None, will create default based on simulated flag.
+            planner: Optional custom planner implementation.
+                    If None, will create default based on simulated flag.
         """
 
         if simulated:
-            from ..knowledge_manager.simulated import SimulatedKnowledgeManager
-            from ..task_scheduler.simulated import SimulatedTaskScheduler
-            from ..transcript_manager.simulated import SimulatedTranscriptManager
             from ..contact_manager.simulated import SimulatedContactManager
+            from ..transcript_manager.simulated import SimulatedTranscriptManager
+            from ..knowledge_manager.simulated import SimulatedKnowledgeManager
+            from ..planner.simulated import SimulatedPlanner
+            from ..task_scheduler.simulated import SimulatedTaskScheduler
 
             # ── Simulated façade (pure-LLM back-ends) ────────────────────
-            self._contact_manager = SimulatedContactManager()
-            self._transcript_manager = SimulatedTranscriptManager()
-            self._knowledge_manager = SimulatedKnowledgeManager()
-            self._task_scheduler = SimulatedTaskScheduler()
+            if contact_manager is not None:
+                self._contact_manager = contact_manager
+            else:
+                self._contact_manager = SimulatedContactManager()
+
+            if transcript_manager is not None:
+                self._transcript_manager = transcript_manager
+            else:
+                self._transcript_manager = SimulatedTranscriptManager()
+
+            if knowledge_manager is not None:
+                self._knowledge_manager = knowledge_manager
+            else:
+                self._knowledge_manager = SimulatedKnowledgeManager()
+
+            if planner is not None:
+                self._planner = planner
+            else:
+                self._planner = SimulatedPlanner()
+
+            if task_scheduler is not None:
+                self._task_scheduler = task_scheduler
+            else:
+                self._task_scheduler = SimulatedTaskScheduler()
+
         else:
             from ..knowledge_manager.knowledge_manager import KnowledgeManager
             from ..planner.tool_loop_planner import ToolLoopPlanner
@@ -59,11 +103,33 @@ class TaskManager:
             from ..contact_manager.contact_manager import ContactManager
 
             # ── Real managers touching Unify back-ends ───────────────────
-            self._contact_manager = ContactManager(self._event_bus)
-            self._transcript_manager = TranscriptManager(self._event_bus)
-            self._knowledge_manager = KnowledgeManager()
-            self._task_scheduler = TaskScheduler()
-            self._planner = ToolLoopPlanner()
+            if contact_manager is not None:
+                self._contact_manager = contact_manager
+            else:
+                self._contact_manager = ContactManager(self._event_bus)
+
+            if transcript_manager is not None:
+                self._transcript_manager = transcript_manager
+            else:
+                self._transcript_manager = TranscriptManager(
+                    self._event_bus,
+                    contact_manager=self._contact_manager,
+                )
+
+            if knowledge_manager is not None:
+                self._knowledge_manager = knowledge_manager
+            else:
+                self._knowledge_manager = KnowledgeManager()
+
+            if planner is not None:
+                self._planner = planner
+            else:
+                self._planner = ToolLoopPlanner()
+
+            if task_scheduler is not None:
+                self._task_scheduler = task_scheduler
+            else:
+                self._task_scheduler = TaskScheduler(planner=self._planner)
 
         #  Run-time state & tool-dict helpers
         self._current_plan = None  # type: ignore
