@@ -1,7 +1,6 @@
 import os
 import json
 import asyncio
-from datetime import datetime, timezone
 import functools
 from typing import List, Dict, Optional, Union, Callable
 
@@ -17,6 +16,7 @@ from ..common.llm_helpers import (
     methods_to_tool_dict,
 )
 from ..events.event_bus import EventBus, Event
+from .prompt_builders import build_ask_prompt, build_summarize_prompt
 from .base import BaseTranscriptManager
 
 
@@ -84,22 +84,7 @@ class TranscriptManager(BaseTranscriptManager):
         clarification_up_q: asyncio.Queue[str] | None = None,
         clarification_down_q: asyncio.Queue[str] | None = None,
     ) -> SteerableToolHandle:
-        from unity.transcript_manager.sys_msgs import ASK
-
-        # ── 0.  Build LLM client ───────────────────────────────────────────
-        client = unify.AsyncUnify(
-            "o4-mini@openai",
-            cache=json.loads(os.environ.get("UNIFY_CACHE", "true")),
-            traced=json.loads(os.environ.get("UNIFY_TRACED", "true")),
-        )
-        client.set_system_message(
-            ASK.replace(
-                "<datetime>",
-                datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC"),
-            ),
-        )
-
-        # ── 1.  Expose tools + a *dynamic* request_clarification helper ──
+        # ── 0.  Build the *live* tools-dict (may include clarification helper) ──
         tools = dict(self._tools)
 
         if clarification_up_q is not None or clarification_down_q is not None:
@@ -118,7 +103,15 @@ class TranscriptManager(BaseTranscriptManager):
 
             tools["request_clarification"] = request_clarification
 
-        # ── 2.  Launch the interactive tool-use loop ──────────────────────
+        # ── 1.  Build LLM client & inject dynamic system-prompt ───────────
+        client = unify.AsyncUnify(
+            "o4-mini@openai",
+            cache=json.loads(os.environ.get("UNIFY_CACHE", "true")),
+            traced=json.loads(os.environ.get("UNIFY_TRACED", "true")),
+        )
+        client.set_system_message(build_ask_prompt(tools))
+
+        # ── 2.  Launch the interactive tool-use loop ───────────────────────
         handle = start_async_tool_use_loop(
             client,
             text,
@@ -163,7 +156,6 @@ class TranscriptManager(BaseTranscriptManager):
         Returns:
             str: The summary of the exchanges.
         """
-        from unity.transcript_manager.sys_msgs import SUMMARIZE
 
         if not isinstance(exchange_ids, list):
             exchange_ids = [exchange_ids]
@@ -174,15 +166,7 @@ class TranscriptManager(BaseTranscriptManager):
             cache=json.loads(os.environ.get("UNIFY_CACHE", "true")),
             traced=json.loads(os.environ.get("UNIFY_TRACED", "true")),
         )
-        client.set_system_message(
-            SUMMARIZE.replace(
-                "<guidance>",
-                f"\n{guidance}\n" if guidance else "",
-            ).replace(
-                "<datetime>",
-                datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC"),
-            ),
-        )
+        client.set_system_message(build_summarize_prompt(guidance))
 
         # ── 1.  Collect raw messages → JSON blob for the prompt ────────────
         msgs = self._search_messages(filter=f"exchange_id in {exchange_ids}")
