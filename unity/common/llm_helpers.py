@@ -192,102 +192,129 @@ def _dumps(
     return json.dumps(ret, indent=indent) if base else ret
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-#  strip doc-lines that describe “hidden” parameters
-# ─────────────────────────────────────────────────────────────────────────────
 import re
 from textwrap import dedent
+from typing import Iterable
 
+# recognised section headings (case-insensitive, colon optional)
+_PARAM_SECTIONS = {"args", "arguments", "parameters", "other parameters"}
+_OTHER_SECTIONS = {
+    "returns",
+    "yields",
+    "raises",
+    "notes",
+    "examples",
+    "references",
+    "see also",
+}
+
+# ––– parameter-line pattern that also accepts the “a / b / c : …” variant –––
 _PARAM_LINE_RX = re.compile(
     r"""
-    ^
-    (?P<indent>\s*)                  #     any amount of leading WS
-    (?P<names>[^\s:]+(?:\s*,\s*[^\s:]+)*)   # 1 or more names (a, b, …)
-    (\s*\([^)]*\))?                 #     optional "(type)"
-    \s*:
+    ^(?P<indent>\s*)                    # capture the leading indentation
+    (?P<names>[^:]+?)                   # everything up to the colon = name list
+    \s*:\s*                             # literal “ : ”
+    (?P<type>.+)$                       # the declared type (ignored here)
     """,
     re.VERBOSE,
 )
 
+# dash-only underline used by the NumPy style (“----------”)
+_DASH_UNDERLINE_RX = re.compile(r"^\s*-{3,}\s*$")
 
-def _strip_hidden_params_from_doc(doc: str, hidden: set[str]) -> str:
-    """
-    Remove *parameter documentation blocks* whose parameter name is in
-    **hidden** from a Google- or NumPy-style docstring.
 
-    We look only inside the “Args:” or “Parameters” section; everything
-    else is kept verbatim.
-    """
+def _strip_hidden_params_from_doc(
+    doc: str,
+    hidden: set[str] | Iterable[str],
+) -> str:
+    """Remove the *Parameters* blocks of any parameters listed in *hidden*."""
+    hidden = set(hidden)
     if not doc or not hidden:
         return doc
 
     lines = dedent(doc).splitlines()
     out: list[str] = []
 
-    inside_param_section = False
-    skip_block = False
-    current_indent = 0
+    i = 0
+    in_params = False  # are we _currently_ inside a param section?
+    skip = False  # are we skipping the current block?
+    base_indent = 0  # indent of the “name : type” line we skip
 
-    for ln in lines:
-        stripped = ln.lstrip()
+    while i < len(lines):
+        ln, stripped = lines[i], lines[i].lstrip()
+        lower = stripped.rstrip(":").lower()
 
-        # ── detect section headers ────────────────────────────────────────
-        if stripped.lower() in ("args:", "parameters"):
-            inside_param_section = True
-            skip_block = False
-            out.append(ln)
+        # ───────────────────────────────────────────────────────────────── #
+        # 1.  Detect the *start* of a Parameters/Args section
+        # ───────────────────────────────────────────────────────────────── #
+        if not in_params and lower in _PARAM_SECTIONS:
+            in_params = True
+            out.append(ln)  # keep the heading
+            # keep the NumPy underline if present
+            j = i + 1
+            if j < len(lines) and _DASH_UNDERLINE_RX.match(lines[j]):
+                out.append(lines[j])
+                i += 1
+            i += 1
             continue
-        if inside_param_section and not stripped:
-            # blank line inside section
-            out.append(ln)
-            continue
-        if inside_param_section and not stripped.startswith(" "):
-            # left the section
-            inside_param_section = False
-            skip_block = False
 
-        if inside_param_section:
+        # ───────────────────────────────────────────────────────────────── #
+        # 2.  While inside the section, decide whether to keep or skip
+        # ───────────────────────────────────────────────────────────────── #
+        if in_params:
+            # Heading of some *other* section → we are done with “Parameters”
+            if lower in _OTHER_SECTIONS:
+                in_params = False
+                out.append(ln)
+                i += 1
+                continue
+
+            # Dash underline that belongs to the *next* section
+            if _DASH_UNDERLINE_RX.match(stripped):
+                in_params = False
+                out.append(ln)
+                i += 1
+                continue
+
+            # Parameter definition line
             m = _PARAM_LINE_RX.match(ln)
             if m:
-                # Are *any* of the listed names hidden?
-                names = {n.strip() for n in m.group("names").split(",")}
+                # the spec allows either “a, b” or “a / b” to list synonyms
+                names = {
+                    n.strip()
+                    for part in m.group("names").split("/")
+                    for n in part.split(",")
+                }
                 if names & hidden:
-                    # start skipping this parameter-block
-                    skip_block = True
-                    current_indent = len(m.group("indent"))
-                    continue  # swallow the parameter line itself
-            if skip_block:
-                # keep skipping as long as the line is *more indented*
-                indent = len(ln) - len(stripped)
-                if indent > current_indent:
+                    skip = True
+                    base_indent = len(m.group("indent"))
+                    # do *not* append this very line
+                    i += 1
                     continue
-                # description block ended
-                skip_block = False
+                else:
+                    skip = False  # keep this parameter
+            # Parameter description line: keep skipping until indentation drops
+            elif skip:
+                indent = len(ln) - len(stripped)
+                if indent > base_indent:
+                    i += 1  # keep swallowing lines of the block
+                    continue
+                skip = False  # indent dropped → end of block
 
-        if not skip_block:
-            out.append(ln)
-
-    # normalise consecutive blank lines
-    cleaned: list[str] = []
-    prev_blank = False
-    for ln in out:
-        blank = not ln.strip()
-        if blank and prev_blank:
+            if not skip:
+                out.append(ln)  # normal, unskipped content
+            i += 1
             continue
-        cleaned.append(ln)
-        prev_blank = blank
 
-    if hidden:
-        pat = re.compile(
-            r"^\s*(?:"
-            + "|".join(re.escape(name) for name in hidden)
-            + r")\s*:.*(?:\n\s+.*)*",
-            flags=re.MULTILINE,
-        )
-        cleaned = pat.sub("", "\n".join(cleaned))
-        cleaned = re.sub(r"\n{3,}", "\n\n", cleaned)  # collapse big gaps
+        # ───────────────────────────────────────────────────────────────── #
+        # 3.  Normal line outside any param section
+        # ───────────────────────────────────────────────────────────────── #
+        out.append(ln)
+        i += 1
 
-    return "\n".join(cleaned).rstrip()
+    # Collapse runs of >2 blank lines that the removals may have created
+    doc_clean = re.sub(r"\n{3,}", "\n\n", "\n".join(out)).rstrip()
+    return doc_clean
 
 
 def annotation_to_schema(ann: Any) -> Dict[str, Any]:
