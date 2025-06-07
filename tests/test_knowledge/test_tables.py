@@ -7,7 +7,7 @@ import pytest
 @_handle_project
 def test_create_table():
     knowledge_manager = KnowledgeManager()
-    knowledge_manager._create_table("MyTable")
+    knowledge_manager._create_table(name="MyTable")
     tables = knowledge_manager._list_tables()
     assert len(tables) == 1
     assert "MyTable" in tables
@@ -17,7 +17,10 @@ def test_create_table():
 @_handle_project
 def test_create_table_w_cols():
     knowledge_manager = KnowledgeManager()
-    knowledge_manager._create_table("MyTable", columns={"ColA": "int", "ColB": "str"})
+    knowledge_manager._create_table(
+        name="MyTable",
+        columns={"ColA": "int", "ColB": "str"},
+    )
     tables = knowledge_manager._list_tables(include_columns=True)
     assert len(tables) == 1
     assert tables == {
@@ -29,7 +32,7 @@ def test_create_table_w_cols():
 @_handle_project
 def test_create_table_w_desc():
     knowledge_manager = KnowledgeManager()
-    knowledge_manager._create_table("MyTable", description="For storing my data.")
+    knowledge_manager._create_table(name="MyTable", description="For storing my data.")
     tables = knowledge_manager._list_tables(include_columns=False)
     assert len(tables) == 1
     assert tables == {
@@ -41,11 +44,11 @@ def test_create_table_w_desc():
 @_handle_project
 def test_list_tables():
     knowledge_manager = KnowledgeManager()
-    knowledge_manager._create_table("MyFirstTable")
+    knowledge_manager._create_table(name="MyFirstTable")
     tables = knowledge_manager._list_tables()
     assert len(tables) == 1
     assert "MyFirstTable" in tables
-    knowledge_manager._create_table("MySecondTable")
+    knowledge_manager._create_table(name="MySecondTable")
     tables = knowledge_manager._list_tables(include_columns=False)
     assert len(tables) == 2
     assert tables == {
@@ -60,7 +63,7 @@ def test_delete_table():
     knowledge_manager = KnowledgeManager()
 
     # create
-    knowledge_manager._create_table("MyTable")
+    knowledge_manager._create_table(name="MyTable")
     tables = knowledge_manager._list_tables()
     assert len(tables) == 1
     assert "MyTable" in tables
@@ -77,7 +80,7 @@ def test_rename_table():
     knowledge_manager = KnowledgeManager()
 
     # create
-    knowledge_manager._create_table("MyTable")
+    knowledge_manager._create_table(name="MyTable")
     tables = knowledge_manager._list_tables()
     assert len(tables) == 1
     assert "MyTable" in tables

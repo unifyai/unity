@@ -7,7 +7,7 @@ import pytest
 @_handle_project
 def test_search_basic():
     knowledge_manager = KnowledgeManager()
-    knowledge_manager._create_table("MyTable")
+    knowledge_manager._create_table(name="MyTable")
     knowledge_manager._add_data(
         table="MyTable",
         data=[{"x": 0, "y": 1}, {"x": 2, "y": 3}],
@@ -25,7 +25,7 @@ def test_search_basic():
 @_handle_project
 def test_search_filter():
     knowledge_manager = KnowledgeManager()
-    knowledge_manager._create_table("MyTable")
+    knowledge_manager._create_table(name="MyTable")
     knowledge_manager._add_data(
         table="MyTable",
         data=[{"x": 0, "y": 1}, {"x": 2, "y": 3}],
@@ -42,12 +42,12 @@ def test_search_filter():
 @_handle_project
 def test_search_specific_tables():
     knowledge_manager = KnowledgeManager()
-    knowledge_manager._create_table("MyTable")
+    knowledge_manager._create_table(name="MyTable")
     knowledge_manager._add_data(
         table="MyTable",
         data=[{"x": 0, "y": 1}, {"x": 2, "y": 3}],
     )
-    knowledge_manager._create_table("MyOtherTable")
+    knowledge_manager._create_table(name="MyOtherTable")
     knowledge_manager._add_data(
         table="MyOtherTable",
         data=[{"a": 9, "b": 10}],
@@ -77,7 +77,7 @@ def test_search_specific_tables():
 @_handle_project
 def test_search_w_filter():
     knowledge_manager = KnowledgeManager()
-    knowledge_manager._create_table("MyTable")
+    knowledge_manager._create_table(name="MyTable")
     knowledge_manager._add_data(
         table="MyTable",
         data=[{"x": 0, "y": 1}, {"x": 1, "y": 2}, {"x": 2, "y": 3}, {"x": 3, "y": 4}],

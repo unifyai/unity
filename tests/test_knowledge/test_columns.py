@@ -7,7 +7,7 @@ import pytest
 @_handle_project
 def test_create_empty_column():
     knowledge_manager = KnowledgeManager()
-    knowledge_manager._create_table("MyTable")
+    knowledge_manager._create_table(name="MyTable")
     knowledge_manager._create_empty_column(
         table="MyTable",
         column_name="MyCol",
@@ -21,7 +21,7 @@ def test_create_empty_column():
 @_handle_project
 def test_create_derived_column():
     knowledge_manager = KnowledgeManager()
-    knowledge_manager._create_table("MyTable")
+    knowledge_manager._create_table(name="MyTable")
     knowledge_manager._add_data(
         table="MyTable",
         data=[{"x": 1, "y": 2}, {"x": 3, "y": 4}],
@@ -44,7 +44,7 @@ def test_create_derived_column():
 @_handle_project
 def test_delete_column():
     knowledge_manager = KnowledgeManager()
-    knowledge_manager._create_table("MyTable")
+    knowledge_manager._create_table(name="MyTable")
     knowledge_manager._add_data(
         table="MyTable",
         data=[{"x": 1, "y": 2}, {"x": 3, "y": 4}],
@@ -63,7 +63,7 @@ def test_delete_column():
 @_handle_project
 def test_delete_empty_column():
     knowledge_manager = KnowledgeManager()
-    knowledge_manager._create_table("MyTable")
+    knowledge_manager._create_table(name="MyTable")
     knowledge_manager._create_empty_column(
         table="MyTable",
         column_name="x",
@@ -82,7 +82,7 @@ def test_delete_empty_column():
 @_handle_project
 def test_rename_column():
     knowledge_manager = KnowledgeManager()
-    knowledge_manager._create_table("MyTable")
+    knowledge_manager._create_table(name="MyTable")
     knowledge_manager._add_data(
         table="MyTable",
         data=[{"x": 1, "y": 2}, {"x": 3, "y": 4}],
