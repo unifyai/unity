@@ -59,22 +59,22 @@ def build_ask_prompt(tools: Dict[str, Callable]) -> str:
     """,
     ).strip()
 
-    return textwrap.dedent(
-        f"""
-        You are an assistant specializing in **retrieving contact information**.
-        Work strictly through the tools provided.
-
-        Tools (name → argspec):
-        {sig_json}
-
-        {usage_examples}
-
-        Contact schema:
-        {json.dumps(Contact.model_json_schema(), indent=4)}
-
-        Current UTC time is {_now()}.
-    """,
-    ).strip()
+    return "\n".join(
+        [
+            "You are an assistant specializing in **retrieving contact information**.",
+            "Work strictly through the tools provided.",
+            "",
+            "Tools (name → argspec):",
+            sig_json,
+            "",
+            usage_examples,
+            "",
+            "Contact schema:",
+            json.dumps(Contact.model_json_schema(), indent=4),
+            "",
+            f"Current UTC time is {_now()}.",
+        ],
+    )
 
 
 def build_update_prompt(tools: Dict[str, Callable]) -> str:
@@ -105,19 +105,19 @@ def build_update_prompt(tools: Dict[str, Callable]) -> str:
     """,
     ).strip()
 
-    return textwrap.dedent(
-        f"""
-        You are an assistant in charge of **creating or editing contacts**.
-        Use the tools provided to create new entries or update existing ones.
-
-        Tools (name → argspec):
-        {sig_json}
-
-        {usage_examples}
-
-        Contact schema:
-        {json.dumps(Contact.model_json_schema(), indent=4)}
-
-        Current UTC time is {_now()}.
-    """,
-    ).strip()
+    return "\n".join(
+        [
+            "You are an assistant in charge of **creating or editing contacts**.",
+            "Use the tools provided to create new entries or update existing ones.",
+            "",
+            "Tools (name → argspec):",
+            sig_json,
+            "",
+            usage_examples,
+            "",
+            "Contact schema:",
+            json.dumps(Contact.model_json_schema(), indent=4),
+            "",
+            f"Current UTC time is {_now()}.",
+        ],
+    )

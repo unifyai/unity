@@ -105,29 +105,29 @@ def build_ask_prompt(tools: Dict[str, Callable]) -> str:  # noqa: C901 – long,
     """,
     ).strip()
 
-    return textwrap.dedent(
-        f"""
-        You are an assistant specialised in **querying and analysing communication transcripts**.
-        Work **exclusively** through the tools listed below to gather data
-        before composing your final answer.
-
-        Tools (name → argspec)
-        ----------------------
-        {sig_json}
-
-        {usage_examples}
-
-        Schemas
-        -------
-        Contact  = {json.dumps(Contact.model_json_schema(), indent=4)}
-
-        Message  = {json.dumps(Message.model_json_schema(), indent=4)}
-
-        Summary  = {json.dumps(MessageExchangeSummary.model_json_schema(), indent=4)}
-
-        Current UTC time: {_now()}.
-    """,
-    ).strip()
+    return "\n".join(
+        [
+            "You are an assistant specialised in **querying and analysing communication transcripts**.",
+            "Work **exclusively** through the tools listed below to gather data",
+            "before composing your final answer.",
+            "",
+            "Tools (name → argspec)",
+            "----------------------",
+            sig_json,
+            "",
+            usage_examples,
+            "",
+            "Schemas",
+            "-------",
+            f"Contact  = {json.dumps(Contact.model_json_schema(), indent=4)}",
+            "",
+            f"Message  = {json.dumps(Message.model_json_schema(), indent=4)}",
+            "",
+            f"Summary  = {json.dumps(MessageExchangeSummary.model_json_schema(), indent=4)}",
+            "",
+            f"Current UTC time: {_now()}.",
+        ],
+    )
 
 
 def build_summarize_prompt(guidance: Optional[str] = None) -> str:
@@ -145,15 +145,15 @@ def build_summarize_prompt(guidance: Optional[str] = None) -> str:
         else ""
     )
 
-    return textwrap.dedent(
-        f"""
-        You will receive one or more message exchanges.
-        Craft a concise summary that captures the most important points
-        **across** all exchanges.  If anything is unclear, use the
-        `request_clarification` tool if available – do **not** hallucinate.
-        Current UTC time: {_now()}.
-        {guidance_block}
-
-        # <<PLACEHOLDER_FOR_USAGE_EXAMPLES>>
-    """,
-    ).strip()
+    return "\n".join(
+        [
+            "You will receive one or more message exchanges.",
+            "Craft a concise summary that captures the most important points",
+            "**across** all exchanges.  If anything is unclear, use the",
+            "`request_clarification` tool if available – do **not** hallucinate.",
+            f"Current UTC time: {_now()}.",
+            guidance_block,
+            "",
+            "# <<PLACEHOLDER_FOR_USAGE_EXAMPLES>>",
+        ],
+    )
