@@ -10,7 +10,9 @@ import unify
 
 from ..common.llm_helpers import SteerableToolHandle
 from .base import BaseTaskScheduler
-from .sys_msgs import ASK, UPDATE
+from .prompt_builders import build_ask_prompt, build_update_prompt
+from ..common.llm_helpers import methods_to_tool_dict
+from .task_scheduler import TaskScheduler
 from ..planner.simulated import SimulatedPlanner
 
 
@@ -152,13 +154,41 @@ class SimulatedTaskScheduler(BaseTaskScheduler):
             traced=json.loads(os.getenv("UNIFY_TRACED", "true")),
             stateful=True,
         )
+        # Re-create the real TaskScheduler prompts *dynamically* so the
+        # simulated assistant can use them for grounding.
+        ask_tools = methods_to_tool_dict(
+            TaskScheduler._search_tasks,
+            TaskScheduler._nearest_tasks,
+            TaskScheduler._get_task_queue,
+            include_class_name=False,
+        )
+        update_tools = methods_to_tool_dict(
+            TaskScheduler._create_task,
+            TaskScheduler._delete_task,
+            TaskScheduler._cancel_tasks,
+            TaskScheduler._update_task_queue,
+            TaskScheduler._update_task_name,
+            TaskScheduler._update_task_description,
+            TaskScheduler._update_task_status,
+            TaskScheduler._update_task_start_at,
+            TaskScheduler._update_task_deadline,
+            TaskScheduler._update_task_repetition,
+            TaskScheduler._update_task_priority,
+            TaskScheduler._search_tasks,
+            TaskScheduler._nearest_tasks,
+            TaskScheduler._get_task_queue,
+            include_class_name=False,
+        )
+        ask_msg = build_ask_prompt(ask_tools)
+        update_msg = build_update_prompt(update_tools)
+
         self._llm.set_system_message(
             "You are a *simulated* task-list manager. "
-            "No real database exists; invent plausible tasks but stay internally "
+            "No real database exists; invent plausible tasks but remain internally "
             "consistent across turns.\n\n"
             "As reference, here are the *real* TaskScheduler prompts:\n\n"
-            f"ASK system message:\n{ASK}\n\n"
-            f"UPDATE system message:\n{UPDATE}\n\n"
+            f"ASK system message:\n{ask_msg}\n\n"
+            f"UPDATE system message:\n{update_msg}\n\n"
             f"Back-story: {self._description}",
         )
 

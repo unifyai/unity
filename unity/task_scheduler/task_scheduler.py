@@ -2,7 +2,7 @@ import os
 import unify
 import asyncio
 import functools
-from datetime import datetime, timezone
+from datetime import datetime
 from typing import Dict, List, Any, Optional, Union
 
 from ..common.embed_utils import EMBED_MODEL, ensure_vector_column
@@ -18,7 +18,7 @@ from .types.repetition import RepeatPattern
 from .types.schedule import Schedule
 from .types.status import Status
 from .types.task import Task
-from .sys_msgs import ASK
+from .prompt_builders import build_ask_prompt, build_update_prompt
 from .base import BaseTaskScheduler
 from ..planner.base import BasePlanner
 from ..planner.simulated import SimulatedPlanner
@@ -123,13 +123,8 @@ class TaskScheduler(BaseTaskScheduler):
             cache=json.loads(os.environ.get("UNIFY_CACHE", "true")),
             traced=json.loads(os.environ.get("UNIFY_TRACED", "true")),
         )
-        client.set_system_message(
-            ASK.replace(
-                "<datetime>",
-                datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC"),
-            ),
-        )
-        # ── 0.  Optionally expose a request_clarification helper ───────────
+
+        # ── 0.  Build a *live* tools-dict so the prompt reflects reality ───
         tools = dict(self._ask_tools)
 
         if clarification_up_q is not None or clarification_down_q is not None:
@@ -143,7 +138,10 @@ class TaskScheduler(BaseTaskScheduler):
 
             tools["request_clarification"] = request_clarification
 
-        # ── 1.  Kick off the tool-use loop ─────────────────────────────────
+        # ── 1.  Inject the dynamic system-prompt ───────────────────────────
+        client.set_system_message(build_ask_prompt(tools))
+
+        # ── 2.  Kick off the tool-use loop ────────────────────────────────
         handle = start_async_tool_use_loop(
             client,
             text,
@@ -176,20 +174,13 @@ class TaskScheduler(BaseTaskScheduler):
         clarification_up_q: asyncio.Queue[str] | None = None,
         clarification_down_q: asyncio.Queue[str] | None = None,
     ) -> SteerableToolHandle:
-        from .sys_msgs import UPDATE
-
         client = unify.AsyncUnify(
             "o4-mini@openai",
             cache=json.loads(os.environ.get("UNIFY_CACHE", "true")),
             traced=json.loads(os.environ.get("UNIFY_TRACED", "true")),
         )
-        client.set_system_message(
-            UPDATE.replace(
-                "<datetime>",
-                datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC"),
-            ),
-        )
-        # ── 0.  Offer a request_clarification helper if queues supplied ──
+
+        # ── 0.  Build a *live* tools-dict first (prompt needs it) ─────────
         tools = dict(self._update_tools)
 
         if clarification_up_q is not None or clarification_down_q is not None:
@@ -203,7 +194,10 @@ class TaskScheduler(BaseTaskScheduler):
 
             tools["request_clarification"] = request_clarification
 
-        # ── 1.  Kick off interactive loop ─────────────────────────────────
+        # ── 1.  Inject the dynamic system-prompt ──────────────────────────
+        client.set_system_message(build_update_prompt(tools))
+
+        # ── 2.  Kick off interactive loop ─────────────────────────────────
         handle = start_async_tool_use_loop(
             client,
             text,
