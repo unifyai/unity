@@ -80,6 +80,7 @@ async def test_km_requests_clarification():
         "Please summarise the knowledge base.",
         clarification_up_q=up_q,
         clarification_down_q=down_q,
+        _requests_clarification=True,
     )
 
     question = await asyncio.wait_for(up_q.get(), timeout=30)

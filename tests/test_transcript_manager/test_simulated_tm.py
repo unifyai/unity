@@ -89,6 +89,7 @@ async def test_tm_requests_clarification():
         "Find important messages.",
         clarification_up_q=up_q,
         clarification_down_q=down_q,
+        _requests_clarification=True,
     )
 
     # Must ask for clarification first

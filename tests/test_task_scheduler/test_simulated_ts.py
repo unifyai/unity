@@ -93,6 +93,7 @@ async def test_ts_requests_clarification():
         "Please prioritise everything appropriately.",
         clarification_up_q=up_q,
         clarification_down_q=down_q,
+        _requests_clarification=True,
     )
 
     # The handle must first raise a clarification question

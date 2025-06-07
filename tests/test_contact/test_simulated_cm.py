@@ -80,6 +80,7 @@ async def test_cm_requests_clarification():
         "Please update my client list.",
         clarification_up_q=up_q,
         clarification_down_q=down_q,
+        _requests_clarification=True,
     )
 
     question = await asyncio.wait_for(up_q.get(), timeout=30)
