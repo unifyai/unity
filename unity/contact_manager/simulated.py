@@ -187,6 +187,7 @@ class SimulatedContactManager(BaseContactManager):
         *,
         _return_reasoning_steps: bool = False,
         parent_chat_context: list[dict] | None = None,
+        _requests_clarification: bool = False,
         clarification_up_q: asyncio.Queue[str] | None = None,
         clarification_down_q: asyncio.Queue[str] | None = None,
     ) -> SteerableToolHandle:
@@ -202,6 +203,7 @@ class SimulatedContactManager(BaseContactManager):
             self._llm,
             instruction,
             _return_reasoning_steps=_return_reasoning_steps,
+            _requests_clarification=_requests_clarification,
             clarification_up_q=clarification_up_q,
             clarification_down_q=clarification_down_q,
         )
@@ -216,6 +218,7 @@ class SimulatedContactManager(BaseContactManager):
         *,
         _return_reasoning_steps: bool = False,
         parent_chat_context: list[dict] | None = None,
+        _requests_clarification: bool = False,
         clarification_up_q: asyncio.Queue[str] | None = None,
         clarification_down_q: asyncio.Queue[str] | None = None,
     ) -> SteerableToolHandle:
@@ -231,6 +234,7 @@ class SimulatedContactManager(BaseContactManager):
             self._llm,
             instruction,
             _return_reasoning_steps=_return_reasoning_steps,
+            _requests_clarification=_requests_clarification,
             clarification_up_q=clarification_up_q,
             clarification_down_q=clarification_down_q,
         )
