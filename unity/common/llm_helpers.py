@@ -211,10 +211,10 @@ _OTHER_SECTIONS = {
 # ––– parameter-line pattern that also accepts the “a / b / c : …” variant –––
 _PARAM_LINE_RX = re.compile(
     r"""
-    ^(?P<indent>\s*)                    # capture the leading indentation
-    (?P<names>[^:]+?)                   # everything up to the colon = name list
-    \s*:\s*                             # literal “ : ”
-    (?P<type>.+)$                       # the declared type (ignored here)
+    ^(?P<indent>\s*)                    # leading spaces
+    (?P<names>[^:]+?)                   # everything until “:”, *if any*
+    (?:\s*:\s*(?P<type>.+))?            # “: type”  ← now OPTIONAL
+    $                                   # EOL
     """,
     re.VERBOSE,
 )
