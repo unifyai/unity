@@ -3,7 +3,7 @@ import asyncio
 import unify
 import functools
 import requests
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, Dict, List, Optional
 
 import json
 from ..common.embed_utils import EMBED_MODEL, ensure_vector_column
@@ -218,23 +218,29 @@ class KnowledgeManager(BaseKnowledgeManager):
 
     def _create_table(
         self,
-        name: str,
         *,
-        description: Optional[str] = None,
-        columns: Optional[Dict[str, ColumnType]] = None,
+        name: str,
+        description: str | None = None,
+        columns: Dict[str, ColumnType] | None = None,
     ) -> Dict[str, str]:
         """
-        Create a new table for storing long-term knowledge.
+        **Create** a brand-new table in the knowledge store.
 
-        Args:
-            name (str): The name of the table to create. Eg: "MyTable".
+        Parameters
+        ----------
+        name : str
+            Canonical table name (must be unique within this manager).
+        description : str | None, default ``None``
+            Human-readable explanation of the table's purpose.
+        columns : dict[str, ColumnType] | None
+            Optional initial schema – mapping *column → type*.  If omitted an
+            empty table is created and columns can be added later with
+            :pyfunc:`_create_empty_column`.
 
-            description (Optional[str]): A description of the table and the main purpose.
-
-            columns (Optional[Dict[str, ColumnType]]): A dictionary of column names and their types. ColumnType can take values: `str`, `int`, `float`, `bool`, `list`, `dict`, `datetime`, `date`, `time`.
-
-        Returns:
-            Dict[str, str]: Message explaining whether the table was created or not.
+        Returns
+        -------
+        dict[str, str]
+            Backend response describing success or failure (driver specific).
         """
         proj = unify.active_project()
         ctx = f"{self._ctx}/{name}"
@@ -252,15 +258,21 @@ class KnowledgeManager(BaseKnowledgeManager):
         self,
         *,
         include_columns: bool = True,
-    ) -> Union[List[str], List[Dict[str, ColumnType]]]:
+    ) -> Dict[str, Dict[str, Any]]:
         """
-        List the tables which are being used to store all knowledge.
+        Enumerate **all** tables managed by this instance.
 
-        Args:
-            include_columns (bool): Whether to include the columns and their types for each table in the returned list.
+        Parameters
+        ----------
+        include_columns : bool, default ``True``
+            When *True* each table entry also contains a
+            ``"columns": {name: type}`` mapping.
 
-        Returns:
-            List[Dict[str, Dict[str, Union[str, ColumnType]]]]: Table names and their descriptions, and optionally also column names and types.
+        Returns
+        -------
+        dict[str, dict]
+            Mapping ``table_name → {"description": str, "columns": {...}}``.
+            If *include_columns* is *False* the ``"columns"`` key is omitted.
         """
         tables = {
             k[len(f"{self._ctx}/") :]: {"description": v}
@@ -272,17 +284,26 @@ class KnowledgeManager(BaseKnowledgeManager):
             k: {**v, "columns": self._get_columns(table=k)} for k, v in tables.items()
         }
 
-    def _rename_table(self, *, old_name: str, new_name: str) -> Dict[str, str]:
+    def _rename_table(
+        self,
+        *,
+        old_name: str,
+        new_name: str,
+    ) -> Dict[str, str]:
         """
-        Rename the table.
+        **Rename** an existing table.
 
-        Args:
-            old_name (str): The old name of the table.
+        Parameters
+        ----------
+        old_name : str
+            Current table identifier.
+        new_name : str
+            New identifier (must not clash with existing tables).
 
-            new_name (str): The new name for the table.
-
-        Returns:
-            Dict[str, str]: Message explaining whether the table was renamed or not.
+        Returns
+        -------
+        dict[str, str]
+            Backend acknowledgement / error message.
         """
         proj = unify.active_project()
         old_name = f"{self._ctx}/{old_name}"
@@ -294,15 +315,19 @@ class KnowledgeManager(BaseKnowledgeManager):
         _handle_exceptions(response)
         return response.json()
 
-    def _delete_table(self, table: str) -> Dict[str, str]:
+    def _delete_table(self, *, table: str) -> Dict[str, str]:
         """
-        Delete the specified table, and all of its data from the knowledge store.
+        **Drop** an entire table *and* all its rows.
 
-        Args:
-            table (str): The name of the table to delete.
+        Parameters
+        ----------
+        table : str
+            Target table name.
 
-        Returns:
-            Dict[str, str]: Message explaining whether the table was deleted or not.
+        Returns
+        -------
+        dict[str, str]
+            Confirmation / error from the backend.
         """
         return unify.delete_context(f"{self._ctx}/{table}")
 
@@ -313,20 +338,24 @@ class KnowledgeManager(BaseKnowledgeManager):
         *,
         table: str,
         column_name: str,
-        column_type: str,
+        column_type: ColumnType | str,
     ) -> Dict[str, str]:
         """
-        Adds an empty column to the table, which is initialized with `None` values.
+        Add a **new, initially empty column** to *table*.
 
-        Args:
-            table (str): The name of the table to add the column to.
+        Parameters
+        ----------
+        table : str
+            Target table.
+        column_name : str
+            New column identifier.
+        column_type : ColumnType | str
+            Logical type, e.g. ``"str"``, ``"float"``, ``"datetime"``.
 
-            column_name (str): The name of the column to add.
-
-            column_type (str): The type of the column to add.
-
-        Returns:
-            Dict[str, str]: Message explaining whether the column was created or not.
+        Returns
+        -------
+        dict[str, str]
+            Backend response.
         """
         proj = unify.active_project()
         ctx = f"{self._ctx}/{table}"
@@ -349,17 +378,23 @@ class KnowledgeManager(BaseKnowledgeManager):
         equation: str,
     ) -> Dict[str, str]:
         """
-        Create a new column in the table, derived from the other columns in the table.
+        Create a **derived column** whose value is computed from other columns
+        via an arbitrary Python *equation*.
 
-        Args:
-            table (str): The name of the table to add the column to.
+        Parameters
+        ----------
+        table : str
+            Table to modify.
+        column_name : str
+            Name of the new derived column.
+        equation : str
+            Python expression evaluated per-row (column names appear as
+            variables).  Example: ``(x**2 + y**2) ** 0.5``.
 
-            column_name (str): The name of the column to add.
-
-            equation (str): The equation to use to derive the column. This is arbitrary Python code, with column names expressed as standard variables. For example, if a table includes two float columns `x` and `y`, then an equation of "(x**2 + y**2)**0.5" would be a valid, computing the length. Indexing is also supported `x[0]` for valid types `dict`, `list`, `str` etc., as is `len(x)`, casting to str via `str(x)` etc. The expression just needs to be valid Python with the column names as variables.
-
-        Returns:
-            Dict[str, str]: Message explaining whether the column was created or not.
+        Returns
+        -------
+        dict[str, str]
+            Backend acknowledgement.
         """
         url = f"{os.environ['UNIFY_BASE_URL']}/logs/derived"
         headers = {"Authorization": f"Bearer {API_KEY}"}
@@ -374,17 +409,26 @@ class KnowledgeManager(BaseKnowledgeManager):
         response = requests.request("POST", url, json=json_input, headers=headers)
         return response.json()
 
-    def _delete_column(self, *, table: str, column_name: str) -> Dict[str, str]:
+    def _delete_column(
+        self,
+        *,
+        table: str,
+        column_name: str,
+    ) -> Dict[str, str]:
         """
-        Delete column from the table, and all of the data.
+        **Remove** a column (and its data) from *table*.
 
-        Args:
-            table (str): The name of the table to delete the column from.
+        Parameters
+        ----------
+        table : str
+            Table name.
+        column_name : str
+            Column to drop.
 
-            column_name (str): The name of the column to delete.
-
-        Returns:
-            Dict[str, str]: Message explaining whether the column was deleted or not.
+        Returns
+        -------
+        dict[str, str]
+            Backend confirmation or error.
         """
         url = f"{os.environ['UNIFY_BASE_URL']}/logs?delete_empty_logs=True"
         headers = {"Authorization": f"Bearer {API_KEY}"}
@@ -406,17 +450,21 @@ class KnowledgeManager(BaseKnowledgeManager):
         new_name: str,
     ) -> Dict[str, str]:
         """
-        Rename the specified column.
+        **Rename** a column inside *table*.
 
-        Args:
-            table (str): The name of the table to rename the column in.
+        Parameters
+        ----------
+        table : str
+            Table identifier.
+        old_name : str
+            Existing column name.
+        new_name : str
+            Desired new name.
 
-            old_name (str): The name of the column to rename.
-
-            new_name (str): The new name for the column.
-
-        Returns:
-            Dict[str, str]: Message explaining whether the column was renamed or not.
+        Returns
+        -------
+        dict[str, str]
+            Backend response.
         """
         proj = unify.active_project()
         ctx = f"{self._ctx}/{table}"
@@ -434,17 +482,29 @@ class KnowledgeManager(BaseKnowledgeManager):
 
     # Add Data
 
-    def _add_data(self, *, table: str, data: List[Dict[str, Any]]) -> Dict[str, str]:
+    def _add_data(
+        self,
+        *,
+        table: str,
+        data: List[Dict[str, Any]],
+    ) -> Dict[str, str]:
         """
-        Add data to the specified table. Will automatically create new columns if any keys are not present in the table already.
+        **Insert** one or many rows into *table*.
 
-        Args:
-            table (str): The name of the table to add the data to.
+        Missing columns are auto-created (type inferred via JSON schema
+        rules) before the insert.
 
-            data (List[Dict[str, Any]]): The data to add to the table.
+        Parameters
+        ----------
+        table : str
+            Destination table.
+        data : list[dict[str, Any]]
+            Sequence of row dictionaries.
 
-        Returns:
-            Dict[str, str]: Message explaining whether the data was added or not.
+        Returns
+        -------
+        dict[str, str]
+            Backend confirmation.
         """
         return unify.create_logs(
             context=f"{self._ctx}/{table}",
@@ -473,40 +533,27 @@ class KnowledgeManager(BaseKnowledgeManager):
         source: str,
         text: str,
         k: int = 5,
-    ) -> List[unify.Log]:
+    ) -> Dict[str, List[Dict[str, Any]]]:
         """
-        Find data semantically similar to the provided text.
+        Perform a **semantic nearest-neighbour search** over one or more
+        tables using cosine similarity in embedding space.
 
-        Args:
-            tables (List[str]): The list of tables to search in.
-            source (str): The name of the column to perform the nearest search on.
-            text (str): The query text to find similar entries to.
-            k (int): The number of results to return.
+        Parameters
+        ----------
+        tables : list[str]
+            Candidate tables (each must contain *source* column).
+        source : str
+            Text column to embed (an auxiliary ``<source>_vec`` column is
+            auto-created if missing).
+        text : str
+            Query text to embed and compare against.
+        k : int, default ``5``
+            Number of nearest rows to return *per table*.
 
-        Returns:
-            List[Dict[str, Any]]: The k nearest entries from the given table  to the query text.
-
-        Usage:
-            # Suppose you have a table called "Articles" with a text column named "content",
-            # and you want to find the rows whose content is semantically closest to a query.
-            # For example, if the table has the following data:
-            # [
-            #     {"content": "The capital of France is Paris."},
-            #     {"content": "Berlin is the capital of Germany."},
-            #     {"content": "Paris is famous for the Eiffel Tower."},
-            # ]
-            # Then you can perform the nearest-neighbour search:
-            results = km._nearest(
-                tables=["Articles"],       # tables to search in
-                source="content",          # existing column to embed
-                text="What is the capital city of Germany?",
-                k=3,                         # number of similar rows to return
-            )
-
-            # The method returns a dictionary keyed by table name. Each value is a
-            # list of the `k` closest rows (ordered by similarity):
-            # >>> results["Articles"][0]
-            # {'content': 'Berlin is the capital of Germany.'}
+        Returns
+        -------
+        dict[str, list[dict[str, Any]]]
+            Mapping ``table_name → [row, …]`` sorted by ascending distance.
         """
         # ToDo: convert to map function
         results = dict()
@@ -537,19 +584,25 @@ class KnowledgeManager(BaseKnowledgeManager):
         tables: Optional[List[str]] = None,
     ) -> Dict[str, List[Dict[str, Any]]]:
         """
-        Apply the filter to all of the specified tables, and return the results following the filter.
+        **Filter search** across one or more tables using a Python boolean
+        expression.
 
-        Args:
-            filter (Optional[str]): Arbitrary Python logical expressions which evaluate to `bool`, with column names expressed as standard variables. For example, if a table includes two integer columns `x` and `y`, then a filter expression of "x > 3 and y < 2" would be a valid. Indexing is also supported `x[0]` for valid types `dict`, `list`, `str` etc., as is `len(x)`, casting to str via `str(x)` etc. The expression just needs to be valid Python with the column names as variables.
+        Parameters
+        ----------
+        filter : str | None, default ``None``
+            Row-level predicate (evaluated with column names as variables).
+            *None* returns all rows.
+        offset : int, default ``0``
+            Pagination offset (0-based).
+        limit : int, default ``100``
+            Maximum rows per table.
+        tables : list[str] | None
+            Subset of tables to scan; ``None`` → all tables.
 
-            offset (int): The offset to start the search from, in the paginated result.
-
-            limit (int): The number of rows to return, in the paginated result.
-
-            tables (Optional[List[str]]): The list of tables to search in. If not provided, all tables will be searched.
-
-        Returns:
-            Dict[str, List[Dict[str, Any]]]: A dictionary where keys are table names and values are lists, where each item in the list is a dict representing a row in the table.
+        Returns
+        -------
+        dict[str, list[dict[str, Any]]]
+            Mapping ``table_name → [row_dict, …]``.
         """
         if tables is None:
             tables = self._list_tables()
