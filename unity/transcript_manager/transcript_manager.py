@@ -302,6 +302,7 @@ class TranscriptManager(BaseTranscriptManager):
             filter=filter,
             offset=offset,
             limit=limit,
+            sorting={"timestamp": "descending"},
         )
         return [Message(**lg.entries) for lg in logs]
 
@@ -337,5 +338,6 @@ class TranscriptManager(BaseTranscriptManager):
             filter=filter,
             offset=offset,
             limit=limit,
+            sorting={"timestamp": "descending"},
         )
         return [MessageExchangeSummary(**lg.entries) for lg in logs]
