@@ -20,7 +20,6 @@ from typing import Callable, Dict, Optional
 from ..contact_manager.types.contact import Contact
 from .types.message import Message
 from .types.message_exchange_summary import MessageExchangeSummary
-from ..common.llm_helpers import SteerableToolHandle, class_api_overview
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Internal helpers
@@ -125,11 +124,6 @@ def build_ask_prompt(tools: Dict[str, Callable]) -> str:  # noqa: C901 – long,
         Message  = {json.dumps(Message.model_json_schema(), indent=4)}
 
         Summary  = {json.dumps(MessageExchangeSummary.model_json_schema(), indent=4)}
-
-        Classes
-        -------
-        SteerableToolHandle:
-        {class_api_overview(SteerableToolHandle)}
 
         Current UTC time: {_now()}.
     """,

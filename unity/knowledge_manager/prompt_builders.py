@@ -6,8 +6,6 @@ import textwrap
 from datetime import datetime, timezone
 from typing import Callable, Dict
 
-from ..common.llm_helpers import SteerableToolHandle, class_api_overview
-
 # ────────────────────────────────────────────────────────────────────────────
 # helpers
 # ────────────────────────────────────────────────────────────────────────────
@@ -87,10 +85,6 @@ def build_store_prompt(
         ---------------------
         {table_schemas_json}
 
-        SteerableToolHandle API
-        -----------------------
-        {class_api_overview(SteerableToolHandle)}
-
         Current UTC time: {_now()}.
         """,
     ).strip()
@@ -146,10 +140,6 @@ def build_retrieve_prompt(
         Current table schemas
         ---------------------
         {table_schemas_json}
-
-        SteerableToolHandle API
-        -----------------------
-        {class_api_overview(SteerableToolHandle)}
 
         Current UTC time: {_now()}.
         """,

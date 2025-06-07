@@ -7,7 +7,6 @@ from datetime import datetime, timezone
 from typing import Dict, Callable
 
 from .types.contact import Contact
-from ..common.llm_helpers import SteerableToolHandle, class_api_overview
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -73,9 +72,6 @@ def build_ask_prompt(tools: Dict[str, Callable]) -> str:
         Contact schema:
         {json.dumps(Contact.model_json_schema(), indent=4)}
 
-        SteerableToolHandle class:
-        {class_api_overview(SteerableToolHandle)}
-
         Current UTC time is {_now()}.
     """,
     ).strip()
@@ -121,9 +117,6 @@ def build_update_prompt(tools: Dict[str, Callable]) -> str:
 
         Contact schema:
         {json.dumps(Contact.model_json_schema(), indent=4)}
-
-        SteerableToolHandle class:
-        {class_api_overview(SteerableToolHandle)}
 
         Current UTC time is {_now()}.
     """,
