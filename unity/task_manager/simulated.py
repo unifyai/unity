@@ -9,13 +9,14 @@ import os
 
 import unify
 
-from datetime import datetime, timezone
+from typing import Callable, Dict
 
 from ..common.llm_helpers import (
     methods_to_tool_dict,
     start_async_tool_use_loop,
     ToolSpec,
 )
+from .prompt_builders import build_ask_prompt, build_request_prompt
 from ..contact_manager.simulated import SimulatedContactManager
 from ..transcript_manager.simulated import SimulatedTranscriptManager
 from ..knowledge_manager.simulated import SimulatedKnowledgeManager
@@ -137,20 +138,8 @@ class SimulatedTaskManager:
         """
         self._refresh_tool_dicts()
 
-        client = unify.AsyncUnify(
-            "o4-mini@openai",
-            cache=json.loads(os.environ.get("UNIFY_CACHE", "true")),
-            traced=json.loads(os.environ.get("UNIFY_TRACED", "true")),
-        )
-        client.set_system_message(
-            "You are the **TaskManager.ask** interface. "
-            "You have *read-only* access to tasks, knowledge, contacts & transcripts.\n"
-            f"(UTC now: {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S')})",
-        )
+        tools: Dict[str, Callable] = dict(self._passive_tools)
 
-        tools = dict(self._passive_tools)
-
-        # optional clarification helper
         if clarification_up_q is not None or clarification_down_q is not None:
 
             async def request_clarification(question: str) -> str:
@@ -160,6 +149,13 @@ class SimulatedTaskManager:
                 return await clarification_down_q.get()
 
             tools["request_clarification"] = request_clarification
+
+        client = unify.AsyncUnify(
+            "o4-mini@openai",
+            cache=json.loads(os.environ.get("UNIFY_CACHE", "true")),
+            traced=json.loads(os.environ.get("UNIFY_TRACED", "true")),
+        )
+        client.set_system_message(build_ask_prompt(tools))
 
         handle = start_async_tool_use_loop(
             client,
@@ -200,18 +196,7 @@ class SimulatedTaskManager:
         """
         self._refresh_tool_dicts()
 
-        client = unify.AsyncUnify(
-            "o4-mini@openai",
-            cache=json.loads(os.environ.get("UNIFY_CACHE", "true")),
-            traced=json.loads(os.environ.get("UNIFY_TRACED", "true")),
-        )
-        client.set_system_message(
-            "You are the **TaskManager.request** interface. "
-            "You have full read-write access to tasks, knowledge, contacts & transcripts.\n"
-            f"(UTC now: {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S')})",
-        )
-
-        tools = dict(self._active_tools)
+        tools: Dict[str, Callable] = dict(self._active_tools)
 
         if clarification_up_q is not None or clarification_down_q is not None:
 
@@ -222,6 +207,13 @@ class SimulatedTaskManager:
                 return await clarification_down_q.get()
 
             tools["request_clarification"] = request_clarification
+
+        client = unify.AsyncUnify(
+            "o4-mini@openai",
+            cache=json.loads(os.environ.get("UNIFY_CACHE", "true")),
+            traced=json.loads(os.environ.get("UNIFY_TRACED", "true")),
+        )
+        client.set_system_message(build_request_prompt(tools))
 
         handle = start_async_tool_use_loop(
             client,

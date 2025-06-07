@@ -9,7 +9,7 @@ import os
 
 import unify
 
-from datetime import datetime, timezone
+from typing import Callable, Dict, Optional, List, Any
 
 from ..common.llm_helpers import (
     methods_to_tool_dict,
@@ -27,7 +27,11 @@ from ..planner.base import BasePlanner
 from ..planner.tool_loop_planner import ToolLoopPlanner
 from ..task_scheduler.base import BaseTaskScheduler
 from ..task_scheduler.task_scheduler import TaskScheduler
-from .sys_msgs import ASK, REQUEST, START_TASK
+from .prompt_builders import (
+    build_ask_prompt,
+    build_request_prompt,
+    build_start_task_prompt,
+)
 
 
 class TaskManager:
@@ -198,31 +202,25 @@ class TaskManager:
         """
         self._refresh_tool_dicts()
 
-        client = unify.AsyncUnify(
-            "o4-mini@openai",
-            cache=json.loads(os.environ.get("UNIFY_CACHE", "true")),
-            traced=json.loads(os.environ.get("UNIFY_TRACED", "true")),
-        )
-        client.set_system_message(
-            ASK.replace(
-                "<datetime>",
-                datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC"),
-            ),
-        )
+        # ---- build live tool-dict BEFORE crafting the prompt ------------
+        tools: Dict[str, Callable] = dict(self._passive_tools)
 
-        tools = dict(self._passive_tools)
-
-        # optional clarification helper
         if clarification_up_q is not None or clarification_down_q is not None:
 
             async def request_clarification(question: str) -> str:
-                """Asks the user for clarification. Use this if the user's request is ambiguous."""
                 if clarification_up_q is None or clarification_down_q is None:
                     raise RuntimeError("Clarification queues missing.")
                 await clarification_up_q.put(question)
                 return await clarification_down_q.get()
 
             tools["request_clarification"] = request_clarification
+
+        client = unify.AsyncUnify(
+            "o4-mini@openai",
+            cache=json.loads(os.environ.get("UNIFY_CACHE", "true")),
+            traced=json.loads(os.environ.get("UNIFY_TRACED", "true")),
+        )
+        client.set_system_message(build_ask_prompt(tools))
 
         handle = start_async_tool_use_loop(
             client,
@@ -263,29 +261,24 @@ class TaskManager:
         """
         self._refresh_tool_dicts()
 
-        client = unify.AsyncUnify(
-            "o4-mini@openai",
-            cache=json.loads(os.environ.get("UNIFY_CACHE", "true")),
-            traced=json.loads(os.environ.get("UNIFY_TRACED", "true")),
-        )
-        client.set_system_message(
-            REQUEST.replace(
-                "<datetime>",
-                datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC"),
-            ),
-        )
-        tools = dict(self._active_tools)
+        tools: Dict[str, Callable] = dict(self._active_tools)
 
         if clarification_up_q is not None or clarification_down_q is not None:
 
             async def request_clarification(question: str) -> str:
-                """Asks the user for clarification. Use this if the user's request is ambiguous."""
                 if clarification_up_q is None or clarification_down_q is None:
                     raise RuntimeError("Clarification queues missing.")
                 await clarification_up_q.put(question)
                 return await clarification_down_q.get()
 
             tools["request_clarification"] = request_clarification
+
+        client = unify.AsyncUnify(
+            "o4-mini@openai",
+            cache=json.loads(os.environ.get("UNIFY_CACHE", "true")),
+            traced=json.loads(os.environ.get("UNIFY_TRACED", "true")),
+        )
+        client.set_system_message(build_request_prompt(tools))
 
         handle = start_async_tool_use_loop(
             client,
@@ -357,8 +350,6 @@ class TaskManager:
             ),
             _wrapped_start_task.__name__: _wrapped_start_task,
         }
-
-        # optional clarification helper
         if clarification_up_q is not None or clarification_down_q is not None:
 
             async def request_clarification(question: str) -> str:
@@ -377,12 +368,7 @@ class TaskManager:
             cache=json.loads(os.environ.get("UNIFY_CACHE", "true")),
             traced=json.loads(os.environ.get("UNIFY_TRACED", "true")),
         )
-        client.set_system_message(
-            START_TASK.replace(
-                "<datetime>",
-                datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC"),
-            ),
-        )
+        client.set_system_message(build_start_task_prompt(tools))
 
         handle = start_async_tool_use_loop(
             client,
