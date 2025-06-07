@@ -38,10 +38,8 @@ class _SimulatedTranscriptHandle(SteerableToolHandle):
         self._want_steps = _return_reasoning_steps
         self._clar_up_q = clarification_up_q
         self._clar_down_q = clarification_down_q
-        if (
-            _requests_clarification
-            and not clarification_up_q
-            or not clarification_down_q
+        if _requests_clarification and (
+            not clarification_up_q or not clarification_down_q
         ):
             raise ValueError(
                 "Clarification queues must be provided when _requests_clarification is True",
