@@ -8,6 +8,6 @@ class ColumnType(StrEnum):
     bool = "bool"
     dict = "dict"
     list = "list"
-    datetime = "datetime"
+    timestamp = "timestamp"
     date = "date"
     time = "time"
