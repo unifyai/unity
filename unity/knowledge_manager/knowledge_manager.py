@@ -1,7 +1,6 @@
 import os
 import asyncio
 import unify
-from datetime import datetime, timezone
 import functools
 import requests
 from typing import Any, Dict, List, Optional, Union
@@ -17,6 +16,7 @@ from ..common.llm_helpers import (
 )
 from ..helpers import _handle_exceptions
 from .base import BaseKnowledgeManager
+from .prompt_builders import build_store_prompt, build_retrieve_prompt
 
 API_KEY = os.environ["UNIFY_KEY"]
 
@@ -84,21 +84,11 @@ class KnowledgeManager(BaseKnowledgeManager):
         clarification_up_q: asyncio.Queue[str] | None = None,
         clarification_down_q: asyncio.Queue[str] | None = None,
     ) -> "SteerableToolHandle":
-        from unity.knowledge_manager.sys_msgs import STORE
 
         client = unify.AsyncUnify(
             "o4-mini@openai",
             cache=json.loads(os.environ.get("UNIFY_CACHE", "true")),
             traced=json.loads(os.environ.get("UNIFY_TRACED", "true")),
-        )
-        client.set_system_message(
-            STORE.replace(
-                "<table_schemas>",
-                json.dumps(self._list_tables(), indent=4),
-            ).replace(
-                "<datetime>",
-                datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC"),
-            ),
         )
 
         # ── 1.  Expose tools + a *dynamic* request_clarification helper ──
@@ -119,6 +109,15 @@ class KnowledgeManager(BaseKnowledgeManager):
             tools["request_clarification"] = request_clarification
 
         # ── 2.  Launch the interactive tool-use loop ──────────────────────
+        # Add the system message with all tools
+        table_schemas_json = json.dumps(self._list_tables(), indent=4)
+        client.set_system_message(
+            build_store_prompt(
+                tools=tools,
+                table_schemas_json=table_schemas_json,
+            ),
+        )
+
         handle = start_async_tool_use_loop(
             client,
             text,
@@ -148,21 +147,10 @@ class KnowledgeManager(BaseKnowledgeManager):
         clarification_up_q: asyncio.Queue[str] | None = None,
         clarification_down_q: asyncio.Queue[str] | None = None,
     ) -> "SteerableToolHandle":
-        from unity.knowledge_manager.sys_msgs import RETRIEVE
-
         client = unify.AsyncUnify(
             "o4-mini@openai",
             cache=json.loads(os.environ.get("UNIFY_CACHE", "true")),
             traced=json.loads(os.environ.get("UNIFY_TRACED", "true")),
-        )
-        client.set_system_message(
-            RETRIEVE.replace(
-                "<table_schemas>",
-                json.dumps(self._list_tables(), indent=4),
-            ).replace(
-                "<datetime>",
-                datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC"),
-            ),
         )
 
         # ── 1.  Expose tools + a *dynamic* request_clarification helper ──
@@ -183,6 +171,14 @@ class KnowledgeManager(BaseKnowledgeManager):
             tools["request_clarification"] = request_clarification
 
         # ── 2.  Launch the interactive tool-use loop ──────────────────────
+        # Add the system message with all tools
+        table_schemas_json = json.dumps(self._list_tables(), indent=4)
+        client.set_system_message(
+            build_retrieve_prompt(
+                tools=tools,
+                table_schemas_json=table_schemas_json,
+            ),
+        )
         handle = start_async_tool_use_loop(
             client,
             text,

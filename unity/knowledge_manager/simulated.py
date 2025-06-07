@@ -10,7 +10,7 @@ from typing import List, Dict, Any
 import unify
 from .base import BaseKnowledgeManager
 from ..common.llm_helpers import SteerableToolHandle
-from .sys_msgs import STORE, RETRIEVE
+from .prompt_builders import build_store_prompt, build_retrieve_prompt
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -144,14 +144,19 @@ class SimulatedKnowledgeManager(BaseKnowledgeManager):
             traced=json.loads(os.getenv("UNIFY_TRACED", "true")),
             stateful=True,
         )
+        # Build *empty* reference prompts (no tools, empty schema) purely for flavour.
+        store_ref = build_store_prompt({}, table_schemas_json="{}")
+        retrieve_ref = build_retrieve_prompt({}, table_schemas_json="{}")
+
         self._llm.set_system_message(
             "You are a *simulated* knowledge-base manager. "
-            "No real database exists – you should fabricate plausible tables, "
-            "columns and rows and maintain a consistent story across turns.\n\n"
-            "As a reference, the system messages for the *real* knowledge-manager 'store' and 'retrieve' methods are as follows."
-            "You do not have access to any real tools, so you should just create a final answer to the storage/retireval request. "
-            f"\n\n'store' system message:\n{STORE}\n\n"
-            f"\n\n'retrieve' system message:\n{RETRIEVE}\n\n"
+            "There is no real database; invent plausible tables, columns and rows "
+            "and keep your story consistent across turns.\n\n"
+            "As a reference, the (tool-enabled) system messages for the *real* "
+            "knowledge-manager are pasted below. **You do not actually have access "
+            "to any tools – just produce the final answer.**\n\n"
+            f"'store' system message:\n{store_ref}\n\n"
+            f"'retrieve' system message:\n{retrieve_ref}\n\n"
             f"Back-story: {self._description}",
         )
 
