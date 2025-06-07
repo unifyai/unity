@@ -213,6 +213,7 @@ class SimulatedTaskScheduler(BaseTaskScheduler):
         _return_reasoning_steps: bool = False,
         log_tool_steps: bool = False,  # Ignored – we do not expose tools
         parent_chat_context: list[dict] | None = None,  # Unused – synthetic
+        _requests_clarification: bool = False,
         clarification_up_q: asyncio.Queue[str] | None = None,
         clarification_down_q: asyncio.Queue[str] | None = None,
     ) -> SteerableToolHandle:
@@ -229,6 +230,7 @@ class SimulatedTaskScheduler(BaseTaskScheduler):
             instruction,
             mode="ask",
             _return_reasoning_steps=_return_reasoning_steps,
+            _requests_clarification=_requests_clarification,
             clarification_up_q=clarification_up_q,
             clarification_down_q=clarification_down_q,
         )
@@ -244,6 +246,7 @@ class SimulatedTaskScheduler(BaseTaskScheduler):
         _return_reasoning_steps: bool = False,
         log_tool_steps: bool = False,  # Ignored – no tools here
         parent_chat_context: list[dict] | None = None,
+        _requests_clarification: bool = False,
         clarification_up_q: asyncio.Queue[str] | None = None,
         clarification_down_q: asyncio.Queue[str] | None = None,
     ) -> SteerableToolHandle:
@@ -260,6 +263,7 @@ class SimulatedTaskScheduler(BaseTaskScheduler):
             instruction,
             mode="update",
             _return_reasoning_steps=_return_reasoning_steps,
+            _requests_clarification=_requests_clarification,
             clarification_up_q=clarification_up_q,
             clarification_down_q=clarification_down_q,
         )
@@ -273,6 +277,7 @@ class SimulatedTaskScheduler(BaseTaskScheduler):
         task_id: int,
         *,
         parent_chat_context: list[dict] | None = None,
+        _requests_clarification: bool = False,
         clarification_up_q: asyncio.Queue[str] | None = None,
         clarification_down_q: asyncio.Queue[str] | None = None,
     ) -> SteerableToolHandle:
@@ -285,6 +290,7 @@ class SimulatedTaskScheduler(BaseTaskScheduler):
         return self._planner.plan(
             task_description,
             parent_chat_context=parent_chat_context,
+            _requests_clarification=_requests_clarification,
             clarification_up_q=clarification_up_q,
             clarification_down_q=clarification_down_q,
         )

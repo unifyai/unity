@@ -176,7 +176,8 @@ class SimulatedKnowledgeManager(BaseKnowledgeManager):
         text: str,
         *,
         _return_reasoning_steps: bool = False,
-        parent_chat_context: list[dict] | None = None,  # unused – we keep state
+        parent_chat_context: list[dict] | None = None,
+        _requests_clarification: bool = False,
         clarification_up_q: asyncio.Queue[str] | None = None,
         clarification_down_q: asyncio.Queue[str] | None = None,
     ) -> SteerableToolHandle:
@@ -192,6 +193,7 @@ class SimulatedKnowledgeManager(BaseKnowledgeManager):
             self._llm,
             instruction,
             _return_reasoning_steps=_return_reasoning_steps,
+            _requests_clarification=_requests_clarification,
             clarification_up_q=clarification_up_q,
             clarification_down_q=clarification_down_q,
         )
@@ -206,6 +208,7 @@ class SimulatedKnowledgeManager(BaseKnowledgeManager):
         *,
         _return_reasoning_steps: bool = False,
         parent_chat_context: list[dict] | None = None,
+        _requests_clarification: bool = False,
         clarification_up_q: asyncio.Queue[str] | None = None,
         clarification_down_q: asyncio.Queue[str] | None = None,
     ) -> SteerableToolHandle:
@@ -221,6 +224,7 @@ class SimulatedKnowledgeManager(BaseKnowledgeManager):
             self._llm,
             text,
             _return_reasoning_steps=_return_reasoning_steps,
+            _requests_clarification=_requests_clarification,
             clarification_up_q=clarification_up_q,
             clarification_down_q=clarification_down_q,
         )
