@@ -6,6 +6,8 @@ import textwrap
 from datetime import datetime, timezone
 from typing import Callable, Dict
 
+from .types import column_type_schema
+
 # ────────────────────────────────────────────────────────────────────────────
 # helpers
 # ────────────────────────────────────────────────────────────────────────────
@@ -81,6 +83,10 @@ def build_store_prompt(
             "",
             usage_examples_placeholder,
             "",
+            "ColumnType Schema",
+            "-----------------",
+            json.dumps(column_type_schema, indent=4),
+            "",
             "Current table schemas",
             "---------------------",
             table_schemas_json,
@@ -136,6 +142,10 @@ def build_retrieve_prompt(
             sig_json,
             "",
             usage_examples_placeholder,
+            "",
+            "ColumnType Schema",
+            "-----------------",
+            json.dumps(column_type_schema, indent=4),
             "",
             "Current table schemas",
             "---------------------",

@@ -11,3 +11,11 @@ class ColumnType(StrEnum):
     timestamp = "timestamp"
     date = "date"
     time = "time"
+
+
+column_type_schema = {
+    "title": "ColumnType",
+    "type": "string",
+    "enum": [member.value for member in ColumnType],
+    "description": "Allowed types for a column.",
+}
