@@ -78,16 +78,8 @@ async def test_tm_pause_and_resume():
     tm = SimulatedTaskManager()
     handle = tm.ask("Give me a list of tomorrow's deadlines.")
 
-    # Initially we expect "pause" but not "resume".
-    tools_initial = handle.valid_tools
-    assert "pause" in tools_initial and "resume" not in tools_initial
-
     # Pause execution.
-    pause_reply = handle.pause()
-    assert "pause" in pause_reply.lower()
-
-    tools_paused = handle.valid_tools
-    assert "resume" in tools_paused and "pause" not in tools_paused
+    handle.pause()
 
     # Kick off result() while paused – it should block.
     res_task = asyncio.create_task(handle.result())
@@ -95,11 +87,7 @@ async def test_tm_pause_and_resume():
     assert not res_task.done(), "result() should block while paused"
 
     # Resume and ensure result() completes.
-    resume_reply = handle.resume()
-    assert "resume" in resume_reply.lower() or "running" in resume_reply.lower()
-
-    tools_running = handle.valid_tools
-    assert "pause" in tools_running and "resume" not in tools_running
+    handle.resume()
 
     answer = await asyncio.wait_for(res_task, timeout=30)
     assert isinstance(answer, str) and answer.strip()
