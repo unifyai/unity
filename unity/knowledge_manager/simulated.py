@@ -27,6 +27,7 @@ class _SimulatedKnowledgeHandle(SteerableToolHandle):
         initial_text: str,
         *,
         _return_reasoning_steps: bool,
+        _requests_clarification: bool = False,
         clarification_up_q: asyncio.Queue[str] | None,
         clarification_down_q: asyncio.Queue[str] | None,
     ):
@@ -35,7 +36,15 @@ class _SimulatedKnowledgeHandle(SteerableToolHandle):
         self._want_steps = _return_reasoning_steps
         self._clar_up_q = clarification_up_q
         self._clar_down_q = clarification_down_q
-        self._needs_clar = self._clar_up_q is not None and self._clar_down_q is not None
+        if (
+            _requests_clarification
+            and not clarification_up_q
+            or not clarification_down_q
+        ):
+            raise ValueError(
+                "Clarification queues must be provided when _requests_clarification is True",
+            )
+        self._needs_clar = _requests_clarification
 
         # fire clarification question immediately if queues supplied
         if self._needs_clar:
