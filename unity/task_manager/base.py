@@ -1,0 +1,118 @@
+"""
+*Public* contract for every **TaskManager** implementation.
+
+The top-level manager unifies four sub-domains
+
+• tasks (TaskScheduler)  • contacts  • transcripts  • knowledge-base
+
+and it exposes exactly **three** conversational entry-points:
+
+1. `ask`        – read-only Q&A across all domains
+2. `request`    – read-write mutations (plus everything in *ask*)
+3. `start_task` – specialised surface for activating a queued task
+"""
+
+from __future__ import annotations
+
+import asyncio
+from abc import ABC, abstractmethod
+from typing import Any, Dict, List, Optional
+
+from ..common.llm_helpers import SteerableToolHandle
+
+
+class BaseTaskManager(ABC):
+    # ------------------------------------------------------------------ #
+    #  ask – read-only                                                   #
+    # ------------------------------------------------------------------ #
+    @abstractmethod
+    def ask(
+        self,
+        text: str,
+        *,
+        _return_reasoning_steps: bool = False,
+        log_tool_steps: bool = False,
+        parent_chat_context: Optional[List[Dict[str, Any]]] = None,
+        clarification_up_q: Optional[asyncio.Queue[str]] = None,
+        clarification_down_q: Optional[asyncio.Queue[str]] = None,
+    ) -> SteerableToolHandle:
+        """
+        Answer a **read-only question** that may reference tasks, contacts,
+        transcripts *or* stored knowledge.
+
+        Parameters
+        ----------
+        text : str
+            The exact user question (natural language).
+        _return_reasoning_steps : bool, default ``False``
+            When *True*, the handle's ``.result()`` yields
+            ``(assistant_answer, hidden_messages)`` instead of just the answer.
+        log_tool_steps : bool, default ``False``
+            Emit server-side logs for each internal tool call (debugging aid).
+        parent_chat_context : list[dict] | None
+            Optional **read-only** context inherited from a parent conversation
+            and made visible to the inner tool loop.
+        clarification_up_q / clarification_down_q : asyncio.Queue[str] | None
+            Two-way channels enabling interactive clarification questions:
+            the LLM places a question on *up* and blocks waiting for the human
+            answer on *down*.
+
+        Returns
+        -------
+        SteerableToolHandle
+            Await ``handle.result()`` for the final answer or steer execution
+            mid-flight via ``pause()``, ``resume()``, ``interject()`` or
+            ``stop()``.
+        """
+
+    # ------------------------------------------------------------------ #
+    #  request – read **and** write                                      #
+    # ------------------------------------------------------------------ #
+    @abstractmethod
+    def request(
+        self,
+        text: str,
+        *,
+        _return_reasoning_steps: bool = False,
+        log_tool_steps: bool = False,
+        parent_chat_context: Optional[List[Dict[str, Any]]] = None,
+        clarification_up_q: Optional[asyncio.Queue[str]] = None,
+        clarification_down_q: Optional[asyncio.Queue[str]] = None,
+    ) -> SteerableToolHandle:
+        """
+        Execute a **mutation request** – create / edit / delete tasks, contacts
+        or knowledge – and return a steerable LLM handle.
+
+        All parameters & return value mirror :py:meth:`ask`.
+        """
+
+    # ------------------------------------------------------------------ #
+    #  start_task – activate one queued task                             #
+    # ------------------------------------------------------------------ #
+    @abstractmethod
+    def start_task(
+        self,
+        text: str,
+        *,
+        _return_reasoning_steps: bool = False,
+        log_tool_steps: bool = False,
+        parent_chat_context: Optional[List[Dict[str, Any]]] = None,
+        clarification_up_q: Optional[asyncio.Queue[str]] = None,
+        clarification_down_q: Optional[asyncio.Queue[str]] = None,
+    ) -> SteerableToolHandle:
+        """
+        Promote a queued / scheduled task to the **active** state based on a
+        natural-language instruction.
+
+        Parameters
+        ----------
+        text : str
+            User instruction, e.g. *"Start the database-migration task now"*.
+        Other keyword arguments
+            Same semantics as in :py:meth:`ask`.
+
+        Returns
+        -------
+        SteerableToolHandle
+            Handle driving the subsequent **task-specific** dialogue.
+        """
