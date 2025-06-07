@@ -71,23 +71,23 @@ def build_store_prompt(
         """,
     ).strip()
 
-    return textwrap.dedent(
-        f"""
-        {core_instructions}
-
-        Tools (name → argspec)
-        ---------------------
-        {sig_json}
-
-        {usage_examples_placeholder}
-
-        Current table schemas
-        ---------------------
-        {table_schemas_json}
-
-        Current UTC time: {_now()}.
-        """,
-    ).strip()
+    return "\n".join(
+        [
+            core_instructions,
+            "",
+            "Tools (name → argspec)",
+            "---------------------",
+            sig_json,
+            "",
+            usage_examples_placeholder,
+            "",
+            "Current table schemas",
+            "---------------------",
+            table_schemas_json,
+            "",
+            f"Current UTC time: {_now()}.",
+        ],
+    )
 
 
 def build_retrieve_prompt(
@@ -127,20 +127,20 @@ def build_retrieve_prompt(
         """,
     ).strip()
 
-    return textwrap.dedent(
-        f"""
-        {core_instructions}
-
-        Tools (name → argspec)
-        ---------------------
-        {sig_json}
-
-        {usage_examples_placeholder}
-
-        Current table schemas
-        ---------------------
-        {table_schemas_json}
-
-        Current UTC time: {_now()}.
-        """,
-    ).strip()
+    return "\n".join(
+        [
+            core_instructions,
+            "",
+            "Tools (name → argspec)",
+            "---------------------",
+            sig_json,
+            "",
+            usage_examples_placeholder,
+            "",
+            "Current table schemas",
+            "---------------------",
+            table_schemas_json,
+            "",
+            f"Current UTC time: {_now()}.",
+        ],
+    )
