@@ -332,25 +332,37 @@ class TaskScheduler(BaseTaskScheduler):
         priority: Priority = Priority.normal,
     ) -> int:
         """
-        Create a new task and – if appropriate – insert it into the
-        runnable queue.
+        Create a **brand-new task** and, depending on its attributes, place it
+        into the appropriate queue or scheduled slot.
 
-        Behaviour
-        ---------
-        • If *status* is **omitted** the method decides:
-            – **scheduled**  when a schedule.start_time > now.
-            – **queued**     otherwise.
+        Parameters
+        ----------
+        name : str
+            Short, human-friendly label (unique across all tasks).
+        description : str
+            Detailed free-text explanation of what should be done.
+        status : Status | None, default ``None``
+            Desired initial lifecycle state.  When omitted the method infers
+            one based on *schedule* and current queue status.
+        schedule : Schedule | None, default ``None``
+            Optional explicit schedule (start-time plus linkage pointers).
+        deadline : str | None, default ``None``
+            ISO-8601 timestamp (UTC) by which the task *must* be finished.
+        repeat : list[RepeatPattern] | None
+            Zero or more recurrence rules for automatically re-instantiating
+            the task.
+        priority : Priority, default :pyattr:`Priority.normal`
+            Relative importance used for queue ordering.
 
-        • If the caller supplies an explicit *status* we validate it
-
-        • New queued tasks are appended (tail) by re-using `_update_task_queue`.
-
-        • Tasks whose `start_time` is in the future are **not** placed
-          in the active queue.
+        Returns
+        -------
+        int
+            The **integer** ``task_id`` assigned to the new task.
 
         Raises
         ------
-        ValueError for invalid combinations or duplicate name/description.
+        ValueError
+            On invalid field combinations or uniqueness violations.
         """
         # ----------------  helper: iso-8601 → datetime  ---------------- #
         from datetime import datetime, timezone
@@ -468,19 +480,23 @@ class TaskScheduler(BaseTaskScheduler):
 
     # Delete
 
-    def _delete_task(
-        self,
-        *,
-        task_id: int,
-    ) -> Dict[str, str]:
+    def _delete_task(self, *, task_id: int) -> None:
         """
-        Deletes the specified task from the task list.
+        Permanently **remove** a task from storage.
 
-        Args:
-            task_id (int): The id of the task to delete.
+        Parameters
+        ----------
+        task_id : int
+            Identifier of the task to delete.
 
-        Returns:
-            Dict[str, str]: Whether the task was deleted or not.
+        Returns
+        -------
+        None
+
+        Raises
+        ------
+        RuntimeError
+            If the task is currently *active* (active tasks cannot be deleted).
         """
         self._ensure_not_active_task(task_id)
         # ToDo: replace with single API call once this task [https://app.clickup.com/t/86c3c1awp] is done
@@ -494,10 +510,20 @@ class TaskScheduler(BaseTaskScheduler):
 
     def _cancel_tasks(self, task_ids: List[int]) -> None:
         """
-        Cancel the specified tasks.
+        Mark one or many tasks as **cancelled** (non-recoverable terminal
+        state).
 
-        Args:
-            task_ids (List[int]): The ids of the tasks to cancel.
+        Parameters
+        ----------
+        task_ids : list[int]
+            Identifiers of the tasks to cancel.
+
+        Raises
+        ------
+        AssertionError
+            If any referenced task is already *completed*.
+        RuntimeError
+            When trying to cancel the currently *active* task.
         """
         self._ensure_not_active_task(task_ids)
         completed_tasks = self._search_tasks(filter="status == 'completed'")
@@ -627,21 +653,28 @@ class TaskScheduler(BaseTaskScheduler):
         new: List[int],
     ) -> None:
         """
-        Re-write the queue so that its order matches the new order.
+        **Re-link** the runnable queue so its order matches *new*.
 
-        Args:
-            original (List[int]): The current queue order, used for validation.
-            new (List[int]): The new queue order, which may include extra task IDs.
+        Parameters
+        ----------
+        original : list[int]
+            Snapshot of the *current* queue order.  Used for sanity checks.
+        new : list[int]
+            Desired queue order (may include *additional* task-ids to be
+            inserted; removal is **not** permitted – cancel tasks first).
 
-        * `original` must describe the *current* queue order; we use it
-          only for validation.
-        * `new` may be a pure re-ordering or may also include **extra**
-          task-ids (inserting new tasks). Removing tasks is *not*
-          allowed here – cancel them instead.
+        Behaviour
+        ---------
+        Updates every affected task's ``schedule`` field so that the queue
+        remains a well-formed doubly-linked list.  The head stores
+        ``prev_task=None`` and the tail ``next_task=None``.
 
-        For every task we update its ``schedule`` field so that the linked
-        list stays consistent, using `None` for the head's `prev_task`
-        and the tail's `next_task`.
+        Raises
+        ------
+        AssertionError
+            On duplicates, attempted removals or other invariants breaches.
+        RuntimeError
+            If the active task appears in either *original* or *new*.
         """
         # The active task may **never** be reordered or touched here.
         self._ensure_not_active_task(original)
@@ -724,14 +757,19 @@ class TaskScheduler(BaseTaskScheduler):
         new_name: str,
     ) -> Dict[str, str]:
         """
-        Update the name of the specified task.
+        Change the **name** (title) of an existing task.
 
-        Args:
-            task_id (int): The id of the task to update.
-            new_name (str): The new name of the task.
+        Parameters
+        ----------
+        task_id : int
+            Identifier of the task to rename.
+        new_name : str
+            New unique name.
 
-        Returns:
-            Dict[str, str]: Whether the task was updated or not.
+        Returns
+        -------
+        dict[str, str]
+            Confirmation payload from :pyfunc:`unify.update_logs`.
         """
         self._ensure_not_active_task(task_id)
         # ToDo: replace with single API call once this task [https://app.clickup.com/t/86c3c1y63] is done
@@ -750,14 +788,25 @@ class TaskScheduler(BaseTaskScheduler):
         new_description: str,
     ) -> Dict[str, str]:
         """
-        Update the description for the specified task.
+        Replace the **description** of an existing task.
 
-        Args:
-            task_id (int): The id of the task to update.
-            new_description (str): The new description for the task.
+        Parameters
+        ----------
+        task_id : int
+            Identifier of the task to modify.
+        new_description : str
+            Fresh free-text description (no length limit, Markdown allowed).
 
-        Returns:
-            Dict[str, str]: Whether the task was updated or not.
+        Returns
+        -------
+        dict[str, str]
+            Confirmation payload as returned by :pyfunc:`unify.update_logs`.
+
+        Raises
+        ------
+        RuntimeError
+            If the referenced task is currently *active* – active tasks are
+            immutable from the scheduler's perspective.
         """
         self._ensure_not_active_task(task_id)
         # ToDo: replace with single API call once this task [https://app.clickup.com/t/86c3c1y63] is done
@@ -779,14 +828,31 @@ class TaskScheduler(BaseTaskScheduler):
         allow_active: bool = False,
     ) -> Dict[str, str]:
         """
-        Update the status for the specified task(s).
+        Change the **lifecycle status** of one or many tasks.
 
-        Args:
-            task_ids (Union[int, List[int]]): The id or ids of the tasks to update.
-            new_status (str): The new status for the task(s).
+        Parameters
+        ----------
+        task_ids : int | list[int]
+            One or multiple task identifiers to update.
+        new_status : str
+            Target status value.  Must be a valid member of
+            :class:`~task_scheduler.types.status.Status`.
+        allow_active : bool, default ``False``
+            Guard-rail – when *False* the method refuses to set the status to
+            ``'active'`` or to touch the *currently* active task.  Internal
+            helpers (e.g. *start_task*) pass *True* when they *really* need to.
 
-        Returns:
-            Dict[str, str]: Whether the task(s) were updated or not.
+        Returns
+        -------
+        dict[str, str]
+            Confirmation object from :pyfunc:`unify.update_logs`.
+
+        Raises
+        ------
+        ValueError
+            If *new_status* is ``'active'`` while *allow_active* is ``False``.
+        RuntimeError
+            When trying to edit the live active task without permission.
         """
         # 1. Forbid making anything *active* (unless explicitly allowed)
         if str(new_status) == Status.active.value and not allow_active:
@@ -815,13 +881,29 @@ class TaskScheduler(BaseTaskScheduler):
         new_start_at: datetime,
     ) -> Dict[str, str]:
         """
-        Update the scheduled **start_time** for the specified task.
+        Set or change a task's **scheduled start-time** (UTC).
 
-        This sets / overwrites the ``schedule['start_time']`` field while
-        preserving any existing ``prev_task`` / ``next_task`` linkage.
-        If the task did not have a schedule previously we create one with
-        ``prev_task`` / ``next_task`` set to ``None`` so that the task is
-        *not* implicitly inserted into the runnable queue.
+        Parameters
+        ----------
+        task_id : int
+            Identifier of the task to reschedule.
+        new_start_at : datetime
+            Exact moment the task becomes *eligible* for activation.  A naive
+            datetime is assumed to be UTC; otherwise the value is preserved
+            verbatim.
+
+        Returns
+        -------
+        dict[str, str]
+            Confirmation payload from :pyfunc:`unify.update_logs`.
+
+        Notes
+        -----
+        * The method **preserves** any existing queue linkage
+          (``prev_task`` / ``next_task``).
+        * When the task previously had *no* schedule, a minimal one is
+          created with linkage fields set to ``None`` (task is *not*
+          inserted into the runnable queue automatically).
         """
         self._ensure_not_active_task(task_id)
         log_id = self._get_logs_by_task_ids(task_ids=task_id)
@@ -857,14 +939,20 @@ class TaskScheduler(BaseTaskScheduler):
         new_deadline: datetime,
     ) -> Dict[str, str]:
         """
-        Update the deadline for the specified task.
+        Adjust a task's **hard deadline** (UTC ISO-8601 timestamp).
 
-        Args:
-            task_id (int): The id of the task to update.
-            new_deadline (datetime): The new deadline for the task.
+        Parameters
+        ----------
+        task_id : int
+            Task identifier.
+        new_deadline : datetime
+            Absolute "must-finish-by" moment.  Naive datetimes are coerced to
+            UTC; timezone-aware values are stored unchanged.
 
-        Returns:
-            Dict[str, str]: Whether the task was updated or not.
+        Returns
+        -------
+        dict[str, str]
+            Confirmation from :pyfunc:`unify.update_logs`.
         """
         self._ensure_not_active_task(task_id)
         log_id = self._get_logs_by_task_ids(task_ids=task_id)
@@ -882,14 +970,20 @@ class TaskScheduler(BaseTaskScheduler):
         new_repeat: List[RepeatPattern],
     ) -> Dict[str, str]:
         """
-        Update the repeat pattern for the specified task.
+        Replace the **recurrence rules** associated with a task.
 
-        Args:
-            task_id (int): The id of the task to update.
-            new_repeat (List[RepeatPattern]): The new repeat patterns for the task.
+        Parameters
+        ----------
+        task_id : int
+            Identifier of the task to modify.
+        new_repeat : list[RepeatPattern]
+            Complete list of replacement recurrence definitions.  Pass an
+            empty list to *disable* repetition.
 
-        Returns:
-            Dict[str, str]: Whether the task was updated or not.
+        Returns
+        -------
+        dict[str, str]
+            Confirmation payload from :pyfunc:`unify.update_logs`.
         """
         self._ensure_not_active_task(task_id)
         log_id = self._get_logs_by_task_ids(task_ids=task_id)
@@ -907,14 +1001,20 @@ class TaskScheduler(BaseTaskScheduler):
         new_priority: Priority,
     ) -> Dict[str, str]:
         """
-        Update the priority for the specified task.
+        Set a task's **priority** (relative importance cue for queueing).
 
-        Args:
-            task_id (int): The id of the task to update.
-            new_priority (Priority): The new priority for the task.
+        Parameters
+        ----------
+        task_id : int
+            Task identifier.
+        new_priority : Priority
+            One of the enumeration values from
+            :class:`~task_scheduler.types.priority.Priority`.
 
-        Returns:
-            Dict[str, str]: Whether the task was updated or not.
+        Returns
+        -------
+        dict[str, str]
+            Confirmation payload from :pyfunc:`unify.update_logs`.
         """
         self._ensure_not_active_task(task_id)
         log_id = self._get_logs_by_task_ids(task_ids=task_id)
@@ -947,14 +1047,20 @@ class TaskScheduler(BaseTaskScheduler):
         k: int = 5,
     ) -> List[Dict[str, Any]]:
         """
-        Find tasks semantically similar to the provided text. This is *always* the best option if you want to search based on the *topic* on *concept* of the task, without resorting to brittle string-based matching provided by the 'filter' tool.
+        Return the **k** tasks whose *name + description* embeddings are
+        *closest* (cosine distance) to the supplied *text*.
 
-        Args:
-            text (str): The text to find similar tasks to.
-            k (int): The number of similar tasks to return.
+        Parameters
+        ----------
+        text : str
+            Query text from which to derive the embedding vector.
+        k : int, default ``5``
+            Number of neighbours to return.
 
-        Returns:
-            List[Dict[str, Any]]: A list where each item in the list is a dict representing a row in the table.
+        Returns
+        -------
+        list[dict]
+            Log-entry dictionaries of the closest tasks (ascending distance).
         """
         self._bootstrap_embeddings()
         return [
@@ -976,18 +1082,24 @@ class TaskScheduler(BaseTaskScheduler):
         limit: int = 100,
     ) -> List[Dict[str, Any]]:
         """
-        Apply the filter to the the list of tasks, and return the results following the filter. If no filter is applied, then *all* tasks are returned.
+        Run a **column-wise Python expression** (`filter`) against every task
+        and return the matching rows.
 
-        Args:
-            filter (Optional[str]): Arbitrary Python logical expressions which evaluate to `bool`, with column names expressed as standard variables.
-            The expression **needs** to be a valid Python expression (ie. it should be able to be evaluated by the python interpreter) with the column names as variables.
-            Supported data types are: str, int, float, bool, list, dict, datetime, time, timedelta, None (and their associated methods).
-            Object notation is not supported (eg: a.b). Use index notation instead (a['b'], a[0], etc..).
-            offset (int): The offset to start the search from, in the paginated result.
-            limit (int): The number of rows to return, in the paginated result.
+        Parameters
+        ----------
+        filter : str | None, default ``None``
+            Any valid Python boolean expression referencing column names as
+            variables, e.g. ``"status == 'queued' and priority == 'high'"``.
+            *None* selects **all** tasks.
+        offset : int, default ``0``
+            Zero-based row offset for pagination.
+        limit : int, default ``100``
+            Maximum number of rows to return.
 
-        Returns:
-            List[Dict[str, Any]]: A list where each item in the list is a dict representing a row in the table.
+        Returns
+        -------
+        list[dict]
+            Entries for each matching task (raw JSON-serialisable dictionaries).
         """
         return [
             log.entries
