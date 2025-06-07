@@ -69,7 +69,7 @@ def test_delete_table():
     assert "MyTable" in tables
 
     # delete
-    knowledge_manager._delete_table("MyTable")
+    knowledge_manager._delete_table(table="MyTable")
     tables = knowledge_manager._list_tables()
     assert len(tables) == 0
 
