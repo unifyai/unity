@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import inspect
 import json
-import textwrap
 from datetime import datetime, timezone
 from typing import Dict, Callable
 
@@ -38,24 +37,24 @@ def build_ask_prompt(tools: Dict[str, Callable]) -> str:
     sig_json = json.dumps(_sig_dict(tools), indent=4)
     usage_examples = "[Add usage examples here]"  # placeholder
 
-    return textwrap.dedent(
-        f"""
-        You are an assistant specialising in **answering questions about the task list**.
-        Interact with the read-only tools provided (see below) to gather whatever
-        information you need, *step-by-step*.  When you have everything, respond
-        with a concise, final answer.
-
-        Tools (name → argspec):
-        {sig_json}
-
-        {usage_examples}
-
-        Task schema:
-        {json.dumps(Task.model_json_schema(), indent=4)}
-
-        Current UTC time is {_now()}.
-        """,
-    ).strip()
+    return "\n".join(
+        [
+            "You are an assistant specialising in **answering questions about the task list**.",
+            "Interact with the read-only tools provided (see below) to gather whatever",
+            "information you need, *step-by-step*.  When you have everything, respond",
+            "with a concise, final answer.",
+            "",
+            "Tools (name → argspec):",
+            sig_json,
+            "",
+            usage_examples,
+            "",
+            "Task schema:",
+            json.dumps(Task.model_json_schema(), indent=4),
+            "",
+            f"Current UTC time is {_now()}.",
+        ],
+    )
 
 
 def build_update_prompt(tools: Dict[str, Callable]) -> str:
@@ -65,20 +64,20 @@ def build_update_prompt(tools: Dict[str, Callable]) -> str:
     sig_json = json.dumps(_sig_dict(tools), indent=4)
     usage_examples = "[Add usage examples here]"  # placeholder
 
-    return textwrap.dedent(
-        f"""
-        You are an assistant responsible for **creating and updating tasks**.
-        Use the tools supplied *only* – never invent your own – until the task
-        list fully reflects the user's intent.
-
-        Tools (name → argspec):
-        {sig_json}
-
-        {usage_examples}
-
-        Task schema:
-        {json.dumps(Task.model_json_schema(), indent=4)}
-
-        Current UTC time is {_now()}.
-        """,
-    ).strip()
+    return "\n".join(
+        [
+            "You are an assistant responsible for **creating and updating tasks**.",
+            "Use the tools supplied *only* – never invent your own – until the task",
+            "list fully reflects the user's intent.",
+            "",
+            "Tools (name → argspec):",
+            sig_json,
+            "",
+            usage_examples,
+            "",
+            "Task schema:",
+            json.dumps(Task.model_json_schema(), indent=4),
+            "",
+            f"Current UTC time is {_now()}.",
+        ],
+    )
