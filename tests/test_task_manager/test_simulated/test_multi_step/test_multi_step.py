@@ -17,11 +17,12 @@ import functools
 
 import pytest
 
-from unity.task_manager.simulated import SimulatedTaskManager
 from unity.contact_manager.simulated import SimulatedContactManager
 from unity.transcript_manager.simulated import SimulatedTranscriptManager
-from unity.task_scheduler.simulated import SimulatedTaskScheduler
 from unity.knowledge_manager.simulated import SimulatedKnowledgeManager
+from unity.planner.simulated import SimulatedPlan
+from unity.task_scheduler.simulated import SimulatedTaskScheduler
+from unity.task_manager.simulated import SimulatedTaskManager
 from tests.helpers import _handle_project
 
 
@@ -310,3 +311,61 @@ async def test_task_scheduler_rollover(monkeypatch):
     await asyncio.wait_for(q3.result(), timeout=60)
 
     assert counts == {"ask": 2, "update": 1}, "Unexpected TaskScheduler call count."
+
+
+# --------------------------------------------------------------------------- #
+# 5. Start task then interject                                                #
+# --------------------------------------------------------------------------- #
+@pytest.mark.asyncio
+@_handle_project
+async def test_plan_activation_and_interjection(monkeypatch):
+    counts = {"start": 0, "plan_interject": 0}
+    start_called = asyncio.Event()
+
+    # --- patch start_task -------------------------------------------------- #
+    orig_start = SimulatedTaskScheduler.start_task
+
+    @functools.wraps(orig_start)
+    def spy_start(self, task_id: int, **kw):
+        counts["start"] += 1
+        start_called.set()
+        return orig_start(self, task_id, **kw)
+
+    monkeypatch.setattr(SimulatedTaskScheduler, "start_task", spy_start, raising=True)
+
+    # --- patch SimulatedPlan.interject (called via _interject_plan_call_) -- #
+    orig_plan_interject = SimulatedPlan.interject
+
+    @functools.wraps(orig_plan_interject)
+    def spy_plan_interject(self, instruction: str):
+        counts["plan_interject"] += 1
+        return orig_plan_interject(self, instruction)
+
+    monkeypatch.setattr(SimulatedPlan, "interject", spy_plan_interject, raising=True)
+
+    tm = SimulatedTaskManager("Nightly data-sync demo.")
+
+    # 1️⃣ Kick-off the task (this spawns _start_task_call_)
+    r1 = tm.request(
+        "Run task with task_id == 123 (nightly data sync) immediately.",
+    )
+
+    # 2️⃣ Wait until we are *sure* start_task has been invoked
+    await asyncio.wait_for(start_called.wait(), timeout=60)
+
+    # 3️⃣ Now interject – guaranteed to hit the running plan
+    await asyncio.wait_for(
+        r1.interject(
+            "Please make sure we sync the data across all servers, "
+            "not only those in the US.",
+        ),
+        timeout=60,
+    )
+
+    # 4️⃣ Let the outer loop finish gracefully
+    await asyncio.wait_for(r1.result(), timeout=120)
+
+    assert counts == {
+        "start": 1,
+        "plan_interject": 1,
+    }, "Plan activation/interjection counts off."
