@@ -369,3 +369,69 @@ async def test_plan_activation_and_interjection(monkeypatch):
         "start": 1,
         "plan_interject": 1,
     }, "Plan activation/interjection counts off."
+
+
+# --------------------------------------------------------------------------- #
+# 6. Interleaved use of four different tools within one mutation request      #
+# --------------------------------------------------------------------------- #
+@pytest.mark.asyncio
+@_handle_project
+async def test_interleaved_tools(monkeypatch):
+    counts = {
+        "km_ret": 0,
+        "cm_ask": 0,
+        "tm_ask": 0,
+        "ts_upd": 0,
+    }
+
+    # -- Knowledge retrieve
+    orig_kb_ret = SimulatedKnowledgeManager.retrieve
+
+    @functools.wraps(orig_kb_ret)
+    def spy_kb_ret(self, text: str, **kw):
+        counts["km_ret"] += 1
+        return orig_kb_ret(self, text, **kw)
+
+    # -- Contact ask
+    orig_cm_ask = SimulatedContactManager.ask
+
+    @functools.wraps(orig_cm_ask)
+    def spy_cm_ask(self, text: str, **kw):
+        counts["cm_ask"] += 1
+        return orig_cm_ask(self, text, **kw)
+
+    # -- Transcript ask
+    orig_tm_ask = SimulatedTranscriptManager.ask
+
+    @functools.wraps(orig_tm_ask)
+    def spy_tm_ask(self, text: str, **kw):
+        counts["tm_ask"] += 1
+        return orig_tm_ask(self, text, **kw)
+
+    # -- Task update
+    orig_ts_upd = SimulatedTaskScheduler.update
+
+    @functools.wraps(orig_ts_upd)
+    def spy_ts_upd(self, text: str, **kw):
+        counts["ts_upd"] += 1
+        return orig_ts_upd(self, text, **kw)
+
+    monkeypatch.setattr(SimulatedKnowledgeManager, "retrieve", spy_kb_ret, raising=True)
+    monkeypatch.setattr(SimulatedContactManager, "ask", spy_cm_ask, raising=True)
+    monkeypatch.setattr(SimulatedTranscriptManager, "ask", spy_tm_ask, raising=True)
+    monkeypatch.setattr(SimulatedTaskScheduler, "update", spy_ts_upd, raising=True)
+
+    tm = SimulatedTaskManager("Contract-renewal campaign demo.")
+
+    h = tm.request(
+        "Create a task for updating client contracts. "
+        "Include the latest contract template from the knowledge-base, "
+        "tag every contact we currently have, "
+        "and attach a short summary of the last email thread. "
+        "Set the due date two weeks from today, and schedule the task for next Monday. "
+        "Do not make a start on it yet.",
+    )
+    await asyncio.wait_for(h.result(), timeout=120)
+
+    expected = {"km_ret": 1, "cm_ask": 1, "tm_ask": 1, "ts_upd": 1}
+    assert counts == expected, "Interleaved tool-call counts do not match."
