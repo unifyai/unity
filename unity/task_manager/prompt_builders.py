@@ -61,7 +61,12 @@ def build_request_prompt(tools: Dict[str, Callable]) -> str:
             "You have **full read-write control** over tasks, contacts, transcripts",
             "and the knowledge-base. Use *only* the tools supplied – never invent",
             "your own. Call them iteratively until the user's request is completely",
-            "fulfilled, verifying state after each mutation.",
+            "fulfilled, verifying state after each mutation." "",
+            "If you are asked to perform a task, you should *always* proceed as follows:",
+            "- Check if this task already exists via TaskScheduler.ask",
+            "- Add a new task *if it doesn't already exist* in the task list via TaskScheduler.update",
+            "- Start the task via TaskScheduler.start_task if the user wants you to start now.",
+            "  Otherwise set the scheduled start date/time when calling TaskScheduler.update above."
             "",
             "Tools (name → argspec):",
             sig_json,
