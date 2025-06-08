@@ -69,6 +69,8 @@ def build_update_prompt(tools: Dict[str, Callable]) -> str:
             "You are an assistant responsible for **creating and updating tasks**.",
             "Use the tools supplied *only* – never invent your own – until the task",
             "list fully reflects the user's intent.",
+            "If a any tasks were created or updated in the process,"
+            "then please *always* include these task id(s) in your final response.",
             "",
             "Tools (name → argspec):",
             sig_json,
