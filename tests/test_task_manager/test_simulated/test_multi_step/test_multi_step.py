@@ -260,3 +260,53 @@ async def test_knowledge_change_audit(monkeypatch):
     ), "KnowledgeManager.retrieve should be called at least once."
     assert counts["km_store"] == 1, "KnowledgeManager.store should be called once."
     assert counts["ts_update"] == 1, "TaskScheduler.update should be called once."
+
+
+# --------------------------------------------------------------------------- #
+# 4. Sprint rollover: ask → update → ask                                      #
+# --------------------------------------------------------------------------- #
+@pytest.mark.asyncio
+@_handle_project
+async def test_task_scheduler_rollover(monkeypatch):
+    counts = {"ask": 0, "update": 0}
+    o_ask = SimulatedTaskScheduler.ask
+    o_upd = SimulatedTaskScheduler.update
+
+    @functools.wraps(o_ask)
+    def spy_ask(self, text: str, **kw):
+        counts["ask"] += 1
+        return o_ask(self, text, **kw)
+
+    @functools.wraps(o_upd)
+    def spy_upd(self, text: str, **kw):
+        counts["update"] += 1
+        return o_upd(self, text, **kw)
+
+    monkeypatch.setattr(SimulatedTaskScheduler, "ask", spy_ask, raising=True)
+    monkeypatch.setattr(SimulatedTaskScheduler, "update", spy_upd, raising=True)
+
+    tm = SimulatedTaskManager("Engineering sprint rollover.")
+
+    # 1️⃣ Query backlog
+    usr_msg = "Which tasks are currently 'queued'?"
+    q1 = tm.ask(usr_msg)
+    assistant_resp = await asyncio.wait_for(q1.result(), timeout=60)
+    chat = [{"user": usr_msg}, {"assistant": assistant_resp}]
+
+    # 2️⃣ Bulk carry-over
+    usr_msg = "Mark all of these tasks as cancelled."
+    r2 = tm.request(
+        usr_msg,
+        parent_chat_context=chat,
+    )
+    assistant_resp = await asyncio.wait_for(r2.result(), timeout=60)
+    chat += [{"user": usr_msg}, {"assistant": assistant_resp}]
+
+    # 3️⃣ Confirm empty
+    q3 = tm.ask(
+        "Double-check the queue backlog is now empty.",
+        parent_chat_context=chat,
+    )
+    await asyncio.wait_for(q3.result(), timeout=60)
+
+    assert counts == {"ask": 2, "update": 1}, "Unexpected TaskScheduler call count."
