@@ -211,10 +211,16 @@ class SimulatedTranscriptManager(BaseTranscriptManager):
         exchange_ids: Union[int, List[int]],
         guidance: Optional[str] = None,
         parent_chat_context: list[dict] | None = None,
+        _requests_clarification: bool = False,
         clarification_up_q: asyncio.Queue[str] | None = None,
         clarification_down_q: asyncio.Queue[str] | None = None,
     ) -> str:
-        instruction = "On this turn you are simulating the 'summarize' method.\n"
+        instruction = (
+            "On this turn you are simulating the 'summarize' method.\n"
+            "Please always provide an imaginery summary (making up the response), "
+            "do not ask for clarifications, or only state *how* you will summarize the exchange(s).\n"
+            "Just provide an imaginery summary.\n"
+        )
         if parent_chat_context:
             instruction += (
                 f"Calling chat context:\n{json.dumps(parent_chat_context, indent=4)}"
@@ -222,8 +228,14 @@ class SimulatedTranscriptManager(BaseTranscriptManager):
         if not isinstance(exchange_ids, list):
             exchange_ids = [exchange_ids]
 
-        # Clarification flow if required
-        if clarification_up_q is not None and clarification_down_q is not None:
+        if _requests_clarification and (
+            not clarification_up_q or not clarification_down_q
+        ):
+            raise ValueError(
+                "Clarification queues must be provided when _requests_clarification is True",
+            )
+
+        if _requests_clarification:
             try:
                 clarification_up_q.put_nowait(
                     "Any special focus for this summary?",
