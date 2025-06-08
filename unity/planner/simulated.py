@@ -266,7 +266,7 @@ class SimulatedPlanner(BasePlanner[SimulatedPlan]):
         *,
         steps: int | None = None,
         timeout: float | None = None,
-        request_clarification: bool = False,
+        _requests_clarification: bool = False,
     ) -> None:
         """
         Initialize a simulated planner.
@@ -280,7 +280,7 @@ class SimulatedPlanner(BasePlanner[SimulatedPlan]):
         super().__init__()
         self._steps = steps
         self._timeout = timeout
-        self._request_clarification = request_clarification
+        self._requests_clarification = _requests_clarification
 
         # One shared, memory-retaining LLM for *all* plans
         self._llm = unify.Unify(
@@ -309,7 +309,7 @@ class SimulatedPlanner(BasePlanner[SimulatedPlan]):
             self._steps,
             timeout=self._timeout,
             parent_chat_context=parent_chat_context,
-            request_clarification=self._request_clarification,
+            _requests_clarification=self._requests_clarification,
             clarification_up_q=clarification_up_q,
             clarification_down_q=clarification_down_q,
         )
