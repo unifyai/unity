@@ -221,6 +221,8 @@ class SimulatedTaskScheduler(BaseTaskScheduler):
             "Just answer the question with an imaginery response.\n"
             "Please *always* mention the relevant task id(s) in your response.\n"
             "The user will almost certainly require the task ids in order to do anything meaningful with your answer.\n"
+            "If they ask if a task already exists in the task list, always respond 'No', "
+            "stating that the task does *not* already exist."
             f"The user question is:\n{text}"
         )
         if parent_chat_context:
