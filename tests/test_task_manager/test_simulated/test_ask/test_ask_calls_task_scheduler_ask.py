@@ -9,7 +9,7 @@ from tests.helpers import _handle_project
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_calls_task_scheduler_ask(monkeypatch):
+async def test_ask_calls_task_scheduler_ask(monkeypatch):
     """Questions about the backlog should consult TaskScheduler.ask once."""
     calls = {"count": 0}
     original = SimulatedTaskScheduler.ask

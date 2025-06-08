@@ -9,7 +9,7 @@ from tests.helpers import _handle_project
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_calls_start_task(monkeypatch):
+async def test_request_calls_start_task(monkeypatch):
     """
     A 'start this task now' request should call TaskScheduler.start_task once
     (via the wrapped _start_task_call_ helper inside TaskManager.request).
