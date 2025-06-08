@@ -19,6 +19,7 @@ import pytest
 
 from unity.task_manager.simulated import SimulatedTaskManager
 from unity.contact_manager.simulated import SimulatedContactManager
+from unity.transcript_manager.simulated import SimulatedTranscriptManager
 from unity.task_scheduler.simulated import SimulatedTaskScheduler
 from tests.helpers import _handle_project
 
@@ -134,3 +135,56 @@ async def test_update_phone_number_then_call(monkeypatch):
     assert (
         counts["ts_start_task"] == 1
     ), "TaskScheduler.start_task should be called once."
+
+
+# --------------------------------------------------------------------------- #
+# 2. Transcript summary, follow-up Q&A, then unrelated mutation               #
+# --------------------------------------------------------------------------- #
+@pytest.mark.asyncio
+@_handle_project
+async def test_transcript_summary_followups(monkeypatch):
+    """
+    • request → TranscriptManager.summarize once
+    • ask     → TranscriptManager.ask       once
+    • final request does not need transcript calls
+    """
+    counts = {"sum": 0, "t_ask": 0}
+
+    orig_sum = SimulatedTranscriptManager.summarize
+    orig_t_ask = SimulatedTranscriptManager.ask
+
+    @functools.wraps(orig_sum)
+    async def spy_sum(self, **kw):
+        counts["sum"] += 1
+        return await orig_sum(self, **kw)
+
+    @functools.wraps(orig_t_ask)
+    def spy_t_ask(self, text: str, **kw):
+        counts["t_ask"] += 1
+        return orig_t_ask(self, text, **kw)
+
+    monkeypatch.setattr(SimulatedTranscriptManager, "summarize", spy_sum, raising=True)
+    monkeypatch.setattr(SimulatedTranscriptManager, "ask", spy_t_ask, raising=True)
+
+    tm = SimulatedTaskManager("Support-call archive demo.")
+
+    # 1️⃣ Summarise & store
+    usr_msg = "Summarise support call #77 from yesterday and store it."
+    r1 = tm.request(usr_msg)
+    assistant_resp = await asyncio.wait_for(r1.result(), timeout=60)
+    chat = [{"user": usr_msg}, {"assistant": assistant_resp}]
+
+    # 2️⃣ Follow-up read query
+    usr_msg = "What was the main action item in that summary?"
+    q2 = tm.ask(usr_msg, parent_chat_context=chat)
+    assistant_resp = await asyncio.wait_for(q2.result(), timeout=60)
+    chat += [{"user": usr_msg}, {"assistant": assistant_resp}]
+
+    # 3️⃣ Unrelated mutation (no additional transcript calls required)
+    r3 = tm.request(
+        "Create a high-priority task for that action item and assign it to DevOps.",
+        parent_chat_context=chat,
+    )
+    await asyncio.wait_for(r3.result(), timeout=60)
+
+    assert counts == {"sum": 1, "t_ask": 1}, "Unexpected transcript-tool call count."
