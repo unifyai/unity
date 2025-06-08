@@ -109,6 +109,7 @@ class SimulatedTaskManager:
         active = {
             **passive,  # read-only tools are also valid here
             **methods_to_tool_dict(
+                self._contact_manager.update,
                 self._transcript_manager.summarize,
                 self._knowledge_manager.store,
                 self._task_scheduler.update,
