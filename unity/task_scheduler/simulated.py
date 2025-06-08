@@ -222,9 +222,9 @@ class SimulatedTaskScheduler(BaseTaskScheduler):
             "Please always *answer* the question (making up the response), "
             "do not ask for clarifications, or only state *how* you will answer the question.\n"
             "Just answer the question with an imaginery response.\n"
-            "Please *always* mention the relevant task id(s) in your response.\n",
+            "Please *always* mention the relevant task id(s) in your response.\n"
             "The user will almost certainly require the task ids in order to do anything meaningful with your answer.\n"
-            f"The user question is:\n{text}",
+            f"The user question is:\n{text}"
         )
         if parent_chat_context:
             instruction += (
@@ -262,8 +262,8 @@ class SimulatedTaskScheduler(BaseTaskScheduler):
             "do not ask for clarifications, explain how you *would* proceed.\n"
             "Just respond as though the user request has been handled without error.\n"
             "If a any tasks were created or updated in the imagined process,"
-            "then please *always* include these task id(s) in your final response.",
-            f"The user update request is:\n{text}",
+            "then please *always* include these task id(s) in your final response."
+            f"The user update request is:\n{text}"
         )
         if parent_chat_context:
             instruction += (
