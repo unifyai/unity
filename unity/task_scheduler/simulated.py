@@ -296,7 +296,7 @@ class SimulatedTaskScheduler(BaseTaskScheduler):
         """
         task_description = f"Simulated task #{task_id}"
         return SimulatedPlanner(
-            timeout=20,
+            timeout=10,
             _requests_clarification=_requests_clarification,
         ).plan(
             task_description,
