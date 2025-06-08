@@ -9,8 +9,8 @@ from tests.helpers import _handle_project
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_calls_transcript_manager_summarize(monkeypatch):
-    """Mutation request to summarise transcripts should call summarize once."""
+async def test_ask_calls_transcript_manager_summarize(monkeypatch):
+    """Ask request to summarise transcripts should call summarize once."""
     calls = {"count": 0}
     original = SimulatedTranscriptManager.summarize
 
@@ -23,7 +23,7 @@ async def test_calls_transcript_manager_summarize(monkeypatch):
 
     tm = SimulatedTaskManager("Demo – sales-call recordings.")
     handle = tm.request(
-        "Summarise yesterday’s call with ACME Corp (with exchange id 123) and save it.",
+        "Can you please give me a summary of the recent exchange with id==123.",
     )
     await asyncio.wait_for(handle.result(), timeout=60)
 
