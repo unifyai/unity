@@ -143,6 +143,9 @@ class TaskManager(BaseTaskManager):
         passive = methods_to_tool_dict(
             self._contact_manager.ask,
             self._transcript_manager.ask,
+            # technically not passive, but likely useful for question answering
+            self._transcript_manager.summarize,
+            #
             self._knowledge_manager.retrieve,
             self._task_scheduler.ask,
             include_class_name=True,
