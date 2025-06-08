@@ -194,7 +194,7 @@ class SimulatedTranscriptManager(BaseTranscriptManager):
             )
         return _SimulatedTranscriptHandle(
             self._llm,
-            text,
+            instruction,
             _return_reasoning_steps=_return_reasoning_steps,
             _requests_clarification=_requests_clarification,
             clarification_up_q=clarification_up_q,
