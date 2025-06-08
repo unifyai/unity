@@ -259,7 +259,9 @@ class SimulatedTaskScheduler(BaseTaskScheduler):
             "(making up an imaginery response to adress any specific details if necessary), "
             "do not ask for clarifications, explain how you *would* proceed.\n"
             "Just respond as though the user request has been handled without error.\n"
-            f"The user update request is:\n{text}"
+            "If a any tasks were created or updated in the imagined process,"
+            "then please *always* include these task id(s) in your final response.",
+            f"The user update request is:\n{text}",
         )
         if parent_chat_context:
             instruction += (
