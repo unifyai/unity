@@ -43,6 +43,8 @@ def build_ask_prompt(tools: Dict[str, Callable]) -> str:
             "Interact with the read-only tools provided (see below) to gather whatever",
             "information you need, *step-by-step*.  When you have everything, respond",
             "with a concise, final answer.",
+            "Please *always* mention the relevant task id(s) in your response.",
+            "The user will almost certainly require the task ids in order to do anything meaningful with your answer."
             "",
             "Tools (name → argspec):",
             sig_json,
