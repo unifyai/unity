@@ -148,10 +148,11 @@ async def test_transcript_summary_followups(monkeypatch):
     • ask     → TranscriptManager.ask       once
     • final request does not need transcript calls
     """
-    counts = {"sum": 0, "t_ask": 0}
+    counts = {"sum": 0, "t_ask": 0, "ts_update": 0}
 
     orig_sum = SimulatedTranscriptManager.summarize
     orig_t_ask = SimulatedTranscriptManager.ask
+    orig_ts_update = SimulatedTaskScheduler.update
 
     @functools.wraps(orig_sum)
     async def spy_sum(self, **kw):
@@ -163,20 +164,28 @@ async def test_transcript_summary_followups(monkeypatch):
         counts["t_ask"] += 1
         return orig_t_ask(self, text, **kw)
 
+    @functools.wraps(orig_ts_update)
+    def spy_ts_update(self, text: str, **kw):
+        counts["ts_update"] += 1
+        return orig_ts_update(self, text, **kw)
+
     monkeypatch.setattr(SimulatedTranscriptManager, "summarize", spy_sum, raising=True)
     monkeypatch.setattr(SimulatedTranscriptManager, "ask", spy_t_ask, raising=True)
+    monkeypatch.setattr(SimulatedTaskScheduler, "update", spy_ts_update, raising=True)
 
     tm = SimulatedTaskManager("Support-call archive demo.")
 
     # 1️⃣ Summarise & store
-    usr_msg = "Summarise support call #77 from yesterday and store it."
+    usr_msg = (
+        "Summarise support call with exchange_id == 123 from yesterday and store it."
+    )
     r1 = tm.request(usr_msg)
     assistant_resp = await asyncio.wait_for(r1.result(), timeout=60)
     chat = [{"user": usr_msg}, {"assistant": assistant_resp}]
 
     # 2️⃣ Follow-up read query
     usr_msg = "What was the main action item in that summary?"
-    q2 = tm.ask(usr_msg, parent_chat_context=chat)
+    q2 = tm.ask(usr_msg)
     assistant_resp = await asyncio.wait_for(q2.result(), timeout=60)
     chat += [{"user": usr_msg}, {"assistant": assistant_resp}]
 
@@ -187,4 +196,8 @@ async def test_transcript_summary_followups(monkeypatch):
     )
     await asyncio.wait_for(r3.result(), timeout=60)
 
-    assert counts == {"sum": 1, "t_ask": 1}, "Unexpected transcript-tool call count."
+    assert counts == {
+        "sum": 1,
+        "t_ask": 1,
+        "ts_update": 1,
+    }, "Unexpected transcript-tool call count."
