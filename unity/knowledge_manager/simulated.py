@@ -183,7 +183,10 @@ class SimulatedKnowledgeManager(BaseKnowledgeManager):
     ) -> SteerableToolHandle:
         instruction = (
             "On this turn you are simulating the 'store' method.\n"
-            f"The user stoage request is:\n{text}"
+            f"The user stoage request is:\n{text}\n"
+            "If the user refers to creating *tasks*, then you should **not** store any tasks.\n"
+            "Tasks should exclusively be sotred by a separate task manager, this is **not your responsibility**.\n"
+            "Please explain this to the user in your response, if this is part of the their request."
         )
         if parent_chat_context:
             instruction += (

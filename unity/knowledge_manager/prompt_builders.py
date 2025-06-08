@@ -60,6 +60,10 @@ def build_store_prompt(
         Keep the schema clean and future-proof – feel free to create,
         rename or delete tables / columns before inserting data.
 
+        If the user refers to creating *tasks*, then you should **not** store any tasks.
+        Tasks should exclusively be sotred by a separate task manager, this is **not your responsibility**.
+        Please explain this to the user in your response, if this is part of the their request.
+
         Follow this workflow strictly:
         1. Extract every fact (subject → attribute → value) from the message.
         2. Decide whether each fact updates an existing row or inserts a new one.
