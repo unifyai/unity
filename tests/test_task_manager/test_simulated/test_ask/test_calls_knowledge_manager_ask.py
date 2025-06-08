@@ -1,4 +1,3 @@
-# test_task_manager/test_simulated/test_ask/test_calls_knowledge_manager_ask.py
 import pytest
 import functools
 import asyncio

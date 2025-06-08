@@ -193,6 +193,9 @@ class SimulatedContactManager(BaseContactManager):
     ) -> SteerableToolHandle:
         instruction = (
             "On this turn you are simulating the 'ask' method.\n"
+            "Please always *answer* the question (making up the response), "
+            "do not ask for clarifications, or only state *how* you will answer the question.\n"
+            "Just answer the question with an imaginery response.\n"
             f"The user question is:\n{text}"
         )
         if parent_chat_context:

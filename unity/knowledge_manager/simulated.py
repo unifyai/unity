@@ -214,6 +214,9 @@ class SimulatedKnowledgeManager(BaseKnowledgeManager):
     ) -> SteerableToolHandle:
         instruction = (
             "On this turn you are simulating the 'retrieve' method.\n"
+            "Please always return imaginery information (making up the response), "
+            "do not ask for clarifications, or only state *how* you will get the information.\n"
+            "Just respond immediately with imaginery information.\n"
             f"The user retrieve request is:\n{text}"
         )
         if parent_chat_context:
