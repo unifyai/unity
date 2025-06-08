@@ -199,9 +199,6 @@ class SimulatedTaskScheduler(BaseTaskScheduler):
             f"Back-story: {self._description}",
         )
 
-        # Re-use a single simulated planner for every `start_task`
-        self._planner = SimulatedPlanner(timeout=20)
-
     # ------------------------------------------------------------------ #
     #  ask                                                               #
     # ------------------------------------------------------------------ #
@@ -298,10 +295,12 @@ class SimulatedTaskScheduler(BaseTaskScheduler):
         `SimulatedPlan` by calling the shared `SimulatedPlanner.plan`.
         """
         task_description = f"Simulated task #{task_id}"
-        return self._planner.plan(
+        return SimulatedPlanner(
+            timeout=20,
+            _requests_clarification=_requests_clarification,
+        ).plan(
             task_description,
             parent_chat_context=parent_chat_context,
-            _requests_clarification=_requests_clarification,
             clarification_up_q=clarification_up_q,
             clarification_down_q=clarification_down_q,
         )
