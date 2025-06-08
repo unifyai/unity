@@ -255,6 +255,10 @@ class SimulatedTaskScheduler(BaseTaskScheduler):
     ) -> SteerableToolHandle:
         instruction = (
             "On this turn you are simulating the 'update' method.\n"
+            "Please always act as though the task has been completed "
+            "(making up an imaginery response to adress any specific details if necessary), "
+            "do not ask for clarifications, explain how you *would* proceed.\n"
+            "Just respond as though the user request has been handled without error.\n"
             f"The user update request is:\n{text}"
         )
         if parent_chat_context:
