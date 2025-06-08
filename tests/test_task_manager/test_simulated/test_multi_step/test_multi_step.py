@@ -21,6 +21,7 @@ from unity.task_manager.simulated import SimulatedTaskManager
 from unity.contact_manager.simulated import SimulatedContactManager
 from unity.transcript_manager.simulated import SimulatedTranscriptManager
 from unity.task_scheduler.simulated import SimulatedTaskScheduler
+from unity.knowledge_manager.simulated import SimulatedKnowledgeManager
 from tests.helpers import _handle_project
 
 
@@ -201,3 +202,61 @@ async def test_transcript_summary_followups(monkeypatch):
         "t_ask": 1,
         "ts_update": 1,
     }, "Unexpected transcript-tool call count."
+
+
+# --------------------------------------------------------------------------- #
+# 3. Knowledge-base change audit: read → maybe-write → read                   #
+# --------------------------------------------------------------------------- #
+@pytest.mark.asyncio
+@_handle_project
+async def test_knowledge_change_audit(monkeypatch):
+    """
+    • First ask: retrieve once
+    • Conditional update: retrieve again, then store once
+    """
+    counts = {"km_retrieve": 0, "km_store": 0, "ts_update": 0}
+    orig_ret = SimulatedKnowledgeManager.retrieve
+    orig_store = SimulatedKnowledgeManager.store
+    orig_ts_update = SimulatedTaskScheduler.update
+
+    @functools.wraps(orig_ret)
+    def spy_ret(self, text: str, **kw):
+        counts["km_retrieve"] += 1
+        return orig_ret(self, text, **kw)
+
+    @functools.wraps(orig_store)
+    def spy_store(self, text: str, **kw):
+        counts["km_store"] += 1
+        return orig_store(self, text, **kw)
+
+    @functools.wraps(orig_ts_update)
+    def spy_ts_update(self, text: str, **kw):
+        counts["ts_update"] += 1
+        return orig_ts_update(self, text, **kw)
+
+    monkeypatch.setattr(SimulatedKnowledgeManager, "retrieve", spy_ret, raising=True)
+    monkeypatch.setattr(SimulatedKnowledgeManager, "store", spy_store, raising=True)
+    monkeypatch.setattr(SimulatedTaskScheduler, "update", spy_ts_update, raising=True)
+
+    tm = SimulatedTaskManager("HR policy KB audit.")
+
+    # 1️⃣ Initial read
+    usr_msg = "How many months of severance do we record for exec layoffs?"
+    q1 = tm.ask(usr_msg)
+    assistant_msg = await asyncio.wait_for(q1.result(), timeout=60)
+    chat = [{"user": usr_msg}, {"assistant": assistant_msg}]
+
+    # 2️⃣ Conditional write + read
+    usr_msg = (
+        "If it isn't recorded as six months, update it to six months and "
+        "create a task noting the previous value."
+    )
+    r2 = tm.request(usr_msg, parent_chat_context=chat)
+    assistant_msg = await asyncio.wait_for(r2.result(), timeout=60)
+    chat += [{"user": usr_msg}, {"assistant": assistant_msg}]
+
+    assert (
+        counts["km_retrieve"] >= 1
+    ), "KnowledgeManager.retrieve should be called at least once."
+    assert counts["km_store"] == 1, "KnowledgeManager.store should be called once."
+    assert counts["ts_update"] == 1, "TaskScheduler.update should be called once."
