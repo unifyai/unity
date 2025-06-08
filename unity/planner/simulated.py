@@ -24,9 +24,9 @@ class SimulatedPlan(BasePlan):
         steps: int,
         timeout: float | None = None,
         parent_chat_context: list[dict] | None = None,
+        _requests_clarification: bool = False,
         clarification_up_q: asyncio.Queue[str] | None = None,
         clarification_down_q: asyncio.Queue[str] | None = None,
-        request_clarification: bool = False,
     ) -> None:
         """
         Initialize a simulated plan.
@@ -46,7 +46,7 @@ class SimulatedPlan(BasePlan):
         self._parent_chat_context = parent_chat_context
         self._clarification_up_q = clarification_up_q
         self._clarification_down_q = clarification_down_q
-        self._request_clarification = request_clarification
+        self._requests_clarification = _requests_clarification
 
         # step-counting
         self._step_count = 0
@@ -85,7 +85,7 @@ class SimulatedPlan(BasePlan):
         try:
             while True:
 
-                if self._request_clarification:
+                if self._requests_clarification:
                     # send the question up
                     try:
                         self._clarification_up_q.put_nowait(
@@ -309,7 +309,7 @@ class SimulatedPlanner(BasePlanner[SimulatedPlan]):
             self._steps,
             timeout=self._timeout,
             parent_chat_context=parent_chat_context,
+            request_clarification=self._request_clarification,
             clarification_up_q=clarification_up_q,
             clarification_down_q=clarification_down_q,
-            request_clarification=self._request_clarification,
         )
