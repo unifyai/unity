@@ -9,7 +9,7 @@ from tests.helpers import _handle_project
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_calls_transcript_manager_ask(monkeypatch):
+async def test_ask_calls_transcript_manager_ask(monkeypatch):
     """Task-level question about recent chats should hit TranscriptManager.ask."""
     calls = {"count": 0}
     original = SimulatedTranscriptManager.ask

@@ -9,7 +9,7 @@ from tests.helpers import _handle_project
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_calls_knowledge_manager_ask(monkeypatch):
+async def test_ask_calls_knowledge_manager_ask(monkeypatch):
     """A knowledge lookup should route to KnowledgeManager.retrieve once."""
     calls = {"count": 0}
     original = SimulatedKnowledgeManager.retrieve

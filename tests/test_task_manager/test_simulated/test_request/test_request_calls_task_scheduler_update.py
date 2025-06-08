@@ -9,7 +9,7 @@ from tests.helpers import _handle_project
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_calls_task_scheduler_update(monkeypatch):
+async def test_request_calls_task_scheduler_update(monkeypatch):
     """Creating or editing a task must invoke TaskScheduler.update exactly once."""
     calls = {"count": 0}
     original = SimulatedTaskScheduler.update

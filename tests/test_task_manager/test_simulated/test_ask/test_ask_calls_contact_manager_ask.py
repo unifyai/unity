@@ -9,7 +9,7 @@ from tests.helpers import _handle_project
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_calls_contact_manager_ask(monkeypatch):
+async def test_ask_calls_contact_manager_ask(monkeypatch):
     """
     SimulatedTaskManager.ask should consult SimulatedContactManager.ask once
     when the user’s question is clearly contact-related.
