@@ -150,7 +150,7 @@ async def _dispatch(
     ) and not raw.endswith("?")
 
     if heuristic_store:
-        handle = km.store(raw, _return_reasoning_steps=show_steps)
+        handle = await km.store(raw, _return_reasoning_steps=show_steps)
         return "store", handle, None
 
     llm = unify.Unify("gpt-4o@openai", response_format=_IntentResp)
@@ -158,11 +158,11 @@ async def _dispatch(
     intent = _IntentResp.model_validate_json(intent_json)
 
     if intent.action == "store":
-        handle = km.store(intent.cleaned_text, _return_reasoning_steps=show_steps)
+        handle = await km.store(intent.cleaned_text, _return_reasoning_steps=show_steps)
         return "store", handle, None
 
     # Retrieval path
-    handle = km.retrieve(intent.cleaned_text, _return_reasoning_steps=show_steps)
+    handle = await km.retrieve(intent.cleaned_text, _return_reasoning_steps=show_steps)
     return "retrieve", handle, None
 
 

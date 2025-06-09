@@ -49,7 +49,7 @@ async def test_km_retrieve_joins_contact_and_company():
 
     # ➌ Ask a question that *requires* calling CM.ask internally
     q = "How many employees are at the company Steve Taylor works at?"
-    h = km.retrieve(q, _return_reasoning_steps=True)
+    h = await km.retrieve(q, _return_reasoning_steps=True)
     answer, reasoning = await h.result()
 
     # Basic semantic check – the answer should quote 1200 employees somewhere
@@ -84,7 +84,7 @@ async def test_km_store_updates_contact_via_cm():
 
     # ‣ Instruction to store extra info
     cmd = "Add Jane Doe's WhatsApp number +15559998877."
-    h = km.store(cmd)
+    h = await km.store(cmd)
     await h.result()  # we don't need the textual confirmation here
 
     # ‣ Verify that the ContactManager state really changed

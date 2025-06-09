@@ -40,7 +40,7 @@ async def test_store_uses_parent_context():
         {"role": "assistant", "content": "Understood – Carlos → Alpha."},
     ]
 
-    handle = km.store(
+    handle = await km.store(
         "Carlos was born in 1990.",
         parent_chat_context=parent_ctx,  # ← will be threaded into the loop
     )
@@ -75,7 +75,7 @@ async def test_store_requests_clarification():
     up_q: asyncio.Queue[str] = asyncio.Queue()
     down_q: asyncio.Queue[str] = asyncio.Queue()
 
-    handle = km.store(
+    handle = await km.store(
         "Please store Carlos' birth year (1990) using his *surname* as the key.",
         clarification_up_q=up_q,
         clarification_down_q=down_q,
@@ -126,7 +126,7 @@ async def test_retrieve_uses_parent_context():
     ]
 
     # ➌ ask about Alpha – model must translate via context
-    handle = km.retrieve(
+    handle = await km.retrieve(
         "When was Alpha born?",
         parent_chat_context=parent_ctx,
         _return_reasoning_steps=True,

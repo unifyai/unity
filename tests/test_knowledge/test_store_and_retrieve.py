@@ -45,7 +45,7 @@ def _contains(text: str, *needles: str) -> bool:
 async def test_store_simple_fact():
     km = KnowledgeManager()
 
-    handle = km.store("Adrian was born in 1994.")
+    handle = await km.store("Adrian was born in 1994.")
     await handle.result()
 
     all_data = km._search_knowledge()
@@ -67,7 +67,7 @@ async def test_retrieve_simple_fact():
     km._create_table(name="MyTable")
     km._add_data(table="MyTable", data=[{"name": "Adrian", "birth_year": "1994"}])
 
-    handle = km.retrieve(
+    handle = await km.retrieve(
         "When was Adrian born?",
         _return_reasoning_steps=True,
     )
@@ -93,10 +93,10 @@ async def test_retrieve_simple_fact():
 async def test_round_trip_simple_fact():
     km = KnowledgeManager()
 
-    handle = km.store("Adrian was born in 1994.")
+    handle = await km.store("Adrian was born in 1994.")
     await handle.result()
 
-    handle = km.retrieve(
+    handle = await km.retrieve(
         "When was Adrian born?",
         _return_reasoning_steps=True,
     )
@@ -127,10 +127,10 @@ async def test_schema_expands_and_new_field_retrievable():
     """
     km = KnowledgeManager()
 
-    handle = km.store("Bob is 35 years old.")
+    handle = await km.store("Bob is 35 years old.")
     await handle.result()
 
-    handle = km.retrieve(
+    handle = await km.retrieve(
         "How old is Bob?",
         _return_reasoning_steps=True,
     )
@@ -143,12 +143,12 @@ async def test_schema_expands_and_new_field_retrievable():
         {"Knowledge Data": km._search_knowledge()},
     )
 
-    handle = km.store(
+    handle = await km.store(
         "Bob's favourite colour is green and his height is 180 centimetres.",
     )
     await handle.result()
 
-    handle = km.retrieve(
+    handle = await km.retrieve(
         "How tall is Bob?",
         _return_reasoning_steps=True,
     )
@@ -161,7 +161,7 @@ async def test_schema_expands_and_new_field_retrievable():
         {"Knowledge Data": km._search_knowledge()},
     )
 
-    handle = km.retrieve(
+    handle = await km.retrieve(
         "What is Bob's favourite colour?",
         _return_reasoning_steps=True,
     )
@@ -174,7 +174,7 @@ async def test_schema_expands_and_new_field_retrievable():
         {"Knowledge Data": km._search_knowledge()},
     )
 
-    handle = km.retrieve(
+    handle = await km.retrieve(
         "How old is Bob?",
         _return_reasoning_steps=True,
     )
@@ -208,15 +208,15 @@ async def test_multiple_tables_and_join_like_query():
     """
     km = KnowledgeManager()
 
-    handle = km.store("The Apple iPhone 15 costs 999 US dollars.")
+    handle = await km.store("The Apple iPhone 15 costs 999 US dollars.")
     await handle.result()
 
-    handle = km.store(
+    handle = await km.store(
         "Daniel bought an iPhone 15 on 3 May 2025 using his credit card.",
     )
     await handle.result()
 
-    handle = km.retrieve(
+    handle = await km.retrieve(
         "How much did Daniel pay for his purchase?",
         _return_reasoning_steps=True,
     )
@@ -251,13 +251,13 @@ async def test_incremental_updates_and_refactor():
     """
     km = KnowledgeManager()
 
-    handle = km.store("Carol owns a dog named Fido.")
+    handle = await km.store("Carol owns a dog named Fido.")
     await handle.result()
 
-    handle = km.store("Carol also owns a cat named Luna.")
+    handle = await km.store("Carol also owns a cat named Luna.")
     await handle.result()
 
-    handle = km.retrieve(
+    handle = await km.retrieve(
         "What are the names of Carol's pets?",
         _return_reasoning_steps=True,
     )
@@ -291,13 +291,13 @@ async def test_numeric_reasoning_after_multiple_points():
     """
     km = KnowledgeManager()
 
-    handle = km.store("Point P has coordinates x = 3 and y = 4.")
+    handle = await km.store("Point P has coordinates x = 3 and y = 4.")
     await handle.result()
 
-    handle = km.store("Point Q has coordinates x = 1 and y = 10.")
+    handle = await km.store("Point Q has coordinates x = 1 and y = 10.")
     await handle.result()
 
-    handle = km.retrieve(
+    handle = await km.retrieve(
         "Which points lie in the first quadrant but have y less than 5?",
         _return_reasoning_steps=True,
     )
@@ -328,13 +328,13 @@ async def test_store_interjection():
     km = KnowledgeManager()
 
     # store some informatiion
-    handle = km.store("Bob lives in Bangkok, Thailand.")
+    handle = await km.store("Bob lives in Bangkok, Thailand.")
 
     # Mid-operation, add another detail that should also get stored.
     await handle.interject("Also, he was born in 1990.")
 
     await handle.result()
-    handle = km.retrieve("Which city does Bob live in and when was he born?")
+    handle = await km.retrieve("Which city does Bob live in and when was he born?")
     out = await handle.result()
 
     # The confirmation text returned by `store()` should include both pieces of information.
@@ -359,7 +359,7 @@ async def test_store_stop():
     km = KnowledgeManager()
 
     # Provide multiple facts in one go so that cancelling halfway through still yields a partial, meaningful result.
-    handle = km.store(
+    handle = await km.store(
         "Bob lives in Bangkok. Alice is 30 years old. Carl is 25 years old.",
     )
     await asyncio.sleep(0.05)
@@ -386,12 +386,12 @@ async def test_retrieve_interjection():
     km = KnowledgeManager()
 
     # Store some data first
-    handle = km.store("Alice is 30 years old.")
-    handle = km.store("Alice lives in New York.")
+    handle = await km.store("Alice is 30 years old.")
+    handle = await km.store("Alice lives in New York.")
     await handle.result()
 
     # Now retrieve with interjection
-    handle = km.retrieve("How old is Alice?")
+    handle = await km.retrieve("How old is Alice?")
     await handle.interject("Also, where does she live?")
     out = await handle.result()
 
@@ -418,13 +418,13 @@ async def test_retrieve_stop():
     km = KnowledgeManager()
 
     # Store some data first
-    handle = km.store(
+    handle = await km.store(
         "The capital of France is Paris. The capital of Germany is Berlin. The capital of Italy is Rome.",
     )
     await handle.result()
 
     # Now retrieve with stop
-    handle = km.retrieve("List the capitals of European countries.")
+    handle = await km.retrieve("List the capitals of European countries.")
     await asyncio.sleep(0.05)
     handle.stop()
     with pytest.raises(asyncio.CancelledError):
