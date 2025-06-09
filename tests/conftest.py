@@ -14,6 +14,7 @@ Global pytest configuration.
 
 from __future__ import annotations
 
+import json
 import os
 import sys
 import types
@@ -24,7 +25,76 @@ import pytest
 
 import unify
 
-unify.activate("UnityTests")
+unify.activate(
+    "UnityTests",
+    overwrite=json.loads(os.getenv("UNIFY_OVERWRITE_PROJECT", "false")),
+)
+
+
+# --------------------------------------------------------------------------- #
+#  Controller Dependency Stubbing Fixture                                     #
+# --------------------------------------------------------------------------- #
+
+
+@pytest.fixture(autouse=True)
+def stub_controller_deps(monkeypatch):
+    """
+    This fixture automatically stubs heavy dependencies for the Controller tests,
+    namely Redis and the BrowserWorker. It runs for every test.
+    """
+
+    # --- Redis stub -----------------------------------------------------------
+    class _FakePubSub:
+        def __init__(self):
+            self._messages = []
+
+        def subscribe(self, *_):
+            pass
+
+        def listen(self):
+            while self._messages:
+                yield self._messages.pop()
+            while True:
+                # Keep the loop alive without blocking
+                yield {"type": "noop"}
+
+        def get_message(self):
+            return None
+
+    class _FakeRedis:
+        def __init__(self, *a, **k):
+            self._pubsub = _FakePubSub()
+            self.published: list[tuple[str, str]] = []
+
+        def pubsub(self):
+            return self._pubsub
+
+        def publish(self, chan, msg):
+            self.published.append((chan, msg))
+
+    # Safely patch redis.Redis with our fake version
+    monkeypatch.setattr("redis.Redis", _FakeRedis)
+
+    # --- BrowserWorker stub ---------------------------------------------------
+    class _DummyWorker:
+        def __init__(self, *a, **k):
+            self.started = False
+            self.stopped = False
+
+        def start(self):
+            self.started = True
+
+        def stop(self):
+            self.stopped = True
+
+        def join(self, *a, **k):
+            pass
+
+    # Safely patch the BrowserWorker class where it's defined
+    monkeypatch.setattr(
+        "unity.controller.playwright_utils.worker.BrowserWorker",
+        _DummyWorker,
+    )
 
 
 # --------------------------------------------------------------------------- #

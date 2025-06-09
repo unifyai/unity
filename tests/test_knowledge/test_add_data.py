@@ -7,7 +7,7 @@ import pytest
 @_handle_project
 def test_add_data():
     knowledge_manager = KnowledgeManager()
-    knowledge_manager._create_table("MyTable")
+    knowledge_manager._create_table(name="MyTable")
     knowledge_manager._add_data(
         table="MyTable",
         data=[{"name": "Alice", "age": 30}, {"name": "Bob", "age": 25}],
@@ -25,7 +25,7 @@ def test_add_data():
 @_handle_project
 def test_add_more_data():
     knowledge_manager = KnowledgeManager()
-    knowledge_manager._create_table("MyTable")
+    knowledge_manager._create_table(name="MyTable")
     knowledge_manager._add_data(
         table="MyTable",
         data=[{"name": "Alice", "age": 30}],

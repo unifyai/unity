@@ -33,29 +33,32 @@ class BaseContactManager(ABC):
         clarification_down_q: Optional[asyncio.Queue[str]] = None,
     ) -> SteerableToolHandle:
         """
-        Ask a *text* question about the contact book and obtain a
-        :class:`~unity.common.llm_helpers.SteerableToolHandle` that lets the
-        caller await the answer (and optionally the underlying reasoning
-        messages) and steer the conversation further.
+        Query the contact book in natural language and receive an **LLM
+        reasoning handle** (`SteerableToolHandle`) that can be awaited,
+        paused/resumed, interjected, or cancelled.
 
         Parameters
         ----------
-        text:
-            Natural-language query – e.g. *“Show me Alice’s phone number.”*
-        _return_reasoning_steps:
-            If *True*, the final ``result`` coroutine returns a
-            ``(answer, messages)`` tuple where *messages* holds the
-            model’s hidden chain-of-thought.
-        parent_chat_context:
-            Extra messages to prepend to the tool loop.
-        clarification_up_q / clarification_down_q:
-            Optional **async** queues used when the model needs to ask the
-            human for disambiguation.
+        text : str
+            The user's plain-English question (e.g. *"Show me Alice's phone
+            number."*).
+        _return_reasoning_steps : bool, default ``False``
+            When *True*, :pyfunc:`SteerableToolHandle.result` returns a
+            tuple ``(answer, messages)`` where *messages* is the invisible
+            chain-of-thought exchanged with the LLM.
+        parent_chat_context : list[dict] | None
+            **Read-only** conversation context to prepend to the tool loop.
+        clarification_up_q / clarification_down_q : asyncio.Queue[str] | None
+            Optional duplex channels.  When supplied the LLM can ask the human
+            follow-up questions via *up_q* and must read answers from
+            *down_q*.
 
         Returns
         -------
         SteerableToolHandle
-            Handle for awaiting / steering the conversation.
+            A live handle that ultimately yields the assistant's answer and
+            exposes steering operations (``pause``, ``resume``, ``interject``,
+            ``stop``).
         """
 
     @abstractmethod
@@ -69,8 +72,21 @@ class BaseContactManager(ABC):
         clarification_down_q: Optional[asyncio.Queue[str]] = None,
     ) -> SteerableToolHandle:
         """
-        Execute an English instruction that **creates** or **modifies**
-        contacts (add, remove, rename, …).
+        Execute a natural-language **mutation** request on the contact book
+        (create, update, delete, rename, …) and obtain a steerable handle to
+        the LLM conversation.
 
-        All parameters mirror :py:meth:`ask`.  See that method for details.
+        Parameters
+        ----------
+        text : str
+            The user's request (e.g. *"Add Sarah Connor's phone number …"*).
+        _return_reasoning_steps, parent_chat_context,
+        clarification_up_q, clarification_down_q
+            Same semantics as in :py:meth:`ask`.
+
+        Returns
+        -------
+        SteerableToolHandle
+            Handle whose :pyfunc:`result` yields confirmation of the mutation
+            and (optionally) reasoning steps.
         """

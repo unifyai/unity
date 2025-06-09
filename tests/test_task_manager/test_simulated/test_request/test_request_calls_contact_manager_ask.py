@@ -1,0 +1,33 @@
+import pytest
+import functools
+import asyncio
+
+from unity.task_manager.simulated import SimulatedTaskManager
+from unity.contact_manager.simulated import SimulatedContactManager
+from tests.helpers import _handle_project
+
+
+@pytest.mark.asyncio
+@_handle_project
+async def test_request_calls_contact_manager_ask(monkeypatch):
+    """
+    A write request that needs contact info should invoke ContactManager.ask once.
+    """
+    calls = {"count": 0}
+    original = SimulatedContactManager.ask
+
+    @functools.wraps(original)
+    def spy(self, text: str, **kwargs):
+        calls["count"] += 1
+        return original(self, text, **kwargs)
+
+    monkeypatch.setattr(SimulatedContactManager, "ask", spy, raising=True)
+
+    tm = SimulatedTaskManager("CRM demo – add reminder tasks.")
+    handle = tm.request(
+        "Create a reminder task to call Alice Reynolds next Wednesday; "
+        "look up her direct mobile number and include it in the task notes.",
+    )
+    await asyncio.wait_for(handle.result(), timeout=60)
+
+    assert calls["count"] == 1, "ContactManager.ask must be called exactly once."

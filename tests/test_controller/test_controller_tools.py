@@ -1,73 +1,12 @@
-import types, sys  # noqa: E402 (stubs before imports)
 import os
 import pytest
 from pathlib import Path
 import base64
 import unify
-import unity.common.llm_helpers as llmh
-from tests.helpers import _handle_project
 import json
 
-
-# --- Redis stub -----------------------------------------------------------
-class _FakePubSub:
-    def __init__(self):
-        self._messages = []
-
-    def subscribe(self, *_):
-        pass
-
-    def listen(self):
-        # generator expected by Controller.run(); empty -> instant end if used
-        while self._messages:
-            yield self._messages.pop()
-        while True:
-            yield {"type": "noop"}
-
-    def get_message(self):
-        return None
-
-
-class _FakeRedis:
-    def __init__(self, *a, **k):
-        self._pubsub = _FakePubSub()
-        self.published: list[tuple[str, str]] = []
-
-    def pubsub(self):
-        return self._pubsub
-
-    def publish(self, chan, msg):
-        self.published.append((chan, msg))
-
-
-sys.modules.setdefault("redis", types.ModuleType("redis"))
-sys.modules["redis"].Redis = _FakeRedis
-
-
-# --- BrowserWorker stub ---------------------------------------------------
-class _DummyWorker:
-    def __init__(self, *a, **k):
-        self.started = False
-        self.stopped = False
-
-    def start(self):
-        self.started = True
-
-    def stop(self):
-        self.stopped = True
-
-    def join(self, *a, **k):
-        pass
-
-
-# ensure parent package module exists
-pkg_path = "unity.controller.playwright_utils"
-if pkg_path not in sys.modules:
-    sys.modules[pkg_path] = types.ModuleType("playwright_stub")
-worker_mod = types.ModuleType("worker")
-worker_mod.BrowserWorker = _DummyWorker
-sys.modules["unity.controller.playwright_utils.worker"] = worker_mod
-
+import unity.common.llm_helpers as llmh
+from tests.helpers import _handle_project
 from unity.controller.controller import Controller
 
 # Use the same model as other tests (override via UNIFY_MODEL env)

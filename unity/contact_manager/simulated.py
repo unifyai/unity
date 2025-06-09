@@ -10,8 +10,9 @@ from typing import List, Dict, Any
 
 import unify
 from .base import BaseContactManager
-from .sys_msgs import ASK_CONTACTS, UPDATE_CONTACTS
-from ..common.llm_helpers import SteerableToolHandle
+from .contact_manager import ContactManager
+from .prompt_builders import build_ask_prompt, build_update_prompt
+from ..common.llm_helpers import SteerableToolHandle, methods_to_tool_dict
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -28,6 +29,7 @@ class _SimulatedContactHandle(SteerableToolHandle):
         initial_text: str,
         *,
         _return_reasoning_steps: bool,
+        _requests_clarification: bool = False,
         clarification_up_q: asyncio.Queue[str] | None,
         clarification_down_q: asyncio.Queue[str] | None,
     ):
@@ -36,7 +38,13 @@ class _SimulatedContactHandle(SteerableToolHandle):
         self._want_steps = _return_reasoning_steps
         self._clar_up_q = clarification_up_q
         self._clar_down_q = clarification_down_q
-        self._needs_clar = self._clar_up_q is not None and self._clar_down_q is not None
+        if _requests_clarification and (
+            not clarification_up_q or not clarification_down_q
+        ):
+            raise ValueError(
+                "Clarification queues must be provided when _requests_clarification is True",
+            )
+        self._needs_clar = _requests_clarification
 
         if self._needs_clar:
             try:
@@ -130,7 +138,10 @@ class SimulatedContactManager(BaseContactManager):
     stateful LLM memory.
     """
 
-    def __init__(self, description: str = "Imaginary CRM.") -> None:
+    def __init__(
+        self,
+        description: str = "nothing fixed, make up some imaginary scenario",
+    ) -> None:
         self._description = description
 
         # Shared, stateful LLM
@@ -140,14 +151,29 @@ class SimulatedContactManager(BaseContactManager):
             traced=json.loads(os.getenv("UNIFY_TRACED", "true")),
             stateful=True,
         )
+        # Re-create the same tool-dicts the real manager uses, then
+        # build the *exact* same prompts via the shared builders.
+        ask_tools = methods_to_tool_dict(
+            ContactManager._search_contacts,
+            include_class_name=False,
+        )
+        upd_tools = methods_to_tool_dict(
+            ContactManager._create_contact,
+            ContactManager._update_contact,
+            ContactManager._search_contacts,
+            include_class_name=False,
+        )
+        ask_msg = build_ask_prompt(ask_tools)
+        upd_msg = build_update_prompt(upd_tools)
+
         self._llm.set_system_message(
             "You are a *simulated* contact-manager assistant. "
             "There is no real database; invent plausible contact records and "
             "keep your story consistent across turns.\n\n"
             "As a reference, the system messages for the *real* contact-manager 'ask' and 'update' methods are as follows."
             "You do not have access to any real tools, so you should just create a final answer to the question/request . "
-            f"\n\n'ask' system message:\n{ASK_CONTACTS}\n\n"
-            f"\n\n'update' system message:\n{UPDATE_CONTACTS}\n\n"
+            f"\n\n'ask' system message:\n{ask_msg}\n\n"
+            f"\n\n'update' system message:\n{upd_msg}\n\n"
             f"Back-story: {self._description}",
         )
 
@@ -161,11 +187,15 @@ class SimulatedContactManager(BaseContactManager):
         *,
         _return_reasoning_steps: bool = False,
         parent_chat_context: list[dict] | None = None,
+        _requests_clarification: bool = False,
         clarification_up_q: asyncio.Queue[str] | None = None,
         clarification_down_q: asyncio.Queue[str] | None = None,
     ) -> SteerableToolHandle:
         instruction = (
             "On this turn you are simulating the 'ask' method.\n"
+            "Please always *answer* the question (making up the response), "
+            "do not ask for clarifications, or only state *how* you will answer the question.\n"
+            "Just answer the question with an imaginery response.\n"
             f"The user question is:\n{text}"
         )
         if parent_chat_context:
@@ -176,6 +206,7 @@ class SimulatedContactManager(BaseContactManager):
             self._llm,
             instruction,
             _return_reasoning_steps=_return_reasoning_steps,
+            _requests_clarification=_requests_clarification,
             clarification_up_q=clarification_up_q,
             clarification_down_q=clarification_down_q,
         )
@@ -190,6 +221,7 @@ class SimulatedContactManager(BaseContactManager):
         *,
         _return_reasoning_steps: bool = False,
         parent_chat_context: list[dict] | None = None,
+        _requests_clarification: bool = False,
         clarification_up_q: asyncio.Queue[str] | None = None,
         clarification_down_q: asyncio.Queue[str] | None = None,
     ) -> SteerableToolHandle:
@@ -205,6 +237,7 @@ class SimulatedContactManager(BaseContactManager):
             self._llm,
             instruction,
             _return_reasoning_steps=_return_reasoning_steps,
+            _requests_clarification=_requests_clarification,
             clarification_up_q=clarification_up_q,
             clarification_down_q=clarification_down_q,
         )

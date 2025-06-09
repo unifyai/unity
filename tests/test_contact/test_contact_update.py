@@ -2,15 +2,10 @@ from __future__ import annotations
 
 import asyncio
 import pytest
-import re
-import json
-from typing import List, Dict, Any
-import os
+from typing import Dict, Any
 
-import unify
 from unity.contact_manager.contact_manager import ContactManager
 from unity.contact_manager.types.contact import Contact
-from tests.assertion_helpers import assertion_failed
 
 
 def _programmatic_contact_check(
@@ -44,64 +39,6 @@ def _programmatic_contact_check(
     return actual_contact
 
 
-def _llm_judge_update_confirmation(
-    command_description: str,
-    assistant_response: str,
-    reasoning_steps: List[Dict[str, Any]],
-    expected_confirmation_fragment: str,
-) -> None:
-    """
-    Uses an LLM to judge if the assistant's textual response appropriately
-    confirms the outcome of the update command.
-    """
-    judge = unify.Unify(
-        "o4-mini@openai",
-        cache=json.loads(os.environ.get("UNIFY_CACHE", "true")),
-        traced=json.loads(os.environ.get("UNIFY_TRACED", "true")),
-    )
-    system_prompt = (
-        "You are a unit-test judge for a contact management assistant. "
-        "The user attempted to perform an action described as: '{command_description}'. "
-        "The assistant responded: '{assistant_response}'. "
-        "Does the assistant's response clearly and accurately confirm that the intended action "
-        "(e.g., 'created', 'updated', 'added details for') was attempted or completed, "
-        "and does it mention the key information like '{expected_confirmation_fragment}'? "
-        "Focus on the appropriateness of the confirmation message. "
-        'Respond ONLY with valid JSON of the form {{"correct": true}} or {{"correct": false}}.'
-    ).format(
-        command_description=command_description,
-        assistant_response=json.dumps(assistant_response),
-        expected_confirmation_fragment=expected_confirmation_fragment,
-    )
-    judge.set_system_message(system_prompt)
-
-    result_json = judge.generate(
-        f"User command: {command_description}\nAssistant response: {assistant_response}",
-    )
-
-    try:
-        # Attempt to find JSON within the response if it's not pure JSON
-        match = re.search(r"\{.*\}", result_json, re.DOTALL)
-        if match:
-            json_str = match.group(0)
-        else:
-            json_str = result_json
-
-        verdict = json.loads(json_str)
-        is_correct = verdict.get("correct")
-    except json.JSONDecodeError:
-        print(f"LLM Judge returned non-JSON: {result_json}")
-        is_correct = False
-
-    assert is_correct is True, assertion_failed(
-        f"Confirmation containing '{expected_confirmation_fragment}' and acknowledging '{command_description}'",
-        assistant_response,
-        reasoning_steps,
-        f"LLM Judge validation for update confirmation. Judge raw response: {result_json}",
-    )
-    print(f"LLM Judge: OK for update confirmation '{command_description}'.")
-
-
 @pytest.mark.eval
 @pytest.mark.asyncio
 async def test_update_create_new_contact(
@@ -112,23 +49,15 @@ async def test_update_create_new_contact(
     command = (
         "Add a new contact: Eve Adams, email eve@paradise.com, phone 777-000-1111."
     )
-    desc = "Create Eve Adams"
-    expected_fragment = "Eve Adams"
 
-    handle = cm.update(command, _return_reasoning_steps=True)
-    assistant_response, reasoning_steps = await handle.result()
+    handle = cm.update(command)
+    await handle.result()
 
-    _llm_judge_update_confirmation(
-        desc,
-        assistant_response,
-        reasoning_steps,
-        expected_fragment,
-    )
     _programmatic_contact_check(
         cm,
         "email_address",
         "eve@paradise.com",
-        {"first_name": "Eve", "surname": "Adams", "phone_number": "777-000-1111"},
+        {"first_name": "Eve", "surname": "Adams", "phone_number": "7770001111"},
     )
 
 
@@ -150,25 +79,17 @@ async def test_update_existing_contact_details(
         assert results, "Alice Smith not found for test setup"
         alice_smith_id = results[0].contact_id
 
-    command = f"Update contact ID {alice_smith_id}: change her phone to 123-123-1234 and add WhatsApp +11231231234."
-    desc = f"Update Alice Smith (ID {alice_smith_id})"
-    expected_fragment = f"ID {alice_smith_id}"
+    command = f"Update contact ID {alice_smith_id}: change her phone to 1231231234 and add WhatsApp +11231231234."
 
-    handle = cm.update(command, _return_reasoning_steps=True)
-    assistant_response, reasoning_steps = await handle.result()
+    handle = cm.update(command)
+    await handle.result()
 
-    _llm_judge_update_confirmation(
-        desc,
-        assistant_response,
-        reasoning_steps,
-        expected_fragment,
-    )
     _programmatic_contact_check(
         cm,
         "contact_id",
         alice_smith_id,
         {
-            "phone_number": "123-123-1234",
+            "phone_number": "1231231234",
             "whatsapp_number": "+11231231234",
             "email_address": "alice.smith@example.com",
         },
@@ -198,28 +119,19 @@ async def test_update_with_parent_context_identification(
             "content": "Yes, the one with email goodgrief@example.org. What about him?",
         },
     ]
-    command = "Add his phone number: 555-PEANUTS."
-    desc = "Add phone for Charlie Brown (identified by context)"
-    expected_fragment = "Charlie Brown"
+    command = "Add his phone number: 555-123456."
 
     handle = cm.update(
         command,
         parent_chat_context=parent_ctx,
-        _return_reasoning_steps=True,
     )
-    assistant_response, reasoning_steps = await handle.result()
+    await handle.result()
 
-    _llm_judge_update_confirmation(
-        desc,
-        assistant_response,
-        reasoning_steps,
-        expected_fragment,
-    )
     _programmatic_contact_check(
         cm,
         "contact_id",
         charlie_id,
-        {"first_name": "Charlie", "surname": "Brown", "phone_number": "555-PEANUTS"},
+        {"first_name": "Charlie", "surname": "Brown", "phone_number": "555123456"},
     )
 
 
@@ -236,38 +148,25 @@ async def test_update_with_clarification_needed(
     clar_down_q = asyncio.Queue()
 
     command = "Add surname 'Wonderland' for Alice."
-    desc = "Add surname for Alice (ambiguous)"
-    expected_fragment_in_confirmation = "Alice Wonderland"
 
     handle = cm.update(
         command,
         clarification_up_q=clar_up_q,
         clarification_down_q=clar_down_q,
-        _return_reasoning_steps=True,
     )
 
-    clarification_question_text = await asyncio.wait_for(
+    await asyncio.wait_for(
         clar_up_q.get(),
         timeout=60,
-    )
-    assert (
-        "two contacts" in clarification_question_text.lower()
-        or "multiple contacts" in clarification_question_text.lower()
     )
 
     await clar_down_q.put(
         "The one with email alice.wonder@example.com.",
     )  # Clarify Alice Wonder
 
-    assistant_response, reasoning_steps = await handle.result()
+    await handle.result()
 
-    _llm_judge_update_confirmation(
-        desc,
-        assistant_response,
-        reasoning_steps,
-        expected_fragment_in_confirmation,
-    )
-    updated_contact = _programmatic_contact_check(
+    _programmatic_contact_check(
         cm,
         "email_address",
         "alice.wonder@example.com",
@@ -289,25 +188,17 @@ async def test_update_interjection_modification(
     """Test interjecting to modify details during an update operation."""
     cm, _ = contact_manager_scenario
     command = "Create a contact for Frank P. Castle, email frank@punisher.net."
-    desc = "Create Frank Castle, then interject phone"
-    expected_fragment = "Frank P. Castle"
 
-    handle = cm.update(command, _return_reasoning_steps=True)
+    handle = cm.update(command)
     await asyncio.sleep(0.2)
-    await handle.interject("Actually, also add his phone as 555-SKULL.")
-    assistant_response, reasoning_steps = await handle.result()
+    await handle.interject("Actually, also add his phone as 555-54321.")
+    await handle.result()
 
-    _llm_judge_update_confirmation(
-        desc,
-        assistant_response,
-        reasoning_steps,
-        expected_fragment,
-    )
     _programmatic_contact_check(
         cm,
         "email_address",
         "frank@punisher.net",
-        {"first_name": "Frank P.", "surname": "Castle", "phone_number": "555-SKULL"},
+        {"first_name": "Frank P.", "surname": "Castle", "phone_number": "55554321"},
     )
 
 

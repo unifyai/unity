@@ -64,7 +64,7 @@ async def test_store_simple_fact():
 async def test_retrieve_simple_fact():
     km = KnowledgeManager()
 
-    km._create_table("MyTable")
+    km._create_table(name="MyTable")
     km._add_data(table="MyTable", data=[{"name": "Adrian", "birth_year": "1994"}])
 
     handle = km.retrieve(
