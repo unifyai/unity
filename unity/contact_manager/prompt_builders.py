@@ -60,6 +60,7 @@ def build_ask_prompt(tools: Dict[str, Callable]) -> str:
     create_custom = _tool_name(tools, "create_custom_column")
     delete_custom = _tool_name(tools, "delete_custom_column")
     list_columns = _tool_name(tools, "list_columns")
+    nearest_search = _tool_name(tools, "nearest_column")
 
     # ------------------------------------------------------------------ #
     #  Usage snippets (standard search + custom-column examples)
@@ -86,6 +87,10 @@ def build_ask_prompt(tools: Dict[str, Callable]) -> str:
           `{search_name}(filter="phone_number is None")`
         • Has any email (not None)
           `{search_name}(filter="email_address is not None")`
+
+        ─ Semantic search ─
+        • Find contacts *similar* to "machine-learning expert" in the *description* field
+          `{nearest_search}(source='description', text='machine-learning expert')`
 
         ─ Custom columns ─
         • Inspect schema
@@ -137,6 +142,7 @@ def build_update_prompt(tools: Dict[str, Callable]) -> str:
     create_custom = _tool_name(tools, "create_custom_column")
     delete_custom = _tool_name(tools, "delete_custom_column")
     list_columns = _tool_name(tools, "list_columns")
+    nearest_search = _tool_name(tools, "nearest_column")
 
     usage_examples = textwrap.dedent(
         f"""
@@ -162,6 +168,10 @@ def build_update_prompt(tools: Dict[str, Callable]) -> str:
           `{update_name}(contact_id=42, department='Engineering')`
         • Remove the column later
           `{delete_custom}(column_name='department')`
+
+        ─ Semantic search example ─
+        • Retrieve top 3 contacts whose *department* is semantically close to "data science"
+          `{nearest_search}(source='department', text='data science', k=3)`
     """,
     ).strip()
 
