@@ -46,14 +46,6 @@ def build_store_prompt(
 
     sig_json = json.dumps(_sig_dict(tools), indent=4)
 
-    usage_examples_placeholder = textwrap.dedent(
-        """
-        Examples
-        --------
-        <add store-usage examples here>
-        """,
-    ).strip()
-
     core_instructions = textwrap.dedent(
         """
         Your task is to **store** new knowledge provided by the user.
@@ -85,8 +77,6 @@ def build_store_prompt(
             "---------------------",
             sig_json,
             "",
-            usage_examples_placeholder,
-            "",
             "ColumnType Schema",
             "-----------------",
             json.dumps(column_type_schema, indent=4),
@@ -110,14 +100,6 @@ def build_retrieve_prompt(
     """
 
     sig_json = json.dumps(_sig_dict(tools), indent=4)
-
-    usage_examples_placeholder = textwrap.dedent(
-        """
-        Examples
-        --------
-        <add retrieve-usage examples here>
-        """,
-    ).strip()
 
     core_instructions = textwrap.dedent(
         """
@@ -144,8 +126,6 @@ def build_retrieve_prompt(
             "Tools (name → argspec)",
             "---------------------",
             sig_json,
-            "",
-            usage_examples_placeholder,
             "",
             "ColumnType Schema",
             "-----------------",
