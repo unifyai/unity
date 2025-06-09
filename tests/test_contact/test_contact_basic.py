@@ -24,6 +24,7 @@ def test_create_contact():
         "email_address": None,
         "phone_number": None,
         "whatsapp_number": None,
+        "description": None,
     }
 
 
@@ -50,6 +51,7 @@ def test_update_contact():
         "email_address": None,
         "phone_number": None,
         "whatsapp_number": None,
+        "description": None,
     }
 
     # update
@@ -69,6 +71,7 @@ def test_update_contact():
         "email_address": None,
         "phone_number": None,
         "whatsapp_number": None,
+        "description": None,
     }
 
 
@@ -93,6 +96,7 @@ def test_create_contacts():
         "email_address": None,
         "phone_number": None,
         "whatsapp_number": None,
+        "description": None,
     }
 
     # second
@@ -109,6 +113,7 @@ def test_create_contacts():
         "email_address": None,
         "phone_number": None,
         "whatsapp_number": None,
+        "description": None,
     }
 
 
