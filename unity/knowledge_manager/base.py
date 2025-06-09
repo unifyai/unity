@@ -38,7 +38,7 @@ class BaseKnowledgeManager(ABC):
     # Public interface                                                   #
     # ------------------------------------------------------------------ #
     @abstractmethod
-    def store(
+    async def store(
         self,
         text: str,
         *,
@@ -74,7 +74,7 @@ class BaseKnowledgeManager(ABC):
         """
 
     @abstractmethod
-    def retrieve(
+    async def retrieve(
         self,
         text: str,
         *,
