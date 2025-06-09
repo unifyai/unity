@@ -47,7 +47,8 @@ async def test_update_create_new_contact(
     """Test creating a new contact using the update method via natural language."""
     cm, _ = contact_manager_scenario
     command = (
-        "Add a new contact: Eve Adams, email eve@paradise.com, phone 777-000-1111."
+        "Add a new contact: Eve Adams, email eve@paradise.com, "
+        "phone 777-000-1111, description 'Digital nomad and writer'."
     )
 
     handle = cm.update(command)
@@ -57,7 +58,12 @@ async def test_update_create_new_contact(
         cm,
         "email_address",
         "eve@paradise.com",
-        {"first_name": "Eve", "surname": "Adams", "phone_number": "7770001111"},
+        {
+            "first_name": "Eve",
+            "surname": "Adams",
+            "phone_number": "7770001111",
+            "description": "Digital nomad and writer",
+        },
     )
 
 
@@ -224,3 +230,29 @@ async def test_update_stop_operation(
     assert (
         len(prof_x_search) == 0
     ), "Contact should ideally not be created if stopped early."
+
+
+@pytest.mark.eval
+@pytest.mark.asyncio
+async def test_update_add_description(
+    contact_manager_scenario: tuple[ContactManager, Dict[str, int]],
+):
+    """Add or change the *description* field on an existing contact."""
+    cm, _ = contact_manager_scenario
+
+    # Pick Bob Johnson
+    bob = cm._search_contacts(filter="first_name == 'Bob' and surname == 'Johnson'")
+    assert bob, "Bob Johnson must exist for this test"
+    bob_id = bob[0].contact_id
+
+    handle = cm.update(
+        f"Add a short description 'Long-time customer' to contact ID {bob_id}.",
+    )
+    await handle.result()
+
+    _programmatic_contact_check(
+        cm,
+        "contact_id",
+        bob_id,
+        {"description": "Long-time customer"},
+    )
