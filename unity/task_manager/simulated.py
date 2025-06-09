@@ -124,7 +124,7 @@ class SimulatedTaskManager:
     #  Public API                                                        #
     # ------------------------------------------------------------------ #
 
-    def ask(
+    async def ask(
         self,
         text: str,
         *,
@@ -181,7 +181,7 @@ class SimulatedTaskManager:
     #  request  (write-capable)                                          #
     # ------------------------------------------------------------------ #
 
-    def request(
+    async def request(
         self,
         text: str,
         *,

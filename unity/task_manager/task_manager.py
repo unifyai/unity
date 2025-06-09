@@ -234,7 +234,7 @@ class TaskManager(BaseTaskManager):
     # ------------------------------------------------------------------ #
 
     @functools.wraps(BaseTaskManager.ask, updated=())
-    def ask(
+    async def ask(
         self,
         text: str,
         *,
@@ -290,7 +290,7 @@ class TaskManager(BaseTaskManager):
     # ------------------------------------------------------------------ #
 
     @functools.wraps(BaseTaskManager.request, updated=())
-    def request(
+    async def request(
         self,
         text: str,
         *,
@@ -344,7 +344,7 @@ class TaskManager(BaseTaskManager):
     #  start_task – new public surface (write-capable but focussed)      #
     # ------------------------------------------------------------------ #
     @functools.wraps(BaseTaskManager.start_task, updated=())
-    def start_task(
+    async def start_task(
         self,
         text: str,
         *,
