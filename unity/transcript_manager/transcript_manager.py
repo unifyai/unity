@@ -75,7 +75,7 @@ class TranscriptManager(BaseTranscriptManager):
     # English-Text Question
 
     @functools.wraps(BaseTranscriptManager.ask, updated=())
-    def ask(
+    async def ask(
         self,
         text: str,
         *,

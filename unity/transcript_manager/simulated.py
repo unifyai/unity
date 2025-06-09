@@ -171,7 +171,7 @@ class SimulatedTranscriptManager(BaseTranscriptManager):
     # ask                                                                   #
     # --------------------------------------------------------------------- #
     @functools.wraps(BaseTranscriptManager.ask, updated=())
-    def ask(
+    async def ask(
         self,
         text: str,
         *,
