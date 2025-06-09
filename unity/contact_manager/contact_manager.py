@@ -201,7 +201,7 @@ class ContactManager(BaseContactManager):
     # Public #
     # -------#
     @functools.wraps(BaseContactManager.ask, updated=())
-    def ask(
+    async def ask(
         self,
         text: str,
         *,
@@ -251,7 +251,7 @@ class ContactManager(BaseContactManager):
         return handle
 
     @functools.wraps(BaseContactManager.update, updated=())
-    def update(
+    async def update(
         self,
         text: str,
         *,

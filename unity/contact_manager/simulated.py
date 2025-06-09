@@ -181,7 +181,7 @@ class SimulatedContactManager(BaseContactManager):
     # ask                                                                   #
     # --------------------------------------------------------------------- #
     @functools.wraps(BaseContactManager.ask, updated=())
-    def ask(
+    async def ask(
         self,
         text: str,
         *,
@@ -215,7 +215,7 @@ class SimulatedContactManager(BaseContactManager):
     # update                                                                #
     # --------------------------------------------------------------------- #
     @functools.wraps(BaseContactManager.update, updated=())
-    def update(
+    async def update(
         self,
         text: str,
         *,

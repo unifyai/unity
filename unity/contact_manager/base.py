@@ -23,7 +23,7 @@ class BaseContactManager(ABC):
     # Public interface                                                   #
     # ------------------------------------------------------------------ #
     @abstractmethod
-    def ask(
+    async def ask(
         self,
         text: str,
         *,
@@ -62,7 +62,7 @@ class BaseContactManager(ABC):
         """
 
     @abstractmethod
-    def update(
+    async def update(
         self,
         text: str,
         *,
