@@ -114,7 +114,8 @@ async def test_retrieve_uses_parent_context():
     km = KnowledgeManager()
 
     # ➊ store a simple fact under the original name
-    await km.store("Carlos was born in 1990.").result()
+    handle = await km.store("Carlos was born in 1990.")
+    await handle.result()
 
     # ➋ build parent-level mapping
     parent_ctx = [
@@ -158,20 +159,19 @@ async def test_retrieve_requests_clarification():
     km = KnowledgeManager()
 
     # ➊ seed two distinct Alex rows
-    await km.store("Alex Johnson was born in 1990.").result()
-    await km.store("Alex Lee was born in 1985.").result()
+    await (await km.store("Alex Johnson was born in 1990.")).result()
+    await (await km.store("Alex Lee was born in 1985.")).result()
 
     # ➋ clarification channels
     up_q, down_q = asyncio.Queue(), asyncio.Queue()
 
     # ➌ run retrieve in background
-    task = asyncio.create_task(
-        km.retrieve(
-            "When was Alex born?",
-            clarification_up_q=up_q,
-            clarification_down_q=down_q,
-        ).result(),  # .result() returns the final string
+    handle = await km.retrieve(
+        "When was Alex born?",
+        clarification_up_q=up_q,
+        clarification_down_q=down_q,
     )
+    task = asyncio.create_task(handle.result())
 
     # ➍ expect a clarification question
     question = await asyncio.wait_for(up_q.get(), timeout=30)
