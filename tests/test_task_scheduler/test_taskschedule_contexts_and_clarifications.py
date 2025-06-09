@@ -41,7 +41,7 @@ async def test_ts_ask_uses_parent_context():
         {"role": "assistant", "content": "Understood – Hotfix ⇢ Thunderbolt."},
     ]
 
-    handle = ts.ask(
+    handle = await ts.ask(
         "What is the priority level of the Thunderbolt task?",
         parent_chat_context=parent_ctx,
     )
@@ -83,7 +83,7 @@ async def test_ts_ask_requests_clarification():
     up_q, down_q = asyncio.Queue(), asyncio.Queue()
 
     # run ask in background (loop starts immediately)
-    handle = ts.ask(
+    handle = await ts.ask(
         "What is the description of the high priority task?",
         clarification_up_q=up_q,
         clarification_down_q=down_q,
