@@ -1,9 +1,12 @@
 from typing import List, Dict, Optional, Callable, Any
 import asyncio
+import requests
 import json
 import functools
 import os
 from .prompt_builders import build_ask_prompt, build_update_prompt
+from ..knowledge_manager.types import ColumnType
+from ..helpers import _handle_exceptions
 
 import unify
 from .types.contact import Contact
@@ -32,20 +35,111 @@ class ContactManager(BaseContactManager):
         event_bus.register_event_types(["Contacts"])
         self._ctx = event_bus.ctxs["Contacts"]
 
-        # Define tools for ask and update methods
-        self._ask_tools: Dict[str, Callable] = methods_to_tool_dict(
-            self._search_contacts,
+        # ── immutable built-in columns ───────────────────────────────────
+        self._REQUIRED_COLUMNS: set[str] = {
+            "contact_id",
+            "first_name",
+            "surname",
+            "email_address",
+            "phone_number",
+            "whatsapp_number",
+        }
+
+        # ── schema-management internal tools (mirrors KnowledgeManager) ──
+        self._schema_tools: Dict[str, Callable] = methods_to_tool_dict(
+            self._create_custom_column,
+            self._delete_custom_column,
+            self._list_columns,
             include_class_name=False,
         )
-        self._update_tools: Dict[str, Callable] = methods_to_tool_dict(
-            self._create_contact,
-            self._update_contact,
-            self._search_contacts,
-            include_class_name=False,
-        )
+
+        # ── public tool dictionaries ─────────────────────────────────────
+        self._ask_tools: Dict[str, Callable] = {
+            **methods_to_tool_dict(self._search_contacts, include_class_name=False),
+            **self._schema_tools,
+        }
+
+        self._update_tools: Dict[str, Callable] = {
+            **methods_to_tool_dict(
+                self._create_contact,
+                self._update_contact,
+                self._search_contacts,
+                include_class_name=False,
+            ),
+            **self._schema_tools,
+        }
         # Add tracing
         if traced:
             self = unify.traced(self)
+
+    # ──────────────────────────────────────────────────────────────────────
+    #  Column helpers (single-table version of KnowledgeManager's helpers)
+    # ──────────────────────────────────────────────────────────────────────
+
+    def _get_columns(self) -> Dict[str, str]:
+        """Return {column_name: column_type} for the contacts table."""
+        proj = unify.active_project()
+        url = f"{os.environ['UNIFY_BASE_URL']}/logs/fields?project={proj}&context={self._ctx}"
+        headers = {"Authorization": f"Bearer {os.environ['UNIFY_KEY']}"}
+        response = requests.request("GET", url, headers=headers)
+        _handle_exceptions(response)
+        ret = response.json()
+        return {k: v["data_type"] for k, v in ret.items()}
+
+    def _list_columns(self, *, include_types: bool = True) -> Dict[str, Any]:
+        """List current columns; with types if *include_types*."""
+        cols = self._get_columns()
+        return {"columns": cols} if include_types else set(cols)
+
+    def _create_custom_column(
+        self,
+        *,
+        column_name: str,
+        column_type: ColumnType | str,
+    ) -> Dict[str, str]:
+        """
+        **Add** a new optional column to the contacts table.
+        """
+        assert (
+            column_name not in self._REQUIRED_COLUMNS
+        ), f"'{column_name}' is a required column and cannot be recreated."
+
+        if column_name in self._get_columns():
+            raise ValueError(f"Column '{column_name}' already exists.")
+
+        proj = unify.active_project()
+        url = f"{os.environ['UNIFY_BASE_URL']}/logs/fields"
+        headers = {"Authorization": f"Bearer {os.environ['UNIFY_KEY']}"}
+        json_input = {
+            "project": proj,
+            "context": self._ctx,
+            "fields": {column_name: str(column_type)},
+        }
+        response = requests.request("POST", url, json=json_input, headers=headers)
+        _handle_exceptions(response)
+        return response.json()
+
+    def _delete_custom_column(self, *, column_name: str) -> Dict[str, str]:
+        """
+        **Remove** a custom column**. Built-in columns are protected.
+        """
+        if column_name in self._REQUIRED_COLUMNS:
+            raise ValueError(f"Cannot delete required column '{column_name}'.")
+
+        if column_name not in self._get_columns():
+            raise ValueError(f"Column '{column_name}' does not exist.")
+
+        url = f"{os.environ['UNIFY_BASE_URL']}/logs?delete_empty_logs=True"
+        headers = {"Authorization": f"Bearer {os.environ['UNIFY_KEY']}"}
+        json_input = {
+            "project": unify.active_project(),
+            "context": self._ctx,
+            "ids_and_fields": [[None, column_name]],
+            "source_type": "all",
+        }
+        response = requests.request("DELETE", url, json=json_input, headers=headers)
+        _handle_exceptions(response)
+        return response.json()
 
     # Public #
     # -------#
@@ -158,6 +252,7 @@ class ContactManager(BaseContactManager):
         email_address: Optional[str] = None,
         phone_number: Optional[str] = None,
         whatsapp_number: Optional[str] = None,
+        **custom_fields: Any,
     ) -> int:
         """
         Persist a **new** contact record.
@@ -199,6 +294,7 @@ class ContactManager(BaseContactManager):
             "email_address": email_address,
             "phone_number": phone_number,
             "whatsapp_number": whatsapp_number,
+            **custom_fields,
         }
         assert any(
             contact_details.values(),
@@ -253,6 +349,7 @@ class ContactManager(BaseContactManager):
         email_address: Optional[str] = None,
         phone_number: Optional[str] = None,
         whatsapp_number: Optional[str] = None,
+        **custom_fields: Any,
     ) -> int:
         """
         Modify **selected** (not `None`) fields of an existing contact.
@@ -297,6 +394,7 @@ class ContactManager(BaseContactManager):
             "email_address": email_address,
             "phone_number": phone_number,
             "whatsapp_number": whatsapp_number,
+            **custom_fields,
         }
         updates_to_apply = [{k: v} for k, v in contact_details.items() if v is not None]
         if not updates_to_apply:
