@@ -27,7 +27,6 @@ def _now() -> str:
 def build_ask_prompt(tools: Dict[str, Callable]) -> str:
     """Dynamic **system** prompt for `TaskManager.ask`."""
     sig_json = json.dumps(_sig_dict(tools), indent=4)
-    usage_examples = "[Add usage examples here]"  # placeholder
 
     return "\n".join(
         [
@@ -37,8 +36,6 @@ def build_ask_prompt(tools: Dict[str, Callable]) -> str:
             "",
             "Tools (name → argspec):",
             sig_json,
-            "",
-            usage_examples,
             "",
             "Task schema (for filters):",
             json.dumps(Task.model_json_schema(), indent=4),
@@ -54,7 +51,6 @@ def build_ask_prompt(tools: Dict[str, Callable]) -> str:
 def build_request_prompt(tools: Dict[str, Callable]) -> str:
     """Dynamic **system** prompt for `TaskManager.request`."""
     sig_json = json.dumps(_sig_dict(tools), indent=4)
-    usage_examples = "[Add usage examples here]"  # placeholder
 
     return "\n".join(
         [
@@ -71,8 +67,6 @@ def build_request_prompt(tools: Dict[str, Callable]) -> str:
             "Tools (name → argspec):",
             sig_json,
             "",
-            usage_examples,
-            "",
             "Task schema:",
             json.dumps(Task.model_json_schema(), indent=4),
             "",
@@ -87,7 +81,6 @@ def build_request_prompt(tools: Dict[str, Callable]) -> str:
 def build_start_task_prompt(tools: Dict[str, Callable]) -> str:
     """Dynamic **system** prompt for `TaskManager.start_task`."""
     sig_json = json.dumps(_sig_dict(tools), indent=4)
-    usage_examples = "[Add usage examples here]"  # placeholder
 
     return "\n".join(
         [
@@ -96,8 +89,6 @@ def build_start_task_prompt(tools: Dict[str, Callable]) -> str:
             "",
             "Tools (name → argspec):",
             sig_json,
-            "",
-            usage_examples,
             "",
             "Activation rules",
             "• Only one task may be active at any time.",
