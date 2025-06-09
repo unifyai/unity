@@ -32,8 +32,8 @@ pyaudio>=0.2.11
 # Twilio for SMS/WhatsApp (sample.py)
 twilio>=8.0.0
 
-Flask==2.3.3
-gunicorn>=21.0.0
+fastapi>=0.104.0
+uvicorn[standard]>=0.24.0
 requests==2.31.0
 asyncio
 # Add any other dependencies your main.py needs
