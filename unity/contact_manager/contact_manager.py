@@ -252,7 +252,7 @@ class ContactManager(BaseContactManager):
         email_address: Optional[str] = None,
         phone_number: Optional[str] = None,
         whatsapp_number: Optional[str] = None,
-        **custom_fields: Any,
+        custom_fields: Optional[Dict[str, ColumnType]] = None,
     ) -> int:
         """
         Persist a **new** contact record.
@@ -274,6 +274,10 @@ class ContactManager(BaseContactManager):
         whatsapp_number : str | None
             Contact's WhatsApp number. Can optionally start with '+' (only if explicitly
             mentioned by the user), but must otherwise contain only digits. Must be unique.
+        custom_fields : Dict[str, ColumnType] | None
+            Additional contact information as key-value pairs, where keys are string column
+            names and values are of type ColumnType. Can include any other relevant
+            information about the contact. May be *None*.
 
         Returns
         -------
@@ -294,7 +298,7 @@ class ContactManager(BaseContactManager):
             "email_address": email_address,
             "phone_number": phone_number,
             "whatsapp_number": whatsapp_number,
-            **custom_fields,
+            **(custom_fields if custom_fields is not None else {}),
         }
         assert any(
             contact_details.values(),
@@ -349,7 +353,7 @@ class ContactManager(BaseContactManager):
         email_address: Optional[str] = None,
         phone_number: Optional[str] = None,
         whatsapp_number: Optional[str] = None,
-        **custom_fields: Any,
+        custom_fields: Optional[Dict[str, ColumnType]] = None,
     ) -> int:
         """
         Modify **selected** (not `None`) fields of an existing contact.
@@ -373,6 +377,10 @@ class ContactManager(BaseContactManager):
         whatsapp_number : str | None
             Contact's WhatsApp number - can optionally start with '+' (only if *explicitly*
             mentioned by the user), but must otherwise contain only digits.
+        custom_fields : Dict[str, ColumnType] | None
+            Additional contact information as key-value pairs, where keys are string column
+            names and values are of type ColumnType. Can include any other relevant
+            information about the contact. May be *None*.
 
         Returns
         -------
@@ -394,7 +402,7 @@ class ContactManager(BaseContactManager):
             "email_address": email_address,
             "phone_number": phone_number,
             "whatsapp_number": whatsapp_number,
-            **custom_fields,
+            **(custom_fields if custom_fields is not None else {}),
         }
         updates_to_apply = [{k: v} for k, v in contact_details.items() if v is not None]
         if not updates_to_apply:
