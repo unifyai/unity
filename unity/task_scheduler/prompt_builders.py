@@ -35,7 +35,6 @@ def build_ask_prompt(tools: Dict[str, Callable]) -> str:
     injected live from the supplied *tools* dict.
     """
     sig_json = json.dumps(_sig_dict(tools), indent=4)
-    usage_examples = "[Add usage examples here]"  # placeholder
 
     return "\n".join(
         [
@@ -48,8 +47,6 @@ def build_ask_prompt(tools: Dict[str, Callable]) -> str:
             "",
             "Tools (name → argspec):",
             sig_json,
-            "",
-            usage_examples,
             "",
             "Task schema:",
             json.dumps(Task.model_json_schema(), indent=4),
@@ -64,7 +61,6 @@ def build_update_prompt(tools: Dict[str, Callable]) -> str:
     Build the **system** prompt for the `update` method.
     """
     sig_json = json.dumps(_sig_dict(tools), indent=4)
-    usage_examples = "[Add usage examples here]"  # placeholder
 
     return "\n".join(
         [
@@ -76,8 +72,6 @@ def build_update_prompt(tools: Dict[str, Callable]) -> str:
             "",
             "Tools (name → argspec):",
             sig_json,
-            "",
-            usage_examples,
             "",
             "Task schema:",
             json.dumps(Task.model_json_schema(), indent=4),
