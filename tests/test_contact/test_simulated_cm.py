@@ -20,7 +20,7 @@ from tests.helpers import _handle_project
 @_handle_project
 async def test_start_and_ask_simulated_cm():
     cm = SimulatedContactManager("Demo CRM for unit-tests.")
-    h = cm.ask("List all my contacts.")
+    h = await cm.ask("List all my contacts.")
     answer = await h.result()
     assert isinstance(answer, str) and answer.strip(), "Answer should be non-empty"
 
@@ -42,7 +42,7 @@ async def test_interject_simulated_cm(monkeypatch):
     monkeypatch.setattr(_SimulatedContactHandle, "interject", wrapped, raising=True)
 
     cm = SimulatedContactManager()
-    h = cm.ask("Show me all contacts created this quarter.")
+    h = await cm.ask("Show me all contacts created this quarter.")
     await asyncio.sleep(0.05)
     reply = h.interject("Filter only VIP customers.")
     assert "ack" in reply.lower() or "noted" in reply.lower()
@@ -57,7 +57,7 @@ async def test_interject_simulated_cm(monkeypatch):
 @_handle_project
 async def test_stop_simulated_cm():
     cm = SimulatedContactManager()
-    h = cm.ask("Generate a full CRM export.")
+    h = await cm.ask("Generate a full CRM export.")
     await asyncio.sleep(0.05)
     h.stop()
     with pytest.raises(asyncio.CancelledError):
@@ -76,7 +76,7 @@ async def test_cm_requests_clarification():
     up_q: asyncio.Queue[str] = asyncio.Queue()
     down_q: asyncio.Queue[str] = asyncio.Queue()
 
-    h = cm.ask(
+    h = await cm.ask(
         "Please update my client list.",
         clarification_up_q=up_q,
         clarification_down_q=down_q,
@@ -104,14 +104,14 @@ async def test_cm_stateful_memory_serial_asks():
     """
     cm = SimulatedContactManager()
 
-    h1 = cm.ask(
+    h1 = await cm.ask(
         "Please suggest a unique reference code for a new prospect, "
         "and reply with *only* that code.",
     )
     ref_code = (await h1.result()).strip()
     assert ref_code, "Reference code should not be empty"
 
-    h2 = cm.ask("Great. What reference code did you just propose?")
+    h2 = await cm.ask("Great. What reference code did you just propose?")
     answer2 = (await h2.result()).lower()
     assert ref_code.lower() in answer2, "LLM should recall the code it generated"
 
@@ -127,13 +127,13 @@ async def test_cm_stateful_update_then_ask():
     email = "john.doe@example.com"
 
     # create a fictitious contact
-    upd = cm.update(
+    upd = await cm.update(
         f"Create a new contact: {full_name}, email {email}, mark as high priority.",
     )
     await upd.result()
 
     # ask about it
-    hq = cm.ask("Do we have Johnathan's contact details on file?")
+    hq = await cm.ask("Do we have Johnathan's contact details on file?")
     ans = (await hq.result()).lower()
     assert (
         "john" in ans and "email" in ans
@@ -205,7 +205,7 @@ async def test_pause_and_resume_simulated_cm(monkeypatch):
     )
 
     cm = SimulatedContactManager()
-    handle = cm.ask("Generate a short summary of all open opportunities.")
+    handle = await cm.ask("Generate a short summary of all open opportunities.")
 
     # valid_tools should start with *pause* (since the handle is running)
     tools_initial = handle.valid_tools
