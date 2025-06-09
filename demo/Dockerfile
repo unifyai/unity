@@ -52,5 +52,5 @@ EXPOSE 8000
 # Set environment variables
 ENV PYTHONPATH=/app
 
-# Use Gunicorn for production WSGI server
-CMD ["gunicorn", "--bind", "0.0.0.0:8000", "--workers", "1", "--timeout", "120", "wrapper_app:app"]
+# Use Uvicorn for production ASGI server
+CMD ["uvicorn", "wrapper_app:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "1"]
