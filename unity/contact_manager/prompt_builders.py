@@ -7,6 +7,7 @@ from datetime import datetime, timezone
 from typing import Dict, Callable
 
 from .types.contact import Contact
+from ..knowledge_manager.types import column_type_schema
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -28,12 +29,41 @@ def _now() -> str:  # UTC timestamp helper
 # ─────────────────────────────────────────────────────────────────────────────
 
 
+def _permanent_columns() -> str:
+    """
+    Return a comma-separated string of the *built-in* column names taken
+    directly from the `Contact` Pydantic model (works on v1 & v2).  Any
+    extra/custom fields are ignored because they are not part of the schema
+    at import time.
+    """
+    return ", ".join(sorted(Contact.model_fields.keys()))
+
+
+def _tool_name(tools: Dict[str, Callable], needle: str) -> str | None:
+    """
+    Best-effort lookup utility: find the *first* tool whose name contains
+    the given *needle* (case-insensitive).  Returns ``None`` if not found.
+    """
+    needle = needle.lower()
+    return next((n for n in tools if needle in n.lower()), None)
+
+
 def build_ask_prompt(tools: Dict[str, Callable]) -> str:
     """Return the system-prompt used by *ask*."""
     sig_json = json.dumps(_sig_dict(tools), indent=4)
     # Assume there is exactly *one* search-tool in the dict:
     search_name = next(iter(tools))
 
+    # ------------------------------------------------------------------ #
+    #  Dynamic helpers for custom-column tools
+    # ------------------------------------------------------------------ #
+    create_custom = _tool_name(tools, "create_custom_column")
+    delete_custom = _tool_name(tools, "delete_custom_column")
+    list_columns = _tool_name(tools, "list_columns")
+
+    # ------------------------------------------------------------------ #
+    #  Usage snippets (standard search + custom-column examples)
+    # ------------------------------------------------------------------ #
     usage_examples = textwrap.dedent(
         f"""
         Examples
@@ -56,6 +86,14 @@ def build_ask_prompt(tools: Dict[str, Callable]) -> str:
           `{search_name}(filter="phone_number is None")`
         • Has any email (not None)
           `{search_name}(filter="email_address is not None")`
+
+        ─ Custom columns ─
+        • Inspect schema
+          `{list_columns}()`
+        • Add a “linkedin” field
+          `{create_custom}(column_name='linkedin', column_type='str')`
+        • Delete it again
+          `{delete_custom}(column_name='linkedin')`
     """,
     ).strip()
 
@@ -64,6 +102,12 @@ def build_ask_prompt(tools: Dict[str, Callable]) -> str:
             "You are an assistant specializing in **retrieving contact information**.",
             "Work strictly through the tools provided.",
             "",
+            "Custom columns:",
+            "---------------",
+            "• The contacts table may include **optional custom columns** in addition to the required ones.",
+            f"• Required columns ({_permanent_columns()}) **cannot** be deleted.",
+            f"• Inspect existing columns via `{list_columns}()`.",
+            "",
             "Tools (name → argspec):",
             sig_json,
             "",
@@ -71,6 +115,9 @@ def build_ask_prompt(tools: Dict[str, Callable]) -> str:
             "",
             "Contact schema:",
             json.dumps(Contact.model_json_schema(), indent=4),
+            "",
+            "ColumnType schema (for custom columns):",
+            json.dumps(column_type_schema, indent=4),
             "",
             f"Current UTC time is {_now()}.",
         ],
@@ -81,10 +128,15 @@ def build_update_prompt(tools: Dict[str, Callable]) -> str:
     """Return the system-prompt used by *update*."""
     sig_json = json.dumps(_sig_dict(tools), indent=4)
 
-    # Pick out canonical names heuristically
-    create_name = next((n for n in tools if "create" in n.lower()), None)
-    update_name = next((n for n in tools if "update" in n.lower()), None)
-    search_name = next((n for n in tools if "search" in n.lower()), None)
+    # Pick out canonical names heuristically (all dynamic)
+    create_name = _tool_name(tools, "create_contact")
+    update_name = _tool_name(tools, "update_contact")
+    search_name = _tool_name(tools, "search_contacts")
+
+    # Custom-column helpers (dynamic)
+    create_custom = _tool_name(tools, "create_custom_column")
+    delete_custom = _tool_name(tools, "delete_custom_column")
+    list_columns = _tool_name(tools, "list_columns")
 
     usage_examples = textwrap.dedent(
         f"""
@@ -102,6 +154,14 @@ def build_update_prompt(tools: Dict[str, Callable]) -> str:
 
         • **Parse** a full name on create
           `"Frank P. Castle"` → `{create_name}(first_name='Frank P.', surname='Castle')`
+
+        ─ Custom columns ─
+        • New column *“department”*
+          `{create_custom}(column_name='department', column_type='str')`
+        • Update a contact's department
+          `{update_name}(contact_id=42, department='Engineering')`
+        • Remove the column later
+          `{delete_custom}(column_name='department')`
     """,
     ).strip()
 
@@ -110,6 +170,12 @@ def build_update_prompt(tools: Dict[str, Callable]) -> str:
             "You are an assistant in charge of **creating or editing contacts**.",
             "Use the tools provided to create new entries or update existing ones.",
             "",
+            "Custom columns:",
+            "---------------",
+            f"• Required columns ({_permanent_columns()}) **cannot** be deleted.",
+            f"• Add a new column with `{create_custom}(…)`, remove with `{delete_custom}(…)`,",
+            f"  and list columns with `{list_columns}()`.",
+            "",
             "Tools (name → argspec):",
             sig_json,
             "",
@@ -117,6 +183,9 @@ def build_update_prompt(tools: Dict[str, Callable]) -> str:
             "",
             "Contact schema:",
             json.dumps(Contact.model_json_schema(), indent=4),
+            "",
+            "ColumnType schema (for custom columns):",
+            json.dumps(column_type_schema, indent=4),
             "",
             f"Current UTC time is {_now()}.",
         ],
