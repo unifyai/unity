@@ -83,8 +83,11 @@ class Controller(threading.Thread):
         """Signal the controller thread to stop."""
         self._stop_event.set()
         # Close pubsub connections to break out of the listen loop
-        self._pubsub_browser_state.close()
-        self._pubsub_text_action.close()
+        try:
+            self._pubsub_browser_state.close()
+            self._pubsub_text_action.close()
+        except Exception:
+            pass
 
     # ------------------------------------------------------------------
     # Internal helper – perform one or more low-level primitives (in order)

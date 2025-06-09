@@ -1,9 +1,9 @@
 from typing import List, Dict, Optional, Callable, Any
 import asyncio
-import functools
-from datetime import datetime, timezone
 import json
+import functools
 import os
+from .prompt_builders import build_ask_prompt, build_update_prompt
 
 import unify
 from .types.contact import Contact
@@ -14,7 +14,6 @@ from ..common.llm_helpers import (
     SteerableToolHandle,
     methods_to_tool_dict,
 )
-from .sys_msgs import ASK_CONTACTS, UPDATE_CONTACTS
 
 
 class ContactManager(BaseContactManager):
@@ -65,13 +64,9 @@ class ContactManager(BaseContactManager):
             cache=json.loads(os.environ.get("UNIFY_CACHE", "true")),
             traced=json.loads(os.environ.get("UNIFY_TRACED", "true")),
         )
-        client.set_system_message(
-            ASK_CONTACTS.replace(
-                "<datetime>",
-                datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC"),
-            ),
-        )
 
+        # Build a *live* tools-dict so the prompt never hard-codes
+        # either the number of tools or their names/argspecs.
         tools = dict(self._ask_tools)
         if clarification_up_q is not None and clarification_down_q is not None:
 
@@ -85,6 +80,7 @@ class ContactManager(BaseContactManager):
 
             tools["request_clarification"] = request_clarification
 
+        client.set_system_message(build_ask_prompt(tools))
         handle = start_async_tool_use_loop(
             client,
             text,
@@ -118,12 +114,6 @@ class ContactManager(BaseContactManager):
             cache=json.loads(os.environ.get("UNIFY_CACHE", "true")),
             traced=json.loads(os.environ.get("UNIFY_TRACED", "true")),
         )
-        client.set_system_message(
-            UPDATE_CONTACTS.replace(
-                "<datetime>",
-                datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC"),
-            ),
-        )
 
         tools = dict(self._update_tools)
         if clarification_up_q is not None and clarification_down_q is not None:
@@ -138,6 +128,7 @@ class ContactManager(BaseContactManager):
 
             tools["request_clarification"] = request_clarification
 
+        client.set_system_message(build_update_prompt(tools))
         handle = start_async_tool_use_loop(
             client,
             text,
@@ -169,16 +160,36 @@ class ContactManager(BaseContactManager):
         whatsapp_number: Optional[str] = None,
     ) -> int:
         """
-        Creates a new contact with the following contact details, as available.
+        Persist a **new** contact record.
 
-        Args:
-            first_name (str): The first name of the contact.
-            surname (str): The surname of the contact.
-            email_address (str): The email address of the contact.
-            phone_number (str): The phone number of the contact.
-            whatsapp_number (str): The WhatsApp number of the contact.
-        Returns:
-            int: The contact_id of the newly created contact.
+        Parameters
+        ----------
+        first_name : str | None
+            Contact's first name. Must start with a capital letter and can only contain
+            letters, spaces, periods and hyphens. May be *None*.
+        surname : str | None
+            Contact's surname/family name. Must start with a capital letter and can only
+            contain letters, spaces, periods and hyphens. May be *None*.
+        email_address : str | None
+            Contact's email address. Must contain exactly one @ symbol with characters
+            on either side. Must not clash with an existing record.
+        phone_number : str | None
+            Contact's phone number. Can optionally start with '+' (only if explicitly
+            mentioned by the user), but must otherwise contain only digits. Must be unique.
+        whatsapp_number : str | None
+            Contact's WhatsApp number. Can optionally start with '+' (only if explicitly
+            mentioned by the user), but must otherwise contain only digits. Must be unique.
+
+        Returns
+        -------
+        int
+            The **integer** ``contact_id`` of the newly created record.
+
+        Raises
+        ------
+        AssertionError
+            If *all* fields are ``None`` **or** if any uniqueness constraint
+            (email / phone / WhatsApp) is violated.
         """
 
         # Prune None values
@@ -244,18 +255,40 @@ class ContactManager(BaseContactManager):
         whatsapp_number: Optional[str] = None,
     ) -> int:
         """
-        Update the contact details of a contact.
+        Modify **selected** (not `None`) fields of an existing contact.
 
-        Args:
-            contact_id (int): The id of the contact to update.
-            first_name (Optional[str]): The first name of the contact.
-            surname (Optional[str]): The surname of the contact.
-            email_address (Optional[str]): The email address of the contact.
-            phone_number (Optional[str]): The phone number of the contact.
-            whatsapp_number (Optional[str]): The WhatsApp number of the contact.
+        Parameters
+        ----------
+        contact_id : int
+            Target record's unique identifier.
+        first_name : str | None
+            Contact's first name - must start with a capital letter and can only contain
+            letters, spaces, periods and hyphens.
+        surname : str | None
+            Contact's surname/family name - must start with a capital letter and can only
+            contain letters, spaces, periods and hyphens.
+        email_address : str | None
+            Contact's email address - must contain exactly one @ symbol with characters
+            on either side.
+        phone_number : str | None
+            Contact's phone number - can optionally start with '+' (only if *explicitly*
+            mentioned by the user), but must otherwise contain only digits.
+        whatsapp_number : str | None
+            Contact's WhatsApp number - can optionally start with '+' (only if *explicitly*
+            mentioned by the user), but must otherwise contain only digits.
 
-        Returns:
-            int: The contact_id of the updated contact.
+        Returns
+        -------
+        int
+            The contact's *unchanged* ``contact_id`` on success.
+
+        Raises
+        ------
+        ValueError
+            • When *no* updatable field is provided.
+            • When *contact_id* does not exist.
+            • When the new email / phone / WhatsApp value duplicates another
+              record.
         """
         # Prune None values
         contact_details = {
@@ -317,15 +350,24 @@ class ContactManager(BaseContactManager):
         limit: int = 100,
     ) -> List[Contact]:
         """
-        Retrieve contact details, based on flexible filtering for first name, surname, email address, WhatsApp number, phone number, or anything else.
+        Retrieve **one or many** contacts matching an arbitrary Python
+        expression.
 
-        Args:
-            filter (Optional[str]): The filter to apply to the contacts.
-            offset (int): The offset to start the retrieval from.
-            limit (int): The maximum number of contacts to retrieve.
+        Parameters
+        ----------
+        filter : str | None, default ``None``
+            A boolean Python expression evaluated against each contact
+            (e.g. ``"first_name == 'John' and surname == 'Doe'"``).  *None*
+            returns **all** records.
+        offset : int, default ``0``
+            Index of the first result to return (0-based).
+        limit : int, default ``100``
+            Maximum number of records to return.
 
-        Returns:
-            List[Contact]: A list of contacts.
+        Returns
+        -------
+        list[Contact]
+            A list of Pydantic :class:`Contact` models in creation order.
         """
         logs = unify.get_logs(
             context=self._ctx,

@@ -1,24 +1,43 @@
 # task_manager/task_manager.py
 from __future__ import annotations
 
-from typing import Callable, Dict
+from typing import Callable, Dict, Optional, List, Any
 
+import functools
 import asyncio
 import json
 import os
 
 import unify
 
-from datetime import datetime, timezone
+from typing import Callable, Dict, Optional, List, Any
 
 from ..common.llm_helpers import (
     methods_to_tool_dict,
     start_async_tool_use_loop,
     ToolSpec,
+    SteerableToolHandle,
+)
+from ..events.event_bus import EventBus
+from ..contact_manager.base import BaseContactManager
+from ..contact_manager.contact_manager import ContactManager
+from ..transcript_manager.base import BaseTranscriptManager
+from ..transcript_manager.transcript_manager import TranscriptManager
+from ..knowledge_manager.base import BaseKnowledgeManager
+from ..knowledge_manager.knowledge_manager import KnowledgeManager
+from ..planner.base import BasePlanner
+from ..planner.tool_loop_planner import ToolLoopPlanner
+from ..task_scheduler.base import BaseTaskScheduler
+from .base import BaseTaskManager
+from ..task_scheduler.task_scheduler import TaskScheduler
+from .prompt_builders import (
+    build_ask_prompt,
+    build_request_prompt,
+    build_start_task_prompt,
 )
 
 
-class TaskManager:
+class TaskManager(BaseTaskManager):
     """
     Top-level façade that *can* own a maximum of *one* live plan at a time and exposes two
     different tool surfaces which include the knowledge, task list, contacts, and transcript histories:
@@ -29,41 +48,73 @@ class TaskManager:
 
     # ------------------------------------------------------------------ #
 
-    def __init__(self, *, simulated: bool = False) -> None:
+    def __init__(
+        self,
+        event_bus: EventBus,
+        *,
+        contact_manager: Optional[BaseContactManager] = None,
+        transcript_manager: Optional[BaseTranscriptManager] = None,
+        knowledge_manager: Optional[BaseKnowledgeManager] = None,
+        task_scheduler: Optional[BaseTaskScheduler] = None,
+        planner: Optional[BasePlanner] = None,
+        traced: bool = True,
+    ) -> None:
         """
         Args:
-            planner_steps:   How many "steps" a simulated plan should take before
-                             auto-completing (only relevant for SimulatedPlanner).
-            simulated:       When *True* all subordinate managers are replaced by
-                             their **simulated** counterparts which keep all state
-                             inside an LLM conversation rather than touching real
-                             storage back-ends.  Defaults to *False* (real managers).
+            simulated: When *True* all subordinate managers are replaced by
+                      their **simulated** counterparts which keep all state
+                      inside an LLM conversation rather than touching real
+                      storage back-ends. Defaults to *False* (real managers).
+            contact_manager: Optional custom contact manager implementation.
+                           If None, will create default based on simulated flag.
+            transcript_manager: Optional custom transcript manager implementation.
+                              If None, will create default based on simulated flag.
+            knowledge_manager: Optional custom knowledge manager implementation.
+                             If None, will create default based on simulated flag.
+            task_scheduler: Optional custom task scheduler implementation.
+                          If None, will create default based on simulated flag.
+            planner: Optional custom planner implementation.
+                    If None, will create default based on simulated flag.
         """
+        # ── Real managers touching Unify back-ends ───────────────────
+        # Keep reference to the bus – needed by sub-managers
+        self._event_bus = event_bus
 
-        if simulated:
-            from ..knowledge_manager.simulated import SimulatedKnowledgeManager
-            from ..task_scheduler.simulated import SimulatedTaskScheduler
-            from ..transcript_manager.simulated import SimulatedTranscriptManager
-            from ..contact_manager.simulated import SimulatedContactManager
-
-            # ── Simulated façade (pure-LLM back-ends) ────────────────────
-            self._contact_manager = SimulatedContactManager()
-            self._transcript_manager = SimulatedTranscriptManager()
-            self._knowledge_manager = SimulatedKnowledgeManager()
-            self._task_scheduler = SimulatedTaskScheduler()
+        # ── contact manager ────────────────────────────────────────────
+        if contact_manager is not None:
+            self._contact_manager = contact_manager
         else:
-            from ..knowledge_manager.knowledge_manager import KnowledgeManager
-            from ..planner.tool_loop_planner import ToolLoopPlanner
-            from ..task_scheduler.task_scheduler import TaskScheduler
-            from ..transcript_manager.transcript_manager import TranscriptManager
-            from ..contact_manager.contact_manager import ContactManager
+            self._contact_manager = ContactManager(
+                event_bus=event_bus,
+                traced=traced,
+            )
 
-            # ── Real managers touching Unify back-ends ───────────────────
-            self._contact_manager = ContactManager(self._event_bus)
-            self._transcript_manager = TranscriptManager(self._event_bus)
+        if transcript_manager is not None:
+            self._transcript_manager = transcript_manager
+        else:
+            self._transcript_manager = TranscriptManager(
+                self._event_bus,
+                contact_manager=self._contact_manager,
+            )
+
+        if knowledge_manager is not None:
+            self._knowledge_manager = knowledge_manager
+        else:
             self._knowledge_manager = KnowledgeManager()
-            self._task_scheduler = TaskScheduler()
+
+        if planner is not None:
+            self._planner = planner
+        else:
             self._planner = ToolLoopPlanner()
+
+        if task_scheduler is not None:
+            self._task_scheduler = task_scheduler
+        else:
+            self._task_scheduler = TaskScheduler(planner=self._planner)
+
+        # ── tracing helper – mirrors other managers ────────────────────
+        if traced:
+            self = unify.traced(self)
 
         #  Run-time state & tool-dict helpers
         self._current_plan = None  # type: ignore
@@ -77,12 +128,24 @@ class TaskManager:
     # ------------------------------------------------------------------ #
 
     def _refresh_tool_dicts(self) -> None:
-        """Re-compute passive / active tool maps based on current plan."""
+        """
+        Build two **fresh** dictionaries every turn:
+
+        • ``self._passive_tools`` – read-only helpers always available.
+        • ``self._active_tools``  – superset that also includes *mutations* and
+          the special “start-task” helper.
+
+        The content reflects *live* state (e.g. whether a plan is currently
+        running) so we must rebuild before every user turn.
+        """
 
         # -------- base passive helpers -------------------------------- #
         passive = methods_to_tool_dict(
             self._contact_manager.ask,
             self._transcript_manager.ask,
+            # technically not passive, but likely useful for question answering
+            self._transcript_manager.summarize,
+            #
             self._knowledge_manager.retrieve,
             self._task_scheduler.ask,
             include_class_name=True,
@@ -92,7 +155,21 @@ class TaskManager:
         if self._current_plan is not None and not self._current_plan.done():
 
             # We expose _ask_plan_call_ (Unify expects this naming)
-            async def _plan_ask_proxy(question: str):
+            async def _plan_ask_proxy(question: str) -> str:
+                """
+                Proxy that forwards a read-only **plan-specific** question to
+                the currently active plan.
+
+                Parameters
+                ----------
+                question : str
+                    Natural-language question about the running plan.
+
+                Returns
+                -------
+                str
+                    Assistant’s answer generated by the plan loop.
+                """
                 return await self._current_plan.ask(question)  # type: ignore[attr-defined]
 
             _plan_ask_proxy.__name__ = "_ask_plan_call_"
@@ -106,10 +183,27 @@ class TaskManager:
         def _wrapped_start_task(
             task_id: int,
             *,
-            parent_chat_context=None,
-            clarification_up_q=None,
-            clarification_down_q=None,
-        ):
+            parent_chat_context: Optional[List[Dict[str, Any]]] = None,
+            clarification_up_q: Optional[asyncio.Queue[str]] = None,
+            clarification_down_q: Optional[asyncio.Queue[str]] = None,
+        ) -> SteerableToolHandle:
+            """
+            Activate a **single queued / scheduled task** and remember the
+            returned plan handle so that subsequent calls to *ask* / *request*
+            can interact with the plan.
+
+            Parameters
+            ----------
+            task_id : int
+                Identifier of the task to activate.
+            parent_chat_context, clarification_up_q, clarification_down_q
+                Propagated verbatim to :py:meth:`TaskScheduler.start_task`.
+
+            Returns
+            -------
+            SteerableToolHandle
+                Handle representing the running *ActiveTask*.
+            """
             handle = self._task_scheduler.start_task(
                 task_id,
                 parent_chat_context=parent_chat_context,
@@ -139,6 +233,7 @@ class TaskManager:
     #  Public API                                                        #
     # ------------------------------------------------------------------ #
 
+    @functools.wraps(BaseTaskManager.ask, updated=())
     def ask(
         self,
         text: str,
@@ -149,25 +244,11 @@ class TaskManager:
         clarification_up_q: asyncio.Queue[str] | None = None,
         clarification_down_q: asyncio.Queue[str] | None = None,
     ):
-        """
-        Read-only question: exposes *passive* helpers (+ plan.ask when available).
-        """
         self._refresh_tool_dicts()
 
-        client = unify.AsyncUnify(
-            "o4-mini@openai",
-            cache=json.loads(os.environ.get("UNIFY_CACHE", "true")),
-            traced=json.loads(os.environ.get("UNIFY_TRACED", "true")),
-        )
-        client.set_system_message(
-            "You are the **TaskManager.ask** interface. "
-            "You have *read-only* access to tasks, knowledge, contacts & transcripts.\n"
-            f"(UTC now: {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S')})",
-        )
+        # ---- build live tool-dict BEFORE crafting the prompt ------------
+        tools: Dict[str, Callable] = dict(self._passive_tools)
 
-        tools = dict(self._passive_tools)
-
-        # optional clarification helper
         if clarification_up_q is not None or clarification_down_q is not None:
 
             async def request_clarification(question: str) -> str:
@@ -177,6 +258,13 @@ class TaskManager:
                 return await clarification_down_q.get()
 
             tools["request_clarification"] = request_clarification
+
+        client = unify.AsyncUnify(
+            "o4-mini@openai",
+            cache=json.loads(os.environ.get("UNIFY_CACHE", "true")),
+            traced=json.loads(os.environ.get("UNIFY_TRACED", "true")),
+        )
+        client.set_system_message(build_ask_prompt(tools))
 
         handle = start_async_tool_use_loop(
             client,
@@ -201,6 +289,7 @@ class TaskManager:
     #  request  (write-capable)                                          #
     # ------------------------------------------------------------------ #
 
+    @functools.wraps(BaseTaskManager.request, updated=())
     def request(
         self,
         text: str,
@@ -211,24 +300,9 @@ class TaskManager:
         clarification_up_q: asyncio.Queue[str] | None = None,
         clarification_down_q: asyncio.Queue[str] | None = None,
     ):
-        """
-        Full-access entry-point – exposes every passive tool **plus** all
-        write-capable helpers and `start_task` (which unlocks plan steering).
-        """
         self._refresh_tool_dicts()
 
-        client = unify.AsyncUnify(
-            "o4-mini@openai",
-            cache=json.loads(os.environ.get("UNIFY_CACHE", "true")),
-            traced=json.loads(os.environ.get("UNIFY_TRACED", "true")),
-        )
-        client.set_system_message(
-            "You are the **TaskManager.request** interface. "
-            "You have full read-write access to tasks, knowledge, contacts & transcripts.\n"
-            f"(UTC now: {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S')})",
-        )
-
-        tools = dict(self._active_tools)
+        tools: Dict[str, Callable] = dict(self._active_tools)
 
         if clarification_up_q is not None or clarification_down_q is not None:
 
@@ -239,6 +313,13 @@ class TaskManager:
                 return await clarification_down_q.get()
 
             tools["request_clarification"] = request_clarification
+
+        client = unify.AsyncUnify(
+            "o4-mini@openai",
+            cache=json.loads(os.environ.get("UNIFY_CACHE", "true")),
+            traced=json.loads(os.environ.get("UNIFY_TRACED", "true")),
+        )
+        client.set_system_message(build_request_prompt(tools))
 
         handle = start_async_tool_use_loop(
             client,
@@ -260,7 +341,87 @@ class TaskManager:
         return handle
 
     # ------------------------------------------------------------------ #
-    #  Back-compat alias (update → request)                              #
+    #  start_task – new public surface (write-capable but focussed)      #
     # ------------------------------------------------------------------ #
+    @functools.wraps(BaseTaskManager.start_task, updated=())
+    def start_task(
+        self,
+        text: str,
+        *,
+        _return_reasoning_steps: bool = False,
+        log_tool_steps: bool = False,
+        parent_chat_context: Optional[List[dict]] = None,
+        clarification_up_q: asyncio.Queue[str] | None = None,
+        clarification_down_q: asyncio.Queue[str] | None = None,
+    ):
+        self._refresh_tool_dicts()  # keeps _start_task_call_ in sync
 
-    update = request  # many callers still use `.update`
+        # ---------------------------------------------------------------- #
+        #  1. Build a dedicated tool-dict for this surface                  #
+        # ---------------------------------------------------------------- #
+        # Re-wrap so that we capture the returned ActiveTask handle and
+        # remember it for future plan queries.
+        def _wrapped_start_task(
+            task_id: int,
+            *,
+            parent_chat_context=None,
+            clarification_up_q=None,
+            clarification_down_q=None,
+        ):
+            handle = self._task_scheduler.start_task(
+                task_id,
+                parent_chat_context=parent_chat_context,
+                clarification_up_q=clarification_up_q,
+                clarification_down_q=clarification_down_q,
+            )
+            self._current_plan = handle
+            return handle
+
+        _wrapped_start_task.__name__ = "_start_task_call_"
+
+        tools: Dict[str, Callable[..., Any]] = {
+            **methods_to_tool_dict(
+                self._task_scheduler._search_tasks,
+                self._task_scheduler._nearest_tasks,
+                include_class_name=False,
+            ),
+            _wrapped_start_task.__name__: _wrapped_start_task,
+        }
+        if clarification_up_q is not None or clarification_down_q is not None:
+
+            async def request_clarification(question: str) -> str:
+                if clarification_up_q is None or clarification_down_q is None:
+                    raise RuntimeError("Clarification queues missing.")
+                await clarification_up_q.put(question)
+                return await clarification_down_q.get()
+
+            tools["request_clarification"] = request_clarification
+
+        # ---------------------------------------------------------------- #
+        #  2. Fire up the interactive loop                                 #
+        # ---------------------------------------------------------------- #
+        client = unify.AsyncUnify(
+            "o4-mini@openai",
+            cache=json.loads(os.environ.get("UNIFY_CACHE", "true")),
+            traced=json.loads(os.environ.get("UNIFY_TRACED", "true")),
+        )
+        client.set_system_message(build_start_task_prompt(tools))
+
+        handle = start_async_tool_use_loop(
+            client,
+            text,
+            tools,
+            parent_chat_context=parent_chat_context,
+            log_steps=log_tool_steps,
+        )
+
+        if _return_reasoning_steps:
+            orig_res = handle.result
+
+            async def _wrapped():
+                answer = await orig_res()
+                return answer, client.messages
+
+            handle.result = _wrapped
+
+        return handle

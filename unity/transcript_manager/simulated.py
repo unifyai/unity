@@ -12,7 +12,7 @@ import unify
 
 from ..common.llm_helpers import SteerableToolHandle
 from .base import BaseTranscriptManager
-from .sys_msgs import ASK, SUMMARIZE
+from .prompt_builders import build_ask_prompt, build_summarize_prompt
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -29,6 +29,7 @@ class _SimulatedTranscriptHandle(SteerableToolHandle):
         initial_text: str,
         *,
         _return_reasoning_steps: bool,
+        _requests_clarification: bool = False,
         clarification_up_q: asyncio.Queue[str] | None,
         clarification_down_q: asyncio.Queue[str] | None,
     ):
@@ -37,7 +38,13 @@ class _SimulatedTranscriptHandle(SteerableToolHandle):
         self._want_steps = _return_reasoning_steps
         self._clar_up_q = clarification_up_q
         self._clar_down_q = clarification_down_q
-        self._needs_clar = self._clar_up_q is not None and self._clar_down_q is not None
+        if _requests_clarification and (
+            not clarification_up_q or not clarification_down_q
+        ):
+            raise ValueError(
+                "Clarification queues must be provided when _requests_clarification is True",
+            )
+        self._needs_clar = _requests_clarification
 
         # fire clarification immediately if queues supplied
         if self._needs_clar:
@@ -135,7 +142,7 @@ class SimulatedTranscriptManager(BaseTranscriptManager):
 
     def __init__(
         self,
-        description: str = "Imaginary multi-channel transcript database.",
+        description: str = "nothing fixed, make up some imaginary scenario",
     ) -> None:
         self._description = description
 
@@ -146,14 +153,17 @@ class SimulatedTranscriptManager(BaseTranscriptManager):
             traced=json.loads(os.getenv("UNIFY_TRACED", "true")),
             stateful=True,
         )
+        ask_sys = build_ask_prompt({})
+        sum_sys = build_summarize_prompt()
+
         self._llm.set_system_message(
             "You are a *simulated* transcript assistant. "
-            "There is NO real database – fabricate convincing yet consistent "
-            "answers about emails, chats, calls, etc.\n\n"
-            "As a reference, the system messages for the *real* transcript 'ask' and 'summarize' methods are as follows."
-            "You do not have access to any real tools, so you should just create a final answer to the question/request. "
-            f"\n\n'ask' system message:\n{ASK}\n\n"
-            f"\n\n'summarize' system message:\n{SUMMARIZE}\n\n"
+            "There is **no** backing datastore – create plausible yet "
+            "self-consistent answers.\n\n"
+            "For reference, here are the *real* system messages used by the "
+            "production implementation:\n"
+            f"\n\n'ask' system message:\n{ask_sys}\n\n"
+            f"\n\n'summarize' system message:\n{sum_sys}\n\n"
             f"Back-story: {self._description}",
         )
 
@@ -167,11 +177,15 @@ class SimulatedTranscriptManager(BaseTranscriptManager):
         *,
         _return_reasoning_steps: bool = False,
         parent_chat_context: list[dict] | None = None,
+        _requests_clarification: bool = False,
         clarification_up_q: asyncio.Queue[str] | None = None,
         clarification_down_q: asyncio.Queue[str] | None = None,
     ) -> SteerableToolHandle:
         instruction = (
             "On this turn you are simulating the 'ask' method.\n"
+            "Please always *answer* the question (making up the response), "
+            "do not ask for clarifications, or only state *how* you will answer the question.\n"
+            "Just answer the question with an imaginery response.\n"
             f"The user question is:\n{text}"
         )
         if parent_chat_context:
@@ -180,8 +194,9 @@ class SimulatedTranscriptManager(BaseTranscriptManager):
             )
         return _SimulatedTranscriptHandle(
             self._llm,
-            text,
+            instruction,
             _return_reasoning_steps=_return_reasoning_steps,
+            _requests_clarification=_requests_clarification,
             clarification_up_q=clarification_up_q,
             clarification_down_q=clarification_down_q,
         )
@@ -196,10 +211,16 @@ class SimulatedTranscriptManager(BaseTranscriptManager):
         exchange_ids: Union[int, List[int]],
         guidance: Optional[str] = None,
         parent_chat_context: list[dict] | None = None,
+        _requests_clarification: bool = False,
         clarification_up_q: asyncio.Queue[str] | None = None,
         clarification_down_q: asyncio.Queue[str] | None = None,
     ) -> str:
-        instruction = "On this turn you are simulating the 'summarize' method.\n"
+        instruction = (
+            "On this turn you are simulating the 'summarize' method.\n"
+            "Please always provide an imaginery summary (making up the response), "
+            "do not ask for clarifications, or only state *how* you will summarize the exchange(s).\n"
+            "Just provide an imaginery summary.\n"
+        )
         if parent_chat_context:
             instruction += (
                 f"Calling chat context:\n{json.dumps(parent_chat_context, indent=4)}"
@@ -207,8 +228,14 @@ class SimulatedTranscriptManager(BaseTranscriptManager):
         if not isinstance(exchange_ids, list):
             exchange_ids = [exchange_ids]
 
-        # Clarification flow if required
-        if clarification_up_q is not None and clarification_down_q is not None:
+        if _requests_clarification and (
+            not clarification_up_q or not clarification_down_q
+        ):
+            raise ValueError(
+                "Clarification queues must be provided when _requests_clarification is True",
+            )
+
+        if _requests_clarification:
             try:
                 clarification_up_q.put_nowait(
                     "Any special focus for this summary?",

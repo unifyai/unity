@@ -10,7 +10,7 @@ from typing import List, Dict, Any
 import unify
 from .base import BaseKnowledgeManager
 from ..common.llm_helpers import SteerableToolHandle
-from .sys_msgs import STORE, RETRIEVE
+from .prompt_builders import build_store_prompt, build_retrieve_prompt
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -27,6 +27,7 @@ class _SimulatedKnowledgeHandle(SteerableToolHandle):
         initial_text: str,
         *,
         _return_reasoning_steps: bool,
+        _requests_clarification: bool = False,
         clarification_up_q: asyncio.Queue[str] | None,
         clarification_down_q: asyncio.Queue[str] | None,
     ):
@@ -35,7 +36,13 @@ class _SimulatedKnowledgeHandle(SteerableToolHandle):
         self._want_steps = _return_reasoning_steps
         self._clar_up_q = clarification_up_q
         self._clar_down_q = clarification_down_q
-        self._needs_clar = self._clar_up_q is not None and self._clar_down_q is not None
+        if _requests_clarification and (
+            not clarification_up_q or not clarification_down_q
+        ):
+            raise ValueError(
+                "Clarification queues must be provided when _requests_clarification is True",
+            )
+        self._needs_clar = _requests_clarification
 
         # fire clarification question immediately if queues supplied
         if self._needs_clar:
@@ -131,7 +138,10 @@ class SimulatedKnowledgeManager(BaseKnowledgeManager):
     single stateful LLM to invent and recall knowledge in-chat.
     """
 
-    def __init__(self, description: str = "Imaginary knowledge base.") -> None:
+    def __init__(
+        self,
+        description: str = "nothing fixed, make up some imaginary scenario",
+    ) -> None:
         self._description = description
 
         # One shared, memory-retaining LLM
@@ -141,14 +151,19 @@ class SimulatedKnowledgeManager(BaseKnowledgeManager):
             traced=json.loads(os.getenv("UNIFY_TRACED", "true")),
             stateful=True,
         )
+        # Build *empty* reference prompts (no tools, empty schema) purely for flavour.
+        store_ref = build_store_prompt({}, table_schemas_json="{}")
+        retrieve_ref = build_retrieve_prompt({}, table_schemas_json="{}")
+
         self._llm.set_system_message(
             "You are a *simulated* knowledge-base manager. "
-            "No real database exists – you should fabricate plausible tables, "
-            "columns and rows and maintain a consistent story across turns.\n\n"
-            "As a reference, the system messages for the *real* knowledge-manager 'store' and 'retrieve' methods are as follows."
-            "You do not have access to any real tools, so you should just create a final answer to the storage/retireval request. "
-            f"\n\n'store' system message:\n{STORE}\n\n"
-            f"\n\n'retrieve' system message:\n{RETRIEVE}\n\n"
+            "There is no real database; invent plausible tables, columns and rows "
+            "and keep your story consistent across turns.\n\n"
+            "As a reference, the (tool-enabled) system messages for the *real* "
+            "knowledge-manager are pasted below. **You do not actually have access "
+            "to any tools – just produce the final answer.**\n\n"
+            f"'store' system message:\n{store_ref}\n\n"
+            f"'retrieve' system message:\n{retrieve_ref}\n\n"
             f"Back-story: {self._description}",
         )
 
@@ -161,13 +176,17 @@ class SimulatedKnowledgeManager(BaseKnowledgeManager):
         text: str,
         *,
         _return_reasoning_steps: bool = False,
-        parent_chat_context: list[dict] | None = None,  # unused – we keep state
+        parent_chat_context: list[dict] | None = None,
+        _requests_clarification: bool = False,
         clarification_up_q: asyncio.Queue[str] | None = None,
         clarification_down_q: asyncio.Queue[str] | None = None,
     ) -> SteerableToolHandle:
         instruction = (
             "On this turn you are simulating the 'store' method.\n"
-            f"The user stoage request is:\n{text}"
+            f"The user stoage request is:\n{text}\n"
+            "If the user refers to creating *tasks*, then you should **not** store any tasks.\n"
+            "Tasks should exclusively be sotred by a separate task manager, this is **not your responsibility**.\n"
+            "Please explain this to the user in your response, if this is part of the their request."
         )
         if parent_chat_context:
             instruction += (
@@ -177,6 +196,7 @@ class SimulatedKnowledgeManager(BaseKnowledgeManager):
             self._llm,
             instruction,
             _return_reasoning_steps=_return_reasoning_steps,
+            _requests_clarification=_requests_clarification,
             clarification_up_q=clarification_up_q,
             clarification_down_q=clarification_down_q,
         )
@@ -191,11 +211,15 @@ class SimulatedKnowledgeManager(BaseKnowledgeManager):
         *,
         _return_reasoning_steps: bool = False,
         parent_chat_context: list[dict] | None = None,
+        _requests_clarification: bool = False,
         clarification_up_q: asyncio.Queue[str] | None = None,
         clarification_down_q: asyncio.Queue[str] | None = None,
     ) -> SteerableToolHandle:
         instruction = (
             "On this turn you are simulating the 'retrieve' method.\n"
+            "Please always return imaginery information (making up the response), "
+            "do not ask for clarifications, or only state *how* you will get the information.\n"
+            "Just respond immediately with imaginery information.\n"
             f"The user retrieve request is:\n{text}"
         )
         if parent_chat_context:
@@ -204,8 +228,9 @@ class SimulatedKnowledgeManager(BaseKnowledgeManager):
             )
         return _SimulatedKnowledgeHandle(
             self._llm,
-            text,
+            instruction,
             _return_reasoning_steps=_return_reasoning_steps,
+            _requests_clarification=_requests_clarification,
             clarification_up_q=clarification_up_q,
             clarification_down_q=clarification_down_q,
         )

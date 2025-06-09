@@ -124,6 +124,18 @@ def methods_to_tool_dict(
     return ret
 
 
+def class_api_overview(cls: type) -> str:
+    """Return a Markdown list of all public callables in *cls*."""
+    blocks = []
+    for name, member in inspect.getmembers(cls, inspect.isfunction):
+        if name.startswith("_"):
+            continue  # skip dunder/private helpers
+        sig = inspect.signature(member)
+        first_line = (member.__doc__ or "").strip().split("\n", 1)[0]
+        blocks.append(f"- **`{name}{sig}`** – {first_line}")
+    return "\n".join(blocks)
+
+
 def _discover_custom_public_methods(handle) -> dict[str, Callable]:
     """
     Return a mapping ``name → bound_method`` of *public* callables on *handle*:
@@ -180,102 +192,129 @@ def _dumps(
     return json.dumps(ret, indent=indent) if base else ret
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-#  strip doc-lines that describe “hidden” parameters
-# ─────────────────────────────────────────────────────────────────────────────
 import re
 from textwrap import dedent
+from typing import Iterable
 
+# recognised section headings (case-insensitive, colon optional)
+_PARAM_SECTIONS = {"args", "arguments", "parameters", "other parameters"}
+_OTHER_SECTIONS = {
+    "returns",
+    "yields",
+    "raises",
+    "notes",
+    "examples",
+    "references",
+    "see also",
+}
+
+# ––– parameter-line pattern that also accepts the “a / b / c : …” variant –––
 _PARAM_LINE_RX = re.compile(
     r"""
-    ^
-    (?P<indent>\s*)                  #     any amount of leading WS
-    (?P<names>[^\s:]+(?:\s*,\s*[^\s:]+)*)   # 1 or more names (a, b, …)
-    (\s*\([^)]*\))?                 #     optional "(type)"
-    \s*:
+    ^(?P<indent>\s*)                    # leading spaces
+    (?P<names>[^:]+?)                   # everything until “:”, *if any*
+    (?:\s*:\s*(?P<type>.+))?            # “: type”  ← now OPTIONAL
+    $                                   # EOL
     """,
     re.VERBOSE,
 )
 
+# dash-only underline used by the NumPy style (“----------”)
+_DASH_UNDERLINE_RX = re.compile(r"^\s*-{3,}\s*$")
 
-def _strip_hidden_params_from_doc(doc: str, hidden: set[str]) -> str:
-    """
-    Remove *parameter documentation blocks* whose parameter name is in
-    **hidden** from a Google- or NumPy-style docstring.
 
-    We look only inside the “Args:” or “Parameters” section; everything
-    else is kept verbatim.
-    """
+def _strip_hidden_params_from_doc(
+    doc: str,
+    hidden: set[str] | Iterable[str],
+) -> str:
+    """Remove the *Parameters* blocks of any parameters listed in *hidden*."""
+    hidden = set(hidden)
     if not doc or not hidden:
         return doc
 
     lines = dedent(doc).splitlines()
     out: list[str] = []
 
-    inside_param_section = False
-    skip_block = False
-    current_indent = 0
+    i = 0
+    in_params = False  # are we _currently_ inside a param section?
+    skip = False  # are we skipping the current block?
+    base_indent = 0  # indent of the “name : type” line we skip
 
-    for ln in lines:
-        stripped = ln.lstrip()
+    while i < len(lines):
+        ln, stripped = lines[i], lines[i].lstrip()
+        lower = stripped.rstrip(":").lower()
 
-        # ── detect section headers ────────────────────────────────────────
-        if stripped.lower() in ("args:", "parameters"):
-            inside_param_section = True
-            skip_block = False
-            out.append(ln)
+        # ───────────────────────────────────────────────────────────────── #
+        # 1.  Detect the *start* of a Parameters/Args section
+        # ───────────────────────────────────────────────────────────────── #
+        if not in_params and lower in _PARAM_SECTIONS:
+            in_params = True
+            out.append(ln)  # keep the heading
+            # keep the NumPy underline if present
+            j = i + 1
+            if j < len(lines) and _DASH_UNDERLINE_RX.match(lines[j]):
+                out.append(lines[j])
+                i += 1
+            i += 1
             continue
-        if inside_param_section and not stripped:
-            # blank line inside section
-            out.append(ln)
-            continue
-        if inside_param_section and not stripped.startswith(" "):
-            # left the section
-            inside_param_section = False
-            skip_block = False
 
-        if inside_param_section:
+        # ───────────────────────────────────────────────────────────────── #
+        # 2.  While inside the section, decide whether to keep or skip
+        # ───────────────────────────────────────────────────────────────── #
+        if in_params:
+            # Heading of some *other* section → we are done with “Parameters”
+            if lower in _OTHER_SECTIONS:
+                in_params = False
+                out.append(ln)
+                i += 1
+                continue
+
+            # Dash underline that belongs to the *next* section
+            if _DASH_UNDERLINE_RX.match(stripped):
+                in_params = False
+                out.append(ln)
+                i += 1
+                continue
+
+            # Parameter definition line
             m = _PARAM_LINE_RX.match(ln)
             if m:
-                # Are *any* of the listed names hidden?
-                names = {n.strip() for n in m.group("names").split(",")}
+                # the spec allows either “a, b” or “a / b” to list synonyms
+                names = {
+                    n.strip()
+                    for part in m.group("names").split("/")
+                    for n in part.split(",")
+                }
                 if names & hidden:
-                    # start skipping this parameter-block
-                    skip_block = True
-                    current_indent = len(m.group("indent"))
-                    continue  # swallow the parameter line itself
-            if skip_block:
-                # keep skipping as long as the line is *more indented*
-                indent = len(ln) - len(stripped)
-                if indent > current_indent:
+                    skip = True
+                    base_indent = len(m.group("indent"))
+                    # do *not* append this very line
+                    i += 1
                     continue
-                # description block ended
-                skip_block = False
+                else:
+                    skip = False  # keep this parameter
+            # Parameter description line: keep skipping until indentation drops
+            elif skip:
+                indent = len(ln) - len(stripped)
+                if indent > base_indent:
+                    i += 1  # keep swallowing lines of the block
+                    continue
+                skip = False  # indent dropped → end of block
 
-        if not skip_block:
-            out.append(ln)
-
-    # normalise consecutive blank lines
-    cleaned: list[str] = []
-    prev_blank = False
-    for ln in out:
-        blank = not ln.strip()
-        if blank and prev_blank:
+            if not skip:
+                out.append(ln)  # normal, unskipped content
+            i += 1
             continue
-        cleaned.append(ln)
-        prev_blank = blank
 
-    if hidden:
-        pat = re.compile(
-            r"^\s*(?:"
-            + "|".join(re.escape(name) for name in hidden)
-            + r")\s*:.*(?:\n\s+.*)*",
-            flags=re.MULTILINE,
-        )
-        cleaned = pat.sub("", "\n".join(cleaned))
-        cleaned = re.sub(r"\n{3,}", "\n\n", cleaned)  # collapse big gaps
+        # ───────────────────────────────────────────────────────────────── #
+        # 3.  Normal line outside any param section
+        # ───────────────────────────────────────────────────────────────── #
+        out.append(ln)
+        i += 1
 
-    return "\n".join(cleaned).rstrip()
+    # Collapse runs of >2 blank lines that the removals may have created
+    doc_clean = re.sub(r"\n{3,}", "\n\n", "\n".join(out)).rstrip()
+    return doc_clean
 
 
 def annotation_to_schema(ann: Any) -> Dict[str, Any]:
@@ -460,6 +499,8 @@ async def _async_tool_use_loop_inner(
     timeout: Optional[int] = 60,
     raise_on_limit: bool = False,
     include_class_in_dynamic_tool_names: bool = False,
+    clarification_up_q: Optional[asyncio.Queue[str]] = None,
+    clarification_down_q: Optional[asyncio.Queue[str]] = None,
 ) -> str:
     r"""
     Orchestrate an *interactive* "function-calling" dialogue between an LLM
@@ -1905,8 +1946,8 @@ async def _async_tool_use_loop_inner(
                     # Always provide queues when the tool supports them – the LLM
                     # never passes them explicitly anymore.
                     if sig_accepts_clar_qs:
-                        clar_up_q = asyncio.Queue()
-                        clar_down_q = asyncio.Queue()
+                        clar_up_q = clarification_up_q or asyncio.Queue()
+                        clar_down_q = clarification_down_q or asyncio.Queue()
                         extra_kwargs["clarification_up_q"] = clar_up_q
                         extra_kwargs["clarification_down_q"] = clar_down_q
                     if sig_accepts_interject_q:
@@ -2154,6 +2195,8 @@ def start_async_tool_use_loop(
     timeout: Optional[int] = 60,
     raise_on_limit: bool = False,
     include_class_in_dynamic_tool_names: bool = False,
+    clarification_up_q: Optional[asyncio.Queue[str]] = None,
+    clarification_down_q: Optional[asyncio.Queue[str]] = None,
 ) -> AsyncToolUseLoopHandle:
     """
     Kick off `_async_tool_use_loop_inner` in its own task and give the caller
@@ -2184,6 +2227,8 @@ def start_async_tool_use_loop(
             timeout=timeout,
             raise_on_limit=raise_on_limit,
             include_class_in_dynamic_tool_names=include_class_in_dynamic_tool_names,
+            clarification_up_q=clarification_up_q,
+            clarification_down_q=clarification_down_q,
         ),
     )
 

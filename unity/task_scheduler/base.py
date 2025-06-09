@@ -35,13 +35,36 @@ class BaseTaskScheduler(ABC):
         clarification_down_q: Optional[asyncio.Queue[str]] = None,
     ) -> SteerableToolHandle:
         """
-        Answer a natural-language question about the task list.
+        Interrogate the current **task list** in natural language and obtain
+        a *live* :class:`~unify.common.llm_helpers.SteerableToolHandle`.
+
+        Parameters
+        ----------
+        text : str
+            The user's plain-English question, e.g. *"Which tasks are due
+            tomorrow?"*.
+        _return_reasoning_steps : bool, default ``False``
+            When *True*, :pymeth:`SteerableToolHandle.result` returns
+            ``(answer, messages)`` – the first element is the assistant's
+            reply, the second the hidden chain-of-thought.
+        log_tool_steps : bool, default ``False``
+            If *True* the task-scheduler logs every tool invocation to the
+            server-side logger.  Mainly useful for debugging.
+        parent_chat_context : list[dict] | None
+            Optional **read-only** conversation context to prepend to the
+            internal tool-use loop.
+        clarification_up_q / clarification_down_q : asyncio.Queue[str] | None
+            Duplex channels enabling interactive *clarification* questions.
+            If supplied the LLM may push a follow-up question onto
+            *clarification_up_q* and must read the human's answer from
+            *clarification_down_q*.
 
         Returns
         -------
         SteerableToolHandle
-            Await `handle.result()` for the answer (and optionally hidden
-            reasoning) or call `handle.interject(...)` / `handle.stop()`.
+            Await :pymeth:`SteerableToolHandle.result` for the final answer or
+            steer the interaction via ``pause()``, ``resume()``,
+            ``interject()`` or ``stop()``.
         """
 
     @abstractmethod
@@ -56,10 +79,11 @@ class BaseTaskScheduler(ABC):
         clarification_down_q: Optional[asyncio.Queue[str]] = None,
     ) -> SteerableToolHandle:
         """
-        Execute a plain-English command that modifies the task list
-        (create / delete tasks, change status, reorder queue, …).
+        Apply a **mutation** request – create, edit, delete or reorder tasks –
+        expressed in plain English and receive a steerable LLM handle.
 
-        All parameters mirror :py:meth:`ask`.  See that method for details.
+        All parameters mirror :pymeth:`ask`; refer there for detailed
+        semantics.
         """
 
     @abstractmethod
@@ -72,9 +96,27 @@ class BaseTaskScheduler(ABC):
         clarification_down_q: Optional[asyncio.Queue[str]] = None,
     ) -> SteerableToolHandle:
         """
-        Start execution of *task_id* and return a steerable handle.
+        Promote an **existing queued/scheduled task** to the *active* state and
+        hand back a :class:`SteerableToolHandle` that tracks the execution
+        conversation.
 
-        • Fails if another task is already active.
-        • Promotes the task's status to **active**.
-        • Clears the primed pointer when relevant.
+        Parameters
+        ----------
+        task_id : int
+            Identifier of the task to activate.
+        parent_chat_context, clarification_up_q, clarification_down_q
+            Same purpose and semantics as in :pymeth:`ask`.
+
+        Returns
+        -------
+        SteerableToolHandle
+            Handle that ultimately yields the *task-specific* assistant
+            dialogue.
+
+        Raises
+        ------
+        RuntimeError
+            If another task is already active.
+        ValueError
+            If *task_id* does not exist or cannot transition to **active**.
         """

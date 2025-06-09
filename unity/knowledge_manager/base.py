@@ -1,4 +1,17 @@
-# unity/knowledge_manager/base.py
+"""
+*Public* contract that every concrete **knowledge-manager** must satisfy.
+
+A knowledge-manager has to:
+• **store** arbitrary facts expressed in natural language, evolving
+  table-based schemas as required;
+• **retrieve** facts on demand, optionally refactoring the schema to make
+  queries easier.
+
+Both operations return a :class:`~unify.common.llm_helpers.SteerableToolHandle`
+so a caller (or higher-level agent) can pause, resume, interject, or cancel the
+LLM reasoning loop.
+"""
+
 from __future__ import annotations
 
 import asyncio
@@ -35,26 +48,29 @@ class BaseKnowledgeManager(ABC):
         clarification_down_q: Optional[asyncio.Queue[str]] = None,
     ) -> SteerableToolHandle:  # noqa: D401 – full docstring below
         """
-        Execute an English instruction that **adds to** or **refactors** the
-        knowledge base (create tables/columns, insert rows, etc.).
+        Persist *new* knowledge or amend existing records, expressed in
+        **plain English**.  The LLM will translate the request into a series
+        of table/column manipulations and data-writes.
 
         Parameters
         ----------
-        text :
-            Natural-language command – e.g. *“Add Adrian’s birthday: 2 Jun 1994.”*
-        return_reasoning_steps :
-            If *True*, :pyattr:`result` returns ``(answer, messages)`` where
-            *messages* contains the model’s hidden chain-of-thought.
-        parent_chat_context :
-            Extra messages to prepend to the tool-use loop.
-        clarification_up_q / clarification_down_q :
-            Optional **async** queues used when the model needs to ask the
-            human for more details.
+        text : str
+            User's instruction, e.g. *"Add that Tesla's battery warranty is
+            eight years."*
+        _return_reasoning_steps : bool, default ``False``
+            When *True* the handle's :pyfunc:`result` yields
+            ``(assistant_reply, messages)`` where *messages* is the hidden
+            chain-of-thought.
+        parent_chat_context : list[dict] | None
+            Read-only message history from outer tool loops.
+        clarification_up_q / clarification_down_q : asyncio.Queue[str] | None
+            Optional duplex channels enabling the LLM to ask the user follow-up
+            questions.
 
         Returns
         -------
         SteerableToolHandle
-            Handle for awaiting / steering the conversation.
+            Live handle to the running reasoning loop.
         """
 
     @abstractmethod
@@ -68,7 +84,21 @@ class BaseKnowledgeManager(ABC):
         clarification_down_q: Optional[asyncio.Queue[str]] = None,
     ) -> SteerableToolHandle:
         """
-        Answer a *text* question by searching the stored knowledge.
+        Answer a **natural-language query** by reading from the knowledge
+        store (and optionally reshaping the schema to make retrieval easier).
 
-        All parameters mirror :py:meth:`store`.  See that method for details.
+        Parameters
+        ----------
+        text : str
+            The user's question, e.g. *"What warranty information do we hold
+            about Tesla vehicles?"*
+        _return_reasoning_steps, parent_chat_context,
+        clarification_up_q, clarification_down_q
+            See :py:meth:`store`.
+
+        Returns
+        -------
+        SteerableToolHandle
+            Handle that eventually yields the answer text (and optionally the
+            hidden reasoning steps).
         """

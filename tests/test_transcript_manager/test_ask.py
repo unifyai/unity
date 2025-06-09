@@ -383,7 +383,7 @@ async def test_ask_requests_clarification_when_context_missing(
     dan, julia = _ID_BY_NAME["dan"], _ID_BY_NAME["julia"]
 
     for s, r, txt in [
-        (dan, julia, "Did you catch the **basketball** game last night?"),
+        (dan, julia, "Did you catch the basketball game last night?"),
         (julia, dan, "Absolutely – it was great!"),
     ]:
         await ebus.publish(

@@ -10,7 +10,9 @@ import unify
 
 from ..common.llm_helpers import SteerableToolHandle
 from .base import BaseTaskScheduler
-from .sys_msgs import ASK, UPDATE
+from .prompt_builders import build_ask_prompt, build_update_prompt
+from ..common.llm_helpers import methods_to_tool_dict
+from .task_scheduler import TaskScheduler
 from ..planner.simulated import SimulatedPlanner
 
 
@@ -24,6 +26,7 @@ class _SimulatedTaskScheduleHandle(SteerableToolHandle):
         *,
         mode: str,
         _return_reasoning_steps: bool = False,
+        _requests_clarification: bool = False,
         clarification_up_q: asyncio.Queue[str] | None = None,
         clarification_down_q: asyncio.Queue[str] | None = None,
     ) -> None:
@@ -33,7 +36,13 @@ class _SimulatedTaskScheduleHandle(SteerableToolHandle):
         self._ret_steps = _return_reasoning_steps
         self._clar_up_q = clarification_up_q
         self._clar_down_q = clarification_down_q
-        self._needs_clar = self._clar_up_q is not None and self._clar_down_q is not None
+        if _requests_clarification and (
+            not clarification_up_q or not clarification_down_q
+        ):
+            raise ValueError(
+                "Clarification queues must be provided when _requests_clarification is True",
+            )
+        self._needs_clar = _requests_clarification
 
         # ── fire the clarification request right away ──────────────────
         self._clar_requested = False
@@ -139,7 +148,10 @@ class SimulatedTaskScheduler(BaseTaskScheduler):
     need the conversational surface.
     """
 
-    def __init__(self, description: str = "You manage an imaginary task list.") -> None:
+    def __init__(
+        self,
+        description: str = "nothing fixed, make up some imaginary scenario",
+    ) -> None:
         self._description = description
 
         # One shared, *stateful* LLM for *everything*
@@ -149,18 +161,43 @@ class SimulatedTaskScheduler(BaseTaskScheduler):
             traced=json.loads(os.getenv("UNIFY_TRACED", "true")),
             stateful=True,
         )
+        # Re-create the real TaskScheduler prompts *dynamically* so the
+        # simulated assistant can use them for grounding.
+        ask_tools = methods_to_tool_dict(
+            TaskScheduler._search_tasks,
+            TaskScheduler._nearest_tasks,
+            TaskScheduler._get_task_queue,
+            include_class_name=False,
+        )
+        update_tools = methods_to_tool_dict(
+            TaskScheduler._create_task,
+            TaskScheduler._delete_task,
+            TaskScheduler._cancel_tasks,
+            TaskScheduler._update_task_queue,
+            TaskScheduler._update_task_name,
+            TaskScheduler._update_task_description,
+            TaskScheduler._update_task_status,
+            TaskScheduler._update_task_start_at,
+            TaskScheduler._update_task_deadline,
+            TaskScheduler._update_task_repetition,
+            TaskScheduler._update_task_priority,
+            TaskScheduler._search_tasks,
+            TaskScheduler._nearest_tasks,
+            TaskScheduler._get_task_queue,
+            include_class_name=False,
+        )
+        ask_msg = build_ask_prompt(ask_tools)
+        update_msg = build_update_prompt(update_tools)
+
         self._llm.set_system_message(
             "You are a *simulated* task-list manager. "
-            "No real database exists; invent plausible tasks but stay internally "
+            "No real database exists; invent plausible tasks but remain internally "
             "consistent across turns.\n\n"
             "As reference, here are the *real* TaskScheduler prompts:\n\n"
-            f"ASK system message:\n{ASK}\n\n"
-            f"UPDATE system message:\n{UPDATE}\n\n"
+            f"ASK system message:\n{ask_msg}\n\n"
+            f"UPDATE system message:\n{update_msg}\n\n"
             f"Back-story: {self._description}",
         )
-
-        # Re-use a single simulated planner for every `start_task`
-        self._planner = SimulatedPlanner(timeout=20)
 
     # ------------------------------------------------------------------ #
     #  ask                                                               #
@@ -173,11 +210,19 @@ class SimulatedTaskScheduler(BaseTaskScheduler):
         _return_reasoning_steps: bool = False,
         log_tool_steps: bool = False,  # Ignored – we do not expose tools
         parent_chat_context: list[dict] | None = None,  # Unused – synthetic
+        _requests_clarification: bool = False,
         clarification_up_q: asyncio.Queue[str] | None = None,
         clarification_down_q: asyncio.Queue[str] | None = None,
     ) -> SteerableToolHandle:
         instruction = (
             "On this turn you are simulating the 'ask' method.\n"
+            "Please always *answer* the question (making up the response), "
+            "do not ask for clarifications, or only state *how* you will answer the question.\n"
+            "Just answer the question with an imaginery response.\n"
+            "Please *always* mention the relevant task id(s) in your response.\n"
+            "The user will almost certainly require the task ids in order to do anything meaningful with your answer.\n"
+            "If they ask if a task already exists in the task list, always respond 'No', "
+            "stating that the task does *not* already exist."
             f"The user question is:\n{text}"
         )
         if parent_chat_context:
@@ -189,6 +234,7 @@ class SimulatedTaskScheduler(BaseTaskScheduler):
             instruction,
             mode="ask",
             _return_reasoning_steps=_return_reasoning_steps,
+            _requests_clarification=_requests_clarification,
             clarification_up_q=clarification_up_q,
             clarification_down_q=clarification_down_q,
         )
@@ -204,11 +250,18 @@ class SimulatedTaskScheduler(BaseTaskScheduler):
         _return_reasoning_steps: bool = False,
         log_tool_steps: bool = False,  # Ignored – no tools here
         parent_chat_context: list[dict] | None = None,
+        _requests_clarification: bool = False,
         clarification_up_q: asyncio.Queue[str] | None = None,
         clarification_down_q: asyncio.Queue[str] | None = None,
     ) -> SteerableToolHandle:
         instruction = (
             "On this turn you are simulating the 'update' method.\n"
+            "Please always act as though the task has been completed "
+            "(making up an imaginery response to adress any specific details if necessary), "
+            "do not ask for clarifications, explain how you *would* proceed.\n"
+            "Just respond as though the user request has been handled without error.\n"
+            "If a any tasks were created or updated in the imagined process,"
+            "then please *always* include these task id(s) in your final response."
             f"The user update request is:\n{text}"
         )
         if parent_chat_context:
@@ -220,6 +273,7 @@ class SimulatedTaskScheduler(BaseTaskScheduler):
             instruction,
             mode="update",
             _return_reasoning_steps=_return_reasoning_steps,
+            _requests_clarification=_requests_clarification,
             clarification_up_q=clarification_up_q,
             clarification_down_q=clarification_down_q,
         )
@@ -233,6 +287,7 @@ class SimulatedTaskScheduler(BaseTaskScheduler):
         task_id: int,
         *,
         parent_chat_context: list[dict] | None = None,
+        _requests_clarification: bool = False,
         clarification_up_q: asyncio.Queue[str] | None = None,
         clarification_down_q: asyncio.Queue[str] | None = None,
     ) -> SteerableToolHandle:
@@ -242,7 +297,10 @@ class SimulatedTaskScheduler(BaseTaskScheduler):
         `SimulatedPlan` by calling the shared `SimulatedPlanner.plan`.
         """
         task_description = f"Simulated task #{task_id}"
-        return self._planner.plan(
+        return SimulatedPlanner(
+            timeout=10,
+            _requests_clarification=_requests_clarification,
+        ).plan(
             task_description,
             parent_chat_context=parent_chat_context,
             clarification_up_q=clarification_up_q,

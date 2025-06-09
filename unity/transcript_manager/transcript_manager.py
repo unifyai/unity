@@ -1,12 +1,12 @@
 import os
 import json
 import asyncio
-from datetime import datetime, timezone
 import functools
-from typing import List, Dict, Optional, Union, Callable
+from typing import List, Dict, Optional, Union, Callable, Any
 
 import unify
 from ..common.embed_utils import EMBED_MODEL, ensure_vector_column
+from ..contact_manager.base import BaseContactManager
 from ..contact_manager.contact_manager import ContactManager
 from .types.message import Message
 from .types.message_exchange_summary import MessageExchangeSummary
@@ -16,6 +16,7 @@ from ..common.llm_helpers import (
     methods_to_tool_dict,
 )
 from ..events.event_bus import EventBus, Event
+from .prompt_builders import build_ask_prompt, build_summarize_prompt
 from .base import BaseTranscriptManager
 
 
@@ -25,15 +26,24 @@ class TranscriptManager(BaseTranscriptManager):
     _VEC_MSG = "content_emb"
     _VEC_SUM = "summary_emb"
 
-    def __init__(self, event_bus: EventBus, *, traced: bool = True) -> None:
+    def __init__(
+        self,
+        event_bus: EventBus,
+        *,
+        traced: bool = True,
+        contact_manager: Optional[BaseContactManager] = None,
+    ) -> None:
         """
         Responsible for *searching through* the full transcripts across all communcation channels exposed to the assistant.
         """
         self._event_bus = event_bus
-        self._contact_manager = ContactManager(
-            event_bus=event_bus,
-            traced=traced,
-        )
+        if contact_manager is not None:
+            self._contact_manager = contact_manager
+        else:
+            self._contact_manager = ContactManager(
+                event_bus=event_bus,
+                traced=traced,
+            )
 
         self._tools = methods_to_tool_dict(
             self.summarize,
@@ -74,22 +84,7 @@ class TranscriptManager(BaseTranscriptManager):
         clarification_up_q: asyncio.Queue[str] | None = None,
         clarification_down_q: asyncio.Queue[str] | None = None,
     ) -> SteerableToolHandle:
-        from unity.transcript_manager.sys_msgs import ASK
-
-        # ── 0.  Build LLM client ───────────────────────────────────────────
-        client = unify.AsyncUnify(
-            "o4-mini@openai",
-            cache=json.loads(os.environ.get("UNIFY_CACHE", "true")),
-            traced=json.loads(os.environ.get("UNIFY_TRACED", "true")),
-        )
-        client.set_system_message(
-            ASK.replace(
-                "<datetime>",
-                datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC"),
-            ),
-        )
-
-        # ── 1.  Expose tools + a *dynamic* request_clarification helper ──
+        # ── 0.  Build the *live* tools-dict (may include clarification helper) ──
         tools = dict(self._tools)
 
         if clarification_up_q is not None or clarification_down_q is not None:
@@ -108,7 +103,15 @@ class TranscriptManager(BaseTranscriptManager):
 
             tools["request_clarification"] = request_clarification
 
-        # ── 2.  Launch the interactive tool-use loop ──────────────────────
+        # ── 1.  Build LLM client & inject dynamic system-prompt ───────────
+        client = unify.AsyncUnify(
+            "o4-mini@openai",
+            cache=json.loads(os.environ.get("UNIFY_CACHE", "true")),
+            traced=json.loads(os.environ.get("UNIFY_TRACED", "true")),
+        )
+        client.set_system_message(build_ask_prompt(tools))
+
+        # ── 2.  Launch the interactive tool-use loop ───────────────────────
         handle = start_async_tool_use_loop(
             client,
             text,
@@ -136,25 +139,10 @@ class TranscriptManager(BaseTranscriptManager):
         *,
         exchange_ids: Union[int, List[int]],
         guidance: Optional[str] = None,
-        parent_chat_context: list[dict] | None = None,
+        parent_chat_context: Optional[List[Dict[str, Any]]] = None,
         clarification_up_q: asyncio.Queue[str] | None = None,
         clarification_down_q: asyncio.Queue[str] | None = None,
     ) -> str:
-        """
-        Summarize the email thread, phone call, or a time-clustered text exchange, save the summary in the backend, and also return it.
-
-        Args:
-            exchange_ids (int): The ids of the exchanges to summarize.
-            guidance (Optional[str]): Optional guidance for the summarization.
-            parent_chat_context (list[dict]): A list of parent context messages to pass down into the tool use loop.
-            clarification_up_q (asyncio.Queue[str]): A queue to send clarification questions up to the caller.
-            clarification_down_q (asyncio.Queue[str]): A queue to send clarification answers down to the model.
-
-        Returns:
-            str: The summary of the exchanges.
-        """
-        from unity.transcript_manager.sys_msgs import SUMMARIZE
-
         if not isinstance(exchange_ids, list):
             exchange_ids = [exchange_ids]
 
@@ -164,15 +152,7 @@ class TranscriptManager(BaseTranscriptManager):
             cache=json.loads(os.environ.get("UNIFY_CACHE", "true")),
             traced=json.loads(os.environ.get("UNIFY_TRACED", "true")),
         )
-        client.set_system_message(
-            SUMMARIZE.replace(
-                "<guidance>",
-                f"\n{guidance}\n" if guidance else "",
-            ).replace(
-                "<datetime>",
-                datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC"),
-            ),
-        )
+        client.set_system_message(build_summarize_prompt(guidance))
 
         # ── 1.  Collect raw messages → JSON blob for the prompt ────────────
         msgs = self._search_messages(filter=f"exchange_id in {exchange_ids}")
@@ -232,14 +212,20 @@ class TranscriptManager(BaseTranscriptManager):
         k: int = 10,
     ) -> List[Message]:
         """
-        Find messages semantically similar to the provided text using vector embeddings.
+        Return the *k* transcript messages whose **content** embedding is
+        *closest* to the embedding of **text** (cosine similarity).
 
-        Args:
-            text (str): The text to find similar messages to.
-            k (int): The number of similar messages to return.
+        Parameters
+        ----------
+        text : str
+            Free-form query text to embed.
+        k : int, default ``10``
+            Number of neighbours to return.
 
-        Returns:
-            List[Message]: A list of messages semantically similar to the provided text.
+        Returns
+        -------
+        list[Message]
+            Messages sorted by **ascending** cosine distance (best match first).
         """
         ensure_vector_column(self._transcripts_ctx, self._VEC_MSG, "content")
         logs = unify.get_logs(
@@ -258,14 +244,20 @@ class TranscriptManager(BaseTranscriptManager):
         k: int = 10,
     ) -> List[MessageExchangeSummary]:
         """
-        Find summaries semantically similar to the provided text using vector embeddings.
+        Retrieve the *k* stored summaries whose **summary text** embedding is
+        closest to the embedding of **text**.
 
-        Args:
-            text (str): The text to find similar summaries to.
-            k (int): The number of similar summaries to return.
+        Parameters
+        ----------
+        text : str
+            Query text.
+        k : int, default ``10``
+            How many nearest summaries to return.
 
-        Returns:
-            List[MessageExchangeSummary]: A list of summaries semantically similar to the provided text.
+        Returns
+        -------
+        list[MessageExchangeSummary]
+            Summaries ordered by similarity (*lowest* cosine distance first).
         """
 
         ensure_vector_column(self._transcripts_ctx, self._VEC_MSG, "content")
@@ -284,23 +276,33 @@ class TranscriptManager(BaseTranscriptManager):
         filter: Optional[str] = None,
         offset: int = 0,
         limit: int = 100,
-    ) -> List[Dict[str, str]]:
+    ) -> List[Message]:
         """
-        Retrieve messages from the transcript history, based on flexible filtering for a specific sender, group of senders, receiver, group of receivers, medium, set of mediums, timestamp range, message length, messages containing a phrase, not containing a phrase, or anything else.
+        Fetch **raw transcript messages** matching an arbitrary Python
+        boolean *filter*.
 
-        Args:
-            filter (Optional[str]): The filter to apply to the messages.
-            offset (int): The offset to start the retrieval from.
-            limit (int): The maximum number of messages to retrieve.
+        Parameters
+        ----------
+        filter : str | None, default ``None``
+            Expression evaluated against each :class:`Message`
+            (e.g. ``"medium == 'email' and 'urgent' in content"``).
+            ``None`` selects *all* messages.
+        offset : int, default ``0``
+            Zero-based index of the first result.
+        limit : int, default ``100``
+            Maximum number of messages to return.
 
-        Returns:
-            List[Dict[str, str]]: A list of messages.
+        Returns
+        -------
+        list[Message]
+            Matching messages in creation order.
         """
         logs = unify.get_logs(
             context=self._transcripts_ctx,
             filter=filter,
             offset=offset,
             limit=limit,
+            sorting={"timestamp": "descending"},
         )
         return [Message(**lg.entries) for lg in logs]
 
@@ -310,22 +312,32 @@ class TranscriptManager(BaseTranscriptManager):
         filter: Optional[str] = None,
         offset: int = 0,
         limit: int = 100,
-    ) -> List[Dict[str, str]]:
+    ) -> List[MessageExchangeSummary]:
         """
-        Retrieve summaries from the transcript history, based on flexible filtering for a specific exchange id, group of exchange ids, medium, set of mediums, timestamp range, summary length, summaries containing a phrase, not containing a phrase, or anything else.
+        Retrieve persisted **exchange summaries** selected by an arbitrary
+        Python boolean *filter*.
 
-        Args:
-            filter (Optional[str]): The filter to apply to the summaries.
-            offset (int): The offset to start the retrieval from.
-            limit (int): The maximum number of summaries to retrieve.
+        Parameters
+        ----------
+        filter : str | None, default ``None``
+            Expression evaluated against each
+            :class:`~MessageExchangeSummary`
+            (e.g. ``"5 in exchange_ids and 'deadline' in summary"``).
+        offset : int, default ``0``
+            Start index for pagination.
+        limit : int, default ``100``
+            Maximum number of summaries to return.
 
-        Returns:
-            List[Dict[str, str]]: A list of exchange summaries.
+        Returns
+        -------
+        list[MessageExchangeSummary]
+            Summaries satisfying the filter in creation order.
         """
         logs = unify.get_logs(
             context=self._summaries_ctx,
             filter=filter,
             offset=offset,
             limit=limit,
+            sorting={"timestamp": "descending"},
         )
         return [MessageExchangeSummary(**lg.entries) for lg in logs]
