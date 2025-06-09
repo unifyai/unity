@@ -21,7 +21,7 @@ class BaseTranscriptManager(ABC):
     # Public interface                                                   #
     # ------------------------------------------------------------------ #
     @abstractmethod
-    def ask(
+    async def ask(
         self,
         text: str,
         *,
