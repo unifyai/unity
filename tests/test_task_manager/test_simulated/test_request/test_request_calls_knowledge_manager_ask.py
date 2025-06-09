@@ -24,7 +24,7 @@ async def test_request_calls_knowledge_manager_ask(monkeypatch):
     monkeypatch.setattr(SimulatedKnowledgeManager, "retrieve", spy, raising=True)
 
     tm = SimulatedTaskManager("Ops run-book demo.")
-    handle = tm.request(
+    handle = await tm.request(
         "Update the knowledge-base to say the X200 battery warranty is now three years. "
         "First, check what warranty period we currently have recorded so we can note the change.",
     )

@@ -24,7 +24,7 @@ async def test_request_calls_transcript_manager_ask(monkeypatch):
     monkeypatch.setattr(SimulatedTranscriptManager, "ask", spy, raising=True)
 
     tm = SimulatedTaskManager("Support chats demo.")
-    handle = tm.request(
+    handle = await tm.request(
         "Archive yesterday's Slack conversation about bug #4321. "
         "Before archiving, tell me the final message in that thread so I can paste it in the ticket.",
     )

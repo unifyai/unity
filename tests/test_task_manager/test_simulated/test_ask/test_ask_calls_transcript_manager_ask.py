@@ -22,7 +22,9 @@ async def test_ask_calls_transcript_manager_ask(monkeypatch):
     monkeypatch.setattr(SimulatedTranscriptManager, "ask", spy, raising=True)
 
     tm = SimulatedTaskManager("Demo – support-team chat archive.")
-    handle = tm.ask("Show me the last Slack message Frank sent about ticket #381.")
+    handle = await tm.ask(
+        "Show me the last Slack message Frank sent about ticket #381.",
+    )
     await asyncio.wait_for(handle.result(), timeout=60)
 
     assert calls["count"] == 1, "TranscriptManager.ask should be invoked once."

@@ -25,7 +25,7 @@ async def test_request_calls_start_task(monkeypatch):
     monkeypatch.setattr(SimulatedTaskScheduler, "start_task", spy, raising=True)
 
     tm = SimulatedTaskManager("Demo – deployment pipeline.")
-    handle = tm.request(
+    handle = await tm.request(
         "Please start task with 'task id == 17' right away – we need the build running.",
     )
     await asyncio.wait_for(handle.result(), timeout=60)
