@@ -40,7 +40,7 @@ def _contains(text: str, *needles: str) -> bool:
 
 @pytest.mark.eval
 @pytest.mark.asyncio
-@pytest.mark.timeout(120)
+@pytest.mark.timeout(300)
 @_handle_project
 async def test_store_simple_fact():
     km = KnowledgeManager()
@@ -59,7 +59,7 @@ async def test_store_simple_fact():
 
 @pytest.mark.eval
 @pytest.mark.asyncio
-@pytest.mark.timeout(120)
+@pytest.mark.timeout(300)
 @_handle_project
 async def test_retrieve_simple_fact():
     km = KnowledgeManager()
@@ -88,7 +88,7 @@ async def test_retrieve_simple_fact():
 
 @pytest.mark.eval
 @pytest.mark.asyncio
-@pytest.mark.timeout(120)
+@pytest.mark.timeout(300)
 @_handle_project
 async def test_round_trip_simple_fact():
     km = KnowledgeManager()
@@ -117,7 +117,7 @@ async def test_round_trip_simple_fact():
 
 @pytest.mark.eval
 @pytest.mark.asyncio
-@pytest.mark.timeout(180)
+@pytest.mark.timeout(300)
 @_handle_project
 async def test_schema_expands_and_new_field_retrievable():
     """
@@ -195,7 +195,7 @@ async def test_schema_expands_and_new_field_retrievable():
 
 @pytest.mark.eval
 @pytest.mark.asyncio
-@pytest.mark.timeout(240)
+@pytest.mark.timeout(300)
 @_handle_project
 async def test_multiple_tables_and_join_like_query():
     """
@@ -237,7 +237,7 @@ async def test_multiple_tables_and_join_like_query():
 
 @pytest.mark.eval
 @pytest.mark.asyncio
-@pytest.mark.timeout(240)
+@pytest.mark.timeout(300)
 @_handle_project
 async def test_incremental_updates_and_refactor():
     """
@@ -278,7 +278,7 @@ async def test_incremental_updates_and_refactor():
 
 @pytest.mark.eval
 @pytest.mark.asyncio
-@pytest.mark.timeout(240)
+@pytest.mark.timeout(300)
 @_handle_project
 async def test_numeric_reasoning_after_multiple_points():
     """
@@ -318,7 +318,7 @@ async def test_numeric_reasoning_after_multiple_points():
 
 @pytest.mark.eval
 @pytest.mark.asyncio
-@pytest.mark.timeout(120)
+@pytest.mark.timeout(300)
 @_handle_project
 async def test_store_interjection():
     """
@@ -353,7 +353,7 @@ async def test_store_interjection():
 
 @pytest.mark.eval
 @pytest.mark.asyncio
-@pytest.mark.timeout(120)
+@pytest.mark.timeout(300)
 @_handle_project
 async def test_store_stop():
     km = KnowledgeManager()
@@ -376,7 +376,7 @@ async def test_store_stop():
 
 @pytest.mark.eval
 @pytest.mark.asyncio
-@pytest.mark.timeout(120)
+@pytest.mark.timeout(300)
 @_handle_project
 async def test_retrieve_interjection():
     """
@@ -409,7 +409,7 @@ async def test_retrieve_interjection():
 
 @pytest.mark.eval
 @pytest.mark.asyncio
-@pytest.mark.timeout(120)
+@pytest.mark.timeout(300)
 @_handle_project
 async def test_retrieve_stop():
     """

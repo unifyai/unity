@@ -178,7 +178,7 @@ def ts_scenario(
 @pytest.mark.eval
 @pytest.mark.asyncio
 @pytest.mark.parametrize("question", QUESTIONS)
-@pytest.mark.timeout(180)
+@pytest.mark.timeout(300)
 async def test_ask_semantic_with_llm_judgement(
     question: str,
     ts_scenario: TaskScheduler,
@@ -197,7 +197,7 @@ async def test_ask_semantic_with_llm_judgement(
 
 @pytest.mark.eval
 @pytest.mark.asyncio
-@pytest.mark.timeout(180)
+@pytest.mark.timeout(300)
 async def test_ask_with_interjection(ts_scenario: TaskScheduler) -> None:
     """Ask a question, interject with a follow-up, and ensure the final answer covers both."""
     try:
@@ -237,7 +237,7 @@ async def test_ask_with_interjection(ts_scenario: TaskScheduler) -> None:
 
 @pytest.mark.eval
 @pytest.mark.asyncio
-@pytest.mark.timeout(180)
+@pytest.mark.timeout(300)
 async def test_ask_stop(ts_scenario: TaskScheduler) -> None:
     """Test that we can stop the conversation mid-way."""
     try:

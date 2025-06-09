@@ -4,7 +4,7 @@ from unity.controller import agent as agent_mod
 from unity.controller.states import BrowserState
 
 
-@pytest.mark.timeout(30)
+@pytest.mark.timeout(300)
 def test_text_to_browser_action():
     """Smoke-test that agent.text_to_browser_action returns a dict with keys.
     Relies on online Unify backend; will skip when network/API not available."""
@@ -27,7 +27,7 @@ def test_text_to_browser_action():
     assert "new_tab" in result["action"]
 
 
-@pytest.mark.timeout(30)
+@pytest.mark.timeout(300)
 def test_text_to_browser_action_multi_step_select():
     """Smoke-test multi-step command generation.
     Relies on online Unify backend; will skip when network/API not available."""
@@ -55,7 +55,7 @@ def test_text_to_browser_action_multi_step_select():
     assert actions[1:4] == ["cursor_left", "cursor_left", "cursor_left"]
 
 
-@pytest.mark.timeout(30)
+@pytest.mark.timeout(300)
 def test_text_to_browser_action_multi_step_select_word():
     """Smoke-test multi-step command generation.
     Relies on online Unify backend; will skip when network/API not available."""
@@ -84,7 +84,7 @@ def test_text_to_browser_action_multi_step_select_word():
     assert actions[2] == "cursor_left"
 
 
-@pytest.mark.timeout(30)
+@pytest.mark.timeout(300)
 def test_text_to_browser_action_multi_step_select_all():
     """Smoke-test multi-step command generation.
     Relies on online Unify backend; will skip when network/API not available."""
@@ -112,7 +112,7 @@ def test_text_to_browser_action_multi_step_select_all():
     assert actions[1] == "press_key a"
 
 
-@pytest.mark.timeout(30)
+@pytest.mark.timeout(300)
 def test_text_to_browser_action_multi_step_delete_left():
     """Smoke-test multi-step command generation.
     Relies on online Unify backend; will skip when network/API not available."""
@@ -138,7 +138,7 @@ def test_text_to_browser_action_multi_step_delete_left():
     assert actions[0] == "press_backspace"
 
 
-@pytest.mark.timeout(30)
+@pytest.mark.timeout(300)
 def test_text_to_browser_action_multi_step_delete_right():
     """Smoke-test multi-step command generation.
     Relies on online Unify backend; will skip when network/API not available."""
@@ -164,7 +164,7 @@ def test_text_to_browser_action_multi_step_delete_right():
     assert actions == ["press_delete", "press_delete"]
 
 
-@pytest.mark.timeout(30)
+@pytest.mark.timeout(300)
 def test_ask_llm_bool():
     """Smoke-test ask_llm with boolean response_type. Skips when backend unavailable."""
     try:
@@ -175,7 +175,7 @@ def test_ask_llm_bool():
     assert isinstance(answer, bool)
 
 
-@pytest.mark.timeout(30)
+@pytest.mark.timeout(300)
 def test_ask_llm_str():
     """ask_llm should return a plain string when response_type=str"""
     try:
@@ -195,7 +195,7 @@ class _Coords(BaseModel):
     lon: float = Field(..., description="longitude")
 
 
-@pytest.mark.timeout(30)
+@pytest.mark.timeout(300)
 def test_ask_llm_custom_model():
     """ask_llm should handle arbitrary Pydantic response models."""
     try:
@@ -212,7 +212,7 @@ def test_ask_llm_custom_model():
     assert -180 <= ret.lon <= 180
 
 
-@pytest.mark.timeout(30)
+@pytest.mark.timeout(300)
 def test_ask_llm_int():
     """ask_llm should return an int when response_type=int"""
     try:
@@ -223,7 +223,7 @@ def test_ask_llm_int():
     assert isinstance(answer, int)
 
 
-@pytest.mark.timeout(30)
+@pytest.mark.timeout(300)
 def test_ask_llm_float():
     """ask_llm should return a float when response_type=float"""
     try:
