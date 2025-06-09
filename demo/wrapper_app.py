@@ -20,7 +20,10 @@ import os
 import time
 import signal
 import threading
-from flask import Flask, jsonify
+import subprocess
+import sys
+from functools import wraps
+from flask import Flask, jsonify, request
 from new_terminal_helper import run_script, terminate_process
 
 app = Flask(__name__)
@@ -28,6 +31,33 @@ app = Flask(__name__)
 # Global state for the single Unity service
 unity_process = None
 service_status = "stopped"
+
+# Authentication decorator
+def require_auth(f):
+    @wraps(f)
+    def decorated_function(*args, **kwargs):
+        # Get the admin key from Authorization header or query parameters
+        auth_header = request.headers.get("Authorization", "")
+        admin_key = None
+
+        # Extract Bearer token from Authorization header
+        if auth_header.startswith("Bearer "):
+            admin_key = auth_header[7:]  # Remove 'Bearer ' prefix
+        else:
+            # Fallback to query parameter
+            admin_key = request.args.get("admin_key")
+
+        if not admin_key:
+            return jsonify({"error": "Admin key required"}), 401
+
+        # First check if the provided key matches the admin key from environment
+        if admin_key == os.environ.get("ORCHESTRA_ADMIN_KEY"):
+            return f(*args, **kwargs)
+
+        # If neither condition is met, raise unauthorized exception
+        return jsonify({"error": "Unauthorized"}), 401
+
+    return decorated_function
 
 
 class UnityServiceManager:
@@ -50,7 +80,12 @@ class UnityServiceManager:
 
             # Start main.py using run_script which handles process groups automatically
             print(f"Starting Unity service (main.py) for assistant {assistant_id}")
-            self.process = run_script("main.py")
+
+            self.process = subprocess.Popen(
+                [sys.executable, "main.py"],
+                start_new_session=True,
+            )
+
             self.start_time = time.time()
 
             # Give it a moment to start
@@ -170,6 +205,7 @@ unity_manager = UnityServiceManager()
 
 # Endpoint 1: Start the service
 @app.route("/start", methods=["POST"])
+@require_auth
 def start_service():
     """Start the Unity service"""
     global service_status
@@ -194,6 +230,7 @@ def start_service():
 
 # Endpoint 2: Stop the service
 @app.route("/stop", methods=["POST"])
+@require_auth
 def stop_service():
     """Stop the Unity service"""
     global service_status
@@ -206,6 +243,7 @@ def stop_service():
 
 # Endpoint 3: Get status
 @app.route("/status", methods=["GET"])
+@require_auth
 def get_status():
     """Get current status of the Unity service"""
     return jsonify(unity_manager.get_status())
@@ -213,6 +251,7 @@ def get_status():
 
 # Health check for the wrapper service
 @app.route("/health", methods=["GET"])
+@require_auth
 def health_check():
     return jsonify(
         {
