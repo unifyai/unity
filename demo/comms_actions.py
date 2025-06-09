@@ -5,7 +5,6 @@ from dotenv import load_dotenv
 load_dotenv()
 
 headers = {"Authorization": f"Bearer {os.getenv('ORCHESTRA_ADMIN_KEY')}"}
-print("headers", headers)
 
 
 async def send_whatsapp_message(from_number: str, to_number: str, message: str) -> bool:
