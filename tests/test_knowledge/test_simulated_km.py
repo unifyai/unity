@@ -20,7 +20,7 @@ from tests.helpers import _handle_project
 @_handle_project
 async def test_start_and_retrieve_simulated_km():
     km = SimulatedKnowledgeManager("Demo KB for unit-tests.")
-    h = km.retrieve("What do we already know about Mars?")
+    h = await km.retrieve("What do we already know about Mars?")
     ans = await h.result()
     assert isinstance(ans, str) and ans.strip(), "Answer should be non-empty"
 
@@ -42,7 +42,7 @@ async def test_interject_simulated_km(monkeypatch):
     monkeypatch.setattr(_SimulatedKnowledgeHandle, "interject", wrapped, raising=True)
 
     km = SimulatedKnowledgeManager()
-    h = km.retrieve("Show me all facts about Paris.")
+    h = await km.retrieve("Show me all facts about Paris.")
     await asyncio.sleep(0.05)
     reply = h.interject("Only include historical facts.")
     assert "ack" in reply.lower() or "noted" in reply.lower()
@@ -57,7 +57,7 @@ async def test_interject_simulated_km(monkeypatch):
 @_handle_project
 async def test_stop_simulated_km():
     km = SimulatedKnowledgeManager()
-    h = km.retrieve("Generate a 100-page report of all knowledge.")
+    h = await km.retrieve("Generate a 100-page report of all knowledge.")
     await asyncio.sleep(0.05)
     h.stop()
     with pytest.raises(asyncio.CancelledError):
@@ -76,7 +76,7 @@ async def test_km_requests_clarification():
     up_q: asyncio.Queue[str] = asyncio.Queue()
     down_q: asyncio.Queue[str] = asyncio.Queue()
 
-    h = km.retrieve(
+    h = await km.retrieve(
         "Please summarise the knowledge base.",
         clarification_up_q=up_q,
         clarification_down_q=down_q,
@@ -105,11 +105,11 @@ async def test_km_stateful_store_then_retrieve():
     fact = "The CEO of Acme Corp is Jane Doe."
 
     # store a new fact
-    h_store = km.store(fact)
+    h_store = await km.store(fact)
     await h_store.result()
 
     # retrieve it
-    h_ret = km.retrieve("Who is the CEO of Acme Corp?")
+    h_ret = await km.retrieve("Who is the CEO of Acme Corp?")
     answer = (await h_ret.result()).lower()
     assert "jane" in answer and "doe" in answer
 
@@ -126,14 +126,14 @@ async def test_km_stateful_serial_retrieves():
     km = SimulatedKnowledgeManager()
 
     # first question – ask for a single‐word theme of the KB
-    h1 = km.retrieve(
+    h1 = await km.retrieve(
         "Using one word only, how would you describe the overall theme of our knowledge base?",
     )
     theme = (await h1.result()).strip()
     assert theme, "Theme word should not be empty"
 
     # follow-up question
-    h2 = km.retrieve(
+    h2 = await km.retrieve(
         "What single word did you just use to describe the knowledge base?",
     )
     ans2 = (await h2.result()).lower()
@@ -205,7 +205,7 @@ async def test_pause_and_resume_simulated_km(monkeypatch):
     )
 
     km = SimulatedKnowledgeManager()
-    handle = km.retrieve("Summarise everything we know about quantum gravity.")
+    handle = await km.retrieve("Summarise everything we know about quantum gravity.")
 
     # Before pausing: pause should be available, resume not.
     tools_initial = handle.valid_tools
