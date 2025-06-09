@@ -51,7 +51,7 @@ async def test_update_create_new_contact(
         "phone 777-000-1111, description 'Digital nomad and writer'."
     )
 
-    handle = cm.update(command)
+    handle = await cm.update(command)
     await handle.result()
 
     _programmatic_contact_check(
@@ -87,7 +87,7 @@ async def test_update_existing_contact_details(
 
     command = f"Update contact ID {alice_smith_id}: change her phone to 1231231234 and add WhatsApp +11231231234."
 
-    handle = cm.update(command)
+    handle = await cm.update(command)
     await handle.result()
 
     _programmatic_contact_check(
@@ -127,7 +127,7 @@ async def test_update_with_parent_context_identification(
     ]
     command = "Add his phone number: 555-123456."
 
-    handle = cm.update(
+    handle = await cm.update(
         command,
         parent_chat_context=parent_ctx,
     )
@@ -155,7 +155,7 @@ async def test_update_with_clarification_needed(
 
     command = "Add surname 'Wonderland' for Alice."
 
-    handle = cm.update(
+    handle = await cm.update(
         command,
         clarification_up_q=clar_up_q,
         clarification_down_q=clar_down_q,
@@ -195,7 +195,7 @@ async def test_update_interjection_modification(
     cm, _ = contact_manager_scenario
     command = "Create a contact for Frank P. Castle, email frank@punisher.net."
 
-    handle = cm.update(command)
+    handle = await cm.update(command)
     await asyncio.sleep(0.2)
     await handle.interject("Actually, also add his phone as 555-54321.")
     await handle.result()
@@ -215,7 +215,7 @@ async def test_update_stop_operation(
 ):
     """Test stopping an update operation."""
     cm, _ = contact_manager_scenario
-    handle = cm.update(
+    handle = await cm.update(
         "Create a very detailed contact for Professor Charles Xavier, email prox@xmen.com, phone 123-PROF-X, with notes about his telepathic abilities and founder of the X-Men.",
     )
     await asyncio.sleep(0.1)
@@ -245,7 +245,7 @@ async def test_update_add_description(
     assert bob, "Bob Johnson must exist for this test"
     bob_id = bob[0].contact_id
 
-    handle = cm.update(
+    handle = await cm.update(
         f"Add a short description 'Long-time customer' to contact ID {bob_id}.",
     )
     await handle.result()

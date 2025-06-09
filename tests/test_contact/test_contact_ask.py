@@ -98,7 +98,7 @@ async def test_ask_semantic_queries(
     """Tests various semantic queries against the ContactManager's ask method."""
     cm, _ = contact_manager_scenario
 
-    handle = cm.ask(question, _return_reasoning_steps=True)
+    handle = await cm.ask(question, _return_reasoning_steps=True)
     candidate_answer, reasoning_steps = await handle.result()
 
     # For better judgment context, fetch all contacts to pass to the LLM judge
@@ -129,7 +129,7 @@ async def test_ask_with_parent_context(
     question = "What's her email address?"
     expected_email = "alice.smith@example.com"  # Email of Alice Smith
 
-    handle = cm.ask(
+    handle = await cm.ask(
         question,
         parent_chat_context=parent_ctx,
         _return_reasoning_steps=True,
@@ -163,7 +163,7 @@ async def test_ask_with_clarification(
     # We expect clarification, then provide info for Alice Wonder (phone 1110001111)
     expected_phone_after_clarification = "1110001111"
 
-    handle = cm.ask(
+    handle = await cm.ask(
         question,
         clarification_up_q=clar_up_q,
         clarification_down_q=clar_down_q,
@@ -205,7 +205,7 @@ async def test_ask_interjection(
     expected_fragment_charlie = "goodgrief@example.org"  # Charlie's email
     expected_fragment_bob = "4445556666"  # Bob's phone
 
-    handle = cm.ask(initial_question, _return_reasoning_steps=True)
+    handle = await cm.ask(initial_question, _return_reasoning_steps=True)
     await asyncio.sleep(0.1)  # Allow initial query to start
     await handle.interject(interjected_question)
     candidate_answer, reasoning_steps = await handle.result()
@@ -234,7 +234,7 @@ async def test_ask_stop_operation(
 ):
     """Test stopping an ask operation."""
     cm, _ = contact_manager_scenario
-    handle = cm.ask(
+    handle = await cm.ask(
         "Find all contacts and list their full details, this might take a while.",
     )
     await asyncio.sleep(0.05)  # Let it start
