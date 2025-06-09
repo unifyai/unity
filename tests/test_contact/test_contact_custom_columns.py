@@ -116,6 +116,6 @@ def test_update_contact_custom_field():
     cm._create_custom_column(column_name="age", column_type="int")
     cid = cm._create_contact(first_name="Tom", custom_fields={"age": 30})
 
-    cm._update_contact(contact_id=cid, age=31)
+    cm._update_contact(contact_id=cid, custom_fields={"age": 31})
     contact = cm._search_contacts(filter=f"contact_id == {cid}")[0]
     assert contact.age == 31
