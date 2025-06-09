@@ -22,42 +22,40 @@ import signal
 import threading
 import subprocess
 import sys
-from functools import wraps
-from flask import Flask, jsonify, request
-from new_terminal_helper import run_script, terminate_process
+from typing import Optional
+from fastapi import FastAPI, HTTPException, Depends, Header, Query
+import uvicorn
+from new_terminal_helper import terminate_process
 
-app = Flask(__name__)
+app = FastAPI()
 
 # Global state for the single Unity service
 unity_process = None
 service_status = "stopped"
 
-# Authentication decorator
-def require_auth(f):
-    @wraps(f)
-    def decorated_function(*args, **kwargs):
-        # Get the admin key from Authorization header or query parameters
-        auth_header = request.headers.get("Authorization", "")
-        admin_key = None
+# Authentication dependency
+async def require_auth(
+    authorization: Optional[str] = Header(None), admin_key: Optional[str] = Query(None)
+):
+    """Authentication dependency for FastAPI"""
+    auth_admin_key = None
 
-        # Extract Bearer token from Authorization header
-        if auth_header.startswith("Bearer "):
-            admin_key = auth_header[7:]  # Remove 'Bearer ' prefix
-        else:
-            # Fallback to query parameter
-            admin_key = request.args.get("admin_key")
+    # Extract Bearer token from Authorization header
+    if authorization and authorization.startswith("Bearer "):
+        auth_admin_key = authorization[7:]  # Remove 'Bearer ' prefix
+    else:
+        # Fallback to query parameter
+        auth_admin_key = admin_key
 
-        if not admin_key:
-            return jsonify({"error": "Admin key required"}), 401
+    if not auth_admin_key:
+        raise HTTPException(status_code=401, detail="Admin key required")
 
-        # First check if the provided key matches the admin key from environment
-        if admin_key == os.environ.get("ORCHESTRA_ADMIN_KEY"):
-            return f(*args, **kwargs)
+    # First check if the provided key matches the admin key from environment
+    if auth_admin_key == os.environ.get("ORCHESTRA_ADMIN_KEY"):
+        return True
 
-        # If neither condition is met, raise unauthorized exception
-        return jsonify({"error": "Unauthorized"}), 401
-
-    return decorated_function
+    # If neither condition is met, raise unauthorized exception
+    raise HTTPException(status_code=401, detail="Unauthorized")
 
 
 class UnityServiceManager:
@@ -204,62 +202,54 @@ unity_manager = UnityServiceManager()
 
 
 # Endpoint 1: Start the service
-@app.route("/start", methods=["POST"])
-@require_auth
-def start_service():
+@app.post("/start")
+async def start_service(auth: bool = Depends(require_auth)):
     """Start the Unity service"""
     global service_status
 
     if unity_manager.start_unity_service():
         service_status = "running"
-        return jsonify(
-            {
-                "status": "started",
-                "message": "Unity service started successfully",
-                "pid": unity_manager.process.pid if unity_manager.process else None,
-                "assistant_id": os.environ.get("ASSISTANT_ID", "default"),
-            },
-        )
+        return {
+            "status": "started",
+            "message": "Unity service started successfully",
+            "pid": unity_manager.process.pid if unity_manager.process else None,
+            "assistant_id": os.environ.get("ASSISTANT_ID", "default"),
+        }
     else:
         service_status = "failed"
-        return (
-            jsonify({"status": "error", "message": "Failed to start Unity service"}),
-            500,
+        raise HTTPException(
+            status_code=500,
+            detail={"status": "error", "message": "Failed to start Unity service"},
         )
 
 
 # Endpoint 2: Stop the service
-@app.route("/stop", methods=["POST"])
-@require_auth
-def stop_service():
+@app.post("/stop")
+async def stop_service(auth: bool = Depends(require_auth)):
     """Stop the Unity service"""
     global service_status
 
     unity_manager.stop_unity_service("manual_stop")
     service_status = "stopped"
 
-    return jsonify({"status": "stopped", "message": "Unity service stopped manually"})
+    return {"status": "stopped", "message": "Unity service stopped manually"}
 
 
 # Endpoint 3: Get status
-@app.route("/status", methods=["GET"])
-@require_auth
-def get_status():
+@app.get("/status")
+async def get_status(auth: bool = Depends(require_auth)):
     """Get current status of the Unity service"""
-    return jsonify(unity_manager.get_status())
+    return unity_manager.get_status()
 
 
 # Health check for the wrapper service
-@app.route("/health", methods=["GET"])
-@require_auth
-def health_check():
-    return jsonify(
-        {
-            "wrapper_status": "healthy",
-            "unity_service": unity_manager.get_status(),
-            "assistant_id": os.environ.get("ASSISTANT_ID", "default"),
-        },
-    )
+@app.get("/health")
+async def health_check(auth: bool = Depends(require_auth)):
+    return {
+        "wrapper_status": "healthy",
+        "unity_service": unity_manager.get_status(),
+        "assistant_id": os.environ.get("ASSISTANT_ID", "default"),
+    }
 
 
 # Graceful shutdown handler
@@ -281,4 +271,9 @@ if auto_start:
 if __name__ == "__main__":
     # Only run in development mode if called directly
     print("Running in development mode...")
-    app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 8000)), debug=True)
+    uvicorn.run(
+        "wrapper_app_fastapi:app",
+        host="0.0.0.0",
+        port=int(os.environ.get("PORT", 8000)),
+        reload=True,
+    )
