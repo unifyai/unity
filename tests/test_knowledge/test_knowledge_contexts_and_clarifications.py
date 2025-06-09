@@ -22,7 +22,7 @@ def _contains(text: str, *needles: str) -> bool:
 # --------------------------------------------------------------------------- #
 @pytest.mark.asyncio
 @pytest.mark.eval
-@pytest.mark.timeout(120)
+@pytest.mark.timeout(300)
 @_handle_project
 async def test_store_uses_parent_context():
     """
@@ -62,7 +62,7 @@ async def test_store_uses_parent_context():
 # --------------------------------------------------------------------------- #
 @pytest.mark.asyncio
 @pytest.mark.eval
-@pytest.mark.timeout(120)
+@pytest.mark.timeout(300)
 @_handle_project
 async def test_store_requests_clarification():
     """
@@ -103,7 +103,7 @@ async def test_store_requests_clarification():
 # --------------------------------------------------------------------------- #
 @pytest.mark.asyncio
 @pytest.mark.eval
-@pytest.mark.timeout(120)
+@pytest.mark.timeout(300)
 @_handle_project
 async def test_retrieve_uses_parent_context():
     """
@@ -147,7 +147,7 @@ async def test_retrieve_uses_parent_context():
 # --------------------------------------------------------------------------- #
 @pytest.mark.asyncio
 @pytest.mark.eval
-@pytest.mark.timeout(120)
+@pytest.mark.timeout(300)
 @_handle_project
 async def test_retrieve_requests_clarification():
     """

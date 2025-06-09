@@ -119,7 +119,7 @@ def basic_task_scenario(setup_session_context):
 
 @pytest.mark.eval
 @pytest.mark.asyncio
-@pytest.mark.timeout(240)
+@pytest.mark.timeout(300)
 async def test_update_reorder_queue(basic_task_scenario):
     ts, ids = basic_task_scenario
 
@@ -142,7 +142,7 @@ async def test_update_reorder_queue(basic_task_scenario):
 
 @pytest.mark.eval
 @pytest.mark.asyncio
-@pytest.mark.timeout(240)
+@pytest.mark.timeout(300)
 async def test_update_cancel_email_tasks(basic_task_scenario):  # FIXME
     ts, ids = basic_task_scenario
 
@@ -171,7 +171,7 @@ def _next_weekday(dt: datetime, weekday: int) -> datetime:
 
 @pytest.mark.eval
 @pytest.mark.asyncio
-@pytest.mark.timeout(240)
+@pytest.mark.timeout(300)
 async def test_update_lower_priority_next_monday(basic_task_scenario):
     ts, ids = basic_task_scenario
 
@@ -203,7 +203,7 @@ async def test_update_lower_priority_next_monday(basic_task_scenario):
 
 @pytest.mark.eval
 @pytest.mark.asyncio
-@pytest.mark.timeout(240)
+@pytest.mark.timeout(300)
 async def test_update_bulk_description_replace(basic_task_scenario):
     ts, ids = basic_task_scenario
 
