@@ -171,7 +171,7 @@ class SimulatedKnowledgeManager(BaseKnowledgeManager):
     #  store                                                             #
     # ------------------------------------------------------------------ #
     @functools.wraps(BaseKnowledgeManager.store, updated=())
-    def store(
+    async def store(
         self,
         text: str,
         *,
@@ -205,7 +205,7 @@ class SimulatedKnowledgeManager(BaseKnowledgeManager):
     #  retrieve                                                          #
     # ------------------------------------------------------------------ #
     @functools.wraps(BaseKnowledgeManager.retrieve, updated=())
-    def retrieve(
+    async def retrieve(
         self,
         text: str,
         *,
