@@ -5,6 +5,7 @@ import json
 import functools
 import os
 from .prompt_builders import build_ask_prompt, build_update_prompt
+from ..common.embed_utils import EMBED_MODEL, ensure_vector_column
 from ..knowledge_manager.types import ColumnType
 from ..helpers import _handle_exceptions
 
@@ -43,6 +44,7 @@ class ContactManager(BaseContactManager):
             "email_address",
             "phone_number",
             "whatsapp_number",
+            "description",
         }
 
         # ── schema-management internal tools (mirrors KnowledgeManager) ──
@@ -55,7 +57,11 @@ class ContactManager(BaseContactManager):
 
         # ── public tool dictionaries ─────────────────────────────────────
         self._ask_tools: Dict[str, Callable] = {
-            **methods_to_tool_dict(self._search_contacts, include_class_name=False),
+            **methods_to_tool_dict(
+                self._search_contacts,
+                self._nearest_column,
+                include_class_name=False,
+            ),
             **self._schema_tools,
         }
 
@@ -64,6 +70,7 @@ class ContactManager(BaseContactManager):
                 self._create_contact,
                 self._update_contact,
                 self._search_contacts,
+                self._nearest_column,
                 include_class_name=False,
             ),
             **self._schema_tools,
@@ -140,6 +147,56 @@ class ContactManager(BaseContactManager):
         response = requests.request("DELETE", url, json=json_input, headers=headers)
         _handle_exceptions(response)
         return response.json()
+
+    # ------------------------------------------------------------------ #
+    #  Vector-search helpers                                             #
+    # ------------------------------------------------------------------ #
+
+    def _ensure_table_vector(self, *, column: str, source: str) -> None:
+        """
+        Ensure that *column* (e.g. ``"notes_vec"``) exists as a vector-embedding
+        derived from *source* (e.g. ``"notes"``).  If it doesn't, create it.
+        """
+        ensure_vector_column(
+            self._ctx,  # contacts live in a single context
+            embed_column=column,
+            source_column=source,
+        )
+
+    def _nearest_column(
+        self,
+        *,
+        source: str,
+        text: str,
+        k: int = 5,
+    ) -> List[Dict[str, Any]]:
+        """
+        **Semantic nearest-neighbour search** over the *source* column.
+
+        Parameters
+        ----------
+        source : str
+            Name of the text column to embed (any default or custom column).
+        text : str
+            Query text.
+        k : int, default ``5``
+            Number of closest rows to return.
+
+        Returns
+        -------
+        list[dict]
+            Rows sorted by ascending cosine distance.
+        """
+        vec_col = f"{source}_vec"
+        self._ensure_table_vector(column=vec_col, source=source)
+        logs = unify.get_logs(
+            context=self._ctx,
+            sorting={
+                f"cosine({vec_col}, embed('{text}', model='{EMBED_MODEL}'))": "ascending",
+            },
+            limit=k,
+        )
+        return [lg.entries for lg in logs]
 
     # Public #
     # -------#
@@ -298,6 +355,7 @@ class ContactManager(BaseContactManager):
             "email_address": email_address,
             "phone_number": phone_number,
             "whatsapp_number": whatsapp_number,
+            "description": None,
             **(custom_fields if custom_fields is not None else {}),
         }
         assert any(
@@ -402,6 +460,7 @@ class ContactManager(BaseContactManager):
             "email_address": email_address,
             "phone_number": phone_number,
             "whatsapp_number": whatsapp_number,
+            "description": None,
             **(custom_fields if custom_fields is not None else {}),
         }
         updates_to_apply = [{k: v} for k, v in contact_details.items() if v is not None]

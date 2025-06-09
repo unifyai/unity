@@ -26,6 +26,9 @@ class Contact(BaseModel):
         description="Contact's WhatsApp number - can optionally start with '+' (only if *explicitly* mentioned by the user), but must otherwise contain only digits",
         pattern="^\\+?[0-9]+$",
     )
+    description: Optional[str] = Field(
+        description="Free-form notes about the contact.",
+    )
     model_config = {
         "extra": "allow",
     }
