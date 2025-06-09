@@ -4,6 +4,8 @@ from dotenv import load_dotenv
 
 load_dotenv("../.env")
 
+headers = {"Authorization": f"Bearer {os.getenv('ORCHESTRA_ADMIN_KEY')}"}
+
 
 async def send_whatsapp_message(from_number: str, to_number: str, message: str) -> bool:
     """
@@ -22,6 +24,7 @@ async def send_whatsapp_message(from_number: str, to_number: str, message: str) 
         async with aiohttp.ClientSession() as session:
             async with session.post(
                 f"{os.getenv('UNITY_COMMS_URL')}/whatsapp/send-text",
+                headers=headers,
                 json={
                     "from": from_number,
                     "to": to_number,
@@ -60,6 +63,7 @@ async def send_sms(from_number: str, to_number: str, message: str) -> bool:
         async with aiohttp.ClientSession() as session:
             async with session.post(
                 f"{os.getenv('UNITY_COMMS_URL')}/phone/send-text",
+                headers=headers,
                 json={
                     "From": from_number,
                     "To": to_number,
@@ -97,6 +101,7 @@ async def send_call(from_number: str, to_number: str) -> bool:
         async with aiohttp.ClientSession() as session:
             async with session.post(
                 f"{os.getenv('UNITY_COMMS_URL')}/phone/send-call",
+                headers=headers,
                 json={"From": from_number, "To": to_number, "NewCall": "true"},
             ) as response:
                 if response.status != 200:
