@@ -26,7 +26,7 @@ class BaseTaskManager(ABC):
     #  ask – read-only                                                   #
     # ------------------------------------------------------------------ #
     @abstractmethod
-    def ask(
+    async def ask(
         self,
         text: str,
         *,
@@ -69,7 +69,7 @@ class BaseTaskManager(ABC):
     #  request – read **and** write                                      #
     # ------------------------------------------------------------------ #
     @abstractmethod
-    def request(
+    async def request(
         self,
         text: str,
         *,
@@ -90,7 +90,7 @@ class BaseTaskManager(ABC):
     #  start_task – activate one queued task                             #
     # ------------------------------------------------------------------ #
     @abstractmethod
-    def start_task(
+    async def start_task(
         self,
         text: str,
         *,
