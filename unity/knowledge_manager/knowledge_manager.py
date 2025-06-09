@@ -15,7 +15,9 @@ from ..common.llm_helpers import (
     methods_to_tool_dict,
 )
 from ..helpers import _handle_exceptions
+from ..events.event_bus import EventBus
 from .base import BaseKnowledgeManager
+from ..contact_manager.contact_manager import BaseContactManager, ContactManager
 from .prompt_builders import build_store_prompt, build_retrieve_prompt
 
 API_KEY = os.environ["UNIFY_KEY"]
@@ -23,10 +25,17 @@ API_KEY = os.environ["UNIFY_KEY"]
 
 class KnowledgeManager(BaseKnowledgeManager):
 
-    def __init__(self, *, traced: bool = True) -> None:
+    def __init__(
+        self,
+        *,
+        contact_manager: Optional[BaseContactManager] = None,
+        traced: bool = True,
+    ) -> None:
         """
         Responsible for *adding to*, *updating* and *searching through* all knowledge the assistant has stored in memory.
         """
+        if contact_manager is None:
+            contact_manager = ContactManager(EventBus())
 
         refactor_tools = methods_to_tool_dict(
             # Tables
@@ -42,19 +51,29 @@ class KnowledgeManager(BaseKnowledgeManager):
             include_class_name=False,
         )
 
-        self._store_tools = {
-            **refactor_tools,
-            **methods_to_tool_dict(
-                self._add_data,
-                include_class_name=False,
-            ),
-        }
+        cm_ask = methods_to_tool_dict(contact_manager.ask, include_class_name=True)
+        cm_update = methods_to_tool_dict(
+            contact_manager.update,
+            include_class_name=True,
+        )
 
         self._retrieve_tools = {
+            **cm_ask,
             **refactor_tools,
             **methods_to_tool_dict(
                 self._search_knowledge,
                 self._nearest_knowledge,
+                include_class_name=False,
+            ),
+        }
+
+        self._store_tools = {
+            **cm_ask,
+            **cm_update,
+            **refactor_tools,
+            **methods_to_tool_dict(
+                self._add_data,
+                include_class_name=False,
             ),
         }
 
