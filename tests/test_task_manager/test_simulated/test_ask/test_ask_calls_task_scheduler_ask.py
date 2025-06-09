@@ -22,7 +22,7 @@ async def test_ask_calls_task_scheduler_ask(monkeypatch):
     monkeypatch.setattr(SimulatedTaskScheduler, "ask", spy, raising=True)
 
     tm = SimulatedTaskManager("Demo – engineering sprint board.")
-    handle = tm.ask("Which tasks are due before Friday?")
+    handle = await tm.ask("Which tasks are due before Friday?")
     await asyncio.wait_for(handle.result(), timeout=6000)
 
     assert calls["count"] == 1, "TaskScheduler.ask should be triggered exactly once."

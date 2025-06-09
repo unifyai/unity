@@ -255,7 +255,7 @@ async def test_ask_semantic_with_llm_judgement(
     times), then asks a _separate_ LLM whether the answer is acceptable.
     """
     tm, _ID_BY_NAME = tm_scenario
-    handle = tm.ask(question, _return_reasoning_steps=True)
+    handle = await tm.ask(question, _return_reasoning_steps=True)
     candidate, steps = await handle.result()
     expected = _answer_semantic(tm, question, _ID_BY_NAME)
     _llm_assert_correct(question, expected, candidate, steps)
@@ -270,7 +270,7 @@ async def test_ask_allows_interjection(
     tm, _ID_BY_NAME = tm_scenario
     # 1) Initial semantic query – last Dan ⇢ Julia phone call date
     q_initial = QUESTIONS[1]  # "When did Dan last speak with Julia on the phone?"
-    handle = tm.ask(q_initial, _return_reasoning_steps=True)
+    handle = await tm.ask(q_initial, _return_reasoning_steps=True)
 
     # 2) Interject with a *different* question (Jimmy holiday date)
     q_follow_up = QUESTIONS[2]  # "Did Jimmy ever tell us when he's on holiday...?"
@@ -297,7 +297,7 @@ async def test_ask_allows_interjection(
 async def test_ask_honors_stop():
     event_bus = EventBus()
     tm = TranscriptManager(event_bus)
-    handle = tm.ask(
+    handle = await tm.ask(
         "List every message received from Carlos, then provide a detailed summary of each one in chronological order.",
     )
     handle.stop()
@@ -347,7 +347,7 @@ async def test_ask_respects_parent_context(
     ]
 
     # ── 3.  Call `.ask()` with that context ────────────────────────────
-    handle = tm.ask(
+    handle = await tm.ask(
         "What day was the conversation?",
         _return_reasoning_steps=True,
         parent_chat_context=parent_ctx,
@@ -426,7 +426,7 @@ async def test_ask_requests_clarification_when_context_missing(
     down_q: asyncio.Queue[str] = asyncio.Queue()
 
     # ── 3.  Call `.ask()` WITHOUT parent context ───────────────────────────
-    handle = tm.ask(
+    handle = await tm.ask(
         "What day was the conversation?",
         _return_reasoning_steps=True,
         clarification_up_q=up_q,

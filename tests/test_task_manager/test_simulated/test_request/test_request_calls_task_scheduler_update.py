@@ -22,7 +22,9 @@ async def test_request_calls_task_scheduler_update(monkeypatch):
     monkeypatch.setattr(SimulatedTaskScheduler, "update", spy, raising=True)
 
     tm = SimulatedTaskManager("Demo – marketing backlog.")
-    handle = tm.request("Add a task: 'Design new landing page', due next Tuesday.")
+    handle = await tm.request(
+        "Add a task: 'Design new landing page', due next Tuesday.",
+    )
     await asyncio.wait_for(handle.result(), timeout=60)
 
     assert calls["count"] == 1, "TaskScheduler.update must be called once."

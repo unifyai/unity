@@ -20,7 +20,7 @@ from tests.helpers import _handle_project
 @_handle_project
 async def test_start_and_ask_simulated_tm():
     tm = SimulatedTranscriptManager("Demo transcript DB.")
-    handle = tm.ask("Show me my unread emails.")
+    handle = await tm.ask("Show me my unread emails.")
     answer = await handle.result()
     assert isinstance(answer, str) and answer.strip(), "Answer should be non-empty"
 
@@ -47,7 +47,7 @@ async def test_interject_simulated_tm(monkeypatch):
     )
 
     tm = SimulatedTranscriptManager()
-    handle = tm.ask("Summarise yesterday's Slack exchange with Bob.")
+    handle = await tm.ask("Summarise yesterday's Slack exchange with Bob.")
     # interject while running
     await asyncio.sleep(0.05)
     reply = handle.interject("Also include any emojis Bob used.")
@@ -64,7 +64,7 @@ async def test_interject_simulated_tm(monkeypatch):
 @_handle_project
 async def test_stop_simulated_tm():
     tm = SimulatedTranscriptManager()
-    handle = tm.ask("Produce a full export of all messages.")
+    handle = await tm.ask("Produce a full export of all messages.")
     await asyncio.sleep(0.05)
     handle.stop()
 
@@ -85,7 +85,7 @@ async def test_tm_requests_clarification():
     up_q: asyncio.Queue[str] = asyncio.Queue()
     down_q: asyncio.Queue[str] = asyncio.Queue()
 
-    handle = tm.ask(
+    handle = await tm.ask(
         "Find important messages.",
         clarification_up_q=up_q,
         clarification_down_q=down_q,
@@ -116,7 +116,7 @@ async def test_tm_stateful_memory():
     tm = SimulatedTranscriptManager()
 
     # 1) Ask for a unique codename – expect a non-empty answer
-    handle1 = tm.ask(
+    handle1 = await tm.ask(
         "Please invent a unique project codename for our upcoming initiative. "
         "Respond with *only* the codename.",
     )
@@ -124,7 +124,7 @@ async def test_tm_stateful_memory():
     assert codename, "Codename should not be empty"
 
     # 2) Ask the LLM to recall what it just said
-    handle2 = tm.ask("Great. What codename did you suggest earlier?")
+    handle2 = await tm.ask("Great. What codename did you suggest earlier?")
     answer2 = (await handle2.result()).lower()
 
     # The second answer should mention the same codename exactly
@@ -214,7 +214,7 @@ async def test_pause_and_resume_simulated_tm(monkeypatch):
     )
 
     tm = SimulatedTranscriptManager()
-    handle = tm.ask("List unread DMs.")
+    handle = await tm.ask("List unread DMs.")
 
     # Initially, pause should be available and resume absent.
     tools_initial = handle.valid_tools

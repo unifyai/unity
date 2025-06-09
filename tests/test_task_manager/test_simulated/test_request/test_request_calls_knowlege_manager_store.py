@@ -22,7 +22,7 @@ async def test_request_calls_knowledge_manager_store(monkeypatch):
     monkeypatch.setattr(SimulatedKnowledgeManager, "store", spy, raising=True)
 
     tm = SimulatedTaskManager("Demo – ops run-book KB.")
-    handle = tm.request("Remember that the new Wi-Fi password is 'P@ssw0rd2025'.")
+    handle = await tm.request("Remember that the new Wi-Fi password is 'P@ssw0rd2025'.")
     await asyncio.wait_for(handle.result(), timeout=60)
 
     assert calls["count"] == 1, "KnowledgeManager.store should be called exactly once."
