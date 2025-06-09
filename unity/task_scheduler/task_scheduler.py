@@ -108,7 +108,7 @@ class TaskScheduler(BaseTaskScheduler):
     # English-Text Question
 
     @functools.wraps(BaseTaskScheduler.ask, updated=())
-    def ask(
+    async def ask(
         self,
         text: str,
         *,
@@ -164,7 +164,7 @@ class TaskScheduler(BaseTaskScheduler):
     # English-Text Update Request
 
     @functools.wraps(BaseTaskScheduler.update, updated=())
-    def update(
+    async def update(
         self,
         text: str,
         *,
@@ -220,7 +220,7 @@ class TaskScheduler(BaseTaskScheduler):
     # Start Task
 
     @functools.wraps(BaseTaskScheduler.start_task, updated=())
-    def start_task(
+    async def start_task(
         self,
         task_id: int,
         *,

@@ -24,7 +24,7 @@ class BaseTaskScheduler(ABC):
     # Public interface                                                   #
     # ------------------------------------------------------------------ #
     @abstractmethod
-    def ask(
+    async def ask(
         self,
         text: str,
         *,
@@ -68,7 +68,7 @@ class BaseTaskScheduler(ABC):
         """
 
     @abstractmethod
-    def update(
+    async def update(
         self,
         text: str,
         *,
@@ -87,7 +87,7 @@ class BaseTaskScheduler(ABC):
         """
 
     @abstractmethod
-    def start_task(
+    async def start_task(
         self,
         task_id: int,
         *,

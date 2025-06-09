@@ -203,7 +203,7 @@ class SimulatedTaskScheduler(BaseTaskScheduler):
     #  ask                                                               #
     # ------------------------------------------------------------------ #
     @functools.wraps(BaseTaskScheduler.ask, updated=())
-    def ask(
+    async def ask(
         self,
         text: str,
         *,
@@ -243,7 +243,7 @@ class SimulatedTaskScheduler(BaseTaskScheduler):
     #  update                                                            #
     # ------------------------------------------------------------------ #
     @functools.wraps(BaseTaskScheduler.update, updated=())
-    def update(
+    async def update(
         self,
         text: str,
         *,
@@ -282,7 +282,7 @@ class SimulatedTaskScheduler(BaseTaskScheduler):
     #  start_task – delegate to SimulatedPlanner.plan                     #
     # ------------------------------------------------------------------ #
     @functools.wraps(BaseTaskScheduler.start_task, updated=())
-    def start_task(
+    async def start_task(
         self,
         task_id: int,
         *,
