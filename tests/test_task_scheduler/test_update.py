@@ -16,7 +16,7 @@ async def test_update_create_task_via_text():
         "description 'Send an email to Jeff Smith, kindly congratulating him and "
         "explaining that he has been promoted from sales rep to sales manager.'"
     )
-    handle = ts.update(text=cmd)
+    handle = await ts.update(text=cmd)
     await handle.result()
 
     tasks = ts._search_tasks()
@@ -42,7 +42,7 @@ async def test_update_delete_task_via_text():
     assert len(ts._search_tasks()) == 1
 
     # delete via plain-English update
-    handle = ts.update(text="Delete the task with id 0.")
+    handle = await ts.update(text="Delete the task with id 0.")
     await handle.result()
 
     assert ts._search_tasks() == []

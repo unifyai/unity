@@ -125,7 +125,7 @@ async def test_update_reorder_queue(basic_task_scenario):
 
     assert [t.task_id for t in ts._get_task_queue()] == ids  # initial order
 
-    handle = ts.update(
+    handle = await ts.update(
         text="Could you update the queue order so that you write the client follow-up email *after* you write the quarterly report? Both tasks are already assigned, you just need to update their scheduling order.",
     )
     await handle.result()
@@ -146,7 +146,7 @@ async def test_update_reorder_queue(basic_task_scenario):
 async def test_update_cancel_email_tasks(basic_task_scenario):  # FIXME
     ts, ids = basic_task_scenario
 
-    handle = ts.update(text="Please cancel all tasks related to sending emails.")
+    handle = await ts.update(text="Please cancel all tasks related to sending emails.")
     await handle.result()
 
     tasks = ts._search_tasks()
@@ -187,7 +187,7 @@ async def test_update_lower_priority_next_monday(basic_task_scenario):
         priority=Priority.high,
     )
 
-    handle = ts.update(
+    handle = await ts.update(
         text="Please lower the priority of all tasks to 'normal' which are scheduled for next Monday.",
     )
     await handle.result()
@@ -216,7 +216,7 @@ async def test_update_bulk_description_replace(basic_task_scenario):
         description="Email the estate agent the sales brochure.",
     )
 
-    handle = ts.update(
+    handle = await ts.update(
         text="Please update all task descriptions to refer to Mr. Smith instead of 'the estate agent'.",
     )
     await handle.result()

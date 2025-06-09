@@ -177,14 +177,14 @@ def _dispatch(ts: TaskScheduler, raw: str, *, show_steps: bool):
     resp = _DispatchResp.model_validate_json(llm.generate(raw))
 
     if resp.require_update:
-        handle = ts.update(
+        handle = await ts.update(
             text=resp.fixed_text,
             _return_reasoning_steps=show_steps,
             log_tool_steps=show_steps,
         )
         return "update", handle
 
-    handle = ts.ask(
+    handle = await ts.ask(
         text=resp.fixed_text,
         _return_reasoning_steps=show_steps,
         log_tool_steps=show_steps,

@@ -23,7 +23,7 @@ from tests.helpers import _handle_project
 @_handle_project
 async def test_start_and_ask_simulated_ts():
     ts = SimulatedTaskScheduler("Demo list for unit-tests.")
-    handle = ts.ask("What are my open tasks today?")
+    handle = await ts.ask("What are my open tasks today?")
     answer = await handle.result()
     assert isinstance(answer, str) and answer.strip(), "Answer should be non-empty"
 
@@ -51,7 +51,7 @@ async def test_interject_simulated_ts(monkeypatch):
     )
 
     ts = SimulatedTaskScheduler("Demo list")
-    handle = ts.ask("Give me a summary of all tasks.")
+    handle = await ts.ask("Give me a summary of all tasks.")
     # Send a follow-up while it is “running”
     await asyncio.sleep(0.05)
     reply = handle.interject("Also include any deadlines, please.")
@@ -68,7 +68,7 @@ async def test_interject_simulated_ts(monkeypatch):
 @_handle_project
 async def test_stop_simulated_ts():
     ts = SimulatedTaskScheduler()
-    handle = ts.ask("Produce a very long report about my tasks.")
+    handle = await ts.ask("Produce a very long report about my tasks.")
     await asyncio.sleep(0.05)  # let the background thread spin up
     handle.stop()
 
@@ -89,7 +89,7 @@ async def test_ts_requests_clarification():
     up_q: asyncio.Queue[str] = asyncio.Queue()
     down_q: asyncio.Queue[str] = asyncio.Queue()
 
-    handle = ts.ask(
+    handle = await ts.ask(
         "Please prioritise everything appropriately.",
         clarification_up_q=up_q,
         clarification_down_q=down_q,
@@ -122,7 +122,7 @@ async def test_ts_stateful_memory_serial_asks():
     ts = SimulatedTaskScheduler()
 
     # 1) Ask for a unique codename – any non-empty string
-    h1 = ts.ask(
+    h1 = await ts.ask(
         "Please invent a codename for our secret task-force. "
         "Respond with only the codename.",
     )
@@ -131,7 +131,7 @@ async def test_ts_stateful_memory_serial_asks():
     assert codename, "Codename should not be empty"
 
     # 2) Ask what codename was suggested
-    h2 = ts.ask("Great. What codename did you propose earlier?")
+    h2 = await ts.ask("Great. What codename did you propose earlier?")
     answer2 = (await h2.result()).lower()
     answer2 = re.sub(r"\W+", "", answer2.strip().lower().replace("codename", ""))
 
@@ -153,13 +153,13 @@ async def test_ts_stateful_update_then_ask():
     task_name = "Draft Budget FY26"
 
     # 1) Tell the manager to add a new high-priority task
-    h_upd = ts.update(
+    h_upd = await ts.update(
         f"Please create a new task called '{task_name}' with high priority.",
     )
     _ = await h_upd.result()  # we don't assert its exact wording
 
     # 2) Ask about high-priority tasks – should mention the one we just added
-    h_q = ts.ask("Which tasks are high priority right now?")
+    h_q = await ts.ask("Which tasks are high priority right now?")
     answer = (await h_q.result()).lower()
 
     assert "budget" in answer, "Answer should reference the task added via update"
@@ -230,7 +230,7 @@ async def test_pause_and_resume_simulated_ts(monkeypatch):
     )
 
     ts = SimulatedTaskScheduler()
-    handle = ts.ask("List tomorrow's tasks.")
+    handle = await ts.ask("List tomorrow's tasks.")
 
     # Initially: "pause" should be present, "resume" absent.
     tools_initial = handle.valid_tools
