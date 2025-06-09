@@ -13,6 +13,7 @@ def test_create_contact():
     contact_manager = ContactManager(eb)
     contact_manager._create_contact(
         first_name="Dan",
+        description="A bit of a loser",
     )
     contacts = contact_manager._search_contacts()
     assert len(contacts) == 1
@@ -24,7 +25,7 @@ def test_create_contact():
         "email_address": None,
         "phone_number": None,
         "whatsapp_number": None,
-        "description": None,
+        "description": "A bit of a loser",
     }
 
 
@@ -58,6 +59,7 @@ def test_update_contact():
     contact_manager._update_contact(
         contact_id=0,
         first_name="Daniel",
+        description="He's alright",
     )
 
     # check
@@ -71,7 +73,7 @@ def test_update_contact():
         "email_address": None,
         "phone_number": None,
         "whatsapp_number": None,
-        "description": None,
+        "description": "He's alright",
     }
 
 
