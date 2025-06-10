@@ -49,7 +49,7 @@ class BaseKnowledgeManager(ABC):
     ) -> SteerableToolHandle:  # noqa: D401 – full docstring below
         """
         Persist *new* knowledge or amend existing records, expressed in
-        **plain English**.  The LLM will translate the request into a series
+        **plain English**. The LLM will translate the request into a series
         of table/column manipulations and data-writes.
 
         Parameters
