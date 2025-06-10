@@ -184,7 +184,7 @@ async def test_ask_semantic_with_llm_judgement(
     ts_scenario: TaskScheduler,
 ) -> None:
     try:
-        handle = ts_scenario.ask(
+        handle = await ts_scenario.ask(
             text=question,
             _return_reasoning_steps=True,
         )
@@ -202,7 +202,7 @@ async def test_ask_with_interjection(ts_scenario: TaskScheduler) -> None:
     """Ask a question, interject with a follow-up, and ensure the final answer covers both."""
     try:
         # 1) Initial question ⇢ primed task name
-        handle = ts_scenario.ask(
+        handle = await ts_scenario.ask(
             text="Which task is currently primed?",
             _return_reasoning_steps=True,
         )
@@ -242,7 +242,7 @@ async def test_ask_stop(ts_scenario: TaskScheduler) -> None:
     """Test that we can stop the conversation mid-way."""
     try:
         # Start with a request that would take some time to complete
-        handle = ts_scenario.ask(
+        handle = await ts_scenario.ask(
             text="List all tasks, then summarize each one in detail.",
         )
 
