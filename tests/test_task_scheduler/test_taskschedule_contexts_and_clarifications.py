@@ -134,9 +134,11 @@ async def test_ts_update_uses_parent_context():  # FIXME: flaky
     ]
 
     # ask to mark Thunderbolt completed
-    await ts.update(
-        "Mark the Thunderbolt task as completed.",
-        parent_chat_context=parent_ctx,
+    await (
+        await ts.update(
+            "Mark the Thunderbolt task as completed.",
+            parent_chat_context=parent_ctx,
+        )
     ).result()
 
     row = ts._search_tasks(filter=f"task_id == {tid}", limit=1)[0]
@@ -182,10 +184,12 @@ async def test_ts_update_requests_clarification():
     up_q, down_q = asyncio.Queue(), asyncio.Queue()
 
     task = asyncio.create_task(
-        ts.update(
-            "Set the queued task's priority to high.",
-            clarification_up_q=up_q,
-            clarification_down_q=down_q,
+        (
+            await ts.update(
+                "Set the queued task's priority to high.",
+                clarification_up_q=up_q,
+                clarification_down_q=down_q,
+            )
         ).result(),
     )
 
