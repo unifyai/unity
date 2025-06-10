@@ -28,13 +28,13 @@ from tests.helpers import _handle_project
 # --------------------------------------------------------------------------- #
 
 
-def _make_scheduler_with_task(description: str, *, steps: int = 1):
+async def _make_scheduler_with_task(description: str, *, steps: int = 1):
     """Return *(scheduler, handle)* where *handle* is the active task."""
     planner = SimulatedPlanner(steps=steps)
     scheduler = TaskScheduler(planner=planner)
 
     task_id = scheduler._create_task(name=description, description=description)
-    handle = scheduler.start_task(task_id=task_id)
+    handle = await scheduler.start_task(task_id=task_id)
     return scheduler, handle
 
 
@@ -59,7 +59,7 @@ async def test_start_task_ask(monkeypatch):
 
     monkeypatch.setattr(SimulatedPlan, "ask", spy_ask, raising=True)
 
-    _scheduler, task = _make_scheduler_with_task(
+    _scheduler, task = await _make_scheduler_with_task(
         "Analyse new product launch performance.",
         steps=1,
     )
@@ -93,7 +93,7 @@ async def test_start_task_interject(monkeypatch):
 
     monkeypatch.setattr(SimulatedPlan, "interject", spy_interject, raising=True)
 
-    _scheduler, task = _make_scheduler_with_task(
+    _scheduler, task = await _make_scheduler_with_task(
         "Investigate competitor pricing.",
         steps=2,
     )
@@ -136,7 +136,7 @@ async def test_start_task_pause_resume(monkeypatch):
     monkeypatch.setattr(SimulatedPlan, "pause", spy_pause, raising=True)
     monkeypatch.setattr(SimulatedPlan, "resume", spy_resume, raising=True)
 
-    _scheduler, task = _make_scheduler_with_task(
+    _scheduler, task = await _make_scheduler_with_task(
         "Run SEO audit for the website.",
         steps=2,
     )
@@ -173,7 +173,7 @@ async def test_start_task_stop(monkeypatch):
 
     monkeypatch.setattr(SimulatedPlan, "stop", spy_stop, raising=True)
 
-    _scheduler, task = _make_scheduler_with_task(
+    _scheduler, task = await _make_scheduler_with_task(
         "Extract sentiment from reviews.",
         steps=5,
     )
@@ -196,7 +196,7 @@ async def test_start_task_stop(monkeypatch):
 async def test_start_task_result_and_done():
     """A normal workflow should complete once enough steps have been taken."""
 
-    _scheduler, task = _make_scheduler_with_task(
+    _scheduler, task = await _make_scheduler_with_task(
         "Compile coverage metrics.",
         steps=1,
     )
