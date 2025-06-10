@@ -27,6 +27,79 @@ def _now() -> str:  # UTC timestamp helper
 # ────────────────────────────────────────────────────────────────────────────
 
 
+def build_refactor_prompt(
+    *,
+    tools: dict[str, callable],
+    table_schemas_json: str,
+) -> str:
+    """
+    Construct the system-prompt for :pymeth:`KnowledgeManager.refactor`.
+
+    The prompt makes three guarantees:
+    1. *All* table/column-level tools are documented in explicit JSON schema.
+    2. Clear, opinionated instructions describe **why** and **how** to
+       normalise the schema (remove duplication, introduce surrogate keys,
+       delete unused columns, etc.).
+    3. Two worked examples illustrate the expected reasoning and tool use.
+    """
+
+    tools_section = "\n".join(
+        f"- **{name}**{sig}"
+        for name, sig in ((t.__name__, str(t.__annotations__)) for t in tools.values())
+    )
+
+    examples = textwrap.dedent(
+        """
+        ### EXAMPLE 1 — simple column move
+        *Before*
+        ┌─ Companies(name, revenue, opening_hours)
+        └─ Contacts(first_name, surname, email_address, **opening_hours**)
+
+        *Action*
+        1. `delete_column(table="Contacts", column_name="opening_hours")`
+        2. `create_empty_column(table="Companies", column_name="company_id", column_type="int")`
+        3. `rename_column(table="Companies", old_name="name", new_name="company_name")`
+        4. Update rows so every contact references `company_id`.
+
+        ### EXAMPLE 2 — splitting a mixed-type column
+        • Detect that `purchase_info` mixes JSON dicts and strings.
+        • Create two new columns (`purchase_details` *dict*, `purchase_note` *str*)
+        • Migrate the correct rows with tool calls (`create_derived_column`, `delete_column`, etc.).
+        """,
+    ).strip()
+
+    return textwrap.dedent(
+        f"""
+        You are the **Schema Refactor Assistant**.
+        Your only goal is to *minimise duplication* and *maximise clarity* of
+        the stored data model by judicious use of the tools listed below.
+
+        --------------------------------------------------------------------
+        ## Current schema (JSON)
+        {table_schemas_json}
+
+        --------------------------------------------------------------------
+        ## Available tools
+        {tools_section}
+
+        --------------------------------------------------------------------
+        ## How to work
+        1. *Analyse* every table/column pair – look for repeated information,
+           low-cardinality text that should be normalised, mixed-type columns,
+           unused columns, etc.
+        2. Draft an **ordered plan** of the minimal set of tool invocations
+           needed to reach Third Normal Form (3NF) or better. Always prefer
+           **rename over delete+create** when feasible.
+        3. Execute the plan step-by-step via the tool calls.
+        4. End with a concise plain-English *migration report*.
+
+        --------------------------------------------------------------------
+        ## Usage examples
+        {examples}
+        """,
+    ).strip()
+
+
 def build_store_prompt(
     tools: Dict[str, Callable],
     *,
@@ -145,76 +218,3 @@ def build_retrieve_prompt(
             f"Current UTC time: {_now()}.",
         ],
     )
-
-
-def build_refactor_prompt(
-    *,
-    tools: dict[str, callable],
-    table_schemas_json: str,
-) -> str:
-    """
-    Construct the system-prompt for :pymeth:`KnowledgeManager.refactor`.
-
-    The prompt makes three guarantees:
-    1. *All* table/column-level tools are documented in explicit JSON schema.
-    2. Clear, opinionated instructions describe **why** and **how** to
-       normalise the schema (remove duplication, introduce surrogate keys,
-       delete unused columns, etc.).
-    3. Two worked examples illustrate the expected reasoning and tool use.
-    """
-
-    tools_section = "\n".join(
-        f"- **{name}**{sig}"
-        for name, sig in ((t.__name__, str(t.__annotations__)) for t in tools.values())
-    )
-
-    examples = textwrap.dedent(
-        """
-        ### EXAMPLE 1 — simple column move
-        *Before*
-        ┌─ Companies(name, revenue, opening_hours)
-        └─ Contacts(first_name, surname, email_address, **opening_hours**)
-
-        *Action*
-        1. `delete_column(table="Contacts", column_name="opening_hours")`
-        2. `create_empty_column(table="Companies", column_name="company_id", column_type="int")`
-        3. `rename_column(table="Companies", old_name="name", new_name="company_name")`
-        4. Update rows so every contact references `company_id`.
-
-        ### EXAMPLE 2 — splitting a mixed-type column
-        • Detect that `purchase_info` mixes JSON dicts and strings.
-        • Create two new columns (`purchase_details` *dict*, `purchase_note` *str*)
-        • Migrate the correct rows with tool calls (`create_derived_column`, `delete_column`, etc.).
-        """,
-    ).strip()
-
-    return textwrap.dedent(
-        f"""
-        You are the **Schema Refactor Assistant**.
-        Your only goal is to *minimise duplication* and *maximise clarity* of
-        the stored data model by judicious use of the tools listed below.
-
-        --------------------------------------------------------------------
-        ## Current schema (JSON)
-        {table_schemas_json}
-
-        --------------------------------------------------------------------
-        ## Available tools
-        {tools_section}
-
-        --------------------------------------------------------------------
-        ## How to work
-        1. *Analyse* every table/column pair – look for repeated information,
-           low-cardinality text that should be normalised, mixed-type columns,
-           unused columns, etc.
-        2. Draft an **ordered plan** of the minimal set of tool invocations
-           needed to reach Third Normal Form (3NF) or better. Always prefer
-           **rename over delete+create** when feasible.
-        3. Execute the plan step-by-step via the tool calls.
-        4. End with a concise plain-English *migration report*.
-
-        --------------------------------------------------------------------
-        ## Usage examples
-        {examples}
-        """,
-    ).strip()

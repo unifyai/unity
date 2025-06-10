@@ -61,9 +61,19 @@ class KnowledgeManager(BaseKnowledgeManager):
             include_class_name=True,
         )
 
+        self._refactor_tools = {
+            **refactor_tools,
+            **contact_manager._schema_tools,
+        }
+
+        refactor_tool = methods_to_tool_dict(
+            self.refactor,
+            include_class_name=False,
+        )
+
         self._retrieve_tools = {
             **cm_ask,
-            **refactor_tools,
+            **refactor_tool,
             **methods_to_tool_dict(
                 self._search_knowledge,
                 self._nearest_knowledge,
@@ -74,17 +84,11 @@ class KnowledgeManager(BaseKnowledgeManager):
         self._store_tools = {
             **cm_ask,
             **cm_update,
-            **refactor_tools,
+            **refactor_tool,
             **methods_to_tool_dict(
                 self._add_data,
                 include_class_name=False,
             ),
-        }
-
-        # ── tools exposed _exclusively_ to the new `refactor` method ─────
-        self._refactor_tools = {
-            **refactor_tools,
-            **contact_manager._schema_tools,
         }
 
         ctxs = unify.get_active_context()
@@ -102,6 +106,68 @@ class KnowledgeManager(BaseKnowledgeManager):
     # -------#
 
     # English-Text Command
+
+    @functools.wraps(BaseKnowledgeManager.refactor, updated=())
+    async def refactor(
+        self,
+        text: str,
+        *,
+        _return_reasoning_steps: bool = False,
+        parent_chat_context: list[dict] | None = None,
+        clarification_up_q: asyncio.Queue[str] | None = None,
+        clarification_down_q: asyncio.Queue[str] | None = None,
+    ) -> "SteerableToolHandle":
+
+        client = unify.AsyncUnify(
+            "o4-mini@openai",
+            cache=json.loads(os.environ.get("UNIFY_CACHE", "true")),
+            traced=json.loads(os.environ.get("UNIFY_TRACED", "true")),
+        )
+
+        # 1️⃣  Prepare toolset (and optional live clarification helper)
+        tools = dict(self._refactor_tools)
+
+        if clarification_up_q is not None or clarification_down_q is not None:
+
+            async def request_clarification(question: str) -> str:
+                if clarification_up_q is None or clarification_down_q is None:
+                    raise RuntimeError(
+                        "KnowledgeManager.refactor was invoked without both "
+                        "clarification queues but the model requested one.",
+                    )
+                await clarification_up_q.put(question)
+                return await clarification_down_q.get()
+
+            tools["request_clarification"] = request_clarification
+
+        # 2️⃣  Build & inject system prompt
+        table_schemas_json = json.dumps(self._list_tables(), indent=4)
+        client.set_system_message(
+            build_refactor_prompt(
+                tools=tools,
+                table_schemas_json=table_schemas_json,
+            ),
+        )
+
+        # 3️⃣  Launch interactive tool-use loop
+        handle = start_async_tool_use_loop(
+            client,
+            text,
+            tools,
+            parent_chat_context=parent_chat_context,
+        )
+
+        # 4️⃣  Optionally wrap .result() to expose hidden reasoning
+        if _return_reasoning_steps:
+            original_result = handle.result
+
+            async def wrapped_result():
+                answer = await original_result()
+                return answer, client.messages
+
+            handle.result = wrapped_result  # type: ignore – runtime override
+
+        return handle
 
     @functools.wraps(BaseKnowledgeManager.store, updated=())
     async def store(
@@ -224,68 +290,6 @@ class KnowledgeManager(BaseKnowledgeManager):
                 return answer, client.messages
 
             handle.result = wrapped_result
-
-        return handle
-
-    @functools.wraps(BaseKnowledgeManager.refactor, updated=())
-    async def refactor(
-        self,
-        text: str,
-        *,
-        _return_reasoning_steps: bool = False,
-        parent_chat_context: list[dict] | None = None,
-        clarification_up_q: asyncio.Queue[str] | None = None,
-        clarification_down_q: asyncio.Queue[str] | None = None,
-    ) -> "SteerableToolHandle":
-
-        client = unify.AsyncUnify(
-            "o4-mini@openai",
-            cache=json.loads(os.environ.get("UNIFY_CACHE", "true")),
-            traced=json.loads(os.environ.get("UNIFY_TRACED", "true")),
-        )
-
-        # 1️⃣  Prepare toolset (and optional live clarification helper)
-        tools = dict(self._refactor_tools)
-
-        if clarification_up_q is not None or clarification_down_q is not None:
-
-            async def request_clarification(question: str) -> str:
-                if clarification_up_q is None or clarification_down_q is None:
-                    raise RuntimeError(
-                        "KnowledgeManager.refactor was invoked without both "
-                        "clarification queues but the model requested one.",
-                    )
-                await clarification_up_q.put(question)
-                return await clarification_down_q.get()
-
-            tools["request_clarification"] = request_clarification
-
-        # 2️⃣  Build & inject system prompt
-        table_schemas_json = json.dumps(self._list_tables(), indent=4)
-        client.set_system_message(
-            build_refactor_prompt(
-                tools=tools,
-                table_schemas_json=table_schemas_json,
-            ),
-        )
-
-        # 3️⃣  Launch interactive tool-use loop
-        handle = start_async_tool_use_loop(
-            client,
-            text,
-            tools,
-            parent_chat_context=parent_chat_context,
-        )
-
-        # 4️⃣  Optionally wrap .result() to expose hidden reasoning
-        if _return_reasoning_steps:
-            original_result = handle.result
-
-            async def wrapped_result():
-                answer = await original_result()
-                return answer, client.messages
-
-            handle.result = wrapped_result  # type: ignore – runtime override
 
         return handle
 
