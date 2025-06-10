@@ -17,9 +17,9 @@ async def test_request_calls_contact_manager_ask(monkeypatch):
     original = SimulatedContactManager.ask
 
     @functools.wraps(original)
-    def spy(self, text: str, **kwargs):
+    async def spy(self, text: str, **kwargs):
         calls["count"] += 1
-        return original(self, text, **kwargs)
+        return await original(self, text, **kwargs)
 
     monkeypatch.setattr(SimulatedContactManager, "ask", spy, raising=True)
 

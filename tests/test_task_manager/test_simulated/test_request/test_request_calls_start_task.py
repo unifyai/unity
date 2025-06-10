@@ -18,9 +18,9 @@ async def test_request_calls_start_task(monkeypatch):
     original = SimulatedTaskScheduler.start_task
 
     @functools.wraps(original)
-    def spy(self, task_id: int, **kwargs):
+    async def spy(self, task_id: int, **kwargs):
         calls["count"] += 1
-        return original(self, task_id, **kwargs)
+        return await original(self, task_id, **kwargs)
 
     monkeypatch.setattr(SimulatedTaskScheduler, "start_task", spy, raising=True)
 

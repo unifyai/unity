@@ -72,9 +72,9 @@ async def test_active_task_interject(monkeypatch):
     original_interject = SimulatedPlan.interject
 
     @functools.wraps(original_interject)
-    def spy_interject(self, instruction: str) -> str:  # type: ignore[override]
+    async def spy_interject(self, instruction: str) -> str:  # type: ignore[override]
         calls["interject"] += 1
-        return original_interject(self, instruction)
+        return await original_interject(self, instruction)
 
     monkeypatch.setattr(SimulatedPlan, "interject", spy_interject, raising=True)
 
