@@ -199,7 +199,7 @@ async def test_plan_requests_clarification():
     The planner should send a clarification question over `clarification_up_q`
     and wait for the reply on `clarification_down_q` before finishing.
     """
-    planner = SimulatedPlanner(steps=1, request_clarification=True)
+    planner = SimulatedPlanner(steps=1, _requests_clarification=True)
 
     up_q: asyncio.Queue[str] = asyncio.Queue()
     down_q: asyncio.Queue[str] = asyncio.Queue()
