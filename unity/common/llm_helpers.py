@@ -1,3 +1,4 @@
+import os
 import json
 import asyncio
 import functools
@@ -2207,8 +2208,8 @@ class AsyncToolUseLoopHandle(SteerableToolHandle):
         #     (LLM sees only the system header + follow-up user question).
         inspection_client = unify.AsyncUnify(
             "o4-mini@openai",
-            cache=True,
-            traced=True,
+            cache=json.loads(os.environ.get("UNIFY_CACHE", "true")),
+            traced=json.loads(os.environ.get("UNIFY_TRACED", "true")),
         )
         inspection_client.set_system_message(
             "You are inspecting a running tool-use conversation. The entire "
