@@ -160,6 +160,10 @@ def test_simulated_km_docstrings_match_real():
         SimulatedKnowledgeManager.retrieve.__doc__.strip()
         == BaseKnowledgeManager.retrieve.__doc__.strip()
     ), ".retrieve doc-string was not copied correctly"
+    assert (
+        SimulatedKnowledgeManager.refactor.__doc__.strip()
+        == BaseKnowledgeManager.refactor.__doc__.strip()
+    ), ".refactor doc-string was not copied correctly"
 
 
 # ────────────────────────────────────────────────────────────────────────────
@@ -238,3 +242,30 @@ async def test_pause_and_resume_simulated_km(monkeypatch):
 
     # Each steering method must have been invoked exactly once
     assert counts == {"pause": 1, "resume": 1}, "pause/resume must each be called once"
+
+
+# ────────────────────────────────────────────────────────────────────────────
+# 9.  Basic refactor                                                         #
+# ────────────────────────────────────────────────────────────────────────────
+@pytest.mark.asyncio
+@_handle_project
+async def test_refactor_simulated_km():
+    """
+    The simulated KM should return a non-empty migration plan in response to
+    .refactor().  We do **not** verify the content in detail – only that the
+    string is present and mentions something schema-related (e.g. "column").
+    """
+    km = SimulatedKnowledgeManager(
+        "Tiny demo KB where Contacts duplicate company opening hours.",
+    )
+
+    h = await km.refactor(
+        "Please remove duplicated columns and introduce proper primary keys.",
+    )
+    plan = await h.result()
+
+    assert isinstance(plan, str) and plan.strip(), "Migration plan should be non-empty"
+    assert "column" in plan.lower() or "table" in plan.lower(), (
+        "Plan should mention schema elements (columns/tables).",
+        plan,
+    )

@@ -10,7 +10,11 @@ from typing import List, Dict, Any
 import unify
 from .base import BaseKnowledgeManager
 from ..common.llm_helpers import SteerableToolHandle
-from .prompt_builders import build_store_prompt, build_retrieve_prompt
+from .prompt_builders import (
+    build_refactor_prompt,
+    build_store_prompt,
+    build_retrieve_prompt,
+)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -152,6 +156,7 @@ class SimulatedKnowledgeManager(BaseKnowledgeManager):
             stateful=True,
         )
         # Build *empty* reference prompts (no tools, empty schema) purely for flavour.
+        refactor_ref = build_refactor_prompt({}, table_schemas_json="{}")
         store_ref = build_store_prompt({}, table_schemas_json="{}")
         retrieve_ref = build_retrieve_prompt({}, table_schemas_json="{}")
 
@@ -162,9 +167,49 @@ class SimulatedKnowledgeManager(BaseKnowledgeManager):
             "As a reference, the (tool-enabled) system messages for the *real* "
             "knowledge-manager are pasted below. **You do not actually have access "
             "to any tools – just produce the final answer.**\n\n"
+            f"'refactor' system message:\n{refactor_ref}\n\n"
             f"'store' system message:\n{store_ref}\n\n"
             f"'retrieve' system message:\n{retrieve_ref}\n\n"
             f"Back-story: {self._description}",
+        )
+
+    # ------------------------------------------------------------------ #
+    #  refactor                                                          #
+    # ------------------------------------------------------------------ #
+    @functools.wraps(BaseKnowledgeManager.refactor, updated=())
+    async def refactor(
+        self,
+        text: str,
+        *,
+        _return_reasoning_steps: bool = False,
+        parent_chat_context: list[dict] | None = None,
+        clarification_up_q: asyncio.Queue[str] | None = None,
+        clarification_down_q: asyncio.Queue[str] | None = None,
+    ) -> SteerableToolHandle:
+        """
+        Simulated version of KnowledgeManager.refactor – no real DDL is run.
+        The LLM simply invents a plausible migration plan and returns it.
+        """
+        instruction = (
+            "On this turn you are simulating the 'refactor' method.\n"
+            "Pretend you have analysed the entire schema and the contacts "
+            "table; respond with a short migration plan that removes any "
+            "duplication, introduces surrogate keys where useful, and generally "
+            "moves the schema toward third-normal-form.  **Do not** execute any "
+            "actual tool calls – just describe what you *would* do.\n"
+            f"The user's refactor request is:\n{text}"
+        )
+        if parent_chat_context:
+            instruction += (
+                f"\nCalling chat context:\n{json.dumps(parent_chat_context, indent=4)}"
+            )
+        return _SimulatedKnowledgeHandle(
+            self._llm,
+            instruction,
+            _return_reasoning_steps=_return_reasoning_steps,
+            _requests_clarification=False,
+            clarification_up_q=clarification_up_q,
+            clarification_down_q=clarification_down_q,
         )
 
     # ------------------------------------------------------------------ #
