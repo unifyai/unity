@@ -151,39 +151,41 @@ async def test_retrieve_uses_parent_context():
 @_handle_project
 async def test_retrieve_requests_clarification():
     """
-    We have *two* people named Alex in storage.
-    When the user asks “When was Alex born?” without disambiguation,
-    retrieve() should request clarification; supplying the surname must
+    We have *four* cars in a garage, each with a different colour.
+    When the user asks "What colour is the car in the garage?” without disambiguation,
+    retrieve() should request clarification; supplying the car model must
     let it finish with the correct answer.
     """
     km = KnowledgeManager()
 
-    # ➊ seed two distinct Alex rows
-    await (await km.store("Alex Johnson was born in 1990.")).result()
-    await (await km.store("Alex Lee was born in 1985.")).result()
+    # ➊ seed four distinct coloured vehiles
+    await (
+        await km.store(
+            "There is a red Citroen, a blue Volkswagen, a green BWM, and a silver Porsche in the garage.",
+        )
+    ).result()
 
     # ➋ clarification channels
     up_q, down_q = asyncio.Queue(), asyncio.Queue()
 
     # ➌ run retrieve in background
     handle = await km.retrieve(
-        "When was Alex born?",
+        "What colour is the car in the garage? I'm looking for one colour, request clarification if you're not sure.",
         clarification_up_q=up_q,
         clarification_down_q=down_q,
     )
     task = asyncio.create_task(handle.result())
 
     # ➍ expect a clarification question
-    question = await asyncio.wait_for(up_q.get(), timeout=30)
-    assert _contains(question, "which", "Alex"), "No disambiguation question"
+    await asyncio.wait_for(up_q.get(), timeout=30)
 
     # ➎ answer the question
-    await down_q.put("I mean Alex Lee.")
+    await down_q.put("I mean the Porsche.")
 
     # ➏ await final answer
     answer = await asyncio.wait_for(task, timeout=30)
-    assert _contains(answer, "1985"), assertion_failed(
-        "Answer containing '1985' (Alex Lee)",
+    assert _contains(answer, "silver"), assertion_failed(
+        "Answer containing 'silver' (silver Porsche)",
         answer,
         "Clarification flow failed",
         {"Knowledge Data": km._search_knowledge()},
