@@ -28,8 +28,8 @@ def _now() -> str:  # UTC timestamp helper
 
 
 def build_refactor_prompt(
-    *,
     tools: dict[str, callable],
+    *,
     table_schemas_json: str,
 ) -> str:
     """
