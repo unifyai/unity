@@ -20,7 +20,7 @@ from tests.helpers import _handle_project
 @_handle_project
 async def test_start_and_retrieve_simulated_km():
     km = SimulatedKnowledgeManager("Demo KB for unit-tests.")
-    h = await km.retrieve("What do we already know about Mars?")
+    h = await km.retrieve("What do we already know about Zebulon?")
     ans = await h.result()
     assert isinstance(ans, str) and ans.strip(), "Answer should be non-empty"
 
@@ -42,7 +42,7 @@ async def test_interject_simulated_km(monkeypatch):
     monkeypatch.setattr(_SimulatedKnowledgeHandle, "interject", wrapped, raising=True)
 
     km = SimulatedKnowledgeManager()
-    h = await km.retrieve("Show me all facts about Paris.")
+    h = await km.retrieve("Show me all facts about Zebulon.")
     await asyncio.sleep(0.05)
     reply = h.interject("Only include historical facts.")
     assert "ack" in reply.lower() or "noted" in reply.lower()
@@ -102,16 +102,16 @@ async def test_km_stateful_store_then_retrieve():
     A fact stored via .store() should be recalled by a later .retrieve().
     """
     km = SimulatedKnowledgeManager()
-    fact = "The CEO of Acme Corp is Jane Doe."
+    fact = "The flagship product of Acme Corp is the Quantum Widget."
 
     # store a new fact
     h_store = await km.store(fact)
     await h_store.result()
 
     # retrieve it
-    h_ret = await km.retrieve("Who is the CEO of Acme Corp?")
+    h_ret = await km.retrieve("What is the flagship product of Acme Corp?")
     answer = (await h_ret.result()).lower()
-    assert "jane" in answer and "doe" in answer
+    assert "quantum" in answer and "widget" in answer
 
 
 # ────────────────────────────────────────────────────────────────────────────

@@ -35,13 +35,13 @@ async def test_store_uses_parent_context():
     parent_ctx = [
         {
             "role": "user",
-            "content": "Whenever you store anything about Carlos, please refer to him as 'Alpha'.",
+            "content": "Whenever you store anything about Project Nova, please refer to it as 'Alpha'.",
         },
-        {"role": "assistant", "content": "Understood – Carlos → Alpha."},
+        {"role": "assistant", "content": "Understood – Project Nova → Alpha."},
     ]
 
     handle = await km.store(
-        "Carlos was born in 1990.",
+        "Project Nova was initiated in 1990.",
         parent_chat_context=parent_ctx,  # ← will be threaded into the loop
     )
     await handle.result()
@@ -50,8 +50,10 @@ async def test_store_uses_parent_context():
     all_data_json = json.dumps(
         km._search_knowledge(),
     )  # private helper OK for assertions
-    assert "Alpha" in all_data_json and "Carlos" not in all_data_json, assertion_failed(
-        "Row mentioning 'Alpha' but not 'Carlos'",
+    assert (
+        "Alpha" in all_data_json and "Project Nova" not in all_data_json
+    ), assertion_failed(
+        "Row mentioning 'Alpha' but not 'Project Nova'",
         all_data_json,
         "Parent-context instruction was not applied",
     )
@@ -66,8 +68,8 @@ async def test_store_uses_parent_context():
 @_handle_project
 async def test_store_requests_clarification():
     """
-    The instruction is ambiguous (“store Carlos' birth year under his
-    *surname*”) – since the surname is unknown the tool must ask a
+    The instruction is ambiguous ("store Carlos' birth year under his
+    *surname*") – since the surname is unknown the tool must ask a
     clarification via `clarification_up_q`, wait for the answer, then finish.
     """
     km = KnowledgeManager()
@@ -76,23 +78,26 @@ async def test_store_requests_clarification():
     down_q: asyncio.Queue[str] = asyncio.Queue()
 
     handle = await km.store(
-        "Please store Carlos' birth year (1990) using his *surname* as the key.",
+        "Please store Project Nova's initiation year (1990) using its *registry code* as the key.",
         clarification_up_q=up_q,
         clarification_down_q=down_q,
     )
 
     # ➊ the very first thing should be a clarification question
     question = await asyncio.wait_for(up_q.get(), timeout=30)
-    assert _contains(question, "surname"), "No clarification question about the surname"
+    assert _contains(
+        question,
+        "registry",
+    ), "No clarification question about the registry code"
 
     # ➋ provide the missing detail
-    await down_q.put("Carlos' surname is Rodriguez.")
+    await down_q.put("Project Nova's registry code is NV-1990.")
 
     # ➌ wait for completion and verify the data was stored correctly
     await handle.result()
     data_json = json.dumps(km._search_knowledge())
-    assert _contains(data_json, "Rodriguez", "1990"), assertion_failed(
-        "Row containing surname 'Rodriguez' and birth year '1990'",
+    assert _contains(data_json, "NV-1990", "1990"), assertion_failed(
+        "Row containing registry code 'NV-1990' and initiation year '1990'",
         data_json,
         "Clarification answer did not propagate into stored data",
     )
@@ -107,34 +112,34 @@ async def test_store_requests_clarification():
 @_handle_project
 async def test_retrieve_uses_parent_context():
     """
-    We stored data about *Carlos*.  The user later calls him “Alpha”.
+    We stored data about *Carlos*.  The user later calls him "Alpha".
     The mapping is provided only via the parent chat context, therefore
     retrieval must rely on it (no clarifications needed).
     """
     km = KnowledgeManager()
 
     # ➊ store a simple fact under the original name
-    handle = await km.store("Carlos was born in 1990.")
+    handle = await km.store("Project Nova was initiated in 1990.")
     await handle.result()
 
     # ➋ build parent-level mapping
     parent_ctx = [
         {
             "role": "user",
-            "content": "Remember that 'Alpha' is another name for Carlos.",
+            "content": "Remember that 'Alpha' is another name for Project Nova.",
         },
-        {"role": "assistant", "content": "Got it – Carlos ≡ Alpha."},
+        {"role": "assistant", "content": "Got it – Project Nova ≡ Alpha."},
     ]
 
     # ➌ ask about Alpha – model must translate via context
     handle = await km.retrieve(
-        "When was Alpha born?",
+        "When was Alpha initiated?",
         parent_chat_context=parent_ctx,
         _return_reasoning_steps=True,
     )
     answer, reasoning = await handle.result()
     assert _contains(answer, "1990"), assertion_failed(
-        "Answer containing '1990' (birth year)",
+        "Answer containing '1990' (initiation year)",
         answer,
         reasoning,
         "Parent-context mapping not respected",
