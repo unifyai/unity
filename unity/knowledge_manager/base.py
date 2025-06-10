@@ -49,7 +49,7 @@ class BaseKnowledgeManager(ABC):
     ) -> SteerableToolHandle:  # noqa: D401 – full docstring below
         """
         Persist *new* knowledge or amend existing records, expressed in
-        **plain English**.  The LLM will translate the request into a series
+        **plain English**. The LLM will translate the request into a series
         of table/column manipulations and data-writes.
 
         Parameters
@@ -101,4 +101,39 @@ class BaseKnowledgeManager(ABC):
         SteerableToolHandle
             Handle that eventually yields the answer text (and optionally the
             hidden reasoning steps).
+        """
+
+    @abstractmethod
+    async def refactor(
+        self,
+        text: str,
+        *,
+        _return_reasoning_steps: bool = False,
+        parent_chat_context: Optional[List[Dict[str, Any]]] = None,
+        clarification_up_q: Optional[asyncio.Queue[str]] = None,
+        clarification_down_q: Optional[asyncio.Queue[str]] = None,
+    ) -> SteerableToolHandle:
+        """
+        **Restructure the schema** of *all* knowledge tables **and** the
+        contacts table so that data are de-duplicated, normalised and stored
+        as clearly and efficiently as possible.
+
+        Parameters
+        ----------
+        text : str
+            A high-level English instruction, e.g.
+            *"Remove duplicated company names and introduce surrogate primary
+            keys where appropriate."* – the low-level operations (column
+            renames, deletions, moves, etc.) are carried out by the LLM via
+            the exposed table/column-manipulation tools.
+        _return_reasoning_steps, parent_chat_context,
+        clarification_up_q, clarification_down_q
+            Behaviour identical to :py:meth:`store`.
+
+        Returns
+        -------
+        SteerableToolHandle
+            Handle whose :pyfunc:`result` yields a natural-language summary of
+            every structural change (and, optionally, the hidden chain-of-
+            thought when *_return_reasoning_steps* is *True*).
         """
