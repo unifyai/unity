@@ -15,9 +15,9 @@ async def test_ask_calls_transcript_manager_ask(monkeypatch):
     original = SimulatedTranscriptManager.ask
 
     @functools.wraps(original)
-    def spy(self, text: str, **kwargs):
+    async def spy(self, text: str, **kwargs):
         calls["count"] += 1
-        return original(self, text, **kwargs)
+        return await original(self, text, **kwargs)
 
     monkeypatch.setattr(SimulatedTranscriptManager, "ask", spy, raising=True)
 

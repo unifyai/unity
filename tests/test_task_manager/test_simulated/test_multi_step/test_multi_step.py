@@ -48,9 +48,9 @@ async def test_update_phone_number_then_call(monkeypatch):
     original_cm_ask = SimulatedContactManager.ask
 
     @functools.wraps(original_cm_ask)
-    def spy_cm_ask(self, text: str, **kw):
+    async def spy_cm_ask(self, text: str, **kw):
         counts["cm_ask"] += 1
-        return original_cm_ask(self, text, **kw)
+        return await original_cm_ask(self, text, **kw)
 
     monkeypatch.setattr(SimulatedContactManager, "ask", spy_cm_ask, raising=True)
 
@@ -59,9 +59,9 @@ async def test_update_phone_number_then_call(monkeypatch):
     original_cm_update = SimulatedContactManager.update
 
     @functools.wraps(original_cm_update)
-    def spy_cm_update(self, text: str, **kw):
+    async def spy_cm_update(self, text: str, **kw):
         counts["cm_update"] += 1
-        return original_cm_update(self, text, **kw)
+        return await original_cm_update(self, text, **kw)
 
     monkeypatch.setattr(SimulatedContactManager, "update", spy_cm_update, raising=True)
 
@@ -72,9 +72,9 @@ async def test_update_phone_number_then_call(monkeypatch):
     original_ts_ask = SimulatedTaskScheduler.ask
 
     @functools.wraps(original_ts_ask)
-    def spy_ts_ask(self, text: str, **kw):
+    async def spy_ts_ask(self, text: str, **kw):
         counts["ts_ask"] += 1
-        return original_ts_ask(self, text, **kw)
+        return await original_ts_ask(self, text, **kw)
 
     monkeypatch.setattr(SimulatedTaskScheduler, "ask", spy_ts_ask, raising=True)
 
@@ -83,9 +83,9 @@ async def test_update_phone_number_then_call(monkeypatch):
     original_ts_update = SimulatedTaskScheduler.update
 
     @functools.wraps(original_ts_update)
-    def spy_ts_update(self, text: str, **kw):
+    async def spy_ts_update(self, text: str, **kw):
         counts["ts_update"] += 1
-        return original_ts_update(self, text, **kw)
+        return await original_ts_update(self, text, **kw)
 
     monkeypatch.setattr(SimulatedTaskScheduler, "update", spy_ts_update, raising=True)
 
@@ -94,9 +94,9 @@ async def test_update_phone_number_then_call(monkeypatch):
     original_ts_start_task = SimulatedTaskScheduler.start_task
 
     @functools.wraps(original_ts_start_task)
-    def spy_ts_start_task(self, text: str, **kw):
+    async def spy_ts_start_task(self, text: str, **kw):
         counts["ts_start_task"] += 1
-        return original_ts_start_task(self, text, **kw)
+        return await original_ts_start_task(self, text, **kw)
 
     monkeypatch.setattr(
         SimulatedTaskScheduler,
@@ -162,14 +162,14 @@ async def test_transcript_summary_followups(monkeypatch):
         return await orig_sum(self, **kw)
 
     @functools.wraps(orig_t_ask)
-    def spy_t_ask(self, text: str, **kw):
+    async def spy_t_ask(self, text: str, **kw):
         counts["t_ask"] += 1
-        return orig_t_ask(self, text, **kw)
+        return await orig_t_ask(self, text, **kw)
 
     @functools.wraps(orig_ts_update)
-    def spy_ts_update(self, text: str, **kw):
+    async def spy_ts_update(self, text: str, **kw):
         counts["ts_update"] += 1
-        return orig_ts_update(self, text, **kw)
+        return await orig_ts_update(self, text, **kw)
 
     monkeypatch.setattr(SimulatedTranscriptManager, "summarize", spy_sum, raising=True)
     monkeypatch.setattr(SimulatedTranscriptManager, "ask", spy_t_ask, raising=True)
@@ -221,19 +221,19 @@ async def test_knowledge_change_audit(monkeypatch):
     orig_ts_update = SimulatedTaskScheduler.update
 
     @functools.wraps(orig_ret)
-    def spy_ret(self, text: str, **kw):
+    async def spy_ret(self, text: str, **kw):
         counts["km_retrieve"] += 1
-        return orig_ret(self, text, **kw)
+        return await orig_ret(self, text, **kw)
 
     @functools.wraps(orig_store)
-    def spy_store(self, text: str, **kw):
+    async def spy_store(self, text: str, **kw):
         counts["km_store"] += 1
-        return orig_store(self, text, **kw)
+        return await orig_store(self, text, **kw)
 
     @functools.wraps(orig_ts_update)
-    def spy_ts_update(self, text: str, **kw):
+    async def spy_ts_update(self, text: str, **kw):
         counts["ts_update"] += 1
-        return orig_ts_update(self, text, **kw)
+        return await orig_ts_update(self, text, **kw)
 
     monkeypatch.setattr(SimulatedKnowledgeManager, "retrieve", spy_ret, raising=True)
     monkeypatch.setattr(SimulatedKnowledgeManager, "store", spy_store, raising=True)
@@ -274,14 +274,14 @@ async def test_task_scheduler_rollover(monkeypatch):
     o_upd = SimulatedTaskScheduler.update
 
     @functools.wraps(o_ask)
-    def spy_ask(self, text: str, **kw):
+    async def spy_ask(self, text: str, **kw):
         counts["ask"] += 1
-        return o_ask(self, text, **kw)
+        return await o_ask(self, text, **kw)
 
     @functools.wraps(o_upd)
-    def spy_upd(self, text: str, **kw):
+    async def spy_upd(self, text: str, **kw):
         counts["update"] += 1
-        return o_upd(self, text, **kw)
+        return await o_upd(self, text, **kw)
 
     monkeypatch.setattr(SimulatedTaskScheduler, "ask", spy_ask, raising=True)
     monkeypatch.setattr(SimulatedTaskScheduler, "update", spy_upd, raising=True)
@@ -326,10 +326,10 @@ async def test_plan_activation_and_interjection(monkeypatch):
     orig_start = SimulatedTaskScheduler.start_task
 
     @functools.wraps(orig_start)
-    def spy_start(self, task_id: int, **kw):
+    async def spy_start(self, task_id: int, **kw):
         counts["start"] += 1
         start_called.set()
-        return orig_start(self, task_id, **kw)
+        return await orig_start(self, task_id, **kw)
 
     monkeypatch.setattr(SimulatedTaskScheduler, "start_task", spy_start, raising=True)
 
@@ -337,9 +337,9 @@ async def test_plan_activation_and_interjection(monkeypatch):
     orig_plan_interject = SimulatedPlan.interject
 
     @functools.wraps(orig_plan_interject)
-    def spy_plan_interject(self, instruction: str):
+    async def spy_plan_interject(self, instruction: str):
         counts["plan_interject"] += 1
-        return orig_plan_interject(self, instruction)
+        return await orig_plan_interject(self, instruction)
 
     monkeypatch.setattr(SimulatedPlan, "interject", spy_plan_interject, raising=True)
 
@@ -388,33 +388,33 @@ async def test_interleaved_tools(monkeypatch):
     orig_kb_ret = SimulatedKnowledgeManager.retrieve
 
     @functools.wraps(orig_kb_ret)
-    def spy_kb_ret(self, text: str, **kw):
+    async def spy_kb_ret(self, text: str, **kw):
         counts["km_ret"] += 1
-        return orig_kb_ret(self, text, **kw)
+        return await orig_kb_ret(self, text, **kw)
 
     # -- Contact ask
     orig_cm_ask = SimulatedContactManager.ask
 
     @functools.wraps(orig_cm_ask)
-    def spy_cm_ask(self, text: str, **kw):
+    async def spy_cm_ask(self, text: str, **kw):
         counts["cm_ask"] += 1
-        return orig_cm_ask(self, text, **kw)
+        return await orig_cm_ask(self, text, **kw)
 
     # -- Transcript ask
     orig_tm_ask = SimulatedTranscriptManager.ask
 
     @functools.wraps(orig_tm_ask)
-    def spy_tm_ask(self, text: str, **kw):
+    async def spy_tm_ask(self, text: str, **kw):
         counts["tm_ask"] += 1
-        return orig_tm_ask(self, text, **kw)
+        return await orig_tm_ask(self, text, **kw)
 
     # -- Task update
     orig_ts_upd = SimulatedTaskScheduler.update
 
     @functools.wraps(orig_ts_upd)
-    def spy_ts_upd(self, text: str, **kw):
+    async def spy_ts_upd(self, text: str, **kw):
         counts["ts_upd"] += 1
-        return orig_ts_upd(self, text, **kw)
+        return await orig_ts_upd(self, text, **kw)
 
     monkeypatch.setattr(SimulatedKnowledgeManager, "retrieve", spy_kb_ret, raising=True)
     monkeypatch.setattr(SimulatedContactManager, "ask", spy_cm_ask, raising=True)
