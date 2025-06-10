@@ -52,9 +52,12 @@ def build_store_prompt(
         Keep the schema clean and future-proof – feel free to create,
         rename or delete tables / columns before inserting data.
 
-        If the user refers to creating *tasks*, then you should **not** store any tasks.
-        Tasks should exclusively be sotred by a separate task manager, this is **not your responsibility**.
+        If the user refers to creating or updating *tasks*, then you should **not** store any tasks.
+        Tasks should exclusively be stored by a separate task manager, this is **not your responsibility**.
         Please explain this to the user in your response, if this is part of the their request.
+
+        Similarly, if the user refers to creating or updating *contacts*, then you should **not** create any new tables.
+        Simply pass on the request to the `ContactManager_update` tool, which is responsible for managing contact info.
 
         Follow this workflow strictly:
         1. Extract every fact (subject → attribute → value) from the message.
@@ -106,6 +109,10 @@ def build_retrieve_prompt(
         Your task is to **retrieve** information requested by the user.
         Use the provided tools to search, transform or even refactor the
         schema so that every requested fact can be answered precisely.
+
+        If the user requests information related to *contact* details,
+        then you should simply pass on the request to the `ContactManager_update` tool,
+        which is responsible for managing contact info.
 
         Mandatory steps:
         1. List each distinct piece of information the question asks for.
