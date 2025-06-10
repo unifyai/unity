@@ -45,7 +45,7 @@ def _contains(text: str, *needles: str) -> bool:
 async def test_store_simple_fact():
     km = KnowledgeManager()
 
-    handle = await km.store("Adrian was born in 1994.")
+    handle = await km.store("The ZX-99 gizmo was released in 1994.")
     await handle.result()
 
     all_data = km._search_knowledge()
@@ -65,10 +65,13 @@ async def test_retrieve_simple_fact():
     km = KnowledgeManager()
 
     km._create_table(name="MyTable")
-    km._add_data(table="MyTable", data=[{"name": "Adrian", "birth_year": "1994"}])
+    km._add_data(
+        table="MyTable",
+        data=[{"model": "ZX-99", "release_year": "1994"}],
+    )
 
     handle = await km.retrieve(
-        "When was Adrian born?",
+        "When was the ZX-99 gizmo released?",
         _return_reasoning_steps=True,
     )
     answer, reasoning = await handle.result()
@@ -93,11 +96,11 @@ async def test_retrieve_simple_fact():
 async def test_round_trip_simple_fact():
     km = KnowledgeManager()
 
-    handle = await km.store("Adrian was born in 1994.")
+    handle = await km.store("The ZX-99 gizmo was released in 1994.")
     await handle.result()
 
     handle = await km.retrieve(
-        "When was Adrian born?",
+        "When was the ZX-99 released?",
         _return_reasoning_steps=True,
     )
     answer, reasoning = await handle.result()
@@ -127,11 +130,11 @@ async def test_schema_expands_and_new_field_retrievable():
     """
     km = KnowledgeManager()
 
-    handle = await km.store("Bob is 35 years old.")
+    handle = await km.store("The QuantumDrive unit produces 35 megawatts.")
     await handle.result()
 
     handle = await km.retrieve(
-        "How old is Bob?",
+        "How many megawatts does the QuantumDrive unit produce?",
         _return_reasoning_steps=True,
     )
     answer, reasoning = await handle.result()
@@ -144,12 +147,12 @@ async def test_schema_expands_and_new_field_retrievable():
     )
 
     handle = await km.store(
-        "Bob's favourite colour is green and his height is 180 centimetres.",
+        "The QuantumDrive's core colour is blue and its weight is 180 kilograms.",
     )
     await handle.result()
 
     handle = await km.retrieve(
-        "How tall is Bob?",
+        "How much does the QuantumDrive unit weigh?",
         _return_reasoning_steps=True,
     )
     answer, reasoning = await handle.result()
@@ -162,12 +165,12 @@ async def test_schema_expands_and_new_field_retrievable():
     )
 
     handle = await km.retrieve(
-        "What is Bob's favourite colour?",
+        "What is the QuantumDrive's core colour?",
         _return_reasoning_steps=True,
     )
     answer, reasoning = await handle.result()
-    assert _contains(answer, "green"), assertion_failed(
-        "Answer containing 'green'",
+    assert _contains(answer, "blue"), assertion_failed(
+        "Answer containing 'blue'",
         answer,
         reasoning,
         "Answer does not contain expected favorite color",
@@ -175,7 +178,7 @@ async def test_schema_expands_and_new_field_retrievable():
     )
 
     handle = await km.retrieve(
-        "How old is Bob?",
+        "How many megawatts does the QuantumDrive unit produce?",
         _return_reasoning_steps=True,
     )
     answer, reasoning = await handle.result()
@@ -208,16 +211,16 @@ async def test_multiple_tables_and_join_like_query():
     """
     km = KnowledgeManager()
 
-    handle = await km.store("The Apple iPhone 15 costs 999 US dollars.")
+    handle = await km.store("The OrbitalDrone X99 costs 999 credits.")
     await handle.result()
 
     handle = await km.store(
-        "Daniel bought an iPhone 15 on 3 May 2025 using his credit card.",
+        "Node Lambda acquired an OrbitalDrone X99 on 3 May 2025 via its procurement channel.",
     )
     await handle.result()
 
     handle = await km.retrieve(
-        "How much did Daniel pay for his purchase?",
+        "How much did Node Lambda pay for its acquisition?",
         _return_reasoning_steps=True,
     )
     answer, reasoning = await handle.result()
@@ -251,19 +254,21 @@ async def test_incremental_updates_and_refactor():
     """
     km = KnowledgeManager()
 
-    handle = await km.store("Carol owns a dog named Fido.")
+    handle = await km.store("The StorageVault contains a component named AlphaCore.")
     await handle.result()
 
-    handle = await km.store("Carol also owns a cat named Luna.")
+    handle = await km.store(
+        "The StorageVault also contains a component named BetaModule.",
+    )
     await handle.result()
 
     handle = await km.retrieve(
-        "What are the names of Carol's pets?",
+        "What are the names of the components in the StorageVault?",
         _return_reasoning_steps=True,
     )
     answer, reasoning = await handle.result()
-    assert _contains(answer, "Fido", "Luna"), assertion_failed(
-        "Answer containing both 'Fido' and 'Luna'",
+    assert _contains(answer, "AlphaCore", "BetaModule"), assertion_failed(
+        "Answer containing both 'AlphaCore' and 'BetaModule'",
         answer,
         reasoning,
         "Answer does not contain both expected pet names",
@@ -328,18 +333,20 @@ async def test_store_interjection():
     km = KnowledgeManager()
 
     # store some informatiion
-    handle = await km.store("Bob lives in Bangkok, Thailand.")
+    handle = await km.store("Batch A is located in Sector 7.")
 
     # Mid-operation, add another detail that should also get stored.
-    await handle.interject("Also, he was born in 1990.")
+    await handle.interject("Also, it was calibrated in 1990.")
 
     await handle.result()
-    handle = await km.retrieve("Which city does Bob live in and when was he born?")
+    handle = await km.retrieve(
+        "Which sector is Batch A located in and when was it calibrated?",
+    )
     out = await handle.result()
 
     # The confirmation text returned by `store()` should include both pieces of information.
-    assert _contains(out, "Bangkok", "1990"), assertion_failed(
-        "Output containing both 'Bangkok' and '1990'",
+    assert _contains(out, "Sector", "7", "1990"), assertion_failed(
+        "Output containing both 'Sector 7' and '1990'",
         out,
         "Output does not contain both expected details about Bob",
         {"Knowledge Data": km._search_knowledge()},
@@ -360,7 +367,7 @@ async def test_store_stop():
 
     # Provide multiple facts in one go so that cancelling halfway through still yields a partial, meaningful result.
     handle = await km.store(
-        "Bob lives in Bangkok. Alice is 30 years old. Carl is 25 years old.",
+        "Batch A is in Sector 7. Module X weighs 30 kg. Device Y weighs 25 kg.",
     )
     await asyncio.sleep(0.05)
     handle.stop()
@@ -386,17 +393,17 @@ async def test_retrieve_interjection():
     km = KnowledgeManager()
 
     # Store some data first
-    handle = await km.store("Alice is 30 years old.")
-    handle = await km.store("Alice lives in New York.")
+    handle = await km.store("Unit 42 weighs 30 kilograms.")
+    handle = await km.store("Unit 42 is stored in Bay A.")
     await handle.result()
 
     # Now retrieve with interjection
-    handle = await km.retrieve("How old is Alice?")
-    await handle.interject("Also, where does she live?")
+    handle = await km.retrieve("How heavy is Unit 42?")
+    await handle.interject("Also, where is it stored?")
     out = await handle.result()
 
-    assert _contains(out, "30", "New York"), assertion_failed(
-        "Output containing both '30' and 'New York'",
+    assert _contains(out, "30", "Bay", "A"), assertion_failed(
+        "Output containing both '30' and 'Bay A'",
         out,
         "Output does not contain both expected details about Alice",
     )
@@ -419,12 +426,13 @@ async def test_retrieve_stop():
 
     # Store some data first
     handle = await km.store(
-        "The capital of France is Paris. The capital of Germany is Berlin. The capital of Italy is Rome.",
+        "The capital of Andovia is Mirax. The capital of Eldoria is Luthen. "
+        "The capital of Zarkon is Nimbos.",
     )
     await handle.result()
 
     # Now retrieve with stop
-    handle = await km.retrieve("List the capitals of European countries.")
+    handle = await km.retrieve("List the capitals of the specified kingdoms.")
     await asyncio.sleep(0.05)
     handle.stop()
     with pytest.raises(asyncio.CancelledError):
