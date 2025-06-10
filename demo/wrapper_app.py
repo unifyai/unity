@@ -33,6 +33,7 @@ app = FastAPI()
 unity_process = None
 service_status = "stopped"
 
+
 # Authentication dependency
 async def require_auth(
     authorization: Optional[str] = Header(None), admin_key: Optional[str] = Query(None)
