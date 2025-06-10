@@ -164,8 +164,13 @@ class TranscriptManager(BaseTranscriptManager):
 
         # ── 2.  Optional request_clarification helper tool ─────────────────
         tools: dict[str, Callable] = {}
-        if clarification_up_q is not None or clarification_down_q is not None:
+        if (
+            clarification_up_q is not None
+            and clarification_down_q is not None
+            and guidance is not None
+        ):
 
+            # clarification capability only added if explicit guidance is given.
             async def request_clarification(question: str) -> str:
                 """Query the user for more information, and wait for the reply."""
                 if clarification_up_q is None or clarification_down_q is None:
