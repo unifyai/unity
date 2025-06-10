@@ -78,7 +78,8 @@ class _SimulatedContactHandle(SteerableToolHandle):
                 self._extra_msgs.append(f"Clarification: {clar}")
 
             prompt = "\n\n---\n\n".join([self._initial] + self._extra_msgs)
-            answer = await asyncio.to_thread(self._llm.generate, prompt)
+
+            answer = await self._llm.generate(prompt)
             self._answer = answer
             self._messages = [
                 {"role": "user", "content": prompt},
@@ -144,8 +145,8 @@ class SimulatedContactManager(BaseContactManager):
     ) -> None:
         self._description = description
 
-        # Shared, stateful LLM
-        self._llm = unify.Unify(
+        # Shared, *stateful* **asynchronous** LLM
+        self._llm = unify.AsyncUnify(
             "gpt-4o@openai",
             cache=json.loads(os.getenv("UNIFY_CACHE", "true")),
             traced=json.loads(os.getenv("UNIFY_TRACED", "true")),
