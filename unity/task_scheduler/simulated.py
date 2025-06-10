@@ -83,10 +83,7 @@ class _SimulatedTaskScheduleHandle(SteerableToolHandle):
             prompt_parts = [self._initial_text] + self._interjections
             user_block = "\n\n---\n\n".join(prompt_parts)
 
-            answer = await asyncio.to_thread(
-                self._llm.generate,
-                user_block,
-            )
+            answer = await self._llm.generate(user_block)
 
             self._answer = answer
             # very small, synthetic trace of “reasoning”
@@ -155,7 +152,7 @@ class SimulatedTaskScheduler(BaseTaskScheduler):
         self._description = description
 
         # One shared, *stateful* LLM for *everything*
-        self._llm = unify.Unify(
+        self._llm = unify.AsyncUnify(
             "gpt-4o@openai",
             cache=json.loads(os.getenv("UNIFY_CACHE", "true")),
             traced=json.loads(os.getenv("UNIFY_TRACED", "true")),
