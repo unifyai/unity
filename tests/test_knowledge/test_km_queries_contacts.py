@@ -84,8 +84,8 @@ async def test_km_store_updates_contact_via_cm():
 
     # ‣ Instruction to store extra info
     cmd = "Add Jane Doe's WhatsApp number +15559998877."
-    h = await km.store(cmd)
-    await h.result()  # we don't need the textual confirmation here
+    h = await km.store(cmd, _return_reasoning_steps=True)
+    _, steps = await h.result()  # we don't need the textual confirmation here
 
     # ‣ Verify that the ContactManager state really changed
     updated = cm._search_contacts(filter="email_address == 'jane@example.com'")
