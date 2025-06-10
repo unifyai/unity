@@ -211,10 +211,11 @@ class SimulatedTranscriptManager(BaseTranscriptManager):
         exchange_ids: Union[int, List[int]],
         guidance: Optional[str] = None,
         parent_chat_context: list[dict] | None = None,
+        _return_reasoning_steps: bool = False,
         _requests_clarification: bool = False,
         clarification_up_q: asyncio.Queue[str] | None = None,
         clarification_down_q: asyncio.Queue[str] | None = None,
-    ) -> str:
+    ) -> SteerableToolHandle:
         instruction = (
             "On this turn you are simulating the 'summarize' method.\n"
             "Please always provide an imaginery summary (making up the response), "
@@ -257,8 +258,11 @@ class SimulatedTranscriptManager(BaseTranscriptManager):
         if clar:
             prompt_parts.append(f"User clarification: {clar}")
 
-        summary = await asyncio.to_thread(
-            self._llm.generate,
+        return _SimulatedTranscriptHandle(
+            self._llm,
             "\n\n".join(prompt_parts),
+            _return_reasoning_steps=_return_reasoning_steps,
+            _requests_clarification=_requests_clarification,
+            clarification_up_q=clarification_up_q,
+            clarification_down_q=clarification_down_q,
         )
-        return summary

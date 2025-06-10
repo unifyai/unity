@@ -144,7 +144,8 @@ async def test_simulated_tm_summarize():
     """
     tm = SimulatedTranscriptManager()
     guidance = "Focus on the key points."
-    summary = await tm.summarize(exchange_ids=99, guidance=guidance)
+    handle = await tm.summarize(exchange_ids=99, guidance=guidance)
+    summary = await handle.result()
 
     assert isinstance(summary, str) and summary.strip(), "Summary should not be empty"
 
