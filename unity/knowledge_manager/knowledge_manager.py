@@ -18,7 +18,11 @@ from ..helpers import _handle_exceptions
 from ..events.event_bus import EventBus
 from .base import BaseKnowledgeManager
 from ..contact_manager.contact_manager import BaseContactManager, ContactManager
-from .prompt_builders import build_store_prompt, build_retrieve_prompt
+from .prompt_builders import (
+    build_store_prompt,
+    build_retrieve_prompt,
+    build_refactor_prompt,
+)
 
 API_KEY = os.environ["UNIFY_KEY"]
 
@@ -75,6 +79,12 @@ class KnowledgeManager(BaseKnowledgeManager):
                 self._add_data,
                 include_class_name=False,
             ),
+        }
+
+        # ── tools exposed _exclusively_ to the new `refactor` method ─────
+        self._refactor_tools = {
+            **refactor_tools,
+            **contact_manager._schema_tools,
         }
 
         ctxs = unify.get_active_context()
@@ -214,6 +224,68 @@ class KnowledgeManager(BaseKnowledgeManager):
                 return answer, client.messages
 
             handle.result = wrapped_result
+
+        return handle
+
+    @functools.wraps(BaseKnowledgeManager.refactor, updated=())
+    async def refactor(
+        self,
+        text: str,
+        *,
+        _return_reasoning_steps: bool = False,
+        parent_chat_context: list[dict] | None = None,
+        clarification_up_q: asyncio.Queue[str] | None = None,
+        clarification_down_q: asyncio.Queue[str] | None = None,
+    ) -> "SteerableToolHandle":
+
+        client = unify.AsyncUnify(
+            "o4-mini@openai",
+            cache=json.loads(os.environ.get("UNIFY_CACHE", "true")),
+            traced=json.loads(os.environ.get("UNIFY_TRACED", "true")),
+        )
+
+        # 1️⃣  Prepare toolset (and optional live clarification helper)
+        tools = dict(self._refactor_tools)
+
+        if clarification_up_q is not None or clarification_down_q is not None:
+
+            async def request_clarification(question: str) -> str:
+                if clarification_up_q is None or clarification_down_q is None:
+                    raise RuntimeError(
+                        "KnowledgeManager.refactor was invoked without both "
+                        "clarification queues but the model requested one.",
+                    )
+                await clarification_up_q.put(question)
+                return await clarification_down_q.get()
+
+            tools["request_clarification"] = request_clarification
+
+        # 2️⃣  Build & inject system prompt
+        table_schemas_json = json.dumps(self._list_tables(), indent=4)
+        client.set_system_message(
+            build_refactor_prompt(
+                tools=tools,
+                table_schemas_json=table_schemas_json,
+            ),
+        )
+
+        # 3️⃣  Launch interactive tool-use loop
+        handle = start_async_tool_use_loop(
+            client,
+            text,
+            tools,
+            parent_chat_context=parent_chat_context,
+        )
+
+        # 4️⃣  Optionally wrap .result() to expose hidden reasoning
+        if _return_reasoning_steps:
+            original_result = handle.result
+
+            async def wrapped_result():
+                answer = await original_result()
+                return answer, client.messages
+
+            handle.result = wrapped_result  # type: ignore – runtime override
 
         return handle
 
