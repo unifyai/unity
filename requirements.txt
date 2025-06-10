@@ -19,3 +19,6 @@ redis
 anticaptchaofficial
 browserbase
 pytest
+redis
+browser-use
+anticaptchaofficial
