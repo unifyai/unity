@@ -2141,13 +2141,141 @@ class AsyncToolUseLoopHandle(SteerableToolHandle):
         interject_queue: asyncio.Queue[str],
         cancel_event: asyncio.Event,
         pause_event: Optional[asyncio.Event] = None,
+        client: "unify.AsyncUnify | None" = None,
     ):
         self._task = task
         self._queue = interject_queue
         self._cancel_event = cancel_event
         # “running” ⇢ Event **set**,  “paused” ⇢ Event **cleared**
         self._pause_event = pause_event or asyncio.Event()
+        self._client = client
         self._pause_event.set()
+
+    async def ask(
+        self,
+        question: str,
+        *,
+        _return_reasoning_steps: bool = False,
+    ) -> "SteerableToolHandle":
+        """
+        Answers *question* about this *pending* tool, associated with this handle.
+        The question is read-only (the tool state is not modified whatsoever).
+        The calling parent loop is left completely untouched.
+        """
+
+        # 0.  Defensive guard: if the outer loop has already finished we can
+        #     just answer from the final transcript without starting another
+        #     loop.
+        if self.done():
+            from ..constants import LOGGER
+
+            LOGGER.warning(
+                "AsyncToolUseLoopHandle.ask() called on an already-finished "
+                "loop – returning a synthetic handle with a static answer.",
+            )
+
+            async def _static() -> str:  # type: ignore[return-type]
+                return (
+                    "Parent loop is already complete; no additional "
+                    "information available."
+                )
+
+            class _StaticHandle(SteerableToolHandle):
+                async def interject(self, *a, **kw): ...
+
+                def stop(self): ...
+
+                def pause(self): ...
+
+                def resume(self): ...
+
+                def done(self):
+                    return True
+
+                async def result(self):
+                    return await _static()
+
+                async def ask(self, *a, **kw):
+                    return self
+
+            return _StaticHandle()  # pragma: no cover
+
+        # 1.  Gather a *read-only* snapshot of the parent chat.
+        parent_ctx = list(self._client.messages) if self._client else []
+
+        # 2.  Prepare an *in-memory* Unify client for the **inspection** loop
+        #     (LLM sees only the system header + follow-up user question).
+        inspection_client = unify.AsyncUnify(
+            "o4-mini@openai",
+            cache=True,
+            traced=True,
+        )
+        inspection_client.set_system_message(
+            "You are inspecting a running tool-use conversation. The entire "
+            "transcript so far is attached below (read-only):\n"
+            f"{json.dumps(parent_ctx, indent=2)}\n\n"
+            "Answer the user's follow-up question using ONLY this context. "
+            "Do not attempt to run new tools unless they are exposed to you.",
+        )
+
+        # 3. Recursive visibility ––––––––––––––––––––––––––––––––––––––––
+        # Any *currently pending* SteerableToolHandle (deep-nested) should
+        # be made available as a tool so the inspection loop can itself ask
+        # follow-up questions.  We approximate this by scanning the parent
+        # task_info dict that the outer loop stored on our asyncio.Task in
+        # its "._task_info" attribute (injected by the inner loop runner).
+        #
+        # The attribute is deliberately *weakly* referenced to avoid tight
+        # coupling; if it is absent we just skip recursion.
+        #
+        # NOTE: this is best-effort – individual callers can override ask()
+        # for richer behaviour if desired.
+        try:
+            task_info = getattr(self._task, "task_info", {})
+        except Exception:
+            task_info = {}
+
+        recursive_tools: dict[str, Callable] = {}
+
+        for _t, _inf in task_info.items():
+            h = _inf.get("handle")
+            if h is None or not isinstance(h, SteerableToolHandle):
+                continue
+
+            async def _proxy(
+                _q: str,
+                _h=h,  # capture now
+            ) -> str:
+                nested = await _h.ask(_q)
+                return await nested.result()
+
+            # tool name encodes the call-id so collisions are impossible
+            _proxy.__name__ = f"ask_{_inf['call_id']}"
+            recursive_tools[_proxy.__name__] = _proxy
+        # ----------------------------------------------------------------
+
+        # 4.  Fire off a *stand-alone* read-only loop.
+        helper_handle = start_async_tool_use_loop(
+            inspection_client,
+            question,
+            recursive_tools,  # may be empty
+            parent_chat_context=parent_ctx,  # ← nested context
+            propagate_chat_context=False,
+            prune_tool_duplicates=False,
+            interrupt_llm_with_interjections=False,
+            max_consecutive_failures=1,
+            timeout=30,
+        )
+
+        if not _return_reasoning_steps:
+            return helper_handle
+
+        async def _wrap():
+            answer = await helper_handle.result()
+            return answer, inspection_client.messages
+
+        helper_handle.result = _wrap  # type: ignore[attr-defined]
+        return helper_handle
 
     # -- public API -----------------------------------------------------------
     @functools.wraps(SteerableToolHandle.interject, updated=())
@@ -2237,4 +2365,5 @@ def start_async_tool_use_loop(
         interject_queue=interject_queue,
         cancel_event=cancel_event,
         pause_event=pause_event,
+        client=client,
     )
