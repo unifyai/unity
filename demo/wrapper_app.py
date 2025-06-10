@@ -273,7 +273,7 @@ if __name__ == "__main__":
     # Only run in development mode if called directly
     print("Running in development mode...")
     uvicorn.run(
-        "wrapper_app_fastapi:app",
+        "wrapper_app:app",
         host="0.0.0.0",
         port=int(os.environ.get("PORT", 8000)),
         reload=True,
