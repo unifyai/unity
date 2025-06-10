@@ -202,7 +202,7 @@ class SimulatedPlan(BasePlan):
             f"Current simulated task:\n{self._task}\n\n"
             f"User instruction to adjust the plan:\n{instruction}"
         )
-        await asyncio.to_thread(self._llm.generate, prompt)
+        await self._llm.generate(prompt)
 
     @functools.wraps(BasePlan.pause, updated=())
     def pause(self) -> str:
@@ -235,7 +235,7 @@ class SimulatedPlan(BasePlan):
             f"You are working on the simulated task:\n{self._task}\n\n"
             f"User asks: {question}"
         )
-        return await asyncio.to_thread(self._llm.generate, prompt)
+        return await self._llm.generate(prompt)
 
     @functools.wraps(BasePlan.done, updated=())
     def done(self) -> bool:
@@ -283,7 +283,7 @@ class SimulatedPlanner(BasePlanner[SimulatedPlan]):
         self._requests_clarification = _requests_clarification
 
         # One shared, memory-retaining LLM for *all* plans
-        self._llm = unify.Unify(
+        self._llm = unify.AsyncUnify(
             "gpt-4o@openai",
             cache=json.loads(os.environ.get("UNIFY_CACHE", "true")),
             traced=json.loads(os.environ.get("UNIFY_TRACED", "true")),
