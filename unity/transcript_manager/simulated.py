@@ -79,7 +79,7 @@ class _SimulatedTranscriptHandle(SteerableToolHandle):
                 self._extra_user_msgs.append(f"Clarification: {clar_reply}")
 
             prompt = "\n\n---\n\n".join([self._initial] + self._extra_user_msgs)
-            answer = await asyncio.to_thread(self._llm.generate, prompt)
+            answer = await self._llm.generate(prompt)
             self._answer = answer
             self._msgs = [
                 {"role": "user", "content": prompt},
@@ -146,8 +146,8 @@ class SimulatedTranscriptManager(BaseTranscriptManager):
     ) -> None:
         self._description = description
 
-        # one shared, *stateful* LLM instance – preserves chat history
-        self._llm = unify.Unify(
+        # Shared, *stateful* **asynchronous** LLM
+        self._llm = unify.AsyncUnify(
             "gpt-4o@openai",
             cache=json.loads(os.getenv("UNIFY_CACHE", "true")),
             traced=json.loads(os.getenv("UNIFY_TRACED", "true")),
