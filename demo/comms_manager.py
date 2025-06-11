@@ -64,7 +64,10 @@ class CommsManager:
                         self.message_queue.put_nowait,
                         {
                             "topic": event["caller_number"],
-                            "event": PhoneCallInitiatedEvent().to_dict(),
+                            "event": {
+                                **PhoneCallInitiatedEvent().to_dict(),
+                                "voice_id": event.get("voice_id", None),
+                            },
                         },
                     )
                     # this should be handled through the comms agents i think
