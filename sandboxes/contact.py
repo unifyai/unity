@@ -200,6 +200,7 @@ async def _main_async() -> None:
 
     # manager
     cm = ContactManager()
+    cm = unify.traced(cm)
 
     # seed
     if not args.reuse:
@@ -258,7 +259,7 @@ async def _main_async() -> None:
 
             # ──────────────── remember the assistant's reply ───────────────
             chat_history.append({"role": "assistant", "content": answer})
-            if args.voice and _kind == "ask":
+            if args.voice:
                 _speak(answer)
             if args.voice:
                 _speak("Anything else I can help with?")
