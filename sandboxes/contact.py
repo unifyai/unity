@@ -25,6 +25,8 @@ from pathlib import Path
 from typing import List, Optional, Tuple, Dict
 
 import unify
+
+unify.set_trace_context("Traces")
 from dotenv import load_dotenv
 from pydantic import BaseModel, Field
 from scenario_builder import ScenarioBuilder
@@ -50,39 +52,6 @@ from sandboxes.utils import (  # shared helpers reused in other sandboxes
 LG = logging.getLogger("contact_sandbox")
 
 # ═════════════════════════════════ seed helpers ═════════════════════════════
-
-_FIXED_CONTACTS: List[dict] = [
-    dict(
-        first_name="Alice",
-        surname="Smith",
-        email_address="alice.smith@example.com",
-        phone_number="+14155550001",
-        whatsapp_number="+14155550001",
-        description="Key account at Acme Corp.",
-    ),
-    dict(
-        first_name="Bob",
-        surname="Jones",
-        email_address="bob.jones@example.com",
-        phone_number="+447700900010",
-        whatsapp_number="+447700900010",
-        description="London sales lead.",
-    ),
-    dict(
-        first_name="Carlos",
-        surname="Diaz",
-        email_address="carlos.diaz@example.com",
-        phone_number="+34911222333",
-        whatsapp_number="+34911222333",
-        description="Madrid‑based logistics contact.",
-    ),
-]
-
-
-def _seed_fixed(cm: ContactManager) -> None:
-    """Populate three predictable contacts."""
-    for c in _FIXED_CONTACTS:
-        cm._create_contact(**c)
 
 
 async def _build_scenario(
@@ -114,11 +83,7 @@ async def _build_scenario(
     try:
         await builder.create()
     except Exception as exc:
-        LG.warning(
-            "LLM seeding via ScenarioBuilder failed – falling back to fixed seed. (%s)",
-            exc,
-        )
-        _seed_fixed(cm)
+        raise (f"LLM seeding via ScenarioBuilder failed. {exc}")
 
     # The new flow doesn't produce a structured "theme"; preserve signature.
     return None
@@ -252,7 +217,7 @@ async def _main_async() -> None:
             if theme:
                 LG.info(f"[seed] theme: {theme}")
         else:
-            _seed_fixed(cm)
+            raise Exception("No text provided for building the custom scenario")
 
     print("ContactManager sandbox – type or speak. 'quit' to exit.\n")
 
