@@ -283,9 +283,7 @@ def get_custom_scenario(args) -> Optional[str]:
     voice_flag = hasattr(args, "voice") and args.voice
     # Check for text-based custom scenario first
     if not voice_flag:
-        print(f"🧮 Let's build your custom scenario:\n{args.custom_scenario}")
-        return args.custom_scenario
-
+        return input("🧮 Explain your custom scenario, press ↵ once you're done\n")
     try:
         # Record and transcribe audio
         print("🧮 Let's build your custom scenario using voice")
