@@ -1,11 +1,10 @@
 import pytest
-from datetime import datetime, UTC
 
 from unity.transcript_manager.transcript_manager import TranscriptManager
 from unity.transcript_manager.types.message import Message, VALID_MEDIA
 from tests.helpers import _handle_project
-from unity.events.event_bus import EventBus, Event
 import random
+import unify
 
 
 @pytest.mark.unit
@@ -17,11 +16,11 @@ async def test_transcript_embedding_semantic_search():
     Test the transcript manager's ability to perform semantic search via nearest message retrieval.
     """
     # Create the TranscriptManager instance
-    tm = TranscriptManager(EventBus())
+    tm = TranscriptManager()
 
     # Create a few test messages
     msgs = [
-        Message(
+        dict(
             medium=random.choice(VALID_MEDIA),
             sender_id=1,
             receiver_id=2,
@@ -29,7 +28,7 @@ async def test_transcript_embedding_semantic_search():
             content="Can you help me with my banking questions? I'm looking to set up a new account.",
             exchange_id=1,
         ),
-        Message(
+        dict(
             medium=random.choice(VALID_MEDIA),
             sender_id=2,
             receiver_id=1,
@@ -37,7 +36,7 @@ async def test_transcript_embedding_semantic_search():
             content="I'd be happy to help with your banking needs! What type of account would you like to set up? Checking, savings, or investment?",
             exchange_id=1,
         ),
-        Message(
+        dict(
             medium=random.choice(VALID_MEDIA),
             sender_id=1,
             receiver_id=2,
@@ -47,18 +46,10 @@ async def test_transcript_embedding_semantic_search():
         ),
     ]
 
-    event_bus = EventBus()
-    [
-        await event_bus.publish(
-            Event(
-                type="Messages",
-                timestamp=datetime.now(UTC).isoformat(),
-                payload=msg,
-            ),
-        )
-        for i, msg in enumerate(msgs)
-    ]
-    event_bus.join_published()
+    unify.create_logs(
+        context=tm._transcripts_ctx,
+        entries=msgs,
+    )
 
     # Ensure that a lexical search for the word 'budgeting' returns no results
     lexical_results = tm._search_messages(filter="'budgeting' in content")

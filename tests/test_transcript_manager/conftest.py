@@ -5,8 +5,7 @@ Global fixtures & shared data usable from any test module.
 from __future__ import annotations
 
 import random
-from datetime import datetime, timezone, UTC
-from unity.events.event_bus import EventBus, Event
+from datetime import datetime, timezone
 from datetime import timedelta
 from typing import List
 import pytest
@@ -16,7 +15,6 @@ import asyncio
 import unify
 from unity.contact_manager.contact_manager import ContactManager
 from unity.transcript_manager.transcript_manager import TranscriptManager
-from unity.transcript_manager.types.message import Message
 
 # --------------------------------------------------------------------------- #
 #  CONTACTS (same as before)                                                  #
@@ -72,9 +70,8 @@ class ScenarioBuilder:
     """Populate Unify with contacts, 6 'meaningful' exchanges + filler."""
 
     def __init__(self) -> None:
-        self._event_bus = EventBus()
-        self.cm = ContactManager(self._event_bus)
-        self.tm = TranscriptManager(self._event_bus)
+        self.cm = ContactManager()
+        self.tm = TranscriptManager()
 
     @classmethod
     async def create(cls) -> "ScenarioBuilder":
@@ -84,11 +81,9 @@ class ScenarioBuilder:
         await self._seed_contacts()
         await self._seed_key_exchanges()
         await self._seed_filler()
-        self._event_bus.join_published()
 
         # Store an initial summary so that summaries exist
         await self.tm.summarize(exchange_ids=[0, 1])
-        self._event_bus.join_published()
 
         return self
 
@@ -232,23 +227,20 @@ class ScenarioBuilder:
         medium: str,
         msgs: List[tuple[int, int, datetime, str]],
     ) -> None:
-        [
-            await self._event_bus.publish(
-                Event(
-                    type="Messages",
-                    timestamp=datetime.now(UTC),
-                    payload=Message(
-                        medium=medium,
-                        sender_id=s,
-                        receiver_id=r,
-                        timestamp=ts.isoformat(),
-                        content=txt,
-                        exchange_id=ex_id,
-                    ),
-                ),
-            )
-            for s, r, ts, txt in msgs
-        ]
+        unify.create_logs(
+            context=self.tm._transcripts_ctx,
+            entries=[
+                dict(
+                    medium=medium,
+                    sender_id=s,
+                    receiver_id=r,
+                    timestamp=ts.isoformat(),
+                    content=txt,
+                    exchange_id=ex_id,
+                )
+                for s, r, ts, txt in msgs
+            ],
+        )
 
 
 # --------------------------------------------------------------------------- #

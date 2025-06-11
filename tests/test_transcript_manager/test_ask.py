@@ -16,8 +16,7 @@ from __future__ import annotations
 
 import json
 import re
-from datetime import datetime, timezone, UTC
-from unity.events.event_bus import EventBus, Event
+from datetime import datetime, timezone
 from typing import List
 import os
 import pytest
@@ -295,8 +294,7 @@ async def test_ask_allows_interjection(
 @pytest.mark.asyncio
 @pytest.mark.eval
 async def test_ask_honors_stop():
-    event_bus = EventBus()
-    tm = TranscriptManager(event_bus)
+    tm = TranscriptManager()
     handle = await tm.ask(
         "List every message received from Carlos, then provide a detailed summary of each one in chronological order.",
     )
@@ -313,7 +311,6 @@ async def test_ask_respects_parent_context(
 ):
     # ── 1.  Seed a “basketball” exchange dated 2025-05-20 ───────────────
     tm, _ID_BY_NAME = tm_scenario
-    ebus = tm._event_bus
     cid = _ID_BY_NAME
     t = datetime(2025, 5, 20, 15, 0, tzinfo=timezone.utc)
 
@@ -321,21 +318,15 @@ async def test_ask_respects_parent_context(
         (cid["dan"], cid["julia"], "Did you catch the **basketball** game?"),
         (cid["julia"], cid["dan"], "Absolutely – great conversation!"),
     ]:
-        await ebus.publish(
-            Event(
-                type="Messages",
-                timestamp=datetime.now(UTC),
-                payload=Message(
-                    medium="phone_call",
-                    sender_id=s,
-                    receiver_id=r,
-                    timestamp=t.isoformat(),
-                    content=txt,
-                    exchange_id=99,
-                ),
-            ),
+        unify.log(
+            context=tm._transcripts_ctx,
+            medium="phone_call",
+            sender_id=s,
+            receiver_id=r,
+            timestamp=t.isoformat(),
+            content=txt,
+            exchange_id=99,
         )
-    ebus.join_published()
 
     # ── 2.  Outer chat context in which `ask` will be called ────────────
     parent_ctx = [
@@ -375,7 +366,6 @@ async def test_ask_requests_clarification_when_context_missing(
     """
 
     tm, _ID_BY_NAME = tm_scenario
-    ebus: EventBus = tm._event_bus
 
     # ── 1.  Seed a short "basketball" conversation on 2025-05-20 ───────────
     t_conv_basketball = datetime(2025, 5, 20, 18, 0, tzinfo=timezone.utc)
@@ -386,40 +376,29 @@ async def test_ask_requests_clarification_when_context_missing(
         (dan, julia, "Did you catch the basketball game last night?"),
         (julia, dan, "Absolutely – it was great!"),
     ]:
-        await ebus.publish(
-            Event(
-                type="Messages",
-                timestamp=datetime.now(UTC).isoformat(),
-                payload=Message(
-                    medium="phone_call",
-                    sender_id=s,
-                    receiver_id=r,
-                    timestamp=t_conv_basketball.isoformat(),
-                    content=txt,
-                    exchange_id=123,
-                ),
-            ),
+        unify.log(
+            context=tm._transcripts_ctx,
+            medium="phone_call",
+            sender_id=s,
+            receiver_id=r,
+            timestamp=t_conv_basketball.isoformat(),
+            content=txt,
+            exchange_id=123,
         )
-    ebus.join_published()
+
     for s, r, txt in [
         (dan, julia, "When are you next going on holiday?"),
         (julia, dan, "I'm hoping to go in August, but lets see what my boss says."),
     ]:
-        await ebus.publish(
-            Event(
-                type="Messages",
-                timestamp=datetime.now(UTC).isoformat(),
-                payload=Message(
-                    medium="email",
-                    sender_id=s,
-                    receiver_id=r,
-                    timestamp=t_conv_holiday.isoformat(),
-                    content=txt,
-                    exchange_id=321,
-                ),
-            ),
+        unify.log(
+            context=tm._transcripts_ctx,
+            medium="email",
+            sender_id=s,
+            receiver_id=r,
+            timestamp=t_conv_holiday.isoformat(),
+            content=txt,
+            exchange_id=321,
         )
-    ebus.join_published()
 
     # ── 2.  Prepare clarification channels ────────────────────────────────
     up_q: asyncio.Queue[str] = asyncio.Queue()
