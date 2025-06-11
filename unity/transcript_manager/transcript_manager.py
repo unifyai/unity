@@ -59,6 +59,11 @@ class TranscriptManager(BaseTranscriptManager):
         else:
             self._transcripts_ctx = "Contacts"
             self._summaries_ctx = "MessageExchangeSummaries"
+        ctxs = unify.get_contexts()
+        if self._transcripts_ctx not in ctxs:
+            unify.create_context(self._transcripts_ctx)
+        if self._summaries_ctx not in ctxs:
+            unify.create_context(self._summaries_ctx)
 
     # Public #
     # -------#
