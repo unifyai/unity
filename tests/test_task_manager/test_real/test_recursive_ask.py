@@ -32,7 +32,6 @@ import re
 
 import pytest
 
-from unity.events.event_bus import EventBus
 from unity.contact_manager.contact_manager import ContactManager
 from unity.task_manager.task_manager import TaskManager
 
@@ -57,17 +56,16 @@ def _extract_int(text: str) -> int:
 # --------------------------------------------------------------------------- #
 @pytest.mark.asyncio
 async def test_two_tier_ask_propagation():
-    bus = EventBus()
 
     # 1️⃣  Ensure we have exactly **one** “Daniel Smith” contact up-front
-    cm = ContactManager(event_bus=bus)
+    cm = ContactManager()
     create = await cm.update(
         "Create a contact called Daniel Smith with email daniel.smith@example.com.",
     )
     await asyncio.wait_for(create.result(), timeout=60)
 
     # 2️⃣  Kick off the *outer* mutation via the real TaskManager
-    tm = TaskManager(event_bus=bus)
+    tm = TaskManager()
 
     h_update = await tm.request(
         "Change Daniel Smith's first name to Dan.",
