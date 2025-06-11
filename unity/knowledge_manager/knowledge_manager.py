@@ -324,7 +324,7 @@ class KnowledgeManager(BaseKnowledgeManager):
         columns : dict[str, ColumnType] | None
             Optional initial schema – mapping *column → type*.  If omitted an
             empty table is created and columns can be added later with
-            :pyfunc:`_create_empty_column`.
+            :pyfunc:`_create_empty_column`. Colums names MUST be *camel case*.
 
         Returns
         -------
@@ -437,7 +437,7 @@ class KnowledgeManager(BaseKnowledgeManager):
         table : str
             Target table.
         column_name : str
-            New column identifier.
+            New column identifier, MUST be *camel case*.
         column_type : ColumnType | str
             Logical type, e.g. ``"str"``, ``"float"``, ``"datetime"``.
 
@@ -475,7 +475,7 @@ class KnowledgeManager(BaseKnowledgeManager):
         table : str
             Table to modify.
         column_name : str
-            Name of the new derived column.
+            Name of the new derived column, MUST be *camel case*.
         equation : str
             Python expression evaluated per-row (column names appear as
             variables).  Example: ``(x**2 + y**2) ** 0.5``.
@@ -512,7 +512,7 @@ class KnowledgeManager(BaseKnowledgeManager):
         table : str
             Table name.
         column_name : str
-            Column to drop.
+            Column to drop, MUST be *camel case*.
 
         Returns
         -------
@@ -546,9 +546,9 @@ class KnowledgeManager(BaseKnowledgeManager):
         table : str
             Table identifier.
         old_name : str
-            Existing column name.
+            Existing column name, MUST be *camel case*.
         new_name : str
-            Desired new name.
+            Desired new name, MUST be *camel case*.
 
         Returns
         -------
@@ -588,7 +588,7 @@ class KnowledgeManager(BaseKnowledgeManager):
         table : str
             Destination table.
         data : list[dict[str, Any]]
-            Sequence of row dictionaries.
+            Sequence of row dictionaries. Dictionary keys (column names) MUST be *camel case*.
 
         Returns
         -------
@@ -609,7 +609,7 @@ class KnowledgeManager(BaseKnowledgeManager):
 
         Args:
             table (str): The name of the table to ensure the vector column in.
-            column (str): The name of the vector column to ensure.
+            column (str): The name of the vector column to ensure, MUST be *camel case*.
             source (str): The name of the column to derive the vector column from.
         """
         context = f"{self._ctx}/{table}"
@@ -633,7 +633,7 @@ class KnowledgeManager(BaseKnowledgeManager):
             Candidate tables (each must contain *source* column).
         source : str
             Text column to embed (an auxiliary ``<source>_vec`` column is
-            auto-created if missing).
+            auto-created if missing). MUST be *camel case*.
         text : str
             Query text to embed and compare against.
         k : int, default ``5``
