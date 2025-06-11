@@ -230,6 +230,10 @@ async def _main_async() -> None:
             LG.info("[seed] building synthetic contacts – this can take 20-40 s…")
             theme = await _build_scenario(cm, scenario_text)
             LG.info("[seed] done.")
+            if args.voice:
+                _speak(
+                    "All done, your custom scenario is built and ready to go. Press enter to record a question or makrequest an update for the contact list.",
+                )
             if theme:
                 LG.info(f"[seed] theme: {theme}")
         else:
@@ -256,14 +260,18 @@ async def _main_async() -> None:
 
             _kind, _handle = await _dispatch(cm, raw, show_steps=args.debug)
             if args.voice:
-                _speak("Working on this")
+                _speak("Sure, working on this now")
 
             answer = await _await_with_interrupt(_handle)
+            if args.voice:
+                _speak("Okay that's all done")
             if isinstance(answer, tuple):  # reasoning steps requested
                 answer, _steps = answer
             print(f"[{_kind}] → {answer}\n")
             if args.voice and _kind == "ask":
                 _speak(answer)
+            if args.voice:
+                _speak("Anything else I can help with?")
         except (EOFError, KeyboardInterrupt):
             print("\nExiting…")
             break

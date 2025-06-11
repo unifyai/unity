@@ -56,6 +56,13 @@ def _py_error_handler(
 
 c_error_handler = ERROR_HANDLER_FUNC(_py_error_handler)
 
+# ---------------------------------------------------------------------------
+# Global lock to guarantee sequential TTS playback
+# (prevents overlapping audio when several `speak()` calls happen in rapid succession)
+# ---------------------------------------------------------------------------
+
+_TTS_LOCK = threading.Lock()
+
 
 @contextmanager
 def noalsaerr():
@@ -199,19 +206,40 @@ async def _speak_async(text: str) -> None:
 # ────────────────────────────── public shim ────────────────────────────────
 def speak(text: str) -> None:
     """
-    Safe *sync* wrapper around :pyfunc:`_speak_async`.
+    Thread-safe synchronous wrapper around :pyfunc:`_speak_async`.
 
-    • If *no* event-loop is running (classic script) → `asyncio.run`.
-    • If we’re already **inside** a running loop (your sandbox) → schedule the
-      coroutine with `loop.create_task` and return immediately (non-blocking).
+    Why change the original behaviour?
+    ----------------------------------
+    The former implementation queued the coroutine on **the current
+    event-loop** if one was already running.  Immediately afterwards many
+    callers block the main thread with `input()` or other synchronous work,
+    starving the loop and delaying audio until the block ends.
+
+    New strategy
+    ------------
+    • If **no** event-loop is running in this thread → fall back to the
+      straightforward ``asyncio.run(_speak_async(text))``.
+    • If a loop **is** running → spin up a **daemon thread** that owns its
+      *own* event-loop and run the coroutine there.
+      A global ``_TTS_LOCK`` ensures that only one utterance plays at once,
+      so messages remain sequential.
     """
+
+    def _run_in_thread() -> None:
+        # Serialise TTS so concurrent calls don’t overlap
+        with _TTS_LOCK:
+            asyncio.run(_speak_async(text))
+
     try:
-        loop = asyncio.get_running_loop()
-        # we're inside an active loop → fire-and-forget
-        loop.create_task(_speak_async(text))
+        # Is there already an event-loop in *this* thread?
+        asyncio.get_running_loop()
     except RuntimeError:
-        # no loop → normal synchronous context
+        # No → safe to run the coroutine synchronously here
         asyncio.run(_speak_async(text))
+    else:
+        # Yes → off-load to a background daemon so it can progress even if
+        # the caller blocks the main thread right after this call.
+        threading.Thread(target=_run_in_thread, daemon=True).start()
 
 
 def input_with_timeout(timeout: float = 0.1) -> Tuple[bool, Optional[str]]:
@@ -287,6 +315,7 @@ def get_custom_scenario(args) -> Optional[str]:
     try:
         # Record and transcribe audio
         print("🧮 Let's build your custom scenario using voice")
+        speak("Let's build your custom scenario using voice. Press enter to start.")
         audio_bytes = record_until_enter()
         transcript = transcribe_deepgram(audio_bytes)
 
