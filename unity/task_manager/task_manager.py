@@ -17,7 +17,6 @@ from ..common.llm_helpers import (
     start_async_tool_use_loop,
     ToolSpec,
 )
-from ..events.event_bus import EventBus
 from ..contact_manager.base import BaseContactManager
 from ..contact_manager.contact_manager import ContactManager
 from ..transcript_manager.base import BaseTranscriptManager
@@ -49,14 +48,12 @@ class TaskManager(BaseTaskManager):
 
     def __init__(
         self,
-        event_bus: EventBus,
         *,
         contact_manager: Optional[BaseContactManager] = None,
         transcript_manager: Optional[BaseTranscriptManager] = None,
         knowledge_manager: Optional[BaseKnowledgeManager] = None,
         task_scheduler: Optional[BaseTaskScheduler] = None,
         planner: Optional[BasePlanner] = None,
-        traced: bool = True,
     ) -> None:
         """
         Args:
@@ -75,24 +72,17 @@ class TaskManager(BaseTaskManager):
             planner: Optional custom planner implementation.
                     If None, will create default based on simulated flag.
         """
-        # ── Real managers touching Unify back-ends ───────────────────
-        # Keep reference to the bus – needed by sub-managers
-        self._event_bus = event_bus
 
         # ── contact manager ────────────────────────────────────────────
         if contact_manager is not None:
             self._contact_manager = contact_manager
         else:
-            self._contact_manager = ContactManager(
-                event_bus=event_bus,
-                traced=traced,
-            )
+            self._contact_manager = ContactManager()
 
         if transcript_manager is not None:
             self._transcript_manager = transcript_manager
         else:
             self._transcript_manager = TranscriptManager(
-                self._event_bus,
                 contact_manager=self._contact_manager,
             )
 
@@ -110,10 +100,6 @@ class TaskManager(BaseTaskManager):
             self._task_scheduler = task_scheduler
         else:
             self._task_scheduler = TaskScheduler(planner=self._planner)
-
-        # ── tracing helper – mirrors other managers ────────────────────
-        if traced:
-            self = unify.traced(self)
 
         #  Run-time state & tool-dict helpers
         self._current_plan = None
