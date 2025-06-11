@@ -130,12 +130,13 @@ async def entrypoint(ctx: agents.JobContext):
 
     # Get phone numbers from environment variables
     from_number = os.environ.get("CALL_FROM_NUMBER", "")
+    voice_id = os.environ.get("VOICE_ID", "")
     # to_number = os.environ.get("CALL_TO_NUMBER", "")
 
     session = AgentSession(
         stt=deepgram.STT(model="nova-3", language="multi"),
         llm=openai.LLM(model="gpt-4o"),
-        tts=cartesia.TTS(),
+        tts=cartesia.TTS(voice=voice_id if voice_id != "" else None),
         vad=silero.VAD.load(),
         turn_detection=MultilingualModel(),
     )
@@ -321,16 +322,20 @@ if __name__ == "__main__":
     from_number = ""
     assistant_number = ""
     to_number = ""
+    voice_id = ""
     outbound = ""
-    if len(sys.argv) > 4:
+    if len(sys.argv) > 5:
         # Remove phone numbers from sys.argv to prevent them from being passed to agents.cli
         from_number = sys.argv[2]
         assistant_number = sys.argv[3]
-        outbound = sys.argv[4]
+        voice_id = sys.argv[4]
+        outbound = sys.argv[5] if sys.argv[5] != "None" else ""
         sys.argv = sys.argv[:2]  # Keep only script name and "dev" command
 
     # Store phone numbers in environment variables to be accessed by entrypoint
     os.environ["CALL_FROM_NUMBER"] = from_number
+    if voice_id != "None":
+        os.environ["VOICE_ID"] = voice_id
     # os.environ["CALL_TO_NUMBER"] = to_number
 
     agent_name = f"unity_{assistant_number}"

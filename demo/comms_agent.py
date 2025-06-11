@@ -121,7 +121,8 @@ class CommsAgent:
                             "dev",
                             self.user_phone_call_number,  # "console" if a local call is needed
                             self.assistant_number,
-                            "--outbound" if new_event.get("outbound") else "",
+                            new_event["voice_id"] if new_event["voice_id"] else "None",
+                            "--outbound" if new_event.get("outbound") else "None",
                         )
                         self.call_mode = True
                         ONGOING_CALL = True
