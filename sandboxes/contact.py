@@ -37,7 +37,6 @@ if str(ROOT) not in sys.path:
 load_dotenv()
 
 # ────────────────────────────────  unity imports  ───────────────────────────
-from unity.events.event_bus import EventBus
 from unity.contact_manager.contact_manager import ContactManager
 from unity.common.llm_helpers import SteerableToolHandle
 from sandboxes.utils import (  # shared helpers reused in other sandboxes
@@ -231,15 +230,14 @@ async def _main_async() -> None:
 
     # prepare Unify context
     unify.activate("ContactSandbox")
-    fresh = "Contacts" not in unify.get_contexts() or (not args.reuse)
-    unify.set_context("Contacts", overwrite=fresh)
+    if not args.reuse and "Contacts" in unify.get_contexts():
+        unify.delete_context("Contacts")
 
     # manager
-    bus = EventBus()
-    cm = ContactManager(event_bus=bus)
+    cm = ContactManager()
 
     # seed
-    if fresh:
+    if not args.reuse:
         if scenario_text:
             LG.info("[voice] transcript: “%s”", scenario_text)
             LG.info("[seed] building synthetic contacts – this can take 20-40 s…")
