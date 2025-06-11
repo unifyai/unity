@@ -64,6 +64,25 @@ c_error_handler = ERROR_HANDLER_FUNC(_py_error_handler)
 _TTS_LOCK = threading.Lock()
 
 
+def _wait_for_tts_end(start_timeout: float = 0.5, poll: float = 0.05) -> None:
+    """
+    Block until any Cartesia-TTS playback triggered by :pyfunc:`speak` has
+    completed **or** been skipped.
+
+    1.  We first give a short grace period (*start_timeout*) for a background
+        TTS thread to *acquire* ``_TTS_LOCK`` – this covers the small race
+        window where :pyfunc:`speak` returned but audio hasn't started yet.
+    2.  Once the lock is held we simply wait until it is released, meaning
+        playback ended or the user hit ↵ to skip.
+    """
+    waited = 0.0
+    while not _TTS_LOCK.locked() and waited < start_timeout:
+        time.sleep(poll)
+        waited += poll
+    while _TTS_LOCK.locked():
+        time.sleep(poll)
+
+
 @contextmanager
 def noalsaerr():
     "Temporarily suppress ALSA warnings (common on Linux CI containers)."
@@ -83,6 +102,8 @@ def noalsaerr():
 
 def record_until_enter() -> bytes:
     "Record audio between two ENTER presses and return WAV bytes."
+    # Make sure any assistant speech has fully finished first
+    _wait_for_tts_end()
     with noalsaerr():
         pa = pyaudio.PyAudio()
 
