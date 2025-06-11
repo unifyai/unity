@@ -16,6 +16,7 @@ Run:
 from __future__ import annotations
 
 # ─────────────────────────────── stdlib / vendored ──────────────────────────
+import os
 import argparse
 import asyncio
 import logging
@@ -182,7 +183,14 @@ async def _main_async() -> None:
     )
     parser.add_argument("--reuse", "-r", action="store_true", help="re-use old data")
     parser.add_argument("--debug", "-d", action="store_true", help="verbose tool logs")
+    parser.add_argument("--traced", "-t", action="store_true", help="include tracing")
     args = parser.parse_args()
+
+    # tracing flag
+    if args.traced:
+        os.environ["UNIFY_TRACED"] = "true"
+    else:
+        os.environ["UNIFY_TRACED"] = "false"
 
     # running memory of the dialogue
     chat_history: List[Dict[str, str]] = []
@@ -200,7 +208,8 @@ async def _main_async() -> None:
 
     # manager
     cm = ContactManager()
-    cm = unify.traced(cm)
+    if args.traced:
+        cm = unify.traced(cm)
 
     # seed
     if not args.reuse:
@@ -260,9 +269,7 @@ async def _main_async() -> None:
             # ──────────────── remember the assistant's reply ───────────────
             chat_history.append({"role": "assistant", "content": answer})
             if args.voice:
-                _speak(answer)
-            if args.voice:
-                _speak("Anything else I can help with?")
+                _speak(f"{answer} Anything else I can help with?")
         except (EOFError, KeyboardInterrupt):
             print("\nExiting…")
             break
