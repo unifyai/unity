@@ -7,11 +7,22 @@
             "request": "launch",
             "program": "${file}",
             "purpose": ["debug-test"],
-            "console": "integratedTerminal",
             "env": {
                 "PYTHONPATH": "${workspaceFolder}"
             },
+            "console": "integratedTerminal",
             "justMyCode": false
-        }
+        },
+        {
+            "name": "Contact Sandbox",
+            "type": "python",
+            "request": "launch",
+            "program": "${workspaceFolder}/sandboxes/contact.py",
+            "args": ["--voice", "--traced"],
+            "cwd": "${workspaceFolder}",
+            "env": { "PYTHONPATH": "${workspaceFolder}" },
+            "console": "integratedTerminal",
+            "justMyCode": false
+          }
     ]
 }
