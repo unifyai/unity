@@ -15,7 +15,6 @@ from ..common.llm_helpers import (
     SteerableToolHandle,
     methods_to_tool_dict,
 )
-from ..events.event_bus import EventBus, Event
 from .prompt_builders import build_ask_prompt, build_summarize_prompt
 from .base import BaseTranscriptManager
 
@@ -28,22 +27,16 @@ class TranscriptManager(BaseTranscriptManager):
 
     def __init__(
         self,
-        event_bus: EventBus,
         *,
-        traced: bool = True,
         contact_manager: Optional[BaseContactManager] = None,
     ) -> None:
         """
         Responsible for *searching through* the full transcripts across all communcation channels exposed to the assistant.
         """
-        self._event_bus = event_bus
         if contact_manager is not None:
             self._contact_manager = contact_manager
         else:
-            self._contact_manager = ContactManager(
-                event_bus=event_bus,
-                traced=traced,
-            )
+            self._contact_manager = ContactManager()
 
         self._tools = methods_to_tool_dict(
             self.summarize,
@@ -59,15 +52,13 @@ class TranscriptManager(BaseTranscriptManager):
         assert (
             read_ctx == write_ctx
         ), "read and write contexts must be the same when instantiating a TranscriptManager."
-        event_bus.register_event_types(
-            ["Messages", "MessageExchangeSummaries"],
-        )
-        self._transcripts_ctx = event_bus.ctxs["Messages"]
-        self._summaries_ctx = event_bus.ctxs["MessageExchangeSummaries"]
 
-        # Add tracing
-        if traced:
-            self = unify.traced(self)
+        if read_ctx:
+            self._transcripts_ctx = f"{read_ctx}/Messages"
+            self._summaries_ctx = f"{read_ctx}/MessageExchangeSummaries"
+        else:
+            self._transcripts_ctx = "Contacts"
+            self._summaries_ctx = "MessageExchangeSummaries"
 
     # Public #
     # -------#
@@ -196,15 +187,12 @@ class TranscriptManager(BaseTranscriptManager):
             parent_chat_context=parent_chat_context,
         )
         summary: str = await handle.result()
-        await self._event_bus.publish(
-            Event(
-                type="MessageExchangeSummaries",
-                timestamp=latest_timestamp,
-                payload=MessageExchangeSummary(
-                    summary=summary,
-                    exchange_ids=exchange_ids,
-                ),
-            ),
+        unify.log(
+            context=self._summaries_ctx,
+            exchange_ids=exchange_ids,
+            summary=summary,
+            new=True,
+            mutable=True,
         )
         return summary
 
