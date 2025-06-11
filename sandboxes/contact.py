@@ -175,12 +175,7 @@ async def _main_async() -> None:
         action="store_true",
         help="enable voice capture + TTS",
     )
-    group = parser.add_mutually_exclusive_group()
-    group.add_argument(
-        "--custom-scenario",
-        action="store_true",
-        help="whether to create a custom scenario",
-    )
+    parser.add_mutually_exclusive_group()
     parser.add_argument("--reuse", "-r", action="store_true", help="re-use old data")
     parser.add_argument("--debug", "-d", action="store_true", help="verbose tool logs")
     parser.add_argument("--traced", "-t", action="store_true", help="include tracing")
@@ -192,19 +187,25 @@ async def _main_async() -> None:
     else:
         os.environ["UNIFY_TRACED"] = "false"
 
-    # running memory of the dialogue
-    chat_history: List[Dict[str, str]] = []
-
-    scenario_text = get_custom_scenario(args)
+    # prepare Unify context
+    unify.activate("ContactSandbox")
+    if not args.reuse:
+        ctxs = unify.get_contexts()
+        if "Contacts" in ctxs:
+            unify.delete_logs(context="Contacts")
+        else:
+            unify.create_context("Contacts")
+        if "Traces" in ctxs:
+            unify.delete_logs(context="Traces")
+        else:
+            unify.create_context("Traces")
 
     # logging
     logging.basicConfig(level=logging.INFO, format="%(message)s")
     LG.setLevel(logging.INFO)
 
-    # prepare Unify context
-    unify.activate("ContactSandbox")
-    if not args.reuse and "Contacts" in unify.get_contexts():
-        unify.delete_context("Contacts")
+    # custom scenario
+    scenario_text = get_custom_scenario(args)
 
     # manager
     cm = ContactManager()
@@ -230,6 +231,9 @@ async def _main_async() -> None:
             raise Exception("No text provided for building the custom scenario")
 
     print("ContactManager sandbox – type or speak. 'quit' to exit.\n")
+
+    # running memory of the dialogue
+    chat_history: List[Dict[str, str]] = []
 
     # interaction loop
     while True:
