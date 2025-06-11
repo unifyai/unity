@@ -34,7 +34,6 @@ class TaskScheduler(BaseTaskScheduler):
         self,
         *,
         planner: Optional[BasePlanner] = None,
-        traced: bool = True,
     ) -> None:
         """
         Responsible for managing the list of tasks, updating the names, descriptions, schedules, repeating pattern and status of all tasks.
@@ -98,9 +97,6 @@ class TaskScheduler(BaseTaskScheduler):
 
         if self._ctx not in unify.get_contexts():
             unify.create_context(self._ctx)
-        # Add tracing
-        if traced:
-            self = unify.traced(self)
 
     # Public #
     # -------#
