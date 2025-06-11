@@ -188,13 +188,21 @@ async def _speak_async(text: str) -> None:
     if not pcm:
         return
 
-    stop = threading.Event()
+    # ─────────────── enter-to-skip listener ────────────────
+    skip = threading.Event()  # raised when user hits ↵
+    listener_done = threading.Event()  # tells the listener to exit
 
-    def _wait_enter():
-        sys.stdin.readline()
-        stop.set()
+    def _listen_enter():
+        """Poll stdin so we can shut the thread down cleanly."""
+        while not listener_done.is_set():
+            r, _, _ = select.select([sys.stdin], [], [], 0.05)
+            if r:
+                sys.stdin.readline()
+                skip.set()
+                break
 
-    threading.Thread(target=_wait_enter, daemon=True).start()
+    listener = threading.Thread(target=_listen_enter, daemon=True)
+    listener.start()
 
     with noalsaerr():
         pa = pyaudio.PyAudio()
@@ -207,7 +215,7 @@ async def _speak_async(text: str) -> None:
 
     chunk = 4800  # ≈0.1 s of audio
     i = 0
-    while i < len(pcm) and not stop.is_set():
+    while i < len(pcm) and not skip.is_set():
         stream.write(pcm[i : i + chunk])
         i += chunk
 
@@ -215,7 +223,11 @@ async def _speak_async(text: str) -> None:
     stream.close()
     pa.terminate()
 
-    if stop.is_set():  # flush the newline the user pressed
+    # ─────────────── clean-up ───────────────
+    listener_done.set()  # stop polling
+    listener.join(timeout=0.1)  # don’t leave it dangling
+
+    if skip.is_set():  # flush the newline the user pressed
         try:
             import termios
 
