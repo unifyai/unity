@@ -18,7 +18,6 @@ from __future__ import annotations
 # ─────────────────────────────── stdlib / vendored ──────────────────────────
 import argparse
 import asyncio
-import json
 import logging
 import os
 import select
@@ -29,6 +28,7 @@ from typing import List, Optional, Tuple
 import unify
 from dotenv import load_dotenv
 from pydantic import BaseModel, Field
+from scenario_builder import ScenarioBuilder
 
 # Ensure repository root resolves for local execution
 ROOT = Path(__file__).resolve().parents[1]
@@ -87,52 +87,40 @@ def _seed_fixed(cm: ContactManager) -> None:
         cm._create_contact(**c)
 
 
-def _seed_llm(cm: ContactManager, custom: Optional[str] = None) -> Optional[str]:
-    """Let an LLM invent a richer contact list."""
-    if custom:
-        prompt = (
-            f"User scenario:\n{custom}\n\n"
-            "Generate 30‑50 realistic business contacts as JSON "
-            "array under key 'contacts'; optional 'theme' field."
+async def _seed_llm(cm: ContactManager, custom: Optional[str] = None) -> Optional[str]:
+    """
+    Populate the contact store **through the official tools** using
+    :class:`ScenarioBuilder`.  Falls back to the fixed seed on any error.
+    """
+    description = (
+        custom.strip()
+        if custom
+        else (
+            "Generate 30-50 realistic business contacts across EMEA, APAC and AMER. "
+            "Each contact needs first_name, surname, email_address and phone_number. "
+            "Vary industries and locations."
         )
-    else:
-        prompt = (
-            "Generate 30‑50 realistic business contacts across EMEA/APAC/AMER. "
-            "Return JSON {'contacts':[...],'theme':<str>}. "
-            "Each contact needs first_name, surname, email_address and phone_number."
-        )
-
-    client = unify.Unify(
-        "o4-mini@openai",
-        cache=json.loads(os.getenv("UNIFY_CACHE", "true")),
-        traced=json.loads(os.getenv("UNIFY_TRACED", "true")),
     )
-    client.set_system_message(prompt)
+
+    builder = ScenarioBuilder(
+        description=description,
+        tools={  # expose only the public surface
+            "update": cm.update,
+            "ask": cm.ask,  # allows the LLM to check for duplicates if it wishes
+        },
+    )
+
     try:
-        payload = json.loads(client.generate("produce contacts"))
-    except Exception:
-        LG.warning("LLM seeding failed – falling back to fixed seed.")
+        await builder.create()
+    except Exception as exc:
+        LG.warning(
+            "LLM seeding via ScenarioBuilder failed – falling back to fixed seed. (%s)",
+            exc,
+        )
         _seed_fixed(cm)
-        return None
 
-    for c in payload.get("contacts", []):
-        # prune unknown keys to avoid validation errors
-        allowed = {
-            k: v
-            for k, v in c.items()
-            if k
-            in {
-                "first_name",
-                "surname",
-                "email_address",
-                "phone_number",
-                "whatsapp_number",
-                "description",
-            }
-        }
-        cm._create_contact(**allowed)
-
-    return payload.get("theme")
+    # The new flow doesn't produce a structured "theme"; preserve signature.
+    return None
 
 
 # ═════════════════════════════ intent dispatcher ════════════════════════════
@@ -256,11 +244,14 @@ async def _main_async() -> None:
     # seed
     if fresh:
         if scenario_text:
-            theme = _seed_llm(cm, scenario_text)
+            LG.info("[voice] transcript: “%s”", scenario_text)
+            LG.info("[seed] building synthetic contacts – this can take 20-40 s…")
+            theme = await _seed_llm(cm, scenario_text)
+            LG.info("[seed] done.")
             if theme:
                 LG.info(f"[seed] theme: {theme}")
         elif args.scenario == "llm":
-            theme = _seed_llm(cm)
+            theme = await _seed_llm(cm)
             if theme:
                 LG.info(f"[seed] theme: {theme}")
         else:

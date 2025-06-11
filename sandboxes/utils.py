@@ -268,12 +268,11 @@ def input_with_timeout(timeout: float = 0.1) -> Tuple[bool, Optional[str]]:
         return False, None
 
 
-def get_custom_scenario(args, *, silent: bool) -> Optional[str]:
+def get_custom_scenario(args) -> Optional[str]:
     """Get custom scenario from args, either text or voice input.
 
     Args:
         args: Parsed command line arguments with custom_scenario and custom_scenario_voice
-        silent: If True, suppress recording messages and warnings
 
     Returns:
         Custom scenario string if provided/captured, None otherwise
@@ -284,33 +283,30 @@ def get_custom_scenario(args, *, silent: bool) -> Optional[str]:
 
     # Check for voice-based custom scenario
     if hasattr(args, "custom_scenario_voice") and args.custom_scenario_voice:
-        if not silent:
-            print("🎙️ Recording custom scenario...")
 
         try:
             # Record and transcribe audio
+            input("Press ↵ to start recording your custom scenario…")
+            print("🎙️ Recording custom scenario...")
             audio_bytes = record_until_enter()
             transcript = transcribe_deepgram(audio_bytes)
 
             # Handle empty or failed transcription
             if not transcript or transcript.strip() == "":
-                if not silent:
-                    print("⚠️ Warning: No transcript received from voice input")
+                print("⚠️ Warning: No transcript received from voice input")
                 return None
 
             # Truncate if too long
             if len(transcript) > MAX_SCENARIO_LENGTH:
                 transcript = transcript[: MAX_SCENARIO_LENGTH - 3] + "..."
-                if not silent:
-                    print(
-                        f"⚠️ Warning: Scenario truncated to {MAX_SCENARIO_LENGTH} characters",
-                    )
+                print(
+                    f"⚠️ Warning: Scenario truncated to {MAX_SCENARIO_LENGTH} characters",
+                )
 
             return transcript.strip()
 
         except Exception as exc:
-            if not silent:
-                print(f"⚠️ Warning: Voice scenario capture failed ({exc})")
+            print(f"⚠️ Warning: Voice scenario capture failed ({exc})")
             return None
 
     # No custom scenario provided
