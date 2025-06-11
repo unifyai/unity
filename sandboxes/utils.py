@@ -277,40 +277,38 @@ def get_custom_scenario(args) -> Optional[str]:
     Returns:
         Custom scenario string if provided/captured, None otherwise
     """
+    custom_scenario_flag = hasattr(args, "custom_scenario") and args.custom_scenario
+    if not custom_scenario_flag:
+        return
+    voice_flag = hasattr(args, "voice") and args.voice
     # Check for text-based custom scenario first
-    if hasattr(args, "custom_scenario") and args.custom_scenario:
+    if not voice_flag:
+        print(f"🧮 Let's build your custom scenario:\n{args.custom_scenario}")
         return args.custom_scenario
 
-    # Check for voice-based custom scenario
-    if hasattr(args, "custom_scenario_voice") and args.custom_scenario_voice:
+    try:
+        # Record and transcribe audio
+        print("🧮 Let's build your custom scenario using voice")
+        audio_bytes = record_until_enter()
+        transcript = transcribe_deepgram(audio_bytes)
 
-        try:
-            # Record and transcribe audio
-            input("Press ↵ to start recording your custom scenario…")
-            print("🎙️ Recording custom scenario...")
-            audio_bytes = record_until_enter()
-            transcript = transcribe_deepgram(audio_bytes)
-
-            # Handle empty or failed transcription
-            if not transcript or transcript.strip() == "":
-                print("⚠️ Warning: No transcript received from voice input")
-                return None
-
-            # Truncate if too long
-            if len(transcript) > MAX_SCENARIO_LENGTH:
-                transcript = transcript[: MAX_SCENARIO_LENGTH - 3] + "..."
-                print(
-                    f"⚠️ Warning: Scenario truncated to {MAX_SCENARIO_LENGTH} characters",
-                )
-
-            return transcript.strip()
-
-        except Exception as exc:
-            print(f"⚠️ Warning: Voice scenario capture failed ({exc})")
+        # Handle empty or failed transcription
+        if not transcript or transcript.strip() == "":
+            print("⚠️ Warning: No transcript received from voice input")
             return None
 
-    # No custom scenario provided
-    return None
+        # Truncate if too long
+        if len(transcript) > MAX_SCENARIO_LENGTH:
+            transcript = transcript[: MAX_SCENARIO_LENGTH - 3] + "..."
+            print(
+                f"⚠️ Warning: Scenario truncated to {MAX_SCENARIO_LENGTH} characters",
+            )
+
+        return transcript.strip()
+
+    except Exception as exc:
+        print(f"⚠️ Warning: Voice scenario capture failed ({exc})")
+        return None
 
 
 # ---------------------------------------------------------------------------
