@@ -22,7 +22,7 @@ import logging
 import select
 import sys
 from pathlib import Path
-from typing import List, Optional, Tuple
+from typing import List, Optional, Tuple, Dict
 
 import unify
 from dotenv import load_dotenv
@@ -140,17 +140,25 @@ _INTENT_SYS_MSG = (
 )
 
 
-async def _dispatch(
+async def _dispatch_with_context(
     cm: ContactManager,
     raw: str,
     *,
     show_steps: bool,
+    parent_chat_context: List[Dict[str, str]],
 ) -> Tuple[str, SteerableToolHandle]:
-    raw = raw.strip()
+    """
+    Same as :pyfunc:`_dispatch` but forwards *parent_chat_context* to the CM
+    methods.  This indirection keeps the diff minimal.
+    """
 
     # quick heuristic – verbs that virtually always imply an update
     if raw.lower().startswith(("add ", "create ", "update ", "change ", "delete ")):
-        handle = await cm.update(raw, _return_reasoning_steps=show_steps)
+        handle = await cm.update(
+            raw,
+            parent_chat_context=parent_chat_context,
+            _return_reasoning_steps=show_steps,
+        )
         return "update", handle
 
     # ask an LLM if less obvious
@@ -159,7 +167,11 @@ async def _dispatch(
         judge.set_system_message(_INTENT_SYS_MSG).generate(raw),
     )
     fn = cm.update if intent.action == "update" else cm.ask
-    handle = await fn(intent.cleaned_text, _return_reasoning_steps=show_steps)
+    handle = await fn(
+        intent.cleaned_text,
+        parent_chat_context=parent_chat_context,
+        _return_reasoning_steps=show_steps,
+    )
     return intent.action, handle
 
 
@@ -208,6 +220,9 @@ async def _main_async() -> None:
     parser.add_argument("--debug", "-d", action="store_true", help="verbose tool logs")
     args = parser.parse_args()
 
+    # running memory of the dialogue
+    chat_history: List[Dict[str, str]] = []
+
     scenario_text = get_custom_scenario(args)
 
     # logging
@@ -228,11 +243,13 @@ async def _main_async() -> None:
         if scenario_text:
             LG.info("[voice] transcript: “%s”", scenario_text)
             LG.info("[seed] building synthetic contacts – this can take 20-40 s…")
+            if args.voice:
+                _speak("Sure thing, building your custom scenario now.")
             theme = await _build_scenario(cm, scenario_text)
             LG.info("[seed] done.")
             if args.voice:
                 _speak(
-                    "All done, your custom scenario is built and ready to go. Press enter to record a question or makrequest an update for the contact list.",
+                    "All done, your custom scenario is built and ready to go. Press enter to record a question or request an update for the contact list.",
                 )
             if theme:
                 LG.info(f"[seed] theme: {theme}")
@@ -258,7 +275,14 @@ async def _main_async() -> None:
             if not raw:
                 continue
 
-            _kind, _handle = await _dispatch(cm, raw, show_steps=args.debug)
+            # ──────────────── remember the user's utterance ────────────────
+            chat_history.append({"role": "user", "content": raw})
+            _kind, _handle = await _dispatch_with_context(
+                cm,
+                raw,
+                show_steps=args.debug,
+                parent_chat_context=chat_history,
+            )
             if args.voice:
                 _speak("Sure, working on this now")
 
@@ -268,6 +292,9 @@ async def _main_async() -> None:
             if isinstance(answer, tuple):  # reasoning steps requested
                 answer, _steps = answer
             print(f"[{_kind}] → {answer}\n")
+
+            # ──────────────── remember the assistant's reply ───────────────
+            chat_history.append({"role": "assistant", "content": answer})
             if args.voice and _kind == "ask":
                 _speak(answer)
             if args.voice:
