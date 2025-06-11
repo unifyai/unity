@@ -495,7 +495,7 @@ async def _async_tool_use_loop_inner(
     interrupt_llm_with_interjections: bool = True,
     propagate_chat_context: bool = True,
     parent_chat_context: Optional[list[dict]] = None,
-    log_steps: bool = False,
+    log_steps: bool = True,
     max_steps: Optional[int] = 25,
     timeout: Optional[int] = 60,
     raise_on_limit: bool = False,
@@ -765,8 +765,6 @@ async def _async_tool_use_loop_inner(
             # ───────────────────────────────────────────────────────────────
             result = _dumps(raw, indent=4)
             consecutive_failures = 0
-            if log_steps:
-                LOGGER.info(f"\n🛠️ {name} = {result}\n")
         except Exception:
             consecutive_failures += 1
             result = traceback.format_exc()
@@ -1519,6 +1517,9 @@ async def _async_tool_use_loop_inner(
 
             msg = client.messages[-1]
 
+            if log_steps:
+                LOGGER.info(f"\n🤖 {json.dumps(msg, indent=4)}\n")
+
             # ── timeout guard (post-LLM) ───────────────────────────────
             if timeout is not None and time.perf_counter() - last_activity_ts > timeout:
                 if raise_on_limit:
@@ -1610,11 +1611,6 @@ async def _async_tool_use_loop_inner(
                             }
                             _insert_after_assistant(msg, tool_reply_msg)
                             info["continue_msg"] = tool_reply_msg
-                            if log_steps:
-                                LOGGER.info(
-                                    f"↩️  {pretty_name} placeholder inserted – still waiting",
-                                )
-
                         else:  # the original tool already finished
                             finished = completed_results.get(
                                 call_id,
@@ -1630,10 +1626,6 @@ async def _async_tool_use_loop_inner(
                                 "content": finished,
                             }
                             _insert_after_assistant(info["assistant_msg"], tool_msg)
-                            if log_steps:
-                                LOGGER.info(
-                                    f"↩️  {pretty_name} answered immediately (already finished)",
-                                )
                         continue  # completed handling of this _continue
 
                     if name.startswith("stop_") and not name.startswith(
@@ -1689,8 +1681,6 @@ async def _async_tool_use_loop_inner(
                         }
                         _insert_after_assistant(msg, tool_msg)
 
-                        if log_steps:
-                            LOGGER.info(f"🚫  {name} executed – task stopped")
                         continue  # nothing else to schedule
 
                     # ── _pause helper ────────────────────────────────────────────────
@@ -1729,8 +1719,6 @@ async def _async_tool_use_loop_inner(
                             "content": f"The tool call [{call_id}] has been paused successfully.",
                         }
                         _insert_after_assistant(msg, tool_msg)
-                        if log_steps:
-                            LOGGER.info(f"⏸️  {pretty_name} executed – task paused")
                         continue  # helper handled, move on
 
                     # ── _resume helper ───────────────────────────────────────────────
@@ -1769,8 +1757,6 @@ async def _async_tool_use_loop_inner(
                             "content": f"The tool call [{call_id}] has been resumed successfully.",
                         }
                         _insert_after_assistant(msg, tool_msg)
-                        if log_steps:
-                            LOGGER.info(f"▶️  {pretty_name} executed – task resumed")
                         continue  # helper handled
 
                     if name.startswith("clarify_"):
@@ -1855,8 +1841,6 @@ async def _async_tool_use_loop_inner(
                         }
                         _insert_after_assistant(msg, tool_msg)
 
-                        if log_steps:
-                            LOGGER.info(f"💬  Interjection delivered → {new_text!r}")
                         continue  # nothing else to schedule
 
                     # Respect *per-tool* concurrency limits  ────────────────
@@ -2036,8 +2020,6 @@ async def _async_tool_use_loop_inner(
                     "results_count": 0,
                 }
 
-                if log_steps:
-                    LOGGER.info("✅ Step finished (tool calls scheduled)")
                 continue  # finished scheduling tools, back to the very top
 
             # ── F.  No new tool calls  ──────────────────────────────────────
@@ -2071,9 +2053,6 @@ async def _async_tool_use_loop_inner(
                         f"max_steps ({max_steps}) exceeded",
                     )
 
-            if log_steps:
-                LOGGER.info(f"\n🤖 {msg['content']}\n")
-                LOGGER.info("✅ Step finished (final answer)")
             return msg["content"]  # DONE!
 
     except asyncio.CancelledError:  # graceful shutdown
@@ -2319,7 +2298,7 @@ def start_async_tool_use_loop(
     interrupt_llm_with_interjections: bool = True,
     propagate_chat_context: bool = True,
     parent_chat_context: Optional[list[dict]] = None,
-    log_steps: bool = False,
+    log_steps: bool = True,
     max_steps: Optional[int] = 25,
     timeout: Optional[int] = 60,
     raise_on_limit: bool = False,
