@@ -86,7 +86,10 @@ def _seed_fixed(cm: ContactManager) -> None:
         cm._create_contact(**c)
 
 
-async def _seed_llm(cm: ContactManager, custom: Optional[str] = None) -> Optional[str]:
+async def _build_scenario(
+    cm: ContactManager,
+    custom: Optional[str] = None,
+) -> Optional[str]:
     """
     Populate the contact store **through the official tools** using
     :class:`ScenarioBuilder`.  Falls back to the fixed seed on any error.
@@ -195,14 +198,12 @@ async def _main_async() -> None:
         action="store_true",
         help="enable voice capture + TTS",
     )
-    parser.add_argument(
-        "--scenario",
-        choices=["fixed", "llm"],
-        default="fixed",
-        help="initial data set (LLM or deterministic)",
-    )
     group = parser.add_mutually_exclusive_group()
-    group.add_argument("--custom-scenario", type=str)
+    group.add_argument(
+        "--custom-scenario",
+        action="store_true",
+        help="whether to create a custom scenario",
+    )
     parser.add_argument("--reuse", "-r", action="store_true", help="re-use old data")
     parser.add_argument("--debug", "-d", action="store_true", help="verbose tool logs")
     args = parser.parse_args()
@@ -227,12 +228,8 @@ async def _main_async() -> None:
         if scenario_text:
             LG.info("[voice] transcript: “%s”", scenario_text)
             LG.info("[seed] building synthetic contacts – this can take 20-40 s…")
-            theme = await _seed_llm(cm, scenario_text)
+            theme = await _build_scenario(cm, scenario_text)
             LG.info("[seed] done.")
-            if theme:
-                LG.info(f"[seed] theme: {theme}")
-        elif args.scenario == "llm":
-            theme = await _seed_llm(cm)
             if theme:
                 LG.info(f"[seed] theme: {theme}")
         else:
