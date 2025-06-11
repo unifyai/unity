@@ -330,17 +330,7 @@ def input_with_timeout(timeout: float = 0.1) -> Tuple[bool, Optional[str]]:
 
 
 def get_custom_scenario(args) -> Optional[str]:
-    """Get custom scenario from args, either text or voice input.
-
-    Args:
-        args: Parsed command line arguments with custom_scenario and custom_scenario_voice
-
-    Returns:
-        Custom scenario string if provided/captured, None otherwise
-    """
-    custom_scenario_flag = hasattr(args, "custom_scenario") and args.custom_scenario
-    if not custom_scenario_flag:
-        return
+    """Get custom scenario from args, either text or voice input."""
     voice_flag = hasattr(args, "voice") and args.voice
     # Check for text-based custom scenario first
     if not voice_flag:
