@@ -15,7 +15,6 @@ from ..common.llm_helpers import (
     methods_to_tool_dict,
 )
 from ..helpers import _handle_exceptions
-from ..events.event_bus import EventBus
 from .base import BaseKnowledgeManager
 from ..contact_manager.contact_manager import BaseContactManager, ContactManager
 from .prompt_builders import (
@@ -33,13 +32,12 @@ class KnowledgeManager(BaseKnowledgeManager):
         self,
         *,
         contact_manager: Optional[BaseContactManager] = None,
-        traced: bool = True,
     ) -> None:
         """
         Responsible for *adding to*, *updating* and *searching through* all knowledge the assistant has stored in memory.
         """
         if contact_manager is None:
-            contact_manager = ContactManager(EventBus())
+            contact_manager = ContactManager()
 
         refactor_tools = methods_to_tool_dict(
             # Tables
@@ -97,10 +95,6 @@ class KnowledgeManager(BaseKnowledgeManager):
             read_ctx == write_ctx
         ), "read and write contexts must be the same when instantiating a KnowledgeManager."
         self._ctx = f"{read_ctx}/Knowledge" if read_ctx else "Knowledge"
-
-        # Add tracing
-        if traced:
-            self = unify.traced(self)
 
     # Public #
     # -------#
