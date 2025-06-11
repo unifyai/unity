@@ -8,7 +8,6 @@ import functools
 
 import unify  # Assuming global conftest.py handles unify activation/stubbing
 from unity.contact_manager.contact_manager import ContactManager
-from unity.events.event_bus import EventBus
 
 # Initial contact data for seeding
 _CONTACTS_DATA: List[Dict[str, str | None]] = [
@@ -54,13 +53,12 @@ _ID_BY_NAME_CONTACTS: Dict[str, int] = {}
 class ScenarioBuilderContacts:
     """Populates Unify with initial contacts for ContactManager testing."""
 
-    def __init__(self, event_bus: EventBus):
-        self._event_bus = event_bus
-        self.cm = ContactManager(event_bus=self._event_bus, traced=False)
+    def __init__(self):
+        self.cm = ContactManager()
 
     @classmethod
-    async def create(cls, event_bus: EventBus) -> "ScenarioBuilderContacts":
-        self = cls(event_bus)
+    async def create(cls) -> "ScenarioBuilderContacts":
+        self = cls()
         await self._seed_contacts()
         return self
 
@@ -133,9 +131,8 @@ def contact_manager_scenario(
     Seeds the backend with contacts exactly once per test session and
     provides the ContactManager instance and a name-to-ID mapping.
     """
-    session_event_bus = EventBus()
 
     builder = event_loop.run_until_complete(
-        ScenarioBuilderContacts.create(session_event_bus),
+        ScenarioBuilderContacts.create(),
     )
     return builder.cm, _ID_BY_NAME_CONTACTS

@@ -11,7 +11,6 @@ from __future__ import annotations
 import pytest
 
 from unity.contact_manager.contact_manager import ContactManager
-from unity.events.event_bus import EventBus
 
 # keeps each test isolated in its own Unify project / trace context
 from tests.helpers import _handle_project
@@ -23,9 +22,7 @@ from tests.helpers import _handle_project
 @pytest.mark.unit
 @_handle_project
 def test_create_custom_column():
-    eb = EventBus()
-    eb.register_event_types(["Messages", "MessageExchangeSummaries"])
-    cm = ContactManager(eb)
+    cm = ContactManager()
 
     before_cols = cm._list_columns()["columns"]
     assert (
@@ -44,9 +41,7 @@ def test_create_custom_column():
 @pytest.mark.unit
 @_handle_project
 def test_create_required_column_raises():
-    eb = EventBus()
-    eb.register_event_types(["Messages", "MessageExchangeSummaries"])
-    cm = ContactManager(eb)
+    cm = ContactManager()
 
     with pytest.raises(AssertionError):
         cm._create_custom_column(column_name="first_name", column_type="str")
@@ -58,9 +53,7 @@ def test_create_required_column_raises():
 @pytest.mark.unit
 @_handle_project
 def test_delete_custom_column():
-    eb = EventBus()
-    eb.register_event_types(["Messages", "MessageExchangeSummaries"])
-    cm = ContactManager(eb)
+    cm = ContactManager()
 
     cm._create_custom_column(column_name="twitter", column_type="str")
     assert "twitter" in cm._list_columns()["columns"]
@@ -75,9 +68,7 @@ def test_delete_custom_column():
 @pytest.mark.unit
 @_handle_project
 def test_delete_required_column_raises():
-    eb = EventBus()
-    eb.register_event_types(["Messages", "MessageExchangeSummaries"])
-    cm = ContactManager(eb)
+    cm = ContactManager()
 
     with pytest.raises(ValueError):
         cm._delete_custom_column(column_name="phone_number")
@@ -89,9 +80,7 @@ def test_delete_required_column_raises():
 @pytest.mark.unit
 @_handle_project
 def test_create_contact_with_custom_field():
-    eb = EventBus()
-    eb.register_event_types(["Messages", "MessageExchangeSummaries"])
-    cm = ContactManager(eb)
+    cm = ContactManager()
 
     cm._create_custom_column(column_name="department", column_type="str")
 
@@ -109,9 +98,7 @@ def test_create_contact_with_custom_field():
 @pytest.mark.unit
 @_handle_project
 def test_update_contact_custom_field():
-    eb = EventBus()
-    eb.register_event_types(["Messages", "MessageExchangeSummaries"])
-    cm = ContactManager(eb)
+    cm = ContactManager()
 
     cm._create_custom_column(column_name="age", column_type="int")
     cid = cm._create_contact(first_name="Tom", custom_fields={"age": 30})

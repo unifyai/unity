@@ -1,16 +1,13 @@
 import pytest
 
 from unity.contact_manager.contact_manager import ContactManager
-from unity.events.event_bus import EventBus
 from tests.helpers import _handle_project
 
 
 @pytest.mark.unit
 @_handle_project
 def test_create_contact():
-    eb = EventBus()
-    eb.register_event_types(["Messages", "MessageExchangeSummaries"])
-    contact_manager = ContactManager(eb)
+    contact_manager = ContactManager()
     contact_manager._create_contact(
         first_name="Dan",
         description="A bit of a loser",
@@ -32,9 +29,7 @@ def test_create_contact():
 @pytest.mark.unit
 @_handle_project
 def test_update_contact():
-    eb = EventBus()
-    eb.register_event_types(["Messages", "MessageExchangeSummaries"])
-    contact_manager = ContactManager(eb)
+    contact_manager = ContactManager()
 
     # create
     contact_manager._create_contact(
@@ -80,9 +75,7 @@ def test_update_contact():
 @pytest.mark.unit
 @_handle_project
 def test_create_contacts():
-    eb = EventBus()
-    eb.register_event_types(["Messages", "MessageExchangeSummaries"])
-    contact_manager = ContactManager(eb)
+    contact_manager = ContactManager()
 
     # first
     contact_manager._create_contact(
@@ -122,9 +115,7 @@ def test_create_contacts():
 @pytest.mark.unit
 @_handle_project
 def test_search_contacts():
-    eb = EventBus()
-    eb.register_event_types(["Messages", "MessageExchangeSummaries"])
-    contact_manager = ContactManager(eb)
+    contact_manager = ContactManager()
     contact_manager._create_contact(
         first_name="Dan",
     )

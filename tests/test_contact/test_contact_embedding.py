@@ -9,7 +9,6 @@ of `<source>_vec` derived columns.
 import pytest
 
 from unity.contact_manager.contact_manager import ContactManager
-from unity.events.event_bus import EventBus
 
 # keeps each test isolated in its own Unify project / trace context
 from tests.helpers import _handle_project
@@ -19,9 +18,7 @@ from tests.helpers import _handle_project
 @pytest.mark.requires_real_unify
 @_handle_project
 def test_contact_embedding_and_nearest_search():
-    eb = EventBus()
-    eb.register_event_types(["Messages", "MessageExchangeSummaries"])
-    cm = ContactManager(eb)
+    cm = ContactManager()
 
     # ------------------------------------------------------------------ #
     # 1️⃣  Create three contacts whose *description* fields are related  #
