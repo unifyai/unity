@@ -83,7 +83,14 @@ class ContactManager(BaseContactManager):
     # ──────────────────────────────────────────────────────────────────────
 
     def _get_columns(self) -> Dict[str, str]:
-        """Return {column_name: column_type} for the contacts table."""
+        """
+        Return {column_name: column_type} for the contacts table.
+
+        Returns
+        -------
+        Dict[str, str]
+            Dictionary mapping column names to their types.
+        """
         proj = unify.active_project()
         url = f"{os.environ['UNIFY_BASE_URL']}/logs/fields?project={proj}&context={self._ctx}"
         headers = {"Authorization": f"Bearer {os.environ['UNIFY_KEY']}"}
@@ -93,7 +100,19 @@ class ContactManager(BaseContactManager):
         return {k: v["data_type"] for k, v in ret.items()}
 
     def _list_columns(self, *, include_types: bool = True) -> Dict[str, Any]:
-        """List current columns; with types if *include_types*."""
+        """
+        List current columns; with types if include_types.
+
+        Parameters
+        ----------
+        include_types : bool, default True
+            Whether to include column types in output.
+
+        Returns
+        -------
+        Dict[str, Any]
+            Dictionary of columns, with types if requested.
+        """
         cols = self._get_columns()
         return {"columns": cols} if include_types else set(cols)
 
@@ -104,7 +123,26 @@ class ContactManager(BaseContactManager):
         column_type: ColumnType | str,
     ) -> Dict[str, str]:
         """
-        **Add** a new optional column to the contacts table.
+        Add a new optional column to the contacts table.
+
+        Parameters
+        ----------
+        column_name : str
+            The name of the column to create (which MUST be snake case).
+        column_type : ColumnType | str
+            The type of the column to create.
+
+        Returns
+        -------
+        Dict[str, str]
+            Dictionary containing the response from the Unify API.
+
+        Raises
+        ------
+        AssertionError
+            If column_name is a required column.
+        ValueError
+            If column already exists.
         """
         assert (
             column_name not in self._REQUIRED_COLUMNS
@@ -127,7 +165,22 @@ class ContactManager(BaseContactManager):
 
     def _delete_custom_column(self, *, column_name: str) -> Dict[str, str]:
         """
-        **Remove** a custom column**. Built-in columns are protected.
+        Remove a custom column. Built-in columns are protected.
+
+        Parameters
+        ----------
+        column_name : str
+            The name of the column to delete (which MUST be snake case).
+
+        Returns
+        -------
+        Dict[str, str]
+            Dictionary containing the response from the Unify API.
+
+        Raises
+        ------
+        ValueError
+            If column_name is a required column or does not exist.
         """
         if column_name in self._REQUIRED_COLUMNS:
             raise ValueError(f"Cannot delete required column '{column_name}'.")
@@ -153,8 +206,14 @@ class ContactManager(BaseContactManager):
 
     def _ensure_table_vector(self, *, column: str, source: str) -> None:
         """
-        Ensure that *column* (e.g. ``"notes_vec"``) exists as a vector-embedding
-        derived from *source* (e.g. ``"notes"``).  If it doesn't, create it.
+        Ensure that column exists as a vector-embedding derived from source.
+
+        Parameters
+        ----------
+        column : str
+            The vector column name (e.g. "notes_vec").
+        source : str
+            The source column name (e.g. "notes").
         """
         ensure_vector_column(
             self._ctx,  # contacts live in a single context
@@ -170,7 +229,7 @@ class ContactManager(BaseContactManager):
         k: int = 5,
     ) -> List[Dict[str, Any]]:
         """
-        **Semantic nearest-neighbour search** over the *source* column.
+        Semantic nearest-neighbour search over the source column.
 
         Parameters
         ----------
@@ -178,12 +237,12 @@ class ContactManager(BaseContactManager):
             Name of the text column to embed (any default or custom column).
         text : str
             Query text.
-        k : int, default ``5``
+        k : int, default 5
             Number of closest rows to return.
 
         Returns
         -------
-        list[dict]
+        List[Dict[str, Any]]
             Rows sorted by ascending cosine distance.
         """
         vec_col = f"{source}_vec"
@@ -312,16 +371,16 @@ class ContactManager(BaseContactManager):
         custom_fields: Optional[Dict[str, ColumnType]] = None,
     ) -> int:
         """
-        Persist a **new** contact record.
+        Persist a new contact record.
 
         Parameters
         ----------
         first_name : str | None
             Contact's first name. Must start with a capital letter and can only contain
-            letters, spaces, periods and hyphens. May be *None*.
+            letters, spaces, periods and hyphens. May be None.
         surname : str | None
             Contact's surname/family name. Must start with a capital letter and can only
-            contain letters, spaces, periods and hyphens. May be *None*.
+            contain letters, spaces, periods and hyphens. May be None.
         email_address : str | None
             Contact's email address. Must contain exactly one @ symbol with characters
             on either side. Must not clash with an existing record.
@@ -333,21 +392,21 @@ class ContactManager(BaseContactManager):
             mentioned by the user), but must otherwise contain only digits. Must be unique.
         description : str | None
             A free-form text description of the contact. Can contain any additional notes
-            or information about the contact. May be *None*.
+            or information about the contact. May be None.
         custom_fields : Dict[str, ColumnType] | None
             Additional contact information as key-value pairs, where keys are string column
             names and values are of type ColumnType. Can include any other relevant
-            information about the contact. May be *None*.
+            information about the contact. May be None.
 
         Returns
         -------
         int
-            The **integer** ``contact_id`` of the newly created record.
+            The integer contact_id of the newly created record.
 
         Raises
         ------
         AssertionError
-            If *all* fields are ``None`` **or** if any uniqueness constraint
+            If all fields are None or if any uniqueness constraint
             (email / phone / WhatsApp) is violated.
         """
 
@@ -418,7 +477,7 @@ class ContactManager(BaseContactManager):
         custom_fields: Optional[Dict[str, ColumnType]] = None,
     ) -> int:
         """
-        Modify **selected** (not `None`) fields of an existing contact.
+        Modify selected (not None) fields of an existing contact.
 
         Parameters
         ----------
@@ -434,30 +493,28 @@ class ContactManager(BaseContactManager):
             Contact's email address - must contain exactly one @ symbol with characters
             on either side.
         phone_number : str | None
-            Contact's phone number - can optionally start with '+' (only if *explicitly*
+            Contact's phone number - can optionally start with '+' (only if explicitly
             mentioned by the user), but must otherwise contain only digits.
         whatsapp_number : str | None
-            Contact's WhatsApp number - can optionally start with '+' (only if *explicitly*
+            Contact's WhatsApp number - can optionally start with '+' (only if explicitly
             mentioned by the user), but must otherwise contain only digits.
         description : str | None
             A free-form text description or notes about the contact.
         custom_fields : Dict[str, ColumnType] | None
             Additional contact information as key-value pairs, where keys are string column
-            names and values are of type ColumnType. Can include any other relevant
-            information about the contact. May be *None*.
+            names (which MUST be snake case) and values are of type ColumnType.
+            Can include any other relevant information about the contact. May be None.
 
         Returns
         -------
         int
-            The contact's *unchanged* ``contact_id`` on success.
+            The contact's unchanged contact_id on success.
 
         Raises
         ------
         ValueError
-            • When *no* updatable field is provided.
-            • When *contact_id* does not exist.
-            • When the new email / phone / WhatsApp value duplicates another
-              record.
+            When no updatable field is provided, when contact_id does not exist,
+            or when the new email/phone/WhatsApp value duplicates another record.
         """
         # Prune None values
         contact_details = {
@@ -521,24 +578,23 @@ class ContactManager(BaseContactManager):
         limit: int = 100,
     ) -> List[Contact]:
         """
-        Retrieve **one or many** contacts matching an arbitrary Python
-        expression.
+        Retrieve one or many contacts matching an arbitrary Python expression.
 
         Parameters
         ----------
-        filter : str | None, default ``None``
+        filter : str | None, default None
             A boolean Python expression evaluated against each contact
-            (e.g. ``"first_name == 'John' and surname == 'Doe'"``).  *None*
-            returns **all** records.
-        offset : int, default ``0``
+            (e.g. "first_name == 'John' and surname == 'Doe'"). None
+            returns all records.
+        offset : int, default 0
             Index of the first result to return (0-based).
-        limit : int, default ``100``
+        limit : int, default 100
             Maximum number of records to return.
 
         Returns
         -------
-        list[Contact]
-            A list of Pydantic :class:`Contact` models in creation order.
+        List[Contact]
+            A list of Pydantic Contact models in creation order.
         """
         logs = unify.get_logs(
             context=self._ctx,
