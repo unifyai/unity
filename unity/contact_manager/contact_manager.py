@@ -35,6 +35,8 @@ class ContactManager(BaseContactManager):
             self._ctx = f"{read_ctx}/Contacts"
         else:
             self._ctx = "Contacts"
+        if self._ctx not in unify.get_contexts():
+            unify.create_context(self._ctx)
 
         # ── immutable built-in columns ───────────────────────────────────
         self._REQUIRED_COLUMNS: set[str] = {
