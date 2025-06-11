@@ -166,7 +166,18 @@ def speak(text: str):
             # Last resort – try bytes() conversion
             return bytes(frame)
 
-    pcm = asyncio.run(_gen())
+    # ── Generate PCM safely whether or not we're already inside an event-loop ──
+    try:
+        loop = asyncio.get_running_loop()  # raises if no loop
+        if loop.is_running():  # typical sandbox case
+            fut = asyncio.run_coroutine_threadsafe(_gen(), loop)
+            pcm = fut.result()
+        else:  # loop exists but isn't running
+            pcm = loop.run_until_complete(_gen())
+    except RuntimeError:
+        # No loop active in this thread → plain old blocking call
+        pcm = asyncio.run(_gen())
+
     if not pcm:
         return
 
