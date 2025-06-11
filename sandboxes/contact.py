@@ -139,7 +139,7 @@ def _seed_llm(cm: ContactManager, custom: Optional[str] = None) -> Optional[str]
 
 
 class _Intent(BaseModel):
-    action: str = Field(..., regex="^(ask|update)$")
+    action: str = Field(..., pattern="^(ask|update)$")
     cleaned_text: str
 
 
@@ -245,7 +245,7 @@ async def _main_async() -> None:
         LG.setLevel(logging.INFO)
 
     # prepare Unify context
-    unify.activate("ContactSandbox")
+    unify.activate("ContactSandbox", overwrite=True)
     fresh = "Contacts" not in unify.get_contexts() or args.new
     unify.set_context("Contacts", overwrite=fresh)
 
