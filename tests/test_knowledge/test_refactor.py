@@ -22,7 +22,6 @@ from __future__ import annotations
 
 import pytest
 
-from unity.events.event_bus import EventBus
 from unity.contact_manager.contact_manager import ContactManager
 from unity.knowledge_manager.knowledge_manager import KnowledgeManager
 
@@ -48,9 +47,7 @@ async def test_refactor_removes_duplicate_opening_hours():
     """
 
     # ➊  Seed duplicated schema & data --------------------------------------
-    eb = EventBus()
-    eb.register_event_types(["Messages", "MessageExchangeSummaries"])
-    cm = ContactManager(eb)
+    cm = ContactManager()
     km = KnowledgeManager(contact_manager=cm)
 
     # Contacts table: add duplicate columns + one sample row
