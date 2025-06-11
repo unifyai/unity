@@ -12,7 +12,6 @@ from ..helpers import _handle_exceptions
 import unify
 from .types.contact import Contact
 from .base import BaseContactManager
-from ..events.event_bus import EventBus
 from ..common.llm_helpers import (
     start_async_tool_use_loop,
     SteerableToolHandle,
@@ -22,19 +21,20 @@ from ..common.llm_helpers import (
 
 class ContactManager(BaseContactManager):
 
-    def __init__(self, event_bus: EventBus, *, traced: bool = True) -> None:
+    def __init__(self) -> None:
         """
         Responsible managing the list of contact details stored upstream.
         """
-        self._event_bus = event_bus
 
         ctxs = unify.get_active_context()
         read_ctx, write_ctx = ctxs["read"], ctxs["write"]
         assert (
             read_ctx == write_ctx
         ), "read and write contexts must be the same when instantiating a TranscriptManager."
-        event_bus.register_event_types(["Contacts"])
-        self._ctx = event_bus.ctxs["Contacts"]
+        if read_ctx:
+            self._ctx = f"{read_ctx}/Contacts"
+        else:
+            self._ctx = "Contacts"
 
         # ── immutable built-in columns ───────────────────────────────────
         self._REQUIRED_COLUMNS: set[str] = {
@@ -75,9 +75,6 @@ class ContactManager(BaseContactManager):
             ),
             **self._schema_tools,
         }
-        # Add tracing
-        if traced:
-            self = unify.traced(self)
 
     # ──────────────────────────────────────────────────────────────────────
     #  Column helpers (single-table version of KnowledgeManager's helpers)
