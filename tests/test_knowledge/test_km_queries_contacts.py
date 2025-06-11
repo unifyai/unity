@@ -10,7 +10,6 @@ from __future__ import annotations
 
 import pytest
 
-from unity.events.event_bus import EventBus
 from unity.contact_manager.contact_manager import ContactManager
 from unity.knowledge_manager.knowledge_manager import KnowledgeManager
 
@@ -30,9 +29,7 @@ async def test_km_retrieve_joins_contact_and_company():
     The KM should discover the employer via CM.ask and then look up the
     company's employee count in its own tables.
     """
-    eb = EventBus()
-    eb.register_event_types(["Messages", "MessageExchangeSummaries"])
-    cm = ContactManager(eb)
+    cm = ContactManager()
     km = KnowledgeManager(contact_manager=cm)
 
     # ➊ Set up contact – add custom "employer" field then create Steve Taylor
@@ -70,9 +67,7 @@ async def test_km_store_updates_contact_via_cm():
     A natural-language *store* instruction routed through KM should trigger
     ContactManager.update to add WhatsApp info.
     """
-    eb = EventBus()
-    eb.register_event_types(["Messages", "MessageExchangeSummaries"])
-    cm = ContactManager(eb)
+    cm = ContactManager()
     km = KnowledgeManager(contact_manager=cm)
 
     # ‣ Pre-existing contact *without* WhatsApp
