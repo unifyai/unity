@@ -19,7 +19,6 @@ from __future__ import annotations
 import argparse
 import asyncio
 import logging
-import os
 import select
 import sys
 from pathlib import Path
@@ -166,21 +165,6 @@ async def _dispatch(
 
 def _input_now(timeout: float = 0.1) -> Optional[str]:
     """Non‑blocking stdin check (POSIX & Windows)."""
-    if os.name == "nt":  # Windows
-        import msvcrt, time as _t
-
-        start = _t.time()
-        buf = []
-        while _t.time() - start < timeout:
-            if msvcrt.kbhit():
-                ch = msvcrt.getwche()
-                if ch == "\r":
-                    return "".join(buf)
-                buf.append(ch)
-            _t.sleep(0.01)
-        return None
-
-    # POSIX
     r, _, _ = select.select([sys.stdin], [], [], timeout)
     return sys.stdin.readline().strip() if r else None
 
@@ -219,22 +203,19 @@ async def _main_async() -> None:
     )
     group = parser.add_mutually_exclusive_group()
     group.add_argument("--custom-scenario", type=str)
-    group.add_argument("--custom-scenario-voice", action="store_true")
-    parser.add_argument("--new", "-n", action="store_true", help="wipe existing data")
-    parser.add_argument("--silent", "-s", action="store_true", help="suppress logs")
+    parser.add_argument("--reuse", "-r", action="store_true", help="re-use old data")
     parser.add_argument("--debug", "-d", action="store_true", help="verbose tool logs")
     args = parser.parse_args()
 
-    scenario_text = get_custom_scenario(args, silent=args.silent)
+    scenario_text = get_custom_scenario(args)
 
     # logging
-    if not args.silent:
-        logging.basicConfig(level=logging.INFO, format="%(message)s")
-        LG.setLevel(logging.INFO)
+    logging.basicConfig(level=logging.INFO, format="%(message)s")
+    LG.setLevel(logging.INFO)
 
     # prepare Unify context
-    unify.activate("ContactSandbox", overwrite=True)
-    fresh = "Contacts" not in unify.get_contexts() or args.new
+    unify.activate("ContactSandbox")
+    fresh = "Contacts" not in unify.get_contexts() or (not args.reuse)
     unify.set_context("Contacts", overwrite=fresh)
 
     # manager
