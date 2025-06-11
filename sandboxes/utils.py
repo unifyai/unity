@@ -135,8 +135,8 @@ def transcribe_deepgram(audio_bytes: bytes) -> str:
         return input("> ")
 
 
-def speak(text: str):
-    """Speak *text* via Cartesia TTS – press ↵ to interrupt playback."""
+async def _speak_async(text: str) -> None:
+    """Real async implementation – **must be run inside an event-loop**."""
     if "CARTESIA_API_KEY" not in os.environ:
         return
 
@@ -145,38 +145,17 @@ def speak(text: str):
     async def _gen() -> bytes:
         async with aiohttp.ClientSession() as s:
             tts = cartesia.TTS(http_session=s)
-            stream = tts.synthesize(text)
+            frame = await tts.synthesize(text).collect()
 
-            # Collect the entire synthesis into one object
-            frame = await stream.collect()
-
-            # Newest SDK exposes to_pcm_bytes()
-            if hasattr(frame, "to_pcm_bytes"):
+            if hasattr(frame, "to_pcm_bytes"):  # newest SDK
                 return frame.to_pcm_bytes()
-
-            # Older SDK exposes data attr
-            if hasattr(frame, "data"):
+            if hasattr(frame, "data"):  # older SDK
                 return bytes(frame.data)
+            if hasattr(frame, "to_wav_bytes"):  # WAV fallback → strip header
+                return frame.to_wav_bytes()[44:]
+            return bytes(frame)  # last-resort
 
-            # Fallback: to_wav_bytes() → strip 44-byte header
-            if hasattr(frame, "to_wav_bytes"):
-                wav = frame.to_wav_bytes()
-                return wav[44:]
-
-            # Last resort – try bytes() conversion
-            return bytes(frame)
-
-    # ── Generate PCM safely whether or not we're already inside an event-loop ──
-    try:
-        loop = asyncio.get_running_loop()  # raises if no loop
-        if loop.is_running():  # typical sandbox case
-            fut = asyncio.run_coroutine_threadsafe(_gen(), loop)
-            pcm = fut.result()
-        else:  # loop exists but isn't running
-            pcm = loop.run_until_complete(_gen())
-    except RuntimeError:
-        # No loop active in this thread → plain old blocking call
-        pcm = asyncio.run(_gen())
+    pcm = await _gen()
 
     if not pcm:
         return
@@ -215,6 +194,24 @@ def speak(text: str):
             termios.tcflush(sys.stdin, termios.TCIFLUSH)
         except Exception:
             pass
+
+
+# ────────────────────────────── public shim ────────────────────────────────
+def speak(text: str) -> None:
+    """
+    Safe *sync* wrapper around :pyfunc:`_speak_async`.
+
+    • If *no* event-loop is running (classic script) → `asyncio.run`.
+    • If we’re already **inside** a running loop (your sandbox) → schedule the
+      coroutine with `loop.create_task` and return immediately (non-blocking).
+    """
+    try:
+        loop = asyncio.get_running_loop()
+        # we're inside an active loop → fire-and-forget
+        loop.create_task(_speak_async(text))
+    except RuntimeError:
+        # no loop → normal synchronous context
+        asyncio.run(_speak_async(text))
 
 
 def input_with_timeout(timeout: float = 0.1) -> Tuple[bool, Optional[str]]:
