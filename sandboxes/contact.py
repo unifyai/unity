@@ -287,7 +287,7 @@ async def _main_async() -> None:
 
             _kind, _handle = await _dispatch(cm, raw, show_steps=args.debug)
             if args.voice:
-                _speak("Working on this…")
+                _speak("Working on this")
 
             answer = await _await_with_interrupt(_handle)
             if isinstance(answer, tuple):  # reasoning steps requested
