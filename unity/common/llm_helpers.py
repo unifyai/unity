@@ -496,8 +496,8 @@ async def _async_tool_use_loop_inner(
     propagate_chat_context: bool = True,
     parent_chat_context: Optional[list[dict]] = None,
     log_steps: bool = True,
-    max_steps: Optional[int] = 25,
-    timeout: Optional[int] = 60,
+    max_steps: Optional[int] = None,
+    timeout: Optional[int] = None,
     raise_on_limit: bool = False,
     include_class_in_dynamic_tool_names: bool = False,
     clarification_up_q: Optional[asyncio.Queue[str]] = None,
@@ -627,7 +627,11 @@ async def _async_tool_use_loop_inner(
     ), "event_bus and event_type must either both be specified or both be unspecified"
 
     if log_steps:
-        LOGGER.info(f"\n🧑‍💻 {message}\n")
+        if parent_chat_context:
+            LOGGER.info(
+                f"\nParent Context: ⬇️ {json.dumps(parent_chat_context, indent=4)}\n",
+            )
+        LOGGER.info(f"\nUser Message 🧑‍💻: {message}\n")
 
     # ── 0-a. Inject **system** header with broader context ───────────────────
     #
@@ -2299,8 +2303,8 @@ def start_async_tool_use_loop(
     propagate_chat_context: bool = True,
     parent_chat_context: Optional[list[dict]] = None,
     log_steps: bool = True,
-    max_steps: Optional[int] = 25,
-    timeout: Optional[int] = 60,
+    max_steps: Optional[int] = None,
+    timeout: Optional[int] = None,
     raise_on_limit: bool = False,
     include_class_in_dynamic_tool_names: bool = False,
     clarification_up_q: Optional[asyncio.Queue[str]] = None,
