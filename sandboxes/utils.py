@@ -164,29 +164,14 @@ def transcribe_deepgram(audio_bytes: bytes) -> str:
 
 
 async def _speak_async(text: str) -> None:
-    """Real async implementation – **must be run inside an event-loop**."""
+    """
+    Stream-out Cartesia audio as it is generated so playback starts almost
+    immediately.  ↵ while speaking still skips the rest.
+    """
     if "CARTESIA_API_KEY" not in os.environ:
         return
 
     print("🗣️ Assistant speaking… press ↵ to skip.")
-
-    async def _gen() -> bytes:
-        async with aiohttp.ClientSession() as s:
-            tts = cartesia.TTS(http_session=s)
-            frame = await tts.synthesize(text).collect()
-
-            if hasattr(frame, "to_pcm_bytes"):  # newest SDK
-                return frame.to_pcm_bytes()
-            if hasattr(frame, "data"):  # older SDK
-                return bytes(frame.data)
-            if hasattr(frame, "to_wav_bytes"):  # WAV fallback → strip header
-                return frame.to_wav_bytes()[44:]
-            return bytes(frame)  # last-resort
-
-    pcm = await _gen()
-
-    if not pcm:
-        return
 
     # ─────────────── enter-to-skip listener ────────────────
     skip = threading.Event()  # raised when user hits ↵
@@ -204,28 +189,43 @@ async def _speak_async(text: str) -> None:
     listener = threading.Thread(target=_listen_enter, daemon=True)
     listener.start()
 
-    with noalsaerr():
-        pa = pyaudio.PyAudio()
-    stream = pa.open(
-        format=pyaudio.paInt16,
-        channels=1,
-        rate=24000,
-        output=True,
-    )
+    # ─────────────── streaming TTS ────────────────
+    async with aiohttp.ClientSession() as session:
+        tts = cartesia.TTS(http_session=session)
 
-    chunk = 4800  # ≈0.1 s of audio
-    i = 0
-    while i < len(pcm) and not skip.is_set():
-        stream.write(pcm[i : i + chunk])
-        i += chunk
+        # Open the PortAudio stream once, before the first frame arrives
+        with noalsaerr():
+            pa = pyaudio.PyAudio()
+        stream = pa.open(
+            format=pyaudio.paInt16,
+            channels=1,
+            rate=tts.sample_rate,  # usually 24 kHz
+            output=True,
+        )
 
-    stream.stop_stream()
-    stream.close()
-    pa.terminate()
+        def _frame_to_pcm(frame: "AudioFrame") -> bytes:
+            """Return raw 16-bit PCM for *any* Cartesia AudioFrame flavour."""
+            if hasattr(frame, "to_pcm_bytes"):  # newest SDK
+                return frame.to_pcm_bytes()
+            if hasattr(frame, "data"):  # mid-2024 builds
+                return bytes(frame.data)
+            if hasattr(frame, "to_wav_bytes"):  # old fallback → strip header
+                return frame.to_wav_bytes()[44:]
+            return bytes(frame)  # last-resort
+
+        async with tts.synthesize(text) as synth_stream:
+            async for audio in synth_stream:  # 10-50 ms frames
+                if skip.is_set():
+                    break
+                stream.write(_frame_to_pcm(audio.frame))
+
+        stream.stop_stream()
+        stream.close()
+        pa.terminate()
 
     # ─────────────── clean-up ───────────────
-    listener_done.set()  # stop polling
-    listener.join(timeout=0.1)  # don’t leave it dangling
+    listener_done.set()
+    listener.join(timeout=0.1)
 
     if skip.is_set():  # flush the newline the user pressed
         try:
