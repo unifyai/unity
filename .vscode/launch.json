@@ -14,7 +14,7 @@
             "justMyCode": false
         },
         {
-            "name": "Contact Sandbox",
+            "name": "Contact Manager Sandbox",
             "type": "python",
             "request": "launch",
             "program": "${workspaceFolder}/sandboxes/contact_manager.py",
@@ -25,10 +25,21 @@
             "justMyCode": false
           },
           {
-            "name": "Knowledge Sandbox",
+            "name": "Knowledge Manager Sandbox",
             "type": "python",
             "request": "launch",
             "program": "${workspaceFolder}/sandboxes/knowledge_manager.py",
+            "args": ["--voice"],
+            "cwd": "${workspaceFolder}",
+            "env": { "PYTHONPATH": "${workspaceFolder}" },
+            "console": "integratedTerminal",
+            "justMyCode": false
+          },
+          {
+            "name": "Task Scheduler Sandbox",
+            "type": "python",
+            "request": "launch",
+            "program": "${workspaceFolder}/sandboxes/task_scheduler.py",
             "args": ["--voice"],
             "cwd": "${workspaceFolder}",
             "env": { "PYTHONPATH": "${workspaceFolder}" },
