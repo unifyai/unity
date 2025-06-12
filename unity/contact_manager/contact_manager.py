@@ -21,7 +21,7 @@ from ..common.llm_helpers import (
 
 class ContactManager(BaseContactManager):
 
-    def __init__(self, *, batched: bool = False) -> None:
+    def __init__(self) -> None:
         """
         Responsible for managing the list of contact details stored upstream.
 
@@ -31,9 +31,6 @@ class ContactManager(BaseContactManager):
             • ``False`` – expose the original *atomic* tools\
             • ``True``  – expose only the new *batched* variants
         """
-        # Store flag so the rest of the class can branch on it
-        self._batched = batched
-
         ctxs = unify.get_active_context()
         read_ctx, write_ctx = ctxs["read"], ctxs["write"]
         assert (
@@ -77,20 +74,14 @@ class ContactManager(BaseContactManager):
         }
 
         # Choose atomic or batched mutation helpers
-        if self._batched:
-            _mutation_fns = [
-                self._create_contacts,
-                self._update_contacts,
-                self._search_contacts,
-                self._nearest_column,
-            ]
-        else:
-            _mutation_fns = [
-                self._create_contact,
-                self._update_contact,
-                self._search_contacts,
-                self._nearest_column,
-            ]
+        _mutation_fns = [
+            self._create_contact,
+            self._create_contacts,
+            self._update_contact,
+            self._update_contacts,
+            self._search_contacts,
+            self._nearest_column,
+        ]
 
         self._update_tools: Dict[str, Callable] = {
             **methods_to_tool_dict(
@@ -136,7 +127,7 @@ class ContactManager(BaseContactManager):
             Dictionary of columns, with types if requested.
         """
         cols = self._get_columns()
-        return {"columns": cols} if include_types else set(cols)
+        return cols if include_types else set(cols)
 
     def _create_custom_column(
         self,
@@ -311,7 +302,13 @@ class ContactManager(BaseContactManager):
 
             tools["request_clarification"] = request_clarification
 
-        client.set_system_message(build_ask_prompt(tools))
+        client.set_system_message(
+            build_ask_prompt(
+                tools=tools,
+                num_contacts=self._num_contacts(),
+                columns=self._list_columns(),
+            ),
+        )
         handle = start_async_tool_use_loop(
             client,
             text,
@@ -377,6 +374,21 @@ class ContactManager(BaseContactManager):
             handle.result = wrapped_result  # type: ignore
 
         return handle
+
+    # Helpers #
+    # --------#
+
+    def _num_contacts(
+        self,
+    ) -> int:
+        """
+        Get the total number of contacts stored in the contacts table.
+        """
+        return unify.get_logs_metric(
+            metric="count",
+            key="contact_id",
+            context=self._ctx,
+        )
 
     # Private #
     # --------#
