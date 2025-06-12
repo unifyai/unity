@@ -1,382 +1,319 @@
-"""knowledge_sandbox.py  (voice mode, Deepgram SDK v4, sync)
-================================================================
-Interactive sandbox for **KnowledgeManager** with optional voice input.
+"""knowledge_sandbox.py  (optional voice mode, Deepgram SDK v4, sync)
+====================================================================
+Interactive sandbox for **KnowledgeManager**.
 
-Features
---------
-* Fixed richly‑seeded scenario covering multiple tables and attributes
-  (people, products, purchases, geometry, pets, misc facts).
-* `--scenario llm` flag – generate 120‑180 factual sentences via LLM and
-  ingest them automatically.
-* Shared audio/STT/TTS helpers imported from `utils.py`.
-* Minimal dispatcher routes utterances to `KnowledgeManager.store` or
-  `.retrieve` using a lightweight LLM intent/cleanup step.
-* Supports interruptions during LLM processing via AsyncToolLoopHandle.
+It supports:
+• Fixed or LLM‑generated seed data.
+• Voice or plain‑text input (same helpers as the other sandboxes).
+• Automatic dispatch to `retrieve`, `store` *or* `refactor` depending on intent.
+• Mid‑conversation interruption (pause / interject / cancel).
 """
 
 from __future__ import annotations
 
+# ─────────────────────────────── stdlib / vendored ──────────────────────────
+import os
 import argparse
 import asyncio
-import json
 import logging
-import re
-import sys
 import select
-import os
-from typing import List, Optional, Tuple
-from pydantic import BaseModel, Field
+import sys
 from pathlib import Path
-
-ROOT = Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(ROOT))
+from typing import List, Optional, Tuple, Dict
 
 import unify
 
-from unity.constants import LOGGER as _LG  # type: ignore
-from unity.knowledge_manager.knowledge_manager import KnowledgeManager  # type: ignore
-from unity.common.llm_helpers import SteerableToolHandle  # type: ignore
-from sandboxes.utils import (
+unify.set_trace_context("Traces")
+from dotenv import load_dotenv
+from pydantic import BaseModel, Field
+from scenario_builder import ScenarioBuilder
+
+# Ensure repository root resolves for local execution
+ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
+load_dotenv()
+
+# ────────────────────────────────  unity imports  ───────────────────────────
+from unity.knowledge_manager.knowledge_manager import KnowledgeManager
+from unity.common.llm_helpers import SteerableToolHandle
+from sandboxes.utils import (  # shared helpers reused in other sandboxes
     record_until_enter as _record_until_enter,
     transcribe_deepgram as _transcribe_deepgram,
     speak as _speak,
     run_in_loop,
     get_custom_scenario,
-)  # type: ignore
+)
+
+LG = logging.getLogger("knowledge_sandbox")
+
+# ═════════════════════════════════ seed helpers ═════════════════════════════
 
 
-# ---------------------------------------------------------------------------
-# Scenario seeding
-# ---------------------------------------------------------------------------
+async def _build_scenario(custom: Optional[str] = None) -> Optional[str]:
+    """
+    Populate the knowledge store **via the official tools** (`store`/`retrieve`)
+    using :class:`ScenarioBuilder`.  Falls back to the fixed seed on error.
+    """
+    km = KnowledgeManager()
 
-
-def _seed_fixed(km: KnowledgeManager) -> None:
-    """Populate KnowledgeManager with a deterministic, multi‑table world."""
-    seed_statements: List[str] = [
-        # People & attributes
-        "Adrian was born in 1994.",
-        "Bob is 35 years old.",
-        "Bob's favourite colour is green and his height is 180 centimetres.",
-        "Carol owns a dog named Fido.",
-        "Carol also owns a cat named Luna.",
-        "Daniel's employee ID is E‑421 and he works in the London office.",
-        # Products & purchases
-        "The Apple iPhone 15 costs 999 US dollars.",
-        "Daniel bought an iPhone 15 on 3 May 2025 using his credit card.",
-        "A Logitech MX Master 4 mouse costs 129 US dollars.",
-        "Sara ordered two MX Master 4 mice on 1 May 2025.",
-        # Geometry
-        "Point P has coordinates x = 3 and y = 4.",
-        "Point Q has coordinates x = 1 and y = 10.",
-        "Point R has coordinates x = ‑5 and y = 7.",
-        # Random knowledge
-        "The capital of Spain is Madrid.",
-        "Mount Everest is 8,848 metres tall.",
-        "The chemical symbol for gold is Au.",
-    ]
-
-    for stmt in seed_statements:
-        km.store(stmt)
-
-
-def _seed_llm(
-    km: KnowledgeManager,
-    custom_scenario: Optional[str] = None,
-) -> Optional[str]:
-    """Use an LLM to generate a large set of factual sentences."""
-    if custom_scenario:
-        prompt = (
-            f"User-provided scenario:\n{custom_scenario}\n\n"
-            "Generate 120‑180 short factual sentences based on this scenario for ingestion by a knowledge base. "
-            "Avoid any personally identifying sensitive data. "
-            'Return as JSON {"statements": [...], "theme": <string>} and nothing else.'
+    description = (
+        custom.strip()
+        if custom
+        else (
+            "Generate 20 diverse facts about electric-vehicle manufacturers. "
+            "Cover launch years, battery capacities, warranty terms and sales "
+            "figures in different regions.  Include numbers, dates and named "
+            "entities so the schema has to evolve."
         )
-    else:
-        prompt = (
-            "Generate 120‑180 short factual sentences suitable for ingestion by a knowledge base. "
-            "Cover diverse domains: personal bios, product pricing, purchases, geography, science facts, pets, coordinates, sports scores etc. "
-            "Avoid any personally identifying sensitive data. "
-            'Return as JSON {"statements": [...], "theme": <string>} and nothing else.'
-        )
-    client = unify.Unify(
-        "o4-mini@openai",
-        cache=json.loads(os.environ.get("UNIFY_CACHE", "true")),
-        traced=json.loads(os.environ.get("UNIFY_TRACED", "true")),
     )
-    client.set_system_message(prompt)
-    raw = client.generate("Produce knowledge scenario").strip()
+    description += (
+        "\nTry to batch actions – each `store` can add multiple rows/columns "
+        "and `retrieve` can verify to avoid duplication."
+    )
+
+    builder = ScenarioBuilder(
+        description=description,
+        tools={
+            "store": km.store,
+            "retrieve": km.retrieve,
+        },
+    )
 
     try:
-        payload = json.loads(raw)
-    except Exception:
-        _LG.warning("LLM scenario failed – falling back to fixed seed.")
-        _seed_fixed(km)
-        return None
+        await builder.create()
+    except Exception as exc:
+        raise RuntimeError(f"LLM seeding via ScenarioBuilder failed. {exc}")
 
-    for stmt in payload.get("statements", []):
-        km.store(stmt)
-
-    return payload.get("theme")
+    return None
 
 
-# ---------------------------------------------------------------------------
-# Dispatcher – decide between store vs retrieve
-# ---------------------------------------------------------------------------
+# ═════════════════════════════ intent dispatcher ════════════════════════════
 
 
-class _IntentResp(BaseModel):
-    action: str = Field(..., description="either 'store' or 'retrieve'")
+class _Intent(BaseModel):
+    action: str = Field(..., pattern="^(retrieve|store|refactor)$")
     cleaned_text: str
 
 
-_INTENT_PROMPT = (
-    "You interface with a knowledge base. Incoming text may be: (a) a fact to be stored, or (b) a question to be answered via retrieval. "
-    "If it ends with a question mark, it's *probably* a retrieval, but clarifying words like 'remember', 'note that', 'please store', etc. force storage. "
-    "Respond with JSON {action:'store'|'retrieve', cleaned_text:'<sanitised>'}. For storage, cleaned_text should be the fact statement; for retrieval, it should be the user question."
+_INTENT_SYS_MSG = (
+    "Decide whether the user input is a *query* about existing knowledge "
+    "(`retrieve`), a *mutation* that adds/updates knowledge (`store`), "
+    "or a schema-level restructuring (`refactor`). "
+    "Return JSON "
+    "{'action':'retrieve'|'store'|'refactor','cleaned_text':<fixed_input>}."
 )
 
 
-async def _dispatch(
+async def _dispatch_with_context(
     km: KnowledgeManager,
     raw: str,
     *,
     show_steps: bool,
-) -> Tuple[str, SteerableToolHandle, List | None]:
-    raw = raw.strip()
-
-    # Quick rule: voice input often lacks punctuation – fall back to heuristic + LLM judge if ambiguous
-    heuristic_store = bool(
-        re.match(r"^(remember|note|store|add)\b", raw, re.I),
-    ) and not raw.endswith("?")
-
-    if heuristic_store:
-        handle = await km.store(raw, _return_reasoning_steps=show_steps)
-        return "store", handle, None
-
-    llm = unify.Unify("gpt-4o@openai", response_format=_IntentResp)
-    intent_json = llm.set_system_message(_INTENT_PROMPT).generate(raw)
-    intent = _IntentResp.model_validate_json(intent_json)
-
-    if intent.action == "store":
-        handle = await km.store(intent.cleaned_text, _return_reasoning_steps=show_steps)
-        return "store", handle, None
-
-    # Retrieval path
-    handle = await km.retrieve(intent.cleaned_text, _return_reasoning_steps=show_steps)
-    return "retrieve", handle, None
-
-
-# ---------------------------------------------------------------------------
-# Input polling helpers
-# ---------------------------------------------------------------------------
-
-
-def _poll_for_input(timeout: float = 0.1) -> Optional[str]:
-    """Non-blocking check for user input from stdin."""
-    if not select.select([sys.stdin], [], [], timeout)[0]:
-        return None
-
-    line = sys.stdin.readline().strip()
-    return line if line else None
-
-
-async def _handle_interruptions(
-    handle: SteerableToolHandle,
-    answer_task: asyncio.Task,
-    *,
-    voice_mode: bool = False,
-) -> str:
+    parent_chat_context: List[Dict[str, str]],
+) -> Tuple[str, SteerableToolHandle]:
     """
-    Poll for user interruptions while waiting for the answer task to complete.
-    Returns the kind of operation and the final result.
+    Figure out whether to call `store`, `retrieve` or `refactor`, forwarding
+    *parent_chat_context* to the KnowledgeManager methods.
     """
-    result = ""
 
-    try:
-        # Loop until the answer task is done
-        while not answer_task.done():
-            # Check for user input
-            if voice_mode:
-                # In voice mode, we just check if the user pressed Enter
-                user_input = _poll_for_input(0.1)
-                if user_input is not None:
-                    print("⚠️ Interruption detected. Recording new input...")
-                    audio_bytes = await asyncio.to_thread(_record_until_enter)
-                    user_text = await asyncio.to_thread(
-                        _transcribe_deepgram,
-                        audio_bytes,
-                    )
-                    if user_text:
-                        print(f"▶️  New input: {user_text}")
-                        if user_text.lower() in {"stop", "cancel"}:
-                            print("🛑 Stopping current operation...")
-                            handle.stop()
-                        else:
-                            print("⚡ Interjecting new information...")
-                            run_in_loop(handle.interject(user_text))
-            else:
-                # In text mode, we check for any input
-                user_input = _poll_for_input(0.1)
-                if user_input is not None:
-                    if user_input.lower() in {"stop", "cancel"}:
-                        print("🛑 Stopping current operation...")
-                        handle.stop()
-                    else:
-                        print(f"⚡ Interjecting: {user_input}")
-                        run_in_loop(handle.interject(user_input))
+    lowered = raw.lower()
 
-            # Small sleep to prevent CPU spinning
-            await asyncio.sleep(0.1)
+    # ───── quick heuristics (fast-path) ───────────────────────────────
+    if lowered.startswith(
+        (
+            "add ",
+            "create ",
+            "update ",
+            "change ",
+            "delete ",
+            "store ",
+            "remember ",
+            "note ",
+        ),
+    ):
+        handle = await km.store(
+            raw,
+            parent_chat_context=parent_chat_context,
+            _return_reasoning_steps=show_steps,
+        )
+        return "store", handle
 
-        # Get the result from the completed task
-        result = answer_task.result()
+    if lowered.startswith(
+        (
+            "refactor ",
+            "restructure ",
+            "normalize ",
+            "normalise ",
+            "schema ",
+        ),
+    ):
+        handle = await km.refactor(
+            raw,
+            parent_chat_context=parent_chat_context,
+            _return_reasoning_steps=show_steps,
+        )
+        return "refactor", handle
 
-        # If we have a tuple (for _return_reasoning_steps=True), extract just the answer
-        if isinstance(result, tuple) and len(result) >= 1:
-            result = result[0]
-
-        return result
-    except asyncio.CancelledError:
-        return "Operation was cancelled."
-
-
-# ---------------------------------------------------------------------------
-# CLI
-# ---------------------------------------------------------------------------
-
-
-async def _main_async(args, scenario_text: Optional[str] = None) -> None:
-    # Logging
-    if not args.silent:
-        logging.basicConfig(level=logging.INFO, format="%(message)s")
-        _LG.setLevel(logging.INFO)
-        if not args.debug:
-            for noisy in ("unify", "unify.utils", "unify.logging", "requests", "httpx"):
-                logging.getLogger(noisy).setLevel(logging.WARNING)
-
-    # Unify project context
-    unify.activate("KnowledgeSandbox")
-    fresh = "Knowledge" not in unify.get_contexts() or args.new
-    unify.set_context("Knowledge", overwrite=fresh)
-
-    # Manager
-    km = KnowledgeManager()
-
-    if fresh:
-        if scenario_text is not None:
-            theme = _seed_llm(km, custom_scenario=scenario_text)
-            if theme:
-                _LG.info(f"[Seed] LLM scenario theme: {theme}")
-        elif args.scenario == "llm":
-            theme = _seed_llm(km)
-            if theme:
-                _LG.info(f"[Seed] LLM scenario theme: {theme}")
-        else:
-            _seed_fixed(km)
-
-    print("KnowledgeManager sandbox – speak or type. 'quit' to exit.")
-    print("Press Enter during processing to interject or type 'stop' to cancel.\n")
-
-    # Interaction loop
-    if args.voice:
-        while True:
-            audio_bytes = _record_until_enter()
-            user_text = _transcribe_deepgram(audio_bytes).strip()
-            if not user_text:
-                continue
-            print(f"▶️  {user_text}")
-            if user_text.lower() in {"quit", "exit"}:
-                break
-
-            _speak("Working on this now…")
-
-            # Get the handle and create a task for the result
-            kind, handle, steps = await _dispatch(
-                km,
-                user_text,
-                show_steps=not args.silent,
-            )
-            answer_task = asyncio.create_task(handle.result())
-
-            # Handle interruptions while waiting for the result
-            result = await _handle_interruptions(
-                handle,
-                answer_task,
-                voice_mode=True,
-            )
-
-            print(f"[{kind}] => {result}\n")
-            if kind == "retrieve":
-                _speak(result)
-    else:
-        try:
-            while True:
-                line = input("> ").strip()
-                if line.lower() in {"quit", "exit"}:
-                    break
-                if not line:
-                    continue
-
-                # Get the handle and create a task for the result
-                kind, handle, steps = await _dispatch(
-                    km,
-                    line,
-                    show_steps=not args.silent,
-                )
-                answer_task = asyncio.create_task(handle.result())
-
-                # Handle interruptions while waiting for the result
-                result = await _handle_interruptions(handle, answer_task)
-
-                print(f"[{kind}] => {result}\n")
-        except (EOFError, KeyboardInterrupt):
-            print()
-
-
-def main() -> None:
-    parser = argparse.ArgumentParser(
-        description="KnowledgeManager sandbox with shared voice mode",
+    # ───── everything else – ask an LLM judge ────────────────────────
+    judge = unify.Unify("gpt-4o@openai", response_format=_Intent)
+    intent = _Intent.model_validate_json(
+        judge.set_system_message(_INTENT_SYS_MSG).generate(raw),
     )
+
+    fn = (
+        km.store
+        if intent.action == "store"
+        else km.refactor if intent.action == "refactor" else km.retrieve
+    )
+    handle = await fn(
+        raw,
+        parent_chat_context=parent_chat_context,
+        _return_reasoning_steps=show_steps,
+    )
+    return intent.action, handle
+
+
+# ═════════════════════════════ interruption helper ══════════════════════════
+
+
+def _input_now(timeout: float = 0.1) -> Optional[str]:
+    """Non‑blocking stdin check (POSIX & Windows)."""
+    r, _, _ = select.select([sys.stdin], [], [], timeout)
+    return sys.stdin.readline().strip() if r else None
+
+
+async def _await_with_interrupt(
+    handle: SteerableToolHandle,
+) -> str:  # returns final answer
+    while not handle.done():
+        txt = _input_now(0.1)
+        if txt:
+            if txt.lower() in {"stop", "cancel"}:
+                handle.stop()
+                break
+            run_in_loop(handle.interject(txt))
+        await asyncio.sleep(0.05)
+
+    return await handle.result()
+
+
+# ══════════════════════════════════  CLI  ═══════════════════════════════════
+
+
+async def _main_async() -> None:
+    parser = argparse.ArgumentParser(description="KnowledgeManager sandbox")
     parser.add_argument(
         "--voice",
         "-v",
         action="store_true",
-        help="enable voice capture/playback",
+        help="enable voice capture + TTS",
     )
-    parser.add_argument(
-        "--scenario",
-        choices=["fixed", "llm"],
-        default="fixed",
-        help="scenario type (overridden by --custom-scenario flags)",
-    )
-    parser.add_argument("--new", "-n", action="store_true", help="wipe & reseed data")
-    parser.add_argument(
-        "--silent",
-        "-s",
-        action="store_true",
-        help="suppress tool logs",
-    )
-    parser.add_argument(
-        "--debug",
-        "-d",
-        action="store_true",
-        help="verbose HTTP/LLM logs",
-    )
-
-    group = parser.add_mutually_exclusive_group()
-    group.add_argument("--custom-scenario", type=str, help="Provide a custom scenario")
-    group.add_argument(
-        "--custom-scenario-voice",
-        action="store_true",
-        help="Describe custom scenario via voice",
-    )
-
+    parser.add_mutually_exclusive_group()
+    parser.add_argument("--reuse", "-r", action="store_true", help="re-use old data")
+    parser.add_argument("--debug", "-d", action="store_true", help="verbose tool logs")
+    parser.add_argument("--traced", "-t", action="store_true", help="include tracing")
     args = parser.parse_args()
 
-    scenario_text = get_custom_scenario(args, silent=args.silent)
+    # tracing flag
+    if args.traced:
+        os.environ["UNIFY_TRACED"] = "true"
+    else:
+        os.environ["UNIFY_TRACED"] = "false"
 
-    # Run the async main function
-    asyncio.run(_main_async(args, scenario_text))
+    # prepare Unify context
+    unify.activate("KnowledgeSandbox")
+    if not args.reuse:
+        ctxs = unify.get_contexts()
+        if "Knowledge" in ctxs:
+            unify.delete_context("Knowledge")
+        unify.create_context("Knowledge")
+        if "Traces" in ctxs:
+            unify.delete_context("Traces")
+        unify.create_context("Traces")
+
+    # logging
+    logging.basicConfig(level=logging.INFO, format="%(message)s")
+    LG.setLevel(logging.INFO)
+
+    # custom scenario
+    scenario_text = get_custom_scenario(args)
+
+    # manager
+    km = KnowledgeManager()
+    if args.traced:
+        km = unify.traced(km)
+
+    # seed
+    if not args.reuse:
+        if scenario_text:
+            LG.info("[voice] transcript: “%s”", scenario_text)
+            LG.info("[seed] building synthetic knowledge base – this can take 20-40 s…")
+            if args.voice:
+                _speak("Sure thing, building your custom scenario now.")
+            theme = await _build_scenario(scenario_text)
+            LG.info("[seed] done.")
+            if args.voice:
+                _speak(
+                    "All done, your custom scenario is built and ready to go. Press enter to record a question or request an update for the contact list.",
+                )
+            if theme:
+                LG.info(f"[seed] theme: {theme}")
+        else:
+            raise Exception("No text provided for building the custom scenario")
+
+    print("KnowledgeManager sandbox – type or speak. 'quit' to exit.\n")
+
+    # running memory of the dialogue
+    chat_history: List[Dict[str, str]] = []
+
+    # interaction loop
+    while True:
+        try:
+            if args.voice:
+                audio = _record_until_enter()
+                raw = _transcribe_deepgram(audio).strip()
+                if not raw:
+                    continue
+                print(f"▶️  {raw}")
+            else:
+                raw = input("> ").strip()
+
+            if raw.lower() in {"quit", "exit"}:
+                break
+            if not raw:
+                continue
+
+            # ──────────────── remember the user's utterance ────────────────
+            _kind, _handle = await _dispatch_with_context(
+                km,
+                raw,
+                show_steps=args.debug,
+                parent_chat_context=chat_history,
+            )
+            chat_history.append({"role": "user", "content": raw})
+            if args.voice:
+                _speak("Let me take a look, give me a moment")
+
+            answer = await _await_with_interrupt(_handle)
+            if args.voice:
+                _speak("Okay that's all done")
+            if isinstance(answer, tuple):  # reasoning steps requested
+                answer, _steps = answer
+            print(f"[{_kind}] → {answer}\n")
+
+            # ──────────────── remember the assistant's reply ───────────────
+            chat_history.append({"role": "assistant", "content": answer})
+            if args.voice:
+                _speak(f"{answer} Anything else I can help with?")
+        except (EOFError, KeyboardInterrupt):
+            print("\nExiting…")
+            break
+
+
+def main() -> None:
+    asyncio.run(_main_async())
 
 
 if __name__ == "__main__":
