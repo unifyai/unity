@@ -118,7 +118,8 @@ def build_ask_prompt(
         [
             "You are an assistant specializing in **retrieving contact information**.",
             "Work strictly through the tools provided.",
-            "You should attempt to answer *all* questions as best you can, even if they seem out of scope."
+            "You should attempt to answer *any* question as best you can, even if it seems out of scope.",
+            "use the tools provided to see if you can find any missing context *before* asking the user for clarifications.",
             "",
             f"There are currently {num_contacts} contacts are stored in a table with the following colums:",
             json.dumps(columns, indent=4),
@@ -185,6 +186,8 @@ def build_update_prompt(tools: Dict[str, Callable]) -> str:
         [
             "You are an assistant in charge of **creating or editing contacts**.",
             "Use the tools provided to create new entries or update existing ones.",
+            "You should attempt to perform *any* request as best you can, even if it seems out of scope.",
+            "use the tools provided to see if you can find any missing context *before* asking the user for clarifications.",
             "",
             "Custom columns:",
             "---------------",
