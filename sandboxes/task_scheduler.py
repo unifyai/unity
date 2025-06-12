@@ -1,381 +1,332 @@
-"""tasklist_sandbox.py  (voice mode, Deepgram SDK v4, sync)
-===========================================================
-Interactive sandbox for **TaskScheduler** with optional hands‑free
-voice input. All shared audio/STT/TTS helpers are imported from
-`utils.py` to avoid duplication with other sandboxes.
+"""
+=====================================================================
+Interactive sandbox for **TaskScheduler**.
+
+It supports:
+• Fixed or LLM‑generated seed data.
+• Voice or plain‑text input (same helpers as the other sandboxes).
+• Automatic dispatch to `ask`, `update` *or* `start_task` depending on intent.
+• Mid‑conversation interruption (pause / interject / cancel).
 """
 
 from __future__ import annotations
 
+# ─────────────────────────────── stdlib / vendored ──────────────────────────
+import os
 import argparse
 import asyncio
-import select
-import json
 import logging
+import select
 import sys
-import threading
-import time
-from datetime import datetime, timezone
 from pathlib import Path
-import os
-from typing import Dict, List, Optional, Tuple
-from pydantic import BaseModel, Field
-from pathlib import Path
-
-ROOT = Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(ROOT))
+from typing import List, Optional, Tuple, Dict
+import re
 
 import unify
 
-from unity.constants import LOGGER as _LG  # type: ignore
-from unity.common import SteerableToolHandle  # type: ignore
-from unity.task_scheduler.task_scheduler import TaskScheduler  # type: ignore
-from unity.task_scheduler.types.priority import Priority  # type: ignore
-from unity.task_scheduler.types.schedule import Schedule  # type: ignore
-from tests.test_task_list.test_update_complex import _next_weekday  # type: ignore
+unify.set_trace_context("Traces")
+from dotenv import load_dotenv
+from pydantic import BaseModel, Field
+from scenario_builder import ScenarioBuilder
+
+# Ensure repository root resolves for local execution
+ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
+load_dotenv()
+
+# ────────────────────────────────  unity imports  ───────────────────────────
+from unity.task_scheduler.task_scheduler import TaskScheduler
+from unity.common.llm_helpers import SteerableToolHandle
 from sandboxes.utils import (
     record_until_enter as _record_until_enter,
     transcribe_deepgram as _transcribe_deepgram,
     speak as _speak,
     run_in_loop,
     get_custom_scenario,
-)  # type: ignore
+)
+
+LG = logging.getLogger("task_scheduler_sandbox")
+
+# ═════════════════════════════════ seed helpers ═════════════════════════════
 
 
-# ---------------------------------------------------------------------------
-# Scenario seeding helpers (fixed + LLM)
-# ---------------------------------------------------------------------------
+async def _build_scenario(custom: Optional[str] = None) -> Optional[str]:
+    """
+    Populate the task scheduler with sample data **through the official tools**
+    using :class:`ScenarioBuilder`.  Falls back to the fixed seed on any error.
+    """
+    ts = TaskScheduler()
 
-
-def _seed_fixed(ts: TaskScheduler) -> None:
-    """Populate a small but varied set of starter tasks."""
-    ts._create_task(
-        name="Write quarterly report",
-        description="Compile and draft the Q2 report for management.",
-        status="active",
-    )
-    ts._create_task(
-        name="Prepare slide deck",
-        description="Create slides for the upcoming board meeting.",
-        status="queued",
-    )
-    ts._create_task(
-        name="Client follow‑up email",
-        description="Send follow‑up email about the proposal.",
-        status="queued",
-    )
-
-    base = datetime.now(timezone.utc)
-    next_mon = _next_weekday(base, 0).replace(hour=9, minute=0, second=0, microsecond=0)
-    ts._create_task(
-        name="Send KPI report",
-        description="Automated email of KPIs to leadership.",
-        schedule=Schedule(
-            start_time=next_mon.isoformat(),
-            prev_task=None,
-            next_task=None,
-        ),
-        priority=Priority.high,
-    )
-    ts._create_task(
-        name="Deploy new release",
-        description="Roll out version 2.0 to production servers.",
-        status="paused",
-    )
-
-
-def _seed_llm(
-    ts: TaskScheduler,
-    custom_scenario: Optional[str] = None,
-) -> Optional[str]:
-    """Generate a large realistic task backlog via LLM."""
-    if custom_scenario:
-        prompt = f"User-provided scenario:\n{custom_scenario}\n\nGenerate realistic tasks based on this scenario. Create 110‑140 tasks across queues with positions, priorities & ISO start times. Return only JSON with top‑level 'tasks' and optional 'theme'."
-    else:
-        prompt = (
-            "Generate a realistic task list for a small business. Pick a coherent theme. "
-            "Create 110‑140 tasks across queues with positions, priorities & ISO start times. "
-            "Return only JSON with top‑level 'tasks' and optional 'theme'."
+    description = (
+        custom.strip()
+        if custom
+        else (
+            "Generate a backlog of 12 realistic product‑development tasks split "
+            "across 'Inbox', 'Next', 'Scheduled' and 'Waiting' queues.  Each task "
+            "must have a short title, detailed description, due date and priority. "
+            "Include dependencies between a few tasks so the schedule has depth."
         )
-    client = unify.Unify(
-        "o4-mini@openai",
-        cache=json.loads(os.environ.get("UNIFY_CACHE", "true")),
-        traced=json.loads(os.environ.get("UNIFY_TRACED", "true")),
     )
-    client.set_system_message(prompt)
-    raw = client.generate("Produce scenario").strip()
+    description += (
+        "\nBatch actions: each `update` call can create or modify several tasks "
+        "and `ask` can verify results to avoid duplications."
+    )
+
+    builder = ScenarioBuilder(
+        description=description,
+        tools={
+            "update": ts.update,
+            "ask": ts.ask,
+        },
+    )
 
     try:
-        payload = json.loads(raw)
-    except Exception:
-        _LG.warning("LLM scenario failed – using fixed seed.")
-        _seed_fixed(ts)
-        return None
+        await builder.create()
+    except Exception as exc:
+        raise RuntimeError(f"LLM seeding via ScenarioBuilder failed. {exc}")
 
-    theme = payload.get("theme")
-    tasks = payload["tasks"]
-
-    # Group by queue_group, sort by queue_position for stable insertion order
-    groups: Dict[str, List[dict]] = {}
-    for t in tasks:
-        groups.setdefault(t.get("queue_group", "default"), []).append(t)
-    for g in groups.values():
-        g.sort(key=lambda d: d.get("queue_position", 0))
-
-    id_map: Dict[Tuple[str, int], int] = {}
-    for g_name, g in groups.items():
-        for idx, entry in enumerate(g):
-            kwargs = {
-                "name": entry["name"],
-                "description": entry["description"],
-                "status": entry.get("status", "queued"),
-                "priority": entry.get("priority", Priority.normal),
-            }
-            if start := entry.get("start_time"):
-                kwargs["schedule"] = Schedule(
-                    start_time=start,
-                    prev_task=None,
-                    next_task=None,
-                )
-            task_id = ts._create_task(**kwargs)
-            id_map[(g_name, idx)] = task_id
-
-    # Wire up prev/next links inside each queue group
-    for g_name, g in groups.items():
-        for idx, _ in enumerate(g):
-            cur = id_map[(g_name, idx)]
-            prev_ = id_map.get((g_name, idx - 1)) if idx > 0 else None
-            next_ = id_map.get((g_name, idx + 1)) if idx < len(g) - 1 else None
-            unify.update_logs(
-                context="Tasks",
-                logs=ts._get_logs_by_task_ids(task_ids=cur),
-                entries={"schedule": {"prev_task": prev_, "next_task": next_}},
-                overwrite=True,
-            )
-    return theme
-
-
-# ---------------------------------------------------------------------------
-# Natural‑language dispatcher (ask vs update)
-# ---------------------------------------------------------------------------
-
-
-class _DispatchResp(BaseModel):
-    require_update: bool = Field(...)
-    fixed_text: str = Field(...)
-
-
-def _dispatch(ts: TaskScheduler, raw: str, *, show_steps: bool):
-    raw = raw.strip()
-
-    llm = unify.Unify("gpt-4o@openai", response_format=_DispatchResp)
-    llm.set_system_message(
-        "There is a table containing a list of tasks, and all of their properties. "
-        "The user has made a request via a speech‑to‑text process, which can introduce errors. "
-        "Using the output schema provided, output a corrected transcript and decide whether the task table must be updated.",
-    )
-    resp = _DispatchResp.model_validate_json(llm.generate(raw))
-
-    if resp.require_update:
-        handle = await ts.update(
-            text=resp.fixed_text,
-            _return_reasoning_steps=show_steps,
-            log_tool_steps=show_steps,
-        )
-        return "update", handle
-
-    handle = await ts.ask(
-        text=resp.fixed_text,
-        _return_reasoning_steps=show_steps,
-        log_tool_steps=show_steps,
-    )
-    return "ask", handle
-
-
-# ---------------------------------------------------------------------------
-# Input helpers for interruption detection
-# ---------------------------------------------------------------------------
-
-
-def _non_blocking_input(prompt: str = "", timeout: float = 0.1) -> Optional[str]:
-    """Check for user input without blocking, with a small timeout."""
-    ready_to_read = select.select([sys.stdin], [], [], timeout)[0]
-    if ready_to_read:
-        return sys.stdin.readline().strip()
     return None
 
 
-def _poll_for_interruption(handle: SteerableToolHandle) -> None:
-    """Poll for user input to interrupt or stop the current operation."""
-    print("⏳ Processing... Type anything to interrupt, or 'stop'/'cancel' to abort.")
-
-    while not handle.done():
-        user_input = _non_blocking_input(timeout=0.1)
-        if user_input:
-            if user_input.lower() in ("stop", "cancel"):
-                print("🛑 Stopping operation...")
-                handle.stop()
-                return
-            else:
-                print(f"💬 Interjecting: {user_input}")
-                run_in_loop(handle.interject(user_input))
-        time.sleep(0.1)
+# ═════════════════════════════ intent dispatcher ════════════════════════════
 
 
-# ---------------------------------------------------------------------------
-# Main entry point
-# ---------------------------------------------------------------------------
+class _Intent(BaseModel):
+    action: str = Field(..., pattern="^(ask|update|start)$")
+    cleaned_text: str
 
 
-async def _process_voice_input(
+_INTENT_SYS_MSG = (
+    "Decide whether the user input is a *query* about existing tasks (`ask`), "
+    "a *mutation* that creates/updates/deletes tasks (`update`), or an "
+    "instruction to begin working on a specific task (`start`). "
+    "Return JSON {'action':'ask'|'update'|'start','cleaned_text':<fixed_input>}."
+)
+
+
+async def _dispatch_with_context(
     ts: TaskScheduler,
-    audio_bytes: bytes,
+    raw: str,
+    *,
     show_steps: bool,
-):
-    """Process voice input with interruption support."""
-    user_text = _transcribe_deepgram(audio_bytes).strip()
-    if not user_text:
-        return
+    parent_chat_context: List[Dict[str, str]],
+) -> Tuple[str, SteerableToolHandle]:
+    """
+    Decide whether to call `ask`, `update` or `start_task`, forwarding
+    *parent_chat_context* to the TaskScheduler methods.  `start_task` requires
+    a numeric *task_id* which is extracted from the user's text.
+    """
 
-    print(f"▶️  {user_text}")
-    if user_text.lower() in {"quit", "exit"}:
-        return "quit"
+    lowered = raw.lower()
 
-    _speak("Working on this now…")
-    kind, handle = _dispatch(ts, user_text, show_steps=show_steps)
+    # ───── quick heuristics (fast‑path) ───────────────────────────────
+    if lowered.startswith(
+        (
+            "add ",
+            "create ",
+            "update ",
+            "change ",
+            "delete ",
+            "schedule ",
+            "move ",
+            "reschedule ",
+        ),
+    ):
+        handle = await ts.update(
+            raw,
+            parent_chat_context=parent_chat_context,
+            _return_reasoning_steps=show_steps,
+        )
+        return "update", handle
 
-    # Start a background thread to poll for interruptions
-    threading.Thread(target=_poll_for_interruption, args=(handle,), daemon=True).start()
+    if lowered.startswith(("start ", "begin ", "activate ")):
+        task_id = _extract_first_int(raw)
+        handle = await ts.start_task(
+            task_id,
+            parent_chat_context=parent_chat_context,
+        )
+        return "start", handle
 
-    # Wait for the result
-    try:
-        result = await handle.result()
-        print(f"[{kind}] => {result}\n")
-        _speak(result)
-    except asyncio.CancelledError:
-        print("Operation was cancelled.")
-
-
-async def _process_text_input(ts: TaskScheduler, text: str, show_steps: bool):
-    """Process text input with interruption support."""
-    if text.lower() in {"quit", "exit"}:
-        return "quit"
-
-    if not text:
-        return
-
-    kind, handle = _dispatch(ts, text, show_steps=show_steps)
-
-    # Start a background thread to poll for interruptions
-    threading.Thread(target=_poll_for_interruption, args=(handle,), daemon=True).start()
-
-    # Wait for the result
-    try:
-        result = await handle.result()
-        print(f"[{kind}] => {result}\n")
-    except asyncio.CancelledError:
-        print("Operation was cancelled.")
-
-
-async def _async_main():
-    parser = argparse.ArgumentParser(
-        description="TaskScheduler sandbox with minimalist voice mode (Deepgram v4, Cartesia)",
+    # ───── everything else – ask an LLM judge ────────────────────────
+    judge = unify.Unify("gpt-4o@openai", response_format=_Intent)
+    intent = _Intent.model_validate_json(
+        judge.set_system_message(_INTENT_SYS_MSG).generate(raw),
     )
+
+    if intent.action == "start":
+        task_id = _extract_first_int(intent.cleaned_text)
+        handle = await ts.start_task(
+            task_id,
+            parent_chat_context=parent_chat_context,
+        )
+    elif intent.action == "update":
+        handle = await ts.update(
+            intent.cleaned_text,
+            parent_chat_context=parent_chat_context,
+            _return_reasoning_steps=show_steps,
+        )
+    else:  # ask
+        handle = await ts.ask(
+            intent.cleaned_text,
+            parent_chat_context=parent_chat_context,
+            _return_reasoning_steps=show_steps,
+        )
+    return intent.action, handle
+
+
+def _extract_first_int(text: str) -> int:
+    """Return the first integer found in *text* or raise ValueError."""
+    m = re.search(r"\d+", text)
+    if not m:
+        raise ValueError("Could not find a task ID in the request.")
+    return int(m.group())
+
+
+# ═════════════════════════════ interruption helper ══════════════════════════
+
+
+def _input_now(timeout: float = 0.1) -> Optional[str]:
+    """Non‑blocking stdin check (POSIX & Windows)."""
+    r, _, _ = select.select([sys.stdin], [], [], timeout)
+    return sys.stdin.readline().strip() if r else None
+
+
+async def _await_with_interrupt(
+    handle: SteerableToolHandle,
+) -> str:  # returns final answer
+    while not handle.done():
+        txt = _input_now(0.1)
+        if txt:
+            if txt.lower() in {"stop", "cancel"}:
+                handle.stop()
+                break
+            run_in_loop(handle.interject(txt))
+        await asyncio.sleep(0.05)
+
+    return await handle.result()
+
+
+# ══════════════════════════════════  CLI  ═══════════════════════════════════
+
+
+async def _main_async() -> None:
+    parser = argparse.ArgumentParser(description="TaskScheduler sandbox")
     parser.add_argument(
         "--voice",
         "-v",
         action="store_true",
-        help="enable voice capture/playback",
+        help="enable voice capture + TTS",
     )
-    parser.add_argument(
-        "--scenario",
-        choices=["fixed", "llm"],
-        default="fixed",
-        help="seeding strategy (overridden by --custom-scenario or --custom-scenario-voice)",
-    )
-    parser.add_argument("--new", "-n", action="store_true", help="wipe & reseed data")
-    parser.add_argument(
-        "--silent",
-        "-s",
-        action="store_true",
-        help="suppress tool logs",
-    )
-    parser.add_argument(
-        "--debug",
-        "-d",
-        action="store_true",
-        help="verbose HTTP/LLM logging",
-    )
-
-    group = parser.add_mutually_exclusive_group()
-    group.add_argument("--custom-scenario", type=str, help="Provide a custom scenario")
-    group.add_argument(
-        "--custom-scenario-voice",
-        action="store_true",
-        help="Describe custom scenario via voice",
-    )
-
+    parser.add_mutually_exclusive_group()
+    parser.add_argument("--reuse", "-r", action="store_true", help="re-use old data")
+    parser.add_argument("--debug", "-d", action="store_true", help="verbose tool logs")
+    parser.add_argument("--traced", "-t", action="store_true", help="include tracing")
     args = parser.parse_args()
 
-    scenario_text = get_custom_scenario(args, silent=args.silent)
-
-    # Logging
-    if not args.silent:
-        logging.basicConfig(level=logging.INFO, format="%(message)s")
-        _LG.setLevel(logging.INFO)
-        if not args.debug:
-            for noisy in ("unify", "unify.utils", "unify.logging", "requests", "httpx"):
-                logging.getLogger(noisy).setLevel(logging.WARNING)
-
-    # Unify context
-    unify.activate("TaskScheduleSandbox")
-    fresh = "Tasks" not in unify.get_contexts() or args.new
-    unify.set_context("Tasks", overwrite=fresh)
-
-    # Manager
-    ts = TaskScheduler()
-
-    if fresh:
-        if scenario_text is not None:
-            _seed_llm(ts, custom_scenario=scenario_text)
-        elif args.scenario == "llm":
-            _seed_llm(ts)
-        else:
-            _seed_fixed(ts)
-
-    print("TaskScheduler sandbox – speak or type. 'quit' to exit.\n")
-
-    # Interaction loop
-    if args.voice:
-        while True:
-            audio_bytes = _record_until_enter()
-            result = await _process_voice_input(
-                ts,
-                audio_bytes,
-                show_steps=not args.silent,
-            )
-            if result == "quit":
-                break
+    # tracing flag
+    if args.traced:
+        os.environ["UNIFY_TRACED"] = "true"
     else:
-        try:
-            while True:
-                line = input("> ").strip()
-                result = await _process_text_input(
-                    ts,
-                    line,
-                    show_steps=not args.silent,
+        os.environ["UNIFY_TRACED"] = "false"
+
+    # prepare Unify context
+    unify.activate("TaskSchedulerSandbox")
+    if not args.reuse:
+        contexts = unify.get_contexts()
+        if "Tasks" in contexts:
+            unify.delete_context("Tasks")
+        unify.create_context("Tasks")
+
+        if "Traces" in contexts:
+            unify.delete_context("Traces")
+        unify.create_context("Traces")
+
+    # logging
+    logging.basicConfig(level=logging.INFO, format="%(message)s")
+    LG.setLevel(logging.INFO)
+
+    # custom scenario
+    scenario_text = get_custom_scenario(args)
+
+    # manager
+    ts = TaskScheduler()
+    if args.traced:
+        ts = unify.traced(ts)
+
+    # seed
+    if not args.reuse:
+        if scenario_text:
+            LG.info("[voice] transcript: “%s”", scenario_text)
+            LG.info("[seed] building synthetic task list – this can take 20‑40 s…")
+            if args.voice:
+                _speak("Sure thing, building your custom scenario now.")
+            theme = await _build_scenario(scenario_text)
+            LG.info("[seed] done.")
+            if args.voice:
+                _speak(
+                    "All done, your custom scenario is ready. "
+                    "Press enter to record a question or update request.",
                 )
-                if result == "quit":
-                    break
+            if theme:
+                LG.info(f"[seed] theme: {theme}")
+        else:
+            raise Exception("No text provided for building the custom scenario")
+
+    print("TaskScheduler sandbox – type or speak. 'quit' to exit.\n")
+
+    # running memory of the dialogue
+    chat_history: List[Dict[str, str]] = []
+
+    # interaction loop
+    while True:
+        try:
+            if args.voice:
+                audio = _record_until_enter()
+                raw = _transcribe_deepgram(audio).strip()
+                if not raw:
+                    continue
+                print(f"▶️  {raw}")
+            else:
+                raw = input("> ").strip()
+
+            if raw.lower() in {"quit", "exit"}:
+                break
+            if not raw:
+                continue
+
+            # ──────────────── remember the user's utterance ────────────────
+            _kind, _handle = await _dispatch_with_context(
+                ts,
+                raw,
+                show_steps=args.debug,
+                parent_chat_context=chat_history,
+            )
+            chat_history.append({"role": "user", "content": raw})
+            if args.voice:
+                _speak("Let me take a look, give me a moment")
+
+            answer = await _await_with_interrupt(_handle)
+            if args.voice:
+                _speak("Okay, that's all done")
+            if isinstance(answer, tuple):  # reasoning steps requested
+                answer, _steps = answer
+            print(f"[{_kind}] → {answer}\n")
+
+            # ──────────────── remember the assistant's reply ───────────────
+            chat_history.append({"role": "assistant", "content": answer})
+            if args.voice:
+                _speak(f"{answer} Anything else I can help with?")
         except (EOFError, KeyboardInterrupt):
-            print()
+            print("\nExiting…")
+            break
+        except Exception as exc:
+            LG.error("Error: %s", exc, exc_info=True)
 
 
 def main() -> None:
-    """Entry point that runs the async main function."""
-    import select  # Import here to avoid issues on Windows
-
-    asyncio.run(_async_main())
+    asyncio.run(_main_async())
 
 
 if __name__ == "__main__":
