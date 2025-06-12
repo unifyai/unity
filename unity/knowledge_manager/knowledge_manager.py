@@ -325,6 +325,7 @@ class KnowledgeManager(BaseKnowledgeManager):
             Optional initial schema – mapping *column → type*.  If omitted an
             empty table is created and columns can be added later with
             :pyfunc:`_create_empty_column`. Colums names MUST be *camel case*.
+            The column name `id` is reserved for internals, do *not* use this name.
 
         Returns
         -------
@@ -438,6 +439,7 @@ class KnowledgeManager(BaseKnowledgeManager):
             Target table.
         column_name : str
             New column identifier, MUST be *camel case*.
+            The column name `id` is reserved for internals, do *not* use this name.
         column_type : ColumnType | str
             Logical type, e.g. ``"str"``, ``"float"``, ``"datetime"``.
 
@@ -476,6 +478,7 @@ class KnowledgeManager(BaseKnowledgeManager):
             Table to modify.
         column_name : str
             Name of the new derived column, MUST be *camel case*.
+            The column name `id` is reserved for internals, do *not* use this name.
         equation : str
             Python expression evaluated per-row (column names appear as
             variables).  Example: ``(x**2 + y**2) ** 0.5``.
@@ -549,6 +552,7 @@ class KnowledgeManager(BaseKnowledgeManager):
             Existing column name, MUST be *camel case*.
         new_name : str
             Desired new name, MUST be *camel case*.
+            The column name `id` is reserved for internals, do *not* use this name.
 
         Returns
         -------

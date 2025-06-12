@@ -73,6 +73,8 @@ def build_refactor_prompt(
         You are the **Schema Refactor Assistant**.
         Your only goal is to *minimise duplication* and *maximise clarity* of
         the stored data model by judicious use of the tools listed below.
+        You should attempt to perform *any* refactor request as best you can, even if it seems out of scope.
+        use the tools provided to see if you can find any missing context *before* asking the user for clarifications.
 
         --------------------------------------------------------------------
         ## Current schema (JSON)
@@ -124,6 +126,8 @@ def build_store_prompt(
         Your task is to **store** new knowledge provided by the user.
         Keep the schema clean and future-proof – feel free to create,
         rename or delete tables / columns before inserting data.
+        You should attempt to perform *any* storage request as best you can, even if it seems out of scope.
+        use the tools provided to see if you can find any missing context *before* asking the user for clarifications.
 
         If the user refers to creating or updating *tasks*, then you should **not** store any tasks.
         Tasks should exclusively be stored by a separate task manager, this is **not your responsibility**.
@@ -182,6 +186,8 @@ def build_retrieve_prompt(
         Your task is to **retrieve** information requested by the user.
         Use the provided tools to search, transform or even refactor the
         schema so that every requested fact can be answered precisely.
+        You should attempt to perform *any* retrieval request as best you can, even if it seems out of scope.
+        use the tools provided to see if you can find any missing context *before* asking the user for clarifications.
 
         If the user requests information related to *contact* details,
         then you should simply pass on the request to the `ContactManager_update` tool,
