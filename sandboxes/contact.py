@@ -62,7 +62,7 @@ async def _build_scenario(
     Populate the contact store **through the official tools** using
     :class:`ScenarioBuilder`.  Falls back to the fixed seed on any error.
     """
-    cm = ContactManager(batched=True)
+    cm = ContactManager()
     description = (
         custom.strip()
         if custom
@@ -137,7 +137,7 @@ async def _dispatch_with_context(
     )
     fn = cm.update if intent.action == "update" else cm.ask
     handle = await fn(
-        intent.cleaned_text,
+        raw,
         parent_chat_context=parent_chat_context,
         _return_reasoning_steps=show_steps,
     )
@@ -255,13 +255,13 @@ async def _main_async() -> None:
                 continue
 
             # ──────────────── remember the user's utterance ────────────────
-            chat_history.append({"role": "user", "content": raw})
             _kind, _handle = await _dispatch_with_context(
                 cm,
                 raw,
                 show_steps=args.debug,
                 parent_chat_context=chat_history,
             )
+            chat_history.append({"role": "user", "content": raw})
             if args.voice:
                 _speak("Sure, working on this now")
 
