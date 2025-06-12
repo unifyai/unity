@@ -1,510 +1,332 @@
-"""transcript_sandbox.py  (voice mode, Deepgram SDK v4, sync)
-================================================================
+"""
+======================================================================
 Interactive sandbox for **TranscriptManager**.
 
-All shared voice helpers now live in `utils.py` to avoid duplication
-with the task‑list sandbox.
+Features
+--------
+• Fixed or LLM-generated seed data via :class:`ScenarioBuilder`.
+• Voice or plain-text input (shared helpers).
+• Automatic dispatch to `ask` *or* `summarize` depending on intent.
+• Mid-conversation interruption (pause / interject / cancel) for `ask` calls.
+• Scenario builder tool-loop exposes **private** ``_log_messages`` alongside
+  the public `ask` and `summarize` methods so that the LLM can inject raw
+  transcripts directly.
 """
 
 from __future__ import annotations
 
+# ─────────────────────────────── stdlib / vendored ──────────────────────────
+import os
 import argparse
 import asyncio
-import threading
-import json
 import logging
-import random
+import re
+import select
 import sys
-from datetime import datetime, timedelta, timezone
-from typing import Dict, List, Optional, Tuple
-import os
 from pathlib import Path
-
-ROOT = Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(ROOT))
+from typing import List, Optional, Tuple, Dict, Union
 
 import unify
 
-from unity.constants import LOGGER as _LG  # type: ignore
-from unity.transcript_manager.transcript_manager import TranscriptManager  # type: ignore
-from unity.transcript_manager.types.message import Message  # type: ignore
-from sandboxes.utils import run_in_loop, get_custom_scenario
+unify.set_trace_context("Traces")
+from dotenv import load_dotenv
+from pydantic import BaseModel, Field
+from scenario_builder import ScenarioBuilder
 
-# Voice helpers (PortAudio capture, Deepgram STT, Cartesia TTS)
+# Ensure repository root resolves for local execution
+ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
 
-# ---------------------------------------------------------------------------
-# Scenario seeding data
-# ---------------------------------------------------------------------------
+load_dotenv()
 
-_CONTACTS: List[dict] = [
-    dict(
-        first_name="Carlos",
-        surname="Diaz",
-        email_address="carlos.diaz@example.com",
-        phone_number="+14155550000",
-        whatsapp_number="+14155550000",
-    ),
-    dict(
-        first_name="Dan",
-        surname="Turner",
-        email_address="dan.turner@example.com",
-        phone_number="+447700900001",
-        whatsapp_number="+447700900001",
-    ),
-    dict(
-        first_name="Julia",
-        surname="Nguyen",
-        email_address="julia.nguyen@example.com",
-        phone_number="+447700900002",
-        whatsapp_number="+447700900002",
-    ),
-    dict(
-        first_name="Jimmy",
-        surname="O'Brien",
-        email_address="jimmy.obrien@example.com",
-        phone_number="+61240011000",
-        whatsapp_number="+61240011000",
-    ),
-    dict(
-        first_name="Anne",
-        surname="Fischer",
-        email_address="anne.fischer@example.com",
-        phone_number="+49891234567",
-        whatsapp_number="+49891234567",
-    ),
-    dict(
-        first_name="Leo",
-        surname="Kowalski",
-        email_address="leo.k@example.com",
-        phone_number="+48500100200",
-        whatsapp_number="+48500100200",
-    ),
-    dict(
-        first_name="Sara",
-        surname="Jensen",
-        email_address="sara.j@example.com",
-        phone_number="+46700111222",
-        whatsapp_number="+46700111222",
-    ),
-]
+# ────────────────────────────────  unity imports  ───────────────────────────
+from unity.transcript_manager.transcript_manager import TranscriptManager
+from unity.common.llm_helpers import SteerableToolHandle
+from sandboxes.utils import (  # shared helpers reused in other sandboxes
+    record_until_enter as _record_until_enter,
+    transcribe_deepgram as _transcribe_deepgram,
+    speak as _speak,
+    run_in_loop,
+    get_custom_scenario,
+)
 
-_ID_BY_NAME: Dict[str, int] = {}
+LG = logging.getLogger("transcript_sandbox")
+
+# ═════════════════════════════════ seed helpers ═════════════════════════════
 
 
-def _seed_fixed(tm: TranscriptManager) -> None:
-    "Populate contacts and a rich set of exchanges."
-    for idx, c in enumerate(_CONTACTS):
-        tm._contact_manager._create_contact(**c)
-        _ID_BY_NAME[c["first_name"].lower()] = idx
+async def _build_scenario(custom: Optional[str] = None) -> Optional[str]:
+    """Populate the transcript store **via the official tools** using
+    :class:`ScenarioBuilder`.
 
-    base = datetime(2025, 4, 20, 9, 0, tzinfo=timezone.utc)
-    ex_id = 0
+    The tool-loop exposes:
+    • ``_log_messages`` – for inserting raw transcript messages.
+    • ``ask``             – so the LLM can sanity-check its inserts.
+    • ``summarize``       – optional summarisation during seeding.
+    """
 
-    def _cid(name: str) -> int:
-        return _ID_BY_NAME[name]
+    tm = TranscriptManager()
 
-    # Dan ↔ Julia phone calls
-    tm.log_messages(
-        [
-            Message(
-                medium="phone_call",
-                sender_id=_cid("dan"),
-                receiver_id=_cid("julia"),
-                timestamp=base.isoformat(),
-                content="Hi Julia, it's Dan. Quick check‑in about Q2 metrics.",
-                exchange_id=ex_id,
-            ),
-            Message(
-                medium="phone_call",
-                sender_id=_cid("julia"),
-                receiver_id=_cid("dan"),
-                timestamp=(base + timedelta(seconds=30)).isoformat(),
-                content="Sure Dan, ready when you are.",
-                exchange_id=ex_id,
-            ),
-        ],
-    )
-    ex_id += 1
-
-    later = base + timedelta(days=6, minutes=30)
-    tm.log_messages(
-        [
-            Message(
-                medium="phone_call",
-                sender_id=_cid("dan"),
-                receiver_id=_cid("julia"),
-                timestamp=later.isoformat(),
-                content="Morning Julia – finalising the London event agenda today.",
-                exchange_id=ex_id,
-            ),
-            Message(
-                medium="phone_call",
-                sender_id=_cid("julia"),
-                receiver_id=_cid("dan"),
-                timestamp=(later + timedelta(seconds=45)).isoformat(),
-                content="Great. Let's confirm the speaker list and coffee budget.",
-                exchange_id=ex_id,
-            ),
-        ],
-    )
-    ex_id += 1
-
-    # Carlos bulk‑order email chain
-    t_email = base + timedelta(days=1, hours=3)
-    tm.log_messages(
-        [
-            Message(
-                medium="email",
-                sender_id=_cid("carlos"),
-                receiver_id=_cid("dan"),
-                timestamp=t_email.isoformat(),
-                content="Subject: Stapler bulk order\n\nHi Dan, I'm **interested in buying 200 units** of your new stapler. Can you quote?\n\nThanks,\nCarlos",
-                exchange_id=ex_id,
-            ),
-            Message(
-                medium="email",
-                sender_id=_cid("dan"),
-                receiver_id=_cid("carlos"),
-                timestamp=(t_email + timedelta(hours=2)).isoformat(),
-                content="Hi Carlos — sure, $4.50 per unit. See attached PDF.",
-                exchange_id=ex_id,
-            ),
-        ],
-    )
-    ex_id += 1
-
-    # Jimmy holiday heads‑up
-    t_holiday = base + timedelta(days=2, hours=9, minutes=10)
-    tm.log_messages(
-        [
-            Message(
-                medium="whatsapp_message",
-                sender_id=_cid("jimmy"),
-                receiver_id=_cid("dan"),
-                timestamp=t_holiday.isoformat(),
-                content="Heads‑up Dan, I'll be **on holiday from 2025‑05‑15 to 2025‑05‑30**. Ping me before that if urgent.",
-                exchange_id=ex_id,
-            ),
-        ],
-    )
-    ex_id += 1
-
-    # Anne passport excuse
-    t_excuse = base + timedelta(days=3)
-    tm.log_messages(
-        [
-            Message(
-                medium="whatsapp_message",
-                sender_id=_cid("anne"),
-                receiver_id=_cid("dan"),
-                timestamp=t_excuse.isoformat(),
-                content="Sorry Dan, I can't join the Berlin trip because my passport expired last week.",
-                exchange_id=ex_id,
-            ),
-        ],
-    )
-    ex_id += 1
-
-    # Leo logistics SMS
-    t_log = base + timedelta(days=4, hours=13)
-    tm.log_messages(
-        [
-            Message(
-                medium="sms_message",
-                sender_id=_cid("leo"),
-                receiver_id=_cid("dan"),
-                timestamp=t_log.isoformat(),
-                content="Dan, the pallets are delayed at customs. Need new clearance docs by tomorrow.",
-                exchange_id=ex_id,
-            ),
-            Message(
-                medium="sms_message",
-                sender_id=_cid("dan"),
-                receiver_id=_cid("leo"),
-                timestamp=(t_log + timedelta(minutes=7)).isoformat(),
-                content="On it – forwarding the updated invoices now.",
-                exchange_id=ex_id,
-            ),
-        ],
-    )
-    ex_id += 1
-
-    # Sara voice‑note (text representation)
-    t_voice = base + timedelta(days=5, hours=17)
-    tm.log_messages(
-        [
-            Message(
-                medium="whatsapp_message",
-                sender_id=_cid("sara"),
-                receiver_id=_cid("dan"),
-                timestamp=t_voice.isoformat(),
-                content="(voice) Hey Dan! Quick thing – keynote speaker wants to swap slots with the panel. OK?",
-                exchange_id=ex_id,
-            ),
-        ],
-    )
-    ex_id += 1
-
-    # Filler exchanges for noise
-    random.seed(42)
-    media = ["email", "phone_call", "sms_message", "whatsapp_message"]
-    filler_start = base + timedelta(days=6)
-    for extra in range(25):
-        mid = random.choice(media)
-        a, b = random.sample(list(_ID_BY_NAME.values()), 2)
-        ex_ref = ex_id + extra
-        msgs: List[Message] = []
-        for i in range(random.randint(5, 15)):
-            msgs.append(
-                Message(
-                    medium=mid,
-                    sender_id=a if i % 2 else b,
-                    receiver_id=b if i % 2 else a,
-                    timestamp=(
-                        filler_start + timedelta(minutes=extra * 4 + i)
-                    ).isoformat(),
-                    content=f"Filler {ex_ref}-{i} {mid} banter.",
-                    exchange_id=ex_ref,
-                ),
-            )
-        tm.log_messages(msgs)
-
-    tm.summarize(exchange_ids=[0, 1])
-
-
-def _seed_llm(tm: TranscriptManager, custom_scenario=None) -> Optional[str]:
-    if custom_scenario:
-        prompt = f"User-provided scenario:\n{custom_scenario}\n\nGenerate transcript scenario."
-    else:
-        prompt = (
-            "Create a realistic communication history for a European event agency with 8‑12 contacts interacting via email, phone_call, sms_message and whatsapp_message. "
-            "Include 60‑90 exchanges with 3‑8 messages each, timestamps between 2025‑04‑01 and 2025‑05‑10 (UTC). "
-            "Return JSON with keys: contacts, exchanges, theme."
+    description = (
+        custom.strip()
+        if custom
+        else (
+            "Generate 15 realistic message exchanges across email, Slack and "
+            "WhatsApp between 5 colleagues over the last two weeks. Vary the "
+            "topics (project updates, meeting scheduling, casual banter). "
+            "Provide rich, time-ordered message content so that questions "
+            "about context, participants and timing are interesting."
         )
-
-    client = unify.Unify(
-        "o4-mini@openai",
-        cache=json.loads(os.environ.get("UNIFY_CACHE", "true")),
-        traced=json.loads(os.environ.get("UNIFY_TRACED", "true")),
     )
-    client.set_system_message(prompt)
-    raw = client.generate("Produce scenario").strip()
+    description += (
+        "\nYou have three tools:\n"
+        "• `_log_messages` — write raw messages (you *must* supply all schema "
+        "  fields).\n"
+        "• `ask` — query what you've created.\n"
+        "• `summarize` — store concise summaries of exchanges.\n"
+        "Work in batches: insert several related messages at once, then call "
+        "`ask` to confirm, and finally `summarize` important threads."
+    )
+
+    builder = ScenarioBuilder(
+        description=description,
+        tools={
+            "_log_messages": tm._log_messages,  # IMPORTANT: private helper
+            "ask": tm.ask,
+            "summarize": tm.summarize,
+        },
+    )
 
     try:
-        payload = json.loads(raw)
-    except Exception:
-        _LG.warning("LLM scenario failed – using fixed seed.")
-        _seed_fixed(tm)
-        return None
+        await builder.create()
+    except Exception as exc:
+        raise RuntimeError(f"LLM seeding via ScenarioBuilder failed. {exc}")
 
-    for idx, c in enumerate(payload["contacts"]):
-        tm.create_contact(**c)
-        _ID_BY_NAME[c["first_name"].lower()] = idx
-
-    for ex_id, ex in enumerate(payload["exchanges"]):
-        mid = ex.get("medium", "email")
-        msgs = [
-            Message(
-                medium=mid,
-                sender_id=_ID_BY_NAME[m["sender_first_name"].lower()],
-                receiver_id=_ID_BY_NAME[m["receiver_first_name"].lower()],
-                timestamp=m["timestamp"],
-                content=m["content"],
-                exchange_id=ex_id,
-            )
-            for m in ex["messages"]
-        ]
-        tm.log_messages(msgs)
-
-    if summaries := [
-        e.get("summary") for e in payload["exchanges"] if e.get("summary")
-    ]:
-        tm.summarize(texts=summaries)
-
-    return payload.get("theme")
+    return None  # kept for signature parity with other sandboxes
 
 
-# ---------------------------------------------------------------------------
-# Dispatcher
-# ---------------------------------------------------------------------------
+# ═════════════════════════════ intent dispatcher ════════════════════════════
 
 
-async def _dispatch(
+class _Intent(BaseModel):
+    """Lightweight schema used when delegating intent detection to an LLM."""
+
+    action: str = Field(..., pattern=r"^(ask|summarize)$")
+    cleaned_text: str
+
+
+_INTENT_SYS_MSG = (
+    "Decide whether the user input is a question about the transcripts "
+    "(`ask`) or a summarisation request (`summarize`). Summarisation inputs "
+    "may mention one or more *exchange IDs* (integers). Return JSON "
+    "{'action':'ask'|'summarize','cleaned_text':<fixed_input>}."
+)
+
+
+_EXCHANGE_ID_RE = re.compile(r"\b\d+\b")
+
+
+def _extract_exchange_ids(text: str) -> List[int]:
+    """Return all integer tokens found in *text* as a list of `int`."""
+
+    return [int(m.group()) for m in _EXCHANGE_ID_RE.finditer(text)]
+
+
+async def _dispatch_with_context(
     tm: TranscriptManager,
     raw: str,
     *,
     show_steps: bool,
-) -> Tuple[str, str, List | None]:
-    handle = await tm.ask(raw.strip(), _return_reasoning_steps=show_steps)
+    parent_chat_context: List[Dict[str, str]],
+) -> Tuple[str, Union[SteerableToolHandle, str]]:
+    """Route *raw* to either `ask` or `summarize`, forwarding chat context."""
 
-    # Create a task for the result
-    answer_task = asyncio.create_task(handle.result())
+    lowered = raw.lower()
 
-    # Set up a way to check for user input
-    stop_event = threading.Event()
+    # ───── heuristic fast-paths ───────────────────────────────────────────
+    if lowered.startswith(("summarize ", "summarise ", "summary ")):
+        ids = _extract_exchange_ids(raw)
+        if not ids:
+            raise ValueError(
+                "Please mention at least one exchange/thread ID to summarise.",
+            )
+        # Guidance is whatever remains after stripping the first word & IDs
+        guidance = " ".join(w for w in raw.split()[1:] if not w.isdigit()).strip()
+        summary = await tm.summarize(exchange_ids=ids, guidance=guidance or None)
+        return "summarize", summary
 
-    def check_input():
-
-        try:
-            user_input = input("Press Enter to interrupt or type 'stop' to cancel...\n")
-            if user_input.lower().strip() == "stop":
-                handle.stop()
-                print("Stopping the current operation...")
-            elif user_input.strip():
-                run_in_loop(handle.interject(user_input))
-                print(f"Added interjection: {user_input}")
-            stop_event.set()
-        except Exception as e:
-            print(f"Error in input thread: {e}")
-            stop_event.set()
-
-    # Start a thread to check for user input
-    input_thread = threading.Thread(target=check_input, daemon=True)
-    input_thread.start()
-
-    try:
-        # Wait for either the answer or user interruption
-        result = await answer_task
-        steps = None
-        if show_steps and isinstance(result, tuple):
-            result, steps = result
-        return "ask", result, steps
-    except asyncio.CancelledError:
-        return "ask", "Operation was cancelled.", None
-    finally:
-        # Clean up
-        if not stop_event.is_set():
-            stop_event.set()
-        if input_thread.is_alive():
-            input_thread.join(timeout=1.0)
-
-
-# ---------------------------------------------------------------------------
-# Main CLI
-# ---------------------------------------------------------------------------
-
-
-async def async_main() -> None:
-    parser = argparse.ArgumentParser(
-        description="TranscriptManager sandbox with Deepgram voice mode",
+    # ───── otherwise maybe ask an LLM judge (rare) ───────────────────────
+    judge = unify.Unify("gpt-4o@openai", response_format=_Intent)
+    intent = _Intent.model_validate_json(
+        judge.set_system_message(_INTENT_SYS_MSG).generate(raw),
     )
+
+    if intent.action == "summarize":
+        ids = _extract_exchange_ids(intent.cleaned_text)
+        if not ids:
+            raise ValueError(
+                "The summarisation request didn't include any exchange IDs.",
+            )
+        guidance = " ".join(
+            w for w in intent.cleaned_text.split() if not w.isdigit()
+        ).strip()
+        summary = await tm.summarize(exchange_ids=ids, guidance=guidance or None)
+        return "summarize", summary
+
+    # default: ask
+    handle = await tm.ask(
+        raw,
+        parent_chat_context=parent_chat_context,
+        _return_reasoning_steps=show_steps,
+    )
+    return "ask", handle
+
+
+# ═════════════════════════════ interruption helper ══════════════════════════
+
+
+def _input_now(timeout: float = 0.1) -> Optional[str]:
+    """Non-blocking stdin check (POSIX & Windows)."""
+    r, _, _ = select.select([sys.stdin], [], [], timeout)
+    return sys.stdin.readline().strip() if r else None
+
+
+async def _await_with_interrupt(handle: SteerableToolHandle) -> str:
+    """Wait on *handle*, permitting live user interjection."""
+
+    while not handle.done():
+        txt = _input_now(0.1)
+        if txt:
+            if txt.lower() in {"stop", "cancel"}:
+                handle.stop()
+                break
+            run_in_loop(handle.interject(txt))
+        await asyncio.sleep(0.05)
+
+    return await handle.result()
+
+
+# ══════════════════════════════════  CLI  ═══════════════════════════════════
+
+
+async def _main_async() -> None:
+    parser = argparse.ArgumentParser(description="TranscriptManager sandbox")
     parser.add_argument(
         "--voice",
         "-v",
         action="store_true",
-        help="enable voice capture/playback",
+        help="enable voice capture + TTS",
     )
-    parser.add_argument(
-        "--scenario",
-        choices=["fixed", "llm"],
-        default="fixed",
-        help="scenario type (overridden by custom scenario flags)",
-    )
-    group = parser.add_mutually_exclusive_group()
-    group.add_argument("--custom-scenario", type=str, help="Provide a custom scenario")
-    group.add_argument(
-        "--custom-scenario-voice",
-        action="store_true",
-        help="Describe custom scenario via voice",
-    )
-    parser.add_argument("--new", "-n", action="store_true", help="wipe & reseed data")
-    parser.add_argument(
-        "--silent",
-        "-s",
-        action="store_true",
-        help="suppress tool logs",
-    )
-    parser.add_argument(
-        "--debug",
-        "-d",
-        action="store_true",
-        help="verbose HTTP/LLM logging",
-    )
+    parser.add_mutually_exclusive_group()
+    parser.add_argument("--reuse", "-r", action="store_true", help="re-use old data")
+    parser.add_argument("--debug", "-d", action="store_true", help="verbose tool logs")
+    parser.add_argument("--traced", "-t", action="store_true", help="include tracing")
     args = parser.parse_args()
 
-    scenario_text = get_custom_scenario(args, silent=args.silent)
+    # tracing flag → env var consumed by `unify`
+    os.environ["UNIFY_TRACED"] = "true" if args.traced else "false"
 
-    if not args.silent:
-        logging.basicConfig(level=logging.INFO, format="%(message)s")
-        _LG.setLevel(logging.INFO)
-        if not args.debug:
-            for noisy in ("unify", "unify.utils", "unify.logging", "requests", "httpx"):
-                logging.getLogger(noisy).setLevel(logging.WARNING)
+    # prepare Unify context
+    unify.activate("TranscriptSandbox")
+    if not args.reuse:
+        ctxs = unify.get_contexts()
+        # Remove everything under the sandbox context for a clean run
+        for ctx in list(ctxs):
+            if ctx.startswith("TranscriptSandbox") or ctx.startswith("Traces"):
+                unify.delete_context(ctx)
+        unify.create_context("Traces")
 
-    # Create a TranscriptManager
-    from unity.events.event_bus import EventBus
+    # logging
+    logging.basicConfig(level=logging.INFO, format="%(message)s")
+    LG.setLevel(logging.INFO)
 
-    eb = EventBus()
-    tm = TranscriptManager(eb)
+    # custom scenario (optional narrative for the LLM seeder)
+    scenario_text = get_custom_scenario(args)
 
-    # Seed with data
-    if args.new or not unify.get_logs(context=tm._contacts_ctx):
-        print("Seeding with fresh data…")
-        if scenario_text is not None:
-            theme = _seed_llm(tm, custom_scenario=scenario_text)
+    # manager (optionally traced)
+    tm: TranscriptManager = TranscriptManager()
+    if args.traced:
+        tm = unify.traced(tm)
+
+    # seed synthetic transcripts unless --reuse
+    if not args.reuse:
+        if scenario_text:
+            LG.info("[voice] transcript: “%s”", scenario_text)
+            LG.info("[seed] building synthetic transcript store – can take 30-60 s…")
+            if args.voice:
+                _speak("Sure thing, building your custom scenario now.")
+            theme = await _build_scenario(scenario_text)
+            LG.info("[seed] done.")
+            if args.voice:
+                _speak(
+                    "All done, your custom scenario is built and ready to go. "
+                    "Press enter to ask questions or request a summary.",
+                )
             if theme:
-                print(f"Scenario theme: {theme}")
-        elif args.scenario == "llm":
-            theme = _seed_llm(tm)
-            if theme:
-                print(f"Scenario theme: {theme}")
+                LG.info(f"[seed] theme: {theme}")
         else:
-            _seed_fixed(tm)
+            raise Exception("No text provided for building the custom scenario")
 
-    # Import voice helpers only if needed
-    if args.voice:
-        from sandboxes.utils import record_until_enter, transcribe_deepgram, speak
+    print("TranscriptManager sandbox – type or speak. 'quit' to exit.\n")
 
-    # Main loop
-    print("\n=== TranscriptManager Sandbox ===")
-    print("Type 'exit' or Ctrl+C to quit.")
-    print("Type 'help' for available commands.")
-    print("During processing: press Enter to interrupt or type 'stop' to cancel.")
+    # running memory of the dialogue (passed back into tm.ask for context)
+    chat_history: List[Dict[str, str]] = []
 
+    # interaction loop
     while True:
         try:
+            # ─────────────────── capture input (voice / text) ──────────────────
             if args.voice:
-                print("\nListening for voice input…")
-                audio = record_until_enter()
-                raw = transcribe_deepgram(audio)
-                print(f"You said: {raw}")
+                audio = _record_until_enter()
+                raw = _transcribe_deepgram(audio).strip()
+                if not raw:
+                    continue
+                print(f"▶️  {raw}")
             else:
-                raw = input("\n> ")
+                raw = input("> ").strip()
 
-            if not raw or raw.lower() in ("exit", "quit"):
+            if raw.lower() in {"quit", "exit"}:
                 break
-
-            if raw.lower() == "help":
-                print("\nAvailable commands:")
-                print("  help - Show this help message")
-                print("  exit, quit - Exit the sandbox")
+            if not raw:
                 continue
 
-            # Dispatch to the appropriate handler
-            try:
-                cmd, result, steps = await _dispatch(tm, raw, show_steps=args.debug)
-                print(f"\n{result}")
+            # ───────────── remember the user's utterance before dispatch ──────
+            _kind, result = await _dispatch_with_context(
+                tm,
+                raw,
+                show_steps=args.debug,
+                parent_chat_context=chat_history,
+            )
+            chat_history.append({"role": "user", "content": raw})
+            if args.voice:
+                _speak("Let me take a look, give me a moment")
 
-                if args.voice:
-                    speak(result)
+            # ───────────── process result (handle or immediate string) ─────────
+            if isinstance(result, SteerableToolHandle):
+                answer = await _await_with_interrupt(result)
+                if isinstance(answer, tuple):  # reasoning steps requested
+                    answer, _steps = answer
+            else:  # already a string (summarize)
+                answer = result
 
-                if steps and args.debug:
-                    print("\nReasoning steps:")
-                    for i, step in enumerate(steps):
-                        print(f"{i+1}. {step['role']}: {step['content']}")
-            except Exception as e:
-                print(f"Error: {e}")
+            if args.voice:
+                _speak("Okay, that's all done")
+            print(f"[{_kind}] → {answer}\n")
 
-        except KeyboardInterrupt:
+            # ───────────── remember assistant's reply for follow-up ────────────
+            chat_history.append({"role": "assistant", "content": answer})
+            if args.voice:
+                _speak(f"{answer} Anything else I can help with?")
+        except (EOFError, KeyboardInterrupt):
             print("\nExiting…")
             break
-        except Exception as e:
-            print(f"Unexpected error: {e}")
+        except Exception as exc:
+            LG.error("[error] %s", exc)
 
 
-def main():
-    """Entry point that runs the async main function."""
-    asyncio.run(async_main())
+def main() -> None:
+    asyncio.run(_main_async())
 
 
 if __name__ == "__main__":
