@@ -4,7 +4,6 @@ from unity.transcript_manager.transcript_manager import TranscriptManager
 from unity.transcript_manager.types.message import Message, VALID_MEDIA
 from tests.helpers import _handle_project
 import random
-import unify
 
 
 @pytest.mark.unit
@@ -46,10 +45,7 @@ async def test_transcript_embedding_semantic_search():
         ),
     ]
 
-    unify.create_logs(
-        context=tm._transcripts_ctx,
-        entries=msgs,
-    )
+    tm._log_messages(msgs)
 
     # Ensure that a lexical search for the word 'budgeting' returns no results
     lexical_results = tm._search_messages(filter="'budgeting' in content")
