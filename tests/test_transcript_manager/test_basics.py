@@ -48,9 +48,8 @@ def _create_contacts():
 @_handle_project
 async def test_log_messages():
     tm = TranscriptManager()
-    unify.create_logs(
-        context=tm._transcripts_ctx,
-        entries=[
+    tm._log_messages(
+        [
             dict(
                 medium=random.choice(VALID_MEDIA),
                 sender_id=random.randint(0, 2),
@@ -74,9 +73,8 @@ async def test_get_messages():
     tm = TranscriptManager()
 
     # log messages
-    unify.create_logs(
-        context=tm._transcripts_ctx,
-        entries=[
+    tm._log_messages(
+        [
             dict(
                 medium=random.choice(VALID_MEDIA),
                 sender_id=random.randint(0, 2),
@@ -141,9 +139,8 @@ async def test_summarize_exchanges():
     _create_contacts()
 
     # phone call
-    unify.create_logs(
-        context=tm._transcripts_ctx,
-        entries=[
+    tm._log_messages(
+        [
             dict(
                 medium="phone_call",
                 sender_id=i % 2,
@@ -165,9 +162,8 @@ async def test_summarize_exchanges():
     )
 
     # email exchange
-    unify.create_logs(
-        context=tm._transcripts_ctx,
-        entries=[
+    tm._log_messages(
+        [
             dict(
                 medium="email",
                 sender_id=i % 2,
@@ -187,9 +183,8 @@ async def test_summarize_exchanges():
     )
 
     # whatsapp exchange
-    unify.create_logs(
-        context=tm._transcripts_ctx,
-        entries=[
+    tm._log_messages(
+        [
             dict(
                 medium="whatsapp_message",
                 sender_id=(i + 1) % 2,

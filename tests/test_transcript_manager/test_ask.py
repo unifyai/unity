@@ -318,14 +318,15 @@ async def test_ask_respects_parent_context(
         (cid["dan"], cid["julia"], "Did you catch the **basketball** game?"),
         (cid["julia"], cid["dan"], "Absolutely – great conversation!"),
     ]:
-        unify.log(
-            context=tm._transcripts_ctx,
-            medium="phone_call",
-            sender_id=s,
-            receiver_id=r,
-            timestamp=t.isoformat(),
-            content=txt,
-            exchange_id=99,
+        tm._log_messages(
+            {
+                "medium": "phone_call",
+                "sender_id": s,
+                "receiver_id": r,
+                "timestamp": t.isoformat(),
+                "content": txt,
+                "exchange_id": 99,
+            },
         )
 
     # ── 2.  Outer chat context in which `ask` will be called ────────────
@@ -376,28 +377,30 @@ async def test_ask_requests_clarification_when_context_missing(
         (dan, julia, "Did you catch the basketball game last night?"),
         (julia, dan, "Absolutely – it was great!"),
     ]:
-        unify.log(
-            context=tm._transcripts_ctx,
-            medium="phone_call",
-            sender_id=s,
-            receiver_id=r,
-            timestamp=t_conv_basketball.isoformat(),
-            content=txt,
-            exchange_id=123,
+        tm._log_messages(
+            {
+                "medium": "phone_call",
+                "sender_id": s,
+                "receiver_id": r,
+                "timestamp": t_conv_basketball.isoformat(),
+                "content": txt,
+                "exchange_id": 123,
+            },
         )
 
     for s, r, txt in [
         (dan, julia, "When are you next going on holiday?"),
         (julia, dan, "I'm hoping to go in August, but lets see what my boss says."),
     ]:
-        unify.log(
-            context=tm._transcripts_ctx,
-            medium="email",
-            sender_id=s,
-            receiver_id=r,
-            timestamp=t_conv_holiday.isoformat(),
-            content=txt,
-            exchange_id=321,
+        tm._log_messages(
+            {
+                "medium": "email",
+                "sender_id": s,
+                "receiver_id": r,
+                "timestamp": t_conv_holiday.isoformat(),
+                "content": txt,
+                "exchange_id": 321,
+            },
         )
 
     # ── 2.  Prepare clarification channels ────────────────────────────────

@@ -201,8 +201,36 @@ class TranscriptManager(BaseTranscriptManager):
         )
         return summary
 
-    # Private #
+    # Helpers #
     # --------#
+    def _log_messages(self, entries: list[dict] | dict) -> None:
+        """
+        **Internal helper** used by tests and scenario-builders to insert raw
+        transcript messages into the backing store *without* repeating the
+        private ``_transcripts_ctx`` implementation detail everywhere.
+
+        Parameters
+        ----------
+        entries : dict | list[dict]
+            One or more dictionaries whose keys conform to the
+            :class:`unity.transcript_manager.types.message.Message` schema
+            (``medium``, ``sender_id``, ``receiver_id``, ``timestamp``,
+            ``content``, ``exchange_id`` …).  A single dictionary is accepted
+            as a convenience and will be wrapped in a list.
+        """
+        if not entries:  # nothing to do
+            return
+
+        if isinstance(entries, dict):  # allow singular call-style
+            entries = [entries]
+
+        unify.create_logs(
+            context=self._transcripts_ctx,
+            entries=entries,  # type: ignore[arg-type] – now definitely list[dict]
+        )
+
+    # Tools #
+    # ------#
     def _nearest_messages(
         self,
         *,
