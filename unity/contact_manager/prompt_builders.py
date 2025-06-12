@@ -4,7 +4,7 @@ import inspect
 import json
 import textwrap
 from datetime import datetime, timezone
-from typing import Dict, Callable
+from typing import Dict, Callable, List
 
 from .types.contact import Contact
 from ..knowledge_manager.types import column_type_schema
@@ -48,7 +48,11 @@ def _tool_name(tools: Dict[str, Callable], needle: str) -> str | None:
     return next((n for n in tools if needle in n.lower()), None)
 
 
-def build_ask_prompt(tools: Dict[str, Callable]) -> str:
+def build_ask_prompt(
+    tools: Dict[str, Callable],
+    num_contacts: int,
+    columns: List[Dict[str, str]],
+) -> str:
     """Return the system-prompt used by *ask*."""
     sig_json = json.dumps(_sig_dict(tools), indent=4)
     # Assume there is exactly *one* search-tool in the dict:
@@ -102,27 +106,29 @@ def build_ask_prompt(tools: Dict[str, Callable]) -> str:
     """,
     ).strip()
 
+    if num_contacts < 50:
+        guidance = f"given that the number of contacts is so small, you should simply use {search_name} with *no filter arguments* for now, so you can unpack the *full* contact list and answer the question directly."
+    else:
+        guidance = (
+            "If the question is open-ended or doesn't clearly match any of the column names,",
+            f"then try {nearest_search} on the most relevant column(s) and see if you can find any semantic match.",
+        )
+
     return "\n".join(
         [
             "You are an assistant specializing in **retrieving contact information**.",
             "Work strictly through the tools provided.",
+            "You should attempt to answer *all* questions as best you can, even if they seem out of scope."
             "",
-            "Custom columns:",
-            "---------------",
-            "• The contacts table may include **optional custom columns** in addition to the required ones.",
-            f"• Required columns ({_permanent_columns()}) **cannot** be deleted.",
-            f"• Inspect existing columns via `{list_columns}()`.",
+            f"There are currently {num_contacts} contacts are stored in a table with the following colums:",
+            json.dumps(columns, indent=4),
             "",
             "Tools (name → argspec):",
             sig_json,
             "",
-            usage_examples,
+            usage_examples if num_contacts >= 50 else "",
             "",
-            "Contact schema:",
-            json.dumps(Contact.model_json_schema(), indent=4),
-            "",
-            "ColumnType schema (for custom columns):",
-            json.dumps(column_type_schema, indent=4),
+            guidance,
             "",
             f"Current UTC time is {_now()}.",
         ],
