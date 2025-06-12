@@ -225,10 +225,11 @@ async def _main_async() -> None:
     # prepare Unify context
     unify.activate("KnowledgeSandbox")
     if not args.reuse:
-        ctxs = unify.get_contexts()
-        if "Knowledge" in ctxs:
-            unify.delete_context("Knowledge")
-        if "Traces" in ctxs:
+        [
+            unify.delete_context(table)
+            for table in unify.get_contexts(prefix="Knowledge").keys()
+        ]
+        if "Traces" in unify.get_contexts():
             unify.delete_context("Traces")
         unify.create_context("Traces")
 
