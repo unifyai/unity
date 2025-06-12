@@ -56,21 +56,25 @@ LG = logging.getLogger("contact_sandbox")
 
 
 async def _build_scenario(
-    cm: ContactManager,
     custom: Optional[str] = None,
 ) -> Optional[str]:
     """
     Populate the contact store **through the official tools** using
     :class:`ScenarioBuilder`.  Falls back to the fixed seed on any error.
     """
+    cm = ContactManager(batched=True)
     description = (
         custom.strip()
         if custom
         else (
-            "Generate 30-50 realistic business contacts across EMEA, APAC and AMER. "
+            "Generate 10 realistic business contacts across EMEA, APAC and AMER. "
             "Each contact needs first_name, surname, email_address and phone_number. "
-            "Vary industries and locations."
+            "Also create custom columns with varying industries and locations."
         )
+    )
+    description += (
+        "\nTry to get as much done as you can with each `update` and `ask` call. "
+        "They can deal with complex multi-step requests just fine."
     )
 
     builder = ScenarioBuilder(
@@ -192,13 +196,11 @@ async def _main_async() -> None:
     if not args.reuse:
         ctxs = unify.get_contexts()
         if "Contacts" in ctxs:
-            unify.delete_logs(context="Contacts")
-        else:
-            unify.create_context("Contacts")
+            unify.delete_context("Contacts")
+        unify.create_context("Contacts")
         if "Traces" in ctxs:
-            unify.delete_logs(context="Traces")
-        else:
-            unify.create_context("Traces")
+            unify.delete_context("Traces")
+        unify.create_context("Traces")
 
     # logging
     logging.basicConfig(level=logging.INFO, format="%(message)s")
@@ -219,7 +221,7 @@ async def _main_async() -> None:
             LG.info("[seed] building synthetic contacts – this can take 20-40 s…")
             if args.voice:
                 _speak("Sure thing, building your custom scenario now.")
-            theme = await _build_scenario(cm, scenario_text)
+            theme = await _build_scenario(scenario_text)
             LG.info("[seed] done.")
             if args.voice:
                 _speak(
