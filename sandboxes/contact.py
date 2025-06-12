@@ -263,7 +263,7 @@ async def _main_async() -> None:
             )
             chat_history.append({"role": "user", "content": raw})
             if args.voice:
-                _speak("Sure, working on this now")
+                _speak("Let me take a look, give me a moment")
 
             answer = await _await_with_interrupt(_handle)
             if args.voice:
