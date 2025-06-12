@@ -7,10 +7,6 @@ It supports:
 • Voice or plain‑text input (same helpers as the other sandboxes).
 • Automatic dispatch to `ask` *or* `update` depending on intent.
 • Mid‑conversation interruption (pause / interject / cancel).
-
-Run:
-    poetry run python -m sandboxes.contact       # text mode
-    poetry run python -m sandboxes.contact --voice   # with STT/TTS
 """
 
 from __future__ import annotations

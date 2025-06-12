@@ -384,11 +384,14 @@ class ContactManager(BaseContactManager):
         """
         Get the total number of contacts stored in the contacts table.
         """
-        return unify.get_logs_metric(
+        ret = unify.get_logs_metric(
             metric="count",
             key="contact_id",
             context=self._ctx,
         )
+        if ret is None:
+            return 0
+        return ret
 
     # Private #
     # --------#
