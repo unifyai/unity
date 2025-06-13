@@ -192,8 +192,8 @@ async def inner_tool(
         raise RuntimeError("queues missing")
 
     await clarification_up_q.put("Inner loop: what colour should the widget be?")
-    await clarification_down_q.get()
-    return "✅ inner finished"
+    color = await clarification_down_q.get()
+    return f"✅ inner finished, color: {color}"
 
 
 # ---------------------------------------------------------------------------
@@ -204,7 +204,7 @@ async def delegating_tool(
     clarification_up_q: asyncio.Queue[str] | None = None,
     clarification_down_q: asyncio.Queue[str] | None = None,
 ) -> str:  # return type misleading on purpose
-    llm = _make_llm("Answer the question by calling inner_tool")
+    llm = make_llm("Answer the question by calling inner_tool")
     handle = start_async_tool_use_loop(  # <-- returns AsyncToolUseLoopHandle
         llm,
         message="Please run inner_tool",
