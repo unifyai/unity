@@ -182,8 +182,8 @@ async def test_functional_tool_pause_extends_wall_clock(client):
     """
 
     async def pausable_fn(*, pause_event: asyncio.Event) -> str:
-        # “work” for 1 second in 0.1-s ticks while honouring pause_event
-        for _ in range(10):
+        # “work” for 2 seconds in 0.1-s ticks while honouring pause_event
+        for _ in range(20):
             await pause_event.wait()
             await asyncio.sleep(0.1)
         return "ok"
@@ -211,7 +211,7 @@ async def test_functional_tool_pause_extends_wall_clock(client):
     t0 = time.perf_counter()
 
     # let assistant schedule the tool, then pause for ~2 s
-    await asyncio.sleep(0.3)
+    await asyncio.sleep(1.5)
     await outer.interject("hold")
     await asyncio.sleep(2.0)  # loop is paused here
     await outer.interject("go")
@@ -221,9 +221,7 @@ async def test_functional_tool_pause_extends_wall_clock(client):
 
     # ── assertions ───────────────────────────────────────────────────────
     assert final.strip().lower() == "done"
-    assert (
-        elapsed >= 3.0
-    ), f"loop finished too fast ({elapsed:.2f}s) – pause ineffective"
+    assert elapsed >= 4, f"loop finished too fast ({elapsed:.2f}s) – pause ineffective"
 
 
 @pytest.mark.asyncio
