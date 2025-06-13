@@ -648,6 +648,7 @@ async def _async_tool_use_loop_inner(
             LOGGER.info(
                 f"⬇️ [{loop_id}] Parent Context: {json.dumps(parent_chat_context, indent=4)}\n",
             )
+        LOGGER.info(f"📋 [{loop_id}] System Message: {client.system_message}\n")
         LOGGER.info(f"🧑‍💻 [{loop_id}] User Message: {message}\n")
 
     # ── 0-a. Inject **system** header with broader context ───────────────────
