@@ -3,6 +3,8 @@ import json
 import asyncio
 import functools
 import inspect
+import secrets
+import string
 import traceback
 from enum import Enum
 from pydantic import BaseModel
@@ -26,6 +28,11 @@ import unify
 from ..constants import LOGGER
 from dataclasses import dataclass
 from ..events.event_bus import EventBus, Event
+
+
+def short_id(length=4):
+    alphabet = string.ascii_lowercase + string.digits  # base36
+    return "".join(secrets.choice(alphabet) for _ in range(length))
 
 
 TYPE_MAP = {str: "string", int: "integer", float: "number", bool: "boolean"}
@@ -603,6 +610,9 @@ async def _async_tool_use_loop_inner(
         The assistant's final plain-text reply *after* every tool result has
         been fed back into the conversation.
     """
+    # unique id
+    loop_id = short_id()
+
     # ── runtime guards ────────────────────────────────────────────────────
     # rolling timeout ----------------------------------------------------
     last_activity_ts: float = time.perf_counter()  # reset every time
@@ -627,9 +637,9 @@ async def _async_tool_use_loop_inner(
     if log_steps:
         if parent_chat_context:
             LOGGER.info(
-                f"\nParent Context: ⬇️ {json.dumps(parent_chat_context, indent=4)}\n",
+                f"⬇️ [{loop_id}] Parent Context: {json.dumps(parent_chat_context, indent=4)}\n",
             )
-        LOGGER.info(f"\nUser Message 🧑‍💻: {message}\n")
+        LOGGER.info(f"🧑‍💻 [{loop_id}] User Message: {message}\n")
 
     # ── 0-a. Inject **system** header with broader context ───────────────────
     #
@@ -772,7 +782,7 @@ async def _async_tool_use_loop_inner(
             result = traceback.format_exc()
             if log_steps:
                 LOGGER.error(
-                    f"\n❌ {name} failed "
+                    f"❌ [{loop_id}] Error: {name} failed "
                     f"(attempt {consecutive_failures}/{max_consecutive_failures}):\n{result}",
                 )
 
@@ -817,7 +827,7 @@ async def _async_tool_use_loop_inner(
         # 6️⃣  failure guard -------------------------------------------------
         if consecutive_failures >= max_consecutive_failures:
             if log_steps:
-                LOGGER.error("🚨 Aborting: too many tool failures.")
+                LOGGER.error(f"🚨 [{loop_id}] Aborting: too many tool failures.")
             raise RuntimeError(
                 "Aborted after too many consecutive tool failures.",
             )
@@ -897,7 +907,7 @@ async def _async_tool_use_loop_inner(
         _append_msgs([notice])
         await _to_event_bus(notice)
         if log_steps:
-            LOGGER.info(f"⏹️  Early exit – {reason}")
+            LOGGER.info(f"⏹️ [{loop_id}] Early exit – {reason}")
         return notice["content"]
 
     # Set to *True* whenever the loop must grant the LLM an immediate turn
@@ -1431,7 +1441,7 @@ async def _async_tool_use_loop_inner(
 
             # ── D.  Ask the LLM what to do next  ────────────────────────────
             if log_steps:
-                LOGGER.info("🔄 LLM thinking…")
+                LOGGER.info(f"🔄 [{loop_id}] LLM thinking…")
 
             if interrupt_llm_with_interjections:
                 # ––––– new *pre-emptive* mode ––––––––––––––––––––––––––––
@@ -1528,7 +1538,7 @@ async def _async_tool_use_loop_inner(
             msg = client.messages[-1]
 
             if log_steps:
-                LOGGER.info(f"\n🤖 {json.dumps(msg, indent=4)}\n")
+                LOGGER.info(f"🤖 [{loop_id}] {json.dumps(msg, indent=4)}\n")
 
             # ── timeout guard (post-LLM) ───────────────────────────────
             if timeout is not None and time.perf_counter() - last_activity_ts > timeout:
