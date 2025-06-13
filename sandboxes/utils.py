@@ -20,6 +20,8 @@ from ctypes import CFUNCTYPE, c_char_p, c_int, cdll
 from typing import List, Optional, Tuple, Any, Coroutine
 from av import AudioFrame
 import pyaudio
+import math
+import struct
 from deepgram import DeepgramClient, FileSource, PrerecordedOptions
 from livekit.plugins import cartesia
 
@@ -97,6 +99,45 @@ def noalsaerr():
 
 
 # ---------------------------------------------------------------------------
+# Simple sine-wave beeps for recording cues
+# ---------------------------------------------------------------------------
+
+
+def _generate_tone(
+    freq: int,
+    duration: float = 0.15,
+    *,
+    sample_rate: int = SAMPLE_RATE,
+    volume: float = 0.3,
+) -> bytes:
+    """Return raw 16-bit PCM bytes for a mono 16-bit sine-wave tone."""
+    total = int(sample_rate * duration)
+    amp = int(volume * 32767)
+    frames = [
+        struct.pack("<h", int(amp * math.sin(2 * math.pi * freq * n / sample_rate)))
+        for n in range(total)
+    ]
+    return b"".join(frames)
+
+
+def _beep(freq: int, duration: float = 0.15) -> None:
+    """Play a sine-wave *freq* Hz tone via PortAudio (same path as TTS)."""
+    pcm = _generate_tone(freq, duration)
+    with noalsaerr():
+        pa = pyaudio.PyAudio()
+    stream = pa.open(
+        format=FORMAT,
+        channels=1,
+        rate=SAMPLE_RATE,
+        output=True,
+    )
+    stream.write(pcm)
+    stream.stop_stream()
+    stream.close()
+    pa.terminate()
+
+
+# ---------------------------------------------------------------------------
 # Public helpers
 # ---------------------------------------------------------------------------
 
@@ -125,6 +166,8 @@ def record_until_enter() -> bytes:
     thr = threading.Thread(target=_capture, daemon=True)
 
     input("\nPress ↵ to start recording…")
+    # High-pitched cue: recording started
+    _beep(1000)
     thr.start()
     input("🎙️  Recording… press ↵ again to stop.")
     stop.set()
@@ -132,6 +175,8 @@ def record_until_enter() -> bytes:
 
     stream.stop_stream()
     stream.close()
+    # Lower-pitched cue: recording stopped
+    _beep(500)
     pa.terminate()
     print("✅ Recording captured.")
 
