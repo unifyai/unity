@@ -1,5 +1,8 @@
+import os
+import json
 import asyncio
 import pytest
+import unify
 
 from unity.common.llm_helpers import start_async_tool_use_loop
 
@@ -139,3 +142,66 @@ async def test_max_steps_graceful_termination():
     result = await handle.result()
     assert "Terminating early" in result
     assert cancel_flag.get("cancelled", False)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 5. minimum_tool_turns behaviour
+# ─────────────────────────────────────────────────────────────────────────────
+
+MODEL_NAME = os.getenv("UNIFY_MODEL", "gpt-4o@openai")  # override if you like
+
+
+def new_client() -> unify.AsyncUnify:
+    """
+    Return a fresh client *with its own conversation state* so that tests do
+    not interfere with one another.
+    """
+    return unify.AsyncUnify(
+        MODEL_NAME,
+        cache=json.loads(os.environ.get("UNIFY_CACHE", "true")),
+        traced=json.loads(os.environ.get("UNIFY_TRACED", "true")),
+    )
+
+
+@pytest.mark.asyncio
+async def test_minimum_tool_turns_zero_returns_immediately():
+    """With the default threshold the loop should accept the LLM's first
+    answer (no tools) and finish without touching *any* tools."""
+
+    async def noop_tool():  # pragma: no cover – should never be called
+        raise RuntimeError("tool should not have been invoked")
+
+    client = new_client()
+    handle = start_async_tool_use_loop(
+        client,
+        message="You are part of a test. Do *not* call any tools, just return to the user immediately",
+        tools={"noop_tool": noop_tool},
+        minimum_tool_turns=0,
+    )
+    await handle.result()
+
+
+@pytest.mark.asyncio
+async def test_minimum_tool_turns_one_forces_tool_invocation():
+    """When the threshold is 1 the loop must *force* at least one tool call
+    even if the LLM avoids tools initially.  The dummy tool sets a flag so we
+    can assert it ran."""
+
+    flag = {"called": False}
+
+    async def dummy_tool():
+        flag["called"] = True
+        return "ok"
+
+    client = new_client()
+    handle = start_async_tool_use_loop(
+        client,
+        message="You are part of a test. Do *not* call any tools, just return to the user immediately",
+        tools={"dummy_tool": dummy_tool},
+        minimum_tool_turns=1,
+    )
+    await handle.result()
+
+    # The loop had to wait for the tool to finish and therefore should return
+    # the *final* assistant content.
+    assert flag["called"] is True
