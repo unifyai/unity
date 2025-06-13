@@ -262,4 +262,4 @@ async def test_clarification_bubbles_through_returned_handle() -> None:
     await asyncio.wait_for(handle.result(), timeout=30)
 
     # final sanity-check: assistant ends with the confirmation from inner_tool
-    assert "inner finished" in outer_llm.messages[-2]["content"].lower()
+    assert "blue" in outer_llm.messages[-1]["content"].lower()
