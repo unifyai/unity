@@ -113,9 +113,10 @@ def pytest_addoption(parser):
         "leaving LLM calls intact.",
     )
     parser.addoption(
-        "--reuse-scenario",
-        default=True,
-        help="Reuse existing committed scenario if available.",
+        "--no-reuse-scenario",
+        action="store_true",
+        default=False,
+        help="Force fresh scenario creation.",
     )
 
 
