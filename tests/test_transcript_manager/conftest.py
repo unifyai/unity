@@ -7,14 +7,15 @@ from __future__ import annotations
 import random
 from datetime import datetime, timezone
 from datetime import timedelta
-from typing import List
+from typing import List, Dict, Any
 import pytest
 import os
-
 import asyncio
 import unify
 from unity.contact_manager.contact_manager import ContactManager
 from unity.transcript_manager.transcript_manager import TranscriptManager
+
+SCENARIO_COMMIT_HASHES: Dict[str, Any] = {}
 
 # --------------------------------------------------------------------------- #
 #  CONTACTS (same as before)                                                  #
@@ -72,6 +73,8 @@ class ScenarioBuilder:
     def __init__(self) -> None:
         self.cm = ContactManager()
         self.tm = TranscriptManager()
+        for idx, c in enumerate(_CONTACTS):
+            _ID_BY_NAME[c["first_name"].lower()] = idx
 
     @classmethod
     async def create(cls) -> "ScenarioBuilder":
@@ -91,7 +94,6 @@ class ScenarioBuilder:
     async def _seed_contacts(self) -> None:
         for idx, c in enumerate(_CONTACTS):
             self.cm._create_contact(**c)
-            _ID_BY_NAME[c["first_name"].lower()] = idx
 
     # --------------------------------------------------------------------- #
     async def _seed_key_exchanges(self) -> None:
@@ -244,7 +246,7 @@ class ScenarioBuilder:
 
 
 # --------------------------------------------------------------------------- #
-# 1.  AsyncIO event loop (session-scoped)
+#  AsyncIO event loop (session-scoped)
 # --------------------------------------------------------------------------- #
 @pytest.fixture(scope="session")
 def event_loop():
@@ -255,35 +257,61 @@ def event_loop():
 
 
 # --------------------------------------------------------------------------- #
-# 2.  One Unify context for the whole run
-# --------------------------------------------------------------------------- #
-@pytest.fixture(scope="session", autouse=True)
-def setup_session_context():
-    """
-    Create (and later clean up) a backend context so that *all* tests share the
-    same seeded data.
-    """
-    file_path = __file__
-    ctx = "/".join(file_path.split("/tests/")[1].split("/")[:-1])
-    if unify.get_contexts(prefix=ctx):
-        unify.delete_context(ctx)
-
-    with unify.Context(ctx):
-        unify.set_trace_context("Traces")
-        yield
-
-    if os.environ.get("UNIFY_DELETE_CONTEXT_ON_EXIT", "false").lower() == "true":
-        unify.delete_context(ctx)
-
-
-# --------------------------------------------------------------------------- #
-# 3.  Fully-populated TranscriptManager
+#  VERSIONED SCENARIO FIXTURE
 # --------------------------------------------------------------------------- #
 @pytest.fixture(scope="session")
-def tm_scenario(
-    setup_session_context,
-    event_loop: asyncio.AbstractEventLoop,
-):
-    """Seed the backend exactly once and share the TM instance."""
-    builder = event_loop.run_until_complete(ScenarioBuilder.create())
-    return builder.tm, _ID_BY_NAME
+def tm_scenario(event_loop: asyncio.AbstractEventLoop, request: pytest.FixtureRequest):
+    """
+    Create (and later clean up) a versioned context so that *all* tests share the
+    same seeded data.
+    """
+    os.environ["TQDM_DISABLE"] = "1"
+
+    unify.set_context("test_transcript_manager")
+    sb = ScenarioBuilder()
+    existing_contexts = unify.get_contexts()
+    reuse_scenario = request.config.getoption("--reuse-scenario")
+    if reuse_scenario and not SCENARIO_COMMIT_HASHES:
+
+        def get_and_rollback_context(ctx):
+            history = unify.get_context_commits(ctx)
+            if history:
+                unify.rollback_context(
+                    name=ctx,
+                    commit_hash=history[0]["commit_hash"],
+                )
+                SCENARIO_COMMIT_HASHES[ctx] = history[0]["commit_hash"]
+
+        unify.map(
+            get_and_rollback_context,
+            list(existing_contexts.keys()),
+            mode="asyncio",
+        )
+
+    # --- One-time setup (per session) ---
+    if not SCENARIO_COMMIT_HASHES:
+        event_loop.run_until_complete(sb.create())
+
+        def commit_context_and_store(ctx):
+            commit_info = unify.commit_context(
+                name=ctx,
+                commit_message="Initial seed data for tests",
+            )
+            SCENARIO_COMMIT_HASHES[ctx] = commit_info["commit_hash"]
+
+        unify.map(
+            commit_context_and_store,
+            list(existing_contexts.keys()),
+            mode="asyncio",
+        )
+
+    yield sb.tm, _ID_BY_NAME
+
+    # # Rollback the context to the clean state after the test has run
+    # def rollback_context(ctx):
+    #     unify.rollback_context(
+    #         name=ctx,
+    #         commit_hash=SCENARIO_COMMIT_HASHES[ctx],
+    #     )
+
+    # unify.map(rollback_context, list(existing_contexts.keys()), mode="asyncio")
