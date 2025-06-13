@@ -133,9 +133,6 @@ def build_store_prompt(
         Tasks should exclusively be stored by a separate task manager, this is **not your responsibility**.
         Please explain this to the user in your response, if this is part of the their request.
 
-        Similarly, if the user refers to creating or updating *contacts*, then you should **not** create any new tables.
-        Simply pass on the request to the `ContactManager_update` tool, which is responsible for managing contact info.
-
         Follow this workflow strictly:
         1. Extract every fact (subject → attribute → value) from the message.
         2. Decide whether each fact updates an existing row or inserts a new one.
@@ -188,10 +185,6 @@ def build_retrieve_prompt(
         schema so that every requested fact can be answered precisely.
         You should attempt to perform *any* retrieval request as best you can, even if it seems out of scope.
         use the tools provided to see if you can find any missing context *before* asking the user for clarifications.
-
-        If the user requests information related to *contact* details,
-        then you should simply pass on the request to the `ContactManager_update` tool,
-        which is responsible for managing contact info.
 
         Mandatory steps:
         1. List each distinct piece of information the question asks for.
