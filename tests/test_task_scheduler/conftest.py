@@ -5,90 +5,193 @@ import os
 import pytest
 import unify
 from unity.task_scheduler.task_scheduler import TaskScheduler
-from typing import List
+from typing import List, Dict, Any
+
+SCENARIO_COMMIT_HASHES: Dict[str, Any] = {}
+
+# Task data for seeding
+_TASKS_DATA: List[Dict[str, str]] = [
+    {
+        "name": "Write quarterly report",
+        "description": "Draft the Q2 report (send email to finance).",
+        "status": "primed",
+    },
+    {
+        "name": "Prepare slide deck",
+        "description": "Create slides for the board meeting. Email once done.",
+        "status": "queued",
+    },
+    {
+        "name": "Client follow-up email",
+        "description": "Send email to prospective client about proposal.",
+        "status": "queued",
+    },
+]
+
+_TASK_IDS: List[int] = []
 
 
-def _seed_basic_tasks(ts: TaskScheduler) -> List[int]:
-    """Return list of task-ids in creation order."""
+class ScenarioBuilderTasks:
+    """Populates Unify with initial tasks for TaskScheduler testing."""
 
-    ids = []
-    ids.append(
-        ts._create_task(
-            name="Write quarterly report",
-            description="Draft the Q2 report (send email to finance).",
-            status="primed",
-        ),
-    )
-    ids.append(
-        ts._create_task(
-            name="Prepare slide deck",
-            description="Create slides for the board meeting. Email once done.",
-            status="queued",
-        ),
-    )
-    ids.append(
-        ts._create_task(
-            name="Client follow-up email",
-            description="Send email to prospective client about proposal.",
-            status="queued",
-        ),
-    )
-    return ids
+    def __init__(self):
+        self.ts = TaskScheduler()
+        self._populate_task_ids()
 
+    def _populate_task_ids(self):
+        """Populate _TASK_IDS by searching for existing tasks."""
+        global _TASK_IDS
+        _TASK_IDS.clear()
 
-@pytest.fixture(scope="session", autouse=True)
-def setup_session_context():
-    """Set up a session-wide context for all tests in this module."""
-    file_path = __file__
-    ctx = "/".join(file_path.split("/tests/")[1].split("/"))[:-3]
-    if unify.get_contexts(prefix=ctx):
-        unify.delete_context(ctx)
-    with unify.Context(ctx):
-        unify.set_trace_context("Traces")
-        yield
+        def search_task_by_name(task_data):
+            """Helper function to search for a task by name and return its ID."""
+            existing_tasks = self.ts._search_tasks(
+                filter=f"name == '{task_data['name']}'",
+            )
+            if existing_tasks:
+                if existing_tasks[0]["status"] == "primed":
+                    self.ts._primed_task = existing_tasks[0]
+                return existing_tasks[0]["task_id"]
+            return None
 
-    if os.environ.get("UNIFY_DELETE_CONTEXT_ON_EXIT", "false").lower() == "true":
-        unify.delete_context(ctx)
+        # Wrap each task_data dict in a tuple to avoid unify.map treating dict keys as kwargs
+        task_data_tuples = [(task_data,) for task_data in _TASKS_DATA]
+
+        # Use unify.map for parallel task searches
+        results = unify.map(
+            search_task_by_name,
+            task_data_tuples,
+            mode="asyncio",
+        )
+
+        # Populate the ID list with found tasks (in order)
+        for result in sorted(results, key=lambda x: x if x is not None else 0):
+            if result is not None:
+                _TASK_IDS.append(result)
+
+    def create(self) -> "ScenarioBuilderTasks":
+        self._seed_tasks()
+        return self
+
+    def _seed_tasks(self) -> None:
+        """Create tasks if they don't already exist."""
+        global _TASK_IDS
+
+        for i, task_data in enumerate(_TASKS_DATA):
+            # Check if task already exists
+            existing_tasks = self.ts._search_tasks(
+                filter=f"name == '{task_data['name']}'",
+            )
+            if existing_tasks:
+                # Update _TASK_IDS if we don't have this ID yet
+                task_id = existing_tasks[0]["task_id"]
+                if len(_TASK_IDS) <= i:
+                    _TASK_IDS.append(task_id)
+                elif i < len(_TASK_IDS) and _TASK_IDS[i] != task_id:
+                    _TASK_IDS[i] = task_id
+                continue  # Task already exists, skip
+
+            try:
+                task_id = self.ts._create_task(**task_data)
+
+                # Add to _TASK_IDS list maintaining order
+                if len(_TASK_IDS) <= i:
+                    _TASK_IDS.append(task_id)
+                else:
+                    _TASK_IDS[i] = task_id
+
+            except Exception as e:
+                print(
+                    f"Warning: Could not create task '{task_data['name']}' due to: {e}",
+                )
 
 
 @pytest.fixture(scope="session")
-def basic_task_scenario(setup_session_context):
+def task_scenario(request: pytest.FixtureRequest):
     """
-    Snapshot task state before each test that uses basic_task_scenario and restore after.
+    Create (and later clean up) a versioned context so that *all* tests share the
+    same seeded data. Build scenario once and reuse across tests.
     """
-    ts = TaskScheduler()
-    ids = _seed_basic_tasks(ts)
-    snapshot = ts._search_tasks()
+    os.environ["TQDM_DISABLE"] = "1"
+    unify.set_context("test_task_scheduler")
+    existing_contexts = unify.get_contexts(prefix="test_task_scheduler")
+    no_reuse_scenario = request.config.getoption("--no-reuse-scenario")
+
+    # If --no-reuse-scenario is explicitly set, override reuse_scenario
+    if no_reuse_scenario:
+        reuse_scenario = False
+    else:
+        reuse_scenario = True
+
+    if not reuse_scenario:
+        # delete all contexts to freshly create the new scenario
+        def recreate_contexts(ctx):
+            try:
+                unify.delete_context(ctx)
+                unify.create_context(ctx)
+            except Exception as e:
+                pass
+
+        unify.map(
+            recreate_contexts,
+            list(existing_contexts.keys()),
+            mode="asyncio",
+        )
+
+    if reuse_scenario and not SCENARIO_COMMIT_HASHES:
+
+        def get_context_commits_and_rollback(ctx):
+            history = unify.get_context_commits(ctx)
+            if history:
+                unify.rollback_context(
+                    name=ctx,
+                    commit_hash=history[0]["commit_hash"],
+                )
+                SCENARIO_COMMIT_HASHES[ctx] = history[0]["commit_hash"]
+
+        unify.map(
+            get_context_commits_and_rollback,
+            list(existing_contexts.keys()),
+            mode="asyncio",
+        )
+
+    # --- One-time setup (per session) ---
+    sb = ScenarioBuilderTasks()
+    if not SCENARIO_COMMIT_HASHES:
+        print("Seeding task scheduler scenario...")
+        sb.create()
+
+        def commit_context_and_store(ctx):
+            commit_info = unify.commit_context(
+                name=ctx,
+                commit_message="Initial seed data for task scheduler tests",
+            )
+            SCENARIO_COMMIT_HASHES[ctx] = commit_info["commit_hash"]
+
+        unify.map(
+            commit_context_and_store,
+            list(existing_contexts.keys()),
+            mode="asyncio",
+        )
+
+    yield sb.ts, _TASK_IDS
+
+
+@pytest.fixture(scope="function")
+def basic_task_scenario(task_scenario):
+    """
+    Per-test fixture that provides fresh scenario data by rolling back to
+    the committed state before each test and after each test completes.
+    """
+    ts, ids = task_scenario
+
+    def rollback_context(ctx):
+        unify.rollback_context(
+            name=ctx,
+            commit_hash=SCENARIO_COMMIT_HASHES[ctx],
+        )
+
+    # Rollback to clean state before test
+    unify.map(rollback_context, list(SCENARIO_COMMIT_HASHES.keys()), mode="asyncio")
+
     yield ts, ids
-    new_snapshot = ts._search_tasks()
-    for t_original, t_new in zip(snapshot, new_snapshot):
-        if t_original["name"] != t_new["name"]:
-            ts._update_task_name(
-                task_id=t_original["task_id"],
-                new_name=t_original["name"],
-            )
-        if t_original["description"] != t_new["description"]:
-            ts._update_task_description(
-                task_id=t_original["task_id"],
-                new_description=t_original["description"],
-            )
-        if t_original["status"] != t_new["status"]:
-            ts._update_task_status(
-                task_ids=[t_original["task_id"]],
-                new_status=t_original["status"],
-            )
-        if t_original["priority"] != t_new["priority"]:
-            ts._update_task_priority(
-                task_id=t_original["task_id"],
-                new_priority=t_original["priority"],
-            )
-        if t_original["deadline"] != t_new["deadline"]:
-            ts._update_task_deadline(
-                task_id=t_original["task_id"],
-                new_deadline=t_original["deadline"],
-            )
-        if t_original["repeat"] != t_new["repeat"]:
-            ts._update_task_repetition(
-                task_id=t_original["task_id"],
-                new_repeat=t_original["repeat"],
-            )
