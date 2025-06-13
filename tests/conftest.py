@@ -1294,3 +1294,38 @@ import pathlib
 
 ROOT_DIR = pathlib.Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT_DIR))
+
+
+# --------------------------------------------------------------------------- #
+#  httpx cleanup
+# --------------------------------------------------------------------------- #
+@pytest.fixture(scope="session", autouse=True)
+def _close_httpx_clients_at_session_end():
+    """
+    Track every httpx.AsyncClient that gets created during the session
+    and close it gracefully *before* pytest tears the event-loop down.
+    """
+    created: list[httpx.AsyncClient] = []
+
+    # monkey-patch __init__ to collect instances
+    orig_init = httpx.AsyncClient.__init__
+
+    def _patched_init(self, *a, **kw):
+        orig_init(self, *a, **kw)
+        created.append(self)
+
+    httpx.AsyncClient.__init__ = _patched_init  # type: ignore[assignment]
+
+    yield  # ← tests run here
+
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    for c in created:
+        if not c.is_closed:
+            # swallow "loop closed" if it still happens for a stray client
+            try:
+                loop.run_until_complete(c.aclose())
+            except RuntimeError:
+                pass
+    loop.run_until_complete(loop.shutdown_asyncgens())
+    loop.close()
