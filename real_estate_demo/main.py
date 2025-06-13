@@ -191,15 +191,7 @@ async def main():
     signal.signal(signal.SIGINT, signal_handler)
 
     event_manager = EventManager()
-    user_agent = CommsAgent(
-        os.getenv("USER_NAME", ""),
-        os.getenv("ASSISTANT_NUMBER", ""),
-        os.getenv("USER_NUMBER", ""),
-        os.getenv("USER_PHONE_NUMBER", ""),
-        None,
-        [],
-        True,
-    )
+    user_agent = CommsAgent(None, [], True)
     user_agent.set_event_manager(event_manager)
     user_agent.subscribe(
         [

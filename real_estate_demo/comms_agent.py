@@ -13,7 +13,7 @@ client = openai.AsyncOpenAI(api_key=os.environ["OPENAI_API_KEY"])
 ONGOING_CALL = False
 
 
-with open("prompts/call_sys.md") as f:
+with open("call_sys.md") as f:
     call_sys = f.read()
 
 
@@ -131,10 +131,10 @@ class CommsAgent:
         self.publish(ev)
 
         if self.main_user:
-            with open("prompts/call_sys.md") as f:
+            with open("call_sys.md") as f:
                 call_sys = f.read().format(name=self.user_name)
         else:
-            with open("prompts/comm_call_sys.md") as f:
+            with open("comm_call_sys.md") as f:
                 call_sys = f.read().format(
                     main_user_name=self.user_name,
                     other_user_name=self.contact_name,
