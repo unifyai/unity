@@ -143,51 +143,80 @@ def _beep(freq: int, duration: float = 0.15) -> None:
 
 
 def record_until_enter() -> bytes:
-    "Record audio between two ENTER presses and return WAV bytes."
-    # Make sure any assistant speech has fully finished first
-    _wait_for_tts_end()
-    with noalsaerr():
-        pa = pyaudio.PyAudio()
+    """
+    Interactive voice-capture helper.
 
-    frames: List[bytes] = []
-    stream = pa.open(
-        format=FORMAT,
-        channels=CHANNELS,
-        rate=SAMPLE_RATE,
-        input=True,
-        frames_per_buffer=CHUNK,
-    )
+    Controls
+    --------
+        ↵ once    → start recording   (high-pitch beep ↑)
+        ↵ again   → accept recording  (low-pitch  beep ↓)
+        cancel↵   → abort & discard   (mid-pitch  beep →)
+    """
+    while True:
+        # Ensure any prior TTS playback has finished
+        _wait_for_tts_end()
 
-    def _capture():
-        while not stop.is_set():
-            frames.append(stream.read(CHUNK, exception_on_overflow=False))
+        # ───────────── prompt to start ─────────────
+        input("\nPress ↵ to start recording…")
 
-    stop = threading.Event()
-    thr = threading.Thread(target=_capture, daemon=True)
+        # ───────────── PortAudio set-up ─────────────
+        with noalsaerr():
+            pa = pyaudio.PyAudio()
+        stream = pa.open(
+            format=FORMAT,
+            channels=CHANNELS,
+            rate=SAMPLE_RATE,
+            input=True,
+            frames_per_buffer=CHUNK,
+        )
+        sample_size = pa.get_sample_size(FORMAT)
 
-    input("\nPress ↵ to start recording…")
-    # High-pitched cue: recording started
-    _beep(1000)
-    thr.start()
-    input("🎙️  Recording… press ↵ again to stop.")
-    stop.set()
-    thr.join()
+        frames: List[bytes] = []
+        stop = threading.Event()
 
-    stream.stop_stream()
-    stream.close()
-    # Lower-pitched cue: recording stopped
-    _beep(500)
-    pa.terminate()
-    print("✅ Recording captured.")
+        def _capture():
+            while not stop.is_set():
+                frames.append(stream.read(CHUNK, exception_on_overflow=False))
 
-    wav_path = "/tmp/voice_input.wav"
-    with wave.open(wav_path, "wb") as wf:
-        wf.setnchannels(CHANNELS)
-        wf.setsampwidth(pa.get_sample_size(FORMAT))
-        wf.setframerate(SAMPLE_RATE)
-        wf.writeframes(b"".join(frames))
-    with open(wav_path, "rb") as f:
-        return f.read()
+        # ───────────── begin capture ─────────────
+        _beep(1000)  # start cue
+        thr = threading.Thread(target=_capture, daemon=True)
+        thr.start()
+
+        user_cmd = (
+            input(
+                "🎙️  Recording… press ↵ again to finish " "(or type 'c' + ↵ to abort).",
+            )
+            .strip()
+            .lower()
+        )
+
+        # ───────────── tear-down PortAudio ─────────────
+        stop.set()
+        thr.join()
+        stream.stop_stream()
+        stream.close()
+        pa.terminate()
+
+        # ───────────── cancellation branch ─────────────
+        if user_cmd.lower() == "c":
+            _beep(750)  # mid-pitch cue
+            print("🚫 Cancelled.")
+            continue  # back to the top → fresh prompt
+
+        # ───────────── normal completion ─────────────
+        _beep(500)  # stop cue
+        print("✅ Recording captured.")
+
+        wav_path = "/tmp/voice_input.wav"
+        with wave.open(wav_path, "wb") as wf:
+            wf.setnchannels(CHANNELS)
+            wf.setsampwidth(sample_size)
+            wf.setframerate(SAMPLE_RATE)
+            wf.writeframes(b"".join(frames))
+
+        with open(wav_path, "rb") as f:
+            return f.read()
 
 
 def transcribe_deepgram(audio_bytes: bytes) -> str:
