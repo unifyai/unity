@@ -294,7 +294,7 @@ async def _main_async() -> None:
                 km,
                 raw,
                 show_steps=args.debug,
-                parent_chat_context=chat_history,
+                parent_chat_context=list(chat_history),
             )
             chat_history.append({"role": "user", "content": raw})
             if args.voice:
