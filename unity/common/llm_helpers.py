@@ -494,6 +494,7 @@ async def _async_tool_use_loop_inner(
     event_type: Optional[str] = None,
     event_bus: Optional[EventBus] = None,
     *,
+    loop_id: Optional[str] = None,
     interject_queue: asyncio.Queue[str],
     cancel_event: asyncio.Event,
     pause_event: asyncio.Event,
@@ -611,7 +612,7 @@ async def _async_tool_use_loop_inner(
         been fed back into the conversation.
     """
     # unique id
-    loop_id = short_id()
+    loop_id = loop_id if loop_id is not None else short_id()
 
     # ── runtime guards ────────────────────────────────────────────────────
     # rolling timeout ----------------------------------------------------
@@ -2311,6 +2312,7 @@ def start_async_tool_use_loop(
     message: str,
     tools: Dict[str, Callable],
     *,
+    loop_id: Optional[str] = None,
     event_type: Optional[str] = None,
     event_bus: Optional[EventBus] = None,
     max_consecutive_failures: int = 3,
@@ -2340,6 +2342,7 @@ def start_async_tool_use_loop(
             tools,
             event_type=event_type,
             event_bus=event_bus,
+            loop_id=loop_id,
             interject_queue=interject_queue,
             cancel_event=cancel_event,
             pause_event=pause_event,

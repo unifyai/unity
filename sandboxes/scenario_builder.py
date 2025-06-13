@@ -125,6 +125,7 @@ class ScenarioBuilder:
             self._client,
             self._description,
             self._tools,
+            loop_id=f"{self.__class__.__name__}.{self.create.__name__}",
             parent_chat_context=parent_chat_context,
         )
 

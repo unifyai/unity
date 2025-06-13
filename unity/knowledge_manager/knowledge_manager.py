@@ -148,6 +148,7 @@ class KnowledgeManager(BaseKnowledgeManager):
             client,
             text,
             tools,
+            loop_id=f"{self.__class__.__name__}.{self.refactor.__name__}",
             parent_chat_context=parent_chat_context,
         )
 
@@ -211,6 +212,7 @@ class KnowledgeManager(BaseKnowledgeManager):
             client,
             text,
             tools,
+            loop_id=f"{self.__class__.__name__}.{self.store.__name__}",
             parent_chat_context=parent_chat_context,
         )
 
@@ -272,6 +274,7 @@ class KnowledgeManager(BaseKnowledgeManager):
             client,
             text,
             tools,
+            loop_id=f"{self.__class__.__name__}.{self.retrieve.__name__}",
             parent_chat_context=parent_chat_context,
         )
 

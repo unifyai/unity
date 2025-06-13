@@ -313,6 +313,7 @@ class ContactManager(BaseContactManager):
             client,
             text,
             tools,
+            loop_id=f"{self.__class__.__name__}.{self.ask.__name__}",
             parent_chat_context=parent_chat_context,
         )
 
@@ -361,6 +362,7 @@ class ContactManager(BaseContactManager):
             client,
             text,
             tools,
+            loop_id=f"{self.__class__.__name__}.{self.update.__name__}",
             parent_chat_context=parent_chat_context,
         )
 
