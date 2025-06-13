@@ -126,7 +126,6 @@ class ScenarioBuilder:
             self._description,
             self._tools,
             parent_chat_context=parent_chat_context,
-            log_steps=False,
         )
 
         if not _return_reasoning_steps:
