@@ -173,6 +173,7 @@ class TaskManager(BaseTaskManager):
             loop_id=f"{self.__class__.__name__}.{self.ask.__name__}",
             parent_chat_context=parent_chat_context,
             log_steps=log_tool_steps,
+            minimum_tool_turns=1,
         )
 
         if _return_reasoning_steps:
@@ -228,6 +229,7 @@ class TaskManager(BaseTaskManager):
             loop_id=f"{self.__class__.__name__}.{self.request.__name__}",
             parent_chat_context=parent_chat_context,
             log_steps=log_tool_steps,
+            minimum_tool_turns=1,
         )
 
         if _return_reasoning_steps:
@@ -314,6 +316,7 @@ class TaskManager(BaseTaskManager):
             loop_id=f"{self.__class__.__name__}.{self.start_task.__name__}",
             parent_chat_context=parent_chat_context,
             log_steps=log_tool_steps,
+            minimum_tool_turns=1,
         )
 
         if _return_reasoning_steps:

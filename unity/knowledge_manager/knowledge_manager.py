@@ -150,6 +150,7 @@ class KnowledgeManager(BaseKnowledgeManager):
             tools,
             loop_id=f"{self.__class__.__name__}.{self.refactor.__name__}",
             parent_chat_context=parent_chat_context,
+            minimum_tool_turns=1,
         )
 
         # 4️⃣  Optionally wrap .result() to expose hidden reasoning
@@ -214,6 +215,7 @@ class KnowledgeManager(BaseKnowledgeManager):
             tools,
             loop_id=f"{self.__class__.__name__}.{self.store.__name__}",
             parent_chat_context=parent_chat_context,
+            minimum_tool_turns=1,
         )
 
         # ── 3.  Optionally wrap .result() to expose reasoning  ────────────
@@ -276,6 +278,7 @@ class KnowledgeManager(BaseKnowledgeManager):
             tools,
             loop_id=f"{self.__class__.__name__}.{self.retrieve.__name__}",
             parent_chat_context=parent_chat_context,
+            minimum_tool_turns=1,
         )
 
         # ── 3.  Optionally wrap .result() to expose reasoning  ────────────
