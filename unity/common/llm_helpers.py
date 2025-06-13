@@ -500,8 +500,6 @@ async def _async_tool_use_loop_inner(
     timeout: Optional[int] = None,
     raise_on_limit: bool = False,
     include_class_in_dynamic_tool_names: bool = False,
-    clarification_up_q: Optional[asyncio.Queue[str]] = None,
-    clarification_down_q: Optional[asyncio.Queue[str]] = None,
 ) -> str:
     r"""
     Orchestrate an *interactive* "function-calling" dialogue between an LLM
@@ -708,8 +706,8 @@ async def _async_tool_use_loop_inner(
                 if hasattr(raw, "interject"):
                     info["is_interjectable"] = True
 
-                h_up_q = getattr(raw, "clarification_up_q", None)
-                h_down_q = getattr(raw, "clarification_down_q", None)
+                h_up_q = getattr(raw, "clarification_up_q", info.get("clar_up_q"))
+                h_down_q = getattr(raw, "clarification_down_q", info.get("clar_down_q"))
 
                 if (h_up_q is not None) ^ (h_down_q is not None):
                     raise AttributeError(
@@ -1169,8 +1167,16 @@ async def _async_tool_use_loop_inner(
                     info["is_interjectable"] = hasattr(handle, "interject")
 
                     # 2. clarification queues
-                    h_up_q = getattr(handle, "clarification_up_q", None)
-                    h_dn_q = getattr(handle, "clarification_down_q", None)
+                    h_up_q = getattr(
+                        handle,
+                        "clarification_up_q",
+                        info.get("clar_up_q"),
+                    )
+                    h_dn_q = getattr(
+                        handle,
+                        "clarification_down_q",
+                        info.get("clar_down_q"),
+                    )
 
                     if (h_up_q is not None) ^ (h_dn_q is not None):
                         raise AttributeError(
@@ -1935,8 +1941,8 @@ async def _async_tool_use_loop_inner(
                     # Always provide queues when the tool supports them – the LLM
                     # never passes them explicitly anymore.
                     if sig_accepts_clar_qs:
-                        clar_up_q = clarification_up_q or asyncio.Queue()
-                        clar_down_q = clarification_down_q or asyncio.Queue()
+                        clar_up_q = asyncio.Queue()
+                        clar_down_q = asyncio.Queue()
                         extra_kwargs["clarification_up_q"] = clar_up_q
                         extra_kwargs["clarification_down_q"] = clar_down_q
                     if sig_accepts_interject_q:
@@ -2307,8 +2313,6 @@ def start_async_tool_use_loop(
     timeout: Optional[int] = None,
     raise_on_limit: bool = False,
     include_class_in_dynamic_tool_names: bool = False,
-    clarification_up_q: Optional[asyncio.Queue[str]] = None,
-    clarification_down_q: Optional[asyncio.Queue[str]] = None,
 ) -> AsyncToolUseLoopHandle:
     """
     Kick off `_async_tool_use_loop_inner` in its own task and give the caller
@@ -2339,8 +2343,6 @@ def start_async_tool_use_loop(
             timeout=timeout,
             raise_on_limit=raise_on_limit,
             include_class_in_dynamic_tool_names=include_class_in_dynamic_tool_names,
-            clarification_up_q=clarification_up_q,
-            clarification_down_q=clarification_down_q,
         ),
     )
 
