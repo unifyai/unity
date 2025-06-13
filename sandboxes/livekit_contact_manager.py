@@ -1,4 +1,4 @@
-"""contact_sandbox.py  (optional voice mode, LiveKit integration)
+"""
 ================================================================
 Interactive sandbox for **ContactManager**.
 
@@ -19,7 +19,6 @@ import asyncio
 import logging
 import select
 import sys
-from pathlib import Path
 from typing import AsyncIterable, List, Optional, Tuple, Dict
 from dotenv import load_dotenv
 from livekit import agents
@@ -39,7 +38,6 @@ from pydantic import BaseModel, Field
 from scenario_builder import ScenarioBuilder
 
 load_dotenv()
-unify.set_trace_context("Traces")
 
 # ────────────────────────────────  unity imports  ───────────────────────────
 from unity.contact_manager.contact_manager import ContactManager
@@ -208,7 +206,8 @@ class Assistant(Agent):
         # Add the ContactManager response to the chat context as a system message
         # so the LLM can process it naturally
         system_message = ChatMessage.create(
-            text=f"Contact Manager Result: {answer}", role="system"
+            text=f"Contact Manager Result: {answer}",
+            role="system",
         )
         turn_ctx.messages.append(system_message)
 
@@ -223,7 +222,10 @@ class Assistant(Agent):
         # Let the default LLM process the chat context (which now includes ContactManager response)
         # and generate a natural response
         async for chunk in Agent.default.llm_node(
-            self, chat_ctx, tools, model_settings
+            self,
+            chat_ctx,
+            tools,
+            model_settings,
         ):
             yield chunk
 
@@ -242,6 +244,7 @@ async def entrypoint(ctx: agents.JobContext):
     import unify
 
     unify.activate("ContactSandbox")
+    unify.set_trace_context("Traces")
     if not args.reuse:
         ctxs = unify.get_contexts()
         if "Contacts" in ctxs:
@@ -280,7 +283,7 @@ async def entrypoint(ctx: agents.JobContext):
     )
 
     await session.generate_reply(
-        instructions="Greet the user and explain that you can help them manage their contacts - search, add, update, or answer questions about their contact database."
+        instructions="Greet the user and explain that you can help them manage their contacts - search, add, update, or answer questions about their contact database.",
     )
 
 
