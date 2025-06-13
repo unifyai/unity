@@ -204,13 +204,21 @@ async def delegating_tool(
     clarification_up_q: asyncio.Queue[str] | None = None,
     clarification_down_q: asyncio.Queue[str] | None = None,
 ) -> str:  # return type misleading on purpose
-    llm = make_llm("Answer the question by calling inner_tool")
+    inner_llm = make_llm(
+        "If any internal tool needs information, call request_clarification.",
+    )
+
+    async def request_clarification(question: str) -> str:
+        await clarification_up_q.put(question)
+        return await clarification_down_q.get()
+
     handle = start_async_tool_use_loop(  # <-- returns AsyncToolUseLoopHandle
-        llm,
-        message="Please run inner_tool",
-        tools={"inner_tool": inner_tool},
-        clarification_up_q=clarification_up_q,
-        clarification_down_q=clarification_down_q,
+        inner_llm,
+        message="Run inner_tool please.",
+        tools={
+            "inner_tool": inner_tool,
+            "request_clarification": request_clarification,
+        },
         log_steps=False,
     )
     return handle  # outer tool finishes instantly
