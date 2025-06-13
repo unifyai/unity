@@ -18,6 +18,7 @@ import wave
 from contextlib import contextmanager
 from ctypes import CFUNCTYPE, c_char_p, c_int, cdll
 from typing import List, Optional, Tuple, Any, Coroutine
+from av import AudioFrame
 import pyaudio
 from deepgram import DeepgramClient, FileSource, PrerecordedOptions
 from livekit.plugins import cartesia
