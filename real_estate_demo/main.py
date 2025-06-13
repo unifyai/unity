@@ -40,8 +40,6 @@ class EventManager:
         )
 
         self.event_aggregator_task = asyncio.create_task(self.collect_events())
-        # Start inactivity monitor
-        self.inactivity_task = asyncio.create_task(self.check_inactivity())
 
         async with self.servers["call"]:
             await self.servers["call"].serve_forever()
@@ -112,8 +110,7 @@ async def main():
     user_agent.set_event_manager(event_manager)
     user_agent.subscribe(
         [
-            os.getenv("USER_NUMBER", ""),
-            os.getenv("USER_PHONE_NUMBER", ""),
+            "user_call_step",
             "user_agent",
         ],
     )
