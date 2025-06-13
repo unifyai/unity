@@ -1054,7 +1054,7 @@ async def _async_tool_use_loop_inner(
                 # ── ensure *unused* auxiliary waiters don't linger ──────────
                 # If one helper won the race we *must* cancel/await the other
                 # so that it cannot consume the next interjection invisibly.
-                for aux in (interject_w, cancel_waiter):
+                for aux in (interject_w, cancel_waiter, *clar_waiters.keys()):
                     if aux not in done and not aux.done():
                         aux.cancel()
                         await asyncio.gather(aux, return_exceptions=True)
