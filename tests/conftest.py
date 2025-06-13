@@ -20,7 +20,8 @@ import sys
 import types
 import importlib
 from typing import Any, Dict, List, Optional
-
+import httpx
+import asyncio
 import pytest
 
 import unify
@@ -29,6 +30,7 @@ unify.activate(
     "UnityTests",
     overwrite=json.loads(os.getenv("UNIFY_OVERWRITE_PROJECT", "false")),
 )
+unify.set_user_logging(False)
 
 
 # --------------------------------------------------------------------------- #
@@ -95,6 +97,18 @@ def stub_controller_deps(monkeypatch):
         "unity.controller.playwright_utils.worker.BrowserWorker",
         _DummyWorker,
     )
+
+    # --- DateTime stub for prompt builders for all managers -----------------------------------
+    def _static_now():
+        """Return a fixed timestamp for consistent test caching."""
+        return "2025-06-13 12:00:00 UTC"  # Friday, June 13, 2025 at noon UTC
+
+    # Patch all _now functions in prompt builders
+    monkeypatch.setattr("unity.contact_manager.prompt_builders._now", _static_now)
+    monkeypatch.setattr("unity.knowledge_manager.prompt_builders._now", _static_now)
+    monkeypatch.setattr("unity.task_manager.prompt_builders._now", _static_now)
+    monkeypatch.setattr("unity.task_scheduler.prompt_builders._now", _static_now)
+    monkeypatch.setattr("unity.transcript_manager.prompt_builders._now", _static_now)
 
 
 # --------------------------------------------------------------------------- #
