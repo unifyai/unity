@@ -106,7 +106,11 @@ async def main():
     global user_agent
 
     event_manager = EventManager()
-    user_agent = CommsAgent(None, [], True)
+    user_agent = CommsAgent(
+        user_name=os.getenv("USER_NAME", ""),
+        past_events=[],
+        main_user_agent=True,
+    )
     user_agent.set_event_manager(event_manager)
     user_agent.subscribe(
         [
