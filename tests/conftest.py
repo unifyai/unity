@@ -112,6 +112,11 @@ def pytest_addoption(parser):
         help="Use an in-memory stub for unite.log / projects whilst "
         "leaving LLM calls intact.",
     )
+    parser.addoption(
+        "--reuse-scenario",
+        default=True,
+        help="Reuse existing committed scenario if available.",
+    )
 
 
 # --------------------------------------------------------------------------- #
