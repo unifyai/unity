@@ -269,8 +269,26 @@ def tm_scenario(event_loop: asyncio.AbstractEventLoop, request: pytest.FixtureRe
 
     unify.set_context("test_transcript_manager")
     sb = ScenarioBuilder()
-    existing_contexts = unify.get_contexts()
-    reuse_scenario = request.config.getoption("--reuse-scenario")
+    existing_contexts = unify.get_contexts(prefix="test_transcript_manager")
+    no_reuse_scenario = request.config.getoption("--no-reuse-scenario")
+
+    # If --no-reuse-scenario is explicitly set, override reuse_scenario
+    if no_reuse_scenario:
+        reuse_scenario = False
+    else:
+        reuse_scenario = True
+
+    if not reuse_scenario:
+        # delete all contexts to freshly create the new scenario
+        def delete_all_contexts(ctx):
+            unify.delete_context(ctx)
+
+        unify.map(
+            delete_all_contexts,
+            list(existing_contexts.keys()),
+            mode="asyncio",
+        )
+
     if reuse_scenario and not SCENARIO_COMMIT_HASHES:
 
         def get_and_rollback_context(ctx):
@@ -290,6 +308,7 @@ def tm_scenario(event_loop: asyncio.AbstractEventLoop, request: pytest.FixtureRe
 
     # --- One-time setup (per session) ---
     if not SCENARIO_COMMIT_HASHES:
+        print("Seeding transcript manager scenario...")
         event_loop.run_until_complete(sb.create())
 
         def commit_context_and_store(ctx):
@@ -306,12 +325,3 @@ def tm_scenario(event_loop: asyncio.AbstractEventLoop, request: pytest.FixtureRe
         )
 
     yield sb.tm, _ID_BY_NAME
-
-    # # Rollback the context to the clean state after the test has run
-    # def rollback_context(ctx):
-    #     unify.rollback_context(
-    #         name=ctx,
-    #         commit_hash=SCENARIO_COMMIT_HASHES[ctx],
-    #     )
-
-    # unify.map(rollback_context, list(existing_contexts.keys()), mode="asyncio")
