@@ -86,7 +86,7 @@ class Assistant(Agent):
         # we will handle this through the events manager
         await publish_event(
             {
-                "topic": self.from_number,
+                "topic": "call_process",
                 "to": "pending",
                 "event": PhoneUtteranceEvent(
                     role="User",
