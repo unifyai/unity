@@ -36,7 +36,8 @@ service_status = "stopped"
 
 # Authentication dependency
 async def require_auth(
-    authorization: Optional[str] = Header(None), admin_key: Optional[str] = Query(None)
+    authorization: Optional[str] = Header(None),
+    admin_key: Optional[str] = Query(None),
 ):
     """Authentication dependency for FastAPI"""
     auth_admin_key = None
