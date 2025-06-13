@@ -30,12 +30,13 @@ class CommTask:
 class CommsAgent:
     def __init__(
         self,
+        user_name: str,
         past_events: list = None,
         main_user_agent: bool = False,
         agent_id: str = None,
         contact_name: str = None,
     ):
-
+        self.user_name = user_name
         self.main_user = main_user_agent
         self.contact_name = contact_name
         self.agent_id = agent_id
