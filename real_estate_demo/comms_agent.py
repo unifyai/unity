@@ -55,7 +55,6 @@ class CommsAgent:
         self.curr_task_id = 0
 
     async def listen_for_events(self):
-        asyncio.create_task(self.whatsapp_queue.run())
         print("COLLECTING...")
         while True:
             try:
