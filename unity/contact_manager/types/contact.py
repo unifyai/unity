@@ -1,4 +1,4 @@
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 from typing import Optional
 
 UNICODE_NAME_RE = r"^[^\W\d_](?:[^\W\d_]|[ .'-])*$"  # ← one reusable constant
@@ -30,5 +30,24 @@ class Contact(BaseModel):
     )
 
     description: Optional[str] = Field(description="Free-form notes about the contact.")
+
+    @field_validator(
+        "first_name",
+        "surname",
+        "email_address",
+        "phone_number",
+        "whatsapp_number",
+        "description",
+        mode="before",
+    )
+    @classmethod
+    def _empty_to_none(cls, v):
+        """
+        Treat blank or whitespace-only strings as missing (None)
+        so they skip regex validation entirely.
+        """
+        if v is not None and isinstance(v, str) and v.strip() == "":
+            return None
+        return v
 
     model_config = {"extra": "allow"}
