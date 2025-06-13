@@ -16,7 +16,6 @@ from ..common.llm_helpers import (
 )
 from ..helpers import _handle_exceptions
 from .base import BaseKnowledgeManager
-from ..contact_manager.contact_manager import BaseContactManager, ContactManager
 from .prompt_builders import (
     build_store_prompt,
     build_retrieve_prompt,
@@ -28,16 +27,11 @@ API_KEY = os.environ["UNIFY_KEY"]
 
 class KnowledgeManager(BaseKnowledgeManager):
 
-    def __init__(
-        self,
-        *,
-        contact_manager: Optional[BaseContactManager] = None,
-    ) -> None:
+    def __init__(self) -> None:
         """
-        Responsible for *adding to*, *updating* and *searching through* all knowledge the assistant has stored in memory.
+        KnowledgeManager now **directly manipulates** the root-level
+        ``Contacts`` table instead of calling the public ContactManager API.
         """
-        if contact_manager is None:
-            contact_manager = ContactManager()
 
         refactor_tools = methods_to_tool_dict(
             # Tables
@@ -53,16 +47,19 @@ class KnowledgeManager(BaseKnowledgeManager):
             include_class_name=False,
         )
 
-        cm_ask = methods_to_tool_dict(contact_manager.ask, include_class_name=True)
-        cm_update = methods_to_tool_dict(
-            contact_manager.update,
-            include_class_name=True,
-        )
-
-        self._refactor_tools = {
-            **refactor_tools,
-            **contact_manager._schema_tools,
+        # ── immutable built-ins for *Contacts* ───────────────────────────
+        self._CONTACT_REQUIRED_COLUMNS: set[str] = {
+            "contact_id",
+            "first_name",
+            "surname",
+            "email_address",
+            "phone_number",
+            "whatsapp_number",
+            "description",
         }
+
+        # ── table/column DDL helpers (no external CM hooks) ──────────────
+        self._refactor_tools = {**refactor_tools}
 
         refactor_tool = methods_to_tool_dict(
             self.refactor,
@@ -70,7 +67,6 @@ class KnowledgeManager(BaseKnowledgeManager):
         )
 
         self._retrieve_tools = {
-            **cm_ask,
             **refactor_tool,
             **methods_to_tool_dict(
                 self._search_knowledge,
@@ -80,13 +76,9 @@ class KnowledgeManager(BaseKnowledgeManager):
         }
 
         self._store_tools = {
-            **cm_ask,
-            **cm_update,
+            **self._refactor_tools,
             **refactor_tool,
-            **methods_to_tool_dict(
-                self._add_data,
-                include_class_name=False,
-            ),
+            **methods_to_tool_dict(self._add_data, include_class_name=False),
         }
 
         ctxs = unify.get_active_context()
@@ -95,6 +87,14 @@ class KnowledgeManager(BaseKnowledgeManager):
             read_ctx == write_ctx
         ), "read and write contexts must be the same when instantiating a KnowledgeManager."
         self._ctx = f"{read_ctx}/Knowledge" if read_ctx else "Knowledge"
+        self._contacts_ctx = f"{read_ctx}/Contacts" if read_ctx else "Contacts"
+
+    # Context Helper #
+    # ---------------#
+
+    def _ctx_for_table(self, table: str) -> str:
+        """Return the correct Unify context for *table*."""
+        return self._contacts_ctx if table == "Contacts" else self._ctx_for_table(table)
 
     # Public #
     # -------#
@@ -298,7 +298,7 @@ class KnowledgeManager(BaseKnowledgeManager):
 
     def _get_columns(self, *, table: str) -> Dict[str, str]:
         proj = unify.active_project()
-        ctx = f"{self._ctx}/{table}"
+        ctx = self._ctx_for_table(table)
         url = f"{os.environ['UNIFY_BASE_URL']}/logs/fields?project={proj}&context={ctx}"
         headers = {"Authorization": f"Bearer {API_KEY}"}
         response = requests.request("GET", url, headers=headers)
@@ -374,6 +374,11 @@ class KnowledgeManager(BaseKnowledgeManager):
             k[len(f"{self._ctx}/") :]: {"description": v}
             for k, v in unify.get_contexts(prefix=f"{self._ctx}/").items()
         }
+        # Expose root-level Contacts
+        if self._contacts_ctx in unify.get_contexts():
+            tables["Contacts"] = {
+                "description": unify.get_contexts()[self._contacts_ctx],
+            }
         if not include_columns:
             return tables
         return {
@@ -425,7 +430,7 @@ class KnowledgeManager(BaseKnowledgeManager):
         dict[str, str]
             Confirmation / error from the backend.
         """
-        return unify.delete_context(f"{self._ctx}/{table}")
+        return unify.delete_context(self._ctx_for_table(table))
 
     # Columns
 
@@ -455,7 +460,7 @@ class KnowledgeManager(BaseKnowledgeManager):
             Backend response.
         """
         proj = unify.active_project()
-        ctx = f"{self._ctx}/{table}"
+        ctx = self._ctx_for_table(table)
         url = f"{os.environ['UNIFY_BASE_URL']}/logs/fields"
         headers = {"Authorization": f"Bearer {API_KEY}"}
         json_input = {
@@ -499,10 +504,10 @@ class KnowledgeManager(BaseKnowledgeManager):
         equation = equation.replace("{", "{lg:")
         json_input = {
             "project": unify.active_project(),
-            "context": f"{self._ctx}/{table}",
+            "context": self._ctx_for_table(table),
             "key": column_name,
             "equation": equation,
-            "referenced_logs": {"lg": {"context": f"{self._ctx}/{table}"}},
+            "referenced_logs": {"lg": {"context": self._ctx_for_table(table)}},
         }
         response = requests.request("POST", url, json=json_input, headers=headers)
         return response.json()
@@ -528,11 +533,19 @@ class KnowledgeManager(BaseKnowledgeManager):
         dict[str, str]
             Backend confirmation or error.
         """
+        # Guard against accidental removal of mandatory contact columns
+        if table == "Contacts" and column_name in self._CONTACT_REQUIRED_COLUMNS:
+            raise ValueError(
+                f"❌  Column '{column_name}' is **mandatory** for contact records "
+                f"and cannot be deleted. Mandatory columns: "
+                f"{', '.join(sorted(self._CONTACT_REQUIRED_COLUMNS))}",
+            )
+
         url = f"{os.environ['UNIFY_BASE_URL']}/logs?delete_empty_logs=True"
         headers = {"Authorization": f"Bearer {API_KEY}"}
         json_input = {
             "project": unify.active_project(),
-            "context": f"{self._ctx}/{table}",
+            "context": self._ctx_for_table(table),
             "ids_and_fields": [[None, column_name]],
             "source_type": "all",
         }
@@ -566,7 +579,7 @@ class KnowledgeManager(BaseKnowledgeManager):
             Backend response.
         """
         proj = unify.active_project()
-        ctx = f"{self._ctx}/{table}"
+        ctx = self._ctx_for_table(table)
         url = f"{os.environ['UNIFY_BASE_URL']}/logs/rename_field"
         headers = {"Authorization": f"Bearer {API_KEY}"}
         json_input = {
@@ -606,7 +619,7 @@ class KnowledgeManager(BaseKnowledgeManager):
             Backend confirmation.
         """
         return unify.create_logs(
-            context=f"{self._ctx}/{table}",
+            context=self._ctx_for_table(table),
             entries=data,
             batched=True,  # NOTE: async logger can mess with the order of the data
         )
@@ -622,7 +635,7 @@ class KnowledgeManager(BaseKnowledgeManager):
             column (str): The name of the vector column to ensure, MUST be *camel case*.
             source (str): The name of the column to derive the vector column from.
         """
-        context = f"{self._ctx}/{table}"
+        context = self._ctx_for_table(table)
         ensure_vector_column(context, embed_column=column, source_column=source)
 
     def _nearest_knowledge(
@@ -657,7 +670,7 @@ class KnowledgeManager(BaseKnowledgeManager):
         # ToDo: convert to map function
         results = dict()
         for table in tables:
-            context = f"{self._ctx}/{table}"
+            context = self._ctx_for_table(table)
             column = f"{source}_vec"
             self._ensure_table_vector(table, column, source)
             results[table] = [
@@ -711,7 +724,7 @@ class KnowledgeManager(BaseKnowledgeManager):
             results[table] = [
                 log.entries
                 for log in unify.get_logs(
-                    context=f"{self._ctx}/{table}",
+                    context=self._ctx_for_table(table),
                     filter=filter,
                     offset=offset,
                     limit=limit,
