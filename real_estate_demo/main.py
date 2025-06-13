@@ -81,7 +81,6 @@ class EventManager:
         while True:
             if self.is_shutting_down:
                 break
-
             try:
                 raw = await reader.readline()
                 if not raw:
@@ -98,66 +97,7 @@ class EventManager:
                 break
 
     def publish(self, event):
-        # Update activity time when events are published
-        self.last_activity_time = asyncio.get_event_loop().time()
         self.events_queue.put_nowait(event)
-
-    async def check_inactivity(self):
-        """Monitor for inactivity and shut down gracefully after timeout"""
-        while True:
-            if self.is_shutting_down:
-                break
-
-            await asyncio.sleep(30)  # Check every 30 seconds
-            current_time = asyncio.get_event_loop().time()
-            if current_time - self.last_activity_time > self.INACTIVITY_TIMEOUT:
-                print(
-                    f"Inactivity timeout reached ({self.INACTIVITY_TIMEOUT}s), shutting down gracefully...",
-                )
-                await self.shutdown_gracefully()
-                break
-
-    async def shutdown_gracefully(self):
-        """Gracefully shut down the event manager and all components"""
-        print("Starting graceful shutdown...")
-        self.is_shutting_down = True
-
-        # Signal the global user agent to clean up
-        global user_agent
-        if user_agent:
-            try:
-                # Clean up main user agent call process
-                user_agent.cleanup()
-
-                # Clean up all comm agents' call processes
-                if hasattr(user_agent, "contact_num_to_comm_agent"):
-                    for comm_agent in user_agent.contact_num_to_comm_agent.values():
-                        comm_agent.cleanup()
-            except Exception as e:
-                print(f"Error during user agent cleanup: {e}")
-
-        # Close all connections
-        for writer in self.writers.values():
-            if writer and not writer.is_closing():
-                try:
-                    writer.close()
-                    await writer.wait_closed()
-                except Exception as e:
-                    print(f"Error closing writer: {e}")
-
-        # Close servers
-        for server in self.servers.values():
-            if server:
-                try:
-                    server.close()
-                    await server.wait_closed()
-                except Exception as e:
-                    print(f"Error closing server: {e}")
-
-        print("Graceful shutdown completed")
-
-        # Exit the application
-        os._exit(0)
 
 
 def loop_exception_handler(loop, context):
