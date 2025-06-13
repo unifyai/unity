@@ -168,7 +168,7 @@ async def _await_with_interrupt(
     return await handle.result()
 
 
-class Assistant(Agent):
+class ConversationManager(Agent):
     def __init__(self, args: argparse.Namespace) -> None:
         super().__init__(
             instructions="You are a helpful voice AI assistant.",
@@ -273,7 +273,7 @@ async def entrypoint(ctx: agents.JobContext):
 
     await session.start(
         room=ctx.room,
-        agent=Assistant(args),
+        agent=ConversationManager(args),
         room_input_options=RoomInputOptions(
             # LiveKit Cloud enhanced noise cancellation
             # - If self-hosting, omit this parameter
