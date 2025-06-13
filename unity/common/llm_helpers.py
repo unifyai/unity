@@ -508,6 +508,7 @@ async def _async_tool_use_loop_inner(
     timeout: Optional[int] = None,
     raise_on_limit: bool = False,
     include_class_in_dynamic_tool_names: bool = False,
+    minimum_tool_turns: int = 0,
 ) -> str:
     r"""
     Orchestrate an *interactive* "function-calling" dialogue between an LLM
@@ -593,6 +594,13 @@ async def _async_tool_use_loop_inner(
         into any child tool via the *internal-only* ``parent_chat_context``
         argument.  This parameter is added automatically and is **not**
         exposed to the LLM.
+
+     minimum_tool_turns : ``int``, default ``0``
+         The loop must see *at least* this many **new tool calls** (calls whose
+         ``function.name`` is one of the *base* tools passed to
+         ``start_async_tool_use_loop``) before it is allowed to finish.
+         Until the threshold is reached, every LLM step is executed with
+         ``tool_choice="required"`` so the model **must** choose a tool.
 
     parent_chat_context : ``list[dict] | None``
         Nested chat structure passed from an **outer** loop.  When
@@ -872,6 +880,8 @@ async def _async_tool_use_loop_inner(
 
     consecutive_failures = 0
     pending: Set[asyncio.Task] = set()
+    # How many base-tool calls have actually been launched so far?
+    total_tool_calls_made: int = 0
     task_info: Dict[asyncio.Task, Dict[str, Any]] = {}
     clarification_channels: Dict[
         str,
@@ -1444,6 +1454,11 @@ async def _async_tool_use_loop_inner(
             if log_steps:
                 LOGGER.info(f"🔄 [{loop_id}] LLM thinking…")
 
+            # Decide whether the model is free to omit a tool this turn
+            tool_choice_mode = (
+                "required" if total_tool_calls_made < minimum_tool_turns else "auto"
+            )
+
             if interrupt_llm_with_interjections:
                 # ––––– new *pre-emptive* mode ––––––––––––––––––––––––––––
                 # ➊ start the LLM step …
@@ -1452,7 +1467,7 @@ async def _async_tool_use_loop_inner(
                         client.generate(
                             return_full_completion=True,
                             tools=tmp_tools,
-                            tool_choice="auto",
+                            tool_choice=tool_choice_mode,
                             stateful=True,
                         ),
                     ),
@@ -1527,7 +1542,7 @@ async def _async_tool_use_loop_inner(
                         client.generate(
                             return_full_completion=True,
                             tools=tmp_tools,
-                            tool_choice="auto",
+                            tool_choice=tool_choice_mode,
                             stateful=True,
                         ),
                     )
@@ -1891,6 +1906,8 @@ async def _async_tool_use_loop_inner(
                         fn = dynamic_tools[name]
                     else:
                         fn = norm_tools[name].fn
+                        # ⇢ counts only “real” (base) tool invocations
+                        total_tool_calls_made += 1
 
                     # ── build **extra** kwargs (chat context + queue) ───
                     extra_kwargs: dict = {}
@@ -2073,6 +2090,11 @@ async def _async_tool_use_loop_inner(
                     return await _handle_limit_reached(
                         f"max_steps ({max_steps}) exceeded",
                     )
+
+            if total_tool_calls_made < minimum_tool_turns:
+                # Not enough tool usage yet – force another LLM turn
+                llm_turn_required = True
+                continue
 
             return msg["content"]  # DONE!
 
@@ -2325,6 +2347,7 @@ def start_async_tool_use_loop(
     timeout: Optional[int] = None,
     raise_on_limit: bool = False,
     include_class_in_dynamic_tool_names: bool = False,
+    minimum_tool_turns: int = 0,
 ) -> AsyncToolUseLoopHandle:
     """
     Kick off `_async_tool_use_loop_inner` in its own task and give the caller
@@ -2356,6 +2379,7 @@ def start_async_tool_use_loop(
             timeout=timeout,
             raise_on_limit=raise_on_limit,
             include_class_in_dynamic_tool_names=include_class_in_dynamic_tool_names,
+            minimum_tool_turns=minimum_tool_turns,
         ),
     )
 
