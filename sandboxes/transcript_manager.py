@@ -241,9 +241,6 @@ async def _main_async() -> None:
     logging.basicConfig(level=logging.INFO, format="%(message)s")
     LG.setLevel(logging.INFO)
 
-    # custom scenario (optional narrative for the LLM seeder)
-    scenario_text = get_custom_scenario(args)
-
     # manager (optionally traced)
     tm: TranscriptManager = TranscriptManager()
     if args.traced:
@@ -251,6 +248,8 @@ async def _main_async() -> None:
 
     # seed synthetic transcripts unless --reuse
     if not args.reuse:
+        # custom scenario
+        scenario_text = get_custom_scenario(args)
         if scenario_text:
             LG.info("[voice] transcript: “%s”", scenario_text)
             LG.info("[seed] building synthetic transcript store – can take 30-60 s…")
@@ -260,8 +259,7 @@ async def _main_async() -> None:
             LG.info("[seed] done.")
             if args.voice:
                 _speak(
-                    "All done, your custom scenario is built and ready to go. "
-                    "Press enter to ask questions or request a summary.",
+                    "All done, your custom scenario is built and ready to go.",
                 )
             if theme:
                 LG.info(f"[seed] theme: {theme}")
@@ -269,6 +267,10 @@ async def _main_async() -> None:
             raise Exception("No text provided for building the custom scenario")
 
     print("TranscriptManager sandbox – type or speak. 'quit' to exit.\n")
+
+    _speak(
+        "Press enter to ask questions or request a summary from the transcripts.",
+    )
 
     # running memory of the dialogue (passed back into tm.ask for context)
     chat_history: List[Dict[str, str]] = []

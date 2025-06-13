@@ -202,9 +202,6 @@ async def _main_async() -> None:
     logging.basicConfig(level=logging.INFO, format="%(message)s")
     LG.setLevel(logging.INFO)
 
-    # custom scenario
-    scenario_text = get_custom_scenario(args)
-
     # manager
     cm = ContactManager()
     if args.traced:
@@ -212,6 +209,8 @@ async def _main_async() -> None:
 
     # seed
     if not args.reuse:
+        # custom scenario
+        scenario_text = get_custom_scenario(args)
         if scenario_text:
             LG.info("[voice] transcript: “%s”", scenario_text)
             LG.info("[seed] building synthetic contacts – this can take 20-40 s…")
@@ -221,7 +220,7 @@ async def _main_async() -> None:
             LG.info("[seed] done.")
             if args.voice:
                 _speak(
-                    "All done, your custom scenario is built and ready to go. Press enter to record a question or request an update for the contact list.",
+                    "All done, your custom scenario is built and ready to go.",
                 )
             if theme:
                 LG.info(f"[seed] theme: {theme}")
@@ -229,6 +228,10 @@ async def _main_async() -> None:
             raise Exception("No text provided for building the custom scenario")
 
     print("ContactManager sandbox – type or speak. 'quit' to exit.\n")
+
+    _speak(
+        "Press enter to record a question or request an update for the contact list.",
+    )
 
     # running memory of the dialogue
     chat_history: List[Dict[str, str]] = []
