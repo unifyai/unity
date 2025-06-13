@@ -24,7 +24,6 @@ import re
 
 import unify
 
-unify.set_trace_context("Traces")
 from dotenv import load_dotenv
 from pydantic import BaseModel, Field
 from scenario_builder import ScenarioBuilder
@@ -233,6 +232,7 @@ async def _main_async() -> None:
 
     # prepare Unify context
     unify.activate("TaskSchedulerSandbox")
+    unify.set_trace_context("Traces")
     if not args.reuse:
         contexts = unify.get_contexts()
         if "Tasks" in contexts:
