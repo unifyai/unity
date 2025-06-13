@@ -180,6 +180,7 @@ class BrowserUsePlan(BasePlan):
                     client=self._plan_client,
                     message=current_task_description,
                     tools=internal_tools,
+                    loop_id=f"{self.__class__.__name__}.{self._manage_plan_execution.__name__}",
                     propagate_chat_context=True,
                     interrupt_llm_with_interjections=True,
                     log_steps=False,
