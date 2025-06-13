@@ -178,3 +178,80 @@ async def test_clarification_bubbles_up_two_tiers() -> None:
     assert closing["role"] == "assistant"
     content = closing["content"].lower()
     assert any(["email" in content, "message" in content]) and "sent" in content
+
+
+# ---------------------------------------------------------------------------
+# inner tool  ➟  always asks one clarification
+# ---------------------------------------------------------------------------
+async def inner_tool(
+    *,
+    clarification_up_q: asyncio.Queue[str] | None = None,
+    clarification_down_q: asyncio.Queue[str] | None = None,
+) -> str:
+    if clarification_up_q is None or clarification_down_q is None:
+        raise RuntimeError("queues missing")
+
+    await clarification_up_q.put("Inner loop: what colour should the widget be?")
+    await clarification_down_q.get()
+    return "✅ inner finished"
+
+
+# ---------------------------------------------------------------------------
+# outer tool  ➟  immediately spawns an async-tool loop and RETURNS its handle
+# ---------------------------------------------------------------------------
+async def delegating_tool(
+    *,
+    clarification_up_q: asyncio.Queue[str] | None = None,
+    clarification_down_q: asyncio.Queue[str] | None = None,
+) -> str:  # return type misleading on purpose
+    llm = _make_llm("Answer the question by calling inner_tool")
+    handle = start_async_tool_use_loop(  # <-- returns AsyncToolUseLoopHandle
+        llm,
+        message="Please run inner_tool",
+        tools={"inner_tool": inner_tool},
+        clarification_up_q=clarification_up_q,
+        clarification_down_q=clarification_down_q,
+        log_steps=False,
+    )
+    return handle  # outer tool finishes instantly
+
+
+# ---------------------------------------------------------------------------
+# regression test
+# ---------------------------------------------------------------------------
+@pytest.mark.asyncio
+async def test_clarification_bubbles_through_returned_handle() -> None:
+    """Clarification raised *inside* the returned handle must still reach the user."""
+
+    clar_up_q: asyncio.Queue[str] = asyncio.Queue()
+    clar_down_q: asyncio.Queue[str] = asyncio.Queue()
+
+    async def request_clarification(question: str) -> str:
+        await clar_up_q.put(question)
+        return await clar_down_q.get()
+
+    outer_llm = make_llm(
+        "If any internal tool needs information, call request_clarification.",
+    )
+
+    handle = start_async_tool_use_loop(
+        outer_llm,
+        message="Run delegating_tool please.",
+        tools={
+            "delegating_tool": delegating_tool,
+            "request_clarification": request_clarification,
+        },
+        log_steps=False,
+    )
+
+    # ── satisfy the clarification that should bubble up ──────────────────
+    question = await asyncio.wait_for(clar_up_q.get(), timeout=10)
+    assert "what colour" in question.lower()
+
+    await clar_down_q.put("Blue, please")
+
+    # ── loop must now complete successfully ───────────────────────────────
+    await asyncio.wait_for(handle.result(), timeout=30)
+
+    # final sanity-check: assistant ends with the confirmation from inner_tool
+    assert "inner finished" in outer_llm.messages[-2]["content"].lower()
