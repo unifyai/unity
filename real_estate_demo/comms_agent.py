@@ -10,9 +10,6 @@ from events import *
 
 client = openai.AsyncOpenAI(api_key=os.environ["OPENAI_API_KEY"])
 
-ONGOING_CALL = False
-
-
 with open("call_sys.md") as f:
     call_sys = f.read()
 
