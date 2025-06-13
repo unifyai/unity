@@ -193,9 +193,6 @@ class CommsAgent:
         #     ...
         if not contact_comms_agent:
             contact_comms_agent = CommsAgent(
-                self.user_name,
-                self.assistant_number,
-                contact_number.replace(" ", "").strip(),
                 contact_name=contact_name,
                 agent_id=self.curr_id,
             )
@@ -204,7 +201,7 @@ class CommsAgent:
             contact_comms_agent.set_event_manager(self.event_manager)
             contact_comms_agent.subscribe(
                 [
-                    contact_number.replace(" ", "").strip(),
+                    "user_call_step",
                     str(contact_comms_agent.agent_id),
                 ],
             )

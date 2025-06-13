@@ -86,7 +86,7 @@ class Assistant(Agent):
         # we will handle this through the events manager
         await publish_event(
             {
-                "topic": "call_process",
+                "topic": "user_call_step",
                 "to": "pending",
                 "event": PhoneUtteranceEvent(
                     role="User",
@@ -150,7 +150,7 @@ async def entrypoint(ctx: agents.JobContext):
     READER, WRITER = await asyncio.open_connection("127.0.0.1", 8090)
     await publish_event(
         {
-            "topic": "call_process",
+            "topic": "user_call_step",
             "to": "pending",
             "event": PhoneCallStartedEvent().to_dict(),
         },
@@ -180,7 +180,7 @@ async def entrypoint(ctx: agents.JobContext):
                         publish_event(
                             {
                                 "to": "past",
-                                "topic": "call_process",
+                                "topic": "user_call_step",
                                 "event": PhoneUtteranceEvent(
                                     role="Assistant",
                                     content=assistant_res.get("phone_utterance"),
@@ -198,7 +198,7 @@ async def entrypoint(ctx: agents.JobContext):
                             publish_event(
                                 {
                                     "to": "past",
-                                    "topic": "call_process",
+                                    "topic": "user_call_step",
                                     "event": InterruptEvent().to_dict(),
                                 },
                             ),
