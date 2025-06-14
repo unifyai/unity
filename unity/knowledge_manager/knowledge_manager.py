@@ -4,7 +4,7 @@ import uuid
 import unify
 import functools
 import requests
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Callable
 
 import json
 from ..common.embed_utils import EMBED_MODEL, ensure_vector_column
@@ -34,17 +34,27 @@ class KnowledgeManager(BaseKnowledgeManager):
         ``Contacts`` table instead of calling the public ContactManager API.
         """
 
-        refactor_tools = methods_to_tool_dict(
+        self._refactor_tools = methods_to_tool_dict(
+            # Search
+            self._search,
+            self._nearest,
             # Tables
             self._tables_overview,
             self._create_table,
             self._rename_table,
             self._delete_table,
             # Columns
+            self._rename_column,
+            self._copy_column,
+            self._move_column,
+            self._delete_column,
             self._create_empty_column,
             self._create_derived_column,
-            self._rename_column,
-            self._delete_column,
+            self._transform_column,
+            self._vectorize_column,
+            # Rows
+            self._delete_rows,
+            self._update_rows,
             include_class_name=False,
         )
 
@@ -59,41 +69,23 @@ class KnowledgeManager(BaseKnowledgeManager):
             "description",
         }
 
-        # ── table/column DDL helpers (no external CM hooks) ──────────────
-        self._refactor_tools = {**refactor_tools}
-        # ── new schema-level helpers ──────────────────────────────────────
-        self._refactor_tools.update(
-            methods_to_tool_dict(
-                self._copy_column,
-                self._move_column,
-                self._transform_column,
-                include_class_name=False,
-            ),
-        )
-
         refactor_tool = methods_to_tool_dict(
             self.refactor,
             include_class_name=False,
         )
 
         self._retrieve_tools = {
-            **refactor_tool,
             **methods_to_tool_dict(
+                self._tables_overview,
                 self._search,
                 self._nearest,
-                self._delete_rows,
-                self._update_rows,
-                include_class_name=False,
             ),
         }
 
         self._store_tools = {
             **self._refactor_tools,
-            **refactor_tool,
             **methods_to_tool_dict(
                 self._add_rows,
-                self._update_rows,
-                self._delete_rows,
                 include_class_name=False,
             ),
         }
@@ -106,12 +98,21 @@ class KnowledgeManager(BaseKnowledgeManager):
         self._ctx = f"{read_ctx}/Knowledge" if read_ctx else "Knowledge"
         self._contacts_ctx = f"{read_ctx}/Contacts" if read_ctx else "Contacts"
 
-    # Context Helper #
-    # ---------------#
+    # Helpers #
+    # --------#
 
     def _ctx_for_table(self, table: str) -> str:
         """Return the correct Unify context for *table*."""
         return self._contacts_ctx if table == "Contacts" else f"{self._ctx}/{table}"
+
+    def _look_first_tool_policy(self, step: int, tls: Dict[str, Callable]):
+        if step < 1:
+            return "required", methods_to_tool_dict(
+                self._search,
+                self._nearest,
+                include_class_name=False,
+            )
+        return "auto", tls
 
     # Public #
     # -------#
@@ -167,7 +168,7 @@ class KnowledgeManager(BaseKnowledgeManager):
             tools,
             loop_id=f"{self.__class__.__name__}.{self.refactor.__name__}",
             parent_chat_context=parent_chat_context,
-            tool_policy=lambda i, _: ("required", _) if i < 1 else ("auto", _),
+            tool_policy=self._look_first_tool_policy,
         )
 
         # 4️⃣  Optionally wrap .result() to expose hidden reasoning
@@ -232,7 +233,7 @@ class KnowledgeManager(BaseKnowledgeManager):
             tools,
             loop_id=f"{self.__class__.__name__}.{self.store.__name__}",
             parent_chat_context=parent_chat_context,
-            tool_policy=lambda i, _: ("required", _) if i < 1 else ("auto", _),
+            tool_policy=self._look_first_tool_policy,
         )
 
         # ── 3.  Optionally wrap .result() to expose reasoning  ────────────

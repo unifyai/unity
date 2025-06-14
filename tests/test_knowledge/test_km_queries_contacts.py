@@ -62,7 +62,7 @@ async def test_km_retrieve_joins_contact_and_company():
 @pytest.mark.asyncio
 @pytest.mark.requires_real_unify
 @_handle_project
-async def test_km_store_updates_contact_via_cm():
+async def test_km_store_updates_contact():
     """
     A natural-language *store* instruction routed through KM should trigger
     ContactManager.update to add WhatsApp info.
