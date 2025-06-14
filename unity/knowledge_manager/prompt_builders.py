@@ -123,7 +123,7 @@ def build_store_prompt(
 
     core_instructions = textwrap.dedent(
         """
-        Your task is to **store** new knowledge provided by the user.
+        Your task is to **store** new knowledge or **update** existing knowledge provided by the user.
         Keep the schema clean and future-proof – feel free to create,
         rename or delete tables / columns before inserting data.
         You should attempt to perform *any* storage request as best you can, even if it seems out of scope.
@@ -135,11 +135,12 @@ def build_store_prompt(
 
         Follow this workflow strictly:
         1. Extract every fact (subject → attribute → value) from the message.
-        2. Decide whether each fact updates an existing row or inserts a new one.
-        3. Add missing columns with the correct data-type where necessary.
-        4. Use `_add_rows` to insert and `_update_rows` to modify existing ones.
-        5. Search again to verify everything stored correctly.
-        6. Reply with a short natural-language confirmation of what was stored.
+        2. Search the tables to see if there are any logs already associated with the data, which should be updated.
+        3. Use this info to decide whether each fact updates an *existing* row / column or inserts a *new* row / column.
+        4. Add missing columns with the correct data-type if necessary (should be quite rare)
+        5. Use `_add_rows` to insert and `_update_rows` to modify existing rows.
+        6. Search again to verify everything was stored or updated correctly.
+        7. Reply with a short natural-language confirmation of what was stored.
 
         If anything is ambiguous, call `request_clarification` **before** writing.
         Do **not** hallucinate data.
