@@ -41,7 +41,22 @@ class ContactManager(BaseContactManager):
         else:
             self._ctx = "Contacts"
         if self._ctx not in unify.get_contexts():
-            unify.create_context(self._ctx)
+            unify.create_context(
+                self._ctx,
+                description="List of contacts, with all contact details stored.",
+            )
+            unify.create_fields(
+                {
+                    "contact_id": "int",
+                    "first_name": "str",
+                    "surname": "str",
+                    "email_address": "str",
+                    "phone_number": "str",
+                    "whatsapp_number": "str",
+                    "description": "str",
+                },
+                context=self._ctx,
+            )
 
         # ── immutable built-in columns ───────────────────────────────────
         self._REQUIRED_COLUMNS: set[str] = {
