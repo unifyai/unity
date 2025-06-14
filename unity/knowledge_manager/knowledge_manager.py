@@ -69,10 +69,10 @@ class KnowledgeManager(BaseKnowledgeManager):
             "description",
         }
 
-        refactor_tool = methods_to_tool_dict(
-            self.refactor,
-            include_class_name=False,
-        )
+        # ── Synthetic PK for *every* knowledge table (except Contacts) ──
+        # We never leak Unify's internal log.id – instead we surface a
+        # monotonically-increasing integer column called  **row_id**.
+        self._ROW_ID: str = "row_id"
 
         self._retrieve_tools = {
             **methods_to_tool_dict(
@@ -359,8 +359,12 @@ class KnowledgeManager(BaseKnowledgeManager):
         proj = unify.active_project()
         ctx = f"{self._ctx}/{name}"
         unify.create_context(ctx, description=description)
-        if not columns:
-            return
+
+        # Always add the generated primary-key unless the caller supplied it.
+        if columns is None:
+            columns = {}
+        if self._ROW_ID not in columns:
+            columns = {self._ROW_ID: ColumnType.int, **columns}
         url = f"{os.environ['UNIFY_BASE_URL']}/logs/fields"
         headers = {"Authorization": f"Bearer {API_KEY}"}
         json_input = {"project": proj, "context": ctx, "fields": columns}
@@ -477,6 +481,11 @@ class KnowledgeManager(BaseKnowledgeManager):
         dict[str, str]
             Backend response.
         """
+        # The internal PK cannot be created manually.
+        if column_name == self._ROW_ID:
+            raise ValueError(
+                f"'{self._ROW_ID}' is reserved and managed automatically.",
+            )
         proj = unify.active_project()
         ctx = self._ctx_for_table(table)
         url = f"{os.environ['UNIFY_BASE_URL']}/logs/fields"
@@ -551,12 +560,12 @@ class KnowledgeManager(BaseKnowledgeManager):
         dict[str, str]
             Backend confirmation or error.
         """
-        # Guard against accidental removal of mandatory contact columns
-        if table == "Contacts" and column_name in self._CONTACT_REQUIRED_COLUMNS:
+        # Guard against removal of mandatory columns
+        if (table == "Contacts" and column_name in self._CONTACT_REQUIRED_COLUMNS) or (
+            table != "Contacts" and column_name == self._ROW_ID
+        ):
             raise ValueError(
-                f"❌  Column '{column_name}' is **mandatory** for contact records "
-                f"and cannot be deleted. Mandatory columns: "
-                f"{', '.join(sorted(self._CONTACT_REQUIRED_COLUMNS))}",
+                f"❌  Column '{column_name}' is mandatory and cannot be deleted.",
             )
 
         url = f"{os.environ['UNIFY_BASE_URL']}/logs?delete_empty_logs=True"
@@ -777,10 +786,27 @@ class KnowledgeManager(BaseKnowledgeManager):
         dict[str, str]
             Backend confirmation.
         """
+        ctx = self._ctx_for_table(table)
+
+        # Find the current maximum row_id (if any) so we can append seamlessly.
+        latest = unify.get_logs(
+            context=ctx,
+            sorting={self._ROW_ID: "descending"},
+            limit=1,
+        )
+        next_id = latest[0].entries[self._ROW_ID] + 1 if latest else 0
+
+        augmented: List[Dict[str, Any]] = []
+        for r in rows:
+            if r.get(self._ROW_ID) is None:
+                r = {self._ROW_ID: next_id, **r}
+                next_id += 1
+            augmented.append(r)
+
         return unify.create_logs(
-            context=self._ctx_for_table(table),
-            entries=rows,
-            batched=True,  # NOTE: async logger can mess with the order of the data
+            context=ctx,
+            entries=augmented,
+            batched=True,
         )
 
     def _update_rows(
@@ -810,8 +836,21 @@ class KnowledgeManager(BaseKnowledgeManager):
             return {"status": "no-op", "reason": "no row_ids given"}
 
         ctx = self._ctx_for_table(table)
+
+        # Map external row_id → internal log.id
+        log_ids: List[int] = []
+        for rid in row_ids:
+            lg = unify.get_logs(
+                context=ctx,
+                filter=f"{self._ROW_ID} == {rid}",
+                limit=1,
+            )
+            if not lg:
+                raise ValueError(f"No such {self._ROW_ID}={rid} in '{table}'.")
+            log_ids.append(lg[0].id)
+
         res = unify.update_logs(
-            logs=row_ids,
+            logs=log_ids,
             context=ctx,
             entries=entries,
             overwrite=overwrite,
@@ -878,7 +917,7 @@ class KnowledgeManager(BaseKnowledgeManager):
             column = f"{source}_vec"
             self._vectorize_column(table, column, source)
             results[table] = [
-                {"row_id": log.id, **log.entries}
+                log.entries
                 for log in unify.get_logs(
                     context=context,
                     sorting={
@@ -926,7 +965,7 @@ class KnowledgeManager(BaseKnowledgeManager):
         results = dict()
         for table in tables:
             results[table] = [
-                {"row_id": log.id, **log.entries}
+                log.entries
                 for log in unify.get_logs(
                     context=self._ctx_for_table(table),
                     filter=filter,
