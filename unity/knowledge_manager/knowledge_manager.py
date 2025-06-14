@@ -1,5 +1,6 @@
 import os
 import asyncio
+import uuid
 import unify
 import functools
 import requests
@@ -60,6 +61,15 @@ class KnowledgeManager(BaseKnowledgeManager):
 
         # ── table/column DDL helpers (no external CM hooks) ──────────────
         self._refactor_tools = {**refactor_tools}
+        # ── new schema-level helpers ──────────────────────────────────────
+        self._refactor_tools.update(
+            methods_to_tool_dict(
+                self._copy_column,
+                self._move_column,
+                self._transform_column,
+                include_class_name=False,
+            ),
+        )
 
         refactor_tool = methods_to_tool_dict(
             self.refactor,
@@ -69,8 +79,9 @@ class KnowledgeManager(BaseKnowledgeManager):
         self._retrieve_tools = {
             **refactor_tool,
             **methods_to_tool_dict(
-                self._search_knowledge,
-                self._nearest_knowledge,
+                self._search,
+                self._delete_data,
+                self._nearest,
                 include_class_name=False,
             ),
         }
@@ -78,7 +89,11 @@ class KnowledgeManager(BaseKnowledgeManager):
         self._store_tools = {
             **self._refactor_tools,
             **refactor_tool,
-            **methods_to_tool_dict(self._add_data, include_class_name=False),
+            **methods_to_tool_dict(
+                self._add_data,
+                self._delete_data,
+                include_class_name=False,
+            ),
         }
 
         ctxs = unify.get_active_context()
@@ -330,7 +345,7 @@ class KnowledgeManager(BaseKnowledgeManager):
         columns : dict[str, ColumnType] | None
             Optional initial schema – mapping *column → type*.  If omitted an
             empty table is created and columns can be added later with
-            :pyfunc:`_create_empty_column`. Colums names MUST be *camel case*.
+            :pyfunc:`_create_empty_column`. Colums names MUST be *snake case*.
             The column name `id` is reserved for internals, do *not* use this name.
 
         Returns
@@ -449,7 +464,7 @@ class KnowledgeManager(BaseKnowledgeManager):
         table : str
             Target table.
         column_name : str
-            New column identifier, MUST be *camel case*.
+            New column identifier, MUST be *snake case*.
             The column name `id` is reserved for internals, do *not* use this name.
         column_type : ColumnType | str
             Logical type, e.g. ``"str"``, ``"float"``, ``"datetime"``.
@@ -488,7 +503,7 @@ class KnowledgeManager(BaseKnowledgeManager):
         table : str
             Table to modify.
         column_name : str
-            Name of the new derived column, MUST be *camel case*.
+            Name of the new derived column, MUST be *snake case*.
             The column name `id` is reserved for internals, do *not* use this name.
         equation : str
             Python expression evaluated per-row (column names appear as
@@ -526,7 +541,7 @@ class KnowledgeManager(BaseKnowledgeManager):
         table : str
             Table name.
         column_name : str
-            Column to drop, MUST be *camel case*.
+            Column to drop, MUST be *snake case*.
 
         Returns
         -------
@@ -568,9 +583,9 @@ class KnowledgeManager(BaseKnowledgeManager):
         table : str
             Table identifier.
         old_name : str
-            Existing column name, MUST be *camel case*.
+            Existing column name, MUST be *snake case*.
         new_name : str
-            Desired new name, MUST be *camel case*.
+            Desired new name, MUST be *snake case*.
             The column name `id` is reserved for internals, do *not* use this name.
 
         Returns
@@ -592,6 +607,147 @@ class KnowledgeManager(BaseKnowledgeManager):
         _handle_exceptions(response)
         return response.json()
 
+    def _copy_column(
+        self,
+        *,
+        source_table: str,
+        column_name: str,
+        dest_table: str,
+    ) -> Dict[str, str]:
+        """
+        **Copy** *column_name* from *source_table* to *dest_table*.
+
+        Internally this attaches every log in *source_table* that contains
+        *column_name* to the destination context via
+        :pyfunc:`unify.add_logs_to_context`.
+        """
+        src_ctx = self._ctx_for_table(source_table)
+        dest_ctx = self._ctx_for_table(dest_table)
+
+        log_ids: List[int] = [
+            log.id
+            for log in unify.get_logs(
+                context=src_ctx,
+                filter=f"{column_name} is not None",
+                limit=100_000,
+            )
+        ]
+        unify.add_logs_to_context(
+            log_ids,
+            context=dest_ctx,
+            project=unify.active_project(),
+        )
+        return {
+            "status": "copied",
+            "rows": str(len(log_ids)),
+            "from": source_table,
+            "to": dest_table,
+            "column": column_name,
+        }
+
+    def _move_column(
+        self,
+        *,
+        source_table: str,
+        column_name: str,
+        dest_table: str,
+    ) -> Dict[str, str]:
+        """
+        **Move** *column_name* from *source_table* to *dest_table*.
+
+        Implemented as `_copy_column` + `_delete_column`.
+        """
+        copy_res = self._copy_column(
+            source_table=source_table,
+            column_name=column_name,
+            dest_table=dest_table,
+        )
+        del_res = self._delete_column(table=source_table, column_name=column_name)
+        return {
+            "status": "moved",
+            "copy_result": str(copy_res),
+            "delete_result": str(del_res),
+        }
+
+    def _transform_column(
+        self,
+        *,
+        table: str,
+        column_name: str,
+        equation: str,
+    ) -> Dict[str, str]:
+        """
+        **Transform** *column_name* in-place according to *equation*.
+
+        Steps:
+        1. Create a temporary derived column from *equation*.
+        2. Delete the original column.
+        3. Rename the temporary column back to the original name.
+        """
+        tmp_name = f"tmp_{column_name}_{uuid.uuid4().hex[:8]}"
+
+        create_res = self._create_derived_column(
+            table=table,
+            column_name=tmp_name,
+            equation=equation,
+        )
+        delete_res = self._delete_column(table=table, column_name=column_name)
+        rename_res = self._rename_column(
+            table=table,
+            old_name=tmp_name,
+            new_name=column_name,
+        )
+        return {
+            "status": "transformed",
+            "create_result": str(create_res),
+            "delete_result": str(delete_res),
+            "rename_result": str(rename_res),
+        }
+
+    #  Row-level deletion
+
+    def _delete_data(
+        self,
+        *,
+        filter: Optional[str] = None,
+        offset: int = 0,
+        limit: int = 100,
+        tables: Optional[List[str]] = None,
+    ) -> Dict[str, str]:
+        """
+        Delete every log **matching *filter*** across the chosen tables.
+
+        Argspec mirrors `_search_knowledge`.
+        """
+        if tables is None:
+            tables = list(self._list_tables().keys())
+
+        summaries: Dict[str, str] = {}
+        for table in tables:
+            ctx = self._ctx_for_table(table)
+            logs = list(
+                unify.get_logs(
+                    context=ctx,
+                    filter=filter,
+                    offset=offset,
+                    limit=limit,
+                ),
+            )
+            if not logs:
+                summaries[table] = "no-op"
+                continue
+
+            log_ids = [log.id for log in logs]
+            res = unify.delete_logs(
+                logs=log_ids,
+                context=ctx,
+                project=unify.active_project(),
+                delete_empty_logs=True,
+            )
+            summaries[table] = res.get("message", str(res))
+
+        return summaries
+
     # Add Data
 
     def _add_data(
@@ -611,7 +767,7 @@ class KnowledgeManager(BaseKnowledgeManager):
         table : str
             Destination table.
         data : list[dict[str, Any]]
-            Sequence of row dictionaries. Dictionary keys (column names) MUST be *camel case*.
+            Sequence of row dictionaries. Dictionary keys (column names) MUST be *snake case*.
 
         Returns
         -------
@@ -625,20 +781,29 @@ class KnowledgeManager(BaseKnowledgeManager):
         )
 
     # Vector Search Helpers
-    def _ensure_table_vector(self, table: str, column: str, source: str) -> None:
+    def _vectorize_column(
+        self,
+        table: str,
+        source_column: str,
+        target_column_name: str,
+    ) -> None:
         """
         Ensure that a vector column exists in the given table. If it doesn't exist,
         create it as a derived column from the source column.
 
         Args:
             table (str): The name of the table to ensure the vector column in.
-            column (str): The name of the vector column to ensure, MUST be *camel case*.
             source (str): The name of the column to derive the vector column from.
+            column (str): The name of the vector column to ensure, MUST be *snake case*.
         """
         context = self._ctx_for_table(table)
-        ensure_vector_column(context, embed_column=column, source_column=source)
+        ensure_vector_column(
+            context,
+            embed_column=target_column_name,
+            source_column=source_column,
+        )
 
-    def _nearest_knowledge(
+    def _nearest(
         self,
         *,
         tables: List[str],
@@ -656,7 +821,7 @@ class KnowledgeManager(BaseKnowledgeManager):
             Candidate tables (each must contain *source* column).
         source : str
             Text column to embed (an auxiliary ``<source>_vec`` column is
-            auto-created if missing). MUST be *camel case*.
+            auto-created if missing). MUST be *snake case*.
         text : str
             Query text to embed and compare against.
         k : int, default ``5``
@@ -672,7 +837,7 @@ class KnowledgeManager(BaseKnowledgeManager):
         for table in tables:
             context = self._ctx_for_table(table)
             column = f"{source}_vec"
-            self._ensure_table_vector(table, column, source)
+            self._vectorize_column(table, column, source)
             results[table] = [
                 log.entries
                 for log in unify.get_logs(
@@ -687,7 +852,7 @@ class KnowledgeManager(BaseKnowledgeManager):
 
     # Search
 
-    def _search_knowledge(
+    def _search(
         self,
         *,
         filter: Optional[str] = None,
