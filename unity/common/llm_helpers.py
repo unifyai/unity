@@ -508,7 +508,9 @@ async def _async_tool_use_loop_inner(
     timeout: Optional[int] = None,
     raise_on_limit: bool = False,
     include_class_in_dynamic_tool_names: bool = False,
-    minimum_tool_turns: int = 0,
+    tool_policy: Optional[
+        Callable[[int, Dict[str, Callable]], Tuple[str, Dict[str, Callable]]]
+    ] = None,
 ) -> str:
     r"""
     Orchestrate an *interactive* "function-calling" dialogue between an LLM
@@ -595,12 +597,14 @@ async def _async_tool_use_loop_inner(
         argument.  This parameter is added automatically and is **not**
         exposed to the LLM.
 
-     minimum_tool_turns : ``int``, default ``0``
-         The loop must see *at least* this many **new tool calls** (calls whose
-         ``function.name`` is one of the *base* tools passed to
-         ``start_async_tool_use_loop``) before it is allowed to finish.
-         Until the threshold is reached, every LLM step is executed with
-         ``tool_choice="required"`` so the model **must** choose a tool.
+     tool_policy : ``Callable | None``, default ``None``
+         Optional callable that *dynamically* controls tool exposure **and**
+         whether a tool call is **required** on a given turn.  Receives the
+         current turn index (starting at ``0``) and the full mapping
+         ``{name → callable}``.  It must return a tuple ``(policy, tools)``
+         where ``policy`` is either ``"auto"`` or ``"required"`` (fed straight
+         into ``tool_choice``) and ``tools`` is the possibly-filtered mapping
+         of base tools visible on that turn.
 
     parent_chat_context : ``list[dict] | None``
         Nested chat structure passed from an **outer** loop.  When
@@ -891,6 +895,9 @@ async def _async_tool_use_loop_inner(
     completed_results: Dict[str, str] = {}
     assistant_meta: Dict[int, Dict[str, Any]] = {}
 
+    # per-turn index (incremented each time the assistant speaks)
+    step_index: int = 0
+
     # ── helper: graceful early-exit when limits are hit ────────────────────
     async def _handle_limit_reached(reason: str) -> str:
         """
@@ -1163,10 +1170,32 @@ async def _async_tool_use_loop_inner(
             #     are immediately reflected in what the LLM can see.
             # ------------------------------------------------------------------
 
+            # 0.  Decide policy & tool-subset for this turn  ───────────────
+            if tool_policy is not None:
+                try:
+                    tool_choice_mode, filtered = tool_policy(
+                        step_index,
+                        {n: s.fn for n, s in norm_tools.items()},
+                    )
+                except Exception as _e:  # never abort the loop on mis-behaving policies
+                    LOGGER.error(
+                        f"tool_policy raised on turn {step_index}: {_e!r}",
+                    )
+                    tool_choice_mode, filtered = "auto", {
+                        n: s.fn for n, s in norm_tools.items()
+                    }
+                policy_tools_norm = _normalise_tools(filtered)
+            else:
+                tool_choice_mode = "auto"
+                policy_tools_norm = norm_tools
+
+            def _concurrency_ok(tn: str) -> bool:
+                return tn not in norm_tools or _can_offer_tool(tn)
+
             visible_base_tools_schema = [
                 method_to_schema(spec.fn, name)
-                for name, spec in norm_tools.items()
-                if _can_offer_tool(name)
+                for name, spec in policy_tools_norm.items()
+                if _concurrency_ok(name)
             ]
 
             # helper: register a freshly-minted coroutine as a *temporary* tool
@@ -1455,11 +1484,6 @@ async def _async_tool_use_loop_inner(
             if log_steps:
                 LOGGER.info(f"🔄 [{loop_id}] LLM thinking…")
 
-            # Decide whether the model is free to omit a tool this turn
-            tool_choice_mode = (
-                "required" if total_tool_calls_made < minimum_tool_turns else "auto"
-            )
-
             if interrupt_llm_with_interjections:
                 # ––––– new *pre-emptive* mode ––––––––––––––––––––––––––––
                 # ➊ start the LLM step …
@@ -1571,6 +1595,8 @@ async def _async_tool_use_loop_inner(
             # LLM has just spoken – reset the flag
             llm_turn_required = False
             await _to_event_bus(msg)
+            # one full assistant turn completed
+            step_index += 1
 
             # ── De-duplicate tool calls (optional) ────────────────────────
             if prune_tool_duplicates and msg.get("tool_calls"):
@@ -2092,11 +2118,6 @@ async def _async_tool_use_loop_inner(
                         f"max_steps ({max_steps}) exceeded",
                     )
 
-            if total_tool_calls_made < minimum_tool_turns:
-                # Not enough tool usage yet – force another LLM turn
-                llm_turn_required = True
-                continue
-
             return msg["content"]  # DONE!
 
     except asyncio.CancelledError:  # graceful shutdown
@@ -2348,7 +2369,9 @@ def start_async_tool_use_loop(
     timeout: Optional[int] = None,
     raise_on_limit: bool = False,
     include_class_in_dynamic_tool_names: bool = False,
-    minimum_tool_turns: int = 0,
+    tool_policy: Optional[
+        Callable[[int, Dict[str, Callable]], Tuple[str, Dict[str, Callable]]]
+    ] = None,
 ) -> AsyncToolUseLoopHandle:
     """
     Kick off `_async_tool_use_loop_inner` in its own task and give the caller
@@ -2380,7 +2403,7 @@ def start_async_tool_use_loop(
             timeout=timeout,
             raise_on_limit=raise_on_limit,
             include_class_in_dynamic_tool_names=include_class_in_dynamic_tool_names,
-            minimum_tool_turns=minimum_tool_turns,
+            tool_policy=tool_policy,
         ),
     )
 
