@@ -36,8 +36,8 @@ class KnowledgeManager(BaseKnowledgeManager):
 
         refactor_tools = methods_to_tool_dict(
             # Tables
-            self._create_table,
             self._tables_overview,
+            self._create_table,
             self._rename_table,
             self._delete_table,
             # Columns
@@ -80,8 +80,9 @@ class KnowledgeManager(BaseKnowledgeManager):
             **refactor_tool,
             **methods_to_tool_dict(
                 self._search,
-                self._delete_data,
                 self._nearest,
+                self._delete_rows,
+                self._update_rows,
                 include_class_name=False,
             ),
         }
@@ -91,7 +92,8 @@ class KnowledgeManager(BaseKnowledgeManager):
             **refactor_tool,
             **methods_to_tool_dict(
                 self._add_rows,
-                self._delete_data,
+                self._update_rows,
+                self._delete_rows,
                 include_class_name=False,
             ),
         }
@@ -706,7 +708,7 @@ class KnowledgeManager(BaseKnowledgeManager):
 
     #  Row-level deletion
 
-    def _delete_data(
+    def _delete_rows(
         self,
         *,
         filter: Optional[str] = None,
@@ -748,7 +750,7 @@ class KnowledgeManager(BaseKnowledgeManager):
 
         return summaries
 
-    # Add Data
+    # Row creation / update
 
     def _add_rows(
         self,
@@ -779,6 +781,42 @@ class KnowledgeManager(BaseKnowledgeManager):
             entries=rows,
             batched=True,  # NOTE: async logger can mess with the order of the data
         )
+
+    def _update_rows(
+        self,
+        *,
+        table: str,
+        row_ids: Optional[List[int]] = None,
+        entries: Optional[List[Dict[str, Any]]] = None,
+        overwrite: bool = False,
+    ) -> Dict[str, str]:
+        """
+        **Update** existing rows identified by their *row_id*.
+
+        Parameters
+        ----------
+        table : str
+            Target table.
+        row_ids : list[int] | None
+            List of `row_id` values to update.  *None* updates nothing and will
+            return a no-op.
+        entries : list[dict[str, Any]] | None
+            New field values (aligned 1-to-1 with *row_ids*).
+        overwrite : bool, default ``False``
+            When *True*, fields **not** mentioned in *entries* are cleared.
+        """
+        if not row_ids:
+            return {"status": "no-op", "reason": "no row_ids given"}
+
+        ctx = self._ctx_for_table(table)
+        res = unify.update_logs(
+            logs=row_ids,
+            context=ctx,
+            entries=entries,
+            overwrite=overwrite,
+            project=unify.active_project(),
+        )
+        return res
 
     # Vector Search Helpers
     def _vectorize_column(
@@ -839,7 +877,7 @@ class KnowledgeManager(BaseKnowledgeManager):
             column = f"{source}_vec"
             self._vectorize_column(table, column, source)
             results[table] = [
-                log.entries
+                {"row_id": log.id, **log.entries}
                 for log in unify.get_logs(
                     context=context,
                     sorting={
@@ -887,7 +925,7 @@ class KnowledgeManager(BaseKnowledgeManager):
         results = dict()
         for table in tables:
             results[table] = [
-                log.entries
+                {"row_id": log.id, **log.entries}
                 for log in unify.get_logs(
                     context=self._ctx_for_table(table),
                     filter=filter,
