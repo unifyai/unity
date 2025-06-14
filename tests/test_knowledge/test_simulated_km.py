@@ -18,9 +18,9 @@ from tests.helpers import _handle_project
 # ────────────────────────────────────────────────────────────────────────────
 @pytest.mark.asyncio
 @_handle_project
-async def test_start_and_retrieve_simulated_km():
+async def test_start_and_ask_simulated_km():
     km = SimulatedKnowledgeManager("Demo KB for unit-tests.")
-    h = await km.retrieve("What do we already know about Zebulon?")
+    h = await km.ask("What do we already know about Zebulon?")
     ans = await h.result()
     assert isinstance(ans, str) and ans.strip(), "Answer should be non-empty"
 
@@ -42,7 +42,7 @@ async def test_interject_simulated_km(monkeypatch):
     monkeypatch.setattr(_SimulatedKnowledgeHandle, "interject", wrapped, raising=True)
 
     km = SimulatedKnowledgeManager()
-    h = await km.retrieve("Show me all facts about Zebulon.")
+    h = await km.ask("Show me all facts about Zebulon.")
     await asyncio.sleep(0.05)
     reply = h.interject("Only include historical facts.")
     assert "ack" in reply.lower() or "noted" in reply.lower()
@@ -57,7 +57,7 @@ async def test_interject_simulated_km(monkeypatch):
 @_handle_project
 async def test_stop_simulated_km():
     km = SimulatedKnowledgeManager()
-    h = await km.retrieve("Generate a 100-page report of all knowledge.")
+    h = await km.ask("Generate a 100-page report of all knowledge.")
     await asyncio.sleep(0.05)
     h.stop()
     with pytest.raises(asyncio.CancelledError):
@@ -76,7 +76,7 @@ async def test_km_requests_clarification():
     up_q: asyncio.Queue[str] = asyncio.Queue()
     down_q: asyncio.Queue[str] = asyncio.Queue()
 
-    h = await km.retrieve(
+    h = await km.ask(
         "Please summarise the knowledge base.",
         clarification_up_q=up_q,
         clarification_down_q=down_q,
@@ -97,7 +97,7 @@ async def test_km_requests_clarification():
 # ────────────────────────────────────────────────────────────────────────────
 @pytest.mark.asyncio
 @_handle_project
-async def test_km_stateful_store_then_retrieve():
+async def test_km_stateful_update_then_retrieve():
     """
     A fact stored via .store() should be recalled by a later .retrieve().
     """
@@ -105,11 +105,11 @@ async def test_km_stateful_store_then_retrieve():
     fact = "The flagship product of Acme Corp is the Quantum Widget."
 
     # store a new fact
-    h_store = await km.store(fact)
+    h_store = await km.update(fact)
     await h_store.result()
 
     # retrieve it
-    h_ret = await km.retrieve("What is the flagship product of Acme Corp?")
+    h_ret = await km.ask("What is the flagship product of Acme Corp?")
     answer = (await h_ret.result()).lower()
     assert "quantum" in answer and "widget" in answer
 
@@ -126,14 +126,14 @@ async def test_km_stateful_serial_retrieves():
     km = SimulatedKnowledgeManager()
 
     # first question – ask for a single‐word theme of the KB
-    h1 = await km.retrieve(
+    h1 = await km.ask(
         "Using one word only, how would you describe the overall theme of our knowledge base?",
     )
     theme = (await h1.result()).strip()
     assert theme, "Theme word should not be empty"
 
     # follow-up question
-    h2 = await km.retrieve(
+    h2 = await km.ask(
         "What single word did you just use to describe the knowledge base?",
     )
     ans2 = (await h2.result()).lower()
@@ -152,13 +152,13 @@ def test_simulated_km_docstrings_match_real():
     from unity.knowledge_manager.simulated import SimulatedKnowledgeManager
 
     assert (
-        SimulatedKnowledgeManager.store.__doc__.strip()
-        == BaseKnowledgeManager.store.__doc__.strip()
+        SimulatedKnowledgeManager.update.__doc__.strip()
+        == BaseKnowledgeManager.update.__doc__.strip()
     ), ".store doc-string was not copied correctly"
 
     assert (
-        SimulatedKnowledgeManager.retrieve.__doc__.strip()
-        == BaseKnowledgeManager.retrieve.__doc__.strip()
+        SimulatedKnowledgeManager.ask.__doc__.strip()
+        == BaseKnowledgeManager.ask.__doc__.strip()
     ), ".retrieve doc-string was not copied correctly"
     assert (
         SimulatedKnowledgeManager.refactor.__doc__.strip()
@@ -209,7 +209,7 @@ async def test_pause_and_resume_simulated_km(monkeypatch):
     )
 
     km = SimulatedKnowledgeManager()
-    handle = await km.retrieve("Summarise everything we know about quantum gravity.")
+    handle = await km.ask("Summarise everything we know about quantum gravity.")
 
     # Before pausing: pause should be available, resume not.
     tools_initial = handle.valid_tools

@@ -24,7 +24,7 @@ def _contains(text: str, *needles: str) -> bool:
 @pytest.mark.eval
 @pytest.mark.timeout(300)
 @_handle_project
-async def test_store_uses_parent_context():
+async def test_update_uses_parent_context():
     """
     A prior conversation instructs the assistant to call 'Carlos' by the
     codename 'Alpha'.  We pass that *parent_chat_context* to .store() and
@@ -40,7 +40,7 @@ async def test_store_uses_parent_context():
         {"role": "assistant", "content": "Understood – Project Nova → Alpha."},
     ]
 
-    handle = await km.store(
+    handle = await km.update(
         "Project Nova was initiated in 1990.",
         parent_chat_context=parent_ctx,  # ← will be threaded into the loop
     )
@@ -66,7 +66,7 @@ async def test_store_uses_parent_context():
 @pytest.mark.eval
 @pytest.mark.timeout(300)
 @_handle_project
-async def test_store_requests_clarification():
+async def test_update_requests_clarification():
     """
     The instruction is ambiguous ("store Carlos' birth year under his
     *surname*") – since the surname is unknown the tool must ask a
@@ -77,7 +77,7 @@ async def test_store_requests_clarification():
     up_q: asyncio.Queue[str] = asyncio.Queue()
     down_q: asyncio.Queue[str] = asyncio.Queue()
 
-    handle = await km.store(
+    handle = await km.update(
         "Please store Project Nova's initiation year (1990) using its *registry code* as the key.",
         clarification_up_q=up_q,
         clarification_down_q=down_q,
@@ -110,7 +110,7 @@ async def test_store_requests_clarification():
 @pytest.mark.eval
 @pytest.mark.timeout(300)
 @_handle_project
-async def test_retrieve_uses_parent_context():
+async def test_ask_uses_parent_context():
     """
     We stored data about *Carlos*.  The user later calls him "Alpha".
     The mapping is provided only via the parent chat context, therefore
@@ -119,7 +119,7 @@ async def test_retrieve_uses_parent_context():
     km = KnowledgeManager()
 
     # ➊ store a simple fact under the original name
-    handle = await km.store("Project Nova was initiated in 1990.")
+    handle = await km.update("Project Nova was initiated in 1990.")
     await handle.result()
 
     # ➋ build parent-level mapping
@@ -132,7 +132,7 @@ async def test_retrieve_uses_parent_context():
     ]
 
     # ➌ ask about Alpha – model must translate via context
-    handle = await km.retrieve(
+    handle = await km.ask(
         "When was Alpha initiated?",
         parent_chat_context=parent_ctx,
         _return_reasoning_steps=True,
@@ -154,7 +154,7 @@ async def test_retrieve_uses_parent_context():
 @pytest.mark.eval
 @pytest.mark.timeout(300)
 @_handle_project
-async def test_retrieve_requests_clarification():
+async def test_ask_requests_clarification():
     """
     We have *four* cars in a garage, each with a different colour.
     When the user asks "What colour is the car in the garage?” without disambiguation,
@@ -165,7 +165,7 @@ async def test_retrieve_requests_clarification():
 
     # ➊ seed four distinct coloured vehiles
     await (
-        await km.store(
+        await km.update(
             "There is a red Citroen, a blue Volkswagen, a green BWM, and a silver Porsche in the garage.",
         )
     ).result()
@@ -174,7 +174,7 @@ async def test_retrieve_requests_clarification():
     up_q, down_q = asyncio.Queue(), asyncio.Queue()
 
     # ➌ run retrieve in background
-    handle = await km.retrieve(
+    handle = await km.ask(
         "What colour is the car in the garage? I'm looking for one colour, request clarification if you're not sure.",
         clarification_up_q=up_q,
         clarification_down_q=down_q,

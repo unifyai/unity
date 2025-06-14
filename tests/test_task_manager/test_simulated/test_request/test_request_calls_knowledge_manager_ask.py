@@ -14,7 +14,7 @@ async def test_request_calls_knowledge_manager_ask(monkeypatch):
     A write request that first checks existing KB facts should call KnowledgeManager.retrieve once.
     """
     calls = {"count": 0}
-    original = SimulatedKnowledgeManager.retrieve
+    original = SimulatedKnowledgeManager.ask
 
     @functools.wraps(original)
     async def spy(self, text: str, **kwargs):

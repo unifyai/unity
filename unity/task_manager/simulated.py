@@ -67,7 +67,7 @@ class SimulatedTaskManager:
         passive = methods_to_tool_dict(
             self._contact_manager.ask,
             self._transcript_manager.ask,
-            self._knowledge_manager.retrieve,
+            self._knowledge_manager.ask,
             self._task_scheduler.ask,
             include_class_name=True,
         )
@@ -111,7 +111,7 @@ class SimulatedTaskManager:
             **methods_to_tool_dict(
                 self._contact_manager.update,
                 self._transcript_manager.summarize,
-                self._knowledge_manager.store,
+                self._knowledge_manager.update,
                 self._task_scheduler.update,
                 ToolSpec(_wrapped_start_task, max_concurrent=1),
                 include_class_name=True,

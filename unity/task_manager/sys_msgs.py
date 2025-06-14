@@ -36,7 +36,7 @@ following tools and may call them as many times as needed:
 • {TaskScheduler._nearest_tasks.__name__.lstrip('_')}(text, k=5)                    → List[Task]
 • {ContactManager.ask.__qualname__}(text)
 • {TranscriptManager.ask.__qualname__}(text)
-• {KnowledgeManager.retrieve.__qualname__}(text)
+• {KnowledgeManager.ask.__qualname__}(text)
 • _ask_plan_call_(question)     – only available when a task is currently
   running; lets you query live progress.
 

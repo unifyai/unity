@@ -12,7 +12,7 @@ from tests.helpers import _handle_project
 async def test_ask_calls_knowledge_manager_ask(monkeypatch):
     """A knowledge lookup should route to KnowledgeManager.retrieve once."""
     calls = {"count": 0}
-    original = SimulatedKnowledgeManager.retrieve
+    original = SimulatedKnowledgeManager.ask
 
     @functools.wraps(original)
     async def spy(self, text: str, **kwargs):

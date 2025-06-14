@@ -102,7 +102,7 @@ def build_refactor_prompt(
     ).strip()
 
 
-def build_store_prompt(
+def build_update_prompt(
     tools: Dict[str, Callable],
     *,
     table_schemas_json: str,
@@ -168,7 +168,7 @@ def build_store_prompt(
     )
 
 
-def build_retrieve_prompt(
+def build_ask_prompt(
     tools: Dict[str, Callable],
     *,
     table_schemas_json: str,

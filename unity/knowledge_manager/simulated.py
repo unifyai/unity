@@ -12,8 +12,8 @@ from .base import BaseKnowledgeManager
 from ..common.llm_helpers import SteerableToolHandle
 from .prompt_builders import (
     build_refactor_prompt,
-    build_store_prompt,
-    build_retrieve_prompt,
+    build_update_prompt,
+    build_ask_prompt,
 )
 
 
@@ -157,8 +157,8 @@ class SimulatedKnowledgeManager(BaseKnowledgeManager):
         )
         # Build *empty* reference prompts (no tools, empty schema) purely for flavour.
         refactor_ref = build_refactor_prompt({}, table_schemas_json="{}")
-        store_ref = build_store_prompt({}, table_schemas_json="{}")
-        retrieve_ref = build_retrieve_prompt({}, table_schemas_json="{}")
+        store_ref = build_update_prompt({}, table_schemas_json="{}")
+        retrieve_ref = build_ask_prompt({}, table_schemas_json="{}")
 
         self._llm.set_system_message(
             "You are a *simulated* knowledge-base manager. "
@@ -215,8 +215,8 @@ class SimulatedKnowledgeManager(BaseKnowledgeManager):
     # ------------------------------------------------------------------ #
     #  store                                                             #
     # ------------------------------------------------------------------ #
-    @functools.wraps(BaseKnowledgeManager.store, updated=())
-    async def store(
+    @functools.wraps(BaseKnowledgeManager.update, updated=())
+    async def update(
         self,
         text: str,
         *,
@@ -249,8 +249,8 @@ class SimulatedKnowledgeManager(BaseKnowledgeManager):
     # ------------------------------------------------------------------ #
     #  retrieve                                                          #
     # ------------------------------------------------------------------ #
-    @functools.wraps(BaseKnowledgeManager.retrieve, updated=())
-    async def retrieve(
+    @functools.wraps(BaseKnowledgeManager.ask, updated=())
+    async def ask(
         self,
         text: str,
         *,

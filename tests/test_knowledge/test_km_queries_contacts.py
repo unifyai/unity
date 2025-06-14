@@ -24,7 +24,7 @@ from tests.helpers import _handle_project
 @pytest.mark.asyncio
 @pytest.mark.requires_real_unify
 @_handle_project
-async def test_km_retrieve_joins_contact_and_company():
+async def test_km_ask_joins_contact_and_company():
     """
     The KM should discover the employer via CM.ask and then look up the
     company's employee count in its own tables.
@@ -46,7 +46,7 @@ async def test_km_retrieve_joins_contact_and_company():
 
     # ➌ Ask a question that *requires* calling CM.ask internally
     q = "How many employees are at the company Steve Taylor works at?"
-    h = await km.retrieve(q, _return_reasoning_steps=True)
+    h = await km.ask(q, _return_reasoning_steps=True)
     answer, reasoning = await h.result()
 
     # Basic semantic check – the answer should quote 1200 employees somewhere
@@ -62,7 +62,7 @@ async def test_km_retrieve_joins_contact_and_company():
 @pytest.mark.asyncio
 @pytest.mark.requires_real_unify
 @_handle_project
-async def test_km_store_updates_contact():
+async def test_km_update_updates_contact():
     """
     A natural-language *store* instruction routed through KM should trigger
     ContactManager.update to add WhatsApp info.
@@ -79,7 +79,7 @@ async def test_km_store_updates_contact():
 
     # ‣ Instruction to store extra info
     cmd = "Add Jane Doe's WhatsApp number +15559998877."
-    h = await km.store(cmd, _return_reasoning_steps=True)
+    h = await km.update(cmd, _return_reasoning_steps=True)
     _, steps = await h.result()  # we don't need the textual confirmation here
 
     # ‣ Verify that the ContactManager state really changed

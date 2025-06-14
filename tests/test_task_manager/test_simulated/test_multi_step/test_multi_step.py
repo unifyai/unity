@@ -216,8 +216,8 @@ async def test_knowledge_change_audit(monkeypatch):
     • Conditional update: retrieve again, then store once
     """
     counts = {"km_retrieve": 0, "km_store": 0, "ts_update": 0}
-    orig_ret = SimulatedKnowledgeManager.retrieve
-    orig_store = SimulatedKnowledgeManager.store
+    orig_ret = SimulatedKnowledgeManager.ask
+    orig_store = SimulatedKnowledgeManager.update
     orig_ts_update = SimulatedTaskScheduler.update
 
     @functools.wraps(orig_ret)
@@ -385,7 +385,7 @@ async def test_interleaved_tools(monkeypatch):
     }
 
     # -- Knowledge retrieve
-    orig_kb_ret = SimulatedKnowledgeManager.retrieve
+    orig_kb_ret = SimulatedKnowledgeManager.ask
 
     @functools.wraps(orig_kb_ret)
     async def spy_kb_ret(self, text: str, **kw):
