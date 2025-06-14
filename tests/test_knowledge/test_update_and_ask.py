@@ -42,10 +42,10 @@ def _contains(text: str, *needles: str) -> bool:
 @pytest.mark.asyncio
 @pytest.mark.timeout(300)
 @_handle_project
-async def test_store_simple_fact():
+async def test_update_simple_fact():
     km = KnowledgeManager()
 
-    handle = await km.store("The ZX-99 gizmo was released in 1994.")
+    handle = await km.update("The ZX-99 gizmo was released in 1994.")
     await handle.result()
 
     all_data = km._search()
@@ -61,7 +61,7 @@ async def test_store_simple_fact():
 @pytest.mark.asyncio
 @pytest.mark.timeout(300)
 @_handle_project
-async def test_retrieve_simple_fact():
+async def test_ask_simple_fact():
     km = KnowledgeManager()
 
     km._create_table(name="MyTable")
@@ -70,7 +70,7 @@ async def test_retrieve_simple_fact():
         rows=[{"model": "ZX-99", "release_year": "1994"}],
     )
 
-    handle = await km.retrieve(
+    handle = await km.ask(
         "When was the ZX-99 gizmo released?",
         _return_reasoning_steps=True,
     )
@@ -96,10 +96,10 @@ async def test_retrieve_simple_fact():
 async def test_round_trip_simple_fact():
     km = KnowledgeManager()
 
-    handle = await km.store("The ZX-99 gizmo was released in 1994.")
+    handle = await km.update("The ZX-99 gizmo was released in 1994.")
     await handle.result()
 
-    handle = await km.retrieve(
+    handle = await km.ask(
         "When was the ZX-99 released?",
         _return_reasoning_steps=True,
     )
@@ -130,10 +130,10 @@ async def test_schema_expands_and_new_field_retrievable():
     """
     km = KnowledgeManager()
 
-    handle = await km.store("The QuantumDrive unit produces 35 megawatts.")
+    handle = await km.update("The QuantumDrive unit produces 35 megawatts.")
     await handle.result()
 
-    handle = await km.retrieve(
+    handle = await km.ask(
         "How many megawatts does the QuantumDrive unit produce?",
         _return_reasoning_steps=True,
     )
@@ -146,12 +146,12 @@ async def test_schema_expands_and_new_field_retrievable():
         {"Knowledge Data": km._search()},
     )
 
-    handle = await km.store(
+    handle = await km.update(
         "The QuantumDrive's core colour is blue and its weight is 180 kilograms.",
     )
     await handle.result()
 
-    handle = await km.retrieve(
+    handle = await km.ask(
         "How much does the QuantumDrive unit weigh?",
         _return_reasoning_steps=True,
     )
@@ -164,7 +164,7 @@ async def test_schema_expands_and_new_field_retrievable():
         {"Knowledge Data": km._search()},
     )
 
-    handle = await km.retrieve(
+    handle = await km.ask(
         "What is the QuantumDrive's core colour?",
         _return_reasoning_steps=True,
     )
@@ -177,7 +177,7 @@ async def test_schema_expands_and_new_field_retrievable():
         {"Knowledge Data": km._search()},
     )
 
-    handle = await km.retrieve(
+    handle = await km.ask(
         "How many megawatts does the QuantumDrive unit produce?",
         _return_reasoning_steps=True,
     )
@@ -211,15 +211,15 @@ async def test_multiple_tables_and_join_like_query():
     """
     km = KnowledgeManager()
 
-    handle = await km.store("The OrbitalDrone X99 costs 999 credits.")
+    handle = await km.update("The OrbitalDrone X99 costs 999 credits.")
     await handle.result()
 
-    handle = await km.store(
+    handle = await km.update(
         "Node Lambda acquired an OrbitalDrone X99 on 3 May 2025 via its procurement channel.",
     )
     await handle.result()
 
-    handle = await km.retrieve(
+    handle = await km.ask(
         "How much did Node Lambda pay for its acquisition?",
         _return_reasoning_steps=True,
     )
@@ -254,15 +254,15 @@ async def test_incremental_updates_and_refactor():
     """
     km = KnowledgeManager()
 
-    handle = await km.store("The StorageVault contains a component named AlphaCore.")
+    handle = await km.update("The StorageVault contains a component named AlphaCore.")
     await handle.result()
 
-    handle = await km.store(
+    handle = await km.update(
         "The StorageVault also contains a component named BetaModule.",
     )
     await handle.result()
 
-    handle = await km.retrieve(
+    handle = await km.ask(
         "What are the names of the components in the StorageVault?",
         _return_reasoning_steps=True,
     )
@@ -296,13 +296,13 @@ async def test_numeric_reasoning_after_multiple_points():
     """
     km = KnowledgeManager()
 
-    handle = await km.store("Point P has coordinates x = 3 and y = 4.")
+    handle = await km.update("Point P has coordinates x = 3 and y = 4.")
     await handle.result()
 
-    handle = await km.store("Point Q has coordinates x = 1 and y = 10.")
+    handle = await km.update("Point Q has coordinates x = 1 and y = 10.")
     await handle.result()
 
-    handle = await km.retrieve(
+    handle = await km.ask(
         "Which points lie in the first quadrant but have y less than 5?",
         _return_reasoning_steps=True,
     )
@@ -325,7 +325,7 @@ async def test_numeric_reasoning_after_multiple_points():
 @pytest.mark.asyncio
 @pytest.mark.timeout(300)
 @_handle_project
-async def test_store_interjection():
+async def test_update_interjection():
     """
     Test that we can interject during a store operation and
     the interjection is incorporated into the final result.
@@ -333,13 +333,13 @@ async def test_store_interjection():
     km = KnowledgeManager()
 
     # store some informatiion
-    handle = await km.store("Batch A is located in Sector 7.")
+    handle = await km.update("Batch A is located in Sector 7.")
 
     # Mid-operation, add another detail that should also get stored.
     await handle.interject("Also, it was calibrated in 1990.")
 
     await handle.result()
-    handle = await km.retrieve(
+    handle = await km.ask(
         "Which sector is Batch A located in and when was it calibrated?",
     )
     out = await handle.result()
@@ -362,11 +362,11 @@ async def test_store_interjection():
 @pytest.mark.asyncio
 @pytest.mark.timeout(300)
 @_handle_project
-async def test_store_stop():
+async def test_update_stop():
     km = KnowledgeManager()
 
     # Provide multiple facts in one go so that cancelling halfway through still yields a partial, meaningful result.
-    handle = await km.store(
+    handle = await km.update(
         "Batch A is in Sector 7. Module X weighs 30 kg. Device Y weighs 25 kg.",
     )
     await asyncio.sleep(0.05)
@@ -385,7 +385,7 @@ async def test_store_stop():
 @pytest.mark.asyncio
 @pytest.mark.timeout(300)
 @_handle_project
-async def test_retrieve_interjection():
+async def test_ask_interjection():
     """
     Test that we can interject during a retrieve operation and
     the interjection is incorporated into the final result.
@@ -393,12 +393,12 @@ async def test_retrieve_interjection():
     km = KnowledgeManager()
 
     # Store some data first
-    handle = await km.store("Unit 42 weighs 30 kilograms.")
-    handle = await km.store("Unit 42 is stored in Bay A.")
+    handle = await km.update("Unit 42 weighs 30 kilograms.")
+    handle = await km.update("Unit 42 is stored in Bay A.")
     await handle.result()
 
     # Now retrieve with interjection
-    handle = await km.retrieve("How heavy is Unit 42?")
+    handle = await km.ask("How heavy is Unit 42?")
     await handle.interject("Also, where is it stored?")
     out = await handle.result()
 
@@ -418,21 +418,21 @@ async def test_retrieve_interjection():
 @pytest.mark.asyncio
 @pytest.mark.timeout(300)
 @_handle_project
-async def test_retrieve_stop():
+async def test_ask_stop():
     """
     Test that we can stop a retrieve operation mid-execution
     """
     km = KnowledgeManager()
 
     # Store some data first
-    handle = await km.store(
+    handle = await km.update(
         "The capital of Andovia is Mirax. The capital of Eldoria is Luthen. "
         "The capital of Zarkon is Nimbos.",
     )
     await handle.result()
 
     # Now retrieve with stop
-    handle = await km.retrieve("List the capitals of the specified kingdoms.")
+    handle = await km.ask("List the capitals of the specified kingdoms.")
     await asyncio.sleep(0.05)
     handle.stop()
     with pytest.raises(asyncio.CancelledError):

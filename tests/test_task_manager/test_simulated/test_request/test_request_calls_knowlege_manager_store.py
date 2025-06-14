@@ -12,7 +12,7 @@ from tests.helpers import _handle_project
 async def test_request_calls_knowledge_manager_store(monkeypatch):
     """A write-request to remember new facts should hit KnowledgeManager.store once."""
     calls = {"count": 0}
-    original = SimulatedKnowledgeManager.store
+    original = SimulatedKnowledgeManager.update
 
     @functools.wraps(original)
     async def spy(self, text: str, **kwargs):

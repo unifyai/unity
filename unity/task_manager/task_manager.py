@@ -111,7 +111,7 @@ class TaskManager(BaseTaskManager):
             # technically not passive, but likely useful for question answering
             self._transcript_manager.summarize,
             #
-            self._knowledge_manager.retrieve,
+            self._knowledge_manager.ask,
             self._task_scheduler.ask,
             include_class_name=True,
         )
@@ -122,7 +122,7 @@ class TaskManager(BaseTaskManager):
             **passive,  # read-only tools are also valid here
             **methods_to_tool_dict(
                 self._transcript_manager.summarize,
-                self._knowledge_manager.store,
+                self._knowledge_manager.update,
                 self._task_scheduler.update,
                 ToolSpec(self._task_scheduler.start_task, max_concurrent=1),
                 include_class_name=True,

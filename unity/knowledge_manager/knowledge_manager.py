@@ -18,8 +18,8 @@ from ..common.llm_helpers import (
 from ..helpers import _handle_exceptions
 from .base import BaseKnowledgeManager
 from .prompt_builders import (
-    build_store_prompt,
-    build_retrieve_prompt,
+    build_update_prompt,
+    build_ask_prompt,
     build_refactor_prompt,
 )
 
@@ -74,7 +74,7 @@ class KnowledgeManager(BaseKnowledgeManager):
         # monotonically-increasing integer column called  **row_id**.
         self._ROW_ID: str = "row_id"
 
-        self._retrieve_tools = {
+        self._ask_tools = {
             **methods_to_tool_dict(
                 self._tables_overview,
                 self._search,
@@ -82,7 +82,7 @@ class KnowledgeManager(BaseKnowledgeManager):
             ),
         }
 
-        self._store_tools = {
+        self._update_tools = {
             **self._refactor_tools,
             **methods_to_tool_dict(
                 self._add_rows,
@@ -183,8 +183,8 @@ class KnowledgeManager(BaseKnowledgeManager):
 
         return handle
 
-    @functools.wraps(BaseKnowledgeManager.store, updated=())
-    async def store(
+    @functools.wraps(BaseKnowledgeManager.update, updated=())
+    async def update(
         self,
         text: str,
         *,
@@ -201,7 +201,7 @@ class KnowledgeManager(BaseKnowledgeManager):
         )
 
         # ── 1.  Expose tools + a *dynamic* request_clarification helper ──
-        tools = dict(self._store_tools)
+        tools = dict(self._update_tools)
 
         if clarification_up_q is not None or clarification_down_q is not None:
 
@@ -221,7 +221,7 @@ class KnowledgeManager(BaseKnowledgeManager):
         # Add the system message with all tools
         table_schemas_json = json.dumps(self._tables_overview(), indent=4)
         client.set_system_message(
-            build_store_prompt(
+            build_update_prompt(
                 tools=tools,
                 table_schemas_json=table_schemas_json,
             ),
@@ -231,7 +231,7 @@ class KnowledgeManager(BaseKnowledgeManager):
             client,
             text,
             tools,
-            loop_id=f"{self.__class__.__name__}.{self.store.__name__}",
+            loop_id=f"{self.__class__.__name__}.{self.update.__name__}",
             parent_chat_context=parent_chat_context,
             tool_policy=self._look_first_tool_policy,
         )
@@ -248,8 +248,8 @@ class KnowledgeManager(BaseKnowledgeManager):
 
         return handle
 
-    @functools.wraps(BaseKnowledgeManager.retrieve, updated=())
-    async def retrieve(
+    @functools.wraps(BaseKnowledgeManager.ask, updated=())
+    async def ask(
         self,
         text: str,
         *,
@@ -265,7 +265,7 @@ class KnowledgeManager(BaseKnowledgeManager):
         )
 
         # ── 1.  Expose tools + a *dynamic* request_clarification helper ──
-        tools = dict(self._retrieve_tools)
+        tools = dict(self._ask_tools)
 
         if clarification_up_q is not None or clarification_down_q is not None:
 
@@ -285,7 +285,7 @@ class KnowledgeManager(BaseKnowledgeManager):
         # Add the system message with all tools
         table_schemas_json = json.dumps(self._tables_overview(), indent=4)
         client.set_system_message(
-            build_retrieve_prompt(
+            build_ask_prompt(
                 tools=tools,
                 table_schemas_json=table_schemas_json,
             ),
@@ -294,7 +294,7 @@ class KnowledgeManager(BaseKnowledgeManager):
             client,
             text,
             tools,
-            loop_id=f"{self.__class__.__name__}.{self.retrieve.__name__}",
+            loop_id=f"{self.__class__.__name__}.{self.ask.__name__}",
             parent_chat_context=parent_chat_context,
             tool_policy=lambda i, _: ("required", _) if i < 1 else ("auto", _),
         )
