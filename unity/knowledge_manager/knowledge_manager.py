@@ -167,7 +167,7 @@ class KnowledgeManager(BaseKnowledgeManager):
             tools,
             loop_id=f"{self.__class__.__name__}.{self.refactor.__name__}",
             parent_chat_context=parent_chat_context,
-            minimum_tool_turns=1,
+            tool_policy=lambda i, _: ("required", _) if i < 1 else ("auto", _),
         )
 
         # 4️⃣  Optionally wrap .result() to expose hidden reasoning
@@ -232,7 +232,7 @@ class KnowledgeManager(BaseKnowledgeManager):
             tools,
             loop_id=f"{self.__class__.__name__}.{self.store.__name__}",
             parent_chat_context=parent_chat_context,
-            minimum_tool_turns=1,
+            tool_policy=lambda i, _: ("required", _) if i < 1 else ("auto", _),
         )
 
         # ── 3.  Optionally wrap .result() to expose reasoning  ────────────
@@ -295,7 +295,7 @@ class KnowledgeManager(BaseKnowledgeManager):
             tools,
             loop_id=f"{self.__class__.__name__}.{self.retrieve.__name__}",
             parent_chat_context=parent_chat_context,
-            minimum_tool_turns=1,
+            tool_policy=lambda i, _: ("required", _) if i < 1 else ("auto", _),
         )
 
         # ── 3.  Optionally wrap .result() to expose reasoning  ────────────

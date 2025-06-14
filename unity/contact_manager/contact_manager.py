@@ -330,7 +330,7 @@ class ContactManager(BaseContactManager):
             tools,
             loop_id=f"{self.__class__.__name__}.{self.ask.__name__}",
             parent_chat_context=parent_chat_context,
-            minimum_tool_turns=1,
+            tool_policy=lambda i, _: ("required", _) if i < 1 else ("auto", _),
         )
 
         if _return_reasoning_steps:
@@ -380,7 +380,7 @@ class ContactManager(BaseContactManager):
             tools,
             loop_id=f"{self.__class__.__name__}.{self.update.__name__}",
             parent_chat_context=parent_chat_context,
-            minimum_tool_turns=1,
+            tool_policy=lambda i, _: ("required", _) if i < 1 else ("auto", _),
         )
 
         if _return_reasoning_steps:
