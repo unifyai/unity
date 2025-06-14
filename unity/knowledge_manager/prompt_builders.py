@@ -137,7 +137,7 @@ def build_store_prompt(
         1. Extract every fact (subject → attribute → value) from the message.
         2. Decide whether each fact updates an existing row or inserts a new one.
         3. Add missing columns with the correct data-type where necessary.
-        4. Use `_add_data` to write the changes.
+        4. Use `_add_rows` to insert and `_update_rows` to modify existing ones.
         5. Search again to verify everything stored correctly.
         6. Reply with a short natural-language confirmation of what was stored.
 
