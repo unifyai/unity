@@ -94,7 +94,7 @@ class KnowledgeManager(BaseKnowledgeManager):
 
     def _ctx_for_table(self, table: str) -> str:
         """Return the correct Unify context for *table*."""
-        return self._contacts_ctx if table == "Contacts" else self._ctx_for_table(table)
+        return self._contacts_ctx if table == "Contacts" else f"{self._ctx}/{table}"
 
     # Public #
     # -------#
