@@ -30,7 +30,7 @@ async def test_km_retrieve_joins_contact_and_company():
     company's employee count in its own tables.
     """
     cm = ContactManager()
-    km = KnowledgeManager(contact_manager=cm)
+    km = KnowledgeManager()
 
     # ➊ Set up contact – add custom "employer" field then create Steve Taylor
     cm._create_custom_column(column_name="employer", column_type="str")
@@ -42,7 +42,7 @@ async def test_km_retrieve_joins_contact_and_company():
 
     # ➋ Set up companies knowledge
     km._create_table(name="Companies", columns={"name": "str", "employees": "int"})
-    km._add_data(table="Companies", data=[{"name": "BigCorp", "employees": 1200}])
+    km._add_rows(table="Companies", rows=[{"name": "BigCorp", "employees": 1200}])
 
     # ➌ Ask a question that *requires* calling CM.ask internally
     q = "How many employees are at the company Steve Taylor works at?"
@@ -68,7 +68,7 @@ async def test_km_store_updates_contact_via_cm():
     ContactManager.update to add WhatsApp info.
     """
     cm = ContactManager()
-    km = KnowledgeManager(contact_manager=cm)
+    km = KnowledgeManager()
 
     # ‣ Pre-existing contact *without* WhatsApp
     cm._create_contact(

@@ -8,9 +8,9 @@ import pytest
 def test_search_basic():
     knowledge_manager = KnowledgeManager()
     knowledge_manager._create_table(name="MyTable")
-    knowledge_manager._add_data(
+    knowledge_manager._add_rows(
         table="MyTable",
-        data=[{"x": 0, "y": 1}, {"x": 2, "y": 3}],
+        rows=[{"x": 0, "y": 1}, {"x": 2, "y": 3}],
     )
     data = knowledge_manager._search()
     assert data == {
@@ -26,9 +26,9 @@ def test_search_basic():
 def test_search_filter():
     knowledge_manager = KnowledgeManager()
     knowledge_manager._create_table(name="MyTable")
-    knowledge_manager._add_data(
+    knowledge_manager._add_rows(
         table="MyTable",
-        data=[{"x": 0, "y": 1}, {"x": 2, "y": 3}],
+        rows=[{"x": 0, "y": 1}, {"x": 2, "y": 3}],
     )
     data = knowledge_manager._search(filter="x > 0")
     assert data == {
@@ -43,14 +43,14 @@ def test_search_filter():
 def test_search_specific_tables():
     knowledge_manager = KnowledgeManager()
     knowledge_manager._create_table(name="MyTable")
-    knowledge_manager._add_data(
+    knowledge_manager._add_rows(
         table="MyTable",
-        data=[{"x": 0, "y": 1}, {"x": 2, "y": 3}],
+        rows=[{"x": 0, "y": 1}, {"x": 2, "y": 3}],
     )
     knowledge_manager._create_table(name="MyOtherTable")
-    knowledge_manager._add_data(
+    knowledge_manager._add_rows(
         table="MyOtherTable",
-        data=[{"a": 9, "b": 10}],
+        rows=[{"a": 9, "b": 10}],
     )
     # default
     data = knowledge_manager._search()
@@ -78,9 +78,9 @@ def test_search_specific_tables():
 def test_search_w_filter():
     knowledge_manager = KnowledgeManager()
     knowledge_manager._create_table(name="MyTable")
-    knowledge_manager._add_data(
+    knowledge_manager._add_rows(
         table="MyTable",
-        data=[{"x": 0, "y": 1}, {"x": 1, "y": 2}, {"x": 2, "y": 3}, {"x": 3, "y": 4}],
+        rows=[{"x": 0, "y": 1}, {"x": 1, "y": 2}, {"x": 2, "y": 3}, {"x": 3, "y": 4}],
     )
     data = knowledge_manager._search(filter="x > 1 and y < 4")
     assert data == {

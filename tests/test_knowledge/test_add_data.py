@@ -8,9 +8,9 @@ import pytest
 def test_add_data():
     knowledge_manager = KnowledgeManager()
     knowledge_manager._create_table(name="MyTable")
-    knowledge_manager._add_data(
+    knowledge_manager._add_rows(
         table="MyTable",
-        data=[{"item": "WidgetA", "units": 30}, {"item": "WidgetB", "units": 25}],
+        rows=[{"item": "WidgetA", "units": 30}, {"item": "WidgetB", "units": 25}],
     )
     data = knowledge_manager._search()
     assert data == {
@@ -26,13 +26,13 @@ def test_add_data():
 def test_add_more_data():
     knowledge_manager = KnowledgeManager()
     knowledge_manager._create_table(name="MyTable")
-    knowledge_manager._add_data(
+    knowledge_manager._add_rows(
         table="MyTable",
-        data=[{"item": "WidgetA", "units": 30}],
+        rows=[{"item": "WidgetA", "units": 30}],
     )
-    knowledge_manager._add_data(
+    knowledge_manager._add_rows(
         table="MyTable",
-        data=[{"item": "WidgetB", "units": 25}],
+        rows=[{"item": "WidgetB", "units": 25}],
     )
     data = knowledge_manager._search()
     assert data == {

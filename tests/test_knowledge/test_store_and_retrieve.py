@@ -65,9 +65,9 @@ async def test_retrieve_simple_fact():
     km = KnowledgeManager()
 
     km._create_table(name="MyTable")
-    km._add_data(
+    km._add_rows(
         table="MyTable",
-        data=[{"model": "ZX-99", "release_year": "1994"}],
+        rows=[{"model": "ZX-99", "release_year": "1994"}],
     )
 
     handle = await km.retrieve(
