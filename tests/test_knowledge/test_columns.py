@@ -13,7 +13,7 @@ def test_create_empty_column():
         column_name="MyCol",
         column_type="int",
     )
-    tables = knowledge_manager._list_tables(include_columns=True)
+    tables = knowledge_manager._tables_overview(include_column_info=True)
     assert tables == {"MyTable": {"description": None, "columns": {"MyCol": "int"}}}
 
 
@@ -22,9 +22,9 @@ def test_create_empty_column():
 def test_create_derived_column():
     knowledge_manager = KnowledgeManager()
     knowledge_manager._create_table(name="MyTable")
-    knowledge_manager._add_data(
+    knowledge_manager._add_rows(
         table="MyTable",
-        data=[{"x": 1, "y": 2}, {"x": 3, "y": 4}],
+        rows=[{"x": 1, "y": 2}, {"x": 3, "y": 4}],
     )
     knowledge_manager._create_derived_column(
         table="MyTable",
@@ -45,9 +45,9 @@ def test_create_derived_column():
 def test_delete_column():
     knowledge_manager = KnowledgeManager()
     knowledge_manager._create_table(name="MyTable")
-    knowledge_manager._add_data(
+    knowledge_manager._add_rows(
         table="MyTable",
-        data=[{"x": 1, "y": 2}, {"x": 3, "y": 4}],
+        rows=[{"x": 1, "y": 2}, {"x": 3, "y": 4}],
     )
     knowledge_manager._delete_column(table="MyTable", column_name="x")
     data = knowledge_manager._search()
@@ -69,10 +69,10 @@ def test_delete_empty_column():
         column_name="x",
         column_type="int",
     )
-    tables = knowledge_manager._list_tables(include_columns=True)
+    tables = knowledge_manager._tables_overview(include_column_info=True)
     assert tables == {"MyTable": {"description": None, "columns": {"x": "int"}}}
     knowledge_manager._delete_column(table="MyTable", column_name="x")
-    tables = knowledge_manager._list_tables(include_columns=True)
+    tables = knowledge_manager._tables_overview(include_column_info=True)
     assert tables == {"MyTable": {"description": None, "columns": {}}}
     data = knowledge_manager._search()
     assert data == {"MyTable": []}
@@ -83,9 +83,9 @@ def test_delete_empty_column():
 def test_rename_column():
     knowledge_manager = KnowledgeManager()
     knowledge_manager._create_table(name="MyTable")
-    knowledge_manager._add_data(
+    knowledge_manager._add_rows(
         table="MyTable",
-        data=[{"x": 1, "y": 2}, {"x": 3, "y": 4}],
+        rows=[{"x": 1, "y": 2}, {"x": 3, "y": 4}],
     )
     knowledge_manager._rename_column(table="MyTable", old_name="x", new_name="X")
     data = knowledge_manager._search()

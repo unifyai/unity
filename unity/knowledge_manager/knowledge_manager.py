@@ -37,7 +37,7 @@ class KnowledgeManager(BaseKnowledgeManager):
         refactor_tools = methods_to_tool_dict(
             # Tables
             self._create_table,
-            self._list_tables,
+            self._tables_overview,
             self._rename_table,
             self._delete_table,
             # Columns
@@ -90,7 +90,7 @@ class KnowledgeManager(BaseKnowledgeManager):
             **self._refactor_tools,
             **refactor_tool,
             **methods_to_tool_dict(
-                self._add_data,
+                self._add_rows,
                 self._delete_data,
                 include_class_name=False,
             ),
@@ -150,7 +150,7 @@ class KnowledgeManager(BaseKnowledgeManager):
             tools["request_clarification"] = request_clarification
 
         # 2️⃣  Build & inject system prompt
-        table_schemas_json = json.dumps(self._list_tables(), indent=4)
+        table_schemas_json = json.dumps(self._tables_overview(), indent=4)
         client.set_system_message(
             build_refactor_prompt(
                 tools=tools,
@@ -216,7 +216,7 @@ class KnowledgeManager(BaseKnowledgeManager):
 
         # ── 2.  Launch the interactive tool-use loop ──────────────────────
         # Add the system message with all tools
-        table_schemas_json = json.dumps(self._list_tables(), indent=4)
+        table_schemas_json = json.dumps(self._tables_overview(), indent=4)
         client.set_system_message(
             build_store_prompt(
                 tools=tools,
@@ -280,7 +280,7 @@ class KnowledgeManager(BaseKnowledgeManager):
 
         # ── 2.  Launch the interactive tool-use loop ──────────────────────
         # Add the system message with all tools
-        table_schemas_json = json.dumps(self._list_tables(), indent=4)
+        table_schemas_json = json.dumps(self._tables_overview(), indent=4)
         client.set_system_message(
             build_retrieve_prompt(
                 tools=tools,
@@ -365,17 +365,17 @@ class KnowledgeManager(BaseKnowledgeManager):
         _handle_exceptions(response)
         return response.json()
 
-    def _list_tables(
+    def _tables_overview(
         self,
         *,
-        include_columns: bool = True,
+        include_column_info: bool = True,
     ) -> Dict[str, Dict[str, Any]]:
         """
-        Enumerate **all** tables managed by this instance.
+        Show the information for **all** tables.
 
         Parameters
         ----------
-        include_columns : bool, default ``True``
+        include_column_info : bool, default ``True``
             When *True* each table entry also contains a
             ``"columns": {name: type}`` mapping.
 
@@ -383,7 +383,7 @@ class KnowledgeManager(BaseKnowledgeManager):
         -------
         dict[str, dict]
             Mapping ``table_name → {"description": str, "columns": {...}}``.
-            If *include_columns* is *False* the ``"columns"`` key is omitted.
+            If *include_column_info* is *False* the ``"columns"`` key is omitted.
         """
         tables = {
             k[len(f"{self._ctx}/") :]: {"description": v}
@@ -394,7 +394,7 @@ class KnowledgeManager(BaseKnowledgeManager):
             tables["Contacts"] = {
                 "description": unify.get_contexts()[self._contacts_ctx],
             }
-        if not include_columns:
+        if not include_column_info:
             return tables
         return {
             k: {**v, "columns": self._get_columns(table=k)} for k, v in tables.items()
@@ -720,7 +720,7 @@ class KnowledgeManager(BaseKnowledgeManager):
         Argspec mirrors `_search_knowledge`.
         """
         if tables is None:
-            tables = list(self._list_tables().keys())
+            tables = list(self._tables_overview().keys())
 
         summaries: Dict[str, str] = {}
         for table in tables:
@@ -750,11 +750,11 @@ class KnowledgeManager(BaseKnowledgeManager):
 
     # Add Data
 
-    def _add_data(
+    def _add_rows(
         self,
         *,
         table: str,
-        data: List[Dict[str, Any]],
+        rows: List[Dict[str, Any]],
     ) -> Dict[str, str]:
         """
         **Insert** one or many rows into *table*.
@@ -766,7 +766,7 @@ class KnowledgeManager(BaseKnowledgeManager):
         ----------
         table : str
             Destination table.
-        data : list[dict[str, Any]]
+        rows : list[dict[str, Any]]
             Sequence of row dictionaries. Dictionary keys (column names) MUST be *snake case*.
 
         Returns
@@ -776,7 +776,7 @@ class KnowledgeManager(BaseKnowledgeManager):
         """
         return unify.create_logs(
             context=self._ctx_for_table(table),
-            entries=data,
+            entries=rows,
             batched=True,  # NOTE: async logger can mess with the order of the data
         )
 
@@ -882,7 +882,7 @@ class KnowledgeManager(BaseKnowledgeManager):
             Mapping ``table_name → [row_dict, …]``.
         """
         if tables is None:
-            tables = self._list_tables()
+            tables = self._tables_overview()
         # ToDo: convert to map function
         results = dict()
         for table in tables:

@@ -48,7 +48,7 @@ async def test_refactor_removes_duplicate_opening_hours():
 
     # ➊  Seed duplicated schema & data --------------------------------------
     cm = ContactManager()
-    km = KnowledgeManager(contact_manager=cm)
+    km = KnowledgeManager()
 
     # Contacts table: add duplicate columns + one sample row
     cm._create_custom_column(column_name="opening_hours", column_type="str")
@@ -71,9 +71,9 @@ async def test_refactor_removes_duplicate_opening_hours():
             "opening_hours": "str",
         },
     )
-    km._add_data(
+    km._add_rows(
         table="Companies",
-        data=[
+        rows=[
             {
                 "name": "Acme",
                 "revenue": 1_000_000,

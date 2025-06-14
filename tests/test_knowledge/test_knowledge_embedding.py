@@ -21,7 +21,7 @@ def test_knowledge_embedding():
         {"content": "Text messaging is my go-to communication method."},
         {"content": "I love taking the train to work."},
     ]
-    manager._add_data(table=table_name, data=entries)
+    manager._add_rows(table=table_name, rows=entries)
 
     # Keyword-based search should find no hits for the term 'preferences'
     keyword_results = manager._search(
