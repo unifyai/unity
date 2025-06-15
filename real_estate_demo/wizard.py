@@ -1,11 +1,14 @@
 from typing import Callable, Literal, Union
 from textwrap import dedent
-import functools
 
 from pydantic import BaseModel, Field, create_model
 
-class Submit(BaseModel):
-    submit: bool = Literal[True]
+class Next(BaseModel):
+    next: bool = Literal[True]
+
+class Back(BaseModel):
+    back: bool = Literal[True]
+
 
 class InputField:
     def __init__(self, id: str, label: str=None, description: str=None, value=None):
@@ -54,7 +57,7 @@ class RadioField:
 #     def set_value(self, value):
 #         self.value = value
 
-class Screen:
+class Node:
     def __init__(self, id: str, title: str, instructions: str, fields: list, next: str|Callable):
         self.id = id
         self.title = title
@@ -89,7 +92,7 @@ class Screen:
         for field in self.fields:
             if isinstance(field, InputField):
                 field_action_model = create_model(
-                    f'Fill{field.label.title()}',
+                    f'Fill{"".join([w.title() for w in field.label.split(" ")])}',
                     value=(str, Field(..., description=field.description))
                 )
                 
@@ -100,12 +103,12 @@ class Screen:
                 )
             self.action_to_field[field_action_model] = field.id
             fields_action_models.append(field_action_model)
-        fields_action_models.append(Submit)
+        # fields_action_models.append(Next)
         self.action_model = Union[*fields_action_models]
     
     def play_actions(self, list_of_actions):
         for action in list_of_actions:
-            if isinstance(action, Submit):
+            if isinstance(action, Next):
                 self.is_submitted = True
             else:
                 action_cls = action.__class__
@@ -120,7 +123,7 @@ class Screen:
             body += field.render()
             body += '\n'
         return dedent(f"""
-Screen: {self.title}
+Node: {self.title}
 Instructions: {self.instructions}
 ---
 
@@ -138,32 +141,42 @@ Instructions: {self.instructions}
 
 
 class Flow:
-    def __init__(self, screens: list[Screen], start: str=None):
+    def __init__(self, screens: list[Node], start: str=None):
         self.screens = screens
         for s in screens:
             s.reset()
-        self.current_screen: Screen = self.screens[0] if start is None else list(filter(lambda s: s.id==start, self.screens))[0]
+        self.current_node: Node = self.screens[0] if start is None else list(filter(lambda s: s.id==start, self.screens))[0]
         
         # this will hold all the data collected so far
-        self.ctx = self.current_screen.data
+        self.ctx = self.current_node.data
+        self.path = [self.current_node]
 
     def play_actions(self, list_of_actions: ...):
-        self.current_screen.play_actions(list_of_actions)
+        self.current_node.play_actions(list_of_actions)
         
         # update ctx
-        self.ctx |= self.current_screen.data
+        self.ctx |= self.current_node.data
 
         # check if the current screen has been submitted
-        if self.current_screen.is_submitted:
-            next_screen_id = self.current_screen.next(self.ctx)
+        if self.current_node.is_submitted:
+            next_screen_id = self.current_node.next(self.ctx)
             # print(next_screen_id)
-            self.current_screen = list(filter(lambda s: s.id==next_screen_id, self.screens))[0]
-            self.ctx |= self.current_screen.data
+            self.current_node = list(filter(lambda s: s.id==next_screen_id, self.screens))[0]
+            self.ctx |= self.current_node.data
+            self.path.append(self.current_node)
     
     def current_action_model(self):
-        return self.current_screen.action_model
+        # we should check if node is terminal (or has no begning) or not actually
+        # before adding both Next and Back
+
+        # TODO: also add a gotonode action dynamically
+        GoToNode = ...
+        return Union[self.current_node.action_model | Next | Back]
     
     def render(self):
-        return self.current_screen.render()
+        return f"""
+Current Path: {" > ".join([n.title for n in self.path])}
+
+{self.current_node.render()}"""
     
     

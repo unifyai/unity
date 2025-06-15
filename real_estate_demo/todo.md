@@ -1,0 +1,5 @@
+- [ ] Next and Back buttons should be provided by the flow class
+- [ ] Next button should validate if all required fields were filled before moving on
+- [ ] Back button should pop the last state
+- [ ] Ability to move to a specific visited node directly, but should pop all state after the said node
+- [ ] ...
