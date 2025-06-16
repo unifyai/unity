@@ -209,7 +209,6 @@ class CommsAgent:
         ev = {"topic": "call_process", "type": "end_gen"}
         self.publish(ev)
 
-
     async def on_run_end(self, t: asyncio.Task):
         try:
             print("FROM ", self.agent_id)
