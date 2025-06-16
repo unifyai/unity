@@ -15,7 +15,6 @@ from .types.status import Status
 from .types.priority import Priority
 from .types.schedule import Schedule
 from .types.repetition import RepeatPattern
-from .types.schedule import Schedule
 from .types.status import Status
 from .types.task import Task
 from .prompt_builders import build_ask_prompt, build_update_prompt
@@ -326,7 +325,7 @@ class TaskScheduler(BaseTaskScheduler):
         name: str,
         description: str,
         status: Optional[Status] = None,
-        schedule: Optional[Schedule] = None,
+        schedule: Optional[Union[Schedule, Dict[str, Any]]] = None,
         deadline: Optional[str] = None,
         repeat: Optional[List[RepeatPattern]] = None,
         priority: Priority = Priority.normal,
@@ -344,8 +343,9 @@ class TaskScheduler(BaseTaskScheduler):
         status : Status | None, default ``None``
             Desired initial lifecycle state.  When omitted the method infers
             one based on *schedule* and current queue status.
-        schedule : Schedule | None, default ``None``
+        schedule : Schedule | dict | None, default ``None``
             Optional explicit schedule (start-time plus linkage pointers).
+            Can be either a Schedule object or a dictionary that will be converted to Schedule.
         deadline : str | None, default ``None``
             ISO-8601 timestamp (UTC) by which the task *must* be finished.
         repeat : list[RepeatPattern] | None
@@ -390,6 +390,10 @@ class TaskScheduler(BaseTaskScheduler):
         # ----------------------------------- #
         if status is not None and isinstance(status, str):
             status = Status(status)
+
+        # Convert schedule dict to Schedule model if needed
+        if schedule is not None and isinstance(schedule, dict):
+            schedule = Schedule(**schedule)
 
         # figure out if schedule is "future"
         future_start = False
