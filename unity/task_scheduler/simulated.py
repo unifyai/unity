@@ -205,7 +205,7 @@ class SimulatedTaskScheduler(BaseTaskScheduler):
         text: str,
         *,
         _return_reasoning_steps: bool = False,
-        log_tool_steps: bool = False,  # Ignored – we do not expose tools
+        log_tool_steps: bool = True,  # Ignored – we do not expose tools
         parent_chat_context: list[dict] | None = None,  # Unused – synthetic
         _requests_clarification: bool = False,
         clarification_up_q: asyncio.Queue[str] | None = None,
@@ -245,7 +245,7 @@ class SimulatedTaskScheduler(BaseTaskScheduler):
         text: str,
         *,
         _return_reasoning_steps: bool = False,
-        log_tool_steps: bool = False,  # Ignored – no tools here
+        log_tool_steps: bool = True,  # Ignored – no tools here
         parent_chat_context: list[dict] | None = None,
         _requests_clarification: bool = False,
         clarification_up_q: asyncio.Queue[str] | None = None,
