@@ -248,7 +248,7 @@ async def _speak_async(text: str) -> None:
     if "CARTESIA_API_KEY" not in os.environ:
         return
 
-    print("🗣️ Assistant speaking… press ↵ to skip.")
+    print(f"🗣️ Assistant speaking…\n\n{text}\n\npress ↵ to skip.")
 
     # ─────────────── enter-to-skip listener ────────────────
     skip = threading.Event()  # raised when user hits ↵
