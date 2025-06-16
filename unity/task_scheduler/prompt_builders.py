@@ -72,6 +72,10 @@ def build_update_prompt(tools: Dict[str, Callable]) -> str:
             "",
             "If tasks are given in a *numbered order*, then please assume that these tasks "
             "should be *queued* in that *same order* unless explicitly stated otherwise.",
+            "Having their `start_at` in ascending order is not enough, ",
+            "tasks which are to be completed *sequentially* should also be *explicitly* queued."
+            "This ensures smooth task progression, even if schedules overrun and `start_at` times"
+            "are therefore not all adhered to."
             "",
             "Tools (name → argspec):",
             sig_json,
