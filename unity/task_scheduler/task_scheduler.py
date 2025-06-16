@@ -327,7 +327,7 @@ class TaskScheduler(BaseTaskScheduler):
         status: Optional[Status] = None,
         schedule: Optional[Union[Schedule, Dict[str, Any]]] = None,
         deadline: Optional[str] = None,
-        repeat: Optional[List[RepeatPattern]] = None,
+        repeat: Optional[List[Union[RepeatPattern, Dict[str, Any]]]] = None,
         priority: Priority = Priority.normal,
     ) -> int:
         """
@@ -348,9 +348,9 @@ class TaskScheduler(BaseTaskScheduler):
             Can be either a Schedule object or a dictionary that will be converted to Schedule.
         deadline : str | None, default ``None``
             ISO-8601 timestamp (UTC) by which the task *must* be finished.
-        repeat : list[RepeatPattern] | None
+        repeat : list[RepeatPattern | dict] | None
             Zero or more recurrence rules for automatically re-instantiating
-            the task.
+            the task. Can be either RepeatPattern objects or dictionaries that will be converted to RepeatPattern.
         priority : Priority, default :pyattr:`Priority.normal`
             Relative importance used for queue ordering.
 
@@ -394,6 +394,10 @@ class TaskScheduler(BaseTaskScheduler):
         # Convert schedule dict to Schedule model if needed
         if schedule is not None and isinstance(schedule, dict):
             schedule = Schedule(**schedule)
+
+        # Convert repeat dicts to RepeatPattern models if needed
+        if repeat is not None:
+            repeat = [RepeatPattern(**r) if isinstance(r, dict) else r for r in repeat]
 
         # figure out if schedule is "future"
         future_start = False
