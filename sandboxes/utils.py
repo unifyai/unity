@@ -248,7 +248,7 @@ async def _speak_async(text: str) -> None:
     if "CARTESIA_API_KEY" not in os.environ:
         return
 
-    print(f"🗣️ Assistant speaking…\n\n{text}\n\npress ↵ to skip.")
+    print(f'🗣️ Assistant speaking…\n"{text}"\npress ↵ to skip.')
 
     # ─────────────── enter-to-skip listener ────────────────
     skip = threading.Event()  # raised when user hits ↵
@@ -336,9 +336,10 @@ def speak(text: str) -> None:
     """
 
     def _run_in_thread() -> None:
-        # Serialise TTS so concurrent calls don’t overlap
-        with _TTS_LOCK:
+        try:
             asyncio.run(_speak_async(text))
+        finally:
+            _TTS_LOCK.release()
 
     try:
         # Is there already an event-loop in *this* thread?
@@ -347,8 +348,9 @@ def speak(text: str) -> None:
         # No → safe to run the coroutine synchronously here
         asyncio.run(_speak_async(text))
     else:
-        # Yes → off-load to a background daemon so it can progress even if
-        # the caller blocks the main thread right after this call.
+        # Yes → grab the lock *now* to freeze call order and then start
+        # a worker that will release it when done.
+        _TTS_LOCK.acquire()
         threading.Thread(target=_run_in_thread, daemon=True).start()
 
 
