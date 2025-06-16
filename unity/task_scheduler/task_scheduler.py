@@ -76,11 +76,6 @@ class TaskScheduler(BaseTaskScheduler):
             self._planner = SimulatedPlanner(timeout=20)
         else:
             self._planner = planner
-        # ID of the *single* task that is allowed to be in the **active**
-        # state at any moment.  This will be maintained by a forthcoming
-        # tool; until then it may legitimately stay as ``None``.
-        self._active_task: Optional[Dict[str, Any]] = None
-        self._primed_task: Optional[Dict[str, Any]] = None
 
         # Internal monotonically-increasing task-id counter.  We keep it local
         # to the manager to avoid an expensive scan across *all* logs every
@@ -96,6 +91,19 @@ class TaskScheduler(BaseTaskScheduler):
 
         if self._ctx not in unify.get_contexts():
             unify.create_context(self._ctx)
+
+        # ID of the *single* task that is allowed to be in the **active**
+        # state at any moment.  This will be maintained by a forthcoming
+        # tool; until then it may legitimately stay as ``None``.
+        self._active_task: Optional[Dict[str, Any]] = None
+        primed_tasks = self._search_tasks(filter="status == 'primed'")
+        if primed_tasks:
+            assert (
+                len(primed_tasks) == 1
+            ), f"More than one primed task found:\n{primed_tasks}"
+            self._primed_task: Optional[Dict[str, Any]] = primed_tasks[0]
+        else:
+            self._primed_task: Optional[Dict[str, Any]] = None
 
     # Public #
     # -------#
@@ -401,8 +409,8 @@ class TaskScheduler(BaseTaskScheduler):
 
         # figure out if schedule is "future"
         future_start = False
-        if schedule and schedule.start_time:
-            future_start = _parse_iso(schedule.start_time) > datetime.now(timezone.utc)
+        if schedule and schedule.start_at:
+            future_start = _parse_iso(schedule.start_at) > datetime.now(timezone.utc)
 
         if status is None:
             # New tasks can only ever begin their life as **scheduled** or
@@ -572,8 +580,7 @@ class TaskScheduler(BaseTaskScheduler):
         """
         Return the runnable task queue (head → tail).
 
-        • If *task_id* is *None* we begin with **the single active task**
-          (falling back to the queue head if there is no active task).
+        • If *task_id* is *None* we begin with **the single active/primed task**
         • Tasks whose status is completed / cancelled / failed are *ignored*.
         • Only the nodes actually traversed are loaded from storage; we never
           materialise the entire task table in memory.
@@ -593,7 +600,7 @@ class TaskScheduler(BaseTaskScheduler):
                 start_task = self._primed_task
                 task_id = start_task["task_id"]
             else:
-                raise Exception("Not yet supported.")
+                raise Exception("task_id must be specified if there is no primed task.")
 
         if start_task is None and task_id is not None:
             start_task = _get_task_by_task_id(task_id)

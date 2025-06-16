@@ -11,7 +11,7 @@ def _sch(prev_, next_):
     return Schedule(
         prev_task=prev_,
         next_task=next_,
-        start_time=datetime.now(timezone.utc).isoformat(),
+        start_at=datetime.now(timezone.utc).isoformat(),
     )
 
 

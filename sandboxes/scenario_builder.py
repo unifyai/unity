@@ -73,7 +73,7 @@ class ScenarioBuilder:
         *,
         description: str,
         tools: Dict[str, Callable],
-        model: str = "o4-mini@openai",
+        endpoint: str = "o4-mini@openai",
         traced: bool = True,
         stateful: bool = True,
     ) -> None:
@@ -86,7 +86,7 @@ class ScenarioBuilder:
         self._tools: Dict[str, Callable] = dict(tools)
 
         self._client = unify.AsyncUnify(
-            model,
+            endpoint,
             cache=True,
             traced=traced,
             stateful=stateful,

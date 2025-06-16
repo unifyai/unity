@@ -87,10 +87,14 @@ class BaseTaskScheduler(ABC):
         If the order *does* matter, and the tasks are given in the correct number order,
         please also say so. You must always be explicit.
 
-        Please also always be explicit about whether a task is *due* by a certain time/data,
-        or whether the task should be *started* at a certain time/date.
+        Please also always be explicit about whether a task is *due* by a certain `deadline`,
+        or whether the task should `start_at` a certain date and time.
         These both represent different things.
-        Tasks can have no due time/date, no start time/data, both, or neither.
+        Tasks can have one, both, or neither of these specified.
+
+        For tasks where the time duration is short and predictable (such as sending an email)
+        then the scheduled `start_at` and the `deadline` should usually be set to the same datetime.
+        Either way, very explicit instructions regarding `start_at` and `deadline` must be given.
 
         All parameters mirror :pymeth:`ask`; refer there for detailed
         semantics.
