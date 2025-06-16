@@ -11,11 +11,11 @@ from ..common.llm_helpers import (
     SteerableToolHandle,
     methods_to_tool_dict,
 )
+from ..common.tool_outcome import ToolOutcome
 from .types.status import Status
 from .types.priority import Priority
 from .types.schedule import Schedule
 from .types.repetition import RepeatPattern
-from .types.status import Status
 from .types.task import Task
 from .prompt_builders import build_ask_prompt, build_update_prompt
 from .base import BaseTaskScheduler
@@ -383,7 +383,7 @@ class TaskScheduler(BaseTaskScheduler):
         deadline: Optional[str] = None,
         repeat: Optional[List[Union[RepeatPattern, Dict[str, Any]]]] = None,
         priority: Priority = Priority.normal,
-    ) -> int:
+    ) -> ToolOutcome:
         """
         Create a **brand-new task** and, depending on its attributes, place it
         into the appropriate queue or scheduled slot.
@@ -410,8 +410,8 @@ class TaskScheduler(BaseTaskScheduler):
 
         Returns
         -------
-        int
-            The **integer** ``task_id`` assigned to the new task.
+        ToolOutcome
+            Tool outcome with any extra relevant details.
 
         Raises
         ------
@@ -544,11 +544,14 @@ class TaskScheduler(BaseTaskScheduler):
                 new_q = original_q + [next_id]
                 self._update_task_queue(original=original_q, new=new_q)
 
-        return next_id
+        return {
+            "outcome": "task created successfully",
+            "details": {"task_id": next_id},
+        }
 
     # Delete
 
-    def _delete_task(self, *, task_id: int) -> None:
+    def _delete_task(self, *, task_id: int) -> ToolOutcome:
         """
         Permanently **remove** a task from storage.
 
@@ -559,7 +562,8 @@ class TaskScheduler(BaseTaskScheduler):
 
         Returns
         -------
-        None
+        ToolOutcome
+            Tool outcome with any extra relevant details.
 
         Raises
         ------
@@ -573,10 +577,14 @@ class TaskScheduler(BaseTaskScheduler):
             context=self._ctx,
             logs=log_id,
         )
+        return {
+            "outcome": "task deleted",
+            "details": {"task_id": task_id},
+        }
 
     # Cancel Task(s)
 
-    def _cancel_tasks(self, task_ids: List[int]) -> None:
+    def _cancel_tasks(self, task_ids: List[int]) -> ToolOutcome:
         """
         Mark one or many tasks as **cancelled** (non-recoverable terminal
         state).
@@ -585,6 +593,11 @@ class TaskScheduler(BaseTaskScheduler):
         ----------
         task_ids : list[int]
             Identifiers of the tasks to cancel.
+
+        Returns
+        -------
+        ToolOutcome
+            Tool outcome with any extra relevant details.
 
         Raises
         ------
@@ -600,6 +613,10 @@ class TaskScheduler(BaseTaskScheduler):
             set(completed_task_ids),
         ), f"Cannot cancel completed tasks. Attempted to cancel: {set(task_ids).intersection(set(completed_task_ids))}"
         self._update_task_status(task_ids=task_ids, new_status="cancelled")
+        return {
+            "outcome": "tasks cancelled",
+            "details": {"task_ids": task_ids},
+        }
 
     # Update Task Queue
 
@@ -718,7 +735,7 @@ class TaskScheduler(BaseTaskScheduler):
         *,
         original: List[int],
         new: List[int],
-    ) -> None:
+    ) -> ToolOutcome:
         """
         **Re-link** the runnable queue so its order matches *new*.
 
@@ -735,6 +752,11 @@ class TaskScheduler(BaseTaskScheduler):
         Updates every affected task's ``schedule`` field so that the queue
         remains a well-formed doubly-linked list.  The head stores
         ``prev_task=None`` and the tail ``next_task=None``.
+
+        Returns
+        -------
+        ToolOutcome
+            Tool outcome with any extra relevant details.
 
         Raises
         ------
@@ -825,6 +847,10 @@ class TaskScheduler(BaseTaskScheduler):
                 entries=payload,
                 overwrite=True,
             )
+        return {
+            "outcome": "queue reordered",
+            "details": {"new_order": new},
+        }
 
     # Update Name / Description
 

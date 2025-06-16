@@ -458,7 +458,7 @@ class ContactManager(BaseContactManager):
         Returns
         -------
         ToolOutcome
-            Tool outcome and any extra relevant details.
+            Tool outcome with any extra relevant details.
 
         Raises
         ------
@@ -571,7 +571,7 @@ class ContactManager(BaseContactManager):
         Returns
         -------
         ToolOutcome
-            Tool outcome and any extra relevant details.
+            Tool outcome with any extra relevant details.
 
         Raises
         ------
