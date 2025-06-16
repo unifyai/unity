@@ -1,12 +1,13 @@
-from typing import Callable, Literal, Union
+import re
+from typing import Callable, Literal, Union, Optional
 from textwrap import dedent
 
 from pydantic import BaseModel, Field, create_model
 
-class Next(BaseModel):
+class GoNext(BaseModel):
     next: bool = Literal[True]
 
-class Back(BaseModel):
+class GoBack(BaseModel):
     back: bool = Literal[True]
 
 
@@ -58,7 +59,7 @@ class RadioField:
 #         self.value = value
 
 class Node:
-    def __init__(self, id: str, title: str, instructions: str, fields: list, next: str|Callable):
+    def __init__(self, id: str, title: str, instructions: str, fields: list, next: str|Callable=None):
         self.id = id
         self.title = title
         self.instructions = instructions
@@ -73,12 +74,15 @@ class Node:
         self.action_to_field = {}
         self.set_up_action_model()
         
-
+        self.is_terminal = False
         if isinstance(next, str):
             self.next = lambda ctx: next
         elif isinstance(next, dict):
             # assume there is one field in the screen
             self.next = lambda ctx: next[ctx[self.fields[0].id]]
+        elif next is None:
+            self.next = None
+            self.is_terminal = True
         else:
             self.next = next
 
@@ -91,29 +95,41 @@ class Node:
         fields_action_models = []
         for field in self.fields:
             if isinstance(field, InputField):
+                pascal_action_name = f'Fill{"".join([w.title() for w in field.label.split(" ")])}'
+                snake_case_action_name = f'fill_{"_".join([w.lower() for w in field.label.split(" ")])}'
+                pascal_action_name = re.sub(r"[\?\!]", "", pascal_action_name)
+                snake_case_action_name = re.sub(r"[\?\!]", "", snake_case_action_name)
                 field_action_model = create_model(
-                    f'Fill{"".join([w.title() for w in field.label.split(" ")])}',
-                    value=(str, Field(..., description=field.description))
+                    pascal_action_name,
+                    value=(str, Field(..., description="value to input"))
                 )
                 
             elif isinstance(field, RadioField):
+                pascal_action_name = f'Select{"".join([w.title() for w in field.label.split(" ")])}'
+                snake_case_action_name = f'select_{"_".join([w.lower() for w in field.label.split(" ")])}'
+                pascal_action_name = re.sub(r"[\?\!]", "", pascal_action_name)
+                snake_case_action_name = re.sub(r"[\?\!]", "", snake_case_action_name)
                 field_action_model = create_model(
-                    f'Select{field.label.title()}',
-                    value=(Literal[*field.options], Field(..., description=field.description))
+                    pascal_action_name,
+                    value=(Literal[*field.options], Field(..., description="option to select"))
                 )
             self.action_to_field[field_action_model] = field.id
-            fields_action_models.append(field_action_model)
+            fields_action_models.append((snake_case_action_name, field, field_action_model))
         # fields_action_models.append(Next)
-        self.action_model = Union[*fields_action_models]
+        self.action_model = create_model(
+            "ActionModel",
+            **{k:(Optional[v], Field(..., description=f.description)) for k, f, v in fields_action_models}
+        )
     
-    def play_actions(self, list_of_actions):
-        for action in list_of_actions:
-            if isinstance(action, Next):
-                self.is_submitted = True
-            else:
-                action_cls = action.__class__
-                field_id = self.action_to_field[action_cls]
-                self.data[field_id] = action.value
+    def play_actions(self, action: BaseModel):
+        for k, v in action:
+            if v is not None:
+                if isinstance(v, GoNext):
+                    self.is_submitted = True
+                else:
+                    action_cls = v.__class__
+                    field_id = self.action_to_field[action_cls]
+                    self.data[field_id] = v.value
 
 
     def render(self):
@@ -145,14 +161,16 @@ class Flow:
         self.screens = screens
         for s in screens:
             s.reset()
+        
         self.current_node: Node = self.screens[0] if start is None else list(filter(lambda s: s.id==start, self.screens))[0]
+        self.root_node = self.current_node
         
         # this will hold all the data collected so far
         self.ctx = self.current_node.data
         self.path = [self.current_node]
 
-    def play_actions(self, list_of_actions: ...):
-        self.current_node.play_actions(list_of_actions)
+    def play_actions(self, action):
+        self.current_node.play_actions(action)
         
         # update ctx
         self.ctx |= self.current_node.data
@@ -165,18 +183,26 @@ class Flow:
             self.ctx |= self.current_node.data
             self.path.append(self.current_node)
     
-    def current_action_model(self):
+    def current_action_model(self) -> BaseModel:
         # we should check if node is terminal (or has no begning) or not actually
         # before adding both Next and Back
-
+        extra_actions = []
         # TODO: also add a gotonode action dynamically
         GoToNode = ...
-        return Union[self.current_node.action_model | Next | Back]
+        if self.current_node != self.root_node:
+            extra_actions.append(("go_back", "go to previous node", GoBack))
+        if not self.current_node.is_terminal:
+            extra_actions.append(("go_next", "go to the next node", GoNext))
+        return create_model(
+            "ActionModel",
+            __base__=self.current_node.action_model,
+            **{k:(Optional[v], Field(..., description=d)) for k, d, v in extra_actions}
+        )
     
     def render(self):
         return f"""
 Current Path: {" > ".join([n.title for n in self.path])}
 
-{self.current_node.render()}"""
+{self.current_node.render()}""".strip()
     
     
