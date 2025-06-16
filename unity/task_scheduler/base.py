@@ -87,6 +87,11 @@ class BaseTaskScheduler(ABC):
         If the order *does* matter, and the tasks are given in the correct number order,
         please also say so. You must always be explicit.
 
+        Please also always be explicit about whether a task is *due* by a certain time/data,
+        or whether the task should be *started* at a certain time/date.
+        These both represent different things.
+        Tasks can have no due time/date, no start time/data, both, or neither.
+
         All parameters mirror :pymeth:`ask`; refer there for detailed
         semantics.
         """
