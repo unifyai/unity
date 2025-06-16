@@ -41,7 +41,7 @@ class RadioField:
         self.value = value
     
     def render(self):
-        str_options = "\n".join([f"( ) {o}" if self.value != o else f"(x) {o}" for o in self.options])
+        str_options = "\n".join([f"( ) {o}" if self.value != o else f"(x) {o} <- currently selected" for o in self.options])
         return dedent(f"""
 {self.label} (Radio Field)
 {str_options}""").strip()
@@ -170,8 +170,16 @@ class Flow:
         self.path = [self.current_node]
 
     def play_actions(self, action):
-        self.current_node.play_actions(action)
+        for l, a in action:
+            if a is not None:
+                if isinstance(a, GoBack):
+                    self.path.pop()
+                    self.current_node = self.path[-1]
+                    self.current_node.is_submitted = False
+                    print(self.current_node.title)
+                    return
         
+        self.current_node.play_actions(action)
         # update ctx
         self.ctx |= self.current_node.data
 
