@@ -69,7 +69,7 @@ async def test_two_tier_ask_propagation():
 
     h_update = await tm.request(
         "Change Daniel Smith's first name to Dan.",
-        log_tool_steps=False,
+        _log_tool_steps=False,
     )
 
     # 3️⃣  While the rename is *still pending*, inspect via .ask()
