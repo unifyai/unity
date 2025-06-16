@@ -273,6 +273,52 @@ class TaskScheduler(BaseTaskScheduler):
     # Private Helpers #
     # ----------------#
 
+    def _validate_scheduled_invariants(
+        self,
+        *,
+        status: Status | str,
+        schedule: Optional[Union[Schedule, Dict[str, Any]]],
+        err_prefix: str = "Invalid task state:",
+    ) -> None:
+        """
+        Enforce that **Status.scheduled** is *only* legal when the task is
+        (a) somewhere inside the runnable queue (`prev_task` ≠ None) **or**
+        (b) has an explicit `start_at` / `start_time` timestamp.
+
+        Args
+        ----
+        status
+            The prospective status **after** the change.
+        schedule
+            The prospective schedule **after** the change (may be None).
+
+        Raises
+        ------
+        ValueError
+            If the rule is violated.
+        """
+        # normalise
+        status = Status(status)
+
+        if status != Status.scheduled:
+            return
+
+        prev_ptr = self._sched_prev(schedule)
+        # model uses `.start_at`; dicts (and our existing code) use `"start_time"`
+        if schedule is None:
+            start_ts = None
+        elif isinstance(schedule, Schedule):
+            start_ts = schedule.start_at
+        else:  # dict
+            start_ts = schedule.get("start_at") or schedule.get("start_time")
+
+        if prev_ptr is None and start_ts is None:
+            raise ValueError(
+                f"{err_prefix} a task with status 'scheduled' must have either "
+                "`prev_task` (it sits behind another task in the queue) or a "
+                "`start_at`/`start_time` timestamp.",
+            )
+
     def _ensure_not_active_task(self, task_ids: Union[int, List[int]]) -> None:
         """
         Raise **RuntimeError** if *task_ids* contains the current
@@ -426,6 +472,12 @@ class TaskScheduler(BaseTaskScheduler):
                 status = Status.queued
 
         # ------------------  conflict checks  ------------------ #
+        self._validate_scheduled_invariants(
+            status=status,
+            schedule=schedule,
+            err_prefix="While creating a task:",
+        )
+
         if status == Status.active:
             raise ValueError(
                 "Tasks cannot be created directly in the 'active' state; "
@@ -732,6 +784,15 @@ class TaskScheduler(BaseTaskScheduler):
 
             updates_per_log[tid] = {"schedule": sched_payload}
 
+        # ── Invariant check across the whole queue relink ────────────────────
+        for tid, payload in updates_per_log.items():
+            status_here = existing_logs.get(tid, {}).get("status", Status.queued)
+            self._validate_scheduled_invariants(
+                status=status_here,
+                schedule=payload["schedule"],
+                err_prefix=f"While re-ordering the queue (task {tid}):",
+            )
+
         # Re-primed
         prime_swap_needed = False
         if self._primed_task is not None:
@@ -882,6 +943,16 @@ class TaskScheduler(BaseTaskScheduler):
         if not allow_active:
             self._ensure_not_active_task(task_ids)
 
+        # ── Invariant check *per task* if new_status becomes 'scheduled' ─────
+        if str(new_status) == Status.scheduled.value:
+            rows = self._search_tasks(filter=f"task_id in {task_ids}")
+            for row in rows:
+                self._validate_scheduled_invariants(
+                    status=new_status,
+                    schedule=row.get("schedule"),
+                    err_prefix=f"While changing status of task {row['task_id']}:",
+                )
+
         # ToDo: replace with single API call once this task [https://app.clickup.com/t/86c3c1y63] is done
         log_ids = self._get_logs_by_task_ids(task_ids=task_ids)
         return unify.update_logs(
@@ -941,6 +1012,13 @@ class TaskScheduler(BaseTaskScheduler):
             "next_task": self._sched_next(current_sched),
             "start_time": new_start_at,
         }
+
+        # ensure the new schedule does not violate the invariant
+        self._validate_scheduled_invariants(
+            status=current_rows[0]["status"],
+            schedule=sched_payload,
+            err_prefix=f"While updating start_time for task {task_id}:",
+        )
 
         return unify.update_logs(
             logs=log_id,
