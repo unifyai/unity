@@ -29,7 +29,7 @@ class BaseTaskScheduler(ABC):
         text: str,
         *,
         _return_reasoning_steps: bool = False,
-        log_tool_steps: bool = True,
+        _log_tool_steps: bool = True,
         parent_chat_context: Optional[List[Dict[str, Any]]] = None,
         clarification_up_q: Optional[asyncio.Queue[str]] = None,
         clarification_down_q: Optional[asyncio.Queue[str]] = None,
@@ -47,7 +47,7 @@ class BaseTaskScheduler(ABC):
             When *True*, :pymeth:`SteerableToolHandle.result` returns
             ``(answer, messages)`` – the first element is the assistant's
             reply, the second the hidden chain-of-thought.
-        log_tool_steps : bool, default ``False``
+        _log_tool_steps : bool, default ``True``
             If *True* the task-scheduler logs every tool invocation to the
             server-side logger.  Mainly useful for debugging.
         parent_chat_context : list[dict] | None
@@ -73,7 +73,7 @@ class BaseTaskScheduler(ABC):
         text: str,
         *,
         _return_reasoning_steps: bool = False,
-        log_tool_steps: bool = True,
+        _log_tool_steps: bool = True,
         parent_chat_context: Optional[List[Dict[str, Any]]] = None,
         clarification_up_q: Optional[asyncio.Queue[str]] = None,
         clarification_down_q: Optional[asyncio.Queue[str]] = None,

@@ -31,7 +31,7 @@ class BaseTaskManager(ABC):
         text: str,
         *,
         _return_reasoning_steps: bool = False,
-        log_tool_steps: bool = True,
+        _log_tool_steps: bool = True,
         parent_chat_context: Optional[List[Dict[str, Any]]] = None,
         clarification_up_q: Optional[asyncio.Queue[str]] = None,
         clarification_down_q: Optional[asyncio.Queue[str]] = None,
@@ -47,7 +47,7 @@ class BaseTaskManager(ABC):
         _return_reasoning_steps : bool, default ``False``
             When *True*, the handle's ``.result()`` yields
             ``(assistant_answer, hidden_messages)`` instead of just the answer.
-        log_tool_steps : bool, default ``False``
+        _log_tool_steps : bool, default ``True``
             Emit server-side logs for each internal tool call (debugging aid).
         parent_chat_context : list[dict] | None
             Optional **read-only** context inherited from a parent conversation
@@ -74,7 +74,7 @@ class BaseTaskManager(ABC):
         text: str,
         *,
         _return_reasoning_steps: bool = False,
-        log_tool_steps: bool = True,
+        _log_tool_steps: bool = True,
         parent_chat_context: Optional[List[Dict[str, Any]]] = None,
         clarification_up_q: Optional[asyncio.Queue[str]] = None,
         clarification_down_q: Optional[asyncio.Queue[str]] = None,
@@ -95,7 +95,7 @@ class BaseTaskManager(ABC):
         text: str,
         *,
         _return_reasoning_steps: bool = False,
-        log_tool_steps: bool = True,
+        _log_tool_steps: bool = True,
         parent_chat_context: Optional[List[Dict[str, Any]]] = None,
         clarification_up_q: Optional[asyncio.Queue[str]] = None,
         clarification_down_q: Optional[asyncio.Queue[str]] = None,
