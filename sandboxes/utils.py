@@ -24,6 +24,7 @@ import math
 import struct
 from deepgram import DeepgramClient, FileSource, PrerecordedOptions
 from livekit.plugins import cartesia
+import argparse
 from unity.common.llm_helpers import SteerableToolHandle
 
 from dotenv import load_dotenv
@@ -435,6 +436,68 @@ def get_custom_scenario(args) -> Optional[str]:
     except Exception as exc:
         print(f"⚠️ Warning: Voice scenario capture failed ({exc})")
         return None
+
+
+# ===========================================================================
+#  CLI boilerplate helper (used by every sandbox)
+# ===========================================================================
+
+
+def build_cli_parser(description: str) -> argparse.ArgumentParser:
+    """
+    Return an :pyclass:`argparse.ArgumentParser` pre-populated with the
+    six command-line switches that every interactive sandbox uses:
+
+    • ``--voice / -v``        – enable voice capture & TTS
+    • ``--reuse / -r``        – keep previous data / skip seeding
+    • ``--debug / -d``        – verbose tool logs (reasoning steps)
+    • ``--traced / -t``       – wrap manager calls in Unify tracing
+    • ``--load_custom / -L``  – restore a saved transcript by name/index
+    • ``--save_custom / -S``  – persist the current seed transcript
+
+    Individual sandboxes remain free to *add* extra flags afterwards.
+    """
+
+    parser = argparse.ArgumentParser(description=description)
+
+    parser.add_argument(
+        "--voice",
+        "-v",
+        action="store_true",
+        help="enable voice capture + TTS",
+    )
+    parser.add_argument(
+        "--reuse",
+        "-r",
+        action="store_true",
+        help="re-use old data (skip fresh seeding)",
+    )
+    parser.add_argument(
+        "--debug",
+        "-d",
+        action="store_true",
+        help="verbose tool logs (reasoning steps)",
+    )
+    parser.add_argument(
+        "--traced",
+        "-t",
+        action="store_true",
+        help="include Unify tracing",
+    )
+    parser.add_argument(
+        "--load_custom",
+        "-L",
+        metavar="NAME|-N",
+        help="Load a stored transcript by name or negative history index",
+    )
+    parser.add_argument(
+        "--save_custom",
+        "-S",
+        metavar="NAME",
+        help="Save the transcript used to seed this run under NAME",
+    )
+
+    return parser
 
 
 # ===========================================================================

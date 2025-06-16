@@ -13,7 +13,6 @@ from __future__ import annotations
 
 # ─────────────────────────────── stdlib / vendored ──────────────────────────
 import os
-import argparse
 import asyncio
 import logging
 import sys
@@ -43,6 +42,7 @@ from sandboxes.utils import (
     speak as _speak,
     get_custom_scenario,
     await_with_interrupt as _await_with_interrupt,
+    build_cli_parser,
 )
 from sandboxes.scenario_store import ScenarioStore
 
@@ -187,29 +187,7 @@ def _extract_first_int(text: str) -> int:
 
 
 async def _main_async() -> None:
-    parser = argparse.ArgumentParser(description="TaskScheduler sandbox")
-    parser.add_argument(
-        "--voice",
-        "-v",
-        action="store_true",
-        help="enable voice capture + TTS",
-    )
-    parser.add_mutually_exclusive_group()
-    parser.add_argument("--reuse", "-r", action="store_true", help="re-use old data")
-    parser.add_argument("--debug", "-d", action="store_true", help="verbose tool logs")
-    parser.add_argument("--traced", "-t", action="store_true", help="include tracing")
-    parser.add_argument(
-        "--load_custom",
-        "-L",
-        metavar="NAME|-N",
-        help="Load a stored transcript by name or negative history index (-1 last, -2 …)",
-    )
-    parser.add_argument(
-        "--save_custom",
-        "-S",
-        metavar="NAME",
-        help="Save the transcript that seeded this run under NAME (over-writes)",
-    )
+    parser = build_cli_parser("TaskScheduler sandbox")
     args = parser.parse_args()
 
     # tracing flag
