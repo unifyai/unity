@@ -16,7 +16,6 @@ import os
 import argparse
 import asyncio
 import logging
-import select
 import sys
 from pathlib import Path
 from typing import List, Optional, Tuple, Dict
@@ -43,6 +42,7 @@ from sandboxes.utils import (  # shared helpers reused in other sandboxes
     speak as _speak,
     run_in_loop,
     get_custom_scenario,
+    await_with_interrupt as _await_with_interrupt,
 )
 from sandboxes.scenario_store import ScenarioStore
 
@@ -173,30 +173,6 @@ async def _dispatch_with_context(
         _return_reasoning_steps=show_steps,
     )
     return intent.action, handle
-
-
-# ═════════════════════════════ interruption helper ══════════════════════════
-
-
-def _input_now(timeout: float = 0.1) -> Optional[str]:
-    """Non‑blocking stdin check (POSIX & Windows)."""
-    r, _, _ = select.select([sys.stdin], [], [], timeout)
-    return sys.stdin.readline().strip() if r else None
-
-
-async def _await_with_interrupt(
-    handle: SteerableToolHandle,
-) -> str:  # returns final answer
-    while not handle.done():
-        txt = _input_now(0.1)
-        if txt:
-            if txt.lower() in {"stop", "cancel"}:
-                handle.stop()
-                break
-            run_in_loop(handle.interject(txt))
-        await asyncio.sleep(0.05)
-
-    return await handle.result()
 
 
 # ══════════════════════════════════  CLI  ═══════════════════════════════════

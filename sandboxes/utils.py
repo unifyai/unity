@@ -24,6 +24,7 @@ import math
 import struct
 from deepgram import DeepgramClient, FileSource, PrerecordedOptions
 from livekit.plugins import cartesia
+from unity.common.llm_helpers import SteerableToolHandle
 
 from dotenv import load_dotenv
 
@@ -434,6 +435,52 @@ def get_custom_scenario(args) -> Optional[str]:
     except Exception as exc:
         print(f"⚠️ Warning: Voice scenario capture failed ({exc})")
         return None
+
+
+# ===========================================================================
+# Minimal, cross-sandbox input / interrupt helpers
+# ===========================================================================
+
+
+def input_now(timeout: float = 0.1) -> Optional[str]:
+    """
+    Quick helper that returns the next *line* waiting on **stdin**
+    (stripped) or ``None`` if nothing arrived within *timeout* s.
+
+    It re-uses :pyfunc:`input_with_timeout`, which already handles the
+    Windows vs Unix intricacies.
+    """
+
+    has_input, txt = input_with_timeout(timeout)
+    return txt if has_input else None
+
+
+async def await_with_interrupt(  # noqa: D401 – imperative helper
+    handle: "SteerableToolHandle",
+    poll: float = 0.05,
+) -> str:
+    """
+    **Common wrapper** used by all interactive sandboxes.
+
+    Waits on ``handle.result()`` but lets the user:
+    • *interject* arbitrary text ⇒ forwarded via ``handle.interject``
+    • type **stop / cancel**     ⇒ aborts the running tool call
+
+    Consolidating this code removes four nearly identical copies.
+    """
+
+    import asyncio  # local to avoid widening the public surface
+
+    while not handle.done():
+        txt = input_now(poll * 2)  # same cadence as old versions
+        if txt:
+            if txt.lower() in {"stop", "cancel"}:
+                handle.stop()
+                break
+            run_in_loop(handle.interject(txt))
+        await asyncio.sleep(poll)
+
+    return await handle.result()
 
 
 # ---------------------------------------------------------------------------
