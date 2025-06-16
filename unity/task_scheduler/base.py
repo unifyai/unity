@@ -82,6 +82,11 @@ class BaseTaskScheduler(ABC):
         Apply a **mutation** request – create, edit, delete or reorder tasks –
         expressed in plain English and receive a steerable LLM handle.
 
+        Please always be explicit about the *ordering* of tasks.
+        If the order *doesn't* matter please say so explicitly.
+        If the order *does* matter, and the tasks are given in the correct number order,
+        please also say so. You must always be explicit.
+
         All parameters mirror :pymeth:`ask`; refer there for detailed
         semantics.
         """
