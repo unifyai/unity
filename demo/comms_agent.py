@@ -10,7 +10,7 @@ import comms_actions
 from actions import *
 from events import *
 from new_terminal_helper import run_script, terminate_process
-from unity.contact_manager.contact_manager import ContactManager
+from ..unity.contact_manager.contact_manager import ContactManager
 
 client = openai.AsyncOpenAI(api_key=os.environ["OPENAI_API_KEY"])
 
