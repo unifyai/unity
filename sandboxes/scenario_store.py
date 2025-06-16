@@ -15,13 +15,13 @@ import json
 from pathlib import Path
 from typing import Union
 
-__all__ = ["TranscriptStore"]
+__all__ = ["ScenarioStore"]
 
 _STORE_PATH = Path.home() / ".task_scheduler_transcripts.json"
 _DEFAULT = {"history": [], "named": {}}
 
 
-class TranscriptStore:
+class ScenarioStore:
     def __init__(self, path: Path | None = None) -> None:
         self._path = path or _STORE_PATH
         try:

@@ -45,7 +45,7 @@ from sandboxes.utils import (
     run_in_loop,
     get_custom_scenario,
 )
-from sandboxes.transcript_store import TranscriptStore
+from sandboxes.scenario_store import ScenarioStore
 
 LG = logging.getLogger("task_scheduler_sandbox")
 
@@ -264,7 +264,7 @@ async def _main_async() -> None:
     ts = TaskScheduler()
     if args.traced:
         ts = unify.traced(ts)
-    store = TranscriptStore()
+    store = ScenarioStore()
 
     # Obtaining the transcript to seed the scenario
     if not args.reuse:
