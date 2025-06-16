@@ -741,6 +741,8 @@ class TaskScheduler(BaseTaskScheduler):
                     orig_primed_tid == original[0]
                 ), "Primed task should be at the front of the queue."
                 prime_swap_needed = new[0] != orig_primed_tid
+        else:
+            orig_primed_tid = None
 
         # Persist
         _task_id_to_task = dict()
