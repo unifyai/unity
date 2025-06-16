@@ -67,6 +67,15 @@ class SendCallAction(BaseModel):
     type: Literal["call"]
 
 
+class ContactManagerAction(BaseModel):
+    type: Literal["update", "ask"]
+    query: str = Field(..., description="The query to perform")
+    show_steps: bool = Field(
+        ...,
+        description="Whether to show the reasoning steps of the contact manager",
+    )
+
+
 # -------- discriminated union --------
 # actually, call and non-call modes will probably have some difference between their actions (as in more actions probably for the voice one),
 # but for now lets keep them the same
@@ -77,6 +86,7 @@ ActionModel = Union[
     CreateCommunicationTask,
     RespondToAgent,
     SendCallAction,
+    # ContactManagerAction,
 ]
 
 

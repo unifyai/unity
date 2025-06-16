@@ -1,6 +1,7 @@
 import os
 import asyncio
 from dataclasses import dataclass
+from pydantic import BaseModel
 from typing import Literal
 
 import openai
@@ -9,6 +10,7 @@ import comms_actions
 from actions import *
 from events import *
 from new_terminal_helper import run_script, terminate_process
+from unity.contact_manager.contact_manager import ContactManager
 
 client = openai.AsyncOpenAI(api_key=os.environ["OPENAI_API_KEY"])
 
@@ -30,6 +32,18 @@ class CommTask:
     contact_number: str
     status: str
     task_description: str
+
+
+class _Intent(BaseModel):
+    action: str = Field(..., pattern="^(ask|update)$")
+    cleaned_text: str
+
+
+_INTENT_SYS_MSG = (
+    "Decide whether the user input is a *query* about existing contacts "
+    "or a *mutation* (create / update).  "
+    "Return JSON {'action':'ask'|'update','cleaned_text':<fixed_input>}."
+)
 
 
 # new events to add:
@@ -103,6 +117,21 @@ class CommsAgent:
         # queue for communication channels to make sure messages arrive in the right order
         self.whatsapp_queue = WhatsappQueue()
 
+        # contact manager
+        self.contact_manager = ContactManager()
+
+    def get_chat_history(self):
+        chat_history = []
+        for event in self.past_events:
+            if event["topic"] == "PhoneUtteranceEvent":
+                chat_history.append(
+                    {
+                        "role": event["payload"]["role"].lower(),
+                        "content": event["payload"]["content"],
+                    }
+                )
+        return chat_history
+
     async def listen_for_events(self):
         asyncio.create_task(self.whatsapp_queue.run())
         print("COLLECTING...")
@@ -163,7 +192,25 @@ class CommsAgent:
 
                 self.pending_events.clear()
 
-    def on_run_end(self, t: asyncio.Task):
+    async def on_contact_manager_task_end(self, t: asyncio.Task):
+        print("CONTACT MANAGER TASK ENDED")
+        # start gen
+        ev = {"topic": "call_process", "type": "start_gen"}
+        self.publish(ev)
+        # gen chunk
+        answer = t.result()
+        ev = {
+            "topic": "call_process",
+            "type": "gen_chunk",
+            "chunk": answer,
+        }
+        self.publish(ev)
+        # end gen
+        ev = {"topic": "call_process", "type": "end_gen"}
+        self.publish(ev)
+
+
+    async def on_run_end(self, t: asyncio.Task):
         try:
             print("FROM ", self.agent_id)
             t: AssistantOutput | CallAssistantOutput | None = t.result()
@@ -214,6 +261,50 @@ class CommsAgent:
                                 action.agent_id,
                                 action.task_id,
                                 action.response,
+                            )
+
+                        elif isinstance(action, ContactManagerAction):
+                            chat_history = self.get_chat_history()
+                            if action.query.lower().startswith(
+                                ("add ", "create ", "update ", "change ", "delete ")
+                            ):
+                                contact_manager_task = asyncio.create_task(
+                                    self.contact_manager.update(
+                                        action.query,
+                                        parent_chat_context=chat_history,
+                                        _return_reasoning_steps=action.show_steps,
+                                    )
+                                )
+                            else:
+                                res = await client.beta.chat.completions.parse(
+                                    model="gpt-4.1",
+                                    messages=[
+                                        {
+                                            "role": "system",
+                                            "content": _INTENT_SYS_MSG,
+                                        },
+                                        {
+                                            "role": "user",
+                                            "content": action.query,
+                                        },
+                                    ],
+                                    response_format=_Intent,
+                                )
+                                intent = res.choices[0].message.parsed
+                                fn = (
+                                    self.contact_manager.update
+                                    if intent.action == "update"
+                                    else self.contact_manager.ask
+                                )
+                                contact_manager_task = asyncio.create_task(
+                                    fn(
+                                        action.query,
+                                        parent_chat_context=chat_history,
+                                        _return_reasoning_steps=action.show_steps,
+                                    )
+                                )
+                            contact_manager_task.add_done_callback(
+                                self.on_contact_manager_task_end
                             )
 
         except asyncio.CancelledError:
