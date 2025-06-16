@@ -45,6 +45,7 @@ from sandboxes.utils import (
     run_in_loop,
     get_custom_scenario,
 )
+from sandboxes.transcript_store import TranscriptStore
 
 LG = logging.getLogger("task_scheduler_sandbox")
 
@@ -222,6 +223,18 @@ async def _main_async() -> None:
     parser.add_argument("--reuse", "-r", action="store_true", help="re-use old data")
     parser.add_argument("--debug", "-d", action="store_true", help="verbose tool logs")
     parser.add_argument("--traced", "-t", action="store_true", help="include tracing")
+    parser.add_argument(
+        "--load_custom",
+        "-L",
+        metavar="NAME|-N",
+        help="Load a stored transcript by name or negative history index (-1 last, -2 …)",
+    )
+    parser.add_argument(
+        "--save_custom",
+        "-S",
+        metavar="NAME",
+        help="Save the transcript that seeded this run under NAME (over-writes)",
+    )
     args = parser.parse_args()
 
     # tracing flag
@@ -247,30 +260,52 @@ async def _main_async() -> None:
     logging.basicConfig(level=logging.INFO, format="%(message)s")
     LG.setLevel(logging.INFO)
 
-    # manager
+    # manager & transcript vault
     ts = TaskScheduler()
     if args.traced:
         ts = unify.traced(ts)
+    store = TranscriptStore()
 
-    # seed
+    # Obtaining the transcript to seed the scenario
     if not args.reuse:
-        # custom scenario
-        scenario_text = get_custom_scenario(args)
-        if scenario_text:
-            LG.info("[voice] transcript: “%s”", scenario_text)
-            LG.info("[seed] building synthetic task list – this can take 20‑40 s…")
+        scenario_text: Optional[str] = None
+
+        # ---- 1️⃣ try --load_custom ------------------------------------
+        if args.load_custom:
+            try:
+                key: int | str
+                # numeric?  (accepts "-3", "-1", etc.)
+                key = int(args.load_custom)
+            except ValueError:
+                key = args.load_custom
+
+            scenario_text = store.get(key)
+            LG.info(f"[seed] loaded transcript {key} → {scenario_text}")
             if args.voice:
-                _speak("Sure thing, building your custom scenario now.")
-            theme = await _build_scenario(scenario_text)
-            LG.info("[seed] done.")
-            if args.voice:
-                _speak(
-                    "All done, your custom scenario is ready.",
-                )
-            if theme:
-                LG.info(f"[seed] theme: {theme}")
-        else:
-            raise Exception("No text provided for building the custom scenario")
+                _speak("Loading your saved scenario, give me a second.")
+
+        # ---- 2️⃣ fall back to fresh voice / text capture ---------------
+        if scenario_text is None:
+            scenario_text = get_custom_scenario(args)
+            if not scenario_text:
+                raise Exception("No text provided for building the custom scenario")
+            store.add_to_history(scenario_text)
+            LG.info(f"[voice] transcript: {scenario_text}")
+
+        # ---- 3️⃣ build the data set ------------------------------------
+        LG.info("[seed] building synthetic task list – this can take 20-40 s…")
+        if args.voice:
+            _speak("Sure thing, building your custom scenario now.")
+
+        await _build_scenario(scenario_text)
+        LG.info("[seed] done.")
+        if args.voice:
+            _speak("All done, your custom scenario is ready.")
+
+        # ---- 4️⃣ optional --save_custom --------------------------------
+        if args.save_custom:
+            store.save_named(args.save_custom, scenario_text)
+            LG.info(f"[seed] transcript saved as {args.save_custom}.")
 
     print("TaskScheduler sandbox – type or speak. 'quit' to exit.\n")
 
