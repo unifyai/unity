@@ -249,7 +249,19 @@ class HierarchicalPlan(BasePlan):
         if self.main_loop_handle: await self.main_loop_handle.interject(message)
 
     async def ask(self, question: str) -> str:
-        return f"Plan state: {self.call_stack}. Goal: {self.goal}"
+        """Asks a question about the current state of the plan."""
+        if self.main_loop_handle and not self.main_loop_handle.done():
+            try:
+                # Delegate to the inner loop's ask method for a rich, contextual answer
+                inspector_handle = await self.main_loop_handle.ask(question)
+                answer = await inspector_handle.result()
+                return answer
+            except Exception as e:
+                logger.error(f"Failed to 'ask' the inner loop: {e}", exc_info=True)
+                # Fallback to simple state reporting
+        return f"Plan state: call_stack={self.call_stack}, state={self._state.name}, goal='{self.goal}'"
+
+    
 
     @property
     def valid_tools(self) -> Dict[str, Callable]:
