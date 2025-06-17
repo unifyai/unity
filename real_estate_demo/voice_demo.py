@@ -27,10 +27,7 @@ class Agent:
 
     async def listen_for_events(self):
         print("COLLECTING...")
-        self.call_proc = run_script(
-                            "call.py",
-                            "console",
-                        )
+        self.call_proc = run_script("call.py", "dev")
         while True:
             try:
                 new_event = await asyncio.wait_for(self.events_queue.get(), 0.5)
