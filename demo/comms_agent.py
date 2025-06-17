@@ -209,6 +209,51 @@ class CommsAgent:
         ev = {"topic": "call_process", "type": "end_gen"}
         self.publish(ev)
 
+    async def handle_contact_manager_action(self, action: ContactManagerAction):
+        """Handle contact manager actions asynchronously"""
+        chat_history = self.get_chat_history()
+        if action.query.lower().startswith(
+            ("add ", "create ", "update ", "change ", "delete ")
+        ):
+            contact_manager_task = asyncio.create_task(
+                self.contact_manager.update(
+                    action.query,
+                    parent_chat_context=chat_history,
+                    _return_reasoning_steps=action.show_steps,
+                )
+            )
+        else:
+            res = await client.beta.chat.completions.parse(
+                model="gpt-4.1",
+                messages=[
+                    {
+                        "role": "system",
+                        "content": _INTENT_SYS_MSG,
+                    },
+                    {
+                        "role": "user",
+                        "content": action.query,
+                    },
+                ],
+                response_format=_Intent,
+            )
+            intent = res.choices[0].message.parsed
+            fn = (
+                self.contact_manager.update
+                if intent.action == "update"
+                else self.contact_manager.ask
+            )
+            contact_manager_task = asyncio.create_task(
+                fn(
+                    action.query,
+                    parent_chat_context=chat_history,
+                    _return_reasoning_steps=action.show_steps,
+                )
+            )
+        contact_manager_task.add_done_callback(
+            self.on_contact_manager_task_end
+        )
+
     def on_run_end(self, t: asyncio.Task):
         try:
             print("FROM ", self.agent_id)
@@ -264,57 +309,12 @@ class CommsAgent:
 
                         # elif isinstance(action, ContactManagerAction):
                         #     # Create a task to handle the async contact manager operations
-                        #     asyncio.create_task(self._handle_contact_manager_action(action))
+                        #     asyncio.create_task(self.handle_contact_manager_action(action))
 
         except asyncio.CancelledError:
             pass
         finally:
             ...
-
-    async def _handle_contact_manager_action(self, action: ContactManagerAction):
-        """Handle contact manager actions asynchronously"""
-        chat_history = self.get_chat_history()
-        if action.query.lower().startswith(
-            ("add ", "create ", "update ", "change ", "delete ")
-        ):
-            contact_manager_task = asyncio.create_task(
-                self.contact_manager.update(
-                    action.query,
-                    parent_chat_context=chat_history,
-                    _return_reasoning_steps=action.show_steps,
-                )
-            )
-        else:
-            res = await client.beta.chat.completions.parse(
-                model="gpt-4.1",
-                messages=[
-                    {
-                        "role": "system",
-                        "content": _INTENT_SYS_MSG,
-                    },
-                    {
-                        "role": "user",
-                        "content": action.query,
-                    },
-                ],
-                response_format=_Intent,
-            )
-            intent = res.choices[0].message.parsed
-            fn = (
-                self.contact_manager.update
-                if intent.action == "update"
-                else self.contact_manager.ask
-            )
-            contact_manager_task = asyncio.create_task(
-                fn(
-                    action.query,
-                    parent_chat_context=chat_history,
-                    _return_reasoning_steps=action.show_steps,
-                )
-            )
-        contact_manager_task.add_done_callback(
-            self.on_contact_manager_task_end
-        )
 
     async def run(self):
         if self.call_mode:
