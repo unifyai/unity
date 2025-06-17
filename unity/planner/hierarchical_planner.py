@@ -262,10 +262,41 @@ class HierarchicalPlan(BasePlan):
         return f"Plan state: call_stack={self.call_stack}, state={self._state.name}, goal='{self.goal}'"
 
     
+    def _is_valid_method(self, name: str) -> bool:
+        """Checks if a control method is valid in the current plan state."""
+        if name == "stop":
+            return self._state in (
+                _HierarchicalPlanState.RUNNING,
+                _HierarchicalPlanState.PAUSED,
+            )
+        if name == "pause":
+            return self._state == _HierarchicalPlanState.RUNNING
+        if name == "resume":
+            return self._state == _HierarchicalPlanState.PAUSED
+        if name == "interject":
+            return (
+                self._state == _HierarchicalPlanState.RUNNING
+                and self.main_loop_handle is not None
+            )
+        if name == "ask":
+            # Ask is useful in most states
+            return self._state not in (
+                _HierarchicalPlanState.IDLE,
+                _HierarchicalPlanState.COMPLETED,
+                _HierarchicalPlanState.STOPPED,
+                _HierarchicalPlanState.ERROR,
+            )
+        return False
 
     @property
     def valid_tools(self) -> Dict[str, Callable]:
-        return {}
+        """Dynamically exposes steerable methods based on the plan's state."""
+        tools = {}
+        potential_tools = ["stop", "pause", "resume", "interject", "ask"]
+        for method_name in potential_tools:
+            if self._is_valid_method(method_name):
+                tools[method_name] = getattr(self, method_name)
+        return tools
 
 
 class HierarchicalPlanner(BasePlanner[HierarchicalPlan]):
