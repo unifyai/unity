@@ -23,7 +23,6 @@ from unity.common.llm_helpers import (
 from unity.controller.controller import Controller
 from unity.function_manager.function_manager import FunctionManager
 from unity.planner.base import BasePlan, BasePlanner
-from unity.task_manager.task_manager import TaskManager
 from unity.planner.tool_loop_planner import ComsManager
 
 logger = logging.getLogger(__name__)
@@ -493,13 +492,11 @@ class HierarchicalPlanner(BasePlanner[HierarchicalPlan]):
 
     def __init__(
         self,
-        task_manager: "TaskManager",
         function_manager: "FunctionManager",
         controller: "Controller",
         coms_manager: "ComsManager",
     ):
         super().__init__()
-        self.task_manager = task_manager
         self.function_manager = function_manager
         self.controller = controller
         self.coms_manager = coms_manager
