@@ -192,35 +192,16 @@ class CommsAgent:
 
                 self.pending_events.clear()
 
-    async def on_contact_manager_task_end(self, t: asyncio.Task):
-        print("CONTACT MANAGER TASK ENDED")
-        # start gen
-        ev = {"topic": "call_process", "type": "start_gen"}
-        self.publish(ev)
-        # gen chunk
-        answer = t.result()
-        ev = {
-            "topic": "call_process",
-            "type": "gen_chunk",
-            "chunk": answer,
-        }
-        self.publish(ev)
-        # end gen
-        ev = {"topic": "call_process", "type": "end_gen"}
-        self.publish(ev)
-
     async def handle_contact_manager_action(self, action: ContactManagerAction):
         """Handle contact manager actions asynchronously"""
         chat_history = self.get_chat_history()
         if action.query.lower().startswith(
             ("add ", "create ", "update ", "change ", "delete ")
         ):
-            contact_manager_task = asyncio.create_task(
-                self.contact_manager.update(
-                    action.query,
-                    parent_chat_context=chat_history,
-                    _return_reasoning_steps=action.show_steps,
-                )
+            self.contact_manager_handle =  await self.contact_manager.update(
+                action.query,
+                parent_chat_context=chat_history,
+                _return_reasoning_steps=action.show_steps,
             )
         else:
             res = await client.beta.chat.completions.parse(
@@ -243,15 +224,44 @@ class CommsAgent:
                 if intent.action == "update"
                 else self.contact_manager.ask
             )
-            contact_manager_task = asyncio.create_task(
-                fn(
-                    action.query,
-                    parent_chat_context=chat_history,
-                    _return_reasoning_steps=action.show_steps,
-                )
+            self.contact_manager_handle = await fn(
+                action.query,
+                parent_chat_context=chat_history,
+                _return_reasoning_steps=action.show_steps,
             )
-        contact_manager_task.add_done_callback(
-            self.on_contact_manager_task_end
+
+        self.publish(
+            {
+                "topic": self.agent_id,
+                "event": ContactManagerStartedEvent(
+                    self.agent_id, chat_history, action.query
+                ).to_dict(),
+            },
+        )
+
+        while not self.contact_manager_handle.done(): pass
+        answer = await self.contact_manager_handle.result()
+
+        if isinstance(answer, tuple):
+            answer, _ = answer
+        self.publish(
+            {
+                "topic": self.agent_id,
+                "event": ContactManagerEndedEvent(
+                    self.agent_id, answer
+                ).to_dict(),
+            },
+        )
+
+    async def handle_contact_manager_interject_action(self, action: ContactManagerInterjectAction):
+        await self.contact_manager_handle.interject(action.query)
+        self.publish(
+            {
+                "topic": self.agent_id,
+                "event": ContactManagerInterjectedEvent(
+                    self.agent_id, action.query
+                ).to_dict(),
+            },
         )
 
     def on_run_end(self, t: asyncio.Task):
@@ -307,9 +317,11 @@ class CommsAgent:
                                 action.response,
                             )
 
-                        # elif isinstance(action, ContactManagerAction):
-                        #     # Create a task to handle the async contact manager operations
-                        #     asyncio.create_task(self.handle_contact_manager_action(action))
+                        elif isinstance(action, ContactManagerAction):
+                            asyncio.create_task(self.handle_contact_manager_action(action))
+
+                        elif isinstance(action, ContactManagerInterjectAction):
+                            asyncio.create_task(self.handle_contact_manager_interject_action(action))
 
         except asyncio.CancelledError:
             pass

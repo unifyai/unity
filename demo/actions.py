@@ -76,6 +76,11 @@ class ContactManagerAction(BaseModel):
     )
 
 
+class ContactManagerInterjectAction(BaseModel):
+    type: Literal["interrupt"]
+    query: str = Field(..., description="The query to perform")
+
+
 # -------- discriminated union --------
 # actually, call and non-call modes will probably have some difference between their actions (as in more actions probably for the voice one),
 # but for now lets keep them the same
@@ -86,7 +91,8 @@ ActionModel = Union[
     CreateCommunicationTask,
     RespondToAgent,
     SendCallAction,
-    # ContactManagerAction,
+    ContactManagerAction,
+    ContactManagerInterjectAction,
 ]
 
 

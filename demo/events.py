@@ -359,3 +359,64 @@ class UserAgentResponseEvent(Event):
     def __str__(self):
         return f"""[USER AGENT RESPONDED TO YOUR QUERY REGARDING {self.task_id} @ {self.fmt_timestamp}]
         {self.response}"""
+
+
+class ContactManagerStartedEvent(Event):
+    def __init__(self, agent_id: str, chat_history: list[dict[str, str]], query: str, *args, **kwargs):
+        kwargs.pop("agent_id", None)
+        kwargs.pop("chat_history", None)
+        kwargs.pop("query", None)
+
+        self.agent_id = agent_id
+        self.chat_history = chat_history
+        self.query = query
+        super().__init__(*args, **kwargs)
+    
+    def to_dict(self) -> dict[str, Any]:
+        base_dict = super().to_dict()
+        base_dict["payload"].update(
+            {
+                "agent_id": self.agent_id,
+                "chat_history": self.chat_history,
+                "query": self.query,
+            },
+        )
+        return base_dict
+    
+    def __str__(self):
+        return f"""[CONTACT MANAGER STARTED @ {self.fmt_timestamp}]
+        {self.query}"""
+
+
+class ContactManagerInterjectedEvent(Event):
+    def __init__(self, agent_id: str, query: str, *args, **kwargs):
+        kwargs.pop("agent_id", None)
+        kwargs.pop("query", None)
+
+        self.agent_id = agent_id
+        self.query = query
+        super().__init__(*args, **kwargs)
+
+    def to_dict(self) -> dict[str, Any]:
+        base_dict = super().to_dict()
+        base_dict["payload"].update(
+            {
+                "agent_id": self.agent_id,
+                "query": self.query,
+            },
+        )
+        return base_dict
+
+    def __str__(self):
+        return f"""[CONTACT MANAGER INTERJECTED @ {self.fmt_timestamp}]
+        {self.query}"""
+
+
+class ContactManagerEndedEvent(Event):
+    def __init__(self, agent_id: str, query: str, *args, **kwargs):
+        kwargs.pop("agent_id", None)
+        kwargs.pop("query", None)
+
+        self.agent_id = agent_id
+        self.query = query
+        super().__init__(*args, **kwargs)
