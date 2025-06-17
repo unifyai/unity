@@ -541,6 +541,19 @@ class TaskScheduler(BaseTaskScheduler):
 
         # ------------------  queue insertion (if relevant)  ---------- #
         if status == Status.queued:
+            # Only *auto-append* when the caller did **not** supply an
+            # explicit linkage (prev/next).  If linkage was given we assume
+            # the user knows where the task belongs.
+            explicit_linkage = schedule is not None and (
+                self._sched_prev(schedule) is not None
+                or self._sched_next(schedule) is not None
+            )
+
+            if explicit_linkage:
+                return {
+                    "outcome": "task created successfully",
+                    "details": {"task_id": next_id},
+                }
             original_q = [t.task_id for t in self._get_task_queue()]
 
             # Only insert if the new task isn't already in that list
@@ -668,12 +681,28 @@ class TaskScheduler(BaseTaskScheduler):
         # ----------------  starting node  ---------------- #
         start_task: Optional[dict] = None
 
+        # ── 0.  Pick a starting node ─────────────────────────────────────
         if task_id is None:
             if self._primed_task:
                 start_task = self._primed_task
                 task_id = start_task["task_id"]
             else:
-                raise Exception("task_id must be specified if there is no primed task.")
+                # Derive the head: the runnable task whose `prev_task` is None
+                head_candidates = self._search_tasks(
+                    filter=(
+                        "schedule is not None and "
+                        "status not in ('completed','cancelled','failed','scheduled') and "
+                        "schedule.get('prev_task') is None"
+                    ),
+                    limit=2,
+                )
+                if not head_candidates:
+                    return []
+                assert (
+                    len(head_candidates) == 1
+                ), f"Multiple heads detected: {head_candidates}"
+                start_task = head_candidates[0]
+                task_id = start_task["task_id"]
 
         if start_task is None and task_id is not None:
             start_task = _get_task_by_task_id(task_id)
@@ -806,7 +835,7 @@ class TaskScheduler(BaseTaskScheduler):
             prev_tid = None if idx == 0 else new[idx - 1]
             next_tid = None if idx == len(new) - 1 else new[idx + 1]
 
-            # ── Decide who owns the timestamp after the re-order ────────────
+            # ── Decide who owns the timestamp & status after re-order ──────
             if idx == 0:  # ↤ HEAD
                 # Prefer the queue-level ts taken from the old head; fall back
                 # to a ts that was already on the new head (rare but legal).
@@ -830,11 +859,31 @@ class TaskScheduler(BaseTaskScheduler):
             if start_ts is not None:
                 sched_payload["start_time"] = start_ts
 
-            updates_per_log[tid] = {"schedule": sched_payload}
+            # ----------------  derive *new* status  ---------------- #
+            existing_status = Status(
+                existing_logs.get(tid, {}).get("status", Status.queued),
+            )
+            if start_ts is not None:  # head keeps ts
+                desired_status = Status.scheduled
+            else:  # no ts
+                desired_status = (
+                    existing_status
+                    if existing_status != Status.scheduled
+                    else Status.queued
+                )
+
+            payload: Dict[str, Any] = {"schedule": sched_payload}
+            if desired_status != existing_status:
+                payload["status"] = desired_status
+
+            updates_per_log[tid] = payload
 
         # ── Invariant check across the whole queue relink ────────────────────
         for tid, payload in updates_per_log.items():
-            status_here = existing_logs.get(tid, {}).get("status", Status.queued)
+            status_here = payload.get(
+                "status",
+                existing_logs.get(tid, {}).get("status", Status.queued),
+            )
             self._validate_scheduled_invariants(
                 status=status_here,
                 schedule=payload["schedule"],
