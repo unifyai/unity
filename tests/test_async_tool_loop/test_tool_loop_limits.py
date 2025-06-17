@@ -26,6 +26,10 @@ class DummyAsyncUnify:
         self.messages.append(msg)
         return msg
 
+    @property
+    def system_message(self) -> str:
+        return ""
+
 
 # ── 1. max_steps safeguard ────────────────────────────────────────────────
 @pytest.mark.asyncio
