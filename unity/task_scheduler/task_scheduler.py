@@ -283,7 +283,7 @@ class TaskScheduler(BaseTaskScheduler):
         """
         Enforce that **Status.scheduled** is *only* legal when the task is
         (a) somewhere inside the runnable queue (`prev_task` ≠ None) **or**
-        (b) has an explicit `start_at` / `start_time` timestamp.
+        (b) has an explicit `start_at` timestamp.
 
         Args
         ----
@@ -304,19 +304,18 @@ class TaskScheduler(BaseTaskScheduler):
             return
 
         prev_ptr = self._sched_prev(schedule)
-        # model uses `.start_at`; dicts (and our existing code) use `"start_time"`
         if schedule is None:
             start_ts = None
         elif isinstance(schedule, Schedule):
             start_ts = schedule.start_at
         else:  # dict
-            start_ts = schedule.get("start_at") or schedule.get("start_time")
+            start_ts = schedule.get("start_at")
 
         if prev_ptr is None and start_ts is None:
             raise ValueError(
                 f"{err_prefix} a task with status 'scheduled' must have either "
                 "`prev_task` (it sits behind another task in the queue) or a "
-                "`start_at`/`start_time` timestamp.",
+                "`start_at` timestamp.",
             )
 
     def _ensure_not_active_task(self, task_ids: Union[int, List[int]]) -> None:
@@ -497,7 +496,7 @@ class TaskScheduler(BaseTaskScheduler):
             )
 
         if status == Status.scheduled and not future_start:
-            raise ValueError("Scheduled tasks require a future start_time")
+            raise ValueError("Scheduled tasks require a future start_at")
 
         # ------------------  generate new task_id  ------------------ #
         # We avoid fetching *all* logs just to know the next id.  Instead we
@@ -772,7 +771,7 @@ class TaskScheduler(BaseTaskScheduler):
         """
         **Re-link** the runnable queue so its order matches *new* **and**
         make sure that exactly one task – the **head** – carries the queue-
-        level ``start_time``/``start_at`` field.
+        level ``start_at`` field.
 
         Rationale
         ---------
@@ -816,7 +815,7 @@ class TaskScheduler(BaseTaskScheduler):
 
         # -------  gather existing logs  -------
         # Collect every task that already has a schedule entry – we need its
-        # linkage pointers *and* any existing start_time value.
+        # linkage pointers *and* any existing start_at value.
         existing_logs = {
             t["task_id"]: t
             for t in self._search_tasks()
@@ -828,7 +827,7 @@ class TaskScheduler(BaseTaskScheduler):
         if original:
             _old_head = existing_logs.get(original[0])
             if _old_head:
-                queue_start_ts = (_old_head.get("schedule") or {}).get("start_time")
+                queue_start_ts = (_old_head.get("schedule") or {}).get("start_at")
 
         updates_per_log: Dict[int, Dict[str, Any]] = {}
         for idx, tid in enumerate(new):
@@ -842,7 +841,7 @@ class TaskScheduler(BaseTaskScheduler):
                 start_ts = queue_start_ts
                 if start_ts is None:
                     start_ts = (existing_logs.get(tid, {}).get("schedule") or {}).get(
-                        "start_time",
+                        "start_at",
                     )
             else:  # ↤ not head ⇒ must not have ts
                 start_ts = None
@@ -852,12 +851,12 @@ class TaskScheduler(BaseTaskScheduler):
                 "next_task": next_tid,
             }
 
-            # Only include *start_time* when we actually know one (i.e. when
+            # Only include *start_at* when we actually know one (i.e. when
             # the task was explicitly scheduled by the user).  For plain queue
             # insertions `start_ts` will be *None* and we leave the field
             # absent.
             if start_ts is not None:
-                sched_payload["start_time"] = start_ts
+                sched_payload["start_at"] = start_ts
 
             # ----------------  derive *new* status  ---------------- #
             existing_status = Status(
@@ -1111,14 +1110,14 @@ class TaskScheduler(BaseTaskScheduler):
         sched_payload = {
             "prev_task": self._sched_prev(current_sched),
             "next_task": self._sched_next(current_sched),
-            "start_time": new_start_at,
+            "start_at": new_start_at,
         }
 
         # ensure the new schedule does not violate the invariant
         self._validate_scheduled_invariants(
             status=current_rows[0]["status"],
             schedule=sched_payload,
-            err_prefix=f"While updating start_time for task {task_id}:",
+            err_prefix=f"While updating start_at for task {task_id}:",
         )
 
         return unify.update_logs(
