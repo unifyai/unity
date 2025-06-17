@@ -5,7 +5,6 @@
 import os
 import asyncio
 import json
-import signal
 from collections import defaultdict
 
 from dotenv import load_dotenv

@@ -117,6 +117,8 @@ class HierarchicalPlan(BasePlan):
 
         async def _run_one_plan_step():
             """The core 'tool' for the SteerableToolLoopHandle."""
+            nonlocal plan_iterator
+
             if self._is_paused_for_modification:
                 return {
                     "status": "paused",
@@ -138,7 +140,6 @@ class HierarchicalPlan(BasePlan):
                 logger.info(f"Handling dynamic implementation for: {function_name}")
                 await self._handle_dynamic_implementation(function_name)
                 # Restart the iterator with the updated code
-                nonlocal plan_iterator
                 plan_iterator = self._create_main_loop_iterator()
                 return {
                     "status": "in_progress",
