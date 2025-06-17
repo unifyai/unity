@@ -737,21 +737,25 @@ class TaskScheduler(BaseTaskScheduler):
         new: List[int],
     ) -> ToolOutcome:
         """
-        **Re-link** the runnable queue so its order matches *new*.
+        **Re-link** the runnable queue so its order matches *new* **and**
+        make sure that exactly one task – the **head** – carries the queue-
+        level ``start_time``/``start_at`` field.
+
+        Rationale
+        ---------
+        The timestamp denotes the *earliest* moment **any** work in the queue
+        may begin. Logically that information belongs to the first task.
+        Whenever we promote another task to the front we therefore have to
+        transfer the timestamp alongside it and strip it from every other
+        node.
 
         Parameters
         ----------
         original : list[int]
-            Snapshot of the *current* queue order.  Used for sanity checks.
+            Snapshot of the queue before the change. Used to locate the
+            authoritative timestamp (if present) on the *former* head.
         new : list[int]
-            Desired queue order (may include *additional* task-ids to be
-            inserted; removal is **not** permitted – cancel tasks first).
-
-        Behaviour
-        ---------
-        Updates every affected task's ``schedule`` field so that the queue
-        remains a well-formed doubly-linked list.  The head stores
-        ``prev_task=None`` and the tail ``next_task=None``.
+            Desired queue order (may include inserts; never removals).
 
         Returns
         -------
@@ -778,19 +782,37 @@ class TaskScheduler(BaseTaskScheduler):
         ), f"update cannot remove existing tasks; cancel them first. Missing tasks: {set(original) - set(new)}"
 
         # -------  gather existing logs  -------
+        # Collect every task that already has a schedule entry – we need its
+        # linkage pointers *and* any existing start_time value.
         existing_logs = {
-            t["task_id"]: t for t in self._search_tasks() if t["schedule"] is not None
+            t["task_id"]: t
+            for t in self._search_tasks()
+            if t.get("schedule") is not None
         }
+
+        # ── 1.  Extract the queue-level timestamp from the old head ──────────
+        queue_start_ts: Optional[str] = None
+        if original:
+            _old_head = existing_logs.get(original[0])
+            if _old_head:
+                queue_start_ts = (_old_head.get("schedule") or {}).get("start_time")
 
         updates_per_log: Dict[int, Dict[str, Any]] = {}
         for idx, tid in enumerate(new):
             prev_tid = None if idx == 0 else new[idx - 1]
             next_tid = None if idx == len(new) - 1 else new[idx + 1]
 
-            # keep an existing start_time; otherwise leave it unset
-            start_ts = None
-            if tid in existing_logs and existing_logs[tid]["schedule"]:
-                start_ts = existing_logs[tid]["schedule"].get("start_time")
+            # ── Decide who owns the timestamp after the re-order ────────────
+            if idx == 0:  # ↤ HEAD
+                # Prefer the queue-level ts taken from the old head; fall back
+                # to a ts that was already on the new head (rare but legal).
+                start_ts = queue_start_ts
+                if start_ts is None:
+                    start_ts = (existing_logs.get(tid, {}).get("schedule") or {}).get(
+                        "start_time",
+                    )
+            else:  # ↤ not head ⇒ must not have ts
+                start_ts = None
 
             sched_payload = {
                 "prev_task": prev_tid,
