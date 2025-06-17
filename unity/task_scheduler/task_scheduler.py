@@ -529,21 +529,23 @@ class TaskScheduler(BaseTaskScheduler):
                 or self._sched_next(schedule) is not None
             )
 
+            task_id = log.entries["task_id"]
+
             if explicit_linkage:
                 return {
                     "outcome": "task created successfully",
-                    "details": {"task_id": log.task_id},
+                    "details": {"task_id": task_id},
                 }
             original_q = [t.task_id for t in self._get_task_queue()]
 
             # Only insert if the new task isn't already in that list
-            if log.task_id not in original_q:
-                new_q = original_q + [log.task_id]
+            if task_id not in original_q:
+                new_q = original_q + [task_id]
                 self._update_task_queue(original=original_q, new=new_q)
 
         return {
             "outcome": "task created successfully",
-            "details": {"task_id": log.task_id},
+            "details": {"task_id": task_id},
         }
 
     # Delete
