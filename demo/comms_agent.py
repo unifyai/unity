@@ -262,9 +262,9 @@ class CommsAgent:
                                 action.response,
                             )
 
-                        elif isinstance(action, ContactManagerAction):
-                            # Create a task to handle the async contact manager operations
-                            asyncio.create_task(self._handle_contact_manager_action(action))
+                        # elif isinstance(action, ContactManagerAction):
+                        #     # Create a task to handle the async contact manager operations
+                        #     asyncio.create_task(self._handle_contact_manager_action(action))
 
         except asyncio.CancelledError:
             pass

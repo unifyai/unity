@@ -45,6 +45,18 @@
             "env": { "PYTHONPATH": "${workspaceFolder}" },
             "console": "integratedTerminal",
             "justMyCode": false
+          },
+          {
+            "name": "User Manager",
+            "type": "python",
+            "request": "launch",
+            "program": "${workspaceFolder}/demo/main.py",
+            "args": [],
+            "cwd": "${workspaceFolder}",
+            "env": { "PYTHONPATH": "${workspaceFolder}" },
+            "envFile": "${workspaceFolder}/demo/.env",
+            "console": "integratedTerminal",
+            "justMyCode": false
           }
     ]
 }
