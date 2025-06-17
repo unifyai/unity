@@ -11,12 +11,11 @@ from ..common.llm_helpers import (
     SteerableToolHandle,
     methods_to_tool_dict,
 )
+from ..common.tool_outcome import ToolOutcome
 from .types.status import Status
 from .types.priority import Priority
 from .types.schedule import Schedule
 from .types.repetition import RepeatPattern
-from .types.schedule import Schedule
-from .types.status import Status
 from .types.task import Task
 from .prompt_builders import build_ask_prompt, build_update_prompt
 from .base import BaseTaskScheduler
@@ -77,11 +76,6 @@ class TaskScheduler(BaseTaskScheduler):
             self._planner = SimulatedPlanner(timeout=20)
         else:
             self._planner = planner
-        # ID of the *single* task that is allowed to be in the **active**
-        # state at any moment.  This will be maintained by a forthcoming
-        # tool; until then it may legitimately stay as ``None``.
-        self._active_task: Optional[Dict[str, Any]] = None
-        self._primed_task: Optional[Dict[str, Any]] = None
 
         # Internal monotonically-increasing task-id counter.  We keep it local
         # to the manager to avoid an expensive scan across *all* logs every
@@ -98,6 +92,19 @@ class TaskScheduler(BaseTaskScheduler):
         if self._ctx not in unify.get_contexts():
             unify.create_context(self._ctx)
 
+        # ID of the *single* task that is allowed to be in the **active**
+        # state at any moment.  This will be maintained by a forthcoming
+        # tool; until then it may legitimately stay as ``None``.
+        self._active_task: Optional[Dict[str, Any]] = None
+        primed_tasks = self._search_tasks(filter="status == 'primed'")
+        if primed_tasks:
+            assert (
+                len(primed_tasks) == 1
+            ), f"More than one primed task found:\n{primed_tasks}"
+            self._primed_task: Optional[Dict[str, Any]] = primed_tasks[0]
+        else:
+            self._primed_task: Optional[Dict[str, Any]] = None
+
     # Public #
     # -------#
 
@@ -109,7 +116,7 @@ class TaskScheduler(BaseTaskScheduler):
         text: str,
         *,
         _return_reasoning_steps: bool = False,
-        log_tool_steps: bool = False,
+        _log_tool_steps: bool = True,
         parent_chat_context: list[dict] | None = None,
         clarification_up_q: asyncio.Queue[str] | None = None,
         clarification_down_q: asyncio.Queue[str] | None = None,
@@ -144,7 +151,7 @@ class TaskScheduler(BaseTaskScheduler):
             tools,
             loop_id=f"{self.__class__.__name__}.{self.ask.__name__}",
             parent_chat_context=parent_chat_context,
-            log_steps=log_tool_steps,
+            log_steps=_log_tool_steps,
             tool_policy=lambda i, _: ("required", _) if i < 1 else ("auto", _),
         )
         if _return_reasoning_steps:
@@ -167,7 +174,7 @@ class TaskScheduler(BaseTaskScheduler):
         text: str,
         *,
         _return_reasoning_steps: bool = False,
-        log_tool_steps: bool = False,
+        _log_tool_steps: bool = True,
         parent_chat_context: list[dict] | None = None,
         clarification_up_q: asyncio.Queue[str] | None = None,
         clarification_down_q: asyncio.Queue[str] | None = None,
@@ -202,7 +209,7 @@ class TaskScheduler(BaseTaskScheduler):
             tools,
             loop_id=f"{self.__class__.__name__}.{self.update.__name__}",
             parent_chat_context=parent_chat_context,
-            log_steps=log_tool_steps,
+            log_steps=_log_tool_steps,
             tool_policy=lambda i, _: ("required", _) if i < 1 else ("auto", _),
         )
         if _return_reasoning_steps:
@@ -266,6 +273,52 @@ class TaskScheduler(BaseTaskScheduler):
     # Private Helpers #
     # ----------------#
 
+    def _validate_scheduled_invariants(
+        self,
+        *,
+        status: Status | str,
+        schedule: Optional[Union[Schedule, Dict[str, Any]]],
+        err_prefix: str = "Invalid task state:",
+    ) -> None:
+        """
+        Enforce that **Status.scheduled** is *only* legal when the task is
+        (a) somewhere inside the runnable queue (`prev_task` ≠ None) **or**
+        (b) has an explicit `start_at` / `start_time` timestamp.
+
+        Args
+        ----
+        status
+            The prospective status **after** the change.
+        schedule
+            The prospective schedule **after** the change (may be None).
+
+        Raises
+        ------
+        ValueError
+            If the rule is violated.
+        """
+        # normalise
+        status = Status(status)
+
+        if status != Status.scheduled:
+            return
+
+        prev_ptr = self._sched_prev(schedule)
+        # model uses `.start_at`; dicts (and our existing code) use `"start_time"`
+        if schedule is None:
+            start_ts = None
+        elif isinstance(schedule, Schedule):
+            start_ts = schedule.start_at
+        else:  # dict
+            start_ts = schedule.get("start_at") or schedule.get("start_time")
+
+        if prev_ptr is None and start_ts is None:
+            raise ValueError(
+                f"{err_prefix} a task with status 'scheduled' must have either "
+                "`prev_task` (it sits behind another task in the queue) or a "
+                "`start_at`/`start_time` timestamp.",
+            )
+
     def _ensure_not_active_task(self, task_ids: Union[int, List[int]]) -> None:
         """
         Raise **RuntimeError** if *task_ids* contains the current
@@ -326,11 +379,11 @@ class TaskScheduler(BaseTaskScheduler):
         name: str,
         description: str,
         status: Optional[Status] = None,
-        schedule: Optional[Schedule] = None,
+        schedule: Optional[Union[Schedule, Dict[str, Any]]] = None,
         deadline: Optional[str] = None,
-        repeat: Optional[List[RepeatPattern]] = None,
+        repeat: Optional[List[Union[RepeatPattern, Dict[str, Any]]]] = None,
         priority: Priority = Priority.normal,
-    ) -> int:
+    ) -> ToolOutcome:
         """
         Create a **brand-new task** and, depending on its attributes, place it
         into the appropriate queue or scheduled slot.
@@ -344,20 +397,21 @@ class TaskScheduler(BaseTaskScheduler):
         status : Status | None, default ``None``
             Desired initial lifecycle state.  When omitted the method infers
             one based on *schedule* and current queue status.
-        schedule : Schedule | None, default ``None``
+        schedule : Schedule | dict | None, default ``None``
             Optional explicit schedule (start-time plus linkage pointers).
+            Can be either a Schedule object or a dictionary that will be converted to Schedule.
         deadline : str | None, default ``None``
             ISO-8601 timestamp (UTC) by which the task *must* be finished.
-        repeat : list[RepeatPattern] | None
+        repeat : list[RepeatPattern | dict] | None
             Zero or more recurrence rules for automatically re-instantiating
-            the task.
+            the task. Can be either RepeatPattern objects or dictionaries that will be converted to RepeatPattern.
         priority : Priority, default :pyattr:`Priority.normal`
             Relative importance used for queue ordering.
 
         Returns
         -------
-        int
-            The **integer** ``task_id`` assigned to the new task.
+        ToolOutcome
+            Tool outcome with any extra relevant details.
 
         Raises
         ------
@@ -391,10 +445,18 @@ class TaskScheduler(BaseTaskScheduler):
         if status is not None and isinstance(status, str):
             status = Status(status)
 
+        # Convert schedule dict to Schedule model if needed
+        if schedule is not None and isinstance(schedule, dict):
+            schedule = Schedule(**schedule)
+
+        # Convert repeat dicts to RepeatPattern models if needed
+        if repeat is not None:
+            repeat = [RepeatPattern(**r) if isinstance(r, dict) else r for r in repeat]
+
         # figure out if schedule is "future"
         future_start = False
-        if schedule and schedule.start_time:
-            future_start = _parse_iso(schedule.start_time) > datetime.now(timezone.utc)
+        if schedule and schedule.start_at:
+            future_start = _parse_iso(schedule.start_at) > datetime.now(timezone.utc)
 
         if status is None:
             # New tasks can only ever begin their life as **scheduled** or
@@ -410,6 +472,12 @@ class TaskScheduler(BaseTaskScheduler):
                 status = Status.queued
 
         # ------------------  conflict checks  ------------------ #
+        self._validate_scheduled_invariants(
+            status=status,
+            schedule=schedule,
+            err_prefix="While creating a task:",
+        )
+
         if status == Status.active:
             raise ValueError(
                 "Tasks cannot be created directly in the 'active' state; "
@@ -476,11 +544,14 @@ class TaskScheduler(BaseTaskScheduler):
                 new_q = original_q + [next_id]
                 self._update_task_queue(original=original_q, new=new_q)
 
-        return next_id
+        return {
+            "outcome": "task created successfully",
+            "details": {"task_id": next_id},
+        }
 
     # Delete
 
-    def _delete_task(self, *, task_id: int) -> None:
+    def _delete_task(self, *, task_id: int) -> ToolOutcome:
         """
         Permanently **remove** a task from storage.
 
@@ -491,7 +562,8 @@ class TaskScheduler(BaseTaskScheduler):
 
         Returns
         -------
-        None
+        ToolOutcome
+            Tool outcome with any extra relevant details.
 
         Raises
         ------
@@ -505,10 +577,14 @@ class TaskScheduler(BaseTaskScheduler):
             context=self._ctx,
             logs=log_id,
         )
+        return {
+            "outcome": "task deleted",
+            "details": {"task_id": task_id},
+        }
 
     # Cancel Task(s)
 
-    def _cancel_tasks(self, task_ids: List[int]) -> None:
+    def _cancel_tasks(self, task_ids: List[int]) -> ToolOutcome:
         """
         Mark one or many tasks as **cancelled** (non-recoverable terminal
         state).
@@ -517,6 +593,11 @@ class TaskScheduler(BaseTaskScheduler):
         ----------
         task_ids : list[int]
             Identifiers of the tasks to cancel.
+
+        Returns
+        -------
+        ToolOutcome
+            Tool outcome with any extra relevant details.
 
         Raises
         ------
@@ -532,6 +613,10 @@ class TaskScheduler(BaseTaskScheduler):
             set(completed_task_ids),
         ), f"Cannot cancel completed tasks. Attempted to cancel: {set(task_ids).intersection(set(completed_task_ids))}"
         self._update_task_status(task_ids=task_ids, new_status="cancelled")
+        return {
+            "outcome": "tasks cancelled",
+            "details": {"task_ids": task_ids},
+        }
 
     # Update Task Queue
 
@@ -564,8 +649,7 @@ class TaskScheduler(BaseTaskScheduler):
         """
         Return the runnable task queue (head → tail).
 
-        • If *task_id* is *None* we begin with **the single active task**
-          (falling back to the queue head if there is no active task).
+        • If *task_id* is *None* we begin with **the single active/primed task**
         • Tasks whose status is completed / cancelled / failed are *ignored*.
         • Only the nodes actually traversed are loaded from storage; we never
           materialise the entire task table in memory.
@@ -585,7 +669,7 @@ class TaskScheduler(BaseTaskScheduler):
                 start_task = self._primed_task
                 task_id = start_task["task_id"]
             else:
-                raise Exception("Not yet supported.")
+                raise Exception("task_id must be specified if there is no primed task.")
 
         if start_task is None and task_id is not None:
             start_task = _get_task_by_task_id(task_id)
@@ -651,7 +735,7 @@ class TaskScheduler(BaseTaskScheduler):
         *,
         original: List[int],
         new: List[int],
-    ) -> None:
+    ) -> ToolOutcome:
         """
         **Re-link** the runnable queue so its order matches *new*.
 
@@ -668,6 +752,11 @@ class TaskScheduler(BaseTaskScheduler):
         Updates every affected task's ``schedule`` field so that the queue
         remains a well-formed doubly-linked list.  The head stores
         ``prev_task=None`` and the tail ``next_task=None``.
+
+        Returns
+        -------
+        ToolOutcome
+            Tool outcome with any extra relevant details.
 
         Raises
         ------
@@ -717,6 +806,15 @@ class TaskScheduler(BaseTaskScheduler):
 
             updates_per_log[tid] = {"schedule": sched_payload}
 
+        # ── Invariant check across the whole queue relink ────────────────────
+        for tid, payload in updates_per_log.items():
+            status_here = existing_logs.get(tid, {}).get("status", Status.queued)
+            self._validate_scheduled_invariants(
+                status=status_here,
+                schedule=payload["schedule"],
+                err_prefix=f"While re-ordering the queue (task {tid}):",
+            )
+
         # Re-primed
         prime_swap_needed = False
         if self._primed_task is not None:
@@ -726,6 +824,8 @@ class TaskScheduler(BaseTaskScheduler):
                     orig_primed_tid == original[0]
                 ), "Primed task should be at the front of the queue."
                 prime_swap_needed = new[0] != orig_primed_tid
+        else:
+            orig_primed_tid = None
 
         # Persist
         _task_id_to_task = dict()
@@ -747,6 +847,10 @@ class TaskScheduler(BaseTaskScheduler):
                 entries=payload,
                 overwrite=True,
             )
+        return {
+            "outcome": "queue reordered",
+            "details": {"new_order": new},
+        }
 
     # Update Name / Description
 
@@ -865,6 +969,16 @@ class TaskScheduler(BaseTaskScheduler):
         if not allow_active:
             self._ensure_not_active_task(task_ids)
 
+        # ── Invariant check *per task* if new_status becomes 'scheduled' ─────
+        if str(new_status) == Status.scheduled.value:
+            rows = self._search_tasks(filter=f"task_id in {task_ids}")
+            for row in rows:
+                self._validate_scheduled_invariants(
+                    status=new_status,
+                    schedule=row.get("schedule"),
+                    err_prefix=f"While changing status of task {row['task_id']}:",
+                )
+
         # ToDo: replace with single API call once this task [https://app.clickup.com/t/86c3c1y63] is done
         log_ids = self._get_logs_by_task_ids(task_ids=task_ids)
         return unify.update_logs(
@@ -924,6 +1038,13 @@ class TaskScheduler(BaseTaskScheduler):
             "next_task": self._sched_next(current_sched),
             "start_time": new_start_at,
         }
+
+        # ensure the new schedule does not violate the invariant
+        self._validate_scheduled_invariants(
+            status=current_rows[0]["status"],
+            schedule=sched_payload,
+            err_prefix=f"While updating start_time for task {task_id}:",
+        )
 
         return unify.update_logs(
             logs=log_id,

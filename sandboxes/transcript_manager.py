@@ -17,11 +17,9 @@ from __future__ import annotations
 
 # ─────────────────────────────── stdlib / vendored ──────────────────────────
 import os
-import argparse
 import asyncio
 import logging
 import re
-import select
 import sys
 from pathlib import Path
 from typing import List, Optional, Tuple, Dict, Union
@@ -46,9 +44,11 @@ from sandboxes.utils import (  # shared helpers reused in other sandboxes
     record_until_enter as _record_until_enter,
     transcribe_deepgram as _transcribe_deepgram,
     speak as _speak,
-    run_in_loop,
     get_custom_scenario,
+    await_with_interrupt as _await_with_interrupt,
+    build_cli_parser,
 )
+from sandboxes.scenario_store import ScenarioStore
 
 LG = logging.getLogger("transcript_sandbox")
 
@@ -182,45 +182,11 @@ async def _dispatch_with_context(
     return "ask", handle
 
 
-# ═════════════════════════════ interruption helper ══════════════════════════
-
-
-def _input_now(timeout: float = 0.1) -> Optional[str]:
-    """Non-blocking stdin check (POSIX & Windows)."""
-    r, _, _ = select.select([sys.stdin], [], [], timeout)
-    return sys.stdin.readline().strip() if r else None
-
-
-async def _await_with_interrupt(handle: SteerableToolHandle) -> str:
-    """Wait on *handle*, permitting live user interjection."""
-
-    while not handle.done():
-        txt = _input_now(0.1)
-        if txt:
-            if txt.lower() in {"stop", "cancel"}:
-                handle.stop()
-                break
-            run_in_loop(handle.interject(txt))
-        await asyncio.sleep(0.05)
-
-    return await handle.result()
-
-
 # ══════════════════════════════════  CLI  ═══════════════════════════════════
 
 
 async def _main_async() -> None:
-    parser = argparse.ArgumentParser(description="TranscriptManager sandbox")
-    parser.add_argument(
-        "--voice",
-        "-v",
-        action="store_true",
-        help="enable voice capture + TTS",
-    )
-    parser.add_mutually_exclusive_group()
-    parser.add_argument("--reuse", "-r", action="store_true", help="re-use old data")
-    parser.add_argument("--debug", "-d", action="store_true", help="verbose tool logs")
-    parser.add_argument("--traced", "-t", action="store_true", help="include tracing")
+    parser = build_cli_parser("TranscriptManager sandbox")
     args = parser.parse_args()
 
     # tracing flag → env var consumed by `unify`
@@ -241,30 +207,44 @@ async def _main_async() -> None:
     logging.basicConfig(level=logging.INFO, format="%(message)s")
     LG.setLevel(logging.INFO)
 
-    # manager (optionally traced)
+    # manager & transcript vault
     tm: TranscriptManager = TranscriptManager()
     if args.traced:
         tm = unify.traced(tm)
+    store = ScenarioStore()
 
-    # seed synthetic transcripts unless --reuse
+    # Seeding logic identical to other sandboxes
     if not args.reuse:
-        # custom scenario
-        scenario_text = get_custom_scenario(args)
-        if scenario_text:
-            LG.info("[voice] transcript: “%s”", scenario_text)
-            LG.info("[seed] building synthetic transcript store – can take 30-60 s…")
+        scenario_text: Optional[str] = None
+
+        if args.load_custom:
+            try:
+                key = int(args.load_custom)
+            except ValueError:
+                key = args.load_custom
+            scenario_text = store.get(key)
+            LG.info(f"[seed] loaded transcript {key} → {scenario_text}")
             if args.voice:
-                _speak("Sure thing, building your custom scenario now.")
-            theme = await _build_scenario(scenario_text)
-            LG.info("[seed] done.")
-            if args.voice:
-                _speak(
-                    "All done, your custom scenario is built and ready to go.",
-                )
-            if theme:
-                LG.info(f"[seed] theme: {theme}")
-        else:
-            raise Exception("No text provided for building the custom scenario")
+                _speak("Loading your saved scenario, give me a second.")
+
+        if scenario_text is None:
+            scenario_text = get_custom_scenario(args)
+            if not scenario_text:
+                raise Exception("No text provided for building the custom scenario")
+            store.add_to_history(scenario_text)
+            LG.info(f"[voice] transcript: {scenario_text}")
+
+        LG.info("[seed] building synthetic transcript store – can take 30-60 s…")
+        if args.voice:
+            _speak("Sure thing, building your custom scenario now.")
+        await _build_scenario(scenario_text)
+        LG.info("[seed] done.")
+        if args.voice:
+            _speak("All done, your custom scenario is built and ready to go.")
+
+        if args.save_custom:
+            store.save_named(args.save_custom, scenario_text)
+            LG.info(f"[seed] transcript saved as {args.save_custom}.")
 
     print("TranscriptManager sandbox – type or speak. 'quit' to exit.\n")
 

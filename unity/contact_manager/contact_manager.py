@@ -8,6 +8,7 @@ from .prompt_builders import build_ask_prompt, build_update_prompt
 from ..common.embed_utils import EMBED_MODEL, ensure_vector_column
 from ..knowledge_manager.types import ColumnType
 from ..helpers import _handle_exceptions
+from ..common.tool_outcome import ToolOutcome
 
 import unify
 from .types.contact import Contact
@@ -425,7 +426,7 @@ class ContactManager(BaseContactManager):
         whatsapp_number: Optional[str] = None,
         description: Optional[str] = None,
         custom_fields: Optional[Dict[str, ColumnType]] = None,
-    ) -> int:
+    ) -> ToolOutcome:
         """
         Persist a new contact record.
 
@@ -456,8 +457,8 @@ class ContactManager(BaseContactManager):
 
         Returns
         -------
-        int
-            The integer contact_id of the newly created record.
+        ToolOutcome
+            Tool outcome with any extra relevant details.
 
         Raises
         ------
@@ -489,7 +490,10 @@ class ContactManager(BaseContactManager):
                 new=True,
                 mutable=True,
             )
-            return 0
+            return {
+                "outcome": "contact created successfully",
+                "details": {"contact_id": 0},
+            }
 
         # Verify uniqueness
         for key, value in contact_details.items():
@@ -518,7 +522,10 @@ class ContactManager(BaseContactManager):
             new=True,
             mutable=True,
         )
-        return this_id
+        return {
+            "outcome": "contact created successfully",
+            "details": {"contact_id": this_id},
+        }
 
     def _update_contact(
         self,
@@ -531,7 +538,7 @@ class ContactManager(BaseContactManager):
         whatsapp_number: Optional[str] = None,
         description: Optional[str] = None,
         custom_fields: Optional[Dict[str, ColumnType]] = None,
-    ) -> int:
+    ) -> ToolOutcome:
         """
         Modify selected (not None) fields of an existing contact.
 
@@ -563,8 +570,8 @@ class ContactManager(BaseContactManager):
 
         Returns
         -------
-        int
-            The contact's unchanged contact_id on success.
+        ToolOutcome
+            Tool outcome with any extra relevant details.
 
         Raises
         ------
@@ -624,7 +631,10 @@ class ContactManager(BaseContactManager):
             entries=updates_to_apply,
             overwrite=True,
         )
-        return contact_id
+        return {
+            "outcome": "contact updated",
+            "details": {"contact_id": contact_id},
+        }
 
     def _search_contacts(
         self,
@@ -668,7 +678,7 @@ class ContactManager(BaseContactManager):
         self,
         *,
         contacts: List[Dict[str, Any]],
-    ) -> List[int]:
+    ) -> List[ToolOutcome]:
         """
         **Batched** version of :py:meth:`_create_contact`.
 
@@ -695,7 +705,7 @@ class ContactManager(BaseContactManager):
             *(_safe_create(i, kw) for i, kw in enumerate(contacts)),
         )
 
-        ok: Dict[int, int] = {}
+        ok: Dict[int, ToolOutcome] = {}
         err: Dict[int, str] = {}
         for status, idx, payload in results:
             (ok if status == "ok" else err)[idx] = payload
@@ -735,7 +745,7 @@ class ContactManager(BaseContactManager):
             *(_safe_update(i, kw) for i, kw in enumerate(contacts)),
         )
 
-        ok: Dict[int, int] = {}
+        ok: Dict[int, ToolOutcome] = {}
         err: Dict[int, str] = {}
         for status, idx, payload in results:
             (ok if status == "ok" else err)[idx] = payload

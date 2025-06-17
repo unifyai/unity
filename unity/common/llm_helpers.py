@@ -838,6 +838,11 @@ async def _async_tool_use_loop_inner(
 
         await _to_event_bus(tool_msg)
 
+        # ── optional console logging for every finished tool call ────────────
+        #     (mirrors the assistant-message logging above)
+        if log_steps:
+            LOGGER.info(f"🛠️ [{loop_id}] {json.dumps(tool_msg, indent=4)}\n")
+
         # 6️⃣  failure guard -------------------------------------------------
         if consecutive_failures >= max_consecutive_failures:
             if log_steps:

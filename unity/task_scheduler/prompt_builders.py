@@ -70,6 +70,13 @@ def build_update_prompt(tools: Dict[str, Callable]) -> str:
             "If a any tasks were created or updated in the process,"
             "then please *always* include these task id(s) in your final response.",
             "",
+            "If tasks are given in a *numbered order*, then please assume that these tasks "
+            "should be *queued* in that *same order* unless explicitly stated otherwise.",
+            "Having their `start_at` in ascending order is not enough, ",
+            "tasks which are to be completed *sequentially* should also be *explicitly* queued."
+            "This ensures smooth task progression, even if schedules overrun and `start_at` times"
+            "are therefore not all adhered to."
+            "",
             "Tools (name → argspec):",
             sig_json,
             "",

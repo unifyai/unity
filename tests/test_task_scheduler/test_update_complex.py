@@ -84,7 +84,7 @@ async def test_update_lower_priority_next_monday(basic_task_scenario):
     base = datetime.now(timezone.utc)
     next_mon = _next_weekday(base, 0).replace(hour=9, minute=0, second=0, microsecond=0)
 
-    sched = Schedule(start_time=next_mon.isoformat(), prev_task=None, next_task=None)
+    sched = Schedule(start_at=next_mon.isoformat(), prev_task=None, next_task=None)
     ts._create_task(
         name="Send KPI report",
         description="Automated email of KPIs to leadership.",

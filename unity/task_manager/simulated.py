@@ -129,7 +129,7 @@ class SimulatedTaskManager:
         text: str,
         *,
         _return_reasoning_steps: bool = False,
-        log_tool_steps: bool = False,
+        _log_tool_steps: bool = True,
         parent_chat_context: list[dict] | None = None,
         clarification_up_q: asyncio.Queue[str] | None = None,
         clarification_down_q: asyncio.Queue[str] | None = None,
@@ -164,7 +164,7 @@ class SimulatedTaskManager:
             tools,
             loop_id=f"{self.__class__.__name__}.{self.ask.__name__}",
             parent_chat_context=parent_chat_context,
-            log_steps=log_tool_steps,
+            log_steps=_log_tool_steps,
         )
 
         if _return_reasoning_steps:
@@ -187,7 +187,7 @@ class SimulatedTaskManager:
         text: str,
         *,
         _return_reasoning_steps: bool = False,
-        log_tool_steps: bool = False,
+        _log_tool_steps: bool = True,
         parent_chat_context: list[dict] | None = None,
         clarification_up_q: asyncio.Queue[str] | None = None,
         clarification_down_q: asyncio.Queue[str] | None = None,
@@ -223,7 +223,7 @@ class SimulatedTaskManager:
             tools,
             loop_id=f"{self.__class__.__name__}.{self.request.__name__}",
             parent_chat_context=parent_chat_context,
-            log_steps=log_tool_steps,
+            log_steps=_log_tool_steps,
         )
 
         if _return_reasoning_steps:

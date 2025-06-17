@@ -24,6 +24,8 @@ import math
 import struct
 from deepgram import DeepgramClient, FileSource, PrerecordedOptions
 from livekit.plugins import cartesia
+import argparse
+from unity.common.llm_helpers import SteerableToolHandle
 
 from dotenv import load_dotenv
 
@@ -246,7 +248,7 @@ async def _speak_async(text: str) -> None:
     if "CARTESIA_API_KEY" not in os.environ:
         return
 
-    print("🗣️ Assistant speaking… press ↵ to skip.")
+    print(f'🗣️ Assistant speaking…\n"{text}"\npress ↵ to skip.')
 
     # ─────────────── enter-to-skip listener ────────────────
     skip = threading.Event()  # raised when user hits ↵
@@ -334,9 +336,10 @@ def speak(text: str) -> None:
     """
 
     def _run_in_thread() -> None:
-        # Serialise TTS so concurrent calls don’t overlap
-        with _TTS_LOCK:
+        try:
             asyncio.run(_speak_async(text))
+        finally:
+            _TTS_LOCK.release()
 
     try:
         # Is there already an event-loop in *this* thread?
@@ -345,8 +348,9 @@ def speak(text: str) -> None:
         # No → safe to run the coroutine synchronously here
         asyncio.run(_speak_async(text))
     else:
-        # Yes → off-load to a background daemon so it can progress even if
-        # the caller blocks the main thread right after this call.
+        # Yes → grab the lock *now* to freeze call order and then start
+        # a worker that will release it when done.
+        _TTS_LOCK.acquire()
         threading.Thread(target=_run_in_thread, daemon=True).start()
 
 
@@ -434,6 +438,114 @@ def get_custom_scenario(args) -> Optional[str]:
     except Exception as exc:
         print(f"⚠️ Warning: Voice scenario capture failed ({exc})")
         return None
+
+
+# ===========================================================================
+#  CLI boilerplate helper (used by every sandbox)
+# ===========================================================================
+
+
+def build_cli_parser(description: str) -> argparse.ArgumentParser:
+    """
+    Return an :pyclass:`argparse.ArgumentParser` pre-populated with the
+    six command-line switches that every interactive sandbox uses:
+
+    • ``--voice / -v``        – enable voice capture & TTS
+    • ``--reuse / -r``        – keep previous data / skip seeding
+    • ``--debug / -d``        – verbose tool logs (reasoning steps)
+    • ``--traced / -t``       – wrap manager calls in Unify tracing
+    • ``--load_custom / -L``  – restore a saved transcript by name/index
+    • ``--save_custom / -S``  – persist the current seed transcript
+
+    Individual sandboxes remain free to *add* extra flags afterwards.
+    """
+
+    parser = argparse.ArgumentParser(description=description)
+
+    parser.add_argument(
+        "--voice",
+        "-v",
+        action="store_true",
+        help="enable voice capture + TTS",
+    )
+    parser.add_argument(
+        "--reuse",
+        "-r",
+        action="store_true",
+        help="re-use old data (skip fresh seeding)",
+    )
+    parser.add_argument(
+        "--debug",
+        "-d",
+        action="store_true",
+        help="verbose tool logs (reasoning steps)",
+    )
+    parser.add_argument(
+        "--traced",
+        "-t",
+        action="store_true",
+        help="include Unify tracing",
+    )
+    parser.add_argument(
+        "--load_custom",
+        "-L",
+        metavar="NAME|-N",
+        help="Load a stored transcript by name or negative history index",
+    )
+    parser.add_argument(
+        "--save_custom",
+        "-S",
+        metavar="NAME",
+        help="Save the transcript used to seed this run under NAME",
+    )
+
+    return parser
+
+
+# ===========================================================================
+# Minimal, cross-sandbox input / interrupt helpers
+# ===========================================================================
+
+
+def input_now(timeout: float = 0.1) -> Optional[str]:
+    """
+    Quick helper that returns the next *line* waiting on **stdin**
+    (stripped) or ``None`` if nothing arrived within *timeout* s.
+
+    It re-uses :pyfunc:`input_with_timeout`, which already handles the
+    Windows vs Unix intricacies.
+    """
+
+    has_input, txt = input_with_timeout(timeout)
+    return txt if has_input else None
+
+
+async def await_with_interrupt(  # noqa: D401 – imperative helper
+    handle: "SteerableToolHandle",
+    poll: float = 0.05,
+) -> str:
+    """
+    **Common wrapper** used by all interactive sandboxes.
+
+    Waits on ``handle.result()`` but lets the user:
+    • *interject* arbitrary text ⇒ forwarded via ``handle.interject``
+    • type **stop / cancel**     ⇒ aborts the running tool call
+
+    Consolidating this code removes four nearly identical copies.
+    """
+
+    import asyncio  # local to avoid widening the public surface
+
+    while not handle.done():
+        txt = input_now(poll * 2)  # same cadence as old versions
+        if txt:
+            if txt.lower() in {"stop", "cancel"}:
+                handle.stop()
+                break
+            run_in_loop(handle.interject(txt))
+        await asyncio.sleep(poll)
+
+    return await handle.result()
 
 
 # ---------------------------------------------------------------------------
