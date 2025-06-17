@@ -591,3 +591,14 @@ Generate either the Python script or the word "None".
         if "None" in script:
             return None
         return script.strip().replace("```python", "").replace("```", "").strip()
+
+    async def close(self):
+        """Gracefully shuts down the planner and its resources."""
+        logger.info("HierarchicalPlanner: Closing resources...")
+        if self.controller:
+            self.controller.stop()
+        if self.coms_manager and hasattr(self.coms_manager, "stop"):
+            # Assuming coms_manager might have an async stop method
+            stop_coro = self.coms_manager.stop()
+            if inspect.iscoroutine(stop_coro):
+                await stop_coro
