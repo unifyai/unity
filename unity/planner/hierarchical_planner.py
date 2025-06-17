@@ -50,6 +50,8 @@ class HierarchicalPlan(BasePlan):
         self,
         planner: "HierarchicalPlanner",
         goal: str,
+        clarification_up_q: Optional[asyncio.Queue[str]] = None,
+        clarification_down_q: Optional[asyncio.Queue[str]] = None,
     ):
         self.planner = planner
         self.goal = goal
@@ -61,6 +63,8 @@ class HierarchicalPlan(BasePlan):
         self._execution_task = asyncio.create_task(self._initialize_and_run())
         self._is_paused_for_modification = False
 
+        self.clarification_up_q = clarification_up_q or asyncio.Queue()
+        self.clarification_down_q = clarification_down_q or asyncio.Queue()
     
     async def _initialize_and_run(self):
         """Initializes the plan and starts the async execution loop."""
@@ -393,17 +397,29 @@ You are an expert Python programmer. Your task is to implement a single `async` 
 
     async def _prepare_execution_environment(self, plan: HierarchicalPlan):
         """Prepares the namespace for executing the generated code."""
+
         # This now includes ComsManager primitives as per Phase 3.
-        plan.execution_namespace.update({
-            'act': self.controller.act,
-            'observe': self.controller.observe,
-            'reason': self._reason_primitive,
-            'start_call': self.coms_manager.start_call,
-            'send_email': self.coms_manager.send_email,
-            'verify': self._create_verify_decorator(plan),
-            'ReplanFromParentException': ReplanFromParentException,
-            'asyncio': asyncio
-        })
+        async def request_clarification_primitive(question: str) -> str:
+            """Sends a question to the user and waits for an answer."""
+            logger.info(f"HierarchicalPlan requesting clarification: '{question}'")
+            await plan.clarification_up_q.put(question)
+            answer = await plan.clarification_down_q.get()
+            logger.info(f"HierarchicalPlan received clarification: '{answer}'")
+            return answer
+
+        plan.execution_namespace.update(
+            {
+                "act": self.controller.act,
+                "observe": self.controller.observe,
+                "reason": self._reason_primitive,
+                "start_call": self.coms_manager.start_call,
+                "send_email": self.coms_manager.send_email,
+                "request_clarification": request_clarification_primitive,
+                "verify": self._create_verify_decorator(plan),
+                "ReplanFromParentException": ReplanFromParentException,
+                "asyncio": asyncio,
+            },
+        )
 
     async def _reason_primitive(self, context: str, question: str) -> str:
         prompt = f"Given the context:\n{context}\n\nPlease answer the following question:\n{question}"
