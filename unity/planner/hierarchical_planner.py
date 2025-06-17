@@ -159,7 +159,9 @@ class HierarchicalPlan(BasePlan):
                 self._state = (
                     _HierarchicalPlanState.PAUSED
                 )  # Or a new 'ESCALATED' state
-                self.action_log.append(f"ESCALATION: Plan paused for escalation. Reason: {e}")
+                escalation_message = f"ESCALATION: Plan has failed strategically and is paused. Reason: {e}. Please provide new instructions to modify the plan or stop it."
+                self.action_log.append(escalation_message)
+                await self.clarification_up_q.put(escalation_message)
                 return {"status": "paused_for_escalation", "details": str(e)}
             except Exception as e:
                 logger.error(f"Error during plan step execution: {e}", exc_info=True)
@@ -171,6 +173,8 @@ class HierarchicalPlan(BasePlan):
             client=self.planner.llm_client,
             message="Executing hierarchical plan...",
             tools={"_run_one_plan_step": _run_one_plan_step},
+            loop_id=f"HierarchicalPlan-{self.goal[:20]}",
+            max_steps=200,
             tool_policy=lambda i, _: (
                 "required",
                 {"_run_one_plan_step": _run_one_plan_step},
@@ -264,8 +268,16 @@ class HierarchicalPlan(BasePlan):
         """Handles 'Modifying Mode' workflow as per Phase 4 spec."""
         logger.info(f"Starting plan modification: '{modification_request}'")
         self.action_log.append(f"Starting plan modification: {modification_request}")
-        await self.pause()
+
+        original_source_code = self.plan_source_code
         self._is_paused_for_modification = True
+
+        # Stop the old handle before making any changes
+        if self.main_loop_handle:
+            self.main_loop_handle.stop()
+            self.main_loop_handle = None
+        self._state = _HierarchicalPlanState.PAUSED
+
 
         try:
             # 1. Plan Surgery
@@ -291,25 +303,19 @@ class HierarchicalPlan(BasePlan):
             self.plan_source_code = new_source_code
             logger.info("Plan successfully modified. Restarting execution loop.")
             self.action_log.append("Plan successfully modified. Restarting execution.")
-
-            # Stop the old handle before creating a new one
-            if self.main_loop_handle:
-                self.main_loop_handle.stop()
-                self.main_loop_handle = None
-
-            # We need to restart the execution loop with the new code
             await self._start_main_execution_loop()
             self._state = _HierarchicalPlanState.RUNNING
 
         except Exception as e:
-            logger.error(f"Failed to modify plan: {e}", exc_info=True)
-            self.action_log.append(f"ERROR: Failed to modify plan: {e}")
-            self._state = _HierarchicalPlanState.ERROR
+            logger.error(f"Failed to modify plan, rolling back: {e}", exc_info=True)
+            self.action_log.append(f"ERROR: Failed to modify plan, rolling back: {e}")
+            self.plan_source_code = original_source_code  # Rollback
+            await self._start_main_execution_loop() # Restart with old code
+            self._state = _HierarchicalPlanState.RUNNING
+
         finally:
             self._is_paused_for_modification = False
-            # Resume only if not already stopped/errored
-            if self._state == _HierarchicalPlanState.PAUSED:
-                await self.resume()
+
 
     async def _execute_correction_script(self, script: str):
         """Executes a short-lived correction script in its own isolated handle."""
@@ -353,13 +359,19 @@ class HierarchicalPlan(BasePlan):
 
     async def stop(self) -> str:
         """Stops the plan's execution and waits for termination."""
-        logger.info(f"HierarchicalPlan stopping. Current state: {self._state.name}")
-        self._state = _HierarchicalPlanState.STOPPED
-        if self.main_loop_handle:
-            self.main_loop_handle.stop()
-        await self._execution_task  # Wait for the task to finish cleanup
-        self.action_log.append("Plan stopped by user.")
-        return "Plan was stopped."
+        if self._state not in (_HierarchicalPlanState.STOPPED, _HierarchicalPlanState.COMPLETED, _HierarchicalPlanState.ERROR):
+            logger.info(f"HierarchicalPlan stopping. Current state: {self._state.name}")
+            self._state = _HierarchicalPlanState.STOPPED
+            if self.main_loop_handle:
+                self.main_loop_handle.stop()
+            try:
+                await asyncio.wait_for(self._execution_task, timeout=5.0)
+            except asyncio.TimeoutError:
+                logger.warning("Timeout waiting for execution task to stop.")
+            self.action_log.append("Plan stopped by user.")
+            return "Plan was stopped."
+        return "Plan is already stopped or completed."
+
 
     async def pause(self) -> str:
         """Pauses the plan's execution."""
@@ -374,7 +386,7 @@ class HierarchicalPlan(BasePlan):
 
     async def resume(self) -> str:
         """Resumes a paused plan."""
-        if self._state == _HierarchicalPlanState.PAUSED:
+        if self._state == _HierarchicalPlanState.PAUSED and not self._is_paused_for_modification:
             logger.info("HierarchicalPlan resuming.")
             self._state = _HierarchicalPlanState.RUNNING
             if self.main_loop_handle:
@@ -431,7 +443,7 @@ Based on the following log, provide a concise answer to the user's question.
         if name == "pause":
             return self._state == _HierarchicalPlanState.RUNNING
         if name == "resume":
-            return self._state == _HierarchicalPlanState.PAUSED
+            return self._state == _HierarchicalPlanState.PAUSED and not self._is_paused_for_modification
         if name == "interject":
             return (
                 self._state == _HierarchicalPlanState.RUNNING
