@@ -241,7 +241,7 @@ async def test_policy_shows_then_hides_tool():
     client = new_client()
     handle = start_async_tool_use_loop(
         client,
-        "You are part of a test. Continue calling the observed tool for as long as you can.",
+        "You are part of a test. Continue calling `observed_tool` until the tool option disappears, up to a *maximum* of two *consecutive* tool calls.",
         {"observed_tool": observed_tool},
         tool_policy=hide_first_then_show,
     )
