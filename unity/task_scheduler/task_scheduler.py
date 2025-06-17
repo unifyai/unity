@@ -283,7 +283,7 @@ class TaskScheduler(BaseTaskScheduler):
         """
         Enforce that **Status.scheduled** is *only* legal when the task is
         (a) somewhere inside the runnable queue (`prev_task` ≠ None) **or**
-        (b) has an explicit `start_at` / `start_time` timestamp.
+        (b) has an explicit `start_at` timestamp.
 
         Args
         ----
@@ -304,19 +304,18 @@ class TaskScheduler(BaseTaskScheduler):
             return
 
         prev_ptr = self._sched_prev(schedule)
-        # model uses `.start_at`; dicts (and our existing code) use `"start_time"`
         if schedule is None:
             start_ts = None
         elif isinstance(schedule, Schedule):
             start_ts = schedule.start_at
         else:  # dict
-            start_ts = schedule.get("start_at") or schedule.get("start_time")
+            start_ts = schedule.get("start_at")
 
         if prev_ptr is None and start_ts is None:
             raise ValueError(
                 f"{err_prefix} a task with status 'scheduled' must have either "
                 "`prev_task` (it sits behind another task in the queue) or a "
-                "`start_at`/`start_time` timestamp.",
+                "`start_at` timestamp.",
             )
 
     def _ensure_not_active_task(self, task_ids: Union[int, List[int]]) -> None:
@@ -458,18 +457,22 @@ class TaskScheduler(BaseTaskScheduler):
         if schedule and schedule.start_at:
             future_start = _parse_iso(schedule.start_at) > datetime.now(timezone.utc)
 
+        #  If the task is explicitly linked **behind**  another task (prev_task ≠ None)
+        # and that task is not terminal, we NEVER mark the newcomer as *primed*.
+        prev_ptr = self._sched_prev(schedule)
+
         if status is None:
-            # New tasks can only ever begin their life as **scheduled** or
-            # **queued**. Promotion to *active* is handled by a dedicated
-            # tool that is not part of this commit.
-            if future_start:
-                status = Status.scheduled
-            elif self._active_task is None and self._primed_task is None:
-                # this goes to the top of the queue, in "primed" state
-                status = Status.primed
+            if prev_ptr is not None:
+                # Already queued behind another runnable task → never primed
+                status = Status.scheduled if future_start else Status.queued
             else:
-                # this goes to be back of the queue
-                status = Status.queued
+                # No predecessor pointer – use the old heuristic
+                if future_start:
+                    status = Status.scheduled
+                elif self._active_task is None and self._primed_task is None:
+                    status = Status.primed
+                else:
+                    status = Status.queued
 
         # ------------------  conflict checks  ------------------ #
         self._validate_scheduled_invariants(
@@ -493,7 +496,7 @@ class TaskScheduler(BaseTaskScheduler):
             )
 
         if status == Status.scheduled and not future_start:
-            raise ValueError("Scheduled tasks require a future start_time")
+            raise ValueError("Scheduled tasks require a future start_at")
 
         # ------------------  generate new task_id  ------------------ #
         # We avoid fetching *all* logs just to know the next id.  Instead we
@@ -537,6 +540,19 @@ class TaskScheduler(BaseTaskScheduler):
 
         # ------------------  queue insertion (if relevant)  ---------- #
         if status == Status.queued:
+            # Only *auto-append* when the caller did **not** supply an
+            # explicit linkage (prev/next).  If linkage was given we assume
+            # the user knows where the task belongs.
+            explicit_linkage = schedule is not None and (
+                self._sched_prev(schedule) is not None
+                or self._sched_next(schedule) is not None
+            )
+
+            if explicit_linkage:
+                return {
+                    "outcome": "task created successfully",
+                    "details": {"task_id": next_id},
+                }
             original_q = [t.task_id for t in self._get_task_queue()]
 
             # Only insert if the new task isn't already in that list
@@ -664,12 +680,29 @@ class TaskScheduler(BaseTaskScheduler):
         # ----------------  starting node  ---------------- #
         start_task: Optional[dict] = None
 
+        # ── 0.  Pick a starting node ─────────────────────────────────────
         if task_id is None:
             if self._primed_task:
                 start_task = self._primed_task
                 task_id = start_task["task_id"]
             else:
-                raise Exception("task_id must be specified if there is no primed task.")
+                # Derive the head: the runnable task whose `prev_task` is None
+                head_candidates = self._search_tasks(
+                    filter=(
+                        "schedule is not None and \n"
+                        "                    status not in "
+                        "('completed','cancelled','failed') and \n"
+                        "                    schedule.get('prev_task') is None"
+                    ),
+                    limit=2,
+                )
+                if not head_candidates:
+                    return []
+                assert (
+                    len(head_candidates) == 1
+                ), f"Multiple heads detected: {head_candidates}"
+                start_task = head_candidates[0]
+                task_id = start_task["task_id"]
 
         if start_task is None and task_id is not None:
             start_task = _get_task_by_task_id(task_id)
@@ -712,10 +745,7 @@ class TaskScheduler(BaseTaskScheduler):
         ordered: List[Task] = []
         cur = head_row
         while cur:
-            if (
-                cur["status"] not in self._TERMINAL_STATUSES
-                and cur["status"] != "scheduled"
-            ):
+            if cur["status"] not in self._TERMINAL_STATUSES:
                 ordered.append(Task(**cur))
 
             nxt_id = self._sched_next(cur["schedule"])
@@ -737,21 +767,25 @@ class TaskScheduler(BaseTaskScheduler):
         new: List[int],
     ) -> ToolOutcome:
         """
-        **Re-link** the runnable queue so its order matches *new*.
+        **Re-link** the runnable queue so its order matches *new* **and**
+        make sure that exactly one task – the **head** – carries the queue-
+        level ``start_at`` field.
+
+        Rationale
+        ---------
+        The timestamp denotes the *earliest* moment **any** work in the queue
+        may begin. Logically that information belongs to the first task.
+        Whenever we promote another task to the front we therefore have to
+        transfer the timestamp alongside it and strip it from every other
+        node.
 
         Parameters
         ----------
         original : list[int]
-            Snapshot of the *current* queue order.  Used for sanity checks.
+            Snapshot of the queue before the change. Used to locate the
+            authoritative timestamp (if present) on the *former* head.
         new : list[int]
-            Desired queue order (may include *additional* task-ids to be
-            inserted; removal is **not** permitted – cancel tasks first).
-
-        Behaviour
-        ---------
-        Updates every affected task's ``schedule`` field so that the queue
-        remains a well-formed doubly-linked list.  The head stores
-        ``prev_task=None`` and the tail ``next_task=None``.
+            Desired queue order (may include inserts; never removals).
 
         Returns
         -------
@@ -778,37 +812,75 @@ class TaskScheduler(BaseTaskScheduler):
         ), f"update cannot remove existing tasks; cancel them first. Missing tasks: {set(original) - set(new)}"
 
         # -------  gather existing logs  -------
+        # Collect every task that already has a schedule entry – we need its
+        # linkage pointers *and* any existing start_at value.
         existing_logs = {
-            t["task_id"]: t for t in self._search_tasks() if t["schedule"] is not None
+            t["task_id"]: t
+            for t in self._search_tasks()
+            if t.get("schedule") is not None
         }
+
+        # ── 1.  Extract the queue-level timestamp from the old head ──────────
+        queue_start_ts: Optional[str] = None
+        if original:
+            _old_head = existing_logs.get(original[0])
+            if _old_head:
+                queue_start_ts = (_old_head.get("schedule") or {}).get("start_at")
 
         updates_per_log: Dict[int, Dict[str, Any]] = {}
         for idx, tid in enumerate(new):
             prev_tid = None if idx == 0 else new[idx - 1]
             next_tid = None if idx == len(new) - 1 else new[idx + 1]
 
-            # keep an existing start_time; otherwise leave it unset
-            start_ts = None
-            if tid in existing_logs and existing_logs[tid]["schedule"]:
-                start_ts = existing_logs[tid]["schedule"].get("start_time")
+            # ── Decide who owns the timestamp & status after re-order ──────
+            if idx == 0:  # ↤ HEAD
+                # Prefer the queue-level ts taken from the old head; fall back
+                # to a ts that was already on the new head (rare but legal).
+                start_ts = queue_start_ts
+                if start_ts is None:
+                    start_ts = (existing_logs.get(tid, {}).get("schedule") or {}).get(
+                        "start_at",
+                    )
+            else:  # ↤ not head ⇒ must not have ts
+                start_ts = None
 
             sched_payload = {
                 "prev_task": prev_tid,
                 "next_task": next_tid,
             }
 
-            # Only include *start_time* when we actually know one (i.e. when
+            # Only include *start_at* when we actually know one (i.e. when
             # the task was explicitly scheduled by the user).  For plain queue
             # insertions `start_ts` will be *None* and we leave the field
             # absent.
             if start_ts is not None:
-                sched_payload["start_time"] = start_ts
+                sched_payload["start_at"] = start_ts
 
-            updates_per_log[tid] = {"schedule": sched_payload}
+            # ----------------  derive *new* status  ---------------- #
+            existing_status = Status(
+                existing_logs.get(tid, {}).get("status", Status.queued),
+            )
+            if start_ts is not None:  # head keeps ts
+                desired_status = Status.scheduled
+            else:  # no ts
+                desired_status = (
+                    existing_status
+                    if existing_status != Status.scheduled
+                    else Status.queued
+                )
+
+            payload: Dict[str, Any] = {"schedule": sched_payload}
+            if desired_status != existing_status:
+                payload["status"] = desired_status
+
+            updates_per_log[tid] = payload
 
         # ── Invariant check across the whole queue relink ────────────────────
         for tid, payload in updates_per_log.items():
-            status_here = existing_logs.get(tid, {}).get("status", Status.queued)
+            status_here = payload.get(
+                "status",
+                existing_logs.get(tid, {}).get("status", Status.queued),
+            )
             self._validate_scheduled_invariants(
                 status=status_here,
                 schedule=payload["schedule"],
@@ -1036,14 +1108,14 @@ class TaskScheduler(BaseTaskScheduler):
         sched_payload = {
             "prev_task": self._sched_prev(current_sched),
             "next_task": self._sched_next(current_sched),
-            "start_time": new_start_at,
+            "start_at": new_start_at,
         }
 
         # ensure the new schedule does not violate the invariant
         self._validate_scheduled_invariants(
             status=current_rows[0]["status"],
             schedule=sched_payload,
-            err_prefix=f"While updating start_time for task {task_id}:",
+            err_prefix=f"While updating start_at for task {task_id}:",
         )
 
         return unify.update_logs(
