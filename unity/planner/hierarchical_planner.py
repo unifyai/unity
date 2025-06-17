@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import enum
 import functools
 import inspect
 import json
@@ -9,7 +10,7 @@ import os
 import sys
 import textwrap
 import traceback
-from typing import Any, Callable, Coroutine, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional
 
 import unify
 from pydantic import BaseModel, Field
@@ -26,19 +27,36 @@ from unity.planner.tool_loop_planner import ComsManager
 
 logger = logging.getLogger(__name__)
 
-# Custom exception for escalating strategic failures, as per the spec.
+
+# Custom exception for escalating strategic failures
 class ReplanFromParentException(Exception):
     """Raised by the @verify decorator when a function's goal is misguided."""
-    pass
+
 
 class VerificationAssessment(BaseModel):
     """Structured output for the _check_state_against_goal LLM call."""
-    status: str = Field(..., description="Outcome status: 'ok', 'reimplement_local', 'replan_parent', or 'fatal_error'.")
+
+    status: str = Field(
+        ...,
+        description="Outcome status: 'ok', 'reimplement_local', 'replan_parent', or 'fatal_error'.",
+    )
     reason: str = Field(..., description="A concise explanation for the status.")
+
+
+# Enum for managing the plan's lifecycle state
+class _HierarchicalPlanState(enum.Enum):
+    IDLE = enum.auto()
+    RUNNING = enum.auto()
+    PAUSED = enum.auto()
+    COMPLETED = enum.auto()
+    STOPPED = enum.auto()
+    ERROR = enum.auto()
+
 
 async def llm_call(client: unify.AsyncUnify, prompt: str) -> str:
     """Convenience wrapper for a simple LLM call."""
     return await client.generate(prompt)
+
 
 class HierarchicalPlan(BasePlan):
     """
@@ -63,11 +81,13 @@ class HierarchicalPlan(BasePlan):
         self._execution_task = asyncio.create_task(self._initialize_and_run())
         self._is_paused_for_modification = False
 
+        self._state = _HierarchicalPlanState.IDLE
         self.clarification_up_q = clarification_up_q or asyncio.Queue()
         self.clarification_down_q = clarification_down_q or asyncio.Queue()
-    
+
     async def _initialize_and_run(self):
         """Initializes the plan and starts the async execution loop."""
+        self._state = _HierarchicalPlanState.RUNNING
         try:
             self.plan_source_code = await self.planner._generate_initial_plan(self.goal)
             logger.info(f"Initial plan generated for goal: '{self.goal}'")
@@ -78,6 +98,7 @@ class HierarchicalPlan(BasePlan):
 
         except Exception as e:
             logger.error(f"Plan initialization failed with error: {e}", exc_info=True)
+            self._state = _HierarchicalPlanState.ERROR
             if self.main_loop_handle and not self.main_loop_handle.done():
                 self.main_loop_handle.stop()
 
@@ -97,12 +118,20 @@ class HierarchicalPlan(BasePlan):
         async def _run_one_plan_step():
             """The core 'tool' for the SteerableToolLoopHandle."""
             if self._is_paused_for_modification:
-                return {"status": "paused", "message": "Execution paused for plan modification."}
+                return {
+                    "status": "paused",
+                    "message": "Execution paused for plan modification.",
+                }
             try:
                 main_coro = next(plan_iterator)
                 result = await main_coro
-                return {"status": "completed", "message": f"Plan finished successfully. Result: {result}"}
+                self._state = _HierarchicalPlanState.COMPLETED
+                return {
+                    "status": "completed",
+                    "message": f"Plan finished successfully. Result: {result}",
+                }
             except StopIteration:
+                self._state = _HierarchicalPlanState.COMPLETED
                 return {"status": "completed", "message": "Plan finished successfully."}
             except NotImplementedError:
                 function_name = self._get_unimplemented_function_name()
@@ -111,28 +140,47 @@ class HierarchicalPlan(BasePlan):
                 # Restart the iterator with the updated code
                 nonlocal plan_iterator
                 plan_iterator = self._create_main_loop_iterator()
-                return {"status": "in_progress", "message": f"Retrying after implementing {function_name}"}
+                return {
+                    "status": "in_progress",
+                    "message": f"Retrying after implementing {function_name}",
+                }
             except ReplanFromParentException as e:
+                self._state = (
+                    _HierarchicalPlanState.PAUSED
+                )  # Or a new 'ESCALATED' state
                 return {"status": "paused_for_escalation", "details": str(e)}
             except Exception as e:
                 logger.error(f"Error during plan step execution: {e}", exc_info=True)
+                self._state = _HierarchicalPlanState.ERROR
                 return {"status": "error", "message": str(e)}
 
         self.main_loop_handle = start_async_tool_use_loop(
             client=self.planner.llm_client,
             message="Executing hierarchical plan...",
             tools={"_run_one_plan_step": _run_one_plan_step},
-            tool_policy=lambda i, _: ("required", {"_run_one_plan_step": _run_one_plan_step})
+            tool_policy=lambda i, _: (
+                "required",
+                {"_run_one_plan_step": _run_one_plan_step},
+            ),
         )
 
-    async def _handle_dynamic_implementation(self, function_name: str, is_strategic_replan: bool = False, replan_reason: str = ""):
+    async def _handle_dynamic_implementation(
+        self,
+        function_name: str,
+        is_strategic_replan: bool = False,
+        replan_reason: str = "",
+    ):
         """Orchestrates the async dynamic implementation of a function."""
         if function_name in self.execution_namespace:
             func_to_implement = self.execution_namespace[function_name]
             signature = inspect.signature(func_to_implement)
             # Get parent code from the call stack for context.
             parent_name = self.call_stack[-1] if self.call_stack else None
-            parent_code = inspect.getsource(self.execution_namespace[parent_name]) if parent_name and parent_name in self.execution_namespace else ""
+            parent_code = (
+                inspect.getsource(self.execution_namespace[parent_name])
+                if parent_name and parent_name in self.execution_namespace
+                else ""
+            )
 
             new_code = await self.planner._dynamic_implement(
                 plan=self,
@@ -140,12 +188,14 @@ class HierarchicalPlan(BasePlan):
                 function_signature=str(signature),
                 parent_code=parent_code,
                 is_strategic_replan=is_strategic_replan,
-                replan_reason=replan_reason
+                replan_reason=replan_reason,
             )
             self._update_plan_with_new_code(function_name, new_code)
             logger.info(f"Dynamically implemented function: '{function_name}'.")
         else:
-            raise RuntimeError(f"Could not find function '{function_name}' to implement.")
+            raise RuntimeError(
+                f"Could not find function '{function_name}' to implement.",
+            )
 
     def _get_unimplemented_function_name(self) -> str:
         """Extracts the function name from the latest traceback."""
@@ -156,6 +206,7 @@ class HierarchicalPlan(BasePlan):
     def _get_main_function_name(self) -> str | None:
         """Parses the source code to find the first defined function."""
         import ast
+
         try:
             tree = ast.parse(self.plan_source_code or "")
             for node in ast.walk(tree):
@@ -168,19 +219,28 @@ class HierarchicalPlan(BasePlan):
     def _update_plan_with_new_code(self, function_name: str, new_code: str):
         """Replaces a function stub or existing function with new code."""
         import re
+
         # Regex to find the whole function definition, decorated or not.
         pattern = re.compile(
             rf"(?:@verify\s*\n)?(?:async\s+)?def\s+{function_name}\(.*\):(?:\n\s+.*)*",
-            re.MULTILINE
+            re.MULTILINE,
         )
         if pattern.search(self.plan_source_code):
-             new_source = pattern.sub(textwrap.dedent(new_code).strip(), self.plan_source_code or "", 1)
-        else: # Fallback for simple stubs
+            new_source = pattern.sub(
+                textwrap.dedent(new_code).strip(),
+                self.plan_source_code or "",
+                1,
+            )
+        else:  # Fallback for simple stubs
             pattern = re.compile(
                 rf"def\s+{function_name}\(.*\):\s*\n(?:\s+.*?\n)*?\s+raise NotImplementedError",
-                re.MULTILINE
+                re.MULTILINE,
             )
-            new_source = pattern.sub(textwrap.dedent(new_code).strip(), self.plan_source_code or "", 1)
+            new_source = pattern.sub(
+                textwrap.dedent(new_code).strip(),
+                self.plan_source_code or "",
+                1,
+            )
 
         self.plan_source_code = new_source
         logger.debug(f"Updated plan source code:\n{self.plan_source_code}")
@@ -194,10 +254,16 @@ class HierarchicalPlan(BasePlan):
 
         try:
             # 1. Plan Surgery
-            new_source_code = await self.planner._perform_plan_surgery(self.plan_source_code, modification_request)
-            
+            new_source_code = await self.planner._perform_plan_surgery(
+                self.plan_source_code,
+                modification_request,
+            )
+
             # 2. Course Correction
-            correction_script = await self.planner._generate_course_correction_script(self.plan_source_code, new_source_code)
+            correction_script = await self.planner._generate_course_correction_script(
+                self.plan_source_code,
+                new_source_code,
+            )
             if correction_script:
                 logger.info("Executing course correction script...")
                 await self._execute_correction_script(correction_script)
@@ -205,48 +271,93 @@ class HierarchicalPlan(BasePlan):
 
             # 3. Update and Resume
             self.plan_source_code = new_source_code
-            logger.info("Plan successfully modified.")
+            logger.info("Plan successfully modified. Restarting execution loop.")
+
+            # Stop the old handle before creating a new one
+            if self.main_loop_handle:
+                self.main_loop_handle.stop()
+                self.main_loop_handle = None
+
+            # We need to restart the execution loop with the new code
+            await self._start_main_execution_loop()
+            self._state = _HierarchicalPlanState.RUNNING
 
         except Exception as e:
             logger.error(f"Failed to modify plan: {e}", exc_info=True)
+            self._state = _HierarchicalPlanState.ERROR
         finally:
             self._is_paused_for_modification = False
-            self.resume()
-            # We need to restart the execution loop with the new code
-            await self._start_main_execution_loop()
+            # Resume only if not already stopped/errored
+            if self._state == _HierarchicalPlanState.PAUSED:
+                self.resume()
 
     async def _execute_correction_script(self, script: str):
         """Executes a short-lived correction script in its own isolated handle."""
         correction_namespace = self.execution_namespace.copy()
         exec(script, correction_namespace)
-        correction_fn = correction_namespace.get('course_correction_main')
+        correction_fn = correction_namespace.get("course_correction_main")
         if not correction_fn:
-            raise RuntimeError("Course correction script did not define 'course_correction_main' function.")
-        
+            raise RuntimeError(
+                "Course correction script did not define 'course_correction_main' function.",
+            )
+
         # We don't need a full steerable loop, just execute the coroutine
         await correction_fn()
 
-
     async def result(self) -> str:
+        """Waits for the plan to complete and returns its final result."""
         await self._execution_task
         if not self.main_loop_handle:
+            self._state = _HierarchicalPlanState.ERROR
             return "Error: Main execution loop was not created."
-        return await self.main_loop_handle.result()
+        final_result = await self.main_loop_handle.result()
+        if self._state not in [
+            _HierarchicalPlanState.COMPLETED,
+            _HierarchicalPlanState.STOPPED,
+        ]:
+            self._state = _HierarchicalPlanState.COMPLETED
+        return final_result
 
     def done(self) -> bool:
-        return self.main_loop_handle.done() if self.main_loop_handle else False
+        """Returns True if the plan has finished executing."""
+        return (
+            self.main_loop_handle.done()
+            if self.main_loop_handle
+            else self._state
+            in [
+                _HierarchicalPlanState.COMPLETED,
+                _HierarchicalPlanState.STOPPED,
+                _HierarchicalPlanState.ERROR,
+            ]
+        )
 
     def stop(self):
-        if self.main_loop_handle: self.main_loop_handle.stop()
+        """Stops the plan's execution."""
+        logger.info(f"HierarchicalPlan stopping. Current state: {self._state.name}")
+        self._state = _HierarchicalPlanState.STOPPED
+        if self.main_loop_handle:
+            self.main_loop_handle.stop()
 
     def pause(self):
-        if self.main_loop_handle: self.main_loop_handle.pause()
+        """Pauses the plan's execution."""
+        if self._state == _HierarchicalPlanState.RUNNING:
+            logger.info(f"HierarchicalPlan pausing.")
+            self._state = _HierarchicalPlanState.PAUSED
+            if self.main_loop_handle:
+                self.main_loop_handle.pause()
 
     def resume(self):
-        if self.main_loop_handle: self.main_loop_handle.resume()
+        """Resumes a paused plan."""
+        if self._state == _HierarchicalPlanState.PAUSED:
+            logger.info(f"HierarchicalPlan resuming.")
+            self._state = _HierarchicalPlanState.RUNNING
+            if self.main_loop_handle:
+                self.main_loop_handle.resume()
 
     async def interject(self, message: str):
-        if self.main_loop_handle: await self.main_loop_handle.interject(message)
+        """Sends an interjection to the running plan."""
+        if self.main_loop_handle:
+            await self.main_loop_handle.interject(message)
 
     async def ask(self, question: str) -> str:
         """Asks a question about the current state of the plan."""
@@ -261,7 +372,6 @@ class HierarchicalPlan(BasePlan):
                 # Fallback to simple state reporting
         return f"Plan state: call_stack={self.call_stack}, state={self._state.name}, goal='{self.goal}'"
 
-    
     def _is_valid_method(self, name: str) -> bool:
         """Checks if a control method is valid in the current plan state."""
         if name == "stop":
@@ -304,6 +414,7 @@ class HierarchicalPlanner(BasePlanner[HierarchicalPlan]):
     Orchestrates task decomposition, execution, and dynamic modification
     by generating and running Python code.
     """
+
     def __init__(
         self,
         task_manager: "TaskManager",
@@ -317,7 +428,7 @@ class HierarchicalPlanner(BasePlanner[HierarchicalPlan]):
         self.controller = controller
         self.coms_manager = coms_manager
         self.llm_client: unify.AsyncUnify = unify.AsyncUnify(
-             os.environ.get("UNIFY_MODEL", "gpt-4o-mini@openai"),
+            os.environ.get("UNIFY_MODEL", "gpt-4o-mini@openai"),
         )
 
     def _make_plan(
@@ -329,7 +440,12 @@ class HierarchicalPlanner(BasePlanner[HierarchicalPlan]):
         clarification_down_q: Optional[asyncio.Queue[str]] = None,
     ) -> HierarchicalPlan:
         """Factory method to create and start a new hierarchical plan."""
-        plan = HierarchicalPlan(planner=self, goal=task_description)
+        plan = HierarchicalPlan(
+            planner=self,
+            goal=task_description,
+            clarification_up_q=clarification_up_q,
+            clarification_down_q=clarification_down_q,
+        )
         return plan
 
     async def _generate_initial_plan(self, goal: str) -> str:
@@ -340,11 +456,15 @@ class HierarchicalPlanner(BasePlanner[HierarchicalPlan]):
         # Phase 3: Query FunctionManager
         try:
             # A real implementation would do a semantic search on the goal
-            existing_functions = self.function_manager.list_functions(include_implementations=True)
+            existing_functions = self.function_manager.list_functions(
+                include_implementations=True,
+            )
             if existing_functions:
-                 logger.info(f"Found {len(existing_functions)} existing functions in FunctionManager.")
+                logger.info(
+                    f"Found {len(existing_functions)} existing functions in FunctionManager.",
+                )
             else:
-                 logger.info("No existing functions found in FunctionManager.")
+                logger.info("No existing functions found in FunctionManager.")
         except Exception as e:
             logger.warning(f"Could not query FunctionManager: {e}")
             existing_functions = {}
@@ -355,6 +475,7 @@ class HierarchicalPlanner(BasePlanner[HierarchicalPlan]):
 - `await reason(context: str, question: str) -> str`: A general-purpose LLM call for reasoning.
 - `await start_call(number: str, purpose: str) -> CallHandle`: Initiates a voice call.
 - `await send_email(recipient: str, subject: str, body: str) -> bool`: Sends an email.
+- `await request_clarification(question: str) -> str`: Asks the user for clarification and waits for an answer.
 """
 
         existing_functions_doc = "\n".join(
@@ -401,11 +522,13 @@ Now, generate the complete `async` Python script for the user goal.
         function_signature: str,
         parent_code: str,
         is_strategic_replan: bool = False,
-        replan_reason: str = ""
+        replan_reason: str = "",
     ) -> str:
         """Generates the async implementation for a function."""
         try:
-            browser_state = await self.controller.observe("Describe the current page for context.")
+            browser_state = await self.controller.observe(
+                "Describe the current page for context.",
+            )
         except Exception:
             browser_state = "Could not observe browser state."
 
@@ -469,8 +592,11 @@ You are an expert Python programmer. Your task is to implement a single `async` 
         return await llm_call(self.llm_client, prompt)
 
     async def _check_state_against_goal(
-        self, function_name: str, function_docstring: str | None,
-        last_action_description: str, observed_state: str
+        self,
+        function_name: str,
+        function_docstring: str | None,
+        last_action_description: str,
+        observed_state: str,
     ) -> VerificationAssessment:
         """Uses an LLM to assess if the last action achieved the function's goal."""
         prompt = f"""
@@ -495,93 +621,138 @@ Respond with a JSON object: {{"status": "...", "reason": "..."}}.
         try:
             return VerificationAssessment(**json.loads(response_str))
         except (json.JSONDecodeError, TypeError) as e:
-            logger.error(f"Failed to decode assessment from LLM: {e}\nResponse: {response_str}")
-            return VerificationAssessment(status="fatal_error", reason="LLM provided a malformed assessment.")
+            logger.error(
+                f"Failed to decode assessment from LLM: {e}\nResponse: {response_str}",
+            )
+            return VerificationAssessment(
+                status="fatal_error",
+                reason="LLM provided a malformed assessment.",
+            )
 
     def _create_verify_decorator(self, plan: HierarchicalPlan):
         """Creates the @verify decorator for async functions, with strategic replan logic."""
+
         def verify(fn):
             @functools.wraps(fn)
             async def wrapper(*args, **kwargs):
                 max_retries = 3
                 last_exception = None
                 plan.call_stack.append(fn.__name__)
-                logger.info(f"VERIFY: Entering '{fn.__name__}' (stack: {plan.call_stack})")
+                logger.info(
+                    f"VERIFY: Entering '{fn.__name__}' (stack: {plan.call_stack})",
+                )
 
                 for attempt in range(max_retries):
                     try:
                         # Phase 4: Handle strategic replan from a child call
-                        return await self._execute_and_verify_step(plan, fn, args, kwargs)
+                        return await self._execute_and_verify_step(
+                            plan,
+                            fn,
+                            args,
+                            kwargs,
+                        )
                     except ReplanFromParentException as e:
-                        logger.warning(f"VERIFY: Caught strategic failure from child of '{fn.__name__}'. Replanning '{fn.__name__}'. Reason: {e}")
+                        logger.warning(
+                            f"VERIFY: Caught strategic failure from child of '{fn.__name__}'. Replanning '{fn.__name__}'. Reason: {e}",
+                        )
                         # Re-implement the CURRENT function due to its child's strategic failure
-                        await plan._handle_dynamic_implementation(fn.__name__, is_strategic_replan=True, replan_reason=str(e))
-                        logger.info(f"VERIFY: Retrying '{fn.__name__}' after strategic replan (attempt {attempt + 2}).")
-                        continue # Retry the current function with its new implementation
+                        await plan._handle_dynamic_implementation(
+                            fn.__name__,
+                            is_strategic_replan=True,
+                            replan_reason=str(e),
+                        )
+                        logger.info(
+                            f"VERIFY: Retrying '{fn.__name__}' after strategic replan (attempt {attempt + 2}).",
+                        )
+                        continue  # Retry the current function with its new implementation
                     except NotImplementedError:
                         plan.call_stack.pop()
                         raise
                     except Exception as e:
                         last_exception = e
-                        logger.error(f"VERIFY: Exception in '{fn.__name__}' (attempt {attempt + 1}): {e}", exc_info=False)
+                        logger.error(
+                            f"VERIFY: Exception in '{fn.__name__}' (attempt {attempt + 1}): {e}",
+                            exc_info=False,
+                        )
                         continue
-                
+
                 plan.call_stack.pop()
-                raise ReplanFromParentException(f"Function '{fn.__name__}' failed after {max_retries} attempts. Last error: {last_exception}")
+                raise ReplanFromParentException(
+                    f"Function '{fn.__name__}' failed after {max_retries} attempts. Last error: {last_exception}",
+                )
 
             return wrapper
+
         return verify
 
-    async def _execute_and_verify_step(self, plan: HierarchicalPlan, fn: Callable, args, kwargs) -> Any:
+    async def _execute_and_verify_step(
+        self,
+        plan: HierarchicalPlan,
+        fn: Callable,
+        args,
+        kwargs,
+    ) -> Any:
         """Helper to encapsulate the execution and verification of a single step."""
         last_action = {"desc": "No action taken"}
         last_observation = {"state": "No observation made"}
 
         async def act_wrapper(instruction: str):
-            last_action['desc'] = f'act("{instruction}")'
+            last_action["desc"] = f'act("{instruction}")'
             return await self.controller.act(instruction)
 
         async def observe_wrapper(query: str):
             res = await self.controller.observe(query)
-            last_observation['state'] = res
+            last_observation["state"] = res
             return res
 
-        original_act = plan.execution_namespace.get('act')
-        original_observe = plan.execution_namespace.get('observe')
-        plan.execution_namespace['act'] = act_wrapper
-        plan.execution_namespace['observe'] = observe_wrapper
+        original_act = plan.execution_namespace.get("act")
+        original_observe = plan.execution_namespace.get("observe")
+        plan.execution_namespace["act"] = act_wrapper
+        plan.execution_namespace["observe"] = observe_wrapper
 
         result = await fn(*args, **kwargs)
 
-        plan.execution_namespace['act'] = original_act
-        plan.execution_namespace['observe'] = original_observe
-        
+        plan.execution_namespace["act"] = original_act
+        plan.execution_namespace["observe"] = original_observe
+
         assessment = await self._check_state_against_goal(
             function_name=fn.__name__,
             function_docstring=fn.__doc__,
-            last_action_description=last_action['desc'],
-            observed_state=last_observation['state']
+            last_action_description=last_action["desc"],
+            observed_state=last_observation["state"],
         )
-        logger.info(f"VERIFY Assessment for '{fn.__name__}': {assessment.status} - {assessment.reason}")
-        
+        logger.info(
+            f"VERIFY Assessment for '{fn.__name__}': {assessment.status} - {assessment.reason}",
+        )
+
         if assessment.status == "ok":
-            logger.info(f"VERIFY: Success for '{fn.__name__}'. Saving to FunctionManager.")
+            logger.info(
+                f"VERIFY: Success for '{fn.__name__}'. Saving to FunctionManager.",
+            )
             # Phase 3: Persist successful function
             try:
                 func_code = inspect.getsource(fn)
                 self.function_manager.add_functions(implementations=[func_code])
             except Exception as e:
-                logger.warning(f"Could not save function '{fn.__name__}' to FunctionManager: {e}")
+                logger.warning(
+                    f"Could not save function '{fn.__name__}' to FunctionManager: {e}",
+                )
             plan.call_stack.pop()
             return result
 
         elif assessment.status == "reimplement_local":
-            logger.warning(f"VERIFY: Tactical error in '{fn.__name__}'. Triggering re-implementation.")
+            logger.warning(
+                f"VERIFY: Tactical error in '{fn.__name__}'. Triggering re-implementation.",
+            )
             await plan._handle_dynamic_implementation(fn.__name__)
-            raise RuntimeError("Forced retry after local reimplementation") # This will be caught by the outer loop to retry
+            raise RuntimeError(
+                "Forced retry after local reimplementation",
+            )  # This will be caught by the outer loop to retry
 
         elif assessment.status == "replan_parent":
-            raise ReplanFromParentException(f"Strategic failure in '{fn.__name__}': {assessment.reason}")
+            raise ReplanFromParentException(
+                f"Strategic failure in '{fn.__name__}': {assessment.reason}",
+            )
 
         elif assessment.status == "fatal_error":
             raise RuntimeError(f"Fatal error in '{fn.__name__}': {assessment.reason}")
@@ -610,10 +781,16 @@ Rewrite the Python script to incorporate the user's change.
         response = await llm_call(self.llm_client, textwrap.dedent(prompt))
         return response.strip().replace("```python", "").replace("```", "").strip()
 
-    async def _generate_course_correction_script(self, old_code: str, new_code: str) -> Optional[str]:
+    async def _generate_course_correction_script(
+        self,
+        old_code: str,
+        new_code: str,
+    ) -> Optional[str]:
         """Generates a Python script to bridge the state gap between an old and new plan."""
-        current_state = await self.controller.observe("Describe the current page, including URL and main elements, for state analysis.")
-        
+        current_state = await self.controller.observe(
+            "Describe the current page, including URL and main elements, for state analysis.",
+        )
+
         prompt = f"""
 You are an expert state transition analyst for an AI agent. The agent's plan has been modified, and it might be in the wrong state to continue. Your task is to generate a 'course correction' script if necessary.
 
