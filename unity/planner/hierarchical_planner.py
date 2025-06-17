@@ -78,6 +78,7 @@ class HierarchicalPlan(BasePlan):
         self.execution_namespace: Dict[str, Any] = {}
         self.call_stack: List[str] = []
         self.action_log: List[str] = []
+        self.function_source_map: Dict[str, str] = {}
 
         self.main_loop_handle: Optional[AsyncToolUseLoopHandle] = None
         self._execution_task = asyncio.create_task(self._initialize_and_run())
@@ -195,8 +196,8 @@ class HierarchicalPlan(BasePlan):
             # Get parent code from the call stack for context.
             parent_name = self.call_stack[-1] if self.call_stack else None
             parent_code = (
-                inspect.getsource(self.execution_namespace[parent_name])
-                if parent_name and parent_name in self.execution_namespace
+                self.function_source_map.get(parent_name, "")
+                if parent_name
                 else ""
             )
 
@@ -235,34 +236,37 @@ class HierarchicalPlan(BasePlan):
         return None
 
     def _update_plan_with_new_code(self, function_name: str, new_code: str):
-        """Replaces a function stub or existing function with new code."""
+        """Replaces a function stub or existing function with new code, validating first."""
+        try:
+            # Validate syntax before attempting to replace
+            ast.parse(new_code)
+        except SyntaxError as e:
+            logger.error(f"Generated code for '{function_name}' has a syntax error: {e}")
+            raise ValueError(f"Invalid syntax in generated code for {function_name}.") from e
+
         import re
 
         # Regex to find the whole function definition, decorated or not.
         pattern = re.compile(
-            rf"(?:@verify\s*\n)?(?:async\s+)?def\s+{function_name}\(.*\):(?:\n\s+.*)*",
+            rf"(?:@verify\s*\n)?(?:async\s+)?def\s+{function_name}\(.*\):(?:\n(.|\n)*?)(?=\n(?:@verify|async def|def)\s|\Z)",
             re.MULTILINE,
         )
+
         if pattern.search(self.plan_source_code):
             new_source = pattern.sub(
                 textwrap.dedent(new_code).strip(),
                 self.plan_source_code or "",
                 1,
             )
-        else:  # Fallback for simple stubs
-            pattern = re.compile(
-                rf"def\s+{function_name}\(.*\):\s*\n(?:\s+.*?\n)*?\s+raise NotImplementedError",
-                re.MULTILINE,
-            )
-            new_source = pattern.sub(
-                textwrap.dedent(new_code).strip(),
-                self.plan_source_code or "",
-                1,
-            )
+        else:
+            raise RuntimeError(f"Could not find function '{function_name}' to update in plan.")
 
         self.plan_source_code = new_source
+        self.function_source_map[function_name] = new_code
         logger.debug(f"Updated plan source code:\n{self.plan_source_code}")
+        # Re-exec to update the namespace, including the newly decorated function
         exec(self.plan_source_code, self.execution_namespace)
+
 
     async def modify_plan(self, modification_request: str):
         """Handles 'Modifying Mode' workflow as per Phase 4 spec."""
@@ -318,17 +322,30 @@ class HierarchicalPlan(BasePlan):
 
 
     async def _execute_correction_script(self, script: str):
-        """Executes a short-lived correction script in its own isolated handle."""
+        """Executes a short-lived correction script with a timeout."""
         correction_namespace = self.execution_namespace.copy()
-        exec(script, correction_namespace)
+        try:
+            ast.parse(script)
+            exec(script, correction_namespace)
+        except SyntaxError as e:
+            logger.error(f"Syntax error in course correction script: {e}")
+            raise ValueError("Course correction script has invalid syntax.") from e
+
         correction_fn = correction_namespace.get("course_correction_main")
-        if not correction_fn:
+        if not correction_fn or not asyncio.iscoroutinefunction(correction_fn):
             raise RuntimeError(
-                "Course correction script did not define 'course_correction_main' function.",
+                "Course correction script did not define an 'async def course_correction_main' function.",
             )
 
-        # We don't need a full steerable loop, just execute the coroutine
-        await correction_fn()
+        try:
+            logger.info("Executing course correction script with a 30s timeout.")
+            await asyncio.wait_for(correction_fn(), timeout=30.0)
+        except asyncio.TimeoutError:
+            logger.error("Course correction script timed out.")
+            raise RuntimeError("Course correction script took too long to execute.")
+        except Exception as e:
+            logger.error(f"Error executing course correction script: {e}", exc_info=True)
+            raise RuntimeError(f"Course correction script failed: {e}") from e
 
     async def result(self) -> str:
         """Waits for the plan to complete and returns its final result."""
@@ -720,6 +737,15 @@ Respond with a JSON object: {{"status": "...", "reason": "..."}}.
         """Creates the @verify decorator for async functions, with strategic replan logic."""
 
         def verify(fn):
+            # Capture the source code at decoration time
+            try:
+                source_code = inspect.getsource(fn)
+                plan.function_source_map[fn.__name__] = source_code
+            except (TypeError, OSError):
+                # This can happen with dynamically generated functions.
+                # The source will be captured from the plan_source_code itself.
+                pass
+
             @functools.wraps(fn)
             async def wrapper(*args, **kwargs):
                 max_retries = 3
@@ -732,10 +758,24 @@ Respond with a JSON object: {{"status": "...", "reason": "..."}}.
 
                 for attempt in range(max_retries):
                     try:
-                        # Phase 4: Handle strategic replan from a child call
+                        func_source = plan.function_source_map.get(fn.__name__)
+                        if not func_source:
+                             # Fallback for functions defined directly in the initial plan
+                            tree = ast.parse(plan.plan_source_code)
+                            for node in ast.walk(tree):
+                                if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name == fn.__name__:
+                                    func_source = ast.unparse(node)
+                                    plan.function_source_map[fn.__name__] = func_source
+                                    break
+                        if not func_source:
+                            logger.warning(f"Could not find source for function {fn.__name__}. Verification may be incomplete.")
+
+
+                        # Pass the captured source code to the verification step
                         return await self._execute_and_verify_step(
                             plan,
                             fn,
+                            func_source,
                             args,
                             kwargs,
                         )
@@ -786,6 +826,7 @@ Respond with a JSON object: {{"status": "...", "reason": "..."}}.
         self,
         plan: HierarchicalPlan,
         fn: Callable,
+        func_source: str, # Now receiving the source code directly
         args,
         kwargs,
     ) -> Any:
@@ -832,13 +873,15 @@ Respond with a JSON object: {{"status": "...", "reason": "..."}}.
                 f"VERIFY: Success for '{fn.__name__}'. Saving to FunctionManager.",
             )
             # Phase 3: Persist successful function
-            try:
-                func_code = inspect.getsource(fn)
-                self.function_manager.add_functions(implementations=[func_code])
-            except Exception as e:
-                logger.warning(
-                    f"Could not save function '{fn.__name__}' to FunctionManager: {e}",
-                )
+            if func_source:
+                try:
+                    self.function_manager.add_functions(implementations=[func_source])
+                except Exception as e:
+                    logger.warning(
+                        f"Could not save function '{fn.__name__}' to FunctionManager: {e}",
+                    )
+            else:
+                logger.warning(f"Could not save function '{fn.__name__}' as source was not available.")
             plan.call_stack.pop()
             return result
 
