@@ -458,18 +458,22 @@ class TaskScheduler(BaseTaskScheduler):
         if schedule and schedule.start_at:
             future_start = _parse_iso(schedule.start_at) > datetime.now(timezone.utc)
 
+        #  If the task is explicitly linked **behind**  another task (prev_task ≠ None)
+        # and that task is not terminal, we NEVER mark the newcomer as *primed*.
+        prev_ptr = self._sched_prev(schedule)
+
         if status is None:
-            # New tasks can only ever begin their life as **scheduled** or
-            # **queued**. Promotion to *active* is handled by a dedicated
-            # tool that is not part of this commit.
-            if future_start:
-                status = Status.scheduled
-            elif self._active_task is None and self._primed_task is None:
-                # this goes to the top of the queue, in "primed" state
-                status = Status.primed
+            if prev_ptr is not None:
+                # Already queued behind another runnable task → never primed
+                status = Status.scheduled if future_start else Status.queued
             else:
-                # this goes to be back of the queue
-                status = Status.queued
+                # No predecessor pointer – use the old heuristic
+                if future_start:
+                    status = Status.scheduled
+                elif self._active_task is None and self._primed_task is None:
+                    status = Status.primed
+                else:
+                    status = Status.queued
 
         # ------------------  conflict checks  ------------------ #
         self._validate_scheduled_invariants(
