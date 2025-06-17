@@ -136,7 +136,7 @@ async def entrypoint(ctx: agents.JobContext):
     session = AgentSession(
         stt=deepgram.STT(model="nova-3", language="multi"),
         llm=openai.LLM(model="gpt-4o"),
-        tts=cartesia.TTS(voice=voice_id if voice_id != "" else None),
+        tts=cartesia.TTS(voice=voice_id if voice_id != "" else cartesia.tts.TTSDefaultVoiceId),
         vad=silero.VAD.load(),
         turn_detection=MultilingualModel(),
     )
