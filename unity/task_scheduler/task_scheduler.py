@@ -89,6 +89,7 @@ class TaskScheduler(BaseTaskScheduler):
                 self._ctx,
                 unique_id_column=True,
                 unique_id_name="task_id",
+                description="List of all tasks with their name, description, status (completed, queued, cancelled etc.), schedule, deadline, repeat pattern, and priority.",
             )
 
         # ID of the *single* task that is allowed to be in the **active**
