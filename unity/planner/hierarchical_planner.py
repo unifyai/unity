@@ -77,6 +77,7 @@ class HierarchicalPlan(BasePlan):
         self.plan_source_code: Optional[str] = None
         self.execution_namespace: Dict[str, Any] = {}
         self.call_stack: List[str] = []
+        self.action_log: List[str] = []
 
         self.main_loop_handle: Optional[AsyncToolUseLoopHandle] = None
         self._execution_task = asyncio.create_task(self._initialize_and_run())
@@ -89,16 +90,19 @@ class HierarchicalPlan(BasePlan):
     async def _initialize_and_run(self):
         """Initializes the plan and starts the async execution loop."""
         self._state = _HierarchicalPlanState.RUNNING
+        self.action_log.append("Initializing plan...")
         try:
             self.plan_source_code = await self.planner._generate_initial_plan(self.goal)
             logger.info(f"Initial plan generated for goal: '{self.goal}'")
             logger.debug(f"Plan Source Code:\n{self.plan_source_code}")
+            self.action_log.append("Initial plan generated successfully.")
 
             await self.planner._prepare_execution_environment(self)
             await self._start_main_execution_loop()
 
         except Exception as e:
             logger.error(f"Plan initialization failed with error: {e}", exc_info=True)
+            self.action_log.append(f"ERROR: Plan initialization failed: {e}")
             self._state = _HierarchicalPlanState.ERROR
             if self.main_loop_handle and not self.main_loop_handle.done():
                 self.main_loop_handle.stop()
@@ -129,16 +133,21 @@ class HierarchicalPlan(BasePlan):
                 main_coro = next(plan_iterator)
                 result = await main_coro
                 self._state = _HierarchicalPlanState.COMPLETED
+                self.action_log.append(f"Plan completed successfully. Result: {result}")
                 return {
                     "status": "completed",
                     "message": f"Plan finished successfully. Result: {result}",
                 }
             except StopIteration:
                 self._state = _HierarchicalPlanState.COMPLETED
+                self.action_log.append("Plan finished successfully.")
                 return {"status": "completed", "message": "Plan finished successfully."}
             except NotImplementedError:
                 function_name = self._get_unimplemented_function_name()
                 logger.info(f"Handling dynamic implementation for: {function_name}")
+                self.action_log.append(
+                    f"Attempting to dynamically implement function: {function_name}"
+                )
                 await self._handle_dynamic_implementation(function_name)
                 # Restart the iterator with the updated code
                 plan_iterator = self._create_main_loop_iterator()
@@ -150,10 +159,12 @@ class HierarchicalPlan(BasePlan):
                 self._state = (
                     _HierarchicalPlanState.PAUSED
                 )  # Or a new 'ESCALATED' state
+                self.action_log.append(f"ESCALATION: Plan paused for escalation. Reason: {e}")
                 return {"status": "paused_for_escalation", "details": str(e)}
             except Exception as e:
                 logger.error(f"Error during plan step execution: {e}", exc_info=True)
                 self._state = _HierarchicalPlanState.ERROR
+                self.action_log.append(f"ERROR: Plan execution failed: {e}")
                 return {"status": "error", "message": str(e)}
 
         self.main_loop_handle = start_async_tool_use_loop(
@@ -164,6 +175,7 @@ class HierarchicalPlan(BasePlan):
                 "required",
                 {"_run_one_plan_step": _run_one_plan_step},
             ),
+            interrupt_llm_with_interjections=True,
         )
 
     async def _handle_dynamic_implementation(
@@ -194,6 +206,7 @@ class HierarchicalPlan(BasePlan):
             )
             self._update_plan_with_new_code(function_name, new_code)
             logger.info(f"Dynamically implemented function: '{function_name}'.")
+            self.action_log.append(f"Successfully implemented function: {function_name}")
         else:
             raise RuntimeError(
                 f"Could not find function '{function_name}' to implement.",
@@ -250,7 +263,8 @@ class HierarchicalPlan(BasePlan):
     async def modify_plan(self, modification_request: str):
         """Handles 'Modifying Mode' workflow as per Phase 4 spec."""
         logger.info(f"Starting plan modification: '{modification_request}'")
-        self.pause()
+        self.action_log.append(f"Starting plan modification: {modification_request}")
+        await self.pause()
         self._is_paused_for_modification = True
 
         try:
@@ -259,6 +273,7 @@ class HierarchicalPlan(BasePlan):
                 self.plan_source_code,
                 modification_request,
             )
+            self.action_log.append("Plan surgery completed.")
 
             # 2. Course Correction
             correction_script = await self.planner._generate_course_correction_script(
@@ -267,12 +282,15 @@ class HierarchicalPlan(BasePlan):
             )
             if correction_script:
                 logger.info("Executing course correction script...")
+                self.action_log.append("Executing course correction script.")
                 await self._execute_correction_script(correction_script)
                 logger.info("Course correction finished.")
+                self.action_log.append("Course correction finished.")
 
             # 3. Update and Resume
             self.plan_source_code = new_source_code
             logger.info("Plan successfully modified. Restarting execution loop.")
+            self.action_log.append("Plan successfully modified. Restarting execution.")
 
             # Stop the old handle before creating a new one
             if self.main_loop_handle:
@@ -285,12 +303,13 @@ class HierarchicalPlan(BasePlan):
 
         except Exception as e:
             logger.error(f"Failed to modify plan: {e}", exc_info=True)
+            self.action_log.append(f"ERROR: Failed to modify plan: {e}")
             self._state = _HierarchicalPlanState.ERROR
         finally:
             self._is_paused_for_modification = False
             # Resume only if not already stopped/errored
             if self._state == _HierarchicalPlanState.PAUSED:
-                self.resume()
+                await self.resume()
 
     async def _execute_correction_script(self, script: str):
         """Executes a short-lived correction script in its own isolated handle."""
@@ -332,46 +351,75 @@ class HierarchicalPlan(BasePlan):
             ]
         )
 
-    def stop(self):
-        """Stops the plan's execution."""
+    async def stop(self) -> str:
+        """Stops the plan's execution and waits for termination."""
         logger.info(f"HierarchicalPlan stopping. Current state: {self._state.name}")
         self._state = _HierarchicalPlanState.STOPPED
         if self.main_loop_handle:
             self.main_loop_handle.stop()
+        await self._execution_task  # Wait for the task to finish cleanup
+        self.action_log.append("Plan stopped by user.")
+        return "Plan was stopped."
 
-    def pause(self):
+    async def pause(self) -> str:
         """Pauses the plan's execution."""
         if self._state == _HierarchicalPlanState.RUNNING:
-            logger.info(f"HierarchicalPlan pausing.")
+            logger.info("HierarchicalPlan pausing.")
             self._state = _HierarchicalPlanState.PAUSED
             if self.main_loop_handle:
                 self.main_loop_handle.pause()
+            self.action_log.append("Plan paused.")
+            return "Plan paused."
+        return f"Plan cannot be paused in state {self._state.name}."
 
-    def resume(self):
+    async def resume(self) -> str:
         """Resumes a paused plan."""
         if self._state == _HierarchicalPlanState.PAUSED:
-            logger.info(f"HierarchicalPlan resuming.")
+            logger.info("HierarchicalPlan resuming.")
             self._state = _HierarchicalPlanState.RUNNING
             if self.main_loop_handle:
                 self.main_loop_handle.resume()
+            self.action_log.append("Plan resumed.")
+            return "Plan resumed."
+        return f"Plan cannot be resumed in state {self._state.name}."
 
-    async def interject(self, message: str):
-        """Sends an interjection to the running plan."""
+    async def interject(self, message: str) -> str:
+        """
+        Sends an interjection to the running plan.
+
+        In this code-driven planner, an interjection provides high-level
+        guidance to the execution loop but may not be acted upon immediately
+        if a function is in the middle of execution.
+        """
         if self.main_loop_handle:
             await self.main_loop_handle.interject(message)
+            self.action_log.append(f"User interjected: '{message}'")
+            return f"Interjection '{message}' sent to plan."
+        return "Could not send interjection: no active loop."
 
     async def ask(self, question: str) -> str:
-        """Asks a question about the current state of the plan."""
-        if self.main_loop_handle and not self.main_loop_handle.done():
-            try:
-                # Delegate to the inner loop's ask method for a rich, contextual answer
-                inspector_handle = await self.main_loop_handle.ask(question)
-                answer = await inspector_handle.result()
-                return answer
-            except Exception as e:
-                logger.error(f"Failed to 'ask' the inner loop: {e}", exc_info=True)
-                # Fallback to simple state reporting
-        return f"Plan state: call_stack={self.call_stack}, state={self._state.name}, goal='{self.goal}'"
+        """Asks a question about the current state of the plan using its action log."""
+        if not self.action_log:
+            return "No actions have been logged yet."
+
+        context = "\n".join(f"- {log}" for log in self.action_log)
+        prompt = f"""
+You are an intelligent assistant analyzing the execution log of a hierarchical plan.
+Based on the following log, provide a concise answer to the user's question.
+
+**Execution Log:**
+{context}
+
+**User's Question:** "{question}"
+
+**Answer:**
+"""
+        try:
+            answer = await llm_call(self.planner.llm_client, textwrap.dedent(prompt))
+            return answer
+        except Exception as e:
+            logger.error(f"Failed to answer 'ask' with LLM: {e}", exc_info=True)
+            return f"Could not answer the question. The current plan state is {self._state.name}."
 
     def _is_valid_method(self, name: str) -> bool:
         """Checks if a control method is valid in the current plan state."""
@@ -394,8 +442,6 @@ class HierarchicalPlan(BasePlan):
             return self._state not in (
                 _HierarchicalPlanState.IDLE,
                 _HierarchicalPlanState.COMPLETED,
-                _HierarchicalPlanState.STOPPED,
-                _HierarchicalPlanState.ERROR,
             )
         return False
 
@@ -670,6 +716,7 @@ Respond with a JSON object: {{"status": "...", "reason": "..."}}.
                 logger.info(
                     f"VERIFY: Entering '{fn.__name__}' (stack: {plan.call_stack})",
                 )
+                plan.action_log.append(f"Entering function: {fn.__name__}")
 
                 for attempt in range(max_retries):
                     try:
@@ -683,6 +730,9 @@ Respond with a JSON object: {{"status": "...", "reason": "..."}}.
                     except ReplanFromParentException as e:
                         logger.warning(
                             f"VERIFY: Caught strategic failure from child of '{fn.__name__}'. Replanning '{fn.__name__}'. Reason: {e}",
+                        )
+                        plan.action_log.append(
+                            f"Strategic failure in child of {fn.__name__}. Replanning. Reason: {e}"
                         )
                         # Re-implement the CURRENT function due to its child's strategic failure
                         await plan._handle_dynamic_implementation(
@@ -703,9 +753,15 @@ Respond with a JSON object: {{"status": "...", "reason": "..."}}.
                             f"VERIFY: Exception in '{fn.__name__}' (attempt {attempt + 1}): {e}",
                             exc_info=False,
                         )
+                        plan.action_log.append(
+                            f"Handled exception in {fn.__name__} (attempt {attempt + 1}): {e}"
+                        )
                         continue
 
                 plan.call_stack.pop()
+                plan.action_log.append(
+                    f"Function {fn.__name__} failed after {max_retries} attempts."
+                )
                 raise ReplanFromParentException(
                     f"Function '{fn.__name__}' failed after {max_retries} attempts. Last error: {last_exception}",
                 )
@@ -727,11 +783,13 @@ Respond with a JSON object: {{"status": "...", "reason": "..."}}.
 
         async def act_wrapper(instruction: str):
             last_action["desc"] = f'act("{instruction}")'
+            plan.action_log.append(f"Executing action: {last_action['desc']}")
             return await self.controller.act(instruction)
 
         async def observe_wrapper(query: str):
             res = await self.controller.observe(query)
             last_observation["state"] = res
+            plan.action_log.append(f"Observed state: {res[:100]}...")
             return res
 
         original_act = plan.execution_namespace.get("act")
@@ -752,6 +810,9 @@ Respond with a JSON object: {{"status": "...", "reason": "..."}}.
         )
         logger.info(
             f"VERIFY Assessment for '{fn.__name__}': {assessment.status} - {assessment.reason}",
+        )
+        plan.action_log.append(
+            f"Verification for {fn.__name__}: {assessment.status} - {assessment.reason}"
         )
 
         if assessment.status == "ok":
