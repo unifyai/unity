@@ -689,9 +689,10 @@ class TaskScheduler(BaseTaskScheduler):
                 # Derive the head: the runnable task whose `prev_task` is None
                 head_candidates = self._search_tasks(
                     filter=(
-                        "schedule is not None and "
-                        "status not in ('completed','cancelled','failed','scheduled') and "
-                        "schedule.get('prev_task') is None"
+                        "schedule is not None and \n"
+                        "                    status not in "
+                        "('completed','cancelled','failed') and \n"
+                        "                    schedule.get('prev_task') is None"
                     ),
                     limit=2,
                 )
@@ -744,10 +745,7 @@ class TaskScheduler(BaseTaskScheduler):
         ordered: List[Task] = []
         cur = head_row
         while cur:
-            if (
-                cur["status"] not in self._TERMINAL_STATUSES
-                and cur["status"] != "scheduled"
-            ):
+            if cur["status"] not in self._TERMINAL_STATUSES:
                 ordered.append(Task(**cur))
 
             nxt_id = self._sched_next(cur["schedule"])
