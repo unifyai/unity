@@ -239,7 +239,8 @@ async def test_clarification_bubbles_through_returned_handle() -> None:
         return await clar_down_q.get()
 
     outer_llm = make_llm(
-        "If any internal tool needs information, call request_clarification.",
+        "If any internal tool needs information, call `request_clarification`. "
+        "Do **not** call clarify_delegating_tool_call_{id} until you've **first** called `request_clarification`.",
     )
 
     handle = start_async_tool_use_loop(
