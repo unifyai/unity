@@ -11,6 +11,7 @@ import sys
 import textwrap
 import traceback
 from typing import Any, Callable, Dict, List, Optional
+import ast
 
 import unify
 from pydantic import BaseModel, Field
@@ -205,14 +206,13 @@ class HierarchicalPlan(BasePlan):
         return frame_summary.name
 
     def _get_main_function_name(self) -> str | None:
-        """Parses the source code to find the first defined function."""
-        import ast
-
+        """Parses the source code to find the function named 'main_plan'."""
         try:
             tree = ast.parse(self.plan_source_code or "")
             for node in ast.walk(tree):
                 if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
-                    return node.name
+                    if node.name == "main_plan":
+                        return node.name
         except SyntaxError:
             return None
         return None
@@ -451,26 +451,27 @@ class HierarchicalPlanner(BasePlanner[HierarchicalPlan]):
 
     async def _generate_initial_plan(self, goal: str) -> str:
         """
-        Generates the initial Python code for the plan, querying the
-        FunctionManager for existing implementations.
+        Generates the initial Python code for the plan, with retries for syntax errors.
         """
-        # Phase 3: Query FunctionManager
-        try:
-            # A real implementation would do a semantic search on the goal
-            existing_functions = self.function_manager.list_functions(
-                include_implementations=True,
-            )
-            if existing_functions:
-                logger.info(
-                    f"Found {len(existing_functions)} existing functions in FunctionManager.",
+        max_retries = 3
+        last_error = ""
+        for attempt in range(max_retries):
+            # Phase 3: Query FunctionManager
+            try:
+                existing_functions = self.function_manager.list_functions(
+                    include_implementations=True,
                 )
-            else:
-                logger.info("No existing functions found in FunctionManager.")
-        except Exception as e:
-            logger.warning(f"Could not query FunctionManager: {e}")
-            existing_functions = {}
+                if existing_functions:
+                    logger.info(
+                        f"Found {len(existing_functions)} existing functions in FunctionManager.",
+                    )
+                else:
+                    logger.info("No existing functions found in FunctionManager.")
+            except Exception as e:
+                logger.warning(f"Could not query FunctionManager: {e}")
+                existing_functions = {}
 
-        primitives_doc = """
+            primitives_doc = """
 - `await act(instruction: str) -> str`: Instructs the browser controller to perform a complex action.
 - `await observe(query: str) -> str`: Observes the browser state.
 - `await reason(context: str, question: str) -> str`: A general-purpose LLM call for reasoning.
@@ -479,16 +480,28 @@ class HierarchicalPlanner(BasePlanner[HierarchicalPlan]):
 - `await request_clarification(question: str) -> str`: Asks the user for clarification and waits for an answer.
 """
 
-        existing_functions_doc = "\n".join(
-            f'- `{name}{data["argspec"]}`: {data["docstring"]}'
-            for name, data in existing_functions.items()
-        )
-        full_existing_code = "\n\n".join(
-            data["implementation"] for data in existing_functions.values()
-        )
+            existing_functions_doc = "\n".join(
+                f'- `{name}{data["argspec"]}`: {data["docstring"]}'
+                for name, data in existing_functions.items()
+            )
+            full_existing_code = "\n\n".join(
+                data["implementation"] for data in existing_functions.values()
+            )
 
-        prompt = f"""
+            retry_prompt = ""
+            if last_error:
+                retry_prompt = f"""
+The previous attempt failed with a syntax error:
+---
+{last_error}
+---
+Please correct the code and provide the full, valid script.
+"""
+
+            prompt = f"""
 You are an expert Python programmer and a meticulous planner. Your task is to take a high-level user goal and decompose it into a Python script.
+
+{retry_prompt}
 
 **User Goal:** "{goal}"
 
@@ -499,11 +512,12 @@ You are an expert Python programmer and a meticulous planner. Your task is to ta
 {existing_functions_doc if existing_functions else "None"}
 
 **Instructions:**
-1.  Structure the plan as a set of `async def` functions with a single main entry point.
-2.  **Reuse existing functions where possible.** If a suitable function from the FunctionManager exists, call it directly. Do NOT redefine it.
-3.  For any new, complex sub-task, define a helper function. If its implementation is not immediately obvious, stub it with `raise NotImplementedError`.
-4.  All functions you generate (new stubs or new fully implemented functions) MUST be decorated with `@verify`.
-5.  The final script should contain the full code for any reused functions, followed by your newly generated functions.
+1.  Structure the plan as a set of `async def` functions.
+2.  The main entry point function MUST be named `main_plan`.
+3.  **Reuse existing functions where possible.** If a suitable function from the FunctionManager exists, call it directly. Do NOT redefine it.
+4.  For any new, complex sub-task, define a helper function. If its implementation is not immediately obvious, stub it with `raise NotImplementedError`.
+5.  All functions you generate (new stubs or new fully implemented functions) MUST be decorated with `@verify`.
+6.  The final script should contain the full code for any reused functions, followed by your newly generated functions.
 
 **Full code of available functions (for injection):**
 ```python
@@ -512,9 +526,23 @@ You are an expert Python programmer and a meticulous planner. Your task is to ta
 
 Now, generate the complete `async` Python script for the user goal.
 """
-        response = await llm_call(self.llm_client, textwrap.dedent(prompt))
-        code = response.strip().replace("```python", "").replace("```", "").strip()
-        return code
+            response = await llm_call(self.llm_client, textwrap.dedent(prompt))
+            code = response.strip().replace("```python", "").replace("```", "").strip()
+
+            # Validate syntax
+            try:
+                ast.parse(code)
+                return code  # Return the valid code
+            except SyntaxError as e:
+                logger.warning(
+                    f"Generated code has a syntax error (attempt {attempt + 1}/{max_retries}): {e}"
+                )
+                last_error = str(e)
+                if attempt == max_retries - 1:
+                    raise  # Re-raise the final syntax error
+
+        raise RuntimeError("Failed to generate a valid plan after multiple attempts.")
+
 
     async def _dynamic_implement(
         self,
