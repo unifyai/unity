@@ -49,12 +49,12 @@ class ContactManager(BaseContactManager):
             )
             unify.create_fields(
                 {
-                    "first_name": "str",
-                    "surname": "str",
-                    "email_address": "str",
-                    "phone_number": "str",
-                    "whatsapp_number": "str",
-                    "description": "str",
+                    "first_name": {"type": "str", "mutable": True},
+                    "surname": {"type": "str"},
+                    "email_address": {"type": "str"},
+                    "phone_number": {"type": "str", "mutable": True},
+                    "whatsapp_number": {"type": "str", "mutable": True},
+                    "description": {"type": "str", "mutable": True},
                 },
                 context=self._ctx,
             )
