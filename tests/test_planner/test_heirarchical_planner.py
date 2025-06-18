@@ -120,3 +120,86 @@ async def sign_in():
     assert "Implemented function: sign_in" in action_log_str
     assert "Verification for sign_in: ok" in action_log_str
     assert "Verification for main_plan: ok" in action_log_str
+
+@pytest.mark.asyncio
+async def test_verification_and_tactical_replanning(
+    planner: HierarchicalPlanner,
+    monkeypatch,
+):
+    """
+    Objective: Verify that the @verify decorator can trigger a "local reimplementation"
+    when the LLM deems an action was tactically flawed.
+    """
+    # --- Arrange ---
+    initial_find_email_code = """
+@verify
+async def find_email():
+    '''Finds an email on the page.'''
+    await act("Scroll to the footer") # Flawed initial attempt
+    return await observe("Find the email address")
+"""
+
+    reimplemented_find_email_code = """
+@verify
+async def find_email():
+    '''Finds an email on the page.'''
+    await act("Click on the 'Contact Us' link") # Corrected attempt
+    return await observe("Find the email address")
+"""
+
+    main_plan_code = f"""
+{initial_find_email_code}
+
+@verify
+async def main_plan():
+    '''Main plan to find an email.'''
+    email = await find_email()
+    return f"Found email: {{email}}"
+"""
+
+    # Mock the planner's internal LLM-based verification
+    mock_check_state = AsyncMock()
+    # The full, correct sequence of verification calls:
+    mock_check_state.side_effect = [
+        # 1. First verification of find_email fails, triggering reimplementation.
+        VerificationAssessment(
+            status="reimplement_local",
+            reason="Did not click contact page first.",
+        ),
+        # 2. Second verification of the *new* find_email succeeds.
+        VerificationAssessment(status="ok", reason="Successfully found email."),
+        # 3. Final verification of the parent main_plan succeeds.
+        VerificationAssessment(status="ok", reason="Parent plan also looks good."),
+    ]
+    monkeypatch.setattr(planner, "_check_state_against_goal", mock_check_state)
+
+    # Mock the dynamic implementation LLM call
+    mock_dynamic_implement_llm = AsyncMock(return_value=reimplemented_find_email_code)
+    monkeypatch.setattr(planner, "_dynamic_implement", mock_dynamic_implement_llm)
+
+    # Mock the initial plan generation
+    mock_generate_plan_llm = AsyncMock(return_value=main_plan_code)
+    monkeypatch.setattr(planner, "_generate_initial_plan", mock_generate_plan_llm)
+
+    # --- Act ---
+    plan = planner.plan("Find the company email.")
+    await plan.result()
+
+    # --- Assert ---
+    # 1. The plan should complete successfully after the replan.
+    assert plan._state == _HierarchicalPlanState.COMPLETED
+
+    # 2. _check_state_against_goal was called three times.
+    assert mock_check_state.call_count == 3
+
+    # 3. _dynamic_implement was called once for the tactical replan.
+    mock_dynamic_implement_llm.assert_called_once()
+    assert mock_dynamic_implement_llm.call_args.kwargs["function_name"] == "find_email"
+
+    # 4. The action log should reflect the failure and reimplementation.
+    action_log_str = " ".join(plan.action_log)
+    assert "reimplement_local" in action_log_str
+    assert "Verification for find_email: ok" in action_log_str
+    assert "Retrying 'find_email' after reimplementation" in action_log_str
+
+
