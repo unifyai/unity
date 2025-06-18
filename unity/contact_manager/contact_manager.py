@@ -246,7 +246,7 @@ class ContactManager(BaseContactManager):
         Parameters
         ----------
         column : str
-            The vector column name (e.g. "notes_vec").
+            The vector column name (e.g. "notes_emb").
         source : str
             The source column name (e.g. "notes").
         """
@@ -280,7 +280,7 @@ class ContactManager(BaseContactManager):
         List[Dict[str, Any]]
             Rows sorted by ascending cosine distance.
         """
-        vec_col = f"{source}_vec"
+        vec_col = f"{source}_emb"
         self._ensure_table_vector(column=vec_col, source=source)
         logs = unify.get_logs(
             context=self._ctx,
@@ -668,7 +668,7 @@ class ContactManager(BaseContactManager):
         return [
             Contact(
                 **{
-                    k: "<full vector omitted>" if k.endswith("_vec") else v
+                    k: "<full vector embedding omitted>" if k.endswith("_emb") else v
                     for k, v in lg.entries.items()
                 },
             )

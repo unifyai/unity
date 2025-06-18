@@ -23,8 +23,8 @@ from .base import BaseTranscriptManager
 class TranscriptManager(BaseTranscriptManager):
 
     # Vector embedding column names
-    _VEC_MSG = "content_vec"
-    _VEC_SUM = "summary_vec"
+    _VEC_MSG = "content_emb"
+    _VEC_SUM = "summary_emb"
 
     def __init__(
         self,
@@ -358,7 +358,7 @@ class TranscriptManager(BaseTranscriptManager):
         return [
             Message(
                 **{
-                    k: "<full vector omitted>" if k.endswith("_vec") else v
+                    k: "<full vector omitted>" if k.endswith("_emb") else v
                     for k, v in lg.entries.items()
                 },
             )
@@ -402,7 +402,7 @@ class TranscriptManager(BaseTranscriptManager):
         return [
             MessageExchangeSummary(
                 **{
-                    k: "<full vector omitted>" if k.endswith("_vec") else v
+                    k: "<full vector omitted>" if k.endswith("_emb") else v
                     for k, v in lg.entries.items()
                 },
             )

@@ -890,7 +890,7 @@ class KnowledgeManager(BaseKnowledgeManager):
         tables : list[str]
             Candidate tables (each must contain *source* column).
         source : str
-            Text column to embed (an auxiliary ``<source>_vec`` column is
+            Text column to embed (an auxiliary ``<source>_emb`` column is
             auto-created if missing). MUST be *snake case*.
         text : str
             Query text to embed and compare against.
@@ -906,7 +906,7 @@ class KnowledgeManager(BaseKnowledgeManager):
         results = dict()
         for table in tables:
             context = self._ctx_for_table(table)
-            column = f"{source}_vec"
+            column = f"{source}_emb"
             self._vectorize_column(table, column, source)
             results[table] = [
                 log.entries
