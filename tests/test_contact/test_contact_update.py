@@ -153,7 +153,7 @@ async def test_update_with_clarification_needed(
     clar_up_q = asyncio.Queue()
     clar_down_q = asyncio.Queue()
 
-    command = "Add surname 'Wonderland' for Alice."
+    command = "Add surname 'Wonderland' for Alice. Request clarification if there is more than one Alice."
 
     handle = await cm.update(
         command,
@@ -178,7 +178,7 @@ async def test_update_with_clarification_needed(
         "alice.wonder@example.com",
         {"first_name": "Alice", "surname": "Wonderland"},
     )
-    # Optionally check that Alice Smith's surname wasn't changed
+    # Check that Alice Smith's surname wasn't changed
     alice_smith_contacts = cm._search_contacts(
         filter="email_address == 'alice.smith@example.com'",
     )
