@@ -32,6 +32,10 @@ class ReplanFromParentException(Exception):
     """Raised by the @verify decorator when a function's goal is misguided."""
 
 
+class _ForcedRetryException(Exception):
+    """Internal exception to force a retry loop after a successful reimplementation."""
+
+
 class VerificationAssessment(BaseModel):
     """Structured output for the _check_state_against_goal LLM call."""
 
@@ -96,6 +100,7 @@ class HierarchicalPlan(BasePlan):
         goal: str,
         clarification_up_q: Optional[asyncio.Queue[str]] = None,
         clarification_down_q: Optional[asyncio.Queue[str]] = None,
+        parent_chat_context: Optional[str] = None,
     ):
         self.planner = planner
         self.goal = goal
@@ -187,6 +192,22 @@ class HierarchicalPlan(BasePlan):
                 }
             except ReplanFromParentException as e:
                 self.escalation_count += 1
+                self.action_log.append(
+                    f"Escalation ({self.escalation_count}/{self.MAX_ESCALATIONS}): {e}",
+                )
+
+                parent_to_replan = self._get_main_function_name()
+                if not parent_to_replan:
+                    raise RuntimeError("Could not determine main_plan to replan.")
+
+                # ALWAYS perform the strategic replan on each escalation cycle.
+                await self._handle_dynamic_implementation(
+                    parent_to_replan,
+                    is_strategic_replan=True,
+                    replan_reason=str(e),
+                )
+
+                # NOW, check if the escalation limit has been reached AFTER replanning.
                 if self.escalation_count >= self.MAX_ESCALATIONS:
                     self._state = _HierarchicalPlanState.PAUSED_FOR_ESCALATION
                     err_msg = f"ESCALATION LIMIT: Max escalations ({self.MAX_ESCALATIONS}) reached. Pausing for intervention. Final reason: {e}"
@@ -198,14 +219,12 @@ class HierarchicalPlan(BasePlan):
                         "force_stop": True,
                     }
 
-                # This path is for strategic replan of the parent, not a terminal error
-                self.action_log.append(
-                    f"Escalation ({self.escalation_count}/{self.MAX_ESCALATIONS}): {e}",
-                )
-                # Let the loop continue to handle the replan at the parent level
+                # If the limit is not reached, create a new iterator and continue the loop.
+                plan_iterator = self._create_main_loop_iterator()
+
                 return {
                     "status": "in_progress",
-                    "message": f"Strategic replan triggered for parent due to: {e}",
+                    "message": f"Strategically replanned '{parent_to_replan}' due to failure in child. Retrying.",
                 }
             except Exception as e:
                 logger.error(f"Plan step execution failed: {e}", exc_info=True)
@@ -214,16 +233,22 @@ class HierarchicalPlan(BasePlan):
                 self.action_log.append(f"ERROR: Plan execution failed: {e}")
                 return {"status": "error", "message": str(e), "force_stop": True}
 
+        def dynamic_tool_policy(step_index, tools):
+            if self._is_complete or self._state in (
+                _HierarchicalPlanState.PAUSED_FOR_MODIFICATION,
+                _HierarchicalPlanState.PAUSED_FOR_ESCALATION,
+            ):
+                return "auto", {}
+            else:
+                return "required", {"_run_one_plan_step": _run_one_plan_step}
+
         self.main_loop_handle = start_async_tool_use_loop(
             client=self.planner.llm_client,
             message="Executing hierarchical plan...",
             tools={"_run_one_plan_step": _run_one_plan_step},
             loop_id=f"HierarchicalPlan-{self.goal[:20]}",
             max_steps=100,
-            tool_policy=lambda i, _: (
-                "required",
-                {"_run_one_plan_step": _run_one_plan_step},
-            ),
+            tool_policy=dynamic_tool_policy,
             interrupt_llm_with_interjections=True,
         )
 
@@ -280,7 +305,6 @@ class HierarchicalPlan(BasePlan):
 
             exec(
                 compile(self.plan_source_code, "<string>", "exec"),
-                self.planner._create_sandbox_globals(),
                 self.execution_namespace,
             )
         except (SyntaxError, ValueError, RuntimeError) as e:
@@ -394,17 +418,13 @@ class HierarchicalPlan(BasePlan):
 
     async def result(self) -> str:
         if self._execution_task and not self._execution_task.done():
-            try:
-                await self._execution_task
-            except Exception as e:
-                return f"Plan execution resulted in an error: {e}"
+            await self._execution_task
 
         if not self.main_loop_handle:
-            return f"Plan concluded in state {self._state.name}."
+            final_log = self.action_log[-1] if self.action_log else "No log available."
+            return f"Plan concluded in state {self._state.name}. Final log: {final_log}"
 
-        if self.main_loop_handle.done():
-            return await self.main_loop_handle.result()
-        return "Plan is still running."
+        return await self.main_loop_handle.result()
 
     def done(self) -> bool:
         return self._is_complete
@@ -545,6 +565,7 @@ class HierarchicalPlanner(BasePlanner[HierarchicalPlan]):
                 "tuple",
                 "range",
                 "Exception",
+                "NotImplementedError",
                 "isinstance",
                 "any",
                 "all",
@@ -568,6 +589,7 @@ class HierarchicalPlanner(BasePlanner[HierarchicalPlan]):
             return await plan.clarification_down_q.get()
 
         plan.execution_namespace.clear()
+        plan.execution_namespace.update(sandbox_globals)
         plan.execution_namespace.update(
             {
                 "act": self.controller.act,
@@ -575,6 +597,7 @@ class HierarchicalPlanner(BasePlanner[HierarchicalPlan]):
                 "request_clarification": request_clarification_primitive,
                 "verify": self._create_verify_decorator(plan),
                 "ReplanFromParentException": ReplanFromParentException,
+                "_ForcedRetryException": _ForcedRetryException,
             },
         )
 
@@ -593,7 +616,6 @@ class HierarchicalPlanner(BasePlanner[HierarchicalPlan]):
 
         exec(
             compile(plan.plan_source_code or "pass", "<string>", "exec"),
-            sandbox_globals,
             plan.execution_namespace,
         )
 
@@ -604,7 +626,6 @@ class HierarchicalPlanner(BasePlanner[HierarchicalPlan]):
                 plan.call_stack.append(fn.__name__)
                 plan.interaction_stack.append([])
                 logger.info(f"VERIFY: Entering '{fn.__name__}'")
-                last_exception = None
                 try:
                     for _ in range(plan.MAX_LOCAL_RETRIES):
                         try:
@@ -617,22 +638,24 @@ class HierarchicalPlanner(BasePlanner[HierarchicalPlan]):
                                 kwargs,
                                 plan.interaction_stack[-1],
                             )
-                        except ReplanFromParentException as e:
-                            await plan._handle_dynamic_implementation(
-                                fn.__name__,
-                                is_strategic_replan=True,
-                                replan_reason=str(e),
+                        except _ForcedRetryException:
+                            plan.action_log.append(
+                                f"Retrying '{fn.__name__}' after reimplementation.",
                             )
-                            last_exception = e
                             continue
+                        except ReplanFromParentException:
+                            raise
                         except NotImplementedError:
                             raise
                         except Exception as e:
-                            last_exception = e
+                            logger.error(
+                                f"Function '{fn.__name__}' failed: {e}",
+                                exc_info=True,
+                            )
                             await asyncio.sleep(1)
                             continue
                     raise ReplanFromParentException(
-                        f"Function '{fn.__name__}' failed after {plan.MAX_LOCAL_RETRIES} local retries. Last error: {last_exception}",
+                        f"Function '{fn.__name__}' failed after multiple retries.",
                     )
                 finally:
                     plan.call_stack.pop()
@@ -696,7 +719,7 @@ class HierarchicalPlanner(BasePlanner[HierarchicalPlan]):
                 fn.__name__,
                 replan_reason=assessment.reason,
             )
-            raise RuntimeError("Forced retry after local reimplementation")
+            raise _ForcedRetryException("Forced retry after local reimplementation")
         elif assessment.status == "replan_parent":
             raise ReplanFromParentException(
                 f"Strategic failure in '{fn.__name__}': {assessment.reason}",
