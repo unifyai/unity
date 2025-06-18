@@ -285,6 +285,11 @@ class TranscriptManager(BaseTranscriptManager):
                 f"cosine({self._VEC_MSG}, embed('{text}', model='{EMBED_MODEL}'))": "ascending",
             },
             limit=k,
+            exclude_fields=[
+                k
+                for k in unify.get_fields(self._transcripts_ctx).keys()
+                if k.endswith("_emb")
+            ],
         )
         return [Message(**lg.entries) for lg in logs]
 
@@ -311,13 +316,18 @@ class TranscriptManager(BaseTranscriptManager):
             Summaries ordered by similarity (*lowest* cosine distance first).
         """
 
-        ensure_vector_column(self._transcripts_ctx, self._VEC_MSG, "content")
+        ensure_vector_column(self._summaries_ctx, self._VEC_SUM, "summary")
         logs = unify.get_logs(
             context=self._summaries_ctx,
             sorting={
                 f"cosine({self._VEC_SUM}, embed('{text}', model='{EMBED_MODEL}'))": "ascending",
             },
             limit=k,
+            exclude_fields=[
+                k
+                for k in unify.get_fields(self._summaries_ctx).keys()
+                if k.endswith("_emb")
+            ],
         )
         return [MessageExchangeSummary(**lg.entries) for lg in logs]
 
@@ -354,16 +364,13 @@ class TranscriptManager(BaseTranscriptManager):
             offset=offset,
             limit=limit,
             sorting={"timestamp": "descending"},
+            exclude_fields=[
+                k
+                for k in unify.get_fields(self._transcripts_ctx).keys()
+                if k.endswith("_emb")
+            ],
         )
-        return [
-            Message(
-                **{
-                    k: "<full vector omitted>" if k.endswith("_emb") else v
-                    for k, v in lg.entries.items()
-                },
-            )
-            for lg in logs
-        ]
+        return [Message(**lg.entries) for lg in logs]
 
     def _search_summaries(
         self,
@@ -398,13 +405,10 @@ class TranscriptManager(BaseTranscriptManager):
             offset=offset,
             limit=limit,
             sorting={"timestamp": "descending"},
+            exclude_fields=[
+                k
+                for k in unify.get_fields(self._summaries_ctx).keys()
+                if k.endswith("_emb")
+            ],
         )
-        return [
-            MessageExchangeSummary(
-                **{
-                    k: "<full vector omitted>" if k.endswith("_emb") else v
-                    for k, v in lg.entries.items()
-                },
-            )
-            for lg in logs
-        ]
+        return [MessageExchangeSummary(**lg.entries) for lg in logs]
