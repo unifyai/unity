@@ -60,5 +60,5 @@ def test_contact_embedding_and_nearest_search():
     # ------------------------------------------------------------------ #
     # 5️⃣  Derived vector column should now exist                         #
     # ------------------------------------------------------------------ #
-    cols = cm._list_columns()["columns"]
+    cols = cm._list_columns()
     assert "description_vec" in cols, "Vector column not created on-demand"
