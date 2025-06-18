@@ -28,7 +28,7 @@ import json
 
 class TaskScheduler(BaseTaskScheduler):
 
-    _VEC_TASK = "task_emb"
+    _VEC_TASK = "task_vec"
 
     def __init__(
         self,
@@ -1253,6 +1253,7 @@ class TaskScheduler(BaseTaskScheduler):
                     f"cosine({self._VEC_TASK}, embed('{text}', model='{EMBED_MODEL}'))": "ascending",
                 },
                 limit=k,
+                exclude_fields=[self._VEC_TASK],
             )
         ]
 
@@ -1290,5 +1291,6 @@ class TaskScheduler(BaseTaskScheduler):
                 filter=filter,
                 offset=offset,
                 limit=limit,
+                exclude_fields=[self._VEC_TASK],
             )
         ]
