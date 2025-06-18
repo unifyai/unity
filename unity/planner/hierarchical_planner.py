@@ -10,7 +10,7 @@ import os
 import sys
 import textwrap
 import traceback
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional, Tuple
 import ast
 
 import unify
@@ -28,7 +28,6 @@ from unity.planner.tool_loop_planner import ComsManager
 logger = logging.getLogger(__name__)
 
 
-# Custom exception for escalating strategic failures
 class ReplanFromParentException(Exception):
     """Raised by the @verify decorator when a function's goal is misguided."""
 
@@ -43,11 +42,14 @@ class VerificationAssessment(BaseModel):
     reason: str = Field(..., description="A concise explanation for the status.")
 
 
-# Enum for managing the plan's lifecycle state
 class _HierarchicalPlanState(enum.Enum):
+    """Manages the detailed lifecycle state of a hierarchical plan."""
+
     IDLE = enum.auto()
     RUNNING = enum.auto()
     PAUSED = enum.auto()
+    PAUSED_FOR_MODIFICATION = enum.auto()
+    PAUSED_FOR_ESCALATION = enum.auto()
     COMPLETED = enum.auto()
     STOPPED = enum.auto()
     ERROR = enum.auto()
@@ -81,7 +83,6 @@ class HierarchicalPlan(BasePlan):
 
         self.main_loop_handle: Optional[AsyncToolUseLoopHandle] = None
         self._execution_task = asyncio.create_task(self._initialize_and_run())
-        self._is_paused_for_modification = False
 
         self._state = _HierarchicalPlanState.IDLE
         self.clarification_up_q = clarification_up_q or asyncio.Queue()
@@ -109,6 +110,7 @@ class HierarchicalPlan(BasePlan):
 
     def _create_main_loop_iterator(self):
         """Creates a fresh generator for executing the plan."""
+        # Re-exec the code to ensure the namespace is up-to-date with any modifications
         exec(self.plan_source_code, self.execution_namespace)
         main_fn_name = self._get_main_function_name()
         if not main_fn_name:
@@ -124,7 +126,8 @@ class HierarchicalPlan(BasePlan):
             """The core 'tool' for the SteerableToolLoopHandle."""
             nonlocal plan_iterator
 
-            if self._is_paused_for_modification:
+            # This check ensures that the loop doesn't advance while a modification is in progress.
+            if self._state == _HierarchicalPlanState.PAUSED_FOR_MODIFICATION:
                 return {
                     "status": "paused",
                     "message": "Execution paused for plan modification.",
@@ -146,7 +149,7 @@ class HierarchicalPlan(BasePlan):
                 function_name = self._get_unimplemented_function_name()
                 logger.info(f"Handling dynamic implementation for: {function_name}")
                 self.action_log.append(
-                    f"Attempting to dynamically implement function: {function_name}"
+                    f"Attempting to dynamically implement function: {function_name}",
                 )
                 await self._handle_dynamic_implementation(function_name)
                 # Restart the iterator with the updated code
@@ -156,12 +159,12 @@ class HierarchicalPlan(BasePlan):
                     "message": f"Retrying after implementing {function_name}",
                 }
             except ReplanFromParentException as e:
-                self._state = (
-                    _HierarchicalPlanState.PAUSED
-                )  # Or a new 'ESCALATED' state
-                escalation_message = f"ESCALATION: Plan has failed strategically and is paused. Reason: {e}. Please provide new instructions to modify the plan or stop it."
+                # IMPROVEMENT: Use a dedicated state and externalize the failure to the user.
+                self._state = _HierarchicalPlanState.PAUSED_FOR_ESCALATION
+                escalation_message = f"ESCALATION: Plan has failed strategically and requires intervention. Reason: {e}. Please use 'modify_plan' to provide new instructions or 'stop' to terminate."
                 self.action_log.append(escalation_message)
-                await self.clarification_up_q.put(escalation_message)
+                logger.critical(escalation_message)
+                await self.clarification_up_q.put(escalation_message)  # Notify client
                 return {"status": "paused_for_escalation", "details": str(e)}
             except Exception as e:
                 logger.error(f"Error during plan step execution: {e}", exc_info=True)
@@ -174,12 +177,12 @@ class HierarchicalPlan(BasePlan):
             message="Executing hierarchical plan...",
             tools={"_run_one_plan_step": _run_one_plan_step},
             loop_id=f"HierarchicalPlan-{self.goal[:20]}",
-            max_steps=200,
+            max_steps=100,
             tool_policy=lambda i, _: (
                 "required",
                 {"_run_one_plan_step": _run_one_plan_step},
             ),
-            interrupt_llm_with_interjections=True,
+            interrupt_llm_with_interjections=True,  # Allow interruption
         )
 
     async def _handle_dynamic_implementation(
@@ -192,12 +195,9 @@ class HierarchicalPlan(BasePlan):
         if function_name in self.execution_namespace:
             func_to_implement = self.execution_namespace[function_name]
             signature = inspect.signature(func_to_implement)
-            # Get parent code from the call stack for context.
             parent_name = self.call_stack[-1] if self.call_stack else None
             parent_code = (
-                self.function_source_map.get(parent_name, "")
-                if parent_name
-                else ""
+                self.function_source_map.get(parent_name, "") if parent_name else ""
             )
 
             new_code = await self.planner._dynamic_implement(
@@ -210,7 +210,9 @@ class HierarchicalPlan(BasePlan):
             )
             self._update_plan_with_new_code(function_name, new_code)
             logger.info(f"Dynamically implemented function: '{function_name}'.")
-            self.action_log.append(f"Successfully implemented function: {function_name}")
+            self.action_log.append(
+                f"Successfully implemented function: {function_name}",
+            )
         else:
             raise RuntimeError(
                 f"Could not find function '{function_name}' to implement.",
@@ -227,9 +229,11 @@ class HierarchicalPlan(BasePlan):
         try:
             tree = ast.parse(self.plan_source_code or "")
             for node in ast.walk(tree):
-                if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
-                    if node.name == "main_plan":
-                        return node.name
+                if (
+                    isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+                    and node.name == "main_plan"
+                ):
+                    return node.name
         except SyntaxError:
             return None
         return None
@@ -237,20 +241,21 @@ class HierarchicalPlan(BasePlan):
     def _update_plan_with_new_code(self, function_name: str, new_code: str):
         """Replaces a function stub or existing function with new code, validating first."""
         try:
-            # Validate syntax before attempting to replace
             ast.parse(new_code)
         except SyntaxError as e:
-            logger.error(f"Generated code for '{function_name}' has a syntax error: {e}")
-            raise ValueError(f"Invalid syntax in generated code for {function_name}.") from e
+            logger.error(
+                f"Generated code for '{function_name}' has a syntax error: {e}",
+            )
+            raise ValueError(
+                f"Invalid syntax in generated code for {function_name}.",
+            ) from e
 
         import re
 
-        # Regex to find the whole function definition, decorated or not.
         pattern = re.compile(
             rf"(?:@verify\s*\n)?(?:async\s+)?def\s+{function_name}\(.*\):(?:\n(.|\n)*?)(?=\n(?:@verify|async def|def)\s|\Z)",
             re.MULTILINE,
         )
-
         if pattern.search(self.plan_source_code):
             new_source = pattern.sub(
                 textwrap.dedent(new_code).strip(),
@@ -258,29 +263,44 @@ class HierarchicalPlan(BasePlan):
                 1,
             )
         else:
-            raise RuntimeError(f"Could not find function '{function_name}' to update in plan.")
+            # Fallback for functions that might be at the end of the file without a following function
+            pattern_eof = re.compile(
+                rf"(?:@verify\s*\n)?(?:async\s+)?def\s+{function_name}\(.*\):.*",
+                re.DOTALL,
+            )
+            if pattern_eof.search(self.plan_source_code):
+                new_source = pattern_eof.sub(
+                    textwrap.dedent(new_code).strip(),
+                    self.plan_source_code or "",
+                    1,
+                )
+            else:
+                raise RuntimeError(
+                    f"Could not find function '{function_name}' to update in plan.",
+                )
 
         self.plan_source_code = new_source
         self.function_source_map[function_name] = new_code
         logger.debug(f"Updated plan source code:\n{self.plan_source_code}")
-        # Re-exec to update the namespace, including the newly decorated function
         exec(self.plan_source_code, self.execution_namespace)
 
+    async def modify_plan(self, modification_request: str) -> str:
+        """
+        Handles 'Modifying Mode' with robust rollback. This is the primary way to correct
+        a plan that is paused for escalation or needs a new direction.
+        """
+        if not self._is_valid_method("modify_plan"):
+            return f"Plan cannot be modified in its current state: {self._state.name}"
 
-    async def modify_plan(self, modification_request: str):
-        """Handles 'Modifying Mode' workflow as per Phase 4 spec."""
         logger.info(f"Starting plan modification: '{modification_request}'")
         self.action_log.append(f"Starting plan modification: {modification_request}")
 
         original_source_code = self.plan_source_code
-        self._is_paused_for_modification = True
+        self._state = _HierarchicalPlanState.PAUSED_FOR_MODIFICATION
 
-        # Stop the old handle before making any changes
         if self.main_loop_handle:
             self.main_loop_handle.stop()
             self.main_loop_handle = None
-        self._state = _HierarchicalPlanState.PAUSED
-
 
         try:
             # 1. Plan Surgery
@@ -306,19 +326,20 @@ class HierarchicalPlan(BasePlan):
             self.plan_source_code = new_source_code
             logger.info("Plan successfully modified. Restarting execution loop.")
             self.action_log.append("Plan successfully modified. Restarting execution.")
-            await self._start_main_execution_loop()
             self._state = _HierarchicalPlanState.RUNNING
+            await self._start_main_execution_loop()
+            return "Plan modified and resumed successfully."
 
         except Exception as e:
-            logger.error(f"Failed to modify plan, rolling back: {e}", exc_info=True)
+            logger.error(
+                f"Failed to modify plan, rolling back to previous version: {e}",
+                exc_info=True,
+            )
             self.action_log.append(f"ERROR: Failed to modify plan, rolling back: {e}")
-            self.plan_source_code = original_source_code  # Rollback
-            await self._start_main_execution_loop() # Restart with old code
+            self.plan_source_code = original_source_code
             self._state = _HierarchicalPlanState.RUNNING
-
-        finally:
-            self._is_paused_for_modification = False
-
+            await self._start_main_execution_loop()  # Restart with old code
+            return "Failed to modify the plan. Rolled back to the previous version and resumed."
 
     async def _execute_correction_script(self, script: str):
         """Executes a short-lived correction script with a timeout."""
@@ -333,7 +354,7 @@ class HierarchicalPlan(BasePlan):
         correction_fn = correction_namespace.get("course_correction_main")
         if not correction_fn or not asyncio.iscoroutinefunction(correction_fn):
             raise RuntimeError(
-                "Course correction script did not define an 'async def course_correction_main' function.",
+                "Course correction script did not define 'async def course_correction_main'.",
             )
 
         try:
@@ -343,51 +364,48 @@ class HierarchicalPlan(BasePlan):
             logger.error("Course correction script timed out.")
             raise RuntimeError("Course correction script took too long to execute.")
         except Exception as e:
-            logger.error(f"Error executing course correction script: {e}", exc_info=True)
+            logger.error(
+                f"Error executing course correction script: {e}",
+                exc_info=True,
+            )
             raise RuntimeError(f"Course correction script failed: {e}") from e
 
     async def result(self) -> str:
         """Waits for the plan to complete and returns its final result."""
-        await self._execution_task
+        if self._execution_task:
+            await self._execution_task
         if not self.main_loop_handle:
-            self._state = _HierarchicalPlanState.ERROR
-            return "Error: Main execution loop was not created."
+            return f"Error: Plan concluded in state {self._state.name} without a final result."
         final_result = await self.main_loop_handle.result()
-        if self._state not in [
-            _HierarchicalPlanState.COMPLETED,
-            _HierarchicalPlanState.STOPPED,
-        ]:
-            self._state = _HierarchicalPlanState.COMPLETED
         return final_result
 
     def done(self) -> bool:
         """Returns True if the plan has finished executing."""
-        return (
-            self.main_loop_handle.done()
-            if self.main_loop_handle
-            else self._state
-            in [
-                _HierarchicalPlanState.COMPLETED,
-                _HierarchicalPlanState.STOPPED,
-                _HierarchicalPlanState.ERROR,
-            ]
+        return self._state in (
+            _HierarchicalPlanState.COMPLETED,
+            _HierarchicalPlanState.STOPPED,
+            _HierarchicalPlanState.ERROR,
         )
 
     async def stop(self) -> str:
         """Stops the plan's execution and waits for termination."""
-        if self._state not in (_HierarchicalPlanState.STOPPED, _HierarchicalPlanState.COMPLETED, _HierarchicalPlanState.ERROR):
+        if self._state not in (
+            _HierarchicalPlanState.STOPPED,
+            _HierarchicalPlanState.COMPLETED,
+            _HierarchicalPlanState.ERROR,
+        ):
             logger.info(f"HierarchicalPlan stopping. Current state: {self._state.name}")
             self._state = _HierarchicalPlanState.STOPPED
             if self.main_loop_handle:
                 self.main_loop_handle.stop()
-            try:
-                await asyncio.wait_for(self._execution_task, timeout=5.0)
-            except asyncio.TimeoutError:
-                logger.warning("Timeout waiting for execution task to stop.")
+            if self._execution_task and not self._execution_task.done():
+                try:
+                    await asyncio.wait_for(self._execution_task, timeout=5.0)
+                except asyncio.TimeoutError:
+                    logger.warning("Timeout waiting for execution task to stop.")
             self.action_log.append("Plan stopped by user.")
             return "Plan was stopped."
-        return "Plan is already stopped or completed."
-
+        return f"Plan already in a terminal state: {self._state.name}."
 
     async def pause(self) -> str:
         """Pauses the plan's execution."""
@@ -397,54 +415,28 @@ class HierarchicalPlan(BasePlan):
             if self.main_loop_handle:
                 self.main_loop_handle.pause()
             self.action_log.append("Plan paused.")
-            return "Plan paused."
-        return f"Plan cannot be paused in state {self._state.name}."
+            return "Plan paused successfully."
+        return f"Plan cannot be paused in state {self.state.name}."
 
     async def resume(self) -> str:
         """Resumes a paused plan."""
-        if self._state == _HierarchicalPlanState.PAUSED and not self._is_paused_for_modification:
+        if self._state == _HierarchicalPlanState.PAUSED:
             logger.info("HierarchicalPlan resuming.")
             self._state = _HierarchicalPlanState.RUNNING
             if self.main_loop_handle:
                 self.main_loop_handle.resume()
             self.action_log.append("Plan resumed.")
-            return "Plan resumed."
-        return f"Plan cannot be resumed in state {self._state.name}."
-
-    async def interject(self, message: str) -> str:
-        """
-        Sends an interjection to the running plan.
-
-        In this code-driven planner, an interjection provides high-level
-        guidance to the execution loop but may not be acted upon immediately
-        if a function is in the middle of execution.
-        """
-        if self.main_loop_handle:
-            await self.main_loop_handle.interject(message)
-            self.action_log.append(f"User interjected: '{message}'")
-            return f"Interjection '{message}' sent to plan."
-        return "Could not send interjection: no active loop."
+            return "Plan resumed successfully."
+        return f"Plan cannot be resumed from state {self._state.name}. It might need modification."
 
     async def ask(self, question: str) -> str:
         """Asks a question about the current state of the plan using its action log."""
         if not self.action_log:
             return "No actions have been logged yet."
-
         context = "\n".join(f"- {log}" for log in self.action_log)
-        prompt = f"""
-You are an intelligent assistant analyzing the execution log of a hierarchical plan.
-Based on the following log, provide a concise answer to the user's question.
-
-**Execution Log:**
-{context}
-
-**User's Question:** "{question}"
-
-**Answer:**
-"""
+        prompt = f'You are an intelligent assistant analyzing an execution log. Based on the log, answer the user\'s question concisely.\n\n**Log:**\n{context}\n\n**Question:** "{question}"\n\n**Answer:**'
         try:
-            answer = await llm_call(self.planner.llm_client, textwrap.dedent(prompt))
-            return answer
+            return await llm_call(self.planner.llm_client, textwrap.dedent(prompt))
         except Exception as e:
             logger.error(f"Failed to answer 'ask' with LLM: {e}", exc_info=True)
             return f"Could not answer the question. The current plan state is {self._state.name}."
@@ -455,21 +447,22 @@ Based on the following log, provide a concise answer to the user's question.
             return self._state in (
                 _HierarchicalPlanState.RUNNING,
                 _HierarchicalPlanState.PAUSED,
+                _HierarchicalPlanState.PAUSED_FOR_ESCALATION,
             )
         if name == "pause":
             return self._state == _HierarchicalPlanState.RUNNING
         if name == "resume":
-            return self._state == _HierarchicalPlanState.PAUSED and not self._is_paused_for_modification
-        if name == "interject":
-            return (
-                self._state == _HierarchicalPlanState.RUNNING
-                and self.main_loop_handle is not None
-            )
+            return self._state == _HierarchicalPlanState.PAUSED
         if name == "ask":
-            # Ask is useful in most states
             return self._state not in (
                 _HierarchicalPlanState.IDLE,
                 _HierarchicalPlanState.COMPLETED,
+            )
+        if name == "modify_plan":
+            return self._state in (
+                _HierarchicalPlanState.PAUSED,
+                _HierarchicalPlanState.PAUSED_FOR_ESCALATION,
+                _HierarchicalPlanState.RUNNING,
             )
         return False
 
@@ -477,7 +470,7 @@ Based on the following log, provide a concise answer to the user's question.
     def valid_tools(self) -> Dict[str, Callable]:
         """Dynamically exposes steerable methods based on the plan's state."""
         tools = {}
-        potential_tools = ["stop", "pause", "resume", "interject", "ask"]
+        potential_tools = ["stop", "pause", "resume", "ask", "modify_plan"]
         for method_name in potential_tools:
             if self._is_valid_method(method_name):
                 tools[method_name] = getattr(self, method_name)
@@ -512,46 +505,24 @@ class HierarchicalPlanner(BasePlanner[HierarchicalPlan]):
         clarification_up_q: Optional[asyncio.Queue[str]] = None,
         clarification_down_q: Optional[asyncio.Queue[str]] = None,
     ) -> HierarchicalPlan:
-        """Factory method to create and start a new hierarchical plan."""
-        plan = HierarchicalPlan(
+        return HierarchicalPlan(
             planner=self,
             goal=task_description,
             clarification_up_q=clarification_up_q,
             clarification_down_q=clarification_down_q,
         )
-        return plan
 
     async def _generate_initial_plan(self, goal: str) -> str:
-        """
-        Generates the initial Python code for the plan, with retries for syntax errors.
-        """
+        """Generates the initial Python code for the plan, with retries for syntax errors."""
         max_retries = 3
         last_error = ""
         for attempt in range(max_retries):
-            # Phase 3: Query FunctionManager
-            try:
-                existing_functions = self.function_manager.list_functions(
-                    include_implementations=True,
-                )
-                if existing_functions:
-                    logger.info(
-                        f"Found {len(existing_functions)} existing functions in FunctionManager.",
-                    )
-                else:
-                    logger.info("No existing functions found in FunctionManager.")
-            except Exception as e:
-                logger.warning(f"Could not query FunctionManager: {e}")
-                existing_functions = {}
-
-            primitives_doc = """
-- `await act(instruction: str) -> str`: Instructs the browser controller to perform a complex action.
-- `await observe(query: str) -> str`: Observes the browser state.
-- `await reason(context: str, question: str) -> str`: A general-purpose LLM call for reasoning.
-- `await start_call(number: str, purpose: str) -> CallHandle`: Initiates a voice call.
-- `await send_email(recipient: str, subject: str, body: str) -> bool`: Sends an email.
-- `await request_clarification(question: str) -> str`: Asks the user for clarification and waits for an answer.
-"""
-
+            existing_functions = (
+                self.function_manager.list_functions(include_implementations=True)
+                if self.function_manager
+                else {}
+            )
+            primitives_doc = "- `await act(instruction: str) -> str`\n- `await observe(query: str) -> str`\n- `await request_clarification(question: str) -> str`"
             existing_functions_doc = "\n".join(
                 f'- `{name}{data["argspec"]}`: {data["docstring"]}'
                 for name, data in existing_functions.items()
@@ -560,18 +531,13 @@ class HierarchicalPlanner(BasePlanner[HierarchicalPlan]):
                 data["implementation"] for data in existing_functions.values()
             )
 
-            retry_prompt = ""
-            if last_error:
-                retry_prompt = f"""
-The previous attempt failed with a syntax error:
----
-{last_error}
----
-Please correct the code and provide the full, valid script.
-"""
-
+            retry_prompt = (
+                f"The previous attempt failed with a syntax error:\n---\n{last_error}\n---\nPlease correct the code."
+                if last_error
+                else ""
+            )
             prompt = f"""
-You are an expert Python programmer and a meticulous planner. Your task is to take a high-level user goal and decompose it into a Python script.
+You are an expert Python programmer. Decompose the high-level user goal into a Python script.
 
 {retry_prompt}
 
@@ -580,41 +546,35 @@ You are an expert Python programmer and a meticulous planner. Your task is to ta
 **Available Primitives:**
 {primitives_doc}
 
-**Available Pre-Implemented Functions from FunctionManager:**
-{existing_functions_doc if existing_functions else "None"}
+**Available Pre-Implemented Functions:**
+{existing_functions_doc or "None"}
 
 **Instructions:**
-1.  Structure the plan as a set of `async def` functions.
-2.  The main entry point function MUST be named `main_plan`.
-3.  **Reuse existing functions where possible.** If a suitable function from the FunctionManager exists, call it directly. Do NOT redefine it.
-4.  For any new, complex sub-task, define a helper function. If its implementation is not immediately obvious, stub it with `raise NotImplementedError`.
-5.  All functions you generate (new stubs or new fully implemented functions) MUST be decorated with `@verify`.
-6.  The final script should contain the full code for any reused functions, followed by your newly generated functions.
+1.  The main entry point function MUST be named `main_plan`.
+2.  All generated functions MUST be `async def` and decorated with `@verify`.
+3.  Reuse existing functions where possible by calling them.
+4.  For new, complex sub-tasks, define a helper function stubbed with `raise NotImplementedError`.
+5.  The final script must be complete, including any reused function code followed by your new functions.
 
 **Full code of available functions (for injection):**
 ```python
-{full_existing_code if full_existing_code else "# No existing functions to inject."}
+{full_existing_code or "# No existing functions to inject."}
 ```
-
-Now, generate the complete `async` Python script for the user goal.
+Now, generate the complete `async` Python script.
 """
             response = await llm_call(self.llm_client, textwrap.dedent(prompt))
             code = response.strip().replace("```python", "").replace("```", "").strip()
-
-            # Validate syntax
             try:
                 ast.parse(code)
-                return code  # Return the valid code
+                return code
             except SyntaxError as e:
                 logger.warning(
-                    f"Generated code has a syntax error (attempt {attempt + 1}/{max_retries}): {e}"
+                    f"Generated code syntax error (attempt {attempt + 1}/{max_retries}): {e}",
                 )
                 last_error = str(e)
                 if attempt == max_retries - 1:
-                    raise  # Re-raise the final syntax error
-
+                    raise
         raise RuntimeError("Failed to generate a valid plan after multiple attempts.")
-
 
     async def _dynamic_implement(
         self,
@@ -626,61 +586,42 @@ Now, generate the complete `async` Python script for the user goal.
         replan_reason: str = "",
     ) -> str:
         """Generates the async implementation for a function."""
-        try:
-            browser_state = await self.controller.observe(
-                "Describe the current page for context.",
-            )
-        except Exception:
-            browser_state = "Could not observe browser state."
-
-        replan_context = ""
-        if is_strategic_replan:
-            replan_context = f"""
-**REPLANNING REQUIRED:**
-The previous attempt to implement this function failed for a strategic reason: '{replan_reason}'.
-You must come up with a different approach to achieve the function's goal. Do not repeat the previous mistake.
-"""
-
+        browser_state = await self.controller.observe(
+            "Describe the current page for context.",
+        )
+        replan_context = (
+            f"**REPLANNING REQUIRED:** The previous approach failed: '{replan_reason}'. Devise a new strategy."
+            if is_strategic_replan
+            else ""
+        )
         prompt = f"""
-You are an expert Python programmer. Your task is to implement a single `async` Python function.
+You are an expert Python programmer. Implement the following `async` function.
 {replan_context}
+
 **Overall Task Goal:** "{plan.goal}"
 **Function to Implement:** `async def {function_name}{function_signature}:`
-**Context:** This function is called from:
-```python
-{parent_code}
-```
-**Current Browser State:**
-"{browser_state}"
+**Context:** This function is called from:\n```python\n{parent_code}\n```
+**Current Browser State:**\n"{browser_state}"
+
 **Instructions:**
-1.  Write the full `async def` implementation for `{function_name}`.
-2.  The implementation MUST be decorated with `@verify`.
-3.  Only use async primitives: `await act(...)`, `await observe(...)`, etc.
-4.  Provide a complete function: signature, decorator, docstring, and body.
+1.  Write the full `async def` implementation for `{function_name}`, decorated with `@verify`.
+2.  Use only the available `async` primitives (`act`, `observe`, etc.).
+3.  Provide a complete function: decorator, signature, docstring, and body.
 """
         response = await llm_call(self.llm_client, textwrap.dedent(prompt))
-        code = response.strip().replace("```python", "").replace("```", "").strip()
-        return code
+        return response.strip().replace("```python", "").replace("```", "").strip()
 
     async def _prepare_execution_environment(self, plan: HierarchicalPlan):
         """Prepares the namespace for executing the generated code."""
 
-        # This now includes ComsManager primitives as per Phase 3.
         async def request_clarification_primitive(question: str) -> str:
-            """Sends a question to the user and waits for an answer."""
-            logger.info(f"HierarchicalPlan requesting clarification: '{question}'")
             await plan.clarification_up_q.put(question)
-            answer = await plan.clarification_down_q.get()
-            logger.info(f"HierarchicalPlan received clarification: '{answer}'")
-            return answer
+            return await plan.clarification_down_q.get()
 
         plan.execution_namespace.update(
             {
                 "act": self.controller.act,
                 "observe": self.controller.observe,
-                "reason": self._reason_primitive,
-                "start_call": self.coms_manager.start_call,
-                "send_email": self.coms_manager.send_email,
                 "request_clarification": request_clarification_primitive,
                 "verify": self._create_verify_decorator(plan),
                 "ReplanFromParentException": ReplanFromParentException,
@@ -688,34 +629,37 @@ You are an expert Python programmer. Your task is to implement a single `async` 
             },
         )
 
-    async def _reason_primitive(self, context: str, question: str) -> str:
-        prompt = f"Given the context:\n{context}\n\nPlease answer the following question:\n{question}"
-        return await llm_call(self.llm_client, prompt)
-
     async def _check_state_against_goal(
         self,
         function_name: str,
         function_docstring: str | None,
-        last_action_description: str,
-        observed_state: str,
+        interactions: List[
+            Tuple[str, str, Optional[str]]
+        ],  # IMPROVEMENT: Now takes a list of interactions
     ) -> VerificationAssessment:
-        """Uses an LLM to assess if the last action achieved the function's goal."""
+        """Uses an LLM to assess if a sequence of actions achieved the function's goal."""
+        interactions_log = "\n".join(
+            f"- Action: `{action}`, Observation: `{obs or 'N/A'}`"
+            if kind == "observe"
+            else f"- Action: `{action}`"
+            for kind, action, obs in interactions
+        )
         prompt = f"""
-You are a verification agent. Your job is to assess if an action was successful by comparing the outcome to the intended goal.
+You are a verification agent. Assess if a sequence of actions successfully met a function's goal.
 
 **Function Goal:**
 - Name: `{function_name}`
 - Purpose: `{function_docstring or 'No docstring provided.'}`
 
-**Action Taken:** `{last_action_description}`
-**Observed Outcome:** `{observed_state}`
+**Interaction Log:**
+{interactions_log or "No actions or observations were recorded."}
 
 **Assessment Task:**
 Respond with a JSON object: {{"status": "...", "reason": "..."}}.
 **Possible Statuses:**
-- "ok": The action was successful and the function's goal appears to be met.
-- "reimplement_local": A tactical error occurred. The implementation is flawed but the goal is sound.
-- "replan_parent": A strategic error occurred. The function's entire premise is wrong or unachievable.
+- "ok": The actions were successful and the function's goal is met.
+- "reimplement_local": A tactical error. The implementation is flawed but the goal is sound.
+- "replan_parent": A strategic error. The function's premise is wrong or unachievable.
 - "fatal_error": An unrecoverable system error occurred.
 """
         response_str = await llm_call(self.llm_client, textwrap.dedent(prompt))
@@ -731,16 +675,12 @@ Respond with a JSON object: {{"status": "...", "reason": "..."}}.
             )
 
     def _create_verify_decorator(self, plan: HierarchicalPlan):
-        """Creates the @verify decorator for async functions, with strategic replan logic."""
+        """Creates the @verify decorator for async functions."""
 
         def verify(fn):
-            # Capture the source code at decoration time
             try:
-                source_code = inspect.getsource(fn)
-                plan.function_source_map[fn.__name__] = source_code
+                plan.function_source_map[fn.__name__] = inspect.getsource(fn)
             except (TypeError, OSError):
-                # This can happen with dynamically generated functions.
-                # The source will be captured from the plan_source_code itself.
                 pass
 
             @functools.wraps(fn)
@@ -756,19 +696,6 @@ Respond with a JSON object: {{"status": "...", "reason": "..."}}.
                 for attempt in range(max_retries):
                     try:
                         func_source = plan.function_source_map.get(fn.__name__)
-                        if not func_source:
-                             # Fallback for functions defined directly in the initial plan
-                            tree = ast.parse(plan.plan_source_code)
-                            for node in ast.walk(tree):
-                                if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name == fn.__name__:
-                                    func_source = ast.unparse(node)
-                                    plan.function_source_map[fn.__name__] = func_source
-                                    break
-                        if not func_source:
-                            logger.warning(f"Could not find source for function {fn.__name__}. Verification may be incomplete.")
-
-
-                        # Pass the captured source code to the verification step
                         return await self._execute_and_verify_step(
                             plan,
                             fn,
@@ -781,9 +708,8 @@ Respond with a JSON object: {{"status": "...", "reason": "..."}}.
                             f"VERIFY: Caught strategic failure from child of '{fn.__name__}'. Replanning '{fn.__name__}'. Reason: {e}",
                         )
                         plan.action_log.append(
-                            f"Strategic failure in child of {fn.__name__}. Replanning. Reason: {e}"
+                            f"Strategic failure in child of {fn.__name__}. Replanning. Reason: {e}",
                         )
-                        # Re-implement the CURRENT function due to its child's strategic failure
                         await plan._handle_dynamic_implementation(
                             fn.__name__,
                             is_strategic_replan=True,
@@ -792,7 +718,7 @@ Respond with a JSON object: {{"status": "...", "reason": "..."}}.
                         logger.info(
                             f"VERIFY: Retrying '{fn.__name__}' after strategic replan (attempt {attempt + 2}).",
                         )
-                        continue  # Retry the current function with its new implementation
+                        continue
                     except NotImplementedError:
                         plan.call_stack.pop()
                         raise
@@ -803,13 +729,14 @@ Respond with a JSON object: {{"status": "...", "reason": "..."}}.
                             exc_info=False,
                         )
                         plan.action_log.append(
-                            f"Handled exception in {fn.__name__} (attempt {attempt + 1}): {e}"
+                            f"Handled exception in {fn.__name__} (attempt {attempt + 1}): {e}",
                         )
+                        await asyncio.sleep(1)  # Brief pause before retry
                         continue
 
                 plan.call_stack.pop()
                 plan.action_log.append(
-                    f"Function {fn.__name__} failed after {max_retries} attempts."
+                    f"Function {fn.__name__} failed after {max_retries} attempts.",
                 )
                 raise ReplanFromParentException(
                     f"Function '{fn.__name__}' failed after {max_retries} attempts. Last error: {last_exception}",
@@ -823,23 +750,22 @@ Respond with a JSON object: {{"status": "...", "reason": "..."}}.
         self,
         plan: HierarchicalPlan,
         fn: Callable,
-        func_source: str, # Now receiving the source code directly
+        func_source: str,
         args,
         kwargs,
     ) -> Any:
         """Helper to encapsulate the execution and verification of a single step."""
-        last_action = {"desc": "No action taken"}
-        last_observation = {"state": "No observation made"}
+        interactions: List[Tuple[str, str, Optional[str]]] = []
 
         async def act_wrapper(instruction: str):
-            last_action["desc"] = f'act("{instruction}")'
-            plan.action_log.append(f"Executing action: {last_action['desc']}")
+            interactions.append(("act", instruction, None))
+            plan.action_log.append(f'Executing action: act("{instruction}")')
             return await self.controller.act(instruction)
 
         async def observe_wrapper(query: str):
             res = await self.controller.observe(query)
-            last_observation["state"] = res
-            plan.action_log.append(f"Observed state: {res[:100]}...")
+            interactions.append(("observe", query, res))
+            plan.action_log.append(f"Observed state for '{query}': {str(res)[:100]}...")
             return res
 
         original_act = plan.execution_namespace.get("act")
@@ -855,70 +781,43 @@ Respond with a JSON object: {{"status": "...", "reason": "..."}}.
         assessment = await self._check_state_against_goal(
             function_name=fn.__name__,
             function_docstring=fn.__doc__,
-            last_action_description=last_action["desc"],
-            observed_state=last_observation["state"],
+            interactions=interactions,
         )
         logger.info(
             f"VERIFY Assessment for '{fn.__name__}': {assessment.status} - {assessment.reason}",
         )
         plan.action_log.append(
-            f"Verification for {fn.__name__}: {assessment.status} - {assessment.reason}"
+            f"Verification for {fn.__name__}: {assessment.status} - {assessment.reason}",
         )
 
         if assessment.status == "ok":
-            logger.info(
-                f"VERIFY: Success for '{fn.__name__}'. Saving to FunctionManager.",
-            )
-            # Phase 3: Persist successful function
-            if func_source:
+            if func_source and self.function_manager:
                 try:
                     self.function_manager.add_functions(implementations=[func_source])
                 except Exception as e:
-                    logger.warning(
-                        f"Could not save function '{fn.__name__}' to FunctionManager: {e}",
-                    )
-            else:
-                logger.warning(f"Could not save function '{fn.__name__}' as source was not available.")
+                    logger.warning(f"Could not save function '{fn.__name__}': {e}")
             plan.call_stack.pop()
             return result
-
         elif assessment.status == "reimplement_local":
-            logger.warning(
-                f"VERIFY: Tactical error in '{fn.__name__}'. Triggering re-implementation.",
+            await plan._handle_dynamic_implementation(
+                fn.__name__,
+                replan_reason=assessment.reason,
             )
-            await plan._handle_dynamic_implementation(fn.__name__)
-            raise RuntimeError(
-                "Forced retry after local reimplementation",
-            )  # This will be caught by the outer loop to retry
-
+            raise RuntimeError("Forced retry after local reimplementation")
         elif assessment.status == "replan_parent":
             raise ReplanFromParentException(
                 f"Strategic failure in '{fn.__name__}': {assessment.reason}",
             )
-
         elif assessment.status == "fatal_error":
             raise RuntimeError(f"Fatal error in '{fn.__name__}': {assessment.reason}")
 
     async def _perform_plan_surgery(self, current_code: str, request: str) -> str:
         """Uses an LLM to rewrite a part of the plan's source code."""
         prompt = f"""
-You are a master programmer tasked with modifying a Python script for an AI agent.
-
-**User's Modification Request:**
-"{request}"
-
-**Current Plan Source Code:**
-```python
-{current_code}
-```
-
-**Instructions:**
-Rewrite the Python script to incorporate the user's change.
-- Identify the correct function(s) to modify.
-- You can add, remove, or change functions.
-- If you add a new function that needs implementation, stub it with `raise NotImplementedError`.
-- Ensure all functions remain decorated with `@verify`.
-- Output only the complete, new Python script.
+You are a master programmer modifying a Python script for an AI agent.
+**User's Modification Request:** "{request}"
+**Current Plan Source Code:**\n```python\n{current_code}\n```
+**Instructions:** Rewrite the script to incorporate the change. Ensure all functions remain decorated with `@verify`. Output only the complete, new Python script.
 """
         response = await llm_call(self.llm_client, textwrap.dedent(prompt))
         return response.strip().replace("```python", "").replace("```", "").strip()
@@ -930,40 +829,15 @@ Rewrite the Python script to incorporate the user's change.
     ) -> Optional[str]:
         """Generates a Python script to bridge the state gap between an old and new plan."""
         current_state = await self.controller.observe(
-            "Describe the current page, including URL and main elements, for state analysis.",
+            "Describe current page for state analysis.",
         )
-
         prompt = f"""
-You are an expert state transition analyst for an AI agent. The agent's plan has been modified, and it might be in the wrong state to continue. Your task is to generate a 'course correction' script if necessary.
+You are a state transition analyst. An AI agent's plan was modified. Generate a 'course correction' script if its current state doesn't match the new plan's starting point.
 
-**Current Browser State:**
-{current_state}
-
-**Old Plan (partial for context):**
-```python
-{old_code[:1000]}...
-```
-
-**New Plan:**
-```python
-{new_code}
-```
-
-**Analysis Task:**
-1.  Analyze the `new_plan` to determine the expected starting state for its execution (e.g., "should be on the LinkedIn search results page").
-2.  Compare this required state with the `current_browser_state`.
-3.  If they are different, generate a short, self-contained Python script named `course_correction_main` that uses `await act()` and `await observe()` to navigate from the current state to the required state.
-4.  If no correction is needed, respond with "None".
-
-**Example Correction Script:**
-```python
-async def course_correction_main():
-    \"\"\"Navigates back to the search results page.\"\"\"
-    await act("Click the browser's back button twice.")
-```
-
-**Your Response:**
-Generate either the Python script or the word "None".
+**Current Browser State:**\n{current_state}
+**Old Plan (context):**\n```python\n{old_code[:1000]}...\n```
+**New Plan:**\n```python\n{new_code}\n```
+**Task:** If the current state is wrong for the new plan, generate a Python script `course_correction_main` using `await act()` to fix it. Otherwise, respond with "None".
 """
         script = await llm_call(self.llm_client, textwrap.dedent(prompt))
         if "None" in script:
@@ -976,7 +850,6 @@ Generate either the Python script or the word "None".
         if self.controller:
             self.controller.stop()
         if self.coms_manager and hasattr(self.coms_manager, "stop"):
-            # Assuming coms_manager might have an async stop method
             stop_coro = self.coms_manager.stop()
             if inspect.iscoroutine(stop_coro):
                 await stop_coro
