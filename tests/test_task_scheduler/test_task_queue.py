@@ -52,13 +52,13 @@ def test_get_queue_and_reorder():
 def test_insert_into_queue():
     ts = TaskScheduler()
 
-    # base queue with one task
-    ts._create_task(name="base", description="x", schedule=_sch(-1, -1))
+    # base task
+    ts._create_task(name="base", description="x")
 
     # create a brand-new task that will be inserted
-    new_id = ts._create_task(name="insert-me", description="y")
+    new_id = ts._create_task(name="insert-me", description="y")["details"]["task_id"]
 
-    ts._update_task_queue(original=[0], new=[0, new_id])
+    ts._update_task_queue(original=[], new=[0, new_id])
 
     q = ts._get_task_queue()
     assert [t.task_id for t in q] == [0, new_id]
