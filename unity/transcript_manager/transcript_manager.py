@@ -287,7 +287,7 @@ class TranscriptManager(BaseTranscriptManager):
             limit=k,
             exclude_fields=[
                 k
-                for k in unify.get_fields(self._messages_ctx).keys()
+                for k in unify.get_fields(context=self._messages_ctx).keys()
                 if k.endswith("_emb")
             ],
         )
@@ -325,7 +325,7 @@ class TranscriptManager(BaseTranscriptManager):
             limit=k,
             exclude_fields=[
                 k
-                for k in unify.get_fields(self._summaries_ctx).keys()
+                for k in unify.get_fields(context=self._summaries_ctx).keys()
                 if k.endswith("_emb")
             ],
         )
@@ -366,7 +366,7 @@ class TranscriptManager(BaseTranscriptManager):
             sorting={"timestamp": "descending"},
             exclude_fields=[
                 k
-                for k in unify.get_fields(self._messages_ctx).keys()
+                for k in unify.get_fields(context=self._messages_ctx).keys()
                 if k.endswith("_emb")
             ],
         )
@@ -407,7 +407,7 @@ class TranscriptManager(BaseTranscriptManager):
             sorting={"timestamp": "descending"},
             exclude_fields=[
                 k
-                for k in unify.get_fields(self._summaries_ctx).keys()
+                for k in unify.get_fields(context=self._summaries_ctx).keys()
                 if k.endswith("_emb")
             ],
         )

@@ -916,7 +916,7 @@ class KnowledgeManager(BaseKnowledgeManager):
                     limit=k,
                     exclude_fields=[
                         k
-                        for k in unify.get_fields(context).keys()
+                        for k in unify.get_fields(context=context).keys()
                         if k.endswith("_emb")
                     ],
                 )
@@ -968,7 +968,9 @@ class KnowledgeManager(BaseKnowledgeManager):
                     limit=limit,
                     exclude_fields=[
                         k
-                        for k in unify.get_fields(self._ctx_for_table(table)).keys()
+                        for k in unify.get_fields(
+                            context=self._ctx_for_table(table),
+                        ).keys()
                         if k.endswith("_emb")
                     ],
                 )

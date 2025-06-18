@@ -631,7 +631,9 @@ class ContactManager(BaseContactManager):
             },
             limit=k,
             exclude_fields=[
-                k for k in unify.get_fields(self._ctx).keys() if k.endswith("_emb")
+                k
+                for k in unify.get_fields(context=self._ctx).keys()
+                if k.endswith("_emb")
             ],
         )
         return [lg.entries for lg in logs]
@@ -668,7 +670,9 @@ class ContactManager(BaseContactManager):
             offset=offset,
             limit=limit,
             exclude_fields=[
-                k for k in unify.get_fields(self._ctx).keys() if k.endswith("_emb")
+                k
+                for k in unify.get_fields(context=self._ctx).keys()
+                if k.endswith("_emb")
             ],
         )
         return [lg.entries for lg in logs]
