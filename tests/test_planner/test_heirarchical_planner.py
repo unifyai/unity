@@ -285,3 +285,104 @@ async def main_plan():
     assert last_call.args[0] == "main_plan"
     assert last_call.kwargs["is_strategic_replan"] is True
 
+
+@pytest.mark.asyncio
+async def test_full_plan_modification_and_correction(
+    planner: HierarchicalPlanner,
+    mock_controller,
+    monkeypatch,
+):
+    """
+    Objective: Test the end-to-end modify_plan workflow, including surgery
+    and course correction.
+    """
+    # --- Arrange ---
+    initial_code = """
+@verify
+async def go_to_site_a():
+    await act("Navigate to site A")
+
+@verify
+async def click_button_b():
+    await act("Click button B")
+
+@verify
+async def main_plan():
+    await go_to_site_a()
+    # Plan will be modified after this point
+    await click_button_b()
+    return "Finished at site A."
+"""
+
+    modified_code = """
+@verify
+async def go_to_site_c():
+    await act("Navigate to site C") # Course correction should have done this
+
+@verify
+async def click_button_d():
+    await act("Click button D")
+
+@verify
+async def main_plan():
+    await go_to_site_c()
+    await click_button_d()
+    return "Finished at site C."
+"""
+
+    correction_script = """
+async def course_correction_main():
+    '''Navigates to the correct starting site for the new plan.'''
+    await act("Navigate to site C")
+"""
+
+    # Mock the LLM calls for plan generation and modification
+    monkeypatch.setattr(
+        planner,
+        "_generate_initial_plan",
+        AsyncMock(return_value=initial_code),
+    )
+    monkeypatch.setattr(
+        planner,
+        "_perform_plan_surgery",
+        AsyncMock(return_value=modified_code),
+    )
+    monkeypatch.setattr(
+        planner,
+        "_generate_course_correction_script",
+        AsyncMock(return_value=correction_script),
+    )
+
+    # Let verification always succeed for this test
+    monkeypatch.setattr(
+        planner,
+        "_check_state_against_goal",
+        AsyncMock(return_value=VerificationAssessment(status="ok", reason="OK")),
+    )
+
+    # --- Act ---
+    plan = planner.plan("Go to site A and click B.")
+
+    # Let the plan run until it has navigated to site A
+    await asyncio.sleep(1)
+
+    # Now, modify the plan
+    modification_result = await plan.modify_plan(
+        "Change the goal to go to site C and click D instead.",
+    )
+    final_result = await plan.result()
+
+    # --- Assert ---
+    # 1. The modification process should report success.
+    assert "modified and resumed successfully" in modification_result
+
+    # 2. The course correction script should have been called.
+    planner._generate_course_correction_script.assert_called_once()
+    mock_controller.act.assert_any_call("Navigate to site C")
+
+    # 3. The final plan execution should reflect the new goal.
+    mock_controller.act.assert_any_call("Click button D")
+
+    # 4. The final result should be from the modified plan.
+    assert "Finished at site C" in final_result
+    assert plan._state == _HierarchicalPlanState.COMPLETED
