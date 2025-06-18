@@ -665,7 +665,15 @@ class ContactManager(BaseContactManager):
             offset=offset,
             limit=limit,
         )
-        return [Contact(**lg.entries) for lg in logs]
+        return [
+            Contact(
+                **{
+                    k: "<full vector omitted>" if k.endswith("_vec") else v
+                    for k, v in lg.entries.items()
+                },
+            )
+            for lg in logs
+        ]
 
     # ────────────────────────────────────────────────────────────────── #
     #  Batched variants (concurrent, fault-tolerant)                   #
