@@ -636,7 +636,7 @@ class ContactManager(BaseContactManager):
                 if k.endswith("_emb")
             ],
         )
-        return [lg.entries for lg in logs]
+        return [Contact(**lg.entries) for lg in logs]
 
     def _search_contacts(
         self,
@@ -675,7 +675,7 @@ class ContactManager(BaseContactManager):
                 if k.endswith("_emb")
             ],
         )
-        return [lg.entries for lg in logs]
+        return [Contact(**lg.entries) for lg in logs]
 
     # ────────────────────────────────────────────────────────────────── #
     #  Batched variants (concurrent, fault-tolerant)                   #
