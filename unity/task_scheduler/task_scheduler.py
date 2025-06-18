@@ -515,15 +515,17 @@ class TaskScheduler(BaseTaskScheduler):
             "priority": priority,
         }
 
-        if status == Status.primed:
-            self._primed_task = task_details
-
         # ------------------  write log immediately  ------------------ #
         log = unify.log(
             context=self._ctx,
             **task_details,
             new=True,
         )
+        task_id = log.entries["task_id"]
+        task_details["task_id"] = task_id
+
+        if status == Status.primed:
+            self._primed_task = task_details
 
         # ------------------  queue insertion (if relevant)  ---------- #
         if status == Status.queued:
@@ -534,8 +536,6 @@ class TaskScheduler(BaseTaskScheduler):
                 self._sched_prev(schedule) is not None
                 or self._sched_next(schedule) is not None
             )
-
-            task_id = log.entries["task_id"]
 
             if explicit_linkage:
                 return {
