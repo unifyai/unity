@@ -9,6 +9,7 @@ from ..common.embed_utils import EMBED_MODEL, ensure_vector_column
 from ..knowledge_manager.types import ColumnType
 from ..helpers import _handle_exceptions
 from ..common.tool_outcome import ToolOutcome
+from ..common.model_to_fields import model_to_fields
 
 import unify
 from .types.contact import Contact
@@ -47,34 +48,9 @@ class ContactManager(BaseContactManager):
                 unique_id_name="contact_id",
                 description="List of contacts, with all contact details stored.",
             )
+            fields = model_to_fields(Contact)
             unify.create_fields(
-                {
-                    "first_name": {
-                        "type": "str",
-                        "mutable": True,
-                        "description": "Contact's first name.",
-                    },
-                    "surname": {"type": "str", "description": "Contact's surname."},
-                    "email_address": {
-                        "type": "str",
-                        "description": "Contact's email address.",
-                    },
-                    "phone_number": {
-                        "type": "str",
-                        "mutable": True,
-                        "description": "Contact's phone number.",
-                    },
-                    "whatsapp_number": {
-                        "type": "str",
-                        "mutable": True,
-                        "description": "Contact's WhatsApp number.",
-                    },
-                    "description": {
-                        "type": "str",
-                        "mutable": True,
-                        "description": "General description of the contact.",
-                    },
-                },
+                fields,
                 context=self._ctx,
             )
 
