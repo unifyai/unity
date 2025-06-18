@@ -197,7 +197,6 @@ async def main():
         os.getenv("ASSISTANT_NUMBER", ""),
         os.getenv("USER_NUMBER", ""),
         os.getenv("USER_PHONE_NUMBER", ""),
-        None,
         [],
         True,
     )
