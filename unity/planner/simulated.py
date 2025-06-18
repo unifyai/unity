@@ -260,7 +260,6 @@ class SimulatedPlan(BasePlan):
 
 
 class SimulatedPlanner(BasePlanner[SimulatedPlan]):
-
     def __init__(
         self,
         *,

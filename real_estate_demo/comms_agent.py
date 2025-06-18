@@ -217,9 +217,9 @@ class CommsAgent:
         self.curr_task_id += 1
         print("created task")
         contact_comms_agent.attach_task(task)
-        self.contact_num_to_comm_agent[contact_number.replace(" ", "")] = (
-            contact_comms_agent
-        )
+        self.contact_num_to_comm_agent[
+            contact_number.replace(" ", "")
+        ] = contact_comms_agent
         self.attach_task(task)
         print("attached tasks")
 
@@ -270,7 +270,8 @@ class CommsAgent:
             },
         )
 
-    async def wait_for_seconds_or_next_event(self, time: int): ...
+    async def wait_for_seconds_or_next_event(self, time: int):
+        ...
 
     def subscribe(self, topics):
         if not self.event_manager:

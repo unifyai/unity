@@ -105,7 +105,6 @@ class Event(BaseModel):
 
 
 class EventBus:
-
     def __init__(self):
 
         # private attributes

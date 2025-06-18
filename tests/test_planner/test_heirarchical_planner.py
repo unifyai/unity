@@ -121,6 +121,7 @@ async def sign_in():
     assert "Verification for sign_in: ok" in action_log_str
     assert "Verification for main_plan: ok" in action_log_str
 
+
 @pytest.mark.asyncio
 async def test_verification_and_tactical_replanning(
     planner: HierarchicalPlanner,
@@ -202,4 +203,85 @@ async def main_plan():
     assert "Verification for find_email: ok" in action_log_str
     assert "Retrying 'find_email' after reimplementation" in action_log_str
 
+
+@pytest.mark.asyncio
+async def test_strategic_replanning_escalation(
+    planner: HierarchicalPlanner,
+    monkeypatch,
+):
+    """
+    Objective: Verify that a strategic failure in a child function correctly bubbles up
+    and triggers a replan of the parent function, leading to an escalation pause.
+    """
+    # --- Arrange ---
+    child_task_code = """
+@verify
+async def child_task():
+    '''A child task that will fail strategically.'''
+    await act("Perform an impossible action.")
+    return "This should not be reached."
+"""
+
+    main_plan_code = f"""
+{child_task_code}
+
+@verify
+async def main_plan():
+    '''Calls a child task.'''
+    await child_task()
+    return "Completed."
+"""
+
+    # Mock verification to always fail strategically for the child task
+    async def mock_check_state_against_goal(function_name: str, *args, **kwargs):
+        if function_name == "child_task":
+            return VerificationAssessment(
+                status="replan_parent",
+                reason="The child task is conceptually flawed.",
+            )
+        # Let the parent succeed if it's ever re-verified
+        return VerificationAssessment(status="ok", reason="Parent is ok.")
+
+    monkeypatch.setattr(
+        planner,
+        "_check_state_against_goal",
+        mock_check_state_against_goal,
+    )
+
+    # Mock the initial plan generation
+    mock_generate_plan = AsyncMock(return_value=main_plan_code)
+    monkeypatch.setattr(planner, "_generate_initial_plan", mock_generate_plan)
+
+    # We will also mock the replan of the parent to see it gets called
+    mock_handle_dynamic_implementation = AsyncMock()
+    monkeypatch.setattr(
+        HierarchicalPlan,
+        "_handle_dynamic_implementation",
+        mock_handle_dynamic_implementation,
+    )
+
+    # --- Act ---
+    plan = planner.plan("Execute a plan with a flawed child task.")
+
+    # --- Assert ---
+    # 1. Wait for the escalation message. This is the correct way to sync.
+    # It proves the escalation logic was reached. We use a timeout to prevent hangs.
+    escalation_message = await asyncio.wait_for(
+        plan.clarification_up_q.get(),
+        timeout=10,
+    )
+
+    # 2. Now that we have the message, the state MUST be correct.
+    assert plan._state == _HierarchicalPlanState.PAUSED_FOR_ESCALATION
+    assert "ESCALATION" in escalation_message
+    assert "child_task" in escalation_message
+
+    # 3. The parent function ('main_plan') should have been triggered for a strategic replan
+    # multiple times, reaching the escalation limit.
+    assert mock_handle_dynamic_implementation.call_count == plan.MAX_ESCALATIONS
+
+    # Check one of the calls to ensure it was for the right function and reason.
+    last_call = mock_handle_dynamic_implementation.call_args_list[-1]
+    assert last_call.args[0] == "main_plan"
+    assert last_call.kwargs["is_strategic_replan"] is True
 

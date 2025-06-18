@@ -27,7 +27,6 @@ API_KEY = os.environ["UNIFY_KEY"]
 
 
 class KnowledgeManager(BaseKnowledgeManager):
-
     def __init__(self) -> None:
         """
         KnowledgeManager now **directly manipulates** the root-level
