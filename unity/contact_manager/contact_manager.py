@@ -78,7 +78,7 @@ class ContactManager(BaseContactManager):
         self._ask_tools: Dict[str, Callable] = {
             **methods_to_tool_dict(
                 self._search_contacts,
-                self._nearest_column,
+                self._nearest_contacts,
                 include_class_name=False,
             ),
             **self._schema_tools,
@@ -91,7 +91,7 @@ class ContactManager(BaseContactManager):
             self._update_contact,
             self._update_contacts,
             self._search_contacts,
-            self._nearest_column,
+            self._nearest_contacts,
         ]
 
         self._update_tools: Dict[str, Callable] = {
@@ -255,41 +255,6 @@ class ContactManager(BaseContactManager):
             embed_column=column,
             source_column=source,
         )
-
-    def _nearest_column(
-        self,
-        *,
-        source: str,
-        text: str,
-        k: int = 5,
-    ) -> List[Dict[str, Any]]:
-        """
-        Semantic nearest-neighbour search over the source column.
-
-        Parameters
-        ----------
-        source : str
-            Name of the text column to embed (any default or custom column).
-        text : str
-            Query text.
-        k : int, default 5
-            Number of closest rows to return.
-
-        Returns
-        -------
-        List[Dict[str, Any]]
-            Rows sorted by ascending cosine distance.
-        """
-        vec_col = f"{source}_emb"
-        self._ensure_table_vector(column=vec_col, source=source)
-        logs = unify.get_logs(
-            context=self._ctx,
-            sorting={
-                f"cosine({vec_col}, embed('{text}', model='{EMBED_MODEL}'))": "ascending",
-            },
-            limit=k,
-        )
-        return [lg.entries for lg in logs]
 
     # Public #
     # -------#
@@ -633,6 +598,44 @@ class ContactManager(BaseContactManager):
             "details": {"contact_id": contact_id},
         }
 
+    def _nearest_contacts(
+        self,
+        *,
+        column: str,
+        text: str,
+        k: int = 5,
+    ) -> List[Dict[str, Any]]:
+        """
+        Semantic nearest-neighbour search over the source column.
+
+        Parameters
+        ----------
+        column : str
+            Name of the text column to embed (any default or custom column).
+        text : str
+            Query text.
+        k : int, default 5
+            Number of closest rows to return.
+
+        Returns
+        -------
+        List[Dict[str, Any]]
+            Rows sorted by ascending cosine distance.
+        """
+        vec_col = f"{column}_emb"
+        self._ensure_table_vector(column=vec_col, source=column)
+        logs = unify.get_logs(
+            context=self._ctx,
+            sorting={
+                f"cosine({vec_col}, embed('{text}', model='{EMBED_MODEL}'))": "ascending",
+            },
+            limit=k,
+            exclude_fields=[
+                k for k in unify.get_fields(self._ctx).keys() if k.endswith("_emb")
+            ],
+        )
+        return [lg.entries for lg in logs]
+
     def _search_contacts(
         self,
         *,
@@ -664,16 +667,11 @@ class ContactManager(BaseContactManager):
             filter=filter,
             offset=offset,
             limit=limit,
+            exclude_fields=[
+                k for k in unify.get_fields(self._ctx).keys() if k.endswith("_emb")
+            ],
         )
-        return [
-            Contact(
-                **{
-                    k: "<full vector embedding omitted>" if k.endswith("_emb") else v
-                    for k, v in lg.entries.items()
-                },
-            )
-            for lg in logs
-        ]
+        return [lg.entries for lg in logs]
 
     # ────────────────────────────────────────────────────────────────── #
     #  Batched variants (concurrent, fault-tolerant)                   #
