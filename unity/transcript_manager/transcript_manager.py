@@ -23,8 +23,8 @@ from .base import BaseTranscriptManager
 class TranscriptManager(BaseTranscriptManager):
 
     # Vector embedding column names
-    _VEC_MSG = "content_emb"
-    _VEC_SUM = "summary_emb"
+    _MSG_EMB = "content_emb"
+    _SUM_EMB = "summary_emb"
 
     def __init__(
         self,
@@ -55,15 +55,15 @@ class TranscriptManager(BaseTranscriptManager):
         ), "read and write contexts must be the same when instantiating a TranscriptManager."
 
         if read_ctx:
-            self._transcripts_ctx = f"{read_ctx}/Messages"
+            self._messages_ctx = f"{read_ctx}/Messages"
             self._summaries_ctx = f"{read_ctx}/MessageExchangeSummaries"
         else:
-            self._transcripts_ctx = "Contacts"
+            self._messages_ctx = "Contacts"
             self._summaries_ctx = "MessageExchangeSummaries"
         ctxs = unify.get_contexts()
-        if self._transcripts_ctx not in ctxs:
+        if self._messages_ctx not in ctxs:
             unify.create_context(
-                self._transcripts_ctx,
+                self._messages_ctx,
                 unique_id_column=True,
                 unique_id_name="message_id",
                 description="List of *all* timestamped messages sent between *all* contacts across *all* mediums.",
@@ -71,7 +71,7 @@ class TranscriptManager(BaseTranscriptManager):
             fields = model_to_fields(Message)
             unify.create_fields(
                 fields,
-                context=self._transcripts_ctx,
+                context=self._messages_ctx,
             )
         if self._summaries_ctx not in ctxs:
             unify.create_context(
@@ -250,7 +250,7 @@ class TranscriptManager(BaseTranscriptManager):
             entries = [entries]
 
         unify.create_logs(
-            context=self._transcripts_ctx,
+            context=self._messages_ctx,
             entries=entries,  # type: ignore[arg-type] – now definitely list[dict]
         )
 
@@ -278,16 +278,16 @@ class TranscriptManager(BaseTranscriptManager):
         list[Message]
             Messages sorted by **ascending** cosine distance (best match first).
         """
-        ensure_vector_column(self._transcripts_ctx, self._VEC_MSG, "content")
+        ensure_vector_column(self._messages_ctx, self._MSG_EMB, "content")
         logs = unify.get_logs(
-            context=self._transcripts_ctx,
+            context=self._messages_ctx,
             sorting={
-                f"cosine({self._VEC_MSG}, embed('{text}', model='{EMBED_MODEL}'))": "ascending",
+                f"cosine({self._MSG_EMB}, embed('{text}', model='{EMBED_MODEL}'))": "ascending",
             },
             limit=k,
             exclude_fields=[
                 k
-                for k in unify.get_fields(self._transcripts_ctx).keys()
+                for k in unify.get_fields(self._messages_ctx).keys()
                 if k.endswith("_emb")
             ],
         )
@@ -316,11 +316,11 @@ class TranscriptManager(BaseTranscriptManager):
             Summaries ordered by similarity (*lowest* cosine distance first).
         """
 
-        ensure_vector_column(self._summaries_ctx, self._VEC_SUM, "summary")
+        ensure_vector_column(self._summaries_ctx, self._SUM_EMB, "summary")
         logs = unify.get_logs(
             context=self._summaries_ctx,
             sorting={
-                f"cosine({self._VEC_SUM}, embed('{text}', model='{EMBED_MODEL}'))": "ascending",
+                f"cosine({self._SUM_EMB}, embed('{text}', model='{EMBED_MODEL}'))": "ascending",
             },
             limit=k,
             exclude_fields=[
@@ -359,14 +359,14 @@ class TranscriptManager(BaseTranscriptManager):
             Matching messages in creation order.
         """
         logs = unify.get_logs(
-            context=self._transcripts_ctx,
+            context=self._messages_ctx,
             filter=filter,
             offset=offset,
             limit=limit,
             sorting={"timestamp": "descending"},
             exclude_fields=[
                 k
-                for k in unify.get_fields(self._transcripts_ctx).keys()
+                for k in unify.get_fields(self._messages_ctx).keys()
                 if k.endswith("_emb")
             ],
         )

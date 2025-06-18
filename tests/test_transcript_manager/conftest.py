@@ -230,7 +230,7 @@ class ScenarioBuilder:
         msgs: List[tuple[int, int, datetime, str]],
     ) -> None:
         unify.create_logs(
-            context=self.tm._transcripts_ctx,
+            context=self.tm._messages_ctx,
             entries=[
                 dict(
                     medium=medium,
