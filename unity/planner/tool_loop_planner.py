@@ -138,9 +138,9 @@ class ToolLoopPlan(BasePlan):
         request_clarification_tool_for_llm.__qualname__ = (
             "request_clarification_from_plan_caller"
         )
-        current_tools[
-            "request_clarification_from_plan_caller"
-        ] = request_clarification_tool_for_llm
+        current_tools["request_clarification_from_plan_caller"] = (
+            request_clarification_tool_for_llm
+        )
         return current_tools
 
     async def _manage_plan_execution(self):

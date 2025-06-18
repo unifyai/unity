@@ -740,9 +740,11 @@ class HierarchicalPlanner(BasePlanner[HierarchicalPlan]):
                 prompt = self._build_initial_plan_prompt(
                     goal,
                     existing_functions,
-                    ""
-                    if attempt == 0
-                    else f"Last attempt failed: {last_error}. Please fix.",
+                    (
+                        ""
+                        if attempt == 0
+                        else f"Last attempt failed: {last_error}. Please fix."
+                    ),
                 )
                 response = await llm_call(self.llm_client, prompt)
                 code = (
@@ -832,9 +834,11 @@ class HierarchicalPlanner(BasePlanner[HierarchicalPlan]):
         interactions,
     ):
         interactions_log = "\n".join(
-            f"- Action: `{act}`, Observation: `{obs or 'N/A'}`"
-            if kind == "observe"
-            else f"- Action: `{act}`"
+            (
+                f"- Action: `{act}`, Observation: `{obs or 'N/A'}`"
+                if kind == "observe"
+                else f"- Action: `{act}`"
+            )
             for kind, act, obs in interactions
         )
         prompt = textwrap.dedent(
