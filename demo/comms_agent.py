@@ -232,7 +232,7 @@ class CommsAgent:
 
         self.publish(
             {
-                "topic": self.agent_id,
+                "topic": "user_agent",
                 "event": ContactManagerStartedEvent(
                     self.agent_id, chat_history, action.query
                 ).to_dict(),
@@ -246,7 +246,7 @@ class CommsAgent:
             answer, _ = answer
         self.publish(
             {
-                "topic": self.agent_id,
+                "topic": "user_agent",
                 "event": ContactManagerEndedEvent(
                     self.agent_id, answer
                 ).to_dict(),
@@ -257,7 +257,7 @@ class CommsAgent:
         await self.contact_manager_handle.interject(action.query)
         self.publish(
             {
-                "topic": self.agent_id,
+                "topic": "user_agent",
                 "event": ContactManagerInterjectedEvent(
                     self.agent_id, action.query
                 ).to_dict(),

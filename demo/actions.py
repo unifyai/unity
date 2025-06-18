@@ -122,6 +122,8 @@ CommsActionModel = Union[
     SendCallAction,
     AskUserAgent,
     EndTask,
+    ContactManagerAction,
+    ContactManagerInterjectAction,
 ]
 
 

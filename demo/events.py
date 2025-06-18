@@ -370,7 +370,7 @@ class ContactManagerStartedEvent(Event):
         self.agent_id = agent_id
         self.chat_history = chat_history
         self.query = query
-        super().__init__(*args, **kwargs)
+        super().__init__(*args, **kwargs, transient=True)
     
     def to_dict(self) -> dict[str, Any]:
         base_dict = super().to_dict()
@@ -395,7 +395,7 @@ class ContactManagerInterjectedEvent(Event):
 
         self.agent_id = agent_id
         self.query = query
-        super().__init__(*args, **kwargs)
+        super().__init__(*args, **kwargs, transient=True)
 
     def to_dict(self) -> dict[str, Any]:
         base_dict = super().to_dict()
@@ -420,3 +420,17 @@ class ContactManagerEndedEvent(Event):
         self.agent_id = agent_id
         self.query = query
         super().__init__(*args, **kwargs)
+
+    def to_dict(self) -> dict[str, Any]:
+        base_dict = super().to_dict()
+        base_dict["payload"].update(
+            {
+                "agent_id": self.agent_id,
+                "query": self.query,
+            },
+        )
+        return base_dict
+
+    def __str__(self):
+        return f"""[CONTACT MANAGER ENDED @ {self.fmt_timestamp}]
+        {self.query}"""
