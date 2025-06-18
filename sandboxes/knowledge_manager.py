@@ -164,9 +164,7 @@ async def _dispatch_with_context(
     fn = (
         km.update
         if intent.action == "store"
-        else km.refactor
-        if intent.action == "refactor"
-        else km.ask
+        else km.refactor if intent.action == "refactor" else km.ask
     )
     handle = await fn(
         raw,
