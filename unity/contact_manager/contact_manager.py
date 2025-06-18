@@ -21,7 +21,6 @@ from ..common.llm_helpers import (
 
 
 class ContactManager(BaseContactManager):
-
     def __init__(self) -> None:
         """
         Responsible for managing the list of contact details stored upstream.

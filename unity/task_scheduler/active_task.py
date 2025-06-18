@@ -9,7 +9,6 @@ if TYPE_CHECKING:
 
 
 class ActiveTask(BasePlan):
-
     def __init__(
         self,
         task_description: str,
