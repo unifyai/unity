@@ -10,6 +10,7 @@ from typing import List, Dict, Any
 
 import unify
 from .base import BaseContactManager
+from .types.contact import Contact
 from .contact_manager import ContactManager
 from .prompt_builders import build_ask_prompt, build_update_prompt
 from ..common.llm_helpers import SteerableToolHandle, methods_to_tool_dict
@@ -164,7 +165,11 @@ class SimulatedContactManager(BaseContactManager):
             ContactManager._search_contacts,
             include_class_name=False,
         )
-        ask_msg = build_ask_prompt(ask_tools)
+        ask_msg = build_ask_prompt(
+            ask_tools,
+            10,
+            [{k: str(v.annotation)} for k, v in Contact.model_fields.items()],
+        )
         upd_msg = build_update_prompt(upd_tools)
 
         self._llm.set_system_message(
