@@ -145,6 +145,7 @@ class ContactManager(BaseContactManager):
         *,
         column_name: str,
         column_type: ColumnType | str,
+        column_description: Optional[str] = None,
     ) -> Dict[str, str]:
         """
         Add a new optional column to the contacts table.
@@ -155,6 +156,8 @@ class ContactManager(BaseContactManager):
             The name of the column to create (which MUST be snake case).
         column_type : ColumnType | str
             The type of the column to create.
+        column_description : Optional[str], default None
+            Optional description of the column's purpose.
 
         Returns
         -------
@@ -178,10 +181,18 @@ class ContactManager(BaseContactManager):
         proj = unify.active_project()
         url = f"{os.environ['UNIFY_BASE_URL']}/logs/fields"
         headers = {"Authorization": f"Bearer {os.environ['UNIFY_KEY']}"}
+        column_info = {
+            "type": str(column_type),
+            "mutable": True,
+        }
+        if column_description is not None:
+            column_info["description"] = column_description
         json_input = {
             "project": proj,
             "context": self._ctx,
-            "fields": {column_name: str(column_type)},
+            "fields": {
+                column_name: column_info,
+            },
         }
         response = requests.request("POST", url, json=json_input, headers=headers)
         _handle_exceptions(response)
