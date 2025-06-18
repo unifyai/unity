@@ -88,6 +88,7 @@ class HierarchicalPlan(BasePlan):
     """
 
     MAX_ESCALATIONS = 3
+    MAX_LOCAL_RETRIES = 2
 
     def __init__(
         self,
@@ -147,10 +148,13 @@ class HierarchicalPlan(BasePlan):
                     "force_stop": True,
                 }
 
-            if self._state == _HierarchicalPlanState.PAUSED_FOR_MODIFICATION:
+            if self._state in (
+                _HierarchicalPlanState.PAUSED_FOR_MODIFICATION,
+                _HierarchicalPlanState.PAUSED_FOR_ESCALATION,
+            ):
                 return {
                     "status": "paused",
-                    "message": "Execution paused for modification.",
+                    "message": f"Execution paused for {self._state.name.lower()}.",
                 }
 
             try:
@@ -183,20 +187,26 @@ class HierarchicalPlan(BasePlan):
                 }
             except ReplanFromParentException as e:
                 self.escalation_count += 1
-                if self.escalation_count > self.MAX_ESCALATIONS:
-                    self._state = _HierarchicalPlanState.ERROR
-                    self._is_complete = True
-                    err_msg = f"ERROR: Max escalations ({self.MAX_ESCALATIONS}) exceeded. Final reason: {e}"
+                if self.escalation_count >= self.MAX_ESCALATIONS:
+                    self._state = _HierarchicalPlanState.PAUSED_FOR_ESCALATION
+                    err_msg = f"ESCALATION LIMIT: Max escalations ({self.MAX_ESCALATIONS}) reached. Pausing for intervention. Final reason: {e}"
                     self.action_log.append(err_msg)
-                    return {"status": "error", "message": err_msg, "force_stop": True}
+                    await self.clarification_up_q.put(err_msg)
+                    return {
+                        "status": "paused_for_escalation",
+                        "message": err_msg,
+                        "force_stop": True,
+                    }
 
-                self._state = _HierarchicalPlanState.PAUSED_FOR_ESCALATION
-                escalation_msg = (
-                    f"ESCALATION ({self.escalation_count}/{self.MAX_ESCALATIONS}): {e}"
+                # This path is for strategic replan of the parent, not a terminal error
+                self.action_log.append(
+                    f"Escalation ({self.escalation_count}/{self.MAX_ESCALATIONS}): {e}",
                 )
-                self.action_log.append(escalation_msg)
-                await self.clarification_up_q.put(escalation_msg)
-                return {"status": "paused_for_escalation", "details": str(e)}
+                # Let the loop continue to handle the replan at the parent level
+                return {
+                    "status": "in_progress",
+                    "message": f"Strategic replan triggered for parent due to: {e}",
+                }
             except Exception as e:
                 logger.error(f"Plan step execution failed: {e}", exc_info=True)
                 self._state = _HierarchicalPlanState.ERROR
@@ -228,7 +238,8 @@ class HierarchicalPlan(BasePlan):
 
     def _get_unimplemented_function_name(self) -> str:
         _, _, exc_tb = sys.exc_info()
-        return traceback.extract_tb(exc_tb)[-1].name
+        frame_summary = traceback.extract_tb(exc_tb)[-1]
+        return frame_summary.name
 
     def _get_main_function_name(self) -> str | None:
         try:
@@ -258,12 +269,14 @@ class HierarchicalPlan(BasePlan):
             new_tree = transformer.visit(old_tree)
 
             if not transformer.replaced:
-                raise RuntimeError(
-                    f"Could not find function '{function_name}' in AST to update.",
-                )
+                old_tree.body.append(new_func_node)
+                new_tree = old_tree
 
             self.plan_source_code = ast.unparse(new_tree)
-            self.function_source_map[function_name] = new_code
+            self.function_source_map[function_name] = ast.get_source_segment(
+                self.plan_source_code,
+                new_func_node,
+            )
 
             exec(
                 compile(self.plan_source_code, "<string>", "exec"),
@@ -282,6 +295,7 @@ class HierarchicalPlan(BasePlan):
             return f"Plan cannot be modified in state: {self._state.name}"
 
         original_source_code = self.plan_source_code
+        self.action_log.append(f"Modification requested: '{modification_request}'")
         self._state = _HierarchicalPlanState.PAUSED_FOR_MODIFICATION
         if self.main_loop_handle:
             self.main_loop_handle.stop()
@@ -298,7 +312,10 @@ class HierarchicalPlan(BasePlan):
             )
 
             if correction_script:
-                await self._execute_correction_script(correction_script)
+                await self._execute_correction_script(
+                    correction_script,
+                    new_source_code,
+                )
 
             self.plan_source_code = new_source_code
             self._state = _HierarchicalPlanState.RUNNING
@@ -309,18 +326,27 @@ class HierarchicalPlan(BasePlan):
             return "Plan modified and resumed successfully."
         except Exception as e:
             logger.error(f"Failed to modify plan, rolling back: {e}", exc_info=True)
+            self.action_log.append(f"ERROR: Failed to modify plan, rolling back. {e}")
             self.plan_source_code = original_source_code
             self._state = _HierarchicalPlanState.RUNNING
             await self.planner._prepare_execution_environment(self)
             await self._start_main_execution_loop()
-            return "Failed to modify plan. Rolled back and resumed."
+            return "Failed to modify the plan. Rolled back to previous version and resumed."
 
-    async def _execute_correction_script(self, script: str):
+    async def _execute_correction_script(self, script: str, new_plan_code: str):
         logger.info("Executing course correction script...")
         self.action_log.append("Executing course correction script.")
+        interactions = []
         try:
             sandbox_globals = self.planner._create_sandbox_globals()
             local_namespace = self.execution_namespace.copy()
+
+            async def act_wrapper(instruction: str):
+                interactions.append(("act", instruction, None))
+                return await self.planner.controller.act(instruction)
+
+            local_namespace["act"] = act_wrapper
+
             exec(
                 compile(script, "<correction_script>", "exec"),
                 sandbox_globals,
@@ -331,17 +357,51 @@ class HierarchicalPlan(BasePlan):
                 raise RuntimeError(
                     "Script must define 'async def course_correction_main'.",
                 )
+
             await asyncio.wait_for(correction_fn(), timeout=60.0)
-            self.action_log.append("Course correction finished.")
+
+            # Verification step
+            assessment = await self.planner._check_state_against_goal(
+                function_name="course_correction",
+                function_docstring=f"Align state for new plan: {new_plan_code[:200]}...",
+                interactions=interactions,
+            )
+            if assessment.status != "ok":
+                raise RuntimeError(
+                    f"Course correction failed verification: {assessment.reason}",
+                )
+
+            self.action_log.append("Course correction finished and verified.")
         except Exception as e:
             self.action_log.append(f"ERROR: Course correction failed: {e}")
             raise RuntimeError(f"Course correction script failed: {e}") from e
 
+    async def resolve_escalation_with_new_goal(self, new_goal: str) -> str:
+        if self._state != _HierarchicalPlanState.PAUSED_FOR_ESCALATION:
+            return f"Error: Plan is not paused for escalation. Current state: {self._state.name}"
+
+        self.action_log.append(f"Resolving escalation with new goal: '{new_goal}'")
+        self.goal = new_goal
+        self.escalation_count = 0
+        self._is_complete = False
+
+        if self.main_loop_handle and not self.main_loop_handle.done():
+            self.main_loop_handle.stop()
+            self.main_loop_handle = None
+
+        await self._initialize_and_run()
+        return f"Plan restarted with new goal: '{new_goal}'"
+
     async def result(self) -> str:
         if self._execution_task and not self._execution_task.done():
-            await self._execution_task
+            try:
+                await self._execution_task
+            except Exception as e:
+                return f"Plan execution resulted in an error: {e}"
+
         if not self.main_loop_handle:
             return f"Plan concluded in state {self._state.name}."
+
         if self.main_loop_handle.done():
             return await self.main_loop_handle.result()
         return "Plan is still running."
@@ -362,7 +422,7 @@ class HierarchicalPlan(BasePlan):
         if not self._is_complete:
             self._state = _HierarchicalPlanState.STOPPED
             self._is_complete = True
-            if self.main_loop_handle:
+            if self.main_loop_handle and not self.main_loop_handle.done():
                 self.main_loop_handle.stop()
             self.action_log.append("Plan stopped by user.")
             return "Plan was stopped."
@@ -397,6 +457,7 @@ class HierarchicalPlan(BasePlan):
                 You are an assistant analyzing an agent's state. Answer the user's question concisely based *only* on the provided context.
 
                 **Goal:** {self.goal}
+                **State:** {self._state.name}
                 **Call Stack:** {' -> '.join(self.call_stack) or 'None'}
                 **Browser State:** {browser_context}
                 **Recent Log:**
@@ -408,7 +469,7 @@ class HierarchicalPlan(BasePlan):
             )
             return await llm_call(self.planner.llm_client, prompt)
         except Exception as e:
-            return f"Could not answer question. Current state: {self._state.name}."
+            return f"Could not answer question. Current state: {self._state.name}. Error: {e}"
 
     def _is_valid_method(self, name: str) -> bool:
         if name == "stop":
@@ -424,15 +485,24 @@ class HierarchicalPlan(BasePlan):
         if name == "modify_plan":
             return self._state in (
                 _HierarchicalPlanState.PAUSED,
-                _HierarchicalPlanState.PAUSED_FOR_ESCALATION,
                 _HierarchicalPlanState.RUNNING,
             )
+        if name == "resolve_escalation_with_new_goal":
+            return self._state == _HierarchicalPlanState.PAUSED_FOR_ESCALATION
         return False
 
     @property
     def valid_tools(self) -> Dict[str, Callable]:
         tools = {}
-        potential_tools = ["stop", "pause", "resume", "ask", "modify_plan", "interject"]
+        potential_tools = [
+            "stop",
+            "pause",
+            "resume",
+            "ask",
+            "modify_plan",
+            "interject",
+            "resolve_escalation_with_new_goal",
+        ]
         for method_name in potential_tools:
             if self._is_valid_method(method_name):
                 tools[method_name] = getattr(self, method_name)
@@ -476,6 +546,16 @@ class HierarchicalPlanner(BasePlanner[HierarchicalPlan]):
                 "range",
                 "Exception",
                 "isinstance",
+                "any",
+                "all",
+                "sum",
+                "min",
+                "max",
+                "abs",
+                "round",
+                "sorted",
+                "enumerate",
+                "zip",
             ]
         }
         return {"__builtins__": safe_builtins, "asyncio": asyncio}
@@ -500,13 +580,16 @@ class HierarchicalPlanner(BasePlanner[HierarchicalPlan]):
 
         plan.function_source_map.clear()
         if plan.plan_source_code:
-            tree = ast.parse(plan.plan_source_code)
-            for node in ast.walk(tree):
-                if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
-                    plan.function_source_map[node.name] = ast.get_source_segment(
-                        plan.plan_source_code,
-                        node,
-                    )
+            try:
+                tree = ast.parse(plan.plan_source_code)
+                for node in ast.walk(tree):
+                    if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                        plan.function_source_map[node.name] = ast.get_source_segment(
+                            plan.plan_source_code,
+                            node,
+                        )
+            except Exception:
+                pass
 
         exec(
             compile(plan.plan_source_code or "pass", "<string>", "exec"),
@@ -521,8 +604,9 @@ class HierarchicalPlanner(BasePlanner[HierarchicalPlan]):
                 plan.call_stack.append(fn.__name__)
                 plan.interaction_stack.append([])
                 logger.info(f"VERIFY: Entering '{fn.__name__}'")
+                last_exception = None
                 try:
-                    for attempt in range(HierarchicalPlan.MAX_ESCALATIONS):
+                    for _ in range(plan.MAX_LOCAL_RETRIES):
                         try:
                             func_source = plan.function_source_map.get(fn.__name__)
                             return await self._execute_and_verify_step(
@@ -539,6 +623,7 @@ class HierarchicalPlanner(BasePlanner[HierarchicalPlan]):
                                 is_strategic_replan=True,
                                 replan_reason=str(e),
                             )
+                            last_exception = e
                             continue
                         except NotImplementedError:
                             raise
@@ -547,7 +632,7 @@ class HierarchicalPlanner(BasePlanner[HierarchicalPlan]):
                             await asyncio.sleep(1)
                             continue
                     raise ReplanFromParentException(
-                        f"Function '{fn.__name__}' failed after retries. Last error: {last_exception}",
+                        f"Function '{fn.__name__}' failed after {plan.MAX_LOCAL_RETRIES} local retries. Last error: {last_exception}",
                     )
                 finally:
                     plan.call_stack.pop()
@@ -570,8 +655,8 @@ class HierarchicalPlanner(BasePlanner[HierarchicalPlan]):
             interactions.append(("act", instruction, None))
             return await self.controller.act(instruction)
 
-        async def observe_wrapper(query: str):
-            res = await self.controller.observe(query)
+        async def observe_wrapper(query: str, **opts):
+            res = await self.controller.observe(query, **opts)
             interactions.append(("observe", query, res))
             return res
 
@@ -582,11 +667,13 @@ class HierarchicalPlanner(BasePlanner[HierarchicalPlan]):
             act_wrapper,
             observe_wrapper,
         )
-        result = await fn(*args, **kwargs)
-        plan.execution_namespace["act"], plan.execution_namespace["observe"] = (
-            original_act,
-            original_observe,
-        )
+        try:
+            result = await fn(*args, **kwargs)
+        finally:
+            plan.execution_namespace["act"], plan.execution_namespace["observe"] = (
+                original_act,
+                original_observe,
+            )
 
         all_interactions = [
             item for sublist in plan.interaction_stack for item in sublist
@@ -596,8 +683,8 @@ class HierarchicalPlanner(BasePlanner[HierarchicalPlan]):
             fn.__doc__,
             all_interactions,
         )
-        logger.info(
-            f"VERIFY Assessment for '{fn.__name__}': {assessment.status} - {assessment.reason}",
+        plan.action_log.append(
+            f"Verification for {fn.__name__}: {assessment.status} - '{assessment.reason}'",
         )
 
         if assessment.status == "ok":
@@ -619,9 +706,9 @@ class HierarchicalPlanner(BasePlanner[HierarchicalPlan]):
 
     async def _generate_initial_plan(self, goal: str) -> str:
         max_retries = 3
+        last_error = ""
         for attempt in range(max_retries):
             try:
-                # Prompt building logic...
                 existing_functions = (
                     self.function_manager.list_functions(include_implementations=True)
                     if self.function_manager
@@ -630,7 +717,9 @@ class HierarchicalPlanner(BasePlanner[HierarchicalPlan]):
                 prompt = self._build_initial_plan_prompt(
                     goal,
                     existing_functions,
-                    "" if attempt == 0 else "Last attempt failed. Please fix.",
+                    ""
+                    if attempt == 0
+                    else f"Last attempt failed: {last_error}. Please fix.",
                 )
                 response = await llm_call(self.llm_client, prompt)
                 code = (
@@ -639,9 +728,10 @@ class HierarchicalPlanner(BasePlanner[HierarchicalPlan]):
                 ast.parse(code)
                 return code
             except SyntaxError as e:
+                last_error = str(e)
                 if attempt == max_retries - 1:
                     raise
-        raise RuntimeError("Failed to generate a valid plan.")
+        raise RuntimeError("Failed to generate a valid plan after multiple retries.")
 
     def _build_initial_plan_prompt(self, goal, existing_functions, retry_msg):
         primitives_doc = (
@@ -666,6 +756,7 @@ class HierarchicalPlanner(BasePlanner[HierarchicalPlan]):
             2. All functions MUST be `async def` and decorated with `@verify`.
             3. Stub complex new tasks with `raise NotImplementedError`.
             4. The script must be complete, including any reused function code.
+            5. CRITICAL: You MUST NOT use any `import` statements. Rely only on provided primitives.
             **Code of available functions:**
             ```python
             {full_existing_code or "# None"}
@@ -690,8 +781,8 @@ class HierarchicalPlanner(BasePlanner[HierarchicalPlan]):
         )
         func_sig = inspect.signature(plan.execution_namespace[function_name])
         parent_code = (
-            plan.function_source_map.get(plan.call_stack[-1], "")
-            if plan.call_stack
+            plan.function_source_map.get(plan.call_stack[-2], "")
+            if len(plan.call_stack) > 1
             else ""
         )
         prompt = textwrap.dedent(
@@ -699,13 +790,14 @@ class HierarchicalPlanner(BasePlanner[HierarchicalPlan]):
             You are an expert Python programmer. Implement the function below.
             {replan_context}
             **Goal:** "{plan.goal}"
-            **Function:** `async def {function_name}{func_sig}:`
-            **Parent Code:**\n```python\n{parent_code}\n```
-            **Browser State:** "{browser_state}"
+            **Function to Implement:** `async def {function_name}{func_sig}:`
+            **Parent Function Code:**\n```python\n{parent_code}\n```
+            **Current Browser State:** "{browser_state}"
             **Instructions:**
-            1. Write the full `async def` implementation for `{function_name}`, with `@verify`.
-            2. Use only `act`, `observe`, etc.
+            1. Write the full `async def` implementation for `{function_name}`.
+            2. The function MUST be decorated with `@verify`.
             3. Provide a complete function (decorator, signature, docstring, body).
+            4. CRITICAL: You MUST NOT use any `import` statements.
         """,
         )
         return await llm_call(self.llm_client, prompt)
@@ -724,29 +816,33 @@ class HierarchicalPlanner(BasePlanner[HierarchicalPlan]):
         )
         prompt = textwrap.dedent(
             f"""
-            You are a verification agent. Assess if the actions met the goal.
+            You are a verification agent. Assess if the actions met the function's goal.
             **Function:** `{function_name}` (Purpose: {function_docstring or 'N/A'})
-            **Log:**\n{interactions_log or "No actions recorded."}
-            **Task:** Respond with JSON: {{"status": "...", "reason": "..."}}.
-            Statuses: "ok", "reimplement_local", "replan_parent", "fatal_error".
+            **Action Log:**\n{interactions_log or "No actions recorded."}
+            **Task:** Respond with a single JSON object: {{"status": "...", "reason": "..."}}.
+            Valid statuses: "ok", "reimplement_local" (tactical error), "replan_parent" (strategic error), "fatal_error".
         """,
         )
         response_str = await llm_call(self.llm_client, prompt)
         try:
-            return VerificationAssessment(**json.loads(response_str))
+            clean_response = (
+                response_str.strip().replace("```json", "").replace("```", "")
+            )
+            return VerificationAssessment(**json.loads(clean_response))
         except (json.JSONDecodeError, TypeError):
             return VerificationAssessment(
                 status="fatal_error",
-                reason="LLM provided malformed assessment.",
+                reason="LLM provided malformed JSON assessment.",
             )
 
     async def _perform_plan_surgery(self, current_code, request):
         prompt = textwrap.dedent(
             f"""
             You are a master programmer modifying a script.
-            **Request:** "{request}"
+            **Modification Request:** "{request}"
             **Current Code:**\n```python\n{current_code}\n```
-            **Instructions:** Rewrite the script to incorporate the change. Keep all `@verify` decorators. Output only the new, complete Python script.
+            **Instructions:** Rewrite the entire script to incorporate the change. Ensure all functions retain their `@verify` decorators. Output only the new, complete Python script. Do not include any explanation.
+            CRITICAL: You MUST NOT use any `import` statements.
         """,
         )
         return await llm_call(self.llm_client, prompt)
@@ -755,11 +851,15 @@ class HierarchicalPlanner(BasePlanner[HierarchicalPlan]):
         current_state = await self.controller.observe("Describe current page.")
         prompt = textwrap.dedent(
             f"""
-            You are a state transition analyst. An agent's plan changed. Generate a script to fix its state if needed.
-            **Current State:** {current_state}
-            **Old Plan:**\n```python\n{old_code[:1000]}...\n```
-            **New Plan:**\n```python\n{new_code}\n```
-            **Task:** If needed, write a script with `async def course_correction_main()` using `await act()` to align the state. Else, respond "None".
+            You are a state transition analyst. An agent's plan has changed. If the agent's current state is incompatible with the start of the new plan, generate a Python script to fix it.
+            **Current Browser State:** {current_state}
+            **Old Plan Snippet:**\n```python\n{old_code[:1000]}...\n```
+            **New Plan Code:**\n```python\n{new_code}\n```
+            **Task:**
+            1. Analyze if the **Current Browser State** is a suitable starting point for the **New Plan Code**.
+            2. If it is NOT suitable, write a script with an `async def course_correction_main()` function that uses `await act()` and `await observe()` to navigate to the correct state.
+            3. If the state is already suitable, respond ONLY with the word "None".
+            4. CRITICAL: The script MUST NOT use any `import` statements.
         """,
         )
         script = await llm_call(self.llm_client, prompt)
