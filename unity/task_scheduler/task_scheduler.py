@@ -28,7 +28,7 @@ import json
 
 class TaskScheduler(BaseTaskScheduler):
 
-    _VEC_TASK = "task_vec"
+    _VEC_TASK = "task_emb"
 
     def __init__(
         self,
