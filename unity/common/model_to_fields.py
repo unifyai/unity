@@ -35,6 +35,8 @@ def model_to_fields(model: type[BaseModel]) -> dict[str, dict[str, Any]]:
         origin = get_origin(py_t) or py_t
 
         # Containers ----------------------------------------------------------
+        if isinstance(origin, type) and issubclass(origin, BaseModel):
+            return ColumnType.dict
         if origin in (dict, Mapping):
             return ColumnType.dict
         if origin in (list, tuple, set, Sequence):
