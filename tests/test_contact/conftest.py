@@ -114,10 +114,11 @@ class ScenarioBuilderContacts:
             data_to_create = {k: v for k, v in contact_data.items() if v is not None}
             try:
                 loop = asyncio.get_event_loop()
-                contact_id = await loop.run_in_executor(
+                response = await loop.run_in_executor(
                     None,
                     functools.partial(self.cm._create_contact, **data_to_create),
                 )
+                contact_id = response["details"]["contact_id"]
 
                 if contact_data.get("first_name"):
                     # Create a unique key if names are not unique, e.g., by adding email
