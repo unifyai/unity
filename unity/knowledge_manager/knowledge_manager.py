@@ -638,14 +638,12 @@ class KnowledgeManager(BaseKnowledgeManager):
         src_ctx = self._ctx_for_table(source_table)
         dest_ctx = self._ctx_for_table(dest_table)
 
-        log_ids: List[int] = [
-            log.id
-            for log in unify.get_logs(
-                context=src_ctx,
-                filter=f"{column_name} is not None",
-                limit=100_000,
-            )
-        ]
+        log_ids = unify.get_logs(
+            context=src_ctx,
+            filter=f"{column_name} is not None",
+            limit=100_000,
+            return_ids_only=True,
+        )
         unify.add_logs_to_context(
             log_ids,
             context=dest_ctx,
@@ -739,19 +737,19 @@ class KnowledgeManager(BaseKnowledgeManager):
         summaries: Dict[str, str] = {}
         for table in tables:
             ctx = self._ctx_for_table(table)
-            logs = list(
+            log_ids = list(
                 unify.get_logs(
                     context=ctx,
                     filter=filter,
                     offset=offset,
                     limit=limit,
+                    return_ids_only=True,
                 ),
             )
-            if not logs:
+            if not log_ids:
                 summaries[table] = "no-op"
                 continue
 
-            log_ids = [log.id for log in logs]
             res = unify.delete_logs(
                 logs=log_ids,
                 context=ctx,
@@ -916,6 +914,11 @@ class KnowledgeManager(BaseKnowledgeManager):
                         f"cosine({column}, embed('{text}', model='{EMBED_MODEL}'))": "ascending",
                     },
                     limit=k,
+                    exclude_fields=[
+                        k
+                        for k in unify.get_fields(context).keys()
+                        if k.endswith("_emb")
+                    ],
                 )
             ]
         return results
@@ -963,6 +966,11 @@ class KnowledgeManager(BaseKnowledgeManager):
                     filter=filter,
                     offset=offset,
                     limit=limit,
+                    exclude_fields=[
+                        k
+                        for k in unify.get_fields(self._ctx_for_table(table)).keys()
+                        if k.endswith("_emb")
+                    ],
                 )
             ]
         return results
