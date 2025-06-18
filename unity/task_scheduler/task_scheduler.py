@@ -17,6 +17,7 @@ from .types.priority import Priority
 from .types.schedule import Schedule
 from .types.repetition import RepeatPattern
 from .types.task import Task
+from ..common.model_to_fields import model_to_fields
 from .prompt_builders import build_ask_prompt, build_update_prompt
 from .base import BaseTaskScheduler
 from ..planner.base import BasePlanner
@@ -90,6 +91,11 @@ class TaskScheduler(BaseTaskScheduler):
                 unique_id_column=True,
                 unique_id_name="task_id",
                 description="List of all tasks with their name, description, status (completed, queued, cancelled etc.), schedule, deadline, repeat pattern, and priority.",
+            )
+            fields = model_to_fields(Task)
+            unify.create_fields(
+                fields,
+                context=self._ctx,
             )
 
         # ID of the *single* task that is allowed to be in the **active**
