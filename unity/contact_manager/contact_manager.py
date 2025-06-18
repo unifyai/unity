@@ -21,7 +21,6 @@ from ..common.llm_helpers import (
 
 
 class ContactManager(BaseContactManager):
-
     def __init__(self) -> None:
         """
         Responsible for managing the list of contact details stored upstream.
@@ -44,11 +43,12 @@ class ContactManager(BaseContactManager):
         if self._ctx not in unify.get_contexts():
             unify.create_context(
                 self._ctx,
+                unique_id_column=True,
+                unique_id_name="contact_id",
                 description="List of contacts, with all contact details stored.",
             )
             unify.create_fields(
                 {
-                    "contact_id": "int",
                     "first_name": "str",
                     "surname": "str",
                     "email_address": "str",
@@ -486,7 +486,6 @@ class ContactManager(BaseContactManager):
             unify.log(
                 context=self._ctx,
                 **contact_details,
-                contact_id=0,
                 new=True,
                 mutable=True,
             )
@@ -507,24 +506,16 @@ class ContactManager(BaseContactManager):
                 len(logs) == 0
             ), f"Invalid, contact with {key} {value} already exists."
 
-        # ToDo: filter only for contact_id once supported in the Python utility function
-        logs = unify.get_logs(
-            context=self._ctx,
-        )
-        largest_id = max([lg.entries["contact_id"] for lg in logs])
-        this_id = largest_id + 1
-
         # Create the new contact
-        unify.log(
+        log = unify.log(
             context=self._ctx,
             **contact_details,
-            contact_id=this_id,
             new=True,
             mutable=True,
         )
         return {
             "outcome": "contact created successfully",
-            "details": {"contact_id": this_id},
+            "details": {"contact_id": log.entries["contact_id"]},
         }
 
     def _update_contact(

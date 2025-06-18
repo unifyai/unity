@@ -77,11 +77,6 @@ class TaskScheduler(BaseTaskScheduler):
         else:
             self._planner = planner
 
-        # Internal monotonically-increasing task-id counter.  We keep it local
-        # to the manager to avoid an expensive scan across *all* logs every
-        # time we create a task.  Initialised lazily on first use.
-        self._next_id: Optional[int] = None
-
         ctxs = unify.get_active_context()
         read_ctx, write_ctx = ctxs["read"], ctxs["write"]
         assert (
@@ -90,7 +85,12 @@ class TaskScheduler(BaseTaskScheduler):
         self._ctx = f"{read_ctx}/Tasks" if read_ctx else "Tasks"
 
         if self._ctx not in unify.get_contexts():
-            unify.create_context(self._ctx)
+            unify.create_context(
+                self._ctx,
+                unique_id_column=True,
+                unique_id_name="task_id",
+                description="List of all tasks with their name, description, status (completed, queued, cancelled etc.), schedule, deadline, repeat pattern, and priority.",
+            )
 
         # ID of the *single* task that is allowed to be in the **active**
         # state at any moment.  This will be maintained by a forthcoming
@@ -498,24 +498,6 @@ class TaskScheduler(BaseTaskScheduler):
         if status == Status.scheduled and not future_start:
             raise ValueError("Scheduled tasks require a future start_at")
 
-        # ------------------  generate new task_id  ------------------ #
-        # We avoid fetching *all* logs just to know the next id.  Instead we
-        # maintain a simple counter that is initialised the first time we
-        # create a task in this process by looking at the *largest* existing
-        # id (if any) through a single, cheap query.
-
-        if self._next_id is None:
-            # First use – find the current maximum task_id (if any) with a
-            # limited query.  The stubbed SDK doesn't expose sorting, so we
-            # fall back to scanning just once during initialisation which is
-            # acceptable in practise.
-            existing = [lg.entries.get("task_id") for lg in unify.get_logs(context=self._ctx)]  # type: ignore[arg-type]
-            existing = [i for i in existing if i is not None]
-            self._next_id = (max(existing) + 1) if existing else 0
-
-        next_id = self._next_id
-        self._next_id += 1
-
         # ------------------  assemble payload  ------------------ #
         task_details = {
             "name": name,
@@ -525,14 +507,13 @@ class TaskScheduler(BaseTaskScheduler):
             "deadline": deadline,
             "repeat": [r.model_dump() for r in repeat] if repeat else None,
             "priority": priority,
-            "task_id": next_id,
         }
 
         if status == Status.primed:
             self._primed_task = task_details
 
         # ------------------  write log immediately  ------------------ #
-        unify.log(
+        log = unify.log(
             context=self._ctx,
             **task_details,
             new=True,
@@ -548,21 +529,23 @@ class TaskScheduler(BaseTaskScheduler):
                 or self._sched_next(schedule) is not None
             )
 
+            task_id = log.entries["task_id"]
+
             if explicit_linkage:
                 return {
                     "outcome": "task created successfully",
-                    "details": {"task_id": next_id},
+                    "details": {"task_id": task_id},
                 }
             original_q = [t.task_id for t in self._get_task_queue()]
 
             # Only insert if the new task isn't already in that list
-            if next_id not in original_q:
-                new_q = original_q + [next_id]
+            if task_id not in original_q:
+                new_q = original_q + [task_id]
                 self._update_task_queue(original=original_q, new=new_q)
 
         return {
             "outcome": "task created successfully",
-            "details": {"task_id": next_id},
+            "details": {"task_id": task_id},
         }
 
     # Delete

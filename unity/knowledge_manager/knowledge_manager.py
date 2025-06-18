@@ -27,7 +27,6 @@ API_KEY = os.environ["UNIFY_KEY"]
 
 
 class KnowledgeManager(BaseKnowledgeManager):
-
     def __init__(self) -> None:
         """
         KnowledgeManager now **directly manipulates** the root-level
@@ -68,11 +67,6 @@ class KnowledgeManager(BaseKnowledgeManager):
             "whatsapp_number",
             "description",
         }
-
-        # ── Synthetic PK for *every* knowledge table (except Contacts) ──
-        # We never leak Unify's internal log.id – instead we surface a
-        # monotonically-increasing integer column called  **row_id**.
-        self._ROW_ID: str = "row_id"
 
         self._ask_tools = {
             **methods_to_tool_dict(
@@ -335,6 +329,7 @@ class KnowledgeManager(BaseKnowledgeManager):
         name: str,
         description: str | None = None,
         columns: Dict[str, ColumnType] | None = None,
+        unique_column_name: str = "row_id",
     ) -> Dict[str, str]:
         """
         **Create** a brand-new table in the knowledge store.
@@ -350,6 +345,13 @@ class KnowledgeManager(BaseKnowledgeManager):
             empty table is created and columns can be added later with
             :pyfunc:`_create_empty_column`. Colums names MUST be *snake case*.
             The column name `id` is reserved for internals, do *not* use this name.
+        unique_column_name : str
+            Every table *must* have a unique integer column which auto-increments
+            upwards from 0. By default this is called `row_id`, but the name can
+            be customized to be more descriptive for the table. For example,
+            `team_id`, `company_id`, `product_id`, or anything else. This is
+            managed automatically, it should not be included in the `columns`
+            argument, and data is *never written* to this unique column.
 
         Returns
         -------
@@ -358,13 +360,16 @@ class KnowledgeManager(BaseKnowledgeManager):
         """
         proj = unify.active_project()
         ctx = f"{self._ctx}/{name}"
-        unify.create_context(ctx, description=description)
+        unify.create_context(
+            ctx,
+            unique_id_column=True,
+            unique_id_name=unique_column_name,
+            description=description,
+        )
 
         # Always add the generated primary-key unless the caller supplied it.
         if columns is None:
             columns = {}
-        if self._ROW_ID not in columns:
-            columns = {self._ROW_ID: ColumnType.int, **columns}
         url = f"{os.environ['UNIFY_BASE_URL']}/logs/fields"
         headers = {"Authorization": f"Bearer {API_KEY}"}
         json_input = {"project": proj, "context": ctx, "fields": columns}
@@ -481,11 +486,6 @@ class KnowledgeManager(BaseKnowledgeManager):
         dict[str, str]
             Backend response.
         """
-        # The internal PK cannot be created manually.
-        if column_name == self._ROW_ID:
-            raise ValueError(
-                f"'{self._ROW_ID}' is reserved and managed automatically.",
-            )
         proj = unify.active_project()
         ctx = self._ctx_for_table(table)
         url = f"{os.environ['UNIFY_BASE_URL']}/logs/fields"
@@ -560,9 +560,11 @@ class KnowledgeManager(BaseKnowledgeManager):
         dict[str, str]
             Backend confirmation or error.
         """
+        table_ctx = unify.get_context(self._ctx_for_table(table))
+        unique_column_name = table_ctx["unique_column_name"]
         # Guard against removal of mandatory columns
         if (table == "Contacts" and column_name in self._CONTACT_REQUIRED_COLUMNS) or (
-            table != "Contacts" and column_name == self._ROW_ID
+            table != "Contacts" and column_name == unique_column_name
         ):
             raise ValueError(
                 f"❌  Column '{column_name}' is mandatory and cannot be deleted.",
@@ -786,26 +788,9 @@ class KnowledgeManager(BaseKnowledgeManager):
         dict[str, str]
             Backend confirmation.
         """
-        ctx = self._ctx_for_table(table)
-
-        # Find the current maximum row_id (if any) so we can append seamlessly.
-        latest = unify.get_logs(
-            context=ctx,
-            sorting={self._ROW_ID: "descending"},
-            limit=1,
-        )
-        next_id = latest[0].entries[self._ROW_ID] + 1 if latest else 0
-
-        augmented: List[Dict[str, Any]] = []
-        for r in rows:
-            if r.get(self._ROW_ID) is None:
-                r = {self._ROW_ID: next_id, **r}
-                next_id += 1
-            augmented.append(r)
-
         return unify.create_logs(
-            context=ctx,
-            entries=augmented,
+            context=self._ctx_for_table(table),
+            entries=rows,
             batched=True,
         )
 
@@ -818,15 +803,15 @@ class KnowledgeManager(BaseKnowledgeManager):
         overwrite: bool = False,
     ) -> Dict[str, str]:
         """
-        **Update** existing rows identified by their *row_id*.
+        **Update** existing rows identified by their *unique_id*.
 
         Parameters
         ----------
         table : str
             Target table.
         row_ids : list[int] | None
-            List of `row_id` values to update.  *None* updates nothing and will
-            return a no-op.
+            List of unique `row_id` rows to update, might have a different name under the hood `team_id`, `product_id` etc.
+            If the unique_column_name is customized  *None* updates nothing and will return a no-op.
         entries : list[dict[str, Any]] | None
             New field values (aligned 1-to-1 with *row_ids*).
         overwrite : bool, default ``False``
@@ -835,19 +820,26 @@ class KnowledgeManager(BaseKnowledgeManager):
         if not row_ids:
             return {"status": "no-op", "reason": "no row_ids given"}
 
+        # Sort row_ids and entries together to maintain alignment
+        if entries is not None:
+            sorted_pairs = sorted(zip(row_ids, entries))
+            row_ids, entries = zip(*sorted_pairs)
+            row_ids = list(row_ids)
+            entries = list(entries)
+        else:
+            row_ids = sorted(row_ids)
+
         ctx = self._ctx_for_table(table)
 
         # Map external row_id → internal log.id
-        log_ids: List[int] = []
-        for rid in row_ids:
-            lg = unify.get_logs(
-                context=ctx,
-                filter=f"{self._ROW_ID} == {rid}",
-                limit=1,
-            )
-            if not lg:
-                raise ValueError(f"No such {self._ROW_ID}={rid} in '{table}'.")
-            log_ids.append(lg[0].id)
+        log_ids = unify.get_logs(
+            context=ctx,
+            filter=f"row_id in {row_ids}",
+            limit=1,
+        )
+        if len(log_ids) != len(row_ids):
+            raise ValueError(f"Each row_id should return a unique log.")
+        log_ids = sorted(log_ids)
 
         res = unify.update_logs(
             logs=log_ids,
