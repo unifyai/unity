@@ -120,10 +120,18 @@ class HierarchicalPlan(BasePlan):
 
     async def _initialize_and_run(self):
         self._state = _HierarchicalPlanState.RUNNING
+
         self.action_log.append("Initializing plan...")
         try:
-            self.plan_source_code = await self.planner._generate_initial_plan(self.goal)
-            self.action_log.append("Initial plan generated successfully.")
+            if self.plan_source_code is None:
+                self.action_log.append("Generating new plan from goal...")
+                self.plan_source_code = await self.planner._generate_initial_plan(
+                    self.goal
+                )
+                self.action_log.append("Initial plan generated successfully.")
+            else:
+                self.action_log.append("Proceeding with existing plan source code.")
+
             await self.planner._prepare_execution_environment(self)
             await self._start_main_execution_loop()
         except Exception as e:
@@ -142,6 +150,7 @@ class HierarchicalPlan(BasePlan):
         yield main_fn()
 
     async def _start_main_execution_loop(self):
+        self.planner.llm_client.reset_messages()
         plan_iterator = self._create_main_loop_iterator()
 
         async def _run_one_plan_step():
@@ -321,6 +330,13 @@ class HierarchicalPlan(BasePlan):
         original_source_code = self.plan_source_code
         self.action_log.append(f"Modification requested: '{modification_request}'")
         self._state = _HierarchicalPlanState.PAUSED_FOR_MODIFICATION
+
+        if self._execution_task and not self._execution_task.done():
+            self._execution_task.cancel()
+            try:
+                await self._execution_task
+            except asyncio.CancelledError:
+                pass
         if self.main_loop_handle:
             self.main_loop_handle.stop()
             self.main_loop_handle = None
@@ -334,7 +350,6 @@ class HierarchicalPlan(BasePlan):
                 self.plan_source_code or "",
                 new_source_code,
             )
-
             if correction_script:
                 await self._execute_correction_script(
                     correction_script,
@@ -342,19 +357,26 @@ class HierarchicalPlan(BasePlan):
                 )
 
             self.plan_source_code = new_source_code
-            self._state = _HierarchicalPlanState.RUNNING
-            self.escalation_count = 0
+            self.action_log.append("Plan successfully modified.")
 
-            await self.planner._prepare_execution_environment(self)
-            await self._start_main_execution_loop()
+            self.escalation_count = 0
+            self._is_complete = False
+            self._state = _HierarchicalPlanState.RUNNING
+            self._execution_task = asyncio.create_task(self._initialize_and_run())
+
             return "Plan modified and resumed successfully."
+
         except Exception as e:
             logger.error(f"Failed to modify plan, rolling back: {e}", exc_info=True)
             self.action_log.append(f"ERROR: Failed to modify plan, rolling back. {e}")
+
             self.plan_source_code = original_source_code
+
+            self.escalation_count = 0
+            self._is_complete = False
             self._state = _HierarchicalPlanState.RUNNING
-            await self.planner._prepare_execution_environment(self)
-            await self._start_main_execution_loop()
+            self._execution_task = asyncio.create_task(self._initialize_and_run())
+
             return "Failed to modify the plan. Rolled back to previous version and resumed."
 
     async def _execute_correction_script(self, script: str, new_plan_code: str):
@@ -362,21 +384,18 @@ class HierarchicalPlan(BasePlan):
         self.action_log.append("Executing course correction script.")
         interactions = []
         try:
-            sandbox_globals = self.planner._create_sandbox_globals()
-            local_namespace = self.execution_namespace.copy()
+            correction_namespace = self.planner._create_sandbox_globals()
 
             async def act_wrapper(instruction: str):
                 interactions.append(("act", instruction, None))
                 return await self.planner.controller.act(instruction)
 
-            local_namespace["act"] = act_wrapper
-
+            correction_namespace["act"] = act_wrapper
             exec(
                 compile(script, "<correction_script>", "exec"),
-                sandbox_globals,
-                local_namespace,
+                correction_namespace,
             )
-            correction_fn = local_namespace.get("course_correction_main")
+            correction_fn = correction_namespace.get("course_correction_main")
             if not correction_fn or not asyncio.iscoroutinefunction(correction_fn):
                 raise RuntimeError(
                     "Script must define 'async def course_correction_main'.",
