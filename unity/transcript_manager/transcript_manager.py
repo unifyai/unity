@@ -9,6 +9,7 @@ from ..common.embed_utils import EMBED_MODEL, ensure_vector_column
 from ..contact_manager.base import BaseContactManager
 from ..contact_manager.contact_manager import ContactManager
 from .types.message import Message
+from ..common.model_to_fields import model_to_fields
 from .types.message_exchange_summary import MessageExchangeSummary
 from ..common.llm_helpers import (
     start_async_tool_use_loop,
@@ -67,12 +68,22 @@ class TranscriptManager(BaseTranscriptManager):
                 unique_id_name="message_id",
                 description="List of *all* timestamped messages sent between *all* contacts across *all* mediums.",
             )
+            fields = model_to_fields(Message)
+            unify.create_fields(
+                fields,
+                context=self._transcripts_ctx,
+            )
         if self._summaries_ctx not in ctxs:
             unify.create_context(
                 self._summaries_ctx,
                 unique_id_column=True,
                 unique_id_name="summary_id",
                 description="List of all message exchange summaries, with each summary covering a fixed number of exchanges.",
+            )
+            fields = model_to_fields(MessageExchangeSummary)
+            unify.create_fields(
+                fields,
+                context=self._summaries_ctx,
             )
 
     # Public #
