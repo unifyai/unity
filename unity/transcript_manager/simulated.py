@@ -244,7 +244,7 @@ class SimulatedTranscriptManager(BaseTranscriptManager):
             except asyncio.QueueFull:
                 pass
             try:
-                clar = await asyncio.wait_for(clarification_down_q.get(), timeout=30)
+                clar = await asyncio.wait_for(clarification_down_q.get(), timeout=60)
             except asyncio.TimeoutError:
                 clar = None
         else:

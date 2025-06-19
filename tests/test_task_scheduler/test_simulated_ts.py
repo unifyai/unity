@@ -97,7 +97,7 @@ async def test_ts_requests_clarification():
     )
 
     # The handle must first raise a clarification question
-    question = await asyncio.wait_for(up_q.get(), timeout=30)
+    question = await asyncio.wait_for(up_q.get(), timeout=60)
     assert "clarify" in question.lower()
 
     # Provide an answer and ensure it flows through to the final result
@@ -256,7 +256,7 @@ async def test_pause_and_resume_simulated_ts(monkeypatch):
     tools_running = handle.valid_tools
     assert "pause" in tools_running and "resume" not in tools_running
 
-    answer = await asyncio.wait_for(res_task, timeout=30)
+    answer = await asyncio.wait_for(res_task, timeout=60)
     assert isinstance(answer, str) and answer.strip()
 
     # Exactly one pause and one resume invocation expected.

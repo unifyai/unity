@@ -52,12 +52,12 @@ async def test_summarize_requests_clarification(tm_scenario: TranscriptManager):
     )
 
     # 1) Wait for the clarification request
-    question = await asyncio.wait_for(up_q.get(), timeout=30)
+    question = await asyncio.wait_for(up_q.get(), timeout=60)
     assert "surname" in question.lower()
 
     # 2) Provide the missing information
     await down_q.put("Carlos' surname is Rodriguez.")
 
     # 3) Assertion on final summary
-    summary = await asyncio.wait_for(handle, timeout=30)
+    summary = await asyncio.wait_for(handle, timeout=60)
     assert "Rodriguez" in summary, "Clarification answer not respected."

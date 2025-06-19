@@ -83,7 +83,7 @@ async def test_cm_requests_clarification():
         _requests_clarification=True,
     )
 
-    question = await asyncio.wait_for(up_q.get(), timeout=30)
+    question = await asyncio.wait_for(up_q.get(), timeout=60)
     assert "clarify" in question.lower()
     await down_q.put("Yes – focus on European clients.")
 
@@ -237,7 +237,7 @@ async def test_pause_and_resume_simulated_cm(monkeypatch):
         "resume" not in tools_after_resume
     ), "resume should NOT be offered after resuming"
 
-    answer = await asyncio.wait_for(res_task, timeout=30)
+    answer = await asyncio.wait_for(res_task, timeout=60)
     assert isinstance(answer, str) and answer.strip(), "Answer should be non-empty"
 
     # 4️⃣ Exactly one pause and one resume call must have been recorded

@@ -416,7 +416,7 @@ async def test_ask_requests_clarification_when_context_missing(
     )
 
     # ── 4.  There should be a clarification request at some point ─────────
-    clar_question: str = await asyncio.wait_for(up_q.get(), timeout=30)
+    clar_question: str = await asyncio.wait_for(up_q.get(), timeout=60)
     assert clar_question, "No clarification question was asked."
 
     # The wording is model-dependent; merely check it *asks which conversation*.

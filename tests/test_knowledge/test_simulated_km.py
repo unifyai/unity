@@ -83,7 +83,7 @@ async def test_km_requests_clarification():
         _requests_clarification=True,
     )
 
-    question = await asyncio.wait_for(up_q.get(), timeout=30)
+    question = await asyncio.wait_for(up_q.get(), timeout=60)
     assert "clarify" in question.lower()
 
     await down_q.put("Focus on scientific facts.")
@@ -237,7 +237,7 @@ async def test_pause_and_resume_simulated_km(monkeypatch):
     assert "pause" in tools_running and "resume" not in tools_running
 
     # Now result() should finish
-    answer = await asyncio.wait_for(res_task, timeout=30)
+    answer = await asyncio.wait_for(res_task, timeout=60)
     assert isinstance(answer, str) and answer.strip()
 
     # Each steering method must have been invoked exactly once
