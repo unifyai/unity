@@ -89,7 +89,7 @@ def _answer_semantic(ts: TaskScheduler, question: str) -> str:
 
     if "client meeting" in q and "scheduled" in q:
         mtg = next(t for t in tasks if "client meeting" in t["name"].lower())
-        return mtg["schedule"]["start_time"].split("T")[0]
+        return mtg["schedule"]["start_at"].split("T")[0]
 
     if "priority" in q and "hotfix" in q:
         hotfix = next(t for t in tasks if "hotfix" in t["name"].lower())
