@@ -1288,6 +1288,8 @@ class TaskScheduler(BaseTaskScheduler):
         list[dict]
             Entries for each matching task (raw JSON-serialisable dictionaries).
         """
+        if isinstance(filter, str):
+            filter = filter.replace(".start_at", "['start_at']")
         return [
             log.entries
             for log in unify.get_logs(
