@@ -96,7 +96,7 @@ def test_update_task_start_at():
     ts._update_task_start_at(task_id=0, new_start_at=start)
 
     task_list = ts._search_tasks()
-    assert task_list[0]["schedule"]["start_time"] == start
+    assert task_list[0]["schedule"]["start_at"] == start
 
 
 @_handle_project
