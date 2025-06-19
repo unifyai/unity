@@ -340,7 +340,7 @@ async def test_ask_respects_parent_context(
 
     # ── 3.  Call `.ask()` with that context ────────────────────────────
     handle = await tm.ask(
-        "What day was the conversation?",
+        "What date was the conversation referenced in the parent context?",
         _return_reasoning_steps=True,
         parent_chat_context=parent_ctx,
     )
@@ -351,7 +351,7 @@ async def test_ask_respects_parent_context(
     assert any(m.get("_ctx_header") for m in steps), "System context header missing."
     # b) LLM judged answer correct
     expected = "2025-05-20"
-    _llm_assert_correct("What day was the conversation?", expected, answer, steps)
+    _llm_assert_correct("What date was the conversation?", expected, answer, steps)
 
 
 @pytest.mark.asyncio
