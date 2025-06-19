@@ -426,8 +426,8 @@ class TaskScheduler(BaseTaskScheduler):
         # ----------------  helper: iso-8601 → datetime  ---------------- #
         from datetime import datetime, timezone
 
-        def _parse_iso(ts: str) -> datetime:
-            dt = datetime.fromisoformat(ts)
+        def _parse_maybe_iso(ts: str) -> datetime:
+            dt = ts if isinstance(ts, datetime) else datetime.fromisoformat(ts)
             return dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)
 
         # ----------------  initial validation & dedup  ---------------- #
@@ -461,7 +461,9 @@ class TaskScheduler(BaseTaskScheduler):
         # figure out if schedule is "future"
         future_start = False
         if schedule and schedule.start_at:
-            future_start = _parse_iso(schedule.start_at) > datetime.now(timezone.utc)
+            future_start = _parse_maybe_iso(schedule.start_at) > datetime.now(
+                timezone.utc,
+            )
 
         #  If the task is explicitly linked **behind**  another task (prev_task ≠ None)
         # and that task is not terminal, we NEVER mark the newcomer as *primed*.
