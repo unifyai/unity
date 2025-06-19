@@ -32,12 +32,14 @@ def ensure_vector_column(
     """
     # Retrieve existing columns and their types
     existing = unify.get_fields(context=context)
+    if derived_expr is not None:
+        derived_expr = derived_expr.replace("{", "{lg:")
     # If the source column is already present, do nothing
     if source_column not in existing:
         # Create the derived vector column
         url = f"{os.environ['UNIFY_BASE_URL']}/logs/derived"
         headers = {"Authorization": f"Bearer {API_KEY}"}
-        expr = derived_expr.replace("{", "{lg:")
+        expr = derived_expr
         json_input = {
             "project": unify.active_project(),
             "context": context,
