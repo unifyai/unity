@@ -124,7 +124,7 @@ async def test_ts_stateful_memory_serial_asks():
     # 1) Ask for a unique codename – any non-empty string
     h1 = await ts.ask(
         "Please invent a codename for our secret task-force. "
-        "Respond with only the codename.",
+        "Respond with only the **single-word** codename and **nothing else**.",
     )
     codename = await h1.result()
     codename = re.sub(r"\W+", "", codename.strip().lower().replace("codename", ""))

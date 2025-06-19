@@ -1,10 +1,11 @@
 from pydantic import BaseModel, Field
-from typing import Optional
+from typing import Optional, List
 
 from .priority import Priority
 from .status import Status
 from .schedule import Schedule
 from .repetition import RepeatPattern
+from datetime import datetime
 
 
 class Task(BaseModel):
@@ -19,10 +20,10 @@ class Task(BaseModel):
     schedule: Optional[Schedule] = Field(
         description="Information about task scheduling, including adjacent tasks in the queue and ideal start time",
     )
-    deadline: Optional[str] = Field(
+    deadline: Optional[datetime] = Field(
         description="Due date/time for the task in ISO-8601 format",
     )
-    repeat: Optional[RepeatPattern] = Field(
+    repeat: Optional[List[RepeatPattern]] = Field(
         description="Pattern defining how the task recurs over time",
     )
     priority: Priority = Field(

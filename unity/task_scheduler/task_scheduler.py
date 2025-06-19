@@ -17,6 +17,7 @@ from .types.priority import Priority
 from .types.schedule import Schedule
 from .types.repetition import RepeatPattern
 from .types.task import Task
+from ..common.model_to_fields import model_to_fields
 from .prompt_builders import build_ask_prompt, build_update_prompt
 from .base import BaseTaskScheduler
 from ..planner.base import BasePlanner
@@ -90,6 +91,11 @@ class TaskScheduler(BaseTaskScheduler):
                 unique_id_column=True,
                 unique_id_name="task_id",
                 description="List of all tasks with their name, description, status (completed, queued, cancelled etc.), schedule, deadline, repeat pattern, and priority.",
+            )
+            fields = model_to_fields(Task)
+            unify.create_fields(
+                fields,
+                context=self._ctx,
             )
 
         # ID of the *single* task that is allowed to be in the **active**
@@ -420,8 +426,8 @@ class TaskScheduler(BaseTaskScheduler):
         # ----------------  helper: iso-8601 → datetime  ---------------- #
         from datetime import datetime, timezone
 
-        def _parse_iso(ts: str) -> datetime:
-            dt = datetime.fromisoformat(ts)
+        def _parse_maybe_iso(ts: str) -> datetime:
+            dt = ts if isinstance(ts, datetime) else datetime.fromisoformat(ts)
             return dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)
 
         # ----------------  initial validation & dedup  ---------------- #
@@ -455,7 +461,9 @@ class TaskScheduler(BaseTaskScheduler):
         # figure out if schedule is "future"
         future_start = False
         if schedule and schedule.start_at:
-            future_start = _parse_iso(schedule.start_at) > datetime.now(timezone.utc)
+            future_start = _parse_maybe_iso(schedule.start_at) > datetime.now(
+                timezone.utc,
+            )
 
         #  If the task is explicitly linked **behind**  another task (prev_task ≠ None)
         # and that task is not terminal, we NEVER mark the newcomer as *primed*.
@@ -499,18 +507,17 @@ class TaskScheduler(BaseTaskScheduler):
             raise ValueError("Scheduled tasks require a future start_at")
 
         # ------------------  assemble payload  ------------------ #
-        task_details = {
-            "name": name,
-            "description": description,
-            "status": status,
-            "schedule": schedule.model_dump() if schedule else None,
-            "deadline": deadline,
-            "repeat": [r.model_dump() for r in repeat] if repeat else None,
-            "priority": priority,
-        }
-
-        if status == Status.primed:
-            self._primed_task = task_details
+        task_details = Task(
+            task_id=0,  # dummy
+            name=name,
+            description=description,
+            status=status,
+            schedule=schedule,
+            deadline=deadline,
+            repeat=repeat,
+            priority=priority,
+        ).model_dump(mode="json")
+        del task_details["task_id"]
 
         # ------------------  write log immediately  ------------------ #
         log = unify.log(
@@ -518,6 +525,11 @@ class TaskScheduler(BaseTaskScheduler):
             **task_details,
             new=True,
         )
+        task_id = log.entries["task_id"]
+        task_details["task_id"] = task_id
+
+        if status == Status.primed:
+            self._primed_task = task_details
 
         # ------------------  queue insertion (if relevant)  ---------- #
         if status == Status.queued:
@@ -528,8 +540,6 @@ class TaskScheduler(BaseTaskScheduler):
                 self._sched_prev(schedule) is not None
                 or self._sched_next(schedule) is not None
             )
-
-            task_id = log.entries["task_id"]
 
             if explicit_linkage:
                 return {
@@ -1247,6 +1257,7 @@ class TaskScheduler(BaseTaskScheduler):
                     f"cosine({self._VEC_TASK}, embed('{text}', model='{EMBED_MODEL}'))": "ascending",
                 },
                 limit=k,
+                exclude_fields=[self._VEC_TASK],
             )
         ]
 
@@ -1277,6 +1288,8 @@ class TaskScheduler(BaseTaskScheduler):
         list[dict]
             Entries for each matching task (raw JSON-serialisable dictionaries).
         """
+        if isinstance(filter, str):
+            filter = filter.replace(".start_at", "['start_at']")
         return [
             log.entries
             for log in unify.get_logs(
@@ -1284,5 +1297,6 @@ class TaskScheduler(BaseTaskScheduler):
                 filter=filter,
                 offset=offset,
                 limit=limit,
+                exclude_fields=[self._VEC_TASK],
             )
         ]

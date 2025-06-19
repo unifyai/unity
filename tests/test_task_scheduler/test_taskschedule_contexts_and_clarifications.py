@@ -84,7 +84,7 @@ async def test_ts_ask_requests_clarification():
 
     # run ask in background (loop starts immediately)
     handle = await ts.ask(
-        "What is the description of the high priority task?",
+        "What is the description of the high priority task? Please request clarification if there is more than one.",
         clarification_up_q=up_q,
         clarification_down_q=down_q,
     )
@@ -126,7 +126,7 @@ async def test_ts_update_uses_parent_context():  # FIXME: flaky
         description="Apply CVE-2025-1234 patch to all services.",
         status="primed",
         priority="high",
-    )
+    )["details"]["task_id"]
 
     parent_ctx = [
         {"role": "user", "content": "Remember: Hotfix task is called Thunderbolt."},
@@ -167,7 +167,7 @@ async def test_ts_update_requests_clarification():
         description="Create slides for the upcoming board meeting.",
         status="primed",
         priority="normal",
-    )
+    )["details"]["task_id"]
     ts._create_task(
         name="Write quarterly report",
         description="Compile and draft the Q2 report.",
@@ -186,7 +186,7 @@ async def test_ts_update_requests_clarification():
     task = asyncio.create_task(
         (
             await ts.update(
-                "Set the queued task's priority to high.",
+                "Set the queued task's priority to high. Please request clarification if there is more than one.",
                 clarification_up_q=up_q,
                 clarification_down_q=down_q,
             )

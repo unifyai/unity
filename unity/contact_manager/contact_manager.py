@@ -9,6 +9,7 @@ from ..common.embed_utils import EMBED_MODEL, ensure_vector_column
 from ..knowledge_manager.types import ColumnType
 from ..helpers import _handle_exceptions
 from ..common.tool_outcome import ToolOutcome
+from ..common.model_to_fields import model_to_fields
 
 import unify
 from .types.contact import Contact
@@ -47,15 +48,9 @@ class ContactManager(BaseContactManager):
                 unique_id_name="contact_id",
                 description="List of contacts, with all contact details stored.",
             )
+            fields = model_to_fields(Contact)
             unify.create_fields(
-                {
-                    "first_name": "str",
-                    "surname": "str",
-                    "email_address": "str",
-                    "phone_number": "str",
-                    "whatsapp_number": "str",
-                    "description": "str",
-                },
+                fields,
                 context=self._ctx,
             )
 
@@ -83,7 +78,7 @@ class ContactManager(BaseContactManager):
         self._ask_tools: Dict[str, Callable] = {
             **methods_to_tool_dict(
                 self._search_contacts,
-                self._nearest_column,
+                self._nearest_contacts,
                 include_class_name=False,
             ),
             **self._schema_tools,
@@ -96,7 +91,7 @@ class ContactManager(BaseContactManager):
             self._update_contact,
             self._update_contacts,
             self._search_contacts,
-            self._nearest_column,
+            self._nearest_contacts,
         ]
 
         self._update_tools: Dict[str, Callable] = {
@@ -150,6 +145,7 @@ class ContactManager(BaseContactManager):
         *,
         column_name: str,
         column_type: ColumnType | str,
+        column_description: Optional[str] = None,
     ) -> Dict[str, str]:
         """
         Add a new optional column to the contacts table.
@@ -160,6 +156,8 @@ class ContactManager(BaseContactManager):
             The name of the column to create (which MUST be snake case).
         column_type : ColumnType | str
             The type of the column to create.
+        column_description : Optional[str], default None
+            Optional description of the column's purpose.
 
         Returns
         -------
@@ -183,10 +181,18 @@ class ContactManager(BaseContactManager):
         proj = unify.active_project()
         url = f"{os.environ['UNIFY_BASE_URL']}/logs/fields"
         headers = {"Authorization": f"Bearer {os.environ['UNIFY_KEY']}"}
+        column_info = {
+            "type": str(column_type),
+            "mutable": True,
+        }
+        if column_description is not None:
+            column_info["description"] = column_description
         json_input = {
             "project": proj,
             "context": self._ctx,
-            "fields": {column_name: str(column_type)},
+            "fields": {
+                column_name: column_info,
+            },
         }
         response = requests.request("POST", url, json=json_input, headers=headers)
         _handle_exceptions(response)
@@ -240,7 +246,7 @@ class ContactManager(BaseContactManager):
         Parameters
         ----------
         column : str
-            The vector column name (e.g. "notes_vec").
+            The vector column name (e.g. "notes_emb").
         source : str
             The source column name (e.g. "notes").
         """
@@ -249,41 +255,6 @@ class ContactManager(BaseContactManager):
             embed_column=column,
             source_column=source,
         )
-
-    def _nearest_column(
-        self,
-        *,
-        source: str,
-        text: str,
-        k: int = 5,
-    ) -> List[Dict[str, Any]]:
-        """
-        Semantic nearest-neighbour search over the source column.
-
-        Parameters
-        ----------
-        source : str
-            Name of the text column to embed (any default or custom column).
-        text : str
-            Query text.
-        k : int, default 5
-            Number of closest rows to return.
-
-        Returns
-        -------
-        List[Dict[str, Any]]
-            Rows sorted by ascending cosine distance.
-        """
-        vec_col = f"{source}_vec"
-        self._ensure_table_vector(column=vec_col, source=source)
-        logs = unify.get_logs(
-            context=self._ctx,
-            sorting={
-                f"cosine({vec_col}, embed('{text}', model='{EMBED_MODEL}'))": "ascending",
-            },
-            limit=k,
-        )
-        return [lg.entries for lg in logs]
 
     # Public #
     # -------#
@@ -627,6 +598,46 @@ class ContactManager(BaseContactManager):
             "details": {"contact_id": contact_id},
         }
 
+    def _nearest_contacts(
+        self,
+        *,
+        column: str,
+        text: str,
+        k: int = 5,
+    ) -> List[Dict[str, Any]]:
+        """
+        Semantic nearest-neighbour search over the source column.
+
+        Parameters
+        ----------
+        column : str
+            Name of the text column to embed (any default or custom column).
+        text : str
+            Query text.
+        k : int, default 5
+            Number of closest rows to return.
+
+        Returns
+        -------
+        List[Dict[str, Any]]
+            Rows sorted by ascending cosine distance.
+        """
+        vec_col = f"{column}_emb"
+        self._ensure_table_vector(column=vec_col, source=column)
+        logs = unify.get_logs(
+            context=self._ctx,
+            sorting={
+                f"cosine({vec_col}, embed('{text}', model='{EMBED_MODEL}'))": "ascending",
+            },
+            limit=k,
+            exclude_fields=[
+                k
+                for k in unify.get_fields(context=self._ctx).keys()
+                if k.endswith("_emb")
+            ],
+        )
+        return [Contact(**lg.entries) for lg in logs]
+
     def _search_contacts(
         self,
         *,
@@ -658,6 +669,11 @@ class ContactManager(BaseContactManager):
             filter=filter,
             offset=offset,
             limit=limit,
+            exclude_fields=[
+                k
+                for k in unify.get_fields(context=self._ctx).keys()
+                if k.endswith("_emb")
+            ],
         )
         return [Contact(**lg.entries) for lg in logs]
 

@@ -9,6 +9,7 @@ from ..common.embed_utils import EMBED_MODEL, ensure_vector_column
 from ..contact_manager.base import BaseContactManager
 from ..contact_manager.contact_manager import ContactManager
 from .types.message import Message
+from ..common.model_to_fields import model_to_fields
 from .types.message_exchange_summary import MessageExchangeSummary
 from ..common.llm_helpers import (
     start_async_tool_use_loop,
@@ -22,8 +23,8 @@ from .base import BaseTranscriptManager
 class TranscriptManager(BaseTranscriptManager):
 
     # Vector embedding column names
-    _VEC_MSG = "content_emb"
-    _VEC_SUM = "summary_emb"
+    _MSG_EMB = "content_emb"
+    _SUM_EMB = "summary_emb"
 
     def __init__(
         self,
@@ -54,18 +55,23 @@ class TranscriptManager(BaseTranscriptManager):
         ), "read and write contexts must be the same when instantiating a TranscriptManager."
 
         if read_ctx:
-            self._transcripts_ctx = f"{read_ctx}/Messages"
+            self._messages_ctx = f"{read_ctx}/Messages"
             self._summaries_ctx = f"{read_ctx}/MessageExchangeSummaries"
         else:
-            self._transcripts_ctx = "Contacts"
+            self._messages_ctx = "Contacts"
             self._summaries_ctx = "MessageExchangeSummaries"
         ctxs = unify.get_contexts()
-        if self._transcripts_ctx not in ctxs:
+        if self._messages_ctx not in ctxs:
             unify.create_context(
-                self._transcripts_ctx,
+                self._messages_ctx,
                 unique_id_column=True,
                 unique_id_name="message_id",
                 description="List of *all* timestamped messages sent between *all* contacts across *all* mediums.",
+            )
+            fields = model_to_fields(Message)
+            unify.create_fields(
+                fields,
+                context=self._messages_ctx,
             )
         if self._summaries_ctx not in ctxs:
             unify.create_context(
@@ -73,6 +79,11 @@ class TranscriptManager(BaseTranscriptManager):
                 unique_id_column=True,
                 unique_id_name="summary_id",
                 description="List of all message exchange summaries, with each summary covering a fixed number of exchanges.",
+            )
+            fields = model_to_fields(MessageExchangeSummary)
+            unify.create_fields(
+                fields,
+                context=self._summaries_ctx,
             )
 
     # Public #
@@ -239,7 +250,7 @@ class TranscriptManager(BaseTranscriptManager):
             entries = [entries]
 
         unify.create_logs(
-            context=self._transcripts_ctx,
+            context=self._messages_ctx,
             entries=entries,  # type: ignore[arg-type] – now definitely list[dict]
         )
 
@@ -267,13 +278,18 @@ class TranscriptManager(BaseTranscriptManager):
         list[Message]
             Messages sorted by **ascending** cosine distance (best match first).
         """
-        ensure_vector_column(self._transcripts_ctx, self._VEC_MSG, "content")
+        ensure_vector_column(self._messages_ctx, self._MSG_EMB, "content")
         logs = unify.get_logs(
-            context=self._transcripts_ctx,
+            context=self._messages_ctx,
             sorting={
-                f"cosine({self._VEC_MSG}, embed('{text}', model='{EMBED_MODEL}'))": "ascending",
+                f"cosine({self._MSG_EMB}, embed('{text}', model='{EMBED_MODEL}'))": "ascending",
             },
             limit=k,
+            exclude_fields=[
+                k
+                for k in unify.get_fields(context=self._messages_ctx).keys()
+                if k.endswith("_emb")
+            ],
         )
         return [Message(**lg.entries) for lg in logs]
 
@@ -300,13 +316,18 @@ class TranscriptManager(BaseTranscriptManager):
             Summaries ordered by similarity (*lowest* cosine distance first).
         """
 
-        ensure_vector_column(self._transcripts_ctx, self._VEC_MSG, "content")
+        ensure_vector_column(self._summaries_ctx, self._SUM_EMB, "summary")
         logs = unify.get_logs(
             context=self._summaries_ctx,
             sorting={
-                f"cosine({self._VEC_SUM}, embed('{text}', model='{EMBED_MODEL}'))": "ascending",
+                f"cosine({self._SUM_EMB}, embed('{text}', model='{EMBED_MODEL}'))": "ascending",
             },
             limit=k,
+            exclude_fields=[
+                k
+                for k in unify.get_fields(context=self._summaries_ctx).keys()
+                if k.endswith("_emb")
+            ],
         )
         return [MessageExchangeSummary(**lg.entries) for lg in logs]
 
@@ -338,11 +359,16 @@ class TranscriptManager(BaseTranscriptManager):
             Matching messages in creation order.
         """
         logs = unify.get_logs(
-            context=self._transcripts_ctx,
+            context=self._messages_ctx,
             filter=filter,
             offset=offset,
             limit=limit,
             sorting={"timestamp": "descending"},
+            exclude_fields=[
+                k
+                for k in unify.get_fields(context=self._messages_ctx).keys()
+                if k.endswith("_emb")
+            ],
         )
         return [Message(**lg.entries) for lg in logs]
 
@@ -379,5 +405,10 @@ class TranscriptManager(BaseTranscriptManager):
             offset=offset,
             limit=limit,
             sorting={"timestamp": "descending"},
+            exclude_fields=[
+                k
+                for k in unify.get_fields(context=self._summaries_ctx).keys()
+                if k.endswith("_emb")
+            ],
         )
         return [MessageExchangeSummary(**lg.entries) for lg in logs]

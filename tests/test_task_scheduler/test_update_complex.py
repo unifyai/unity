@@ -10,7 +10,7 @@ state matches expectations.
 from __future__ import annotations
 
 import re
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta
 
 import pytest
 from unity.task_scheduler.types.priority import Priority
@@ -77,14 +77,12 @@ def _next_weekday(dt: datetime, weekday: int) -> datetime:
 @pytest.mark.eval
 @pytest.mark.asyncio
 @pytest.mark.timeout(300)
-async def test_update_lower_priority_next_monday(basic_task_scenario):
+async def test_update_lower_priority_for_future_date(basic_task_scenario):
     ts, ids = basic_task_scenario
 
     # create one scheduled next Monday with high priority
-    base = datetime.now(timezone.utc)
-    next_mon = _next_weekday(base, 0).replace(hour=9, minute=0, second=0, microsecond=0)
-
-    sched = Schedule(start_at=next_mon.isoformat(), prev_task=None, next_task=None)
+    next_mon = "2035-06-16T09:00:00Z"
+    sched = Schedule(start_at=next_mon, prev_task=None, next_task=None)
     ts._create_task(
         name="Send KPI report",
         description="Automated email of KPIs to leadership.",
@@ -93,7 +91,7 @@ async def test_update_lower_priority_next_monday(basic_task_scenario):
     )
 
     handle = await ts.update(
-        text="Please lower the priority of all tasks to 'normal' which are scheduled for next Monday.",
+        text="Please lower the priority of all tasks to 'normal' which are scheduled to start on Monday 16th June 2035",
     )
     await handle.result()
 

@@ -33,7 +33,9 @@ async def _make_scheduler_with_task(description: str, *, steps: int = 1):
     planner = SimulatedPlanner(steps=steps)
     scheduler = TaskScheduler(planner=planner)
 
-    task_id = scheduler._create_task(name=description, description=description)
+    task_id = scheduler._create_task(name=description, description=description)[
+        "details"
+    ]["task_id"]
     handle = await scheduler.start_task(task_id=task_id)
     return scheduler, handle
 

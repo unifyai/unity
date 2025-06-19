@@ -52,13 +52,13 @@ def test_get_queue_and_reorder():
 def test_insert_into_queue():
     ts = TaskScheduler()
 
-    # base queue with one task
-    ts._create_task(name="base", description="x", schedule=_sch(-1, -1))
+    # base task
+    ts._create_task(name="base", description="x")
 
     # create a brand-new task that will be inserted
-    new_id = ts._create_task(name="insert-me", description="y")
+    new_id = ts._create_task(name="insert-me", description="y")["details"]["task_id"]
 
-    ts._update_task_queue(original=[0], new=[0, new_id])
+    ts._update_task_queue(original=[], new=[0, new_id])
 
     q = ts._get_task_queue()
     assert [t.task_id for t in q] == [0, new_id]
@@ -115,7 +115,7 @@ def test_start_time_moves_with_front_swap():
     q = ts._get_task_queue()
     assert [t.task_id for t in q] == [2, 0, 1]
     _assert_head_owns_timestamp(q)
-    assert q[0].schedule.start_at == "2025-06-23T09:00:00+00:00"
+    assert q[0].schedule.start_at.isoformat() == "2025-06-23T09:00:00+00:00"
 
 
 @_handle_project
@@ -151,7 +151,7 @@ def test_start_time_inherited_on_new_front_insert():
     q = ts._get_task_queue()
     assert [t.task_id for t in q] == [new_front_id, 0, 1]
     _assert_head_owns_timestamp(q)
-    assert q[0].schedule.start_at == "2025-06-23T09:00:00+00:00"
+    assert q[0].schedule.start_at.isoformat() == "2025-06-23T09:00:00+00:00"
 
 
 @_handle_project

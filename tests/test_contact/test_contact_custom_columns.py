@@ -24,14 +24,14 @@ from tests.helpers import _handle_project
 def test_create_custom_column():
     cm = ContactManager()
 
-    before_cols = cm._list_columns()["columns"]
+    before_cols = cm._list_columns()
     assert (
         "nickname" not in before_cols
     ), "Pre-condition failed: nickname already exists"
 
     cm._create_custom_column(column_name="nickname", column_type="str")
 
-    after_cols = cm._list_columns()["columns"]
+    after_cols = cm._list_columns()
     assert "nickname" in after_cols and after_cols["nickname"] == "str"
 
 
@@ -56,10 +56,10 @@ def test_delete_custom_column():
     cm = ContactManager()
 
     cm._create_custom_column(column_name="twitter", column_type="str")
-    assert "twitter" in cm._list_columns()["columns"]
+    assert "twitter" in cm._list_columns()
 
     cm._delete_custom_column(column_name="twitter")
-    assert "twitter" not in cm._list_columns()["columns"]
+    assert "twitter" not in cm._list_columns()
 
 
 # ────────────────────────────────────────────────────────────────────────────
@@ -87,7 +87,7 @@ def test_create_contact_with_custom_field():
     cid = cm._create_contact(
         first_name="Jane",
         custom_fields={"department": "Engineering"},
-    )
+    )["details"]["contact_id"]
     contacts = cm._search_contacts(filter=f"contact_id == {cid}")
     assert contacts and contacts[0].department == "Engineering"
 
@@ -101,7 +101,9 @@ def test_update_contact_custom_field():
     cm = ContactManager()
 
     cm._create_custom_column(column_name="age", column_type="int")
-    cid = cm._create_contact(first_name="Tom", custom_fields={"age": 30})
+    cid = cm._create_contact(first_name="Tom", custom_fields={"age": 30})["details"][
+        "contact_id"
+    ]
 
     cm._update_contact(contact_id=cid, custom_fields={"age": 31})
     contact = cm._search_contacts(filter=f"contact_id == {cid}")[0]

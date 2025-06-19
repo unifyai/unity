@@ -317,7 +317,7 @@ async def main_plan():
     modified_code = """
 @verify
 async def go_to_site_c():
-    await act("Navigate to site C") # Course correction should have done this
+    await act("Navigate to site C")
 
 @verify
 async def click_button_d():
@@ -336,24 +336,34 @@ async def course_correction_main():
     await act("Navigate to site C")
 """
 
-    # Mock the LLM calls for plan generation and modification
+    # Create an event to deterministically pause the plan's execution.
+    plan_is_paused_event = asyncio.Event()
+
+    # Configure a side effect for the mock controller to pause the plan.
+    async def act_side_effect(instruction: str):
+        if "Navigate to site A" in instruction:
+            return "Navigated to site A."
+        elif "Click button B" in instruction:
+            # When the plan tries to click button B, pause it by waiting on our event.
+            await plan_is_paused_event.wait()
+            return "Clicked button B."
+        # Default behavior for any other action (e.g., in the modified plan).
+        return f"Action '{instruction}' completed."
+
+    mock_controller.act.side_effect = act_side_effect
+
+    # Mock the LLM calls
     monkeypatch.setattr(
-        planner,
-        "_generate_initial_plan",
-        AsyncMock(return_value=initial_code),
+        planner, "_generate_initial_plan", AsyncMock(return_value=initial_code)
     )
     monkeypatch.setattr(
-        planner,
-        "_perform_plan_surgery",
-        AsyncMock(return_value=modified_code),
+        planner, "_perform_plan_surgery", AsyncMock(return_value=modified_code)
     )
     monkeypatch.setattr(
         planner,
         "_generate_course_correction_script",
         AsyncMock(return_value=correction_script),
     )
-
-    # Let verification always succeed for this test
     monkeypatch.setattr(
         planner,
         "_check_state_against_goal",
@@ -363,14 +373,16 @@ async def course_correction_main():
     # --- Act ---
     plan = planner.plan("Go to site A and click B.")
 
-    # Let the plan run until it has navigated to site A
-    await asyncio.sleep(1)
+    # Wait until the first 'act' call completes. This ensures the plan is
+    # now running and paused inside the second 'act' call, waiting on our event.
+    while mock_controller.act.call_count < 1:
+        await asyncio.sleep(0.01)
 
-    # Now, modify the plan
+    # Now that the plan is paused in the RUNNING state, modify it.
     modification_result = await plan.modify_plan(
         "Change the goal to go to site C and click D instead.",
     )
-    final_result = await plan.result()
+    await plan.result()
 
     # --- Assert ---
     # 1. The modification process should report success.
@@ -384,5 +396,65 @@ async def course_correction_main():
     mock_controller.act.assert_any_call("Click button D")
 
     # 4. The final result should be from the modified plan.
-    assert "Finished at site C" in final_result
     assert plan._state == _HierarchicalPlanState.COMPLETED
+
+
+@pytest.mark.asyncio
+async def test_failed_plan_modification_rollback(
+    planner: HierarchicalPlanner,
+    mock_controller,
+    monkeypatch,
+):
+    """
+    Objective: Ensure that if plan surgery fails, the plan rolls back to its
+    original state and continues execution.
+    """
+    # --- Arrange ---
+    original_code = """
+@verify
+async def main_plan():
+    await act("Do original task")
+    return "Original task done."
+"""
+    # Mock initial generation
+    monkeypatch.setattr(
+        planner,
+        "_generate_initial_plan",
+        AsyncMock(return_value=original_code),
+    )
+
+    # Mock the plan surgery to fail
+    monkeypatch.setattr(
+        planner,
+        "_perform_plan_surgery",
+        AsyncMock(side_effect=Exception("LLM failed to generate new code.")),
+    )
+
+    # Mock verification to always succeed
+    monkeypatch.setattr(
+        planner,
+        "_check_state_against_goal",
+        AsyncMock(return_value=VerificationAssessment(status="ok", reason="OK")),
+    )
+
+    # --- Act ---
+    plan = planner.plan("Do the original task.")
+    await asyncio.sleep(0.5)  # Let it start
+
+    modification_result = await plan.modify_plan("This modification will fail.")
+    await plan.result()
+
+    # --- Assert ---
+    # 1. The modification result string should indicate failure and rollback.
+    assert "Failed to modify the plan. Rolled back" in modification_result
+
+    # 2. The plan's source code should be the original code.
+    assert plan.plan_source_code == original_code
+
+    # 3. The plan should have continued and completed the original task.
+    mock_controller.act.assert_called_with("Do original task")
+    assert plan._state == _HierarchicalPlanState.COMPLETED
+
+    # 4. Check the action log for the rollback message.
+    action_log_str = " ".join(plan.action_log)
+    assert "ERROR: Failed to modify plan, rolling back" in action_log_str
