@@ -126,7 +126,7 @@ async def test_ts_update_uses_parent_context():  # FIXME: flaky
         description="Apply CVE-2025-1234 patch to all services.",
         status="primed",
         priority="high",
-    )
+    )["details"]["task_id"]
 
     parent_ctx = [
         {"role": "user", "content": "Remember: Hotfix task is called Thunderbolt."},
