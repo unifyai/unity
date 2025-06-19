@@ -77,6 +77,11 @@ def build_update_prompt(tools: Dict[str, Callable]) -> str:
             "This ensures smooth task progression, even if schedules overrun and `start_at` times"
             "are therefore not all adhered to."
             "",
+            "⚠️  **Hard invariants you must NEVER violate**:",
+            "• A task may *never* define both `prev_task` **and** `start_at`.",
+            "• Whenever you set `prev_task` or `next_task`, you MUST also update",
+            "  the reciprocal pointer on the neighbouring task so both sides match.",
+            "",
             "Tools (name → argspec):",
             sig_json,
             "",
