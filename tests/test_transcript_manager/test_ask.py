@@ -409,7 +409,7 @@ async def test_ask_requests_clarification_when_context_missing(
 
     # ── 3.  Call `.ask()` WITHOUT parent context ───────────────────────────
     handle = await tm.ask(
-        "What day was the conversation?",
+        "What day was the conversation? Request a clarification if you're unsure.",
         _return_reasoning_steps=True,
         clarification_up_q=up_q,
         clarification_down_q=down_q,
