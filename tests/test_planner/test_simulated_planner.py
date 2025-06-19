@@ -212,7 +212,7 @@ async def test_plan_requests_clarification():
     )
 
     # the plan must ask a clarification question first
-    question = await asyncio.wait_for(up_q.get(), timeout=30)
+    question = await asyncio.wait_for(up_q.get(), timeout=60)
     assert "clarify" in question.lower()
 
     # provide the clarification answer

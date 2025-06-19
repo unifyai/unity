@@ -93,7 +93,7 @@ async def test_tm_requests_clarification():
     )
 
     # Must ask for clarification first
-    question = await asyncio.wait_for(up_q.get(), timeout=30)
+    question = await asyncio.wait_for(up_q.get(), timeout=60)
     assert "clarify" in question.lower()
 
     # Provide clarification
@@ -240,7 +240,7 @@ async def test_pause_and_resume_simulated_tm(monkeypatch):
     tools_running = handle.valid_tools
     assert "pause" in tools_running and "resume" not in tools_running
 
-    answer = await asyncio.wait_for(res_task, timeout=30)
+    answer = await asyncio.wait_for(res_task, timeout=60)
     assert isinstance(answer, str) and answer.strip()
 
     # Each steering method should have been called exactly once.

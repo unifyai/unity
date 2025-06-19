@@ -184,7 +184,7 @@ def _dumps(
         base = True
         idx = list()
     if isinstance(obj, BaseModel):
-        ret = obj.model_dump()
+        ret = obj.model_dump(mode="json")
     elif inspect.isclass(obj) and issubclass(obj, BaseModel):
         ret = obj.model_json_schema()
     elif isinstance(obj, Log):
@@ -2314,7 +2314,7 @@ class AsyncToolUseLoopHandle(SteerableToolHandle):
             prune_tool_duplicates=False,
             interrupt_llm_with_interjections=False,
             max_consecutive_failures=1,
-            timeout=30,
+            timeout=60,
         )
 
         if not _return_reasoning_steps:

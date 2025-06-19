@@ -50,14 +50,14 @@ async def test_log_messages():
     tm = TranscriptManager()
     tm._log_messages(
         [
-            dict(
+            Message(
                 medium=random.choice(VALID_MEDIA),
                 sender_id=random.randint(0, 2),
                 receiver_id=random.randint(0, 2),
-                timestamp=datetime.now(UTC).isoformat(),
+                timestamp=datetime.now(UTC),
                 content=random.choice(MESSAGES),
                 exchange_id=i,
-            )
+            ).to_post_json()
             for i in range(10)
         ],
     )
@@ -75,14 +75,14 @@ async def test_get_messages():
     # log messages
     tm._log_messages(
         [
-            dict(
+            Message(
                 medium=random.choice(VALID_MEDIA),
                 sender_id=random.randint(0, 2),
                 receiver_id=random.randint(0, 2),
-                timestamp=datetime.now(UTC).isoformat(),
+                timestamp=datetime.now(UTC),
                 content=random.choice(MESSAGES),
                 exchange_id=i,
-            )
+            ).to_post_json()
             for i in range(10)
         ],
     )
@@ -141,14 +141,14 @@ async def test_summarize_exchanges():
     # phone call
     tm._log_messages(
         [
-            dict(
+            Message(
                 medium="phone_call",
                 sender_id=i % 2,
                 receiver_id=(i + 1) % 2,
-                timestamp=datetime.now(UTC).isoformat(),
+                timestamp=datetime.now(UTC),
                 content=msg,
                 exchange_id=0,
-            )
+            ).to_post_json()
             for i, msg in enumerate(
                 [
                     "Hey, how's it going?",
@@ -164,14 +164,14 @@ async def test_summarize_exchanges():
     # email exchange
     tm._log_messages(
         [
-            dict(
+            Message(
                 medium="email",
                 sender_id=i % 2,
                 receiver_id=(i + 1) % 2,
-                timestamp=datetime.now(UTC).isoformat(),
+                timestamp=datetime.now(UTC),
                 content=msg,
                 exchange_id=1,
-            )
+            ).to_post_json()
             for i, msg in enumerate(
                 [
                     "Great catching up the other day, did you manage to talk to your manager?",
@@ -185,14 +185,14 @@ async def test_summarize_exchanges():
     # whatsapp exchange
     tm._log_messages(
         [
-            dict(
+            Message(
                 medium="whatsapp_message",
                 sender_id=(i + 1) % 2,
                 receiver_id=i % 2,
-                timestamp=datetime.now(UTC).isoformat(),
+                timestamp=datetime.now(UTC),
                 content=msg,
                 exchange_id=2,
-            )
+            ).to_post_json()
             for i, msg in enumerate(
                 [
                     "Hey, yeah we'd love to buy your staplers!",
@@ -203,12 +203,14 @@ async def test_summarize_exchanges():
     )
 
     # summarize
-    summary = await tm.summarize(exchange_ids=[0, 1, 2])
+    handle = await tm.summarize(exchange_ids=[0, 1, 2])
+    summary = await handle.result()
 
     # retrieve summary
     summaries = tm._search_summaries()
     assert len(summaries) == 1
     assert summaries[0].model_dump() == {
+        "summary_id": 0,
         "exchange_ids": [0, 1, 2],
         "summary": summary,
     }

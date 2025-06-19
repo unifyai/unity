@@ -19,7 +19,7 @@ async def test_transcript_embedding_semantic_search():
 
     # Create a few test messages
     msgs = [
-        dict(
+        Message(
             medium=random.choice(VALID_MEDIA),
             sender_id=1,
             receiver_id=2,
@@ -27,7 +27,7 @@ async def test_transcript_embedding_semantic_search():
             content="Can you help me with my banking questions? I'm looking to set up a new account.",
             exchange_id=1,
         ),
-        dict(
+        Message(
             medium=random.choice(VALID_MEDIA),
             sender_id=2,
             receiver_id=1,
@@ -35,7 +35,7 @@ async def test_transcript_embedding_semantic_search():
             content="I'd be happy to help with your banking needs! What type of account would you like to set up? Checking, savings, or investment?",
             exchange_id=1,
         ),
-        dict(
+        Message(
             medium=random.choice(VALID_MEDIA),
             sender_id=1,
             receiver_id=2,
@@ -45,7 +45,7 @@ async def test_transcript_embedding_semantic_search():
         ),
     ]
 
-    tm._log_messages(msgs)
+    tm._log_messages([m.to_post_json() for m in msgs])
 
     # Ensure that a lexical search for the word 'budgeting' returns no results
     lexical_results = tm._search_messages(filter="'budgeting' in content")

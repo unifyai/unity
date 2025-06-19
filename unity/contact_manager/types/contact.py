@@ -1,11 +1,13 @@
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 from typing import Optional
 
 UNICODE_NAME_RE = r"^[^\W\d_](?:[^\W\d_]|[ .'-])*$"  # ← one reusable constant
 
+UNASSIGNED = -1
+
 
 class Contact(BaseModel):
-    contact_id: int = Field(description="Unique identifier for the contact")
+    contact_id: int = Field(description="Unique identifier for the contact", ge=-1)
 
     first_name: Optional[str] = Field(
         description="Contact's first name – letters (any script) plus . ' - and space",
@@ -30,6 +32,16 @@ class Contact(BaseModel):
     )
 
     description: Optional[str] = Field(description="Free-form notes about the contact.")
+
+    @model_validator(mode="before")
+    @classmethod
+    def _inject_sentinel(cls, data: dict) -> dict:
+        data.setdefault("contact_id", UNASSIGNED)
+        return data
+
+    def to_post_json(self) -> dict:
+        exclude = {"contact_id"} if self.contact_id == UNASSIGNED else {}
+        return self.model_dump(mode="json", exclude=exclude)
 
     @field_validator(
         "first_name",

@@ -161,7 +161,7 @@ class TranscriptManager(BaseTranscriptManager):
         parent_chat_context: Optional[List[Dict[str, Any]]] = None,
         clarification_up_q: asyncio.Queue[str] | None = None,
         clarification_down_q: asyncio.Queue[str] | None = None,
-    ) -> str:
+    ) -> SteerableToolHandle:
         if not isinstance(exchange_ids, list):
             exchange_ids = [exchange_ids]
 
@@ -178,7 +178,6 @@ class TranscriptManager(BaseTranscriptManager):
         exchanges = {
             id: [m.content for m in msgs if m.exchange_id == id] for id in exchange_ids
         }
-        latest_timestamp = max(m.timestamp for m in msgs)
         exchanges_json = json.dumps(exchanges, indent=2)
 
         # ── 2.  Optional request_clarification helper tool ─────────────────
@@ -214,17 +213,28 @@ class TranscriptManager(BaseTranscriptManager):
             tools,
             loop_id=f"{self.__class__.__name__}.{self.summarize.__name__}",
             parent_chat_context=parent_chat_context,
-            tool_policy=lambda i, _: ("required", _) if i < 1 else ("auto", _),
+            tool_policy=lambda i, _: (
+                ("required", _) if (tools and i < 1) else ("auto", _)
+            ),
         )
-        summary: str = await handle.result()
-        unify.log(
-            context=self._summaries_ctx,
-            exchange_ids=exchange_ids,
-            summary=summary,
-            new=True,
-            mutable=True,
-        )
-        return summary
+
+        # Wrap the original result to log the summary when it completes
+        original_result = handle.result
+
+        async def wrapped_result():
+            summary = await original_result()
+            unify.log(
+                context=self._summaries_ctx,
+                exchange_ids=exchange_ids,
+                summary=summary,
+                new=True,
+                mutable=True,
+            )
+            return summary
+
+        handle.result = wrapped_result
+
+        return handle
 
     # Helpers #
     # --------#

@@ -215,7 +215,7 @@ class SimulatedTranscriptManager(BaseTranscriptManager):
         _requests_clarification: bool = False,
         clarification_up_q: asyncio.Queue[str] | None = None,
         clarification_down_q: asyncio.Queue[str] | None = None,
-    ) -> str:
+    ) -> SteerableToolHandle:
         instruction = (
             "On this turn you are simulating the 'summarize' method.\n"
             "Please always provide an imaginery summary (making up the response), "
@@ -244,7 +244,7 @@ class SimulatedTranscriptManager(BaseTranscriptManager):
             except asyncio.QueueFull:
                 pass
             try:
-                clar = await asyncio.wait_for(clarification_down_q.get(), timeout=30)
+                clar = await asyncio.wait_for(clarification_down_q.get(), timeout=60)
             except asyncio.TimeoutError:
                 clar = None
         else:
@@ -258,11 +258,11 @@ class SimulatedTranscriptManager(BaseTranscriptManager):
         if clar:
             prompt_parts.append(f"User clarification: {clar}")
 
-        return await _SimulatedTranscriptHandle(
+        return _SimulatedTranscriptHandle(
             self._llm,
             "\n\n".join(prompt_parts),
             _return_reasoning_steps=_return_reasoning_steps,
             _requests_clarification=_requests_clarification,
             clarification_up_q=clarification_up_q,
             clarification_down_q=clarification_down_q,
-        ).result()
+        )

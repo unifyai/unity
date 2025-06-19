@@ -1,4 +1,4 @@
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 from typing import Optional, List
 
 from .priority import Priority
@@ -7,9 +7,11 @@ from .schedule import Schedule
 from .repetition import RepeatPattern
 from datetime import datetime
 
+UNASSIGNED = -1
+
 
 class Task(BaseModel):
-    task_id: int = Field(description="Unique identifier for the task")
+    task_id: int = Field(description="Unique identifier for the task", ge=-1)
     name: str = Field(description="Short title of the task")
     description: str = Field(
         description="Detailed explanation of what the task involves",
@@ -29,3 +31,13 @@ class Task(BaseModel):
     priority: Priority = Field(
         description="Importance level of the task (low, normal, high, urgent)",
     )
+
+    @model_validator(mode="before")
+    @classmethod
+    def _inject_sentinel(cls, data: dict) -> dict:
+        data.setdefault("task_id", UNASSIGNED)
+        return data
+
+    def to_post_json(self) -> dict:
+        exclude = {"task_id"} if self.task_id == UNASSIGNED else {}
+        return self.model_dump(mode="json", exclude=exclude)

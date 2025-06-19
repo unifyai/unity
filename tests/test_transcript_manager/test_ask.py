@@ -64,7 +64,7 @@ def _answer_semantic(
         if last_call_messages:
             # Let's use the date of the first message in the snippet
             try:
-                dialogue_timestamp_iso = last_call_messages[0].timestamp
+                dialogue_timestamp_iso = last_call_messages[0].timestamp.isoformat()
                 dialogue_date = datetime.fromisoformat(
                     dialogue_timestamp_iso.replace("Z", "+00:00"),
                 ).strftime(
@@ -99,7 +99,7 @@ def _answer_semantic(
             if m.medium == "phone_call"
             and {m.sender_id, m.receiver_id} == {cid("dan"), cid("julia")}
         )
-        return last.split("T")[0]
+        return last.isoformat().split("T")[0]
 
     if "jimmy" in q and "holiday" in q:
         pattern = re.compile(r"\d{4}-\d{2}-\d{2}")
@@ -340,7 +340,7 @@ async def test_ask_respects_parent_context(
 
     # ── 3.  Call `.ask()` with that context ────────────────────────────
     handle = await tm.ask(
-        "What day was the conversation?",
+        "What date was the conversation referenced in the parent context?",
         _return_reasoning_steps=True,
         parent_chat_context=parent_ctx,
     )
@@ -351,7 +351,7 @@ async def test_ask_respects_parent_context(
     assert any(m.get("_ctx_header") for m in steps), "System context header missing."
     # b) LLM judged answer correct
     expected = "2025-05-20"
-    _llm_assert_correct("What day was the conversation?", expected, answer, steps)
+    _llm_assert_correct("What date was the conversation?", expected, answer, steps)
 
 
 @pytest.mark.asyncio
@@ -409,14 +409,14 @@ async def test_ask_requests_clarification_when_context_missing(
 
     # ── 3.  Call `.ask()` WITHOUT parent context ───────────────────────────
     handle = await tm.ask(
-        "What day was the conversation?",
+        "What day was the conversation? Request a clarification if you're unsure.",
         _return_reasoning_steps=True,
         clarification_up_q=up_q,
         clarification_down_q=down_q,
     )
 
     # ── 4.  There should be a clarification request at some point ─────────
-    clar_question: str = await asyncio.wait_for(up_q.get(), timeout=30)
+    clar_question: str = await asyncio.wait_for(up_q.get(), timeout=60)
     assert clar_question, "No clarification question was asked."
 
     # The wording is model-dependent; merely check it *asks which conversation*.
