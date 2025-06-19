@@ -235,8 +235,8 @@ async def test_knowledge_change_audit(monkeypatch):
         counts["ts_update"] += 1
         return await orig_ts_update(self, text, **kw)
 
-    monkeypatch.setattr(SimulatedKnowledgeManager, "retrieve", spy_ret, raising=True)
-    monkeypatch.setattr(SimulatedKnowledgeManager, "store", spy_store, raising=True)
+    monkeypatch.setattr(SimulatedKnowledgeManager, "ask", spy_ret, raising=True)
+    monkeypatch.setattr(SimulatedKnowledgeManager, "update", spy_store, raising=True)
     monkeypatch.setattr(SimulatedTaskScheduler, "update", spy_ts_update, raising=True)
 
     tm = SimulatedTaskManager("HR policy KB audit.")
@@ -416,7 +416,7 @@ async def test_interleaved_tools(monkeypatch):
         counts["ts_upd"] += 1
         return await orig_ts_upd(self, text, **kw)
 
-    monkeypatch.setattr(SimulatedKnowledgeManager, "retrieve", spy_kb_ret, raising=True)
+    monkeypatch.setattr(SimulatedKnowledgeManager, "ask", spy_kb_ret, raising=True)
     monkeypatch.setattr(SimulatedContactManager, "ask", spy_cm_ask, raising=True)
     monkeypatch.setattr(SimulatedTranscriptManager, "ask", spy_tm_ask, raising=True)
     monkeypatch.setattr(SimulatedTaskScheduler, "update", spy_ts_upd, raising=True)
