@@ -5,6 +5,7 @@ from .priority import Priority
 from .status import Status
 from .schedule import Schedule
 from .repetition import RepeatPattern
+from datetime import datetime
 
 
 class Task(BaseModel):
@@ -19,7 +20,7 @@ class Task(BaseModel):
     schedule: Optional[Schedule] = Field(
         description="Information about task scheduling, including adjacent tasks in the queue and ideal start time",
     )
-    deadline: Optional[str] = Field(
+    deadline: Optional[datetime] = Field(
         description="Due date/time for the task in ISO-8601 format",
     )
     repeat: Optional[RepeatPattern] = Field(
