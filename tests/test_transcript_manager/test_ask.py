@@ -99,7 +99,7 @@ def _answer_semantic(
             if m.medium == "phone_call"
             and {m.sender_id, m.receiver_id} == {cid("dan"), cid("julia")}
         )
-        return last.split("T")[0]
+        return last.isoformat().split("T")[0]
 
     if "jimmy" in q and "holiday" in q:
         pattern = re.compile(r"\d{4}-\d{2}-\d{2}")
