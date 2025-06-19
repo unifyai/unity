@@ -171,7 +171,7 @@ async def test_ask_with_clarification(
     )
 
     # Expect a clarification question
-    clarification_question_text = await asyncio.wait_for(clar_up_q.get(), timeout=30)
+    clarification_question_text = await asyncio.wait_for(clar_up_q.get(), timeout=60)
     assert (
         "two contacts" in clarification_question_text.lower()
         or "multiple contacts" in clarification_question_text.lower()

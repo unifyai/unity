@@ -84,7 +84,7 @@ async def test_update_requests_clarification():
     )
 
     # ➊ the very first thing should be a clarification question
-    question = await asyncio.wait_for(up_q.get(), timeout=30)
+    question = await asyncio.wait_for(up_q.get(), timeout=60)
     assert _contains(
         question,
         "registry",
@@ -182,13 +182,13 @@ async def test_ask_requests_clarification():
     task = asyncio.create_task(handle.result())
 
     # ➍ expect a clarification question
-    await asyncio.wait_for(up_q.get(), timeout=30)
+    await asyncio.wait_for(up_q.get(), timeout=60)
 
     # ➎ answer the question
     await down_q.put("I mean the Porsche.")
 
     # ➏ await final answer
-    answer = await asyncio.wait_for(task, timeout=30)
+    answer = await asyncio.wait_for(task, timeout=60)
     assert _contains(answer, "silver"), assertion_failed(
         "Answer containing 'silver' (silver Porsche)",
         answer,

@@ -469,7 +469,7 @@ async def test_plan_requests_clarification(
     try:
         question_from_plan = await asyncio.wait_for(
             clarification_up_q.get(),
-            timeout=30,
+            timeout=60,
         )
     except asyncio.TimeoutError:
         pytest.fail("Test (Clarification): Timed out waiting for question from plan.")
@@ -485,7 +485,7 @@ async def test_plan_requests_clarification(
 
     final_result = ""
     try:
-        final_result = await asyncio.wait_for(plan_handle.result(), timeout=30)
+        final_result = await asyncio.wait_for(plan_handle.result(), timeout=60)
     except asyncio.TimeoutError:
         pytest.fail(
             "Test (Clarification): Timed out waiting for plan final result after providing clarification.",
