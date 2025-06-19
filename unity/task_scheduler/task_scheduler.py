@@ -306,9 +306,6 @@ class TaskScheduler(BaseTaskScheduler):
         # normalise
         status = Status(status)
 
-        if status != Status.scheduled:
-            return
-
         prev_ptr = self._sched_prev(schedule)
         if schedule is None:
             start_ts = None
@@ -316,6 +313,15 @@ class TaskScheduler(BaseTaskScheduler):
             start_ts = schedule.start_at
         else:  # dict
             start_ts = schedule.get("start_at")
+
+        if prev_ptr is not None and start_ts is not None:
+            raise ValueError(
+                f"{err_prefix} a task cannot define both 'prev_task' and "
+                "'start_at' – the timestamp belongs on the queue head only.",
+            )
+
+        if status != Status.scheduled:
+            return
 
         if prev_ptr is None and start_ts is None:
             raise ValueError(
@@ -1084,6 +1090,13 @@ class TaskScheduler(BaseTaskScheduler):
         """
         self._ensure_not_active_task(task_id)
         log_id = self._get_logs_by_task_ids(task_ids=task_id)
+
+        # Guard-rail: tasks inside a queue can't own a start_at
+        if self._sched_prev(current_sched) is not None:
+            raise ValueError(
+                "Cannot set 'start_at' when the task has 'prev_task'. "
+                "Move it to the queue head first.",
+            )
 
         # Coerce to ISO-8601 string (Unify stores plain serialisable values)
         if isinstance(new_start_at, datetime):
