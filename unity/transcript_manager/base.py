@@ -68,7 +68,7 @@ class BaseTranscriptManager(ABC):
         parent_chat_context: Optional[List[Dict[str, Any]]] = None,
         clarification_up_q: Optional[asyncio.Queue[str]] = None,
         clarification_down_q: Optional[asyncio.Queue[str]] = None,
-    ) -> str:
+    ) -> SteerableToolHandle:
         """
         Create a **concise summary** of one or more message exchanges
         (threads, phone calls, etc.) and persist it in the backing store.
