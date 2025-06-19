@@ -37,9 +37,8 @@ class Message(BaseModel):
     # Don’t serialise the sentinel value when POSTing
     def to_post_json(self) -> dict:
         """Dump payload for POST; omit the dummy id."""
-        if self.message_id == UNASSIGNED:
-            return self.model_dump(mode="json", exclude={"message_id"})
-        return self.model_dump(mode="json")
+        exclude = {"message_id"} if self.message_id == UNASSIGNED else {}
+        return self.model_dump(mode="json", exclude=exclude)
 
 
 VALID_MEDIA: tuple[str, ...] = tuple(m.value for m in Medium)
