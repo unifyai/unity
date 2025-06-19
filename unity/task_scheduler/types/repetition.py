@@ -6,9 +6,9 @@ be stored in `unify` logs without ambiguity.
 
 from __future__ import annotations
 
-from datetime import datetime
 from enum import Enum
 from typing import List, Optional
+from datetime import datetime, time
 from pydantic import BaseModel, Field, field_validator
 
 
@@ -38,6 +38,7 @@ class RepeatPattern(BaseModel):
     * **weekdays**  – which days of the week (only when `frequency=weekly`).
     * **count**     – stop after *count* occurrences.
     * **until**     – or stop at this date/time (ISO-8601).
+    * **time_of_day** – local *clock* time at which each occurrence starts.
 
     Anything more elaborate can still be represented by creating multiple
     `RepeatPattern` instances for a single task.
@@ -62,13 +63,28 @@ class RepeatPattern(BaseModel):
         None,
         description="Hard cut-off date/time after which no repeats occur",
     )
-
-    # ------------------------------------------------------------------ #
-    #  Validators                                                         #
-    # ------------------------------------------------------------------ #
+    time_of_day: Optional[time] = Field(
+        None,
+        description=(
+            "Clock time at which the task should start on each occurrence "
+            "(e.g. 09:00).  When omitted the time is inherited from the "
+            "queue head or resolved dynamically by the scheduler."
+        ),
+    )
 
     @field_validator("weekdays")
     def _weekdays_only_for_weekly(cls, v, info):
         if v is not None and info.data.get("frequency") != Frequency.WEEKLY:
             raise ValueError("`weekdays` only makes sense with weekly frequency")
+        return v
+
+    @field_validator("time_of_day")
+    def _time_without_date(cls, v):
+        """
+        Disallow accidental full datetimes – the field must be a *time* only.
+        """
+        if isinstance(v, datetime):
+            raise ValueError(
+                "`time_of_day` must be a `datetime.time`, not a full datetime",
+            )
         return v
