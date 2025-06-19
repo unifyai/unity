@@ -1143,13 +1143,6 @@ class TaskScheduler(BaseTaskScheduler):
         self._ensure_not_active_task(task_id)
         log_id = self._get_logs_by_task_ids(task_ids=task_id)
 
-        # Guard-rail: tasks inside a queue can't own a start_at
-        if self._sched_prev(current_sched) is not None:
-            raise ValueError(
-                "Cannot set 'start_at' when the task has 'prev_task'. "
-                "Move it to the queue head first.",
-            )
-
         # Coerce to ISO-8601 string (Unify stores plain serialisable values)
         if isinstance(new_start_at, datetime):
             new_start_at = new_start_at.isoformat()
@@ -1157,6 +1150,14 @@ class TaskScheduler(BaseTaskScheduler):
         # Fetch the current task row to preserve linkage information if present
         current_rows = self._search_tasks(filter=f"task_id == {task_id}", limit=1)
         current_sched = current_rows[0].get("schedule") if current_rows else None
+
+        # Guard-rail: tasks inside a queue can't own a start_at
+        if self._sched_prev(current_sched) is not None:
+            raise ValueError(
+                "Cannot set 'start_at' when the task has 'prev_task'. "
+                "Move it to the queue head first.",
+            )
+
         if current_sched is None:
             current_sched = {}
 
