@@ -52,7 +52,7 @@ def model_to_fields(model: type[BaseModel]) -> dict[str, dict[str, Any]]:
         if origin is bool:
             return ColumnType.bool
         if origin is datetime:
-            return ColumnType.timestamp
+            return ColumnType.datetime
         if origin is date:
             return ColumnType.date
         if origin is time:
