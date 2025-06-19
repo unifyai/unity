@@ -1,5 +1,6 @@
 from enum import StrEnum
 from pydantic import BaseModel, Field, model_validator
+from datetime import datetime
 
 UNASSIGNED = -1
 
@@ -19,7 +20,7 @@ class Message(BaseModel):
     )
     sender_id: int = Field(description="ID of the contact who sent the message")
     receiver_id: int = Field(description="ID of the contact who received the message")
-    timestamp: str = Field(
+    timestamp: datetime = Field(
         description="When the message was sent/received in ISO-8601 format",
     )
     content: str = Field(description="The actual text content of the message")
