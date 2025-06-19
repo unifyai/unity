@@ -796,8 +796,7 @@ class KnowledgeManager(BaseKnowledgeManager):
         self,
         *,
         table: str,
-        row_ids: Optional[List[int]] = None,
-        entries: Optional[List[Dict[str, Any]]] = None,
+        updates: Dict[int, Dict[str, Any]],
         overwrite: bool = False,
     ) -> Dict[str, str]:
         """
@@ -807,44 +806,29 @@ class KnowledgeManager(BaseKnowledgeManager):
         ----------
         table : str
             Target table.
-        row_ids : list[int] | None
-            List of unique `row_id` rows to update, might have a different name under the hood `team_id`, `product_id` etc.
-            If the unique_column_name is customized  *None* updates nothing and will return a no-op.
-        entries : list[dict[str, Any]] | None
-            New field values (aligned 1-to-1 with *row_ids*).
+        updates : dict[int, dict[str, Any]]
+            Mapping of unique `row_id` rows to update (might be named `team_id`, `product_id` etc.)
+            to the dict of new field values mapping column names to the new overwriting values.
         overwrite : bool, default ``False``
             When *True*, fields **not** mentioned in *entries* are cleared.
         """
-        if not row_ids:
-            return {"status": "no-op", "reason": "no row_ids given"}
-
-        # Sort row_ids and entries together to maintain alignment
-        if entries is not None:
-            sorted_pairs = sorted(zip(row_ids, entries))
-            row_ids, entries = zip(*sorted_pairs)
-            row_ids = list(row_ids)
-            entries = list(entries)
-        else:
-            row_ids = sorted(row_ids)
-
         ctx = self._ctx_for_table(table)
-
-        # Map external row_id → internal log.id
-        log_ids = unify.get_logs(
-            context=ctx,
-            filter=f"row_id in {row_ids}",
-            limit=1,
+        ctx_info = unify.get_context(ctx)
+        unique_column_name = ctx_info["unique_id_name"]
+        unique_ids = sorted([int(k) for k in updates.keys()])
+        log_ids: List[int] = sorted(
+            unify.get_logs(
+                context=ctx,
+                filter=f"{unique_column_name} in {unique_ids}",
+                return_ids_only=True,
+            ),
         )
-        if len(log_ids) != len(row_ids):
-            raise ValueError(f"Each row_id should return a unique log.")
-        log_ids = sorted(log_ids)
-
+        entries = [updates[str(unique_id)] for unique_id in unique_ids]
         res = unify.update_logs(
             logs=log_ids,
             context=ctx,
             entries=entries,
             overwrite=overwrite,
-            project=unify.active_project(),
         )
         return res
 
