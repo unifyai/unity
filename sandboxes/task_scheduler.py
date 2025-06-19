@@ -203,7 +203,6 @@ async def _main_async() -> None:
         contexts = unify.get_contexts()
         if "Tasks" in contexts:
             unify.delete_context("Tasks")
-        unify.create_context("Tasks")
 
         if "Traces" in contexts:
             unify.delete_context("Traces")

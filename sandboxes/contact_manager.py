@@ -159,7 +159,6 @@ async def _main_async() -> None:
         ctxs = unify.get_contexts()
         if "Contacts" in ctxs:
             unify.delete_context("Contacts")
-        unify.create_context("Contacts")
         if "Traces" in ctxs:
             unify.delete_context("Traces")
         unify.create_context("Traces")
