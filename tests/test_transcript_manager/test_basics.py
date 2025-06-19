@@ -203,12 +203,14 @@ async def test_summarize_exchanges():
     )
 
     # summarize
-    summary = await tm.summarize(exchange_ids=[0, 1, 2])
+    handle = await tm.summarize(exchange_ids=[0, 1, 2])
+    summary = await handle.result()
 
     # retrieve summary
     summaries = tm._search_summaries()
     assert len(summaries) == 1
     assert summaries[0].model_dump() == {
+        "summary_id": 0,
         "exchange_ids": [0, 1, 2],
         "summary": summary,
     }
