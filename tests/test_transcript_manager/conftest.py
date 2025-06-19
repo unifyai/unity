@@ -14,6 +14,7 @@ import asyncio
 import unify
 from unity.contact_manager.contact_manager import ContactManager
 from unity.transcript_manager.transcript_manager import TranscriptManager
+from unity.transcript_manager.types.message import Message
 
 SCENARIO_COMMIT_HASHES: Dict[str, Any] = {}
 
@@ -229,17 +230,16 @@ class ScenarioBuilder:
         medium: str,
         msgs: List[tuple[int, int, datetime, str]],
     ) -> None:
-        unify.create_logs(
-            context=self.tm._messages_ctx,
-            entries=[
-                dict(
+        self.tm._log_messages(
+            [
+                Message(
                     medium=medium,
                     sender_id=s,
                     receiver_id=r,
-                    timestamp=ts.isoformat(),
+                    timestamp=ts,
                     content=txt,
                     exchange_id=ex_id,
-                )
+                ).to_post_json()
                 for s, r, ts, txt in msgs
             ],
         )
