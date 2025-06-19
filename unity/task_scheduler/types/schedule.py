@@ -1,6 +1,6 @@
 from typing import Optional
-from pydantic import BaseModel, Field
 from datetime import datetime
+from pydantic import BaseModel, Field, model_validator
 
 
 class Schedule(BaseModel):
@@ -14,3 +14,18 @@ class Schedule(BaseModel):
         default=None,
         description="The scheduled start time for the task in ISO-8601 format. Only set when the user explicitly schedules the task.",
     )
+
+    @model_validator(mode="before")
+    @classmethod
+    def _no_start_at_with_prev(cls, data: dict) -> dict:
+        """
+        **Invariant #1** – A task that sits *behind* another one
+        (``prev_task`` ≠ None) inherits its timing from the **head** of the
+        queue and therefore **MUST NOT** carry its own ``start_at``.
+        """
+        if data.get("prev_task") is not None and data.get("start_at") is not None:
+            raise ValueError(
+                "Cannot specify 'start_at' together with 'prev_task'. "
+                "Place the timestamp on the queue head instead.",
+            )
+        return data
