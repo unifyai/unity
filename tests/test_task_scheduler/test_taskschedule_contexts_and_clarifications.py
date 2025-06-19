@@ -84,7 +84,7 @@ async def test_ts_ask_requests_clarification():
 
     # run ask in background (loop starts immediately)
     handle = await ts.ask(
-        "What is the description of the high priority task?",
+        "What is the description of the high priority task? Please request clarification if there is more than one.",
         clarification_up_q=up_q,
         clarification_down_q=down_q,
     )
