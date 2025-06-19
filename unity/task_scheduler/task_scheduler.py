@@ -532,6 +532,9 @@ class TaskScheduler(BaseTaskScheduler):
         task_id = log.entries["task_id"]
         task_details["task_id"] = task_id
 
+        # Keep linkage symmetric right after creation
+        self._sync_adjacent_links(task_id=task_id, schedule=schedule)
+
         if status == Status.primed:
             self._primed_task = task_details
 
@@ -652,6 +655,55 @@ class TaskScheduler(BaseTaskScheduler):
         if isinstance(sched, dict):
             return sched.get("next_task")
         return getattr(sched, "next_task", None)
+
+    def _sync_adjacent_links(
+        self,
+        *,
+        task_id: int,
+        schedule: Optional[Union[Schedule, dict]],
+    ) -> None:
+        """
+        Guarantee **link symmetry**:
+
+        * If *schedule.prev_task* → *P*, then *P.schedule.next_task* → *task_id*
+        * If *schedule.next_task* → *N*, then *N.schedule.prev_task* → *task_id*
+        """
+        if schedule is None:
+            return
+
+        if isinstance(schedule, Schedule):
+            schedule = schedule.model_dump()
+
+        neighbours: list[tuple[str, str, int]] = []
+        if schedule.get("prev_task") is not None:
+            neighbours.append(("next_task", "prev_task", schedule["prev_task"]))
+        if schedule.get("next_task") is not None:
+            neighbours.append(("prev_task", "next_task", schedule["next_task"]))
+
+        for field_to_set, _, neighbour_id in neighbours:
+            rows = self._search_tasks(filter=f"task_id == {neighbour_id}", limit=1)
+            if not rows:
+                raise ValueError(
+                    f"Broken queue linkage: referenced task_id {neighbour_id} not found.",
+                )
+
+            row = rows[0]
+            n_sched = {**(row.get("schedule") or {})}
+            if n_sched.get(field_to_set) == task_id:
+                continue  # already correct
+
+            # Strip start_at if the neighbour ceases to be queue head
+            if field_to_set == "prev_task":
+                n_sched.pop("start_at", None)
+
+            n_sched[field_to_set] = task_id
+            log_id = self._get_logs_by_task_ids(task_ids=row["task_id"])
+            unify.update_logs(
+                logs=log_id,
+                context=self._ctx,
+                entries={"schedule": n_sched},
+                overwrite=True,
+            )
 
     _TERMINAL_STATUSES = {"completed", "cancelled", "failed"}
 
