@@ -178,7 +178,6 @@ class TranscriptManager(BaseTranscriptManager):
         exchanges = {
             id: [m.content for m in msgs if m.exchange_id == id] for id in exchange_ids
         }
-        latest_timestamp = max(m.timestamp for m in msgs)
         exchanges_json = json.dumps(exchanges, indent=2)
 
         # ── 2.  Optional request_clarification helper tool ─────────────────
@@ -214,7 +213,9 @@ class TranscriptManager(BaseTranscriptManager):
             tools,
             loop_id=f"{self.__class__.__name__}.{self.summarize.__name__}",
             parent_chat_context=parent_chat_context,
-            tool_policy=lambda i, _: ("required", _) if i < 1 else ("auto", _),
+            tool_policy=lambda i, _: (
+                ("required", _) if (tools and i < 1) else ("auto", _)
+            ),
         )
 
         # Wrap the original result to log the summary when it completes
