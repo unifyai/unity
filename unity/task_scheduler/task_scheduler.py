@@ -508,7 +508,6 @@ class TaskScheduler(BaseTaskScheduler):
 
         # ------------------  assemble payload  ------------------ #
         task_details = Task(
-            task_id=0,  # dummy
             name=name,
             description=description,
             status=status,
@@ -516,8 +515,7 @@ class TaskScheduler(BaseTaskScheduler):
             deadline=deadline,
             repeat=repeat,
             priority=priority,
-        ).model_dump(mode="json")
-        del task_details["task_id"]
+        ).to_post_json()
 
         # ------------------  write log immediately  ------------------ #
         log = unify.log(
