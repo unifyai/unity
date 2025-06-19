@@ -198,7 +198,7 @@ class CommsAgent:
         if action.query.lower().startswith(
             ("add ", "create ", "update ", "change ", "delete ")
         ):
-            self.contact_manager_handle =  await self.contact_manager.update(
+            self.contact_manager_handle = await self.contact_manager.update(
                 action.query,
                 parent_chat_context=chat_history,
                 _return_reasoning_steps=action.show_steps,

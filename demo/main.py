@@ -13,6 +13,7 @@ from typing import Optional
 import unify
 
 load_dotenv()
+unify.activate("ContactManagerIntegration")
 LG = logging.getLogger("contact_manager_integration")
 
 from unity.contact_manager.contact_manager import ContactManager
@@ -189,7 +190,6 @@ def loop_exception_handler(loop, context):
 
 async def build_scenario():
     # prepare Unify context
-    unify.activate("ContactManagerIntegration")
     unify.set_trace_context("Traces")
     ctxs = unify.get_contexts()
     if "Contacts" in ctxs:
