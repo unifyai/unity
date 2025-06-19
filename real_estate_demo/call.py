@@ -49,8 +49,9 @@ async def process_structured_output(
 ) -> AsyncIterable[str]:
     last_response = ""
     acc_text = ""
+    print("GOT TO TTS")
     async for chunk in text:
-        print("CHUNK FOR TTS", chunk)
+        # print("CHUNK FOR TTS", chunk)
         acc_text += chunk
         try:
             resp = from_json(
@@ -66,7 +67,7 @@ async def process_structured_output(
 
         new_delta = resp["response"][len(last_response) :]
         if new_delta:
-            print("delta", new_delta)
+            # print("delta", new_delta)
             yield new_delta
         last_response = resp["response"]
 
@@ -240,7 +241,10 @@ async def entrypoint(ctx: agents.JobContext):
         nonlocal session, last_activity_time
         handle = await session.generate_reply()
         last_activity_time = asyncio.get_event_loop().time()  # Update activity time
-        return handle.chat_message.text_content, handle.interrupted
+        try:
+            return handle.chat_message.text_content, handle.interrupted
+        except:
+            pass
 
     def on_response_end(t: asyncio.Task):
         nonlocal last_activity_time

@@ -8,7 +8,7 @@ from pydantic import BaseModel, Field
 
 from new_terminal_helper import run_script, terminate_process
 
-from demo_flow import flow, get_action_event, GoBack, GoNext, SYS_SONNET_2
+from demo_flow import flow, get_action_event, GoBack, GoNext, EndSession, SYS_SONNET_2
 
 
 client = openai.AsyncOpenAI(api_key=os.environ["OPENAI_API_KEY"])
@@ -77,10 +77,13 @@ class Agent:
                             action_event = get_action_event(flow, action)
                         else:
                             if isinstance(action, GoNext):
-                                action_event = f"GoNext and has advanced to the next node: '{flow.current_node.title}'"
+                                action_event = f"and has advanced to the next node: '{flow.current_node.title}'"
                             elif isinstance(action, GoBack):
-                                action_event = f"GoBack and went back to the previous node: '{flow.current_node.title}'"
-                        self.events_queue.put_nowait({"content": f"Agent took action: {action_event}"})
+                                action_event = f"and went back to the previous node: '{flow.current_node.title}'"
+                            elif isinstance(action, EndSession):
+                                action_event = f"The session with the user has ended."
+                        self.events_queue.put_nowait({"content": f"Agent took action `{action.__class__.__name__}`: {action_event}"})
+                        break
 
         except asyncio.CancelledError:
             pass

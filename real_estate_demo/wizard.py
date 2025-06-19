@@ -165,6 +165,7 @@ class Flow:
         self.flow_done = False
 
     def play_actions(self, action):
+        if self.flow_done: return
         for l, a in action:
             if a is not None:
                 if isinstance(a, GoBack):

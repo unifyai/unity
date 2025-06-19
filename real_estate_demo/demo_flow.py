@@ -6,7 +6,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 
-from wizard import Node, Flow, InputField, RadioField, GoBack, GoNext
+from wizard import Node, Flow, InputField, RadioField, GoBack, GoNext, EndSession
 
 from pydantic import BaseModel, Field
 import openai
@@ -176,7 +176,7 @@ appointment_screen = Node(
 repair_ticket_raised_screen = Node(
     "repair_ticket_raised_screen",
     "Repair Ticket Successfully Raised",
-    """Inform the user that a ticket with the following details has been raised. After that thank them and end the session.
+    """Inform the user that a ticket with the following details has been raised. After that ask them, if they need anything else, if not thank them and end the session.
 Ticket Details:
 Location: {exact_location}
 Area: {location}
@@ -261,12 +261,16 @@ Your mission: resolve tenants' maintenance requests fast, accurately and with mi
 </input_parsing_rules>
 
 <response_rules>
-  • Replies ≤ 8 words; prefer silence when the action itself speaks.  
-  • Skip "Shall I mark…?" confirmations — act directly.  
+  • Replies ≤ 8 words.  
+  • Prefer silence when the action itself speaks.  
+  • **Progress cues sparingly:** after two or more consecutive silent
+    navigation steps (e.g. multiple `GoNext` in a row) or when the
+    user has been waiting >10 s, send a brief filler such as
+    “Okay—give me a moment…”, “One sec…”, or “Almost done…”.
+    Do **not** add a filler after every single action.  
   • Strategic acknowledgments only:
     - "Got it." for user-provided information
     - "Perfect." for completing sections  
-    - Stay silent for obvious/expected selections
   • Direct prompts with specific options: "Kitchen, bedroom, or bathroom?"
   • No closings until the terminal node.
   • Remember: the tenant cannot see the form on your screen.
@@ -274,6 +278,15 @@ Your mission: resolve tenants' maintenance requests fast, accurately and with mi
     you must include **all the information they need** right in your
     message — options, summaries, previously captured details, etc.
 </response_rules>
+
+<language_style>
+  • Friendly, efficient, human.  
+  • Natural transitions: "Got it." "One sec."  
+  • Rotate between "Perfect." "Noted." or silence after field actions.  
+  • Brief, occasional progress cues while working — roughly every
+    2-3 nodes, not every turn.  
+  • Occasionally indicate progress: "Almost done..." "Last question..."
+</language_style>
 
 <agent_script_rules>
   • Never combine field-fill and navigation in the same turn.  
@@ -297,13 +310,6 @@ Your mission: resolve tenants' maintenance requests fast, accurately and with mi
     "That sounds serious — I'll mark this as urgent."
 </emergency_cue>
 
-<language_style>
-  • Friendly, efficient, human.  
-  • Natural transitions: "Got it." "One sec."  
-  • Rotate between "Perfect." "Noted." or silence after field actions.
-  • Occasionally indicate progress: "Almost done..." "Last question..."
-</language_style>
-
 <completion_behavior>
   • Only at the final node may you close with "Anything else I can help with today?"  
   • Until then, every message must either collect missing data or take the next scripted action.
@@ -315,9 +321,10 @@ async def call_llm(flow: Flow, event_stream: list):
     client = openai.AsyncOpenAI(api_key=os.environ["OPENAI_API_KEY"])
 
     class AgentOutput(BaseModel):
-        response: Optional[str] = Field(..., description="Your response to the user if, show as [Agent: ...] in the event stream")
+        response: Optional[str] = Field(..., 
+                                        description="Your response to the user if, show as [Agent: ...] in the event stream")
         action: Optional[flow.current_action_model()] = Field(..., 
-                                                                     description="action to take given the current state (state = events stream and agent script UI)")
+                                        description="action to take given the current state (state = events stream and agent script UI)")
     
     event_stream_str = "\n".join(event_stream)
     user_msg = f"<event_stream>\n{event_stream_str}\n</event_stream>\n\n<agent_script>\n{flow.render()}\n</agent_script>"
