@@ -904,14 +904,14 @@ class KnowledgeManager(BaseKnowledgeManager):
         results = dict()
         for table in tables:
             context = self._ctx_for_table(table)
-            column = f"{source}_emb"
-            self._vectorize_column(table, column, source)
+            column_emb = f"{source}_emb"
+            self._vectorize_column(table, source, column_emb)
             results[table] = [
                 log.entries
                 for log in unify.get_logs(
                     context=context,
                     sorting={
-                        f"cosine({column}, embed('{text}', model='{EMBED_MODEL}'))": "ascending",
+                        f"cosine({column_emb}, embed('{text}', model='{EMBED_MODEL}'))": "ascending",
                     },
                     limit=k,
                     exclude_fields=[
