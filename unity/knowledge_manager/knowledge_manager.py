@@ -4,7 +4,7 @@ import uuid
 import unify
 import functools
 import requests
-from typing import Any, Dict, List, Optional, Callable
+from typing import Any, Dict, List, Optional, Callable, Union
 
 import json
 from ..common.embed_utils import EMBED_MODEL, ensure_vector_column
@@ -797,7 +797,6 @@ class KnowledgeManager(BaseKnowledgeManager):
         *,
         table: str,
         updates: Dict[int, Dict[str, Any]],
-        overwrite: bool = False,
     ) -> Dict[str, str]:
         """
         **Update** existing rows identified by their *unique_id*.
@@ -828,7 +827,7 @@ class KnowledgeManager(BaseKnowledgeManager):
             logs=log_ids,
             context=ctx,
             entries=entries,
-            overwrite=overwrite,
+            overwrite=True,
         )
         return res
 
@@ -858,7 +857,7 @@ class KnowledgeManager(BaseKnowledgeManager):
     def _nearest(
         self,
         *,
-        tables: List[str],
+        tables: Optional[Union[str, List[str]]],
         source: str,
         text: str,
         k: int = 5,
@@ -869,8 +868,8 @@ class KnowledgeManager(BaseKnowledgeManager):
 
         Parameters
         ----------
-        tables : list[str]
-            Candidate tables (each must contain *source* column).
+        tables : str | list[str]
+            Candidate tables (each must contain *source* column); ``None`` → all tables.
         source : str
             Text column to embed (an auxiliary ``<source>_emb`` column is
             auto-created if missing). MUST be *snake case*.
@@ -885,6 +884,10 @@ class KnowledgeManager(BaseKnowledgeManager):
             Mapping ``table_name → [row, …]`` sorted by ascending distance.
         """
         # ToDo: convert to map function
+        if tables is None:
+            tables = self._tables_overview()
+        elif isinstance(tables, str):
+            tables = [tables]
         results = dict()
         for table in tables:
             context = self._ctx_for_table(table)
@@ -915,7 +918,7 @@ class KnowledgeManager(BaseKnowledgeManager):
         filter: Optional[str] = None,
         offset: int = 0,
         limit: int = 100,
-        tables: Optional[List[str]] = None,
+        tables: Optional[Union[str, List[str]]] = None,
     ) -> Dict[str, List[Dict[str, Any]]]:
         """
         **Filter search** across one or more tables using a Python boolean
@@ -930,7 +933,7 @@ class KnowledgeManager(BaseKnowledgeManager):
             Pagination offset (0-based).
         limit : int, default ``100``
             Maximum rows per table.
-        tables : list[str] | None
+        tables :  str | list[str]
             Subset of tables to scan; ``None`` → all tables.
 
         Returns
@@ -940,6 +943,8 @@ class KnowledgeManager(BaseKnowledgeManager):
         """
         if tables is None:
             tables = self._tables_overview()
+        elif isinstance(tables, str):
+            tables = [tables]
         # ToDo: convert to map function
         results = dict()
         for table in tables:
