@@ -40,4 +40,4 @@ class Task(BaseModel):
 
     def to_post_json(self) -> dict:
         exclude = {"task_id"} if self.task_id == UNASSIGNED else {}
-        return self.model_dump(exclude=exclude)
+        return self.model_dump(mode="json", exclude=exclude)

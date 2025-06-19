@@ -41,7 +41,7 @@ class Contact(BaseModel):
 
     def to_post_json(self) -> dict:
         exclude = {"contact_id"} if self.contact_id == UNASSIGNED else {}
-        return self.model_dump(exclude=exclude)
+        return self.model_dump(mode="json", exclude=exclude)
 
     @field_validator(
         "first_name",
