@@ -19,10 +19,10 @@ async def test_ask_calls_knowledge_manager_ask(monkeypatch):
         calls["count"] += 1
         return await original(self, text, **kwargs)
 
-    monkeypatch.setattr(SimulatedKnowledgeManager, "retrieve", spy, raising=True)
+    monkeypatch.setattr(SimulatedKnowledgeManager, "ask", spy, raising=True)
 
     tm = SimulatedTaskManager("Demo – internal KB for product specs.")
     handle = await tm.ask("What warranty info do we store about the X200 battery pack?")
     await asyncio.wait_for(handle.result(), timeout=60)
 
-    assert calls["count"] == 1, "KnowledgeManager.retrieve must be called exactly once."
+    assert calls["count"] == 1, "KnowledgeManager.ask must be called exactly once."
