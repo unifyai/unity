@@ -123,7 +123,7 @@ class CommsAgent:
     def get_chat_history(self):
         chat_history = []
         for event in self.past_events:
-            if event["topic"] == "PhoneUtteranceEvent":
+            if event["event_name"] == "PhoneUtteranceEvent":
                 chat_history.append(
                     {
                         "role": event["payload"]["role"].lower(),
