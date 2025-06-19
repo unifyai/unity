@@ -92,7 +92,7 @@ class ScenarioBuilderTasks:
                 continue  # Task already exists, skip
 
             try:
-                task_id = self.ts._create_task(**task_data)
+                task_id = self.ts._create_task(**task_data)["details"]["task_id"]
 
                 # Add to _TASK_IDS list maintaining order
                 if len(_TASK_IDS) <= i:
