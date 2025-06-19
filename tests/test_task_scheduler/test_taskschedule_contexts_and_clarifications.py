@@ -113,7 +113,7 @@ async def test_ts_ask_requests_clarification():
 # --------------------------------------------------------------------------- #
 @pytest.mark.asyncio
 @_handle_project
-async def test_ts_update_uses_parent_context():  # FIXME: flaky
+async def test_ts_update_uses_parent_context():
     """
     User nicknames 'Hotfix security vulnerability' as *Thunderbolt* in a
     prior exchange.  update() must interpret that nickname without asking.
@@ -129,14 +129,17 @@ async def test_ts_update_uses_parent_context():  # FIXME: flaky
     )["details"]["task_id"]
 
     parent_ctx = [
-        {"role": "user", "content": "Remember: Hotfix task is called Thunderbolt."},
+        {
+            "role": "user",
+            "content": "Remember: 'Thunderbolt' is just codename for the task named 'Hotfix security vulnerability'.",
+        },
         {"role": "assistant", "content": "Acknowledged."},
     ]
 
     # ask to mark Thunderbolt completed
     await (
         await ts.update(
-            "Mark the Thunderbolt task as completed.",
+            "Mark the 'Thunderbolt' task as completed.",
             parent_chat_context=parent_ctx,
         )
     ).result()
