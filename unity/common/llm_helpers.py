@@ -184,7 +184,7 @@ def _dumps(
         base = True
         idx = list()
     if isinstance(obj, BaseModel):
-        ret = obj.model_dump()
+        ret = obj.model_dump(mode="json")
     elif inspect.isclass(obj) and issubclass(obj, BaseModel):
         ret = obj.model_json_schema()
     elif isinstance(obj, Log):
