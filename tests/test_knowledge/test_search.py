@@ -15,8 +15,8 @@ def test_search_basic():
     data = knowledge_manager._search()
     assert data == {
         "MyTable": [
-            {"x": 2, "y": 3},
-            {"x": 0, "y": 1},
+            {"row_id": 1, "x": 2, "y": 3},
+            {"row_id": 0, "x": 0, "y": 1},
         ],
     }
 
@@ -33,7 +33,7 @@ def test_search_filter():
     data = knowledge_manager._search(filter="x > 0")
     assert data == {
         "MyTable": [
-            {"x": 2, "y": 3},
+            {"row_id": 1, "x": 2, "y": 3},
         ],
     }
 
@@ -56,19 +56,19 @@ def test_search_specific_tables():
     data = knowledge_manager._search()
     assert data == {
         "MyTable": [
-            {"x": 2, "y": 3},
-            {"x": 0, "y": 1},
+            {"row_id": 1, "x": 2, "y": 3},
+            {"row_id": 0, "x": 0, "y": 1},
         ],
         "MyOtherTable": [
-            {"a": 9, "b": 10},
+            {"row_id": 0, "a": 9, "b": 10},
         ],
     }
     # specific tables
     data = knowledge_manager._search(tables=["MyTable"])
     assert data == {
         "MyTable": [
-            {"x": 2, "y": 3},
-            {"x": 0, "y": 1},
+            {"row_id": 1, "x": 2, "y": 3},
+            {"row_id": 0, "x": 0, "y": 1},
         ],
     }
 
@@ -85,6 +85,6 @@ def test_search_w_filter():
     data = knowledge_manager._search(filter="x > 1 and y < 4")
     assert data == {
         "MyTable": [
-            {"x": 2, "y": 3},
+            {"row_id": 2, "x": 2, "y": 3},
         ],
     }
