@@ -1,5 +1,7 @@
 from enum import StrEnum
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
+
+UNASSIGNED = -1
 
 
 class Medium(StrEnum):
@@ -11,7 +13,7 @@ class Medium(StrEnum):
 
 
 class Message(BaseModel):
-    message_id: int = Field(description="Unique identifier for the message")
+    message_id: int = Field(description="Unique identifier for the message", ge=-1)
     medium: Medium = Field(
         description="The communication channel used for this message",
     )
@@ -24,6 +26,19 @@ class Message(BaseModel):
     exchange_id: int = Field(
         description="ID of the conversation thread this message belongs to",
     )
+
+    @model_validator(mode="before")
+    @classmethod
+    def _inject_sentinel(cls, data: dict) -> dict:
+        data.setdefault("message_id", UNASSIGNED)
+        return data
+
+    # Don’t serialise the sentinel value when POSTing
+    def to_post_json(self) -> dict:
+        """Dump payload for POST; omit the dummy id."""
+        if self.message_id == UNASSIGNED:
+            return self.model_dump(mode="json", exclude={"message_id"})
+        return self.model_dump(mode="json")
 
 
 VALID_MEDIA: tuple[str, ...] = tuple(m.value for m in Medium)
