@@ -64,7 +64,7 @@ def _answer_semantic(
         if last_call_messages:
             # Let's use the date of the first message in the snippet
             try:
-                dialogue_timestamp_iso = last_call_messages[0].timestamp
+                dialogue_timestamp_iso = last_call_messages[0].timestamp.isoformat()
                 dialogue_date = datetime.fromisoformat(
                     dialogue_timestamp_iso.replace("Z", "+00:00"),
                 ).strftime(
