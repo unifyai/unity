@@ -140,14 +140,6 @@ async def _dispatch_with_context(
         )
         return "update", handle
 
-    if lowered.startswith(("start ", "begin ", "activate ")):
-        task_id = _extract_first_int(raw)
-        handle = await ts.start_task(
-            task_id,
-            parent_chat_context=parent_chat_context,
-        )
-        return "start", handle
-
     # ───── everything else – ask an LLM judge ────────────────────────
     judge = unify.Unify("gpt-4o@openai", response_format=_Intent)
     intent = _Intent.model_validate_json(
