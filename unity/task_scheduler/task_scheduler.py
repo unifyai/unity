@@ -216,7 +216,9 @@ class TaskScheduler(BaseTaskScheduler):
             loop_id=f"{self.__class__.__name__}.{self.update.__name__}",
             parent_chat_context=parent_chat_context,
             log_steps=_log_tool_steps,
-            tool_policy=lambda i, _: ("required", _) if i < 1 else ("auto", _),
+            tool_policy=lambda i, _: (
+                ("required", self._ask_tools) if i < 1 else ("auto", _)
+            ),
         )
         if _return_reasoning_steps:
             # Wrap the handle.result() to return both answer and reasoning steps
