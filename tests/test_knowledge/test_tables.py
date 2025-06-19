@@ -24,7 +24,10 @@ def test_create_table_w_cols():
     tables = knowledge_manager._tables_overview(include_column_info=True)
     assert len(tables) == 1
     assert tables == {
-        "MyTable": {"description": None, "columns": {"ColA": "int", "ColB": "str"}},
+        "MyTable": {
+            "description": None,
+            "columns": {"row_id": "int", "ColA": "int", "ColB": "str"},
+        },
     }
 
 
