@@ -167,7 +167,7 @@ async def test_ts_update_requests_clarification():
         description="Create slides for the upcoming board meeting.",
         status="primed",
         priority="normal",
-    )
+    )["details"]["task_id"]
     ts._create_task(
         name="Write quarterly report",
         description="Compile and draft the Q2 report.",
@@ -186,7 +186,7 @@ async def test_ts_update_requests_clarification():
     task = asyncio.create_task(
         (
             await ts.update(
-                "Set the queued task's priority to high.",
+                "Set the queued task's priority to high. Please request clarification if there is more than one.",
                 clarification_up_q=up_q,
                 clarification_down_q=down_q,
             )
