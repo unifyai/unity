@@ -213,7 +213,7 @@ class EventBus:
         if hasattr(event, "to_post_json") and callable(getattr(event, "to_post_json")):
             entries = event.to_post_json()
         else:
-            entries = event.model_dump()
+            entries = event.model_dump(mode="json")
 
         # Log to global event table
         self._logger.log_create(
