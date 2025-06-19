@@ -1,5 +1,5 @@
 from pydantic import BaseModel, Field
-from typing import Optional
+from typing import Optional, List
 
 from .priority import Priority
 from .status import Status
@@ -23,7 +23,7 @@ class Task(BaseModel):
     deadline: Optional[datetime] = Field(
         description="Due date/time for the task in ISO-8601 format",
     )
-    repeat: Optional[RepeatPattern] = Field(
+    repeat: Optional[List[RepeatPattern]] = Field(
         description="Pattern defining how the task recurs over time",
     )
     priority: Priority = Field(
