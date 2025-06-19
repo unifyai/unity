@@ -507,15 +507,17 @@ class TaskScheduler(BaseTaskScheduler):
             raise ValueError("Scheduled tasks require a future start_at")
 
         # ------------------  assemble payload  ------------------ #
-        task_details = {
-            "name": name,
-            "description": description,
-            "status": status,
-            "schedule": schedule.model_dump() if schedule else None,
-            "deadline": deadline,
-            "repeat": [r.model_dump() for r in repeat] if repeat else None,
-            "priority": priority,
-        }
+        task_details = Task(
+            task_id=0,  # dummy
+            name=name,
+            description=description,
+            status=status,
+            schedule=schedule,
+            deadline=deadline,
+            repeat=repeat,
+            priority=priority,
+        ).model_dump(mode="json")
+        del task_details["task_id"]
 
         # ------------------  write log immediately  ------------------ #
         log = unify.log(
