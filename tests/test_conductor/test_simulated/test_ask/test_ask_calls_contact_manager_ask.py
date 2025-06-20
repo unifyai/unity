@@ -24,8 +24,8 @@ async def test_ask_calls_contact_manager_ask(monkeypatch):
 
     monkeypatch.setattr(SimulatedContactManager, "ask", spy, raising=True)
 
-    tm = SimulatedConductor("Unit-test scenario – small team CRM.")
-    handle = await tm.ask("What's Alice Reynolds' mobile number so I can ping her?")
+    cond = SimulatedConductor("Unit-test scenario – small team CRM.")
+    handle = await cond.ask("What's Alice Reynolds' mobile number so I can ping her?")
     await asyncio.wait_for(handle.result(), timeout=60)
 
     assert calls["count"] == 1, "ContactManager.ask must be called exactly once."

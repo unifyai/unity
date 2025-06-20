@@ -21,8 +21,8 @@ async def test_ask_calls_transcript_manager_summarize(monkeypatch):
 
     monkeypatch.setattr(SimulatedTranscriptManager, "summarize", spy, raising=True)
 
-    tm = SimulatedConductor("Demo – sales-call recordings.")
-    handle = await tm.request(
+    cond = SimulatedConductor("Demo – sales-call recordings.")
+    handle = await cond.request(
         "Can you please give me a summary of the recent exchange with id==123.",
     )
     await asyncio.wait_for(handle.result(), timeout=60)

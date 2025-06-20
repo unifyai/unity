@@ -23,8 +23,8 @@ async def test_request_calls_contact_manager_ask(monkeypatch):
 
     monkeypatch.setattr(SimulatedContactManager, "ask", spy, raising=True)
 
-    tm = SimulatedConductor("CRM demo – add reminder tasks.")
-    handle = await tm.request(
+    cond = SimulatedConductor("CRM demo – add reminder tasks.")
+    handle = await cond.request(
         "Create a reminder task to call Alice Reynolds next Wednesday; "
         "look up her direct mobile number and include it in the task notes.",
     )

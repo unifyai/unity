@@ -65,9 +65,9 @@ async def test_two_tier_ask_propagation():
     await asyncio.wait_for(create.result(), timeout=60)
 
     # 2️⃣  Kick off the *outer* mutation via the real Conductor
-    tm = Conductor()
+    cond = Conductor()
 
-    h_update = await tm.request(
+    h_update = await cond.request(
         "Change Daniel Smith's first name to Dan.",
         _log_tool_steps=False,
     )
@@ -84,7 +84,7 @@ async def test_two_tier_ask_propagation():
     # 4️⃣  Let the outer update finish, then verify the rename took effect
     await asyncio.wait_for(h_update.result(), timeout=120)
 
-    h_verify = await tm.ask("How many Daniel's do we have in our contacts?")
+    h_verify = await cond.ask("How many Daniel's do we have in our contacts?")
     post_answer = await asyncio.wait_for(h_verify.result(), timeout=60)
     assert (
         _extract_int(post_answer) == 0
