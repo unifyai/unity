@@ -294,12 +294,14 @@ class SimulatedTaskScheduler(BaseTaskScheduler):
         `SimulatedPlan` by calling the shared `SimulatedPlanner.execute`.
         """
         task_description = f"Simulated task #{task_id}"
-        return SimulatedPlanner(
+        planner = SimulatedPlanner(
             timeout=10,
             _requests_clarification=_requests_clarification,
-        ).execute(
+        )
+        handle = await planner.execute(
             task_description,
             parent_chat_context=parent_chat_context,
             clarification_up_q=clarification_up_q,
             clarification_down_q=clarification_down_q,
         )
+        return handle
