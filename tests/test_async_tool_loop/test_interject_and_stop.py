@@ -126,7 +126,9 @@ async def test_interject_leads_to_second_tool_and_final_result():
     # --- inject clarification ------------------------------------------------
     await asyncio.sleep(0.02)
     await handle.interject(
-        "And also echo B please, the order of the echos doesn't matter.",
+        "And also echo B please, the order of the echos doesn't matter."
+        "Don't return until both have completed."
+        "Use the 'continue' tool to continue a pending tool execution if needed.",
     )
 
     await handle.result()
