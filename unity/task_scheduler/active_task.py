@@ -2,13 +2,13 @@ import asyncio
 import functools
 from typing import Optional, Dict, Callable, TYPE_CHECKING
 
-from ..planner.base import BasePlanner, ActiveTask
+from ..planner.base import BasePlanner, BaseActiveTask
 
 if TYPE_CHECKING:
     from .task_scheduler import TaskScheduler
 
 
-class ActiveTask(ActiveTask):
+class ActiveTask(BaseActiveTask):
     def __init__(
         self,
         task_description: str,
@@ -44,38 +44,38 @@ class ActiveTask(ActiveTask):
         self._scheduler: Optional["TaskScheduler"] = scheduler
         self._task_id: Optional[int] = task_id
 
-    @functools.wraps(ActiveTask.ask, updated=())
+    @functools.wraps(BaseActiveTask.ask, updated=())
     async def ask(self, message: str) -> str:
         return await asyncio.to_thread(self._active_task.ask, message)
 
-    @functools.wraps(ActiveTask.interject, updated=())
+    @functools.wraps(BaseActiveTask.interject, updated=())
     async def interject(self, message: str) -> None:
         await self._active_task.interject(message)
 
-    @functools.wraps(ActiveTask.stop, updated=())
+    @functools.wraps(BaseActiveTask.stop, updated=())
     def stop(self) -> Optional[str]:
         ret = self._active_task.stop()
         self._mirror_status("cancelled")
         self._clear_active_pointer()
         return ret
 
-    @functools.wraps(ActiveTask.pause, updated=())
+    @functools.wraps(BaseActiveTask.pause, updated=())
     def pause(self) -> Optional[str]:
         ret = self._active_task.pause()
         self._mirror_status("paused")
         return ret
 
-    @functools.wraps(ActiveTask.resume, updated=())
+    @functools.wraps(BaseActiveTask.resume, updated=())
     def resume(self) -> Optional[str]:
         return self._active_task.resume()
 
-    @functools.wraps(ActiveTask.done, updated=())
+    @functools.wraps(BaseActiveTask.done, updated=())
     def done(self) -> bool:
         ret = self._active_task.done()
         self._mirror_status("active")
         return ret
 
-    @functools.wraps(ActiveTask.result, updated=())
+    @functools.wraps(BaseActiveTask.result, updated=())
     async def result(self) -> str:
         ret = await self._active_task.result()
         # If the task wasn't explicitly cancelled/failed, mark as completed.
@@ -114,7 +114,7 @@ class ActiveTask(ActiveTask):
         return self._active_task.ask(question)
 
     @property
-    @functools.wraps(ActiveTask.valid_tools, updated=())
+    @functools.wraps(BaseActiveTask.valid_tools, updated=())
     def valid_tools(self) -> Dict[str, Callable]:
         tools = {
             self.interject.__name__: self.interject,

@@ -7,7 +7,7 @@ import os
 import json
 
 from unity.common.llm_helpers import start_async_tool_use_loop
-from unity.planner.base import BasePlanner, ActiveTask
+from unity.planner.base import BasePlanner, BaseActiveTask
 from unity.planner.browser_use_planner import BrowserUsePlanner, BrowserUsePlan
 from unity.planner.tool_loop_planner import ToolLoopPlanner, ToolLoopPlan
 from tests.helpers import _handle_project
@@ -24,7 +24,7 @@ def make_client(system_message: str):
     return client
 
 
-PlannerFixture = Tuple[Type[BasePlanner], Type[ActiveTask], dict]
+PlannerFixture = Tuple[Type[BasePlanner], Type[BaseActiveTask], dict]
 
 
 @pytest.fixture(
