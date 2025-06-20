@@ -11,6 +11,8 @@ from unity.planner.hierarchical_planner import (
 from unity.controller.controller import Controller
 from unity.function_manager.function_manager import FunctionManager
 from unity.planner.tool_loop_planner import ComsManager
+import unity.planner.hierarchical_planner as hierarchical_planner_module
+from unity.common.llm_helpers import AsyncToolUseLoopHandle
 
 # --- Mocks for Dependencies ---
 
@@ -19,8 +21,16 @@ from unity.planner.tool_loop_planner import ComsManager
 def mock_controller():
     """Provides a mock Controller instance."""
     controller = MagicMock(spec=Controller)
-    controller.act = AsyncMock(return_value="Action completed.")
-    controller.observe = AsyncMock(return_value="Observed the initial page state.")
+
+    async def act_func(instruction: str):
+        return f"Action completed: {instruction}"
+
+    controller.act = act_func
+
+    async def observe_func(query: str):
+        return f"Observed: {query}"
+
+    controller.observe = observe_func
     return controller
 
 
@@ -101,6 +111,7 @@ async def sign_in():
     # --- Act ---
     plan = planner.execute(
         "Sign in to the website. Once signed in, respond **only** with 'Signed in successfully.'",
+        exploratory_mode=False,
     )
     final_result = await plan.result()
 
@@ -183,7 +194,7 @@ async def main_plan():
     monkeypatch.setattr(planner, "_generate_initial_plan", mock_generate_plan_llm)
 
     # --- Act ---
-    plan = planner.execute("Find the company email.")
+    plan = planner.execute("Find the company email.", exploratory_mode=False)
     await plan.result()
 
     # --- Assert ---
@@ -261,7 +272,10 @@ async def main_plan():
     )
 
     # --- Act ---
-    plan = planner.execute("Execute a plan with a flawed child task.")
+    plan = planner.execute(
+        "Execute a plan with a flawed child task.",
+        exploratory_mode=False,
+    )
 
     # --- Assert ---
     # 1. Wait for the escalation message. This is the correct way to sync.
@@ -338,6 +352,8 @@ async def course_correction_main():
 
     # Create an event to deterministically pause the plan's execution.
     plan_is_paused_event = asyncio.Event()
+    mock_act = AsyncMock()
+    monkeypatch.setattr(mock_controller, "act", mock_act)
 
     # Configure a side effect for the mock controller to pause the plan.
     async def act_side_effect(instruction: str):
@@ -375,7 +391,7 @@ async def course_correction_main():
     )
 
     # --- Act ---
-    plan = planner.execute("Go to site A and click B.")
+    plan = planner.execute("Go to site A and click B.", exploratory_mode=False)
 
     # Wait until the first 'act' call completes. This ensures the plan is
     # now running and paused inside the second 'act' call, waiting on our event.
@@ -442,7 +458,9 @@ async def main_plan():
     )
 
     # --- Act ---
-    plan = planner.execute("Do the original task.")
+    mock_act = AsyncMock()
+    monkeypatch.setattr(mock_controller, "act", mock_act)
+    plan = planner.execute("Do the original task.", exploratory_mode=False)
     await asyncio.sleep(0.5)  # Let it start
 
     modification_result = await plan.modify_plan("This modification will fail.")
@@ -489,7 +507,7 @@ async def test_fatal_error_in_verification(planner: HierarchicalPlanner, monkeyp
     )
 
     # --- Act ---
-    plan = planner.execute("Test fatal error handling.")
+    plan = planner.execute("Test fatal error handling.", exploratory_mode=False)
     await plan.result()
 
     # --- Assert ---
@@ -535,7 +553,10 @@ async def main_plan():
     )
 
     # --- Act ---
-    plan = planner.execute("A task that will fail and escalate.")
+    plan = planner.execute(
+        "A task that will fail and escalate.",
+        exploratory_mode=False,
+    )
     # The plan will escalate and pause, so we get the message. This waits for the *entire*
     # escalation process to finish.
     await asyncio.wait_for(plan.clarification_up_q.get(), timeout=20)
@@ -572,7 +593,7 @@ async def test_user_initiated_stop(planner: HierarchicalPlanner, mock_controller
     )
 
     # --- Act ---
-    plan = planner.execute("A long running plan to stop.")
+    plan = planner.execute("A long running plan to stop.", exploratory_mode=False)
     await asyncio.sleep(0.1)  # Ensure the plan has started and is waiting
     assert not plan.done()
 
@@ -603,7 +624,7 @@ async def test_user_initiated_pause_and_resume(
     )
 
     # --- Act ---
-    plan = planner.execute("A long running plan to pause.")
+    plan = planner.execute("A long running plan to pause.", exploratory_mode=False)
     await asyncio.sleep(0.1)
     assert plan._state == _HierarchicalPlanState.RUNNING
 
