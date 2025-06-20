@@ -789,10 +789,7 @@ async def _async_tool_use_loop_inner(
             # ───────────────────────────────────────────────────────────────
             #  Normal (non-handle) result – unchanged path
             # ───────────────────────────────────────────────────────────────
-            try:
-                result = _dumps(raw, indent=4)
-            except:
-                breakpoint()
+            result = _dumps(raw, indent=4)
             consecutive_failures = 0
         except Exception:
             consecutive_failures += 1
