@@ -294,7 +294,7 @@ class SimulatedPlanner(BasePlanner):
             "across multiple plans and calls.",
         )
 
-    def _execute_task_and_return_handle(
+    async def _execute_task_and_return_handle(
         self,
         task_description: str,
         *,

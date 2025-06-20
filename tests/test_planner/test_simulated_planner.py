@@ -205,7 +205,7 @@ async def test_plan_requests_clarification():
     down_q: asyncio.Queue[str] = asyncio.Queue()
 
     # start a plan that needs clarification
-    active_task = planner.execute(
+    active_task = await planner.execute(
         "Compile the quarterly report",
         clarification_up_q=up_q,
         clarification_down_q=down_q,
