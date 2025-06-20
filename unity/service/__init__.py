@@ -20,7 +20,7 @@ def terminate_process(proc: subprocess.Popen) -> None:
     """
     Terminate a subprocess gracefully, falling back to force kill if needed.
     Handles both Windows and Unix-like systems.
-    
+
     Args:
         proc: The subprocess.Popen object to terminate
     """
@@ -53,7 +53,7 @@ def terminate_process(proc: subprocess.Popen) -> None:
 def _start_monitoring() -> None:
     """Start background monitoring of the Unity process"""
     global _monitoring, _monitor_thread
-    
+
     if not _monitoring:
         _monitoring = True
         _monitor_thread = threading.Thread(
@@ -72,7 +72,7 @@ def _stop_monitoring() -> None:
 def _monitor_process() -> None:
     """Background thread to monitor process health"""
     global _monitoring, _process, _shutdown_reason
-    
+
     while _monitoring and _process:
         try:
             # Check if process is still running
@@ -86,9 +86,7 @@ def _monitor_process() -> None:
                         "Unity service exited cleanly - likely due to inactivity timeout",
                     )
                 elif exit_code != 0 and not _shutdown_reason:
-                    _shutdown_reason = (
-                        f"process_crashed (exit_code: {exit_code})"
-                    )
+                    _shutdown_reason = f"process_crashed (exit_code: {exit_code})"
                     print(f"Unity service crashed with exit code: {exit_code}")
 
                 _monitoring = False
@@ -105,9 +103,10 @@ def _monitor_process() -> None:
 
 def _run_async_start(manager_name: str = "contact") -> bool:
     """Internal async function to start the service"""
+
     async def _async_start():
         global _process, _start_time, _shutdown_reason
-        
+
         if _process and _process.poll() is None:
             print("Unity service is already running")
             return True  # Already running
@@ -143,12 +142,13 @@ def _run_async_start(manager_name: str = "contact") -> bool:
         except Exception as e:
             print(f"Failed to start Unity service: {e}")
             return False
-    
+
     # Check if we're already in an event loop
     try:
         loop = asyncio.get_running_loop()
         # We're in an async context, create a task
         import concurrent.futures
+
         with concurrent.futures.ThreadPoolExecutor() as executor:
             future = executor.submit(asyncio.run, _async_start())
             return future.result()
@@ -165,7 +165,7 @@ def _run_async_start(manager_name: str = "contact") -> bool:
 def start(manager_name: str = "contact") -> bool:
     """
     Start the Unity service as a subprocess.
-    
+
     Returns:
         bool: True if service started successfully, False otherwise
     """
@@ -174,10 +174,12 @@ def start(manager_name: str = "contact") -> bool:
 
 def _run_async_stop(reason: str) -> bool:
     """Internal async function to stop the service"""
+
     async def _async_stop():
         from unity.helpers import terminate_process
+
         global _process, _shutdown_reason
-        
+
         _stop_monitoring()  # Stop monitoring first
 
         if _process:
@@ -200,6 +202,7 @@ def _run_async_stop(reason: str) -> bool:
         loop = asyncio.get_running_loop()
         # We're in an async context, create a task
         import concurrent.futures
+
         with concurrent.futures.ThreadPoolExecutor() as executor:
             future = executor.submit(asyncio.run, _async_stop())
             return future.result()
@@ -216,10 +219,10 @@ def _run_async_stop(reason: str) -> bool:
 def stop(reason: str = "manual_stop") -> bool:
     """
     Stop the Unity service and all its child processes.
-    
+
     Args:
         reason: Reason for stopping the service
-        
+
     Returns:
         bool: True if service was stopped successfully
     """
@@ -229,7 +232,7 @@ def stop(reason: str = "manual_stop") -> bool:
 def is_running() -> bool:
     """
     Check if the Unity service is currently running.
-    
+
     Returns:
         bool: True if service is running, False otherwise
     """
@@ -240,12 +243,12 @@ def is_running() -> bool:
 def get_status() -> Dict[str, Any]:
     """
     Get detailed status of the Unity service.
-    
+
     Returns:
         dict: Status information including running state, uptime, process ID, etc.
     """
     global _process, _start_time, _shutdown_reason
-    
+
     running = is_running()
     uptime = time.time() - _start_time if _start_time and running else 0
 
@@ -272,7 +275,7 @@ def get_status() -> Dict[str, Any]:
 def get_process() -> Optional[subprocess.Popen]:
     """
     Get the current process object (for advanced usage).
-    
+
     Returns:
         Optional[subprocess.Popen]: The current process object or None
     """
@@ -286,7 +289,7 @@ def cleanup() -> None:
     Useful for testing or when you want to reset the global state.
     """
     global _process, _start_time, _shutdown_reason, _monitor_thread, _monitoring
-    
+
     if _process:
         stop("cleanup")
 

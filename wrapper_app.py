@@ -67,7 +67,9 @@ async def start_service(auth: bool = Depends(require_auth)):
         return {
             "status": "started",
             "message": "Unity service started successfully",
-            "pid": unity.service.get_process().pid if unity.service.get_process() else None,
+            "pid": unity.service.get_process().pid
+            if unity.service.get_process()
+            else None,
             "assistant_id": os.environ.get("ASSISTANT_ID", "default"),
         }
     else:

@@ -221,11 +221,7 @@ class CommsAgent:
                 response_format=self.intent_output_format,
             )
             intent = res.choices[0].message.parsed
-            fn = (
-                self.manager.update
-                if intent.action == "update"
-                else self.manager.ask
-            )
+            fn = self.manager.update if intent.action == "update" else self.manager.ask
             self.manager_handle = await fn(
                 action.query,
                 parent_chat_context=chat_history,
@@ -257,13 +253,13 @@ class CommsAgent:
         self.publish(
             {
                 "topic": "user_agent",
-                "event": ManagerEndedEvent(self.agent_id, self.manager_name, answer).to_dict(),
+                "event": ManagerEndedEvent(
+                    self.agent_id, self.manager_name, answer
+                ).to_dict(),
             },
         )
 
-    async def handle_manager_interject_action(
-        self, action: ManagerInterjectAction
-    ):
+    async def handle_manager_interject_action(self, action: ManagerInterjectAction):
         """Handle manager interject actions asynchronously"""
         # check if the manager is running
         if not self.manager_handle:
@@ -277,7 +273,9 @@ class CommsAgent:
         else:
             # interject
             await self.manager_handle.interject(action.query)
-            event = ManagerInterjectedEvent(self.agent_id, self.manager_name, action.query)
+            event = ManagerInterjectedEvent(
+                self.agent_id, self.manager_name, action.query
+            )
         self.publish({"topic": "user_agent", "event": event.to_dict()})
 
     def on_run_end(self, t: asyncio.Task):
@@ -334,9 +332,7 @@ class CommsAgent:
                             )
 
                         elif isinstance(action, ManagerAction):
-                            asyncio.create_task(
-                                self.handle_manager_action(action)
-                            )
+                            asyncio.create_task(self.handle_manager_action(action))
 
                         elif isinstance(action, ManagerInterjectAction):
                             asyncio.create_task(
