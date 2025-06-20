@@ -76,32 +76,3 @@ def build_request_prompt(tools: Dict[str, Callable]) -> str:
             f"Current UTC time is {_now()}.",
         ],
     )
-
-
-def build_execute_task_prompt(tools: Dict[str, Callable]) -> str:
-    """Dynamic **system** prompt for `Conductor.execute_task`."""
-    sig_json = json.dumps(_sig_dict(tools), indent=4)
-
-    return "\n".join(
-        [
-            "Your job is to **activate exactly one task** so that it becomes the",
-            "single *active* task in the system.",
-            "",
-            "Tools (name → argspec):",
-            sig_json,
-            "",
-            "Activation rules",
-            "• Only one task may be active at any time.",
-            "• Do **not** change other task properties here.",
-            "• After success, confirm activation in natural language.",
-            "• Ask for clarification if the user is ambiguous.",
-            "",
-            "Task schema:",
-            json.dumps(Task.model_json_schema(), indent=4),
-            "",
-            "SteerableToolHandle class:",
-            class_api_overview(SteerableToolHandle),
-            "",
-            f"Current UTC time is {_now()}.",
-        ],
-    )
