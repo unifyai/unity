@@ -6,11 +6,11 @@ import os
 import json
 
 import unify
-from .base import BasePlanner, ActiveTask
+from .base import BasePlanner, BaseActiveTask
 from typing import Optional
 
 
-class SimulatedActiveTask(ActiveTask):
+class SimulatedActiveTask(BaseActiveTask):
     """
     A dummy active task class that simulates task execution and question answering.
     Public API surface (stop, ask, interject, pause, resume) is determined dynamically
@@ -177,14 +177,14 @@ class SimulatedActiveTask(ActiveTask):
 
     # Pubic
 
-    @functools.wraps(ActiveTask.result, updated=())
+    @functools.wraps(BaseActiveTask.result, updated=())
     async def result(self) -> str:
         await asyncio.to_thread(self._done_event.wait)
         return self._result_str  # type: ignore
 
     # Dynamic Methods (Public vs Private Depending on State)
 
-    @functools.wraps(ActiveTask.stop, updated=())
+    @functools.wraps(BaseActiveTask.stop, updated=())
     def stop(self) -> str:
         if not self._task:
             raise Exception("No tasks are currently being performed.")
@@ -193,7 +193,7 @@ class SimulatedActiveTask(ActiveTask):
         self._complete(msg)
         return msg
 
-    @functools.wraps(ActiveTask.interject, updated=())
+    @functools.wraps(BaseActiveTask.interject, updated=())
     async def interject(self, instruction: str) -> None:
         if not self._task:
             raise Exception("No tasks are currently being performed.")
@@ -204,7 +204,7 @@ class SimulatedActiveTask(ActiveTask):
         )
         await self._llm.generate(prompt)
 
-    @functools.wraps(ActiveTask.pause, updated=())
+    @functools.wraps(BaseActiveTask.pause, updated=())
     def pause(self) -> str:
         if not self._task:
             raise Exception("No task is running, so nothing to pause.")
@@ -215,7 +215,7 @@ class SimulatedActiveTask(ActiveTask):
         self._count_step()
         return f"Paused task '{self._task}'."
 
-    @functools.wraps(ActiveTask.resume, updated=())
+    @functools.wraps(BaseActiveTask.resume, updated=())
     def resume(self) -> str:
         if not self._task:
             raise Exception("No task is running, so nothing to resume.")
@@ -226,7 +226,7 @@ class SimulatedActiveTask(ActiveTask):
         self._count_step()
         return f"Resumed task '{self._task}'."
 
-    @functools.wraps(ActiveTask.ask, updated=())
+    @functools.wraps(BaseActiveTask.ask, updated=())
     async def ask(self, question: str) -> str:
         if not self._task:
             raise Exception("No tasks are currently being performed.")
@@ -237,12 +237,12 @@ class SimulatedActiveTask(ActiveTask):
         )
         return await self._llm.generate(prompt)
 
-    @functools.wraps(ActiveTask.done, updated=())
+    @functools.wraps(BaseActiveTask.done, updated=())
     def done(self) -> bool:
         return self._done_event.is_set()
 
     @property
-    @functools.wraps(ActiveTask.valid_tools, updated=())
+    @functools.wraps(BaseActiveTask.valid_tools, updated=())
     def valid_tools(self):
         if self._task is None:
             return {}

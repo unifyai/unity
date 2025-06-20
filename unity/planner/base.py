@@ -7,14 +7,14 @@ from typing import Callable, Dict, Optional
 
 from unity.common.llm_helpers import SteerableToolHandle
 
-__all__ = ["ActiveTask", "BasePlanner"]
+__all__ = ["BaseActiveTask", "BasePlanner"]
 
 # --------------------------------------------------------------------------- #
 # BasePlan
 # --------------------------------------------------------------------------- #
 
 
-class ActiveTask(SteerableToolHandle, ABC):
+class BaseActiveTask(SteerableToolHandle, ABC):
     """
     Abstract contract that every concrete *plan* must satisfy.
 
@@ -59,7 +59,7 @@ class BasePlanner(ABC):
     """
 
     def __init__(self) -> None:
-        self._active_task: Optional[ActiveTask] = None
+        self._active_task: Optional[BaseActiveTask] = None
 
     # ─────────────────────────── Plan management ────────────────────────── #
 
@@ -70,7 +70,7 @@ class BasePlanner(ABC):
         parent_chat_context: list[dict] | None = None,
         clarification_up_q: Optional[asyncio.Queue[str]] = None,
         clarification_down_q: Optional[asyncio.Queue[str]] = None,
-    ) -> ActiveTask:
+    ) -> BaseActiveTask:
         """
         Create (and start) a new active task.
 
@@ -101,7 +101,7 @@ class BasePlanner(ABC):
         parent_chat_context: list[dict] | None = None,
         clarification_up_q: Optional[asyncio.Queue[str]] = None,
         clarification_down_q: Optional[asyncio.Queue[str]] = None,
-    ) -> ActiveTask:
+    ) -> BaseActiveTask:
         """
         Concrete planner must build **and start** an active task implementation
         (e.g. ``SimulatedActiveTask``) and return it.
@@ -110,7 +110,7 @@ class BasePlanner(ABC):
     # ────────────────────────── Convenience API ─────────────────────────── #
 
     @property
-    def active_task(self) -> Optional[ActiveTask]:
+    def active_task(self) -> Optional[BaseActiveTask]:
         """Return the currently running task (or *None* if idle)."""
         return self._active_task
 

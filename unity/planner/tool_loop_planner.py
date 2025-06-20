@@ -12,7 +12,7 @@ from unity.common.llm_helpers import (
     start_async_tool_use_loop,
     SteerableToolHandle,
 )
-from .base import ActiveTask, BasePlanner
+from .base import BaseActiveTask, BasePlanner
 from unity.controller.controller import Controller
 from unify import AsyncUnify
 import unify
@@ -45,7 +45,7 @@ class _PlanState(enum.Enum):
     ERROR = enum.auto()
 
 
-class ToolLoopPlan(ActiveTask):
+class ToolLoopPlan(BaseActiveTask):
     """
     Represents an active plan being executed by the ToolLoopPlanner.
     Inherits from SteerableToolHandle to provide a consistent interface for interaction.
@@ -265,7 +265,7 @@ class ToolLoopPlan(ActiveTask):
             )
             self._overall_plan_completion_event.set()
 
-    @functools.wraps(ActiveTask.result, updated=())
+    @functools.wraps(BaseActiveTask.result, updated=())
     async def result(self) -> str:
         await self._overall_plan_completion_event.wait()
         if self._error_str:
@@ -276,7 +276,7 @@ class ToolLoopPlan(ActiveTask):
             else f"Plan {self._task_id} concluded without a specific result (State: {self._state.name})."
         )
 
-    @functools.wraps(ActiveTask.done, updated=())
+    @functools.wraps(BaseActiveTask.done, updated=())
     def done(self) -> bool:
         return self._overall_plan_completion_event.is_set()
 
@@ -306,7 +306,7 @@ class ToolLoopPlan(ActiveTask):
             return self._state in (_PlanState.RUNNING, _PlanState.PAUSED)
         return False
 
-    @functools.wraps(ActiveTask.stop, updated=())
+    @functools.wraps(BaseActiveTask.stop, updated=())
     async def stop(self) -> str:
         if not self._is_valid_method("stop"):
             if self.done():
@@ -339,7 +339,7 @@ class ToolLoopPlan(ActiveTask):
         await self._overall_plan_completion_event.wait()
         return self._result_str
 
-    @functools.wraps(ActiveTask.pause, updated=())
+    @functools.wraps(BaseActiveTask.pause, updated=())
     async def pause(self) -> str:
         if not self._is_valid_method("pause"):
             raise RuntimeError(
@@ -375,7 +375,7 @@ class ToolLoopPlan(ActiveTask):
 
         return f"Plan {self._task_id} paused successfully. Awaiting resume."
 
-    @functools.wraps(ActiveTask.resume, updated=())
+    @functools.wraps(BaseActiveTask.resume, updated=())
     async def resume(self) -> str:
         if not self._is_valid_method("resume"):
             raise RuntimeError(
@@ -387,7 +387,7 @@ class ToolLoopPlan(ActiveTask):
         self._resume_requested_event.set()
         return f"Plan {self._task_id} is resuming."
 
-    @functools.wraps(ActiveTask.interject, updated=())
+    @functools.wraps(BaseActiveTask.interject, updated=())
     async def interject(self, message: str) -> str:
         if not self._is_valid_method("interject"):
             if self._state != _PlanState.RUNNING:
@@ -401,7 +401,7 @@ class ToolLoopPlan(ActiveTask):
         await self._loop_handle.interject(message)  # type: ignore
         return f"Interjection '{message}' sent to plan {self._task_id}."
 
-    @functools.wraps(ActiveTask.ask, updated=())
+    @functools.wraps(BaseActiveTask.ask, updated=())
     async def ask(self, question: str) -> str:
         if not self._is_valid_method("ask"):
             raise RuntimeError(
@@ -450,7 +450,7 @@ class ToolLoopPlan(ActiveTask):
             return f"Error answering question due to LLM failure: {e}"
 
     @property
-    @functools.wraps(ActiveTask.valid_tools, updated=())
+    @functools.wraps(BaseActiveTask.valid_tools, updated=())
     def valid_tools(self) -> Dict[str, Callable[..., Awaitable[Any]]]:
         tools = {}
         potential_tools = ["stop", "pause", "resume", "interject", "ask"]

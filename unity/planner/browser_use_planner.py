@@ -15,7 +15,7 @@ from unity.common.llm_helpers import (
     start_async_tool_use_loop,
     SteerableToolHandle,
 )
-from .base import ActiveTask, BasePlanner
+from .base import BaseActiveTask, BasePlanner
 from unify import AsyncUnify
 import unify
 
@@ -38,7 +38,7 @@ class _BrowserPlannerState(enum.Enum):
     ERROR = enum.auto()
 
 
-class BrowserUsePlan(ActiveTask):
+class BrowserUsePlan(BaseActiveTask):
     """
     Represents an active plan being executed by the BrowserUsePlanner.
     Inherits from SteerableToolHandle to provide a consistent interface for interaction.
@@ -285,7 +285,7 @@ class BrowserUsePlan(ActiveTask):
             )
             self._overall_plan_completion_event.set()
 
-    @functools.wraps(ActiveTask.result, updated=())
+    @functools.wraps(BaseActiveTask.result, updated=())
     async def result(self) -> str:
         await self._overall_plan_completion_event.wait()
         if self._error_str:
@@ -296,7 +296,7 @@ class BrowserUsePlan(ActiveTask):
             else f"Plan {self._task_id} concluded without a specific result (State: {self._state.name})."
         )
 
-    @functools.wraps(ActiveTask.done, updated=())
+    @functools.wraps(BaseActiveTask.done, updated=())
     def done(self) -> bool:
         return self._overall_plan_completion_event.is_set()
 
@@ -334,7 +334,7 @@ class BrowserUsePlan(ActiveTask):
         return False
 
     # --- Public Control Methods ---
-    @functools.wraps(ActiveTask.stop, updated=())
+    @functools.wraps(BaseActiveTask.stop, updated=())
     async def stop(self) -> str:
         if not self._is_valid_method("stop"):
             # If already stopped/completed/errored, result() will give the status.
@@ -378,7 +378,7 @@ class BrowserUsePlan(ActiveTask):
 
         return self._result_str
 
-    @functools.wraps(ActiveTask.pause, updated=())
+    @functools.wraps(BaseActiveTask.pause, updated=())
     async def pause(self) -> str:
         if not self._is_valid_method("pause"):
             raise RuntimeError(
@@ -418,7 +418,7 @@ class BrowserUsePlan(ActiveTask):
         # Pause returns quickly; the overall plan's result() is still pending.
         return f"Plan {self._task_id} paused successfully. Awaiting resume."
 
-    @functools.wraps(ActiveTask.resume, updated=())
+    @functools.wraps(BaseActiveTask.resume, updated=())
     async def resume(self) -> str:
         if not self._is_valid_method("resume"):
             raise RuntimeError(
@@ -432,7 +432,7 @@ class BrowserUsePlan(ActiveTask):
         self._resume_requested_event.set()  # Signal _manage_plan_execution to continue
         return f"Plan {self._task_id} is resuming."
 
-    @functools.wraps(ActiveTask.interject, updated=())
+    @functools.wraps(BaseActiveTask.interject, updated=())
     async def interject(self, message: str) -> str:
         if not self._is_valid_method("interject"):
             # Check current state for more accurate error.
@@ -448,7 +448,7 @@ class BrowserUsePlan(ActiveTask):
         await self._loop_handle.interject(message)  # type: ignore
         return f"Interjection '{message}' sent to plan {self._task_id}."
 
-    @functools.wraps(ActiveTask.ask, updated=())
+    @functools.wraps(BaseActiveTask.ask, updated=())
     async def ask(self, question: str) -> str:
         try:
             if not self._is_valid_method("ask"):
@@ -508,7 +508,7 @@ class BrowserUsePlan(ActiveTask):
             return f"Error answering question due to LLM failure: {e}"
 
     @property
-    @functools.wraps(ActiveTask.valid_tools, updated=())
+    @functools.wraps(BaseActiveTask.valid_tools, updated=())
     def valid_tools(self) -> Dict[str, Callable[..., Awaitable[Any]]]:
         tools = {}
         # valid_tools should reflect methods callable by an external LLM on this Plan instance
