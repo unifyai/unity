@@ -742,3 +742,254 @@ async def test_user_initiated_pause_and_resume(
 
     # --- Assert ---
     assert plan._state == _HierarchicalPlanState.COMPLETED
+
+
+@pytest.mark.asyncio
+async def test_nested_dynamic_implementation(planner: HierarchicalPlanner, monkeypatch):
+    """
+    Objective: Verify the planner can handle a chain of dynamic implementations,
+    where a newly implemented function itself calls another stubbed function.
+    """
+    # --- Arrange ---
+    initial_code = """
+@verify
+async def child_task():
+    raise NotImplementedError
+
+@verify
+async def parent_task():
+    '''This task depends on a child task.'''
+    raise NotImplementedError
+
+@verify
+async def main_plan():
+    await parent_task()
+    return "Nested implementation complete."
+"""
+
+    implemented_parent = """
+@verify
+async def parent_task():
+    '''This task depends on a child task.'''
+    await child_task()
+"""
+    implemented_child = '@verify\nasync def child_task():\n    await act("Perform the final child action.")'
+
+    mock_llm = AsyncMock()
+    mock_llm.side_effect = [
+        initial_code,
+        implemented_parent,
+        implemented_child,
+    ]
+    monkeypatch.setattr("unity.planner.hierarchical_planner.llm_call", mock_llm)
+
+    monkeypatch.setattr(
+        planner,
+        "_check_state_against_goal",
+        AsyncMock(return_value=VerificationAssessment(status="ok", reason="OK")),
+    )
+
+    # --- Act ---
+    plan = planner.execute("Execute a plan with nested stubs.", exploratory_mode=False)
+    final_result = await plan.result()
+
+    # --- Assert ---
+    # 1. The plan should complete successfully.
+    assert plan._state == _HierarchicalPlanState.COMPLETED
+    assert "Nested implementation complete" in final_result
+
+    # 2. Check the sequence of implementations in the action log.
+    action_log_str = " ".join(plan.action_log)
+    parent_impl_index = action_log_str.find("Implemented function: parent_task")
+    child_impl_index = action_log_str.find("Implemented function: child_task")
+
+    assert parent_impl_index != -1 and child_impl_index != -1
+    assert parent_impl_index < child_impl_index
+
+    # 3. Both functions should now be fully implemented in the final source code.
+    assert "raise NotImplementedError" not in plan.plan_source_code
+
+    assert "await act('Perform the final child action.')" in plan.plan_source_code
+
+
+@pytest.mark.asyncio
+async def test_modify_plan_while_paused(
+    planner: HierarchicalPlanner,
+    mock_controller,
+    monkeypatch,
+):
+    """
+    Objective: Ensure a plan can be successfully modified while it is in an
+    explicitly PAUSED state.
+    """
+    # --- Arrange ---
+    pause_event = asyncio.Event()
+    mock_controller.act.side_effect = pause_event.wait  # Will hang until event is set
+
+    initial_code = '@verify\nasync def main_plan(): await act("long running action")'
+    modified_code = (
+        '@verify\nasync def main_plan(): await act("new action after pause")'
+    )
+
+    monkeypatch.setattr(
+        planner,
+        "_generate_initial_plan",
+        AsyncMock(return_value=initial_code),
+    )
+    monkeypatch.setattr(
+        planner,
+        "_perform_plan_surgery",
+        AsyncMock(return_value=modified_code),
+    )
+    # No course correction needed for this simple change
+    monkeypatch.setattr(
+        planner,
+        "_generate_course_correction_script",
+        AsyncMock(return_value=None),
+    )
+    monkeypatch.setattr(
+        planner,
+        "_check_state_against_goal",
+        AsyncMock(return_value=VerificationAssessment(status="ok", reason="OK")),
+    )
+
+    # --- Act ---
+    mock_act = AsyncMock()
+    monkeypatch.setattr(mock_controller, "act", mock_act)
+    plan = planner.execute(
+        "A plan to be modified while paused.",
+        exploratory_mode=False,
+    )
+    await asyncio.sleep(0.1)  # Let the plan start and hit the waiting act()
+
+    # Pause the running plan
+    await plan.pause()
+    assert plan._state == _HierarchicalPlanState.PAUSED
+
+    # Modify the plan while it's paused.
+    modification_result = await plan.modify_plan("Change the action.")
+
+    # Unblock the original action (which is now irrelevant but needs to terminate)
+    pause_event.set()
+    await plan.result()  # Await the result of the *new* plan execution
+
+    # --- Assert ---
+    # 1. The modification process should succeed.
+    assert "modified and resumed successfully" in modification_result
+
+    # 2. The plan should complete successfully with the new action.
+    assert plan._state == _HierarchicalPlanState.COMPLETED
+    mock_controller.act.assert_any_call("new action after pause")
+
+    # 3. The action log should show the pause before the modification.
+    log_str = " ".join(plan.action_log)
+    pause_index = log_str.find("Plan paused by user.")
+    modify_index = log_str.find("Modification requested:")
+    assert pause_index != -1 and modify_index != -1
+    assert pause_index < modify_index
+
+
+@pytest.mark.asyncio
+async def test_invalid_code_generation_handling(
+    planner: HierarchicalPlanner,
+    monkeypatch,
+):
+    """
+    Objective: Verify that the system handles a SyntaxError from LLM-generated
+    code gracefully and enters an ERROR state.
+    """
+    # --- Arrange ---
+    initial_code = "@verify\nasync def main_plan(): raise NotImplementedError"
+    invalid_code = "async def main_plan(:\n    pass # Invalid syntax"
+
+    # Mock the LLM to return valid code initially, then invalid code for the implementation
+    mock_llm = AsyncMock()
+    mock_llm.side_effect = [initial_code, invalid_code]
+    monkeypatch.setattr("unity.planner.hierarchical_planner.llm_call", mock_llm)
+
+    # --- Act ---
+    plan = planner.execute(
+        "A plan that will fail code generation.",
+        exploratory_mode=False,
+    )
+    result = await plan.result()
+
+    # --- Assert ---
+    # 1. The plan should be in an ERROR state.
+    assert plan._state == _HierarchicalPlanState.ERROR
+
+    # 2. The final result string should contain the error message.
+    assert "ERROR:" in result
+    assert "invalid syntax" in result
+
+
+@pytest.mark.asyncio
+async def test_failed_course_correction_triggers_rollback(
+    planner: HierarchicalPlanner,
+    mock_controller,
+    monkeypatch,
+):
+    """
+    Objective: Verify that if the course correction script fails its own
+    verification, the entire plan modification is rolled back.
+    """
+    # --- Arrange ---
+    initial_code = '@verify\nasync def main_plan():\n    await act("original action")\n    return "Original done."'
+    modified_code = '@verify\nasync def main_plan():\n    await act("modified action")'
+    correction_script = '@verify\nasync def course_correction_main():\n    await act("correction action")'
+
+    # Mock the various generation steps
+    monkeypatch.setattr(
+        planner,
+        "_generate_initial_plan",
+        AsyncMock(return_value=initial_code),
+    )
+    monkeypatch.setattr(
+        planner,
+        "_perform_plan_surgery",
+        AsyncMock(return_value=modified_code),
+    )
+    monkeypatch.setattr(
+        planner,
+        "_generate_course_correction_script",
+        AsyncMock(return_value=correction_script),
+    )
+
+    # 1. Mock verification: Succeed for the original plan, but FAIL for the course correction.
+    async def mock_check_state(function_name: str, *args, **kwargs):
+        if function_name == "course_correction":
+            return VerificationAssessment(
+                status="fatal_error",
+                reason="Correction script failed.",
+            )
+        return VerificationAssessment(status="ok", reason="OK")
+
+    monkeypatch.setattr(planner, "_check_state_against_goal", mock_check_state)
+
+    # --- Act ---
+    mock_act = AsyncMock()
+    monkeypatch.setattr(mock_controller, "act", mock_act)
+    plan = planner.execute(
+        "A plan with a failing course correction.",
+        exploratory_mode=False,
+    )
+    await asyncio.sleep(0.1)  # Let the plan start
+
+    modification_result = await plan.modify_plan(
+        "A modification that will fail correction.",
+    )
+    await plan.result()
+
+    # --- Assert ---
+    # 1. The modification result should indicate failure and rollback.
+    assert "Failed to modify the plan. Rolled back" in modification_result
+
+    # 2. The course correction should have been attempted and failed.
+    log_str = " ".join(plan.action_log)
+    assert "Executing course correction script" in log_str
+    assert "ERROR: Course correction failed" in log_str
+
+    # 3. The plan should have rolled back and completed the ORIGINAL task.
+    assert plan.plan_source_code == initial_code
+    mock_controller.act.assert_called_with("original action")
+    assert plan._state == _HierarchicalPlanState.COMPLETED
