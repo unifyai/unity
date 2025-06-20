@@ -537,8 +537,9 @@ class TaskScheduler(BaseTaskScheduler):
         # Keep linkage symmetric right after creation
         self._sync_adjacent_links(task_id=task_id, schedule=schedule)
 
+        # ── Ensure the in-memory cache reflects any linkage tweaks ──
         if status == Status.primed:
-            self._primed_task = task_details
+            self._refresh_primed_cache(task_id)
 
         # ------------------  queue insertion (if relevant)  ---------- #
         if status == Status.queued:
@@ -707,7 +708,31 @@ class TaskScheduler(BaseTaskScheduler):
                 overwrite=True,
             )
 
+            # Was the neighbour the *primed* task?  Keep cache in lock-step.
+            if (
+                self._primed_task is not None
+                and self._primed_task["task_id"] == neighbour_id
+            ):
+                self._refresh_primed_cache(neighbour_id)
+
     _TERMINAL_STATUSES = {"completed", "cancelled", "failed"}
+
+    def _refresh_primed_cache(self, task_id: Optional[int] = None) -> None:
+        """
+        Reload the *primed* task from storage so that the in-memory copy
+        always mirrors the authoritative log row.
+
+        When *task_id* is *None*, the method refreshes the **currently
+        cached** primed task (if there is one).  Otherwise the referenced
+        row is fetched and promoted to ``self._primed_task``.
+        """
+        if task_id is None and self._primed_task is not None:
+            task_id = self._primed_task["task_id"]
+        if task_id is None:
+            return
+
+        rows = self._search_tasks(filter=f"task_id == {task_id}", limit=1)
+        self._primed_task = rows[0] if rows else None
 
     def _get_task_queue(
         self,
