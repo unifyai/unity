@@ -1,7 +1,6 @@
 import os
 import asyncio
 from dataclasses import dataclass
-from pydantic import BaseModel
 from typing import Literal
 
 import openai
@@ -10,17 +9,16 @@ import comms_actions
 from actions import *
 from events import *
 from new_terminal_helper import run_script, terminate_process
-from unity.contact_manager.contact_manager import ContactManager
 
 client = openai.AsyncOpenAI(api_key=os.environ["OPENAI_API_KEY"])
 
 ONGOING_CALL = False
 
 
-with open("demo/prompts/call_sys.md") as f:
+with open("prompts/call_sys.md") as f:
     call_sys = f.read()
 
-with open("demo/prompts/non_call_sys.md") as f:
+with open("prompts/non_call_sys.md") as f:
     non_call_sys = f.read()
 
 
@@ -32,18 +30,6 @@ class CommTask:
     contact_number: str
     status: str
     task_description: str
-
-
-class _Intent(BaseModel):
-    action: str = Field(..., pattern="^(ask|update)$")
-    cleaned_text: str
-
-
-_INTENT_SYS_MSG = (
-    "Decide whether the user input is a *query* about existing contacts "
-    "or a *mutation* (create / update).  "
-    "Return JSON {'action':'ask'|'update','cleaned_text':<fixed_input>}."
-)
 
 
 # new events to add:
@@ -117,21 +103,6 @@ class CommsAgent:
         # queue for communication channels to make sure messages arrive in the right order
         self.whatsapp_queue = WhatsappQueue()
 
-        # contact manager
-        self.contact_manager = ContactManager()
-
-    def get_chat_history(self):
-        chat_history = []
-        for event in self.past_events:
-            if event["event_name"] == "PhoneUtteranceEvent":
-                chat_history.append(
-                    {
-                        "role": event["payload"]["role"].lower(),
-                        "content": event["payload"]["content"],
-                    }
-                )
-        return chat_history
-
     async def listen_for_events(self):
         asyncio.create_task(self.whatsapp_queue.run())
         print("COLLECTING...")
@@ -146,7 +117,7 @@ class CommsAgent:
                     global ONGOING_CALL
                     if not ONGOING_CALL:
                         self.call_proc = run_script(
-                            "demo/call.py",
+                            "call.py",
                             "dev",
                             self.user_phone_call_number,  # "console" if a local call is needed
                             self.assistant_number,
@@ -191,94 +162,6 @@ class CommsAgent:
                 self.current_llm_run.add_done_callback(self.on_run_end)
 
                 self.pending_events.clear()
-
-    async def handle_contact_manager_action(self, action: ContactManagerAction):
-        """Handle contact manager actions asynchronously"""
-        # get chat history
-        chat_history = self.get_chat_history()
-
-        # check if the query is a mutation
-        if action.query.lower().startswith(
-            ("add ", "create ", "update ", "change ", "delete ")
-        ):
-            self.contact_manager_handle = await self.contact_manager.update(
-                action.query,
-                parent_chat_context=chat_history,
-                _return_reasoning_steps=action.show_steps,
-            )
-        else:
-            res = await client.beta.chat.completions.parse(
-                model="gpt-4.1",
-                messages=[
-                    {
-                        "role": "system",
-                        "content": _INTENT_SYS_MSG,
-                    },
-                    {
-                        "role": "user",
-                        "content": action.query,
-                    },
-                ],
-                response_format=_Intent,
-            )
-            intent = res.choices[0].message.parsed
-            fn = (
-                self.contact_manager.update
-                if intent.action == "update"
-                else self.contact_manager.ask
-            )
-            self.contact_manager_handle = await fn(
-                action.query,
-                parent_chat_context=chat_history,
-                _return_reasoning_steps=action.show_steps,
-            )
-
-        # publish start event
-        self.publish(
-            {
-                "topic": "user_agent",
-                "event": ContactManagerStartedEvent(
-                    self.agent_id, chat_history, action.query
-                ).to_dict(),
-            },
-        )
-
-        # wait for the handle to be done
-        while not self.contact_manager_handle.done():
-            print("waiting for handle to be done")
-            await asyncio.sleep(1)
-
-        # get handle result
-        answer = await self.contact_manager_handle.result()
-        self.contact_manager_handle = None
-        if isinstance(answer, tuple):
-            answer, _ = answer
-
-        # publish end event
-        self.publish(
-            {
-                "topic": "user_agent",
-                "event": ContactManagerEndedEvent(self.agent_id, answer).to_dict(),
-            },
-        )
-
-    async def handle_contact_manager_interject_action(
-        self, action: ContactManagerInterjectAction
-    ):
-        """Handle contact manager interject actions asynchronously"""
-        # check if the contact manager is running
-        if not self.contact_manager_handle:
-            # interject failed
-            event = ContactManagerInterjectFailedEvent(
-                self.agent_id,
-                "Contact manager is not running currently, "
-                "please create a new action instead",
-            )
-        else:
-            # interject
-            await self.contact_manager_handle.interject(action.query)
-            event = ContactManagerInterjectedEvent(self.agent_id, action.query)
-        self.publish({"topic": "user_agent", "event": event.to_dict()})
 
     def on_run_end(self, t: asyncio.Task):
         try:
@@ -333,16 +216,6 @@ class CommsAgent:
                                 action.response,
                             )
 
-                        elif isinstance(action, ContactManagerAction):
-                            asyncio.create_task(
-                                self.handle_contact_manager_action(action)
-                            )
-
-                        elif isinstance(action, ContactManagerInterjectAction):
-                            asyncio.create_task(
-                                self.handle_contact_manager_interject_action(action)
-                            )
-
         except asyncio.CancelledError:
             pass
         finally:
@@ -360,10 +233,10 @@ class CommsAgent:
         print(user_msg, flush=True)
 
         if self.main_user:
-            with open("demo/prompts/non_call_sys.md") as f:
+            with open("prompts/non_call_sys.md") as f:
                 non_call_sys = f.read().format(name=self.user_name)
         else:
-            with open("demo/prompts/comm_non_call_sys.md") as f:
+            with open("prompts/comm_non_call_sys.md") as f:
                 non_call_sys = f.read().format(
                     main_user_name=self.user_name,
                     other_user_name=self.contact_name,
@@ -394,10 +267,10 @@ class CommsAgent:
         self.publish(ev)
 
         if self.main_user:
-            with open("demo/prompts/call_sys.md") as f:
+            with open("prompts/call_sys.md") as f:
                 call_sys = f.read().format(name=self.user_name)
         else:
-            with open("demo/prompts/comm_call_sys.md") as f:
+            with open("prompts/comm_call_sys.md") as f:
                 call_sys = f.read().format(
                     main_user_name=self.user_name,
                     other_user_name=self.contact_name,
