@@ -6,7 +6,7 @@ import os
 import json
 
 from unity.common.llm_helpers import start_async_tool_use_loop
-from unity.planner.simulated import SimulatedPlanner, SimulatedPlan
+from unity.planner.simulated import SimulatedPlanner, SimulatedActiveTask
 from tests.helpers import _handle_project
 
 
@@ -30,14 +30,14 @@ async def test_start_and_ask_simulated_plan(monkeypatch):
     planner = SimulatedPlanner(steps=1)
     # Count how many times ask is invoked
     ask_called = {"count": 0}
-    original_ask = SimulatedPlan.ask
+    original_ask = SimulatedActiveTask.ask
 
     @functools.wraps(original_ask)
     def ask(self, question: str) -> str:
         ask_called["count"] += 1
         return original_ask(self, question)
 
-    monkeypatch.setattr(SimulatedPlan, "ask", ask, raising=True)
+    monkeypatch.setattr(SimulatedActiveTask, "ask", ask, raising=True)
 
     system = (
         "You are running inside an automated test.\n"
@@ -49,7 +49,7 @@ async def test_start_and_ask_simulated_plan(monkeypatch):
     handle = start_async_tool_use_loop(
         client=client,
         message="begin",
-        tools={"plan": planner.plan},
+        tools={"execute": planner.execute},
         max_steps=20,
         timeout=120,
     )
@@ -69,7 +69,7 @@ async def test_interject_simulated_plan(monkeypatch):
     """
     planner = SimulatedPlanner(steps=1)
     interjected = {"count": 0, "msgs": []}
-    original_interject = SimulatedPlan.interject
+    original_interject = SimulatedActiveTask.interject
 
     @functools.wraps(original_interject)
     def interject(self, instruction: str) -> str:
@@ -77,7 +77,7 @@ async def test_interject_simulated_plan(monkeypatch):
         interjected["msgs"].append(instruction)
         return original_interject(self, instruction)
 
-    monkeypatch.setattr(SimulatedPlan, "interject", interject, raising=True)
+    monkeypatch.setattr(SimulatedActiveTask, "interject", interject, raising=True)
 
     system = (
         "You are running inside an automated test.\n"
@@ -89,7 +89,7 @@ async def test_interject_simulated_plan(monkeypatch):
     handle = start_async_tool_use_loop(
         client=client,
         message="kickoff",
-        tools={"plan": planner.plan},
+        tools={"execute": planner.execute},
         max_steps=20,
         timeout=120,
     )
@@ -110,22 +110,22 @@ async def test_pause_and_resume_simulated_plan(monkeypatch):
     """
     planner = SimulatedPlanner(steps=2)
     counts = {"pause": 0, "resume": 0}
-    original_pause = SimulatedPlan.pause
+    original_pause = SimulatedActiveTask.pause
 
     @functools.wraps(original_pause)
     def pause(self) -> str:
         counts["pause"] += 1
         return original_pause(self)
 
-    original_resume = SimulatedPlan.resume
+    original_resume = SimulatedActiveTask.resume
 
     @functools.wraps(original_resume)
     def resume(self) -> str:
         counts["resume"] += 1
         return original_resume(self)
 
-    monkeypatch.setattr(SimulatedPlan, "pause", pause, raising=True)
-    monkeypatch.setattr(SimulatedPlan, "resume", resume, raising=True)
+    monkeypatch.setattr(SimulatedActiveTask, "pause", pause, raising=True)
+    monkeypatch.setattr(SimulatedActiveTask, "resume", resume, raising=True)
 
     system = (
         "You are running inside an automated test.\n"
@@ -138,7 +138,7 @@ async def test_pause_and_resume_simulated_plan(monkeypatch):
     handle = start_async_tool_use_loop(
         client=client,
         message="run",
-        tools={"plan": planner.plan},
+        tools={"execute": planner.execute},
         max_steps=30,
         timeout=180,
     )
@@ -162,14 +162,14 @@ async def test_stop_simulated_plan(monkeypatch):
     """
     planner = SimulatedPlanner(steps=1)
     stopped = {"count": 0}
-    original_stop = SimulatedPlan.stop
+    original_stop = SimulatedActiveTask.stop
 
     @functools.wraps(original_stop)
     def stop(self) -> str:
         stopped["count"] += 1
         return original_stop(self)
 
-    monkeypatch.setattr(SimulatedPlan, "stop", stop, raising=True)
+    monkeypatch.setattr(SimulatedActiveTask, "stop", stop, raising=True)
 
     system = (
         "You are running inside an automated test.\n"
@@ -181,7 +181,7 @@ async def test_stop_simulated_plan(monkeypatch):
     handle = start_async_tool_use_loop(
         client=client,
         message="begin",
-        tools={"plan": planner.plan},
+        tools={"execute": planner.execute},
         max_steps=20,
         timeout=120,
     )
@@ -205,7 +205,7 @@ async def test_plan_requests_clarification():
     down_q: asyncio.Queue[str] = asyncio.Queue()
 
     # start a plan that needs clarification
-    plan = planner.plan(
+    active_task = planner.execute(
         "Compile the quarterly report",
         clarification_up_q=up_q,
         clarification_down_q=down_q,
@@ -219,5 +219,5 @@ async def test_plan_requests_clarification():
     await down_q.put("Yes, please compile the Q1 report now.")
 
     # the final result should propagate the clarification answer
-    result = await plan.result()
+    result = await active_task.result()
     assert "q1 report" in result.lower()

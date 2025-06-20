@@ -22,7 +22,7 @@ from unity.common.llm_helpers import (
 )
 from unity.controller.controller import Controller
 from unity.function_manager.function_manager import FunctionManager
-from unity.planner.base import BasePlan, BasePlanner
+from unity.planner.base import ActiveTask, BasePlanner
 from unity.planner.tool_loop_planner import ComsManager
 
 logger = logging.getLogger(__name__)
@@ -115,7 +115,7 @@ class FunctionReplacer(ast.NodeTransformer):
         return self.generic_visit(node)
 
 
-class HierarchicalPlan(BasePlan):
+class HierarchicalPlan(ActiveTask):
     """
     Represents and executes a single, dynamically generated hierarchical plan.
     This class is a steerable handle managing the plan's lifecycle.
@@ -1065,8 +1065,8 @@ class HierarchicalPlanner(BasePlanner[HierarchicalPlan]):
         )
 
     async def close(self):
-        if self._active_plan:
-            await self._active_plan.stop()
+        if self._active_task:
+            await self._active_task.stop()
         if self.controller:
             self.controller.stop()
         if self.coms_manager and hasattr(self.coms_manager, "stop"):

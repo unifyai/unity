@@ -276,10 +276,10 @@ class SimulatedTaskScheduler(BaseTaskScheduler):
         )
 
     # ------------------------------------------------------------------ #
-    #  start_task – delegate to SimulatedPlanner.plan                     #
+    #  execite_task – delegate to SimulatedPlanner.execute                     #
     # ------------------------------------------------------------------ #
-    @functools.wraps(BaseTaskScheduler.start_task, updated=())
-    async def start_task(
+    @functools.wraps(BaseTaskScheduler.execute_task, updated=())
+    async def execute_task(
         self,
         task_id: int,
         *,
@@ -297,7 +297,7 @@ class SimulatedTaskScheduler(BaseTaskScheduler):
         return SimulatedPlanner(
             timeout=10,
             _requests_clarification=_requests_clarification,
-        ).plan(
+        ).execute(
             task_description,
             parent_chat_context=parent_chat_context,
             clarification_up_q=clarification_up_q,

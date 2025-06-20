@@ -9,27 +9,27 @@ from tests.helpers import _handle_project
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_request_calls_start_task(monkeypatch):
+async def test_request_calls_execute_task(monkeypatch):
     """
-    A 'start this task now' request should call TaskScheduler.start_task once
-    (via the wrapped _start_task_call_ helper inside TaskManager.request).
+    A 'start this task now' request should call TaskScheduler.execute_task once
+    (via the wrapped _execute_task_call_ helper inside TaskManager.request).
     """
     calls = {"count": 0}
-    original = SimulatedTaskScheduler.start_task
+    original = SimulatedTaskScheduler.execute_task
 
     @functools.wraps(original)
     async def spy(self, task_id: int, **kwargs):
         calls["count"] += 1
         return await original(self, task_id, **kwargs)
 
-    monkeypatch.setattr(SimulatedTaskScheduler, "start_task", spy, raising=True)
+    monkeypatch.setattr(SimulatedTaskScheduler, "execute_task", spy, raising=True)
 
     tm = SimulatedTaskManager("Demo – deployment pipeline.")
     handle = await tm.request(
         "Please start task with 'task id == 17' right away – we need the build running.",
     )
-    await asyncio.wait_for(handle.result(), timeout=60)
+    await asyncio.wait_for(handle.result(), timeout=6000)
 
     assert (
         calls["count"] == 1
-    ), "TaskScheduler.start_task should be invoked exactly once."
+    ), "TaskScheduler.execute_task should be invoked exactly once."

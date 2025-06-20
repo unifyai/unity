@@ -5,7 +5,7 @@ Interactive sandbox for **TaskScheduler**.
 It supports:
 • Fixed or LLM‑generated seed data.
 • Voice or plain‑text input (same helpers as the other sandboxes).
-• Automatic dispatch to `ask`, `update` *or* `start_task` depending on intent.
+• Automatic dispatch to `ask`, `update` *or* `execute_task` depending on intent.
 • Mid‑conversation interruption (pause / interject / cancel).
 """
 
@@ -113,8 +113,8 @@ async def _dispatch_with_context(
     parent_chat_context: List[Dict[str, str]],
 ) -> Tuple[str, SteerableToolHandle]:
     """
-    Decide whether to call `ask`, `update` or `start_task`, forwarding
-    *parent_chat_context* to the TaskScheduler methods.  `start_task` requires
+    Decide whether to call `ask`, `update` or `execute_task`, forwarding
+    *parent_chat_context* to the TaskScheduler methods.  `execute_task` requires
     a numeric *task_id* which is extracted from the user's text.
     """
 
@@ -148,7 +148,7 @@ async def _dispatch_with_context(
 
     if intent.action == "start":
         task_id = _extract_first_int(intent.cleaned_text)
-        handle = await ts.start_task(
+        handle = await ts.execute_task(
             task_id,
             parent_chat_context=parent_chat_context,
         )
