@@ -70,6 +70,7 @@ class BasePlanner(ABC):
         parent_chat_context: list[dict] | None = None,
         clarification_up_q: Optional[asyncio.Queue[str]] = None,
         clarification_down_q: Optional[asyncio.Queue[str]] = None,
+        **kwargs,
     ) -> ActiveTask:
         """
         Create (and start) a new active task.
@@ -89,6 +90,7 @@ class BasePlanner(ABC):
             parent_chat_context=parent_chat_context,
             clarification_up_q=clarification_up_q,
             clarification_down_q=clarification_down_q,
+            **kwargs,
         )
         self._active_task = active_task
         return await active_task
@@ -101,6 +103,7 @@ class BasePlanner(ABC):
         parent_chat_context: list[dict] | None = None,
         clarification_up_q: Optional[asyncio.Queue[str]] = None,
         clarification_down_q: Optional[asyncio.Queue[str]] = None,
+        **kwargs,
     ) -> ActiveTask:
         """
         Concrete planner must build **and start** an active task implementation
