@@ -94,9 +94,9 @@ async def test_update_phone_number_then_call(monkeypatch):
     original_ts_execute_task = SimulatedTaskScheduler.execute_task
 
     @functools.wraps(original_ts_execute_task)
-    async def spy_ts_execute_task(self, text: str, **kw):
+    async def spy_ts_execute_task(self, task_id: int, **kw):
         counts["ts_execute_task"] += 1
-        return await original_ts_execute_task(self, text, **kw)
+        return await original_ts_execute_task(self, task_id, **kw)
 
     monkeypatch.setattr(
         SimulatedTaskScheduler,
@@ -319,32 +319,37 @@ async def test_task_scheduler_rollover(monkeypatch):
 @pytest.mark.asyncio
 @_handle_project
 async def test_plan_activation_and_interjection(monkeypatch):
-    counts = {"start": 0, "plan_interject": 0}
+    counts = {"start": 0, "active_task_interject": 0}
     start_called = asyncio.Event()
 
     # --- patch execute_task -------------------------------------------------- #
-    orig_start = SimulatedTaskScheduler.execute_task
+    orig_exec_task = SimulatedTaskScheduler.execute_task
 
-    @functools.wraps(orig_start)
-    async def spy_start(self, task_id: int, **kw):
-        counts["start"] += 1
+    @functools.wraps(orig_exec_task)
+    async def spy_exec_task(self, task_id: int, **kw):
+        counts["exec_task"] += 1
         start_called.set()
-        return await orig_start(self, task_id, **kw)
+        return await orig_exec_task(self, task_id, **kw)
 
-    monkeypatch.setattr(SimulatedTaskScheduler, "execute_task", spy_start, raising=True)
+    monkeypatch.setattr(
+        SimulatedTaskScheduler,
+        "execute_task",
+        spy_exec_task,
+        raising=True,
+    )
 
     # --- patch SimulatedPlan.interject (called via _interject_plan_call_) -- #
-    orig_plan_interject = SimulatedActiveTask.interject
+    orig_active_task_interject = SimulatedActiveTask.interject
 
-    @functools.wraps(orig_plan_interject)
-    async def spy_plan_interject(self, instruction: str):
-        counts["plan_interject"] += 1
-        return await orig_plan_interject(self, instruction)
+    @functools.wraps(orig_active_task_interject)
+    async def spy_active_task_interject(self, instruction: str):
+        counts["active_task_interject"] += 1
+        return await orig_active_task_interject(self, instruction)
 
     monkeypatch.setattr(
         SimulatedActiveTask,
         "interject",
-        spy_plan_interject,
+        spy_active_task_interject,
         raising=True,
     )
 
@@ -371,8 +376,8 @@ async def test_plan_activation_and_interjection(monkeypatch):
     await asyncio.wait_for(r1.result(), timeout=120)
 
     assert counts == {
-        "start": 1,
-        "plan_interject": 1,
+        "exec_task": 1,
+        "active_task_interject": 1,
     }, "Plan activation/interjection counts off."
 
 
@@ -383,19 +388,19 @@ async def test_plan_activation_and_interjection(monkeypatch):
 @_handle_project
 async def test_interleaved_tools(monkeypatch):
     counts = {
-        "km_ret": 0,
+        "km_ask": 0,
         "cm_ask": 0,
         "tm_ask": 0,
         "ts_upd": 0,
     }
 
     # -- Knowledge retrieve
-    orig_kb_ret = SimulatedKnowledgeManager.ask
+    orig_kb_ask = SimulatedKnowledgeManager.ask
 
-    @functools.wraps(orig_kb_ret)
-    async def spy_kb_ret(self, text: str, **kw):
-        counts["km_ret"] += 1
-        return await orig_kb_ret(self, text, **kw)
+    @functools.wraps(orig_kb_ask)
+    async def spy_kb_ask(self, text: str, **kw):
+        counts["km_ask"] += 1
+        return await orig_kb_ask(self, text, **kw)
 
     # -- Contact ask
     orig_cm_ask = SimulatedContactManager.ask
@@ -421,7 +426,7 @@ async def test_interleaved_tools(monkeypatch):
         counts["ts_upd"] += 1
         return await orig_ts_upd(self, text, **kw)
 
-    monkeypatch.setattr(SimulatedKnowledgeManager, "ask", spy_kb_ret, raising=True)
+    monkeypatch.setattr(SimulatedKnowledgeManager, "ask", spy_kb_ask, raising=True)
     monkeypatch.setattr(SimulatedContactManager, "ask", spy_cm_ask, raising=True)
     monkeypatch.setattr(SimulatedTranscriptManager, "ask", spy_tm_ask, raising=True)
     monkeypatch.setattr(SimulatedTaskScheduler, "update", spy_ts_upd, raising=True)
@@ -438,5 +443,5 @@ async def test_interleaved_tools(monkeypatch):
     )
     await asyncio.wait_for(h.result(), timeout=120)
 
-    expected = {"km_ret": 1, "cm_ask": 1, "tm_ask": 1, "ts_upd": 1}
+    expected = {"km_ask": 1, "cm_ask": 1, "tm_ask": 1, "ts_upd": 1}
     assert counts == expected, "Interleaved tool-call counts do not match."
