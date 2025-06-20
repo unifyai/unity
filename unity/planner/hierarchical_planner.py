@@ -641,7 +641,7 @@ class HierarchicalPlan(ActiveTask):
         return tools
 
 
-class HierarchicalPlanner(BasePlanner[HierarchicalPlan]):
+class HierarchicalPlanner(BasePlanner):
     """Orchestrates task execution by generating and managing Python code."""
 
     def __init__(

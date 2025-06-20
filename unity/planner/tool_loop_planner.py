@@ -460,7 +460,7 @@ class ToolLoopPlan(ActiveTask):
         return tools
 
 
-class ToolLoopPlanner(BasePlanner[ToolLoopPlan]):
+class ToolLoopPlanner(BasePlanner):
     def __init__(
         self,
         session_connect_url: Optional[str] = None,

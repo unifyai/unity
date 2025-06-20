@@ -259,7 +259,7 @@ class SimulatedActiveTask(ActiveTask):
         return available
 
 
-class SimulatedPlanner(BasePlanner[SimulatedActiveTask]):
+class SimulatedPlanner(BasePlanner):
     def __init__(
         self,
         *,
