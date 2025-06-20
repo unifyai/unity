@@ -79,7 +79,8 @@ async def test_active_task_interject(monkeypatch):
 
     monkeypatch.setattr(SimulatedActiveTask, "interject", spy_interject, raising=True)
 
-    task = ActiveTask("Investigate competitor pricing.", planner)
+    plan_handle = await planner.execute("Investigate competitor pricing.")
+    task = ActiveTask(plan_handle)
 
     await task.interject("First gather public filings.")
     # Give the background thread one beat to process the step counter.
@@ -121,7 +122,8 @@ async def test_active_task_pause_resume(monkeypatch):
     monkeypatch.setattr(SimulatedActiveTask, "pause", spy_pause, raising=True)
     monkeypatch.setattr(SimulatedActiveTask, "resume", spy_resume, raising=True)
 
-    task = ActiveTask("Run SEO audit for the website.", planner)
+    plan_handle = await planner.execute("Run SEO audit for the website.")
+    task = ActiveTask(plan_handle)
     # Pause, wait a moment to ensure the thread blocks, then resume.
     task.pause()
     await asyncio.sleep(0.1)
@@ -156,7 +158,8 @@ async def test_active_task_stop(monkeypatch):
 
     monkeypatch.setattr(SimulatedActiveTask, "stop", spy_stop, raising=True)
 
-    task = ActiveTask("Extract sentiment from reviews.", planner)
+    plan_handle = await planner.execute("Extract sentiment from reviews.")
+    task = ActiveTask(plan_handle)
     task.stop()
     result = await task.result()
 
@@ -177,7 +180,8 @@ async def test_active_task_result_and_done():
     A normal workflow should complete once enough steps have been taken.
     """
     planner = SimulatedPlanner(steps=1)  # finishes after a single steering op
-    task = ActiveTask("Compile coverage metrics.", planner)
+    plan_handle = await planner.execute("Compile coverage metrics.")
+    task = ActiveTask(plan_handle)
 
     # One interjection increments the internal step counter to fulfil `_steps`.
     await task.interject("Provide initial outline first.")
