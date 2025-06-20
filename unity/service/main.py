@@ -14,7 +14,6 @@ from unity.contact_manager.contact_manager import ContactManager
 from unity.knowledge_manager.knowledge_manager import KnowledgeManager
 from unity.service.comms_agent import CommsAgent
 from unity.service.comms_manager import CommsManager
-from unity.task_manager.task_manager import TaskManager
 from unity.transcript_manager.transcript_manager import TranscriptManager
 
 load_dotenv()
@@ -31,12 +30,16 @@ class _KnowledgeIntent(BaseModel):
     cleaned_text: str
 
 
+class _TranscriptIntent(BaseModel):
+    action: str = Field(..., pattern=r"^(ask|summarize)$")
+    cleaned_text: str
+
+
 # globals
 user_agent = None
 manager_dict = {
     "contact": ContactManager,
     "knowledge": KnowledgeManager,
-    "task": TaskManager,
     "transcript": TranscriptManager,
 }
 intent_sys_msg_dict = {
@@ -52,10 +55,17 @@ intent_sys_msg_dict = {
         "or a *mutation* (create / update).  "
         "Return JSON {'action':'ask'|'update','cleaned_text':<fixed_input>}."
     ),
+    "transcript": (
+        "Decide whether the user input is a question about the transcripts "
+        "(`ask`) or a summarisation request (`summarize`). Summarisation inputs "
+        "may mention one or more *exchange IDs* (integers). Return JSON "
+        "{'action':'ask'|'summarize','cleaned_text':<fixed_input>}."
+    ),
 }
 intent_output_format_dict = {
-    "knowledge": _KnowledgeIntent,
     "contact": _ContactIntent,
+    "knowledge": _KnowledgeIntent,
+    "transcript": _TranscriptIntent,
 }
 
 
