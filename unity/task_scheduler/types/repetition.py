@@ -46,25 +46,25 @@ class RepeatPattern(BaseModel):
 
     frequency: Frequency = Field(..., description="Base unit of recurrence")
     interval: int = Field(
-        1,
+        default=1,
         ge=1,
         description="Number of frequency units between each repeat",
     )
     weekdays: Optional[List[Weekday]] = Field(
-        None,
+        default=None,
         description="Applicable only when frequency == weekly; " "ignored otherwise",
     )
     count: Optional[int] = Field(
-        None,
+        default=None,
         ge=1,
         description="Total number of occurrences before stopping",
     )
     until: Optional[datetime] = Field(
-        None,
+        default=None,
         description="Hard cut-off date/time after which no repeats occur",
     )
     time_of_day: Optional[time] = Field(
-        None,
+        default=None,
         description=(
             "Clock time at which the task should start on each occurrence "
             "(e.g. 09:00).  When omitted the time is inherited from the "
