@@ -7,31 +7,40 @@ UNASSIGNED = -1
 
 
 class Contact(BaseModel):
-    contact_id: int = Field(description="Unique identifier for the contact", ge=-1)
-
+    contact_id: int = Field(
+        default=-1,
+        description="Unique identifier for the contact",
+        ge=-1,
+    )
     first_name: Optional[str] = Field(
+        default=None,
         description="Contact's first name – letters (any script) plus . ' - and space",
         pattern=UNICODE_NAME_RE,
     )
     surname: Optional[str] = Field(
+        default=None,
         description="Contact's surname – letters (any script) plus . ' - and space",
         pattern=UNICODE_NAME_RE,
     )
-
     email_address: Optional[str] = Field(
+        default=None,
         description="Must contain exactly one @ with characters on either side",
         pattern=r"^[^@]+@[^@]+$",
     )
     phone_number: Optional[str] = Field(
+        default=None,
         description="Optional leading +, then digits only",
         pattern=r"^\+?[0-9]+$",
     )
     whatsapp_number: Optional[str] = Field(
+        default=None,
         description="Optional leading +, then digits only",
         pattern=r"^\+?[0-9]+$",
     )
-
-    description: Optional[str] = Field(description="Free-form notes about the contact.")
+    description: Optional[str] = Field(
+        default=None,
+        description="Free-form notes about the contact.",
+    )
 
     @model_validator(mode="before")
     @classmethod
