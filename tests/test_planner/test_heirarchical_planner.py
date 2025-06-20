@@ -458,3 +458,34 @@ async def main_plan():
     # 4. Check the action log for the rollback message.
     action_log_str = " ".join(plan.action_log)
     assert "ERROR: Failed to modify plan, rolling back" in action_log_str
+
+
+@pytest.mark.asyncio
+async def test_fatal_error_in_verification(planner: HierarchicalPlanner, monkeypatch):
+    """
+    Objective: Verify that a 'fatal_error' from the verifier stops the plan
+    and sets its state to ERROR.
+    """
+    # --- Arrange ---
+    plan_code = '@verify\nasync def main_plan(): await act("Do something")'
+    monkeypatch.setattr(
+        planner, "_generate_initial_plan", AsyncMock(return_value=plan_code)
+    )
+    monkeypatch.setattr(
+        planner,
+        "_check_state_against_goal",
+        AsyncMock(
+            return_value=VerificationAssessment(
+                status="fatal_error", reason="Unrecoverable error."
+            )
+        ),
+    )
+
+    # --- Act ---
+    plan = planner.plan("Test fatal error handling.")
+    await plan.result()
+
+    # --- Assert ---
+    assert plan._state == _HierarchicalPlanState.ERROR
+    assert "fatal_error" in " ".join(plan.action_log)
+    assert "Unrecoverable error" in " ".join(plan.action_log)
