@@ -8,9 +8,9 @@ UNASSIGNED = -1
 
 class Contact(BaseModel):
     contact_id: int = Field(
-        default=-1,
+        default=UNASSIGNED,
         description="Unique identifier for the contact",
-        ge=-1,
+        ge=UNASSIGNED,
     )
     first_name: Optional[str] = Field(
         default=None,
