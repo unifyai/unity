@@ -16,9 +16,9 @@ __all__ = ["BaseActiveTask", "BasePlanner"]
 
 class BaseActiveTask(SteerableToolHandle, ABC):
     """
-    Abstract contract that every concrete *plan* must satisfy.
+    Abstract contract that every concrete *active task* must satisfy.
 
-    A plan represents a long-running task that can be steered at runtime
+    An active task represents a long-running task that can be steered at runtime
     (pause / resume / interject / ask / stop) and that ultimately resolves
     to a single result string.
 
