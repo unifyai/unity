@@ -55,12 +55,6 @@ class SimulatedConductor:
         # These two dicts are rebuilt lazily before every ask/request
         self._passive_tools: Dict[str, Callable] = {}
         self._active_tools: Dict[str, Callable] = {}
-
-    # ------------------------------------------------------------------ #
-    #  Internal: build tool dictionaries                                 #
-    # ------------------------------------------------------------------ #
-
-    def _refresh_tool_dicts(self) -> None:
         """Re-compute passive / active tool maps based on current active task."""
 
         # -------- base passive helpers -------------------------------- #
@@ -137,7 +131,6 @@ class SimulatedConductor:
         """
         Read-only question: exposes *passive* helpers (+ active_task.ask when available).
         """
-        self._refresh_tool_dicts()
 
         tools: Dict[str, Callable] = dict(self._passive_tools)
 
@@ -196,7 +189,6 @@ class SimulatedConductor:
         Full-access entry-point – exposes every passive tool **plus** all
         write-capable helpers and `execute_task` (which unlocks plan steering).
         """
-        self._refresh_tool_dicts()
 
         tools: Dict[str, Callable] = dict(self._active_tools)
 
