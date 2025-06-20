@@ -255,19 +255,22 @@ class TaskScheduler(BaseTaskScheduler):
         if task_row["status"] in ("completed", "cancelled", "failed", "active"):
             raise ValueError(f"Task {task_id} is already {task_row['status']!r}.")
 
-        # 1. build & store the ActiveTask with scheduler-awareness
-        handle = ActiveTask(
+        # 1.  build the *real* active plan
+        plan_handle = await self._planner.execute(
             task_row["description"],
-            self._planner,
-            task_id=task_id,
-            scheduler=self,
             parent_chat_context=parent_chat_context,
             clarification_up_q=clarification_up_q,
             clarification_down_q=clarification_down_q,
         )
+        # 2.  wrap it so we can keep the task-table in sync
+        handle = ActiveTask(
+            plan_handle,
+            task_id=task_id,
+            scheduler=self,
+        )
         self._active_task = {"task_id": task_id, "handle": handle}
 
-        # 2. Promote status → active and clear primed pointer if needed
+        # 3. Promote status → active and clear primed pointer if needed
         self._update_task_status(
             task_ids=task_id,
             new_status="active",
