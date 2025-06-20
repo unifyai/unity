@@ -129,9 +129,9 @@ async def test_pause_and_resume_simulated_plan(monkeypatch):
 
     system = (
         "You are running inside an automated test.\n"
-        "1️⃣ Call `plan` with argument `task_description='perform research on Tasty Cola Ltd.'`.\n"
-        "2️⃣ When the user says 'hold', call the helper starting with `_pause_plan_call_`.\n"
-        "3️⃣ When the user says 'go', call the helper starting with `_resume_plan_call_`.\n"
+        "1️⃣ Call `execute` with argument `task_description='perform research on Tasty Cola Ltd.'`.\n"
+        "2️⃣ When the user says 'hold', call the helper starting with `_pause_execute_call_`.\n"
+        "3️⃣ When the user says 'go', call the helper starting with `_resume_execute_call_`.\n"
         "4️⃣ After resume, reply with 'done'."
     )
     client = make_client(system)
