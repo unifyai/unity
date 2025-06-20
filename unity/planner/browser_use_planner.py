@@ -716,11 +716,11 @@ class BrowserUsePlanner(BasePlanner):
                 # This might be redundant if BrowserUsePlan also does this, but harmless.
                 self._main_event_loop = asyncio.get_running_loop()
                 logger.info(
-                    f"BrowserUsePlanner._make_plan captured event loop: {self._main_event_loop}",
+                    f"BrowserUsePlanner._execute_task_and_return_handle captured event loop: {self._main_event_loop}",
                 )
             except RuntimeError:
                 logger.error(
-                    "BrowserUsePlanner._make_plan: No running event loop to pass to BrowserUsePlan.",
+                    "BrowserUsePlanner._execute_task_and_return_handle: No running event loop to pass to BrowserUsePlan.",
                 )
                 # Let BrowserUsePlan handle its own loop acquisition or failure.
 

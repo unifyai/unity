@@ -122,7 +122,7 @@ async def test_start_and_ask_plan(monkeypatch, planner_and_plan_types):
         "4. After the `_stop_` tool returns its result, your next and ONLY response MUST be the single word 'ask_completed'. You MUST NOT call any more tools or say anything else."
     )
     client = make_client(system)
-    tools = {"execute": planner.plan}
+    tools = {"execute": planner.execute}
 
     handle = start_async_tool_use_loop(
         client=client,
@@ -239,7 +239,7 @@ async def test_interject_plan(monkeypatch, planner_and_plan_types):
         "3. After the `_interject_` tool returns, your next and ONLY response MUST be the single word 'interjection_processed'. You MUST NOT call any more tools or say anything else."
     )
     client = make_client(system)
-    tools = {"execute": planner.plan}
+    tools = {"execute": planner.execute}
 
     handle = start_async_tool_use_loop(
         client=client,
@@ -359,7 +359,7 @@ async def test_pause_and_resume_plan(
         "5. After the `_stop_` tool returns, your next and ONLY response MUST be the single word 'pause_resume_completed'. You MUST NOT call any more tools or say anything else."
     )
     client = make_client(system)
-    tools = {"execute": planner.plan}
+    tools = {"execute": planner.execute}
 
     handle = start_async_tool_use_loop(
         client=client,
@@ -459,7 +459,7 @@ async def test_plan_requests_clarification(
         "After clarification, extract content for the specified product's website (assume it's productname.com)."
     )
 
-    plan_handle = planner.plan(
+    plan_handle = planner.execute(
         task_description,
         clarification_up_q=clarification_up_q,
         clarification_down_q=clarification_down_q,

@@ -291,7 +291,7 @@ class SimulatedTaskScheduler(BaseTaskScheduler):
         """
         In the simulated world we don't have a real DB of tasks, so we
         fabricate a description from the *task_id* and spin up a **real**
-        `SimulatedPlan` by calling the shared `SimulatedPlanner.plan`.
+        `SimulatedPlan` by calling the shared `SimulatedPlanner.execute`.
         """
         task_description = f"Simulated task #{task_id}"
         return SimulatedPlanner(
