@@ -216,7 +216,9 @@ class TaskScheduler(BaseTaskScheduler):
             loop_id=f"{self.__class__.__name__}.{self.update.__name__}",
             parent_chat_context=parent_chat_context,
             log_steps=_log_tool_steps,
-            tool_policy=lambda i, _: ("required", _) if i < 1 else ("auto", _),
+            tool_policy=lambda i, _: (
+                ("required", self._ask_tools) if i < 1 else ("auto", _)
+            ),
         )
         if _return_reasoning_steps:
             # Wrap the handle.result() to return both answer and reasoning steps
@@ -306,9 +308,6 @@ class TaskScheduler(BaseTaskScheduler):
         # normalise
         status = Status(status)
 
-        if status != Status.scheduled:
-            return
-
         prev_ptr = self._sched_prev(schedule)
         if schedule is None:
             start_ts = None
@@ -316,6 +315,15 @@ class TaskScheduler(BaseTaskScheduler):
             start_ts = schedule.start_at
         else:  # dict
             start_ts = schedule.get("start_at")
+
+        if prev_ptr is not None and start_ts is not None:
+            raise ValueError(
+                f"{err_prefix} a task cannot define both 'prev_task' and "
+                "'start_at' – the timestamp belongs on the queue head only.",
+            )
+
+        if status != Status.scheduled:
+            return
 
         if prev_ptr is None and start_ts is None:
             raise ValueError(
@@ -526,6 +534,9 @@ class TaskScheduler(BaseTaskScheduler):
         task_id = log.entries["task_id"]
         task_details["task_id"] = task_id
 
+        # Keep linkage symmetric right after creation
+        self._sync_adjacent_links(task_id=task_id, schedule=schedule)
+
         if status == Status.primed:
             self._primed_task = task_details
 
@@ -646,6 +657,55 @@ class TaskScheduler(BaseTaskScheduler):
         if isinstance(sched, dict):
             return sched.get("next_task")
         return getattr(sched, "next_task", None)
+
+    def _sync_adjacent_links(
+        self,
+        *,
+        task_id: int,
+        schedule: Optional[Union[Schedule, dict]],
+    ) -> None:
+        """
+        Guarantee **link symmetry**:
+
+        * If *schedule.prev_task* → *P*, then *P.schedule.next_task* → *task_id*
+        * If *schedule.next_task* → *N*, then *N.schedule.prev_task* → *task_id*
+        """
+        if schedule is None:
+            return
+
+        if isinstance(schedule, Schedule):
+            schedule = schedule.model_dump()
+
+        neighbours: list[tuple[str, str, int]] = []
+        if schedule.get("prev_task") is not None:
+            neighbours.append(("next_task", "prev_task", schedule["prev_task"]))
+        if schedule.get("next_task") is not None:
+            neighbours.append(("prev_task", "next_task", schedule["next_task"]))
+
+        for field_to_set, _, neighbour_id in neighbours:
+            rows = self._search_tasks(filter=f"task_id == {neighbour_id}", limit=1)
+            if not rows:
+                raise ValueError(
+                    f"Broken queue linkage: referenced task_id {neighbour_id} not found.",
+                )
+
+            row = rows[0]
+            n_sched = {**(row.get("schedule") or {})}
+            if n_sched.get(field_to_set) == task_id:
+                continue  # already correct
+
+            # Strip start_at if the neighbour ceases to be queue head
+            if field_to_set == "prev_task":
+                n_sched.pop("start_at", None)
+
+            n_sched[field_to_set] = task_id
+            log_id = self._get_logs_by_task_ids(task_ids=row["task_id"])
+            unify.update_logs(
+                logs=log_id,
+                context=self._ctx,
+                entries={"schedule": n_sched},
+                overwrite=True,
+            )
 
     _TERMINAL_STATUSES = {"completed", "cancelled", "failed"}
 
@@ -1092,6 +1152,14 @@ class TaskScheduler(BaseTaskScheduler):
         # Fetch the current task row to preserve linkage information if present
         current_rows = self._search_tasks(filter=f"task_id == {task_id}", limit=1)
         current_sched = current_rows[0].get("schedule") if current_rows else None
+
+        # Guard-rail: tasks inside a queue can't own a start_at
+        if self._sched_prev(current_sched) is not None:
+            raise ValueError(
+                "Cannot set 'start_at' when the task has 'prev_task'. "
+                "Move it to the queue head first.",
+            )
+
         if current_sched is None:
             current_sched = {}
 

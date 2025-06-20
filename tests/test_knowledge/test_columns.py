@@ -14,7 +14,9 @@ def test_create_empty_column():
         column_type="int",
     )
     tables = knowledge_manager._tables_overview(include_column_info=True)
-    assert tables == {"MyTable": {"description": None, "columns": {"MyCol": "int"}}}
+    assert tables == {
+        "MyTable": {"description": None, "columns": {"row_id": "int", "MyCol": "int"}},
+    }
 
 
 @pytest.mark.unit
@@ -34,8 +36,8 @@ def test_create_derived_column():
     data = knowledge_manager._search()
     assert data == {
         "MyTable": [
-            {"x": 3, "y": 4, "distance": (3**2 + 4**2) ** 0.5},
-            {"x": 1, "y": 2, "distance": (1**2 + 2**2) ** 0.5},
+            {"row_id": 1, "x": 3, "y": 4, "distance": (3**2 + 4**2) ** 0.5},
+            {"row_id": 0, "x": 1, "y": 2, "distance": (1**2 + 2**2) ** 0.5},
         ],
     }
 
@@ -53,8 +55,8 @@ def test_delete_column():
     data = knowledge_manager._search()
     assert data == {
         "MyTable": [
-            {"y": 4},
-            {"y": 2},
+            {"row_id": 1, "y": 4},
+            {"row_id": 0, "y": 2},
         ],
     }
 
@@ -70,10 +72,12 @@ def test_delete_empty_column():
         column_type="int",
     )
     tables = knowledge_manager._tables_overview(include_column_info=True)
-    assert tables == {"MyTable": {"description": None, "columns": {"x": "int"}}}
+    assert tables == {
+        "MyTable": {"description": None, "columns": {"row_id": "int", "x": "int"}},
+    }
     knowledge_manager._delete_column(table="MyTable", column_name="x")
     tables = knowledge_manager._tables_overview(include_column_info=True)
-    assert tables == {"MyTable": {"description": None, "columns": {}}}
+    assert tables == {"MyTable": {"description": None, "columns": {"row_id": "int"}}}
     data = knowledge_manager._search()
     assert data == {"MyTable": []}
 
@@ -92,13 +96,13 @@ def test_rename_column():
 
     # Assert the exact structure and order of keys
     assert list(data.keys()) == ["MyTable"]
-    assert list(data["MyTable"][0].keys()) == ["X", "y"]
-    assert list(data["MyTable"][1].keys()) == ["X", "y"]
+    assert list(data["MyTable"][0].keys()) == ["row_id", "X", "y"]
+    assert list(data["MyTable"][1].keys()) == ["row_id", "X", "y"]
 
     # Assert the values
     assert data == {
         "MyTable": [
-            {"X": 3, "y": 4},
-            {"X": 1, "y": 2},
+            {"row_id": 1, "X": 3, "y": 4},
+            {"row_id": 0, "X": 1, "y": 2},
         ],
     }

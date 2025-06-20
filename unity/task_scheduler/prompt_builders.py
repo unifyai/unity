@@ -77,6 +77,9 @@ def build_update_prompt(tools: Dict[str, Callable]) -> str:
             "This ensures smooth task progression, even if schedules overrun and `start_at` times"
             "are therefore not all adhered to."
             "",
+            "ALWAYS check the existing tasks BEFORE creating new ones."
+            "If you are asked to re-order or reschedule tasks, this is especially important. They likely already exist."
+            "",
             "Tools (name → argspec):",
             sig_json,
             "",

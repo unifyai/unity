@@ -197,10 +197,14 @@ async def _main_async() -> None:
     unify.set_trace_context("Traces")
     if not args.reuse:
         ctxs = unify.get_contexts()
-        # Remove everything under the sandbox context for a clean run
-        for ctx in list(ctxs):
-            if ctx.startswith("TranscriptSandbox") or ctx.startswith("Traces"):
-                unify.delete_context(ctx)
+        if "Messages" in ctxs:
+            unify.delete_context("Messages")
+        if "MessageExchangeSummaries" in ctxs:
+            unify.delete_context("MessageExchangeSummaries")
+        if "Contacts" in ctxs:
+            unify.delete_context("Contacts")
+        if "Traces" in ctxs:
+            unify.delete_context("Traces")
         unify.create_context("Traces")
 
     # logging

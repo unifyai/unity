@@ -75,8 +75,8 @@ async def _build_scenario(custom: Optional[str] = None) -> Optional[str]:
     builder = ScenarioBuilder(
         description=description,
         tools={
-            "store": km.update,
-            "retrieve": km.ask,
+            "update": km.update,
+            "ask": km.ask,
         },
     )
 
@@ -137,7 +137,7 @@ async def _dispatch_with_context(
             parent_chat_context=parent_chat_context,
             _return_reasoning_steps=show_steps,
         )
-        return "store", handle
+        return "update", handle
 
     if lowered.startswith(
         (
@@ -163,7 +163,7 @@ async def _dispatch_with_context(
 
     fn = (
         km.update
-        if intent.action == "store"
+        if intent.action == "update"
         else km.refactor if intent.action == "refactor" else km.ask
     )
     handle = await fn(

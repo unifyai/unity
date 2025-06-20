@@ -4,7 +4,7 @@ import uuid
 import unify
 import functools
 import requests
-from typing import Any, Dict, List, Optional, Callable
+from typing import Any, Dict, List, Optional, Callable, Union
 
 import json
 from ..common.embed_utils import EMBED_MODEL, ensure_vector_column
@@ -561,7 +561,7 @@ class KnowledgeManager(BaseKnowledgeManager):
             Backend confirmation or error.
         """
         table_ctx = unify.get_context(self._ctx_for_table(table))
-        unique_column_name = table_ctx["unique_column_name"]
+        unique_column_name = table_ctx["unique_id_name"]
         # Guard against removal of mandatory columns
         if (table == "Contacts" and column_name in self._CONTACT_REQUIRED_COLUMNS) or (
             table != "Contacts" and column_name == unique_column_name
@@ -796,9 +796,7 @@ class KnowledgeManager(BaseKnowledgeManager):
         self,
         *,
         table: str,
-        row_ids: Optional[List[int]] = None,
-        entries: Optional[List[Dict[str, Any]]] = None,
-        overwrite: bool = False,
+        updates: Dict[int, Dict[str, Any]],
     ) -> Dict[str, str]:
         """
         **Update** existing rows identified by their *unique_id*.
@@ -807,44 +805,29 @@ class KnowledgeManager(BaseKnowledgeManager):
         ----------
         table : str
             Target table.
-        row_ids : list[int] | None
-            List of unique `row_id` rows to update, might have a different name under the hood `team_id`, `product_id` etc.
-            If the unique_column_name is customized  *None* updates nothing and will return a no-op.
-        entries : list[dict[str, Any]] | None
-            New field values (aligned 1-to-1 with *row_ids*).
+        updates : dict[int, dict[str, Any]]
+            Mapping of unique `row_id` rows to update (might be named `team_id`, `product_id` etc.)
+            to the dict of new field values mapping column names to the new overwriting values.
         overwrite : bool, default ``False``
             When *True*, fields **not** mentioned in *entries* are cleared.
         """
-        if not row_ids:
-            return {"status": "no-op", "reason": "no row_ids given"}
-
-        # Sort row_ids and entries together to maintain alignment
-        if entries is not None:
-            sorted_pairs = sorted(zip(row_ids, entries))
-            row_ids, entries = zip(*sorted_pairs)
-            row_ids = list(row_ids)
-            entries = list(entries)
-        else:
-            row_ids = sorted(row_ids)
-
         ctx = self._ctx_for_table(table)
-
-        # Map external row_id → internal log.id
-        log_ids = unify.get_logs(
-            context=ctx,
-            filter=f"row_id in {row_ids}",
-            limit=1,
+        ctx_info = unify.get_context(ctx)
+        unique_column_name = ctx_info["unique_id_name"]
+        unique_ids = sorted([int(k) for k in updates.keys()])
+        log_ids: List[int] = sorted(
+            unify.get_logs(
+                context=ctx,
+                filter=f"{unique_column_name} in {unique_ids}",
+                return_ids_only=True,
+            ),
         )
-        if len(log_ids) != len(row_ids):
-            raise ValueError(f"Each row_id should return a unique log.")
-        log_ids = sorted(log_ids)
-
+        entries = [updates[str(unique_id)] for unique_id in unique_ids]
         res = unify.update_logs(
             logs=log_ids,
             context=ctx,
             entries=entries,
-            overwrite=overwrite,
-            project=unify.active_project(),
+            overwrite=True,
         )
         return res
 
@@ -874,7 +857,7 @@ class KnowledgeManager(BaseKnowledgeManager):
     def _nearest(
         self,
         *,
-        tables: List[str],
+        tables: Optional[Union[str, List[str]]],
         source: str,
         text: str,
         k: int = 5,
@@ -885,8 +868,8 @@ class KnowledgeManager(BaseKnowledgeManager):
 
         Parameters
         ----------
-        tables : list[str]
-            Candidate tables (each must contain *source* column).
+        tables : str | list[str]
+            Candidate tables (each must contain *source* column); ``None`` → all tables.
         source : str
             Text column to embed (an auxiliary ``<source>_emb`` column is
             auto-created if missing). MUST be *snake case*.
@@ -901,17 +884,21 @@ class KnowledgeManager(BaseKnowledgeManager):
             Mapping ``table_name → [row, …]`` sorted by ascending distance.
         """
         # ToDo: convert to map function
+        if tables is None:
+            tables = self._tables_overview()
+        elif isinstance(tables, str):
+            tables = [tables]
         results = dict()
         for table in tables:
             context = self._ctx_for_table(table)
-            column = f"{source}_emb"
-            self._vectorize_column(table, column, source)
+            column_emb = f"{source}_emb"
+            self._vectorize_column(table, source, column_emb)
             results[table] = [
                 log.entries
                 for log in unify.get_logs(
                     context=context,
                     sorting={
-                        f"cosine({column}, embed('{text}', model='{EMBED_MODEL}'))": "ascending",
+                        f"cosine({column_emb}, embed('{text}', model='{EMBED_MODEL}'))": "ascending",
                     },
                     limit=k,
                     exclude_fields=[
@@ -931,7 +918,7 @@ class KnowledgeManager(BaseKnowledgeManager):
         filter: Optional[str] = None,
         offset: int = 0,
         limit: int = 100,
-        tables: Optional[List[str]] = None,
+        tables: Optional[Union[str, List[str]]] = None,
     ) -> Dict[str, List[Dict[str, Any]]]:
         """
         **Filter search** across one or more tables using a Python boolean
@@ -946,7 +933,7 @@ class KnowledgeManager(BaseKnowledgeManager):
             Pagination offset (0-based).
         limit : int, default ``100``
             Maximum rows per table.
-        tables : list[str] | None
+        tables :  str | list[str]
             Subset of tables to scan; ``None`` → all tables.
 
         Returns
@@ -956,6 +943,8 @@ class KnowledgeManager(BaseKnowledgeManager):
         """
         if tables is None:
             tables = self._tables_overview()
+        elif isinstance(tables, str):
+            tables = [tables]
         # ToDo: convert to map function
         results = dict()
         for table in tables:
