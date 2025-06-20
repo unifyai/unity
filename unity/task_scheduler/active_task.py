@@ -1,8 +1,7 @@
-import asyncio
 import functools
 from typing import Optional, Dict, Callable, TYPE_CHECKING
 
-from ..planner.base import BasePlanner, BaseActiveTask
+from ..planner.base import BaseActiveTask
 
 if TYPE_CHECKING:
     from .task_scheduler import TaskScheduler
@@ -11,14 +10,10 @@ if TYPE_CHECKING:
 class ActiveTask(BaseActiveTask):
     def __init__(
         self,
-        task_description: str,
-        planner: BasePlanner,
+        active_task: BaseActiveTask,
         *,
         task_id: Optional[int] = None,
         scheduler: Optional["TaskScheduler"] = None,
-        parent_chat_context: list[dict] | None = None,
-        clarification_up_q: asyncio.Queue[str] | None = None,
-        clarification_down_q: asyncio.Queue[str] | None = None,
     ):
         """
         Thin wrapper that:
@@ -35,18 +30,13 @@ class ActiveTask(BaseActiveTask):
             When provided, every lifecycle transition (pause/resume/stop/finish)
             is mirrored back into the task list via ``scheduler._update_task_status``.
         """
-        self._active_task = planner.execute(
-            task_description,
-            parent_chat_context=parent_chat_context,
-            clarification_up_q=clarification_up_q,
-            clarification_down_q=clarification_down_q,
-        )
+        self._active_task = active_task
         self._scheduler: Optional["TaskScheduler"] = scheduler
         self._task_id: Optional[int] = task_id
 
     @functools.wraps(BaseActiveTask.ask, updated=())
     async def ask(self, message: str) -> str:
-        return await asyncio.to_thread(self._active_task.ask, message)
+        return await self._active_task.ask(message)
 
     @functools.wraps(BaseActiveTask.interject, updated=())
     async def interject(self, message: str) -> None:

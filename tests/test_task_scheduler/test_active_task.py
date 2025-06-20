@@ -44,7 +44,8 @@ async def test_active_task_ask(monkeypatch):
 
     monkeypatch.setattr(SimulatedActiveTask, "ask", spy_ask, raising=True)
 
-    task = ActiveTask("Analyse new product launch performance.", planner)
+    plan_handle = await planner.execute("Analyse new product launch performance.")
+    task = ActiveTask(plan_handle)
 
     # Trigger a single ask call that should propagate to the active task.
     await task.ask("Do we have any early metrics?")
