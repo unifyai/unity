@@ -5,9 +5,11 @@ from pydantic import BaseModel, Field, model_validator
 
 class Schedule(BaseModel):
     next_task: Optional[int] = Field(
+        default=None,
         description="ID of the next task in the sequence, used for task dependencies and ordering",
     )
     prev_task: Optional[int] = Field(
+        default=None,
         description="ID of the previous task in the sequence, used for task dependencies and ordering",
     )
     start_at: Optional[datetime] = Field(
