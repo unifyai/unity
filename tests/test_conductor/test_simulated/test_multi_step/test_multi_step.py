@@ -318,8 +318,8 @@ async def test_task_scheduler_rollover(monkeypatch):
 # --------------------------------------------------------------------------- #
 @pytest.mark.asyncio
 @_handle_project
-async def test_plan_activation_and_interjection(monkeypatch):
-    counts = {"start": 0, "active_task_interject": 0}
+async def test_execute_task_and_interject(monkeypatch):
+    counts = {"exec_task": 0, "active_task_interject": 0}
     start_called = asyncio.Event()
 
     # --- patch execute_task -------------------------------------------------- #
