@@ -45,7 +45,7 @@ class VerificationAssessment(BaseModel):
 
     status: str = Field(
         ...,
-        description="Outcome: 'ok', 'reimplement_local', 'replan_parent', or 'fatal_error'.",
+        description="Outcome: 'ok', 'reimplement_local', 'replan_parent', 'fatal_error', or 'request_clarification'.",
     )
     reason: str = Field(..., description="A concise explanation for the status.")
 
@@ -131,7 +131,7 @@ class HierarchicalPlan(ActiveTask):
         clarification_up_q: Optional[asyncio.Queue[str]] = None,
         clarification_down_q: Optional[asyncio.Queue[str]] = None,
         parent_chat_context: Optional[str] = None,
-        exploratory_mode: bool = False,
+        exploratory_mode: bool = True,
     ):
         self.planner = planner
         self.goal = goal
@@ -189,27 +189,60 @@ class HierarchicalPlan(ActiveTask):
 
     async def _perform_exploration(self):
         self._state = _HierarchicalPlanState.EXPLORING
-        self.action_log.append("Starting exploratory phase...")
+        self.action_log.append("Starting interactive exploratory phase...")
         try:
-            initial_state = await self.planner.controller.observe(
-                "Describe the current page and its URL for initial context.",
-            )
-            prompt = textwrap.dedent(
+
+            async def request_clarification(question: str) -> str:
+                """Asks the user for clarification when blocked or needs more input."""
+                self.action_log.append(
+                    f"Exploration: Asking for clarification: '{question}'",
+                )
+                await self.clarification_up_q.put(question)
+                answer = await self.clarification_down_q.get()
+                self.action_log.append(f"Exploration: Received answer: '{answer}'")
+                return f"Received user clarification: '{answer}'"
+
+            exploratory_tools = {
+                "observe": self.planner.controller.observe,
+                "request_clarification": request_clarification,
+            }
+
+            research_prompt = textwrap.dedent(
                 f"""
-                You are an exploration agent. Your goal is to gather information to help create a better plan.
-                **Main Goal:** "{self.goal}"
-                **Current Page State:** "{initial_state}"
-                **Task:** Formulate a single, concise `observe` query to gather the most critical information from this page to achieve the main goal. Your query should be a simple string.
-                **Example Query:** "What are the main navigation links in the header?"
+                You are an intelligent Research Assistant. Your goal is to gather critical information to create a robust plan for the main objective.
+
+                **Main Objective:** "{self.goal}"
+
+                **Your Tools:**
+                - `observe(query: str)`: Use this to inspect the current environment and gather information.
+                - `request_clarification(question: str)`: If you are blocked, missing information, or need user input, use this tool to ask a question.
+
+                **Your Task:**
+                1. Think step-by-step to determine what information is needed.
+                2. Use the `observe` tool to gather this information.
+                3. If necessary, use `request_clarification` to ask for guidance.
+                4. When you have gathered all necessary information, provide a final, concise summary of your findings. This summary will be used to generate the main plan. DO NOT say that you are ready; your final output MUST BE the summary itself.
                 """,
             )
-            exploration_query = await llm_call(self.planner.llm_client, prompt)
-            self.action_log.append(f"Exploration query: '{exploration_query}'")
-            observation_result = await self.planner.controller.observe(
-                exploration_query,
+
+            exploration_client = unify.AsyncUnify(
+                os.environ.get("UNIFY_MODEL", "gpt-4o-mini@openai"),
             )
-            self.exploration_summary = f"Initial observation of the page for the goal '{self.goal}' revealed: {observation_result}"
+            exploration_client.set_system_message(research_prompt)
+
+            exploration_loop_handle = start_async_tool_use_loop(
+                client=exploration_client,
+                message="Begin your research based on the main objective.",
+                tools=exploratory_tools,
+                loop_id="ExploratoryPhase",
+                max_steps=10,
+            )
+
+            summary = await exploration_loop_handle.result()
+            self.exploration_summary = summary
             self.action_log.append("Exploratory phase completed.")
+            self.action_log.append(f"Exploration Summary: {summary}")
+
         except Exception as e:
             logger.error(f"Exploration phase failed: {e}", exc_info=True)
             self.action_log.append(
@@ -269,13 +302,27 @@ class HierarchicalPlan(ActiveTask):
                     "force_stop": True,
                 }
             except NotImplementedError:
-                function_name = self._get_unimplemented_function_name()
-                await self._handle_dynamic_implementation(function_name)
-                plan_iterator = self._create_main_loop_iterator()
-                return {
-                    "status": "in_progress",
-                    "message": f"Implemented {function_name}, retrying.",
-                }
+                try:
+                    function_name = self._get_unimplemented_function_name()
+                    await self._handle_dynamic_implementation(function_name)
+                    plan_iterator = self._create_main_loop_iterator()
+                    return {
+                        "status": "in_progress",
+                        "message": f"Implemented {function_name}, retrying.",
+                    }
+                except Exception as e:
+                    logger.error(
+                        f"Failed to implement stub function: {e}",
+                        exc_info=True,
+                    )
+                    self._state = _HierarchicalPlanState.ERROR
+                    self.action_log.append(
+                        f"ERROR: Failed during dynamic implementation: {e}",
+                    )
+                    self._set_final_result(
+                        f"ERROR: Failed during dynamic implementation: {e}",
+                    )
+                    return {"status": "error", "message": str(e), "force_stop": True}
             except ReplanFromParentException as e:
                 self.escalation_count += 1
                 self.action_log.append(
@@ -317,7 +364,6 @@ class HierarchicalPlan(ActiveTask):
 
         def dynamic_tool_policy(step_index, tools):
             if self._is_complete or self._state in (
-                _HierarchicalPlanState.PAUSED,
                 _HierarchicalPlanState.PAUSED_FOR_MODIFICATION,
                 _HierarchicalPlanState.PAUSED_FOR_ESCALATION,
             ):
@@ -334,6 +380,7 @@ class HierarchicalPlan(ActiveTask):
             tool_policy=dynamic_tool_policy,
             interrupt_llm_with_interjections=True,
         )
+        await self.main_loop_handle.result()
 
     async def _handle_dynamic_implementation(self, function_name: str, **kwargs):
         new_code = await self.planner._dynamic_implement(
@@ -1016,7 +1063,10 @@ class HierarchicalPlanner(BasePlanner):
             Valid statuses: "ok", "reimplement_local" (tactical error), "replan_parent" (strategic error), "fatal_error".
         """,
         )
-        response_str = await llm_call(self.llm_client, prompt)
+        verification_client = unify.AsyncUnify(
+            os.environ.get("UNIFY_MODEL", "gpt-4o-mini@openai"),
+        )
+        response_str = await llm_call(verification_client, prompt)
         try:
             clean_response = (
                 response_str.strip().replace("```json", "").replace("```", "")
