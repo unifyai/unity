@@ -67,7 +67,8 @@ class SendCallAction(BaseModel):
     type: Literal["call"]
 
 
-class ContactManagerAction(BaseModel):
+class ManagerAction(BaseModel):
+    manager_name: Literal["contact", "knowledge", "task", "transcript"]
     type: Literal["update", "ask"]
     query: str = Field(..., description="The query to perform")
     show_steps: bool = Field(
@@ -76,7 +77,8 @@ class ContactManagerAction(BaseModel):
     )
 
 
-class ContactManagerInterjectAction(BaseModel):
+class ManagerInterjectAction(BaseModel):
+    manager_name: Literal["contact", "knowledge", "task", "transcript"]
     type: Literal["interrupt"]
     query: str = Field(..., description="The query to perform")
 
@@ -91,8 +93,8 @@ ActionModel = Union[
     CreateCommunicationTask,
     RespondToAgent,
     SendCallAction,
-    ContactManagerAction,
-    ContactManagerInterjectAction,
+    ManagerAction,
+    ManagerInterjectAction,
 ]
 
 
@@ -122,8 +124,8 @@ CommsActionModel = Union[
     SendCallAction,
     AskUserAgent,
     EndTask,
-    ContactManagerAction,
-    ContactManagerInterjectAction,
+    ManagerAction,
+    ManagerInterjectAction,
 ]
 
 

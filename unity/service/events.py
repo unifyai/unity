@@ -361,20 +361,23 @@ class UserAgentResponseEvent(Event):
         {self.response}"""
 
 
-class ContactManagerStartedEvent(Event):
+class ManagerStartedEvent(Event):
     def __init__(
         self,
         agent_id: str,
+        manager_name: str,
         chat_history: list[dict[str, str]],
         query: str,
         *args,
         **kwargs,
     ):
         kwargs.pop("agent_id", None)
+        kwargs.pop("manager_name", None)
         kwargs.pop("chat_history", None)
         kwargs.pop("query", None)
 
         self.agent_id = agent_id
+        self.manager_name = manager_name
         self.chat_history = chat_history
         self.query = query
         super().__init__(*args, **kwargs, transient=True)
@@ -384,6 +387,7 @@ class ContactManagerStartedEvent(Event):
         base_dict["payload"].update(
             {
                 "agent_id": self.agent_id,
+                "manager_name": self.manager_name.upper(),
                 "chat_history": self.chat_history,
                 "query": self.query,
             },
@@ -391,16 +395,18 @@ class ContactManagerStartedEvent(Event):
         return base_dict
 
     def __str__(self):
-        return f"""[CONTACT MANAGER STARTED @ {self.fmt_timestamp}]
+        return f"""[{self.manager_name.upper()} MANAGER STARTED @ {self.fmt_timestamp}]
         {self.query}"""
 
 
-class ContactManagerInterjectedEvent(Event):
-    def __init__(self, agent_id: str, query: str, *args, **kwargs):
+class ManagerInterjectedEvent(Event):
+    def __init__(self, agent_id: str, manager_name: str, query: str, *args, **kwargs):
         kwargs.pop("agent_id", None)
+        kwargs.pop("manager_name", None)
         kwargs.pop("query", None)
 
         self.agent_id = agent_id
+        self.manager_name = manager_name
         self.query = query
         super().__init__(*args, **kwargs, transient=True)
 
@@ -409,22 +415,25 @@ class ContactManagerInterjectedEvent(Event):
         base_dict["payload"].update(
             {
                 "agent_id": self.agent_id,
+                "manager_name": self.manager_name.upper(),
                 "query": self.query,
             },
         )
         return base_dict
 
     def __str__(self):
-        return f"""[CONTACT MANAGER INTERJECTED @ {self.fmt_timestamp}]
+        return f"""[{self.manager_name.upper()} MANAGER INTERJECTED @ {self.fmt_timestamp}]
         {self.query}"""
 
 
-class ContactManagerInterjectFailedEvent(Event):
-    def __init__(self, agent_id: str, query: str, *args, **kwargs):
+class ManagerInterjectFailedEvent(Event):
+    def __init__(self, agent_id: str, manager_name: str, query: str, *args, **kwargs):
         kwargs.pop("agent_id", None)
+        kwargs.pop("manager_name", None)
         kwargs.pop("query", None)
 
         self.agent_id = agent_id
+        self.manager_name = manager_name
         self.query = query
         super().__init__(*args, **kwargs, transient=True)
 
@@ -433,22 +442,25 @@ class ContactManagerInterjectFailedEvent(Event):
         base_dict["payload"].update(
             {
                 "agent_id": self.agent_id,
+                "manager_name": self.manager_name,
                 "query": self.query,
             },
         )
         return base_dict
 
     def __str__(self):
-        return f"""[CONTACT MANAGER INTERJECT FAILED @ {self.fmt_timestamp}]
+        return f"""[{self.manager_name.upper()} MANAGER INTERJECT FAILED @ {self.fmt_timestamp}]
         {self.query}"""
 
 
-class ContactManagerEndedEvent(Event):
-    def __init__(self, agent_id: str, query: str, *args, **kwargs):
+class ManagerEndedEvent(Event):
+    def __init__(self, agent_id: str, manager_name: str, query: str, *args, **kwargs):
         kwargs.pop("agent_id", None)
+        kwargs.pop("manager_name", None)
         kwargs.pop("query", None)
 
         self.agent_id = agent_id
+        self.manager_name = manager_name
         self.query = query
         super().__init__(*args, **kwargs)
 
@@ -457,11 +469,12 @@ class ContactManagerEndedEvent(Event):
         base_dict["payload"].update(
             {
                 "agent_id": self.agent_id,
+                "manager_name": self.manager_name,
                 "query": self.query,
             },
         )
         return base_dict
 
     def __str__(self):
-        return f"""[CONTACT MANAGER ENDED @ {self.fmt_timestamp}]
+        return f"""[{self.manager_name.upper()} MANAGER ENDED @ {self.fmt_timestamp}]
         {self.query}"""

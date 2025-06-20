@@ -289,7 +289,7 @@ def cleanup() -> None:
     
     if _process:
         stop("cleanup")
-    
+
     _process = None
     _start_time = None
     _shutdown_reason = None

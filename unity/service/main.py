@@ -10,6 +10,7 @@ import logging
 import os
 import signal
 import unify
+from unity.contact_manager.contact_manager import ContactManager
 from unity.service.comms_agent import CommsAgent
 from unity.service.comms_manager import CommsManager
 
@@ -199,8 +200,10 @@ async def main():
         os.getenv("ASSISTANT_NUMBER", ""),
         os.getenv("USER_NUMBER", ""),
         os.getenv("USER_PHONE_NUMBER", ""),
-        [],
-        True,
+        past_events=[],
+        main_user_agent=True,
+        manager=ContactManager(),
+        manager_name="contact",
     )
     user_agent.set_event_manager(event_manager)
     user_agent.subscribe(

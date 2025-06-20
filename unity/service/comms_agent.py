@@ -1,3 +1,4 @@
+from abc import ABC
 import asyncio
 from dataclasses import dataclass
 import openai
@@ -5,7 +6,6 @@ import os
 from pydantic import BaseModel
 from typing import Literal
 
-from unity.contact_manager.contact_manager import ContactManager
 from unity.helpers import run_script, terminate_process
 from unity.service import comms_actions
 from unity.service.actions import *
@@ -76,6 +76,8 @@ class CommsAgent:
         agent_id: str = None,
         contact_name: str = None,
         contact_number: str = None,
+        manager: ABC = None,
+        manager_name: str = "contact",
     ):
 
         self.main_user = main_user_agent
@@ -116,8 +118,9 @@ class CommsAgent:
         # queue for communication channels to make sure messages arrive in the right order
         self.whatsapp_queue = WhatsappQueue()
 
-        # contact manager
-        self.contact_manager = ContactManager()
+        # manager
+        self.manager = manager
+        self.manager_name = manager_name
 
     def get_chat_history(self):
         chat_history = []
@@ -191,8 +194,8 @@ class CommsAgent:
 
                 self.pending_events.clear()
 
-    async def handle_contact_manager_action(self, action: ContactManagerAction):
-        """Handle contact manager actions asynchronously"""
+    async def handle_manager_action(self, action: ManagerAction):
+        """Handle manager actions asynchronously"""
         # get chat history
         chat_history = self.get_chat_history()
 
@@ -200,7 +203,7 @@ class CommsAgent:
         if action.query.lower().startswith(
             ("add ", "create ", "update ", "change ", "delete ")
         ):
-            self.contact_manager_handle = await self.contact_manager.update(
+            self.manager_handle = await self.manager.update(
                 action.query,
                 parent_chat_context=chat_history,
                 _return_reasoning_steps=action.show_steps,
@@ -222,11 +225,11 @@ class CommsAgent:
             )
             intent = res.choices[0].message.parsed
             fn = (
-                self.contact_manager.update
+                self.manager.update
                 if intent.action == "update"
-                else self.contact_manager.ask
+                else self.manager.ask
             )
-            self.contact_manager_handle = await fn(
+            self.manager_handle = await fn(
                 action.query,
                 parent_chat_context=chat_history,
                 _return_reasoning_steps=action.show_steps,
@@ -236,20 +239,20 @@ class CommsAgent:
         self.publish(
             {
                 "topic": "user_agent",
-                "event": ContactManagerStartedEvent(
-                    self.agent_id, chat_history, action.query
+                "event": ManagerStartedEvent(
+                    self.agent_id, self.manager_name, chat_history, action.query
                 ).to_dict(),
             },
         )
 
         # wait for the handle to be done
-        while not self.contact_manager_handle.done():
+        while not self.manager_handle.done():
             print("waiting for handle to be done")
             await asyncio.sleep(1)
 
         # get handle result
-        answer = await self.contact_manager_handle.result()
-        self.contact_manager_handle = None
+        answer = await self.manager_handle.result()
+        self.manager_handle = None
         if isinstance(answer, tuple):
             answer, _ = answer
 
@@ -257,26 +260,27 @@ class CommsAgent:
         self.publish(
             {
                 "topic": "user_agent",
-                "event": ContactManagerEndedEvent(self.agent_id, answer).to_dict(),
+                "event": ManagerEndedEvent(self.agent_id, self.manager_name, answer).to_dict(),
             },
         )
 
-    async def handle_contact_manager_interject_action(
-        self, action: ContactManagerInterjectAction
+    async def handle_manager_interject_action(
+        self, action: ManagerInterjectAction
     ):
-        """Handle contact manager interject actions asynchronously"""
-        # check if the contact manager is running
-        if not self.contact_manager_handle:
+        """Handle manager interject actions asynchronously"""
+        # check if the manager is running
+        if not self.manager_handle:
             # interject failed
-            event = ContactManagerInterjectFailedEvent(
+            event = ManagerInterjectFailedEvent(
                 self.agent_id,
-                "Contact manager is not running currently, "
+                self.manager_name,
+                f"{self.manager_name} manager is not running currently, "
                 "please create a new action instead",
             )
         else:
             # interject
-            await self.contact_manager_handle.interject(action.query)
-            event = ContactManagerInterjectedEvent(self.agent_id, action.query)
+            await self.manager_handle.interject(action.query)
+            event = ManagerInterjectedEvent(self.agent_id, self.manager_name, action.query)
         self.publish({"topic": "user_agent", "event": event.to_dict()})
 
     def on_run_end(self, t: asyncio.Task):
@@ -332,14 +336,14 @@ class CommsAgent:
                                 action.response,
                             )
 
-                        elif isinstance(action, ContactManagerAction):
+                        elif isinstance(action, ManagerAction):
                             asyncio.create_task(
-                                self.handle_contact_manager_action(action)
+                                self.handle_manager_action(action)
                             )
 
-                        elif isinstance(action, ContactManagerInterjectAction):
+                        elif isinstance(action, ManagerInterjectAction):
                             asyncio.create_task(
-                                self.handle_contact_manager_interject_action(action)
+                                self.handle_manager_interject_action(action)
                             )
 
         except asyncio.CancelledError:
