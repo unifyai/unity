@@ -697,13 +697,14 @@ class BrowserUsePlanner(BasePlanner):
             tools[action_name] = _make_tool_wrapper
         return tools
 
-    def _execute_task_and_return_handle(
+    async def _execute_task_and_return_handle(
         self,
         task_description: str,
         *,
         parent_chat_context: list[dict] | None = None,
         clarification_up_q: Optional[asyncio.Queue[str]] = None,
         clarification_down_q: Optional[asyncio.Queue[str]] = None,
+        **kwargs,
     ) -> BrowserUsePlan:
         """
         Initiates a new plan for the given task description using browser_use tools.
