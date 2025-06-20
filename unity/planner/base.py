@@ -85,7 +85,7 @@ class BasePlanner(ABC):
                 "completion before starting a new one.",
             )
 
-        active_task = self._execute_task_and_return_handle(
+        active_task = await self._execute_task_and_return_handle(
             task_description,
             parent_chat_context=parent_chat_context,
             clarification_up_q=clarification_up_q,
@@ -93,7 +93,7 @@ class BasePlanner(ABC):
             **kwargs,
         )
         self._active_task = active_task
-        return await active_task
+        return active_task
 
     @abstractmethod
     async def _execute_task_and_return_handle(

@@ -578,13 +578,14 @@ class ToolLoopPlanner(BasePlanner):
             "communicate": communicate,
         }
 
-    def _execute_task_and_return_handle(
+    async def _execute_task_and_return_handle(
         self,
         task_description: str,
         *,
         parent_chat_context: list[dict] | None = None,
         clarification_up_q: Optional[asyncio.Queue[str]] = None,
         clarification_down_q: Optional[asyncio.Queue[str]] = None,
+        **kwargs,
     ) -> ToolLoopPlan:
         logger.info(f"ToolLoopPlanner: Planning task: '{task_description}'")
 

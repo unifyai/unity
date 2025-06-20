@@ -717,7 +717,7 @@ class HierarchicalPlanner(BasePlanner):
             logger.error(f"Generated code failed sanitization: {e}")
             raise
 
-    def _execute_task_and_return_handle(
+    async def _execute_task_and_return_handle(
         self,
         task_description: str,
         *,
