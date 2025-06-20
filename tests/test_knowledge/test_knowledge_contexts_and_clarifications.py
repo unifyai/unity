@@ -166,7 +166,7 @@ async def test_ask_requests_clarification():
     # ➊ seed four distinct coloured vehiles
     await (
         await km.update(
-            "There is a red Citroen, a blue Volkswagen, a green BWM, and a silver Porsche in the garage.",
+            "There is a red Citroen, a blue Volkswagen, a green BMW, and a silver Porsche in the garage.",
         )
     ).result()
 
