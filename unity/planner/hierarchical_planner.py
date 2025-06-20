@@ -22,7 +22,7 @@ from unity.common.llm_helpers import (
 )
 from unity.controller.controller import Controller
 from unity.function_manager.function_manager import FunctionManager
-from unity.planner.base import BasePlan, BasePlanner
+from unity.planner.base import ActiveTask, BasePlanner
 from unity.planner.tool_loop_planner import ComsManager
 
 logger = logging.getLogger(__name__)
@@ -34,6 +34,10 @@ class ReplanFromParentException(Exception):
 
 class _ForcedRetryException(Exception):
     """Internal exception to force a retry loop after a successful reimplementation."""
+
+
+class FatalVerificationError(Exception):
+    """Raised when verification results in a fatal, unrecoverable error."""
 
 
 class VerificationAssessment(BaseModel):
@@ -50,6 +54,7 @@ class _HierarchicalPlanState(enum.Enum):
     """Manages the detailed lifecycle state of a hierarchical plan."""
 
     IDLE = enum.auto()
+    EXPLORING = enum.auto()
     RUNNING = enum.auto()
     PAUSED = enum.auto()
     PAUSED_FOR_MODIFICATION = enum.auto()
@@ -62,6 +67,31 @@ class _HierarchicalPlanState(enum.Enum):
 async def llm_call(client: unify.AsyncUnify, prompt: str) -> str:
     """Convenience wrapper for a simple LLM call."""
     return await client.generate(prompt)
+
+
+class PlanSanitizer(ast.NodeTransformer):
+    """
+    AST transformer to enforce security and correctness of plan code.
+    1. Disallows `import` and `import from` statements.
+    2. Ensures every `async def` function is decorated with `@verify`.
+    """
+
+    def visit_Import(self, node: ast.Import) -> Any:
+        raise SyntaxError("Import statements are not allowed in plans.")
+
+    def visit_ImportFrom(self, node: ast.ImportFrom) -> Any:
+        raise SyntaxError("Import statements are not allowed in plans.")
+
+    def visit_AsyncFunctionDef(
+        self,
+        node: ast.AsyncFunctionDef,
+    ) -> ast.AsyncFunctionDef:
+        has_verify = any(
+            isinstance(d, ast.Name) and d.id == "verify" for d in node.decorator_list
+        )
+        if not has_verify:
+            node.decorator_list.insert(0, ast.Name(id="verify", ctx=ast.Load()))
+        return self.generic_visit(node)
 
 
 class FunctionReplacer(ast.NodeTransformer):
@@ -85,7 +115,7 @@ class FunctionReplacer(ast.NodeTransformer):
         return self.generic_visit(node)
 
 
-class HierarchicalPlan(BasePlan):
+class HierarchicalPlan(ActiveTask):
     """
     Represents and executes a single, dynamically generated hierarchical plan.
     This class is a steerable handle managing the plan's lifecycle.
@@ -101,9 +131,12 @@ class HierarchicalPlan(BasePlan):
         clarification_up_q: Optional[asyncio.Queue[str]] = None,
         clarification_down_q: Optional[asyncio.Queue[str]] = None,
         parent_chat_context: Optional[str] = None,
+        exploratory_mode: bool = False,
     ):
         self.planner = planner
         self.goal = goal
+        self.exploratory_mode = exploratory_mode
+        self.exploration_summary: Optional[str] = None
         self.plan_source_code: Optional[str] = None
         self.execution_namespace: Dict[str, Any] = {}
         self.call_stack: List[str] = []
@@ -113,20 +146,35 @@ class HierarchicalPlan(BasePlan):
         self.escalation_count = 0
         self._is_complete = False
         self.main_loop_handle: Optional[AsyncToolUseLoopHandle] = None
-        self._execution_task = asyncio.create_task(self._initialize_and_run())
+        self._execution_task: Optional[asyncio.Task] = None
         self._state = _HierarchicalPlanState.IDLE
+        self._completion_event = asyncio.Event()
+        self._final_result_str: Optional[str] = None
         self.clarification_up_q = clarification_up_q or asyncio.Queue()
         self.clarification_down_q = clarification_down_q or asyncio.Queue()
+        self._execution_task = asyncio.create_task(self._initialize_and_run())
+
+    def _set_final_result(self, result: str):
+        """Sets the final result and the completion event."""
+        if not self._completion_event.is_set():
+            self._final_result_str = result
+            self._is_complete = True
+            self._completion_event.set()
 
     async def _initialize_and_run(self):
-        self._state = _HierarchicalPlanState.RUNNING
-
         self.action_log.append("Initializing plan...")
         try:
+            if self.exploratory_mode:
+                await self._perform_exploration()
+
+            if not self._is_complete:
+                self._state = _HierarchicalPlanState.RUNNING
+
             if self.plan_source_code is None:
                 self.action_log.append("Generating new plan from goal...")
                 self.plan_source_code = await self.planner._generate_initial_plan(
-                    self.goal
+                    self.goal,
+                    self.exploration_summary,
                 )
                 self.action_log.append("Initial plan generated successfully.")
             else:
@@ -136,11 +184,40 @@ class HierarchicalPlan(BasePlan):
             await self._start_main_execution_loop()
         except Exception as e:
             logger.error(f"Plan initialization failed: {e}", exc_info=True)
-            self.action_log.append(f"ERROR: Plan initialization failed: {e}")
             self._state = _HierarchicalPlanState.ERROR
-            self._is_complete = True
-            if self.main_loop_handle and not self.main_loop_handle.done():
-                self.main_loop_handle.stop()
+            self._set_final_result(f"ERROR: Plan initialization failed: {e}")
+
+    async def _perform_exploration(self):
+        self._state = _HierarchicalPlanState.EXPLORING
+        self.action_log.append("Starting exploratory phase...")
+        try:
+            initial_state = await self.planner.controller.observe(
+                "Describe the current page and its URL for initial context.",
+            )
+            prompt = textwrap.dedent(
+                f"""
+                You are an exploration agent. Your goal is to gather information to help create a better plan.
+                **Main Goal:** "{self.goal}"
+                **Current Page State:** "{initial_state}"
+                **Task:** Formulate a single, concise `observe` query to gather the most critical information from this page to achieve the main goal. Your query should be a simple string.
+                **Example Query:** "What are the main navigation links in the header?"
+                """,
+            )
+            exploration_query = await llm_call(self.planner.llm_client, prompt)
+            self.action_log.append(f"Exploration query: '{exploration_query}'")
+            observation_result = await self.planner.controller.observe(
+                exploration_query,
+            )
+            self.exploration_summary = f"Initial observation of the page for the goal '{self.goal}' revealed: {observation_result}"
+            self.action_log.append("Exploratory phase completed.")
+        except Exception as e:
+            logger.error(f"Exploration phase failed: {e}", exc_info=True)
+            self.action_log.append(
+                f"WARNING: Exploration failed: {e}. Proceeding without extra context.",
+            )
+            self.exploration_summary = None
+        finally:
+            self._state = _HierarchicalPlanState.RUNNING
 
     def _create_main_loop_iterator(self):
         main_fn_name = self._get_main_function_name()
@@ -175,8 +252,8 @@ class HierarchicalPlan(BasePlan):
                 main_coro = next(plan_iterator)
                 result = await main_coro
                 self._state = _HierarchicalPlanState.COMPLETED
-                self._is_complete = True
                 self.action_log.append(f"Plan completed. Result: {result}")
+                self._set_final_result(f"Plan completed. Result: {result}")
                 return {
                     "status": "completed",
                     "message": f"Plan finished. Result: {result}",
@@ -184,8 +261,8 @@ class HierarchicalPlan(BasePlan):
                 }
             except StopIteration:
                 self._state = _HierarchicalPlanState.COMPLETED
-                self._is_complete = True
                 self.action_log.append("Plan finished.")
+                self._set_final_result("Plan finished.")
                 return {
                     "status": "completed",
                     "message": "Plan finished.",
@@ -209,28 +286,24 @@ class HierarchicalPlan(BasePlan):
                 if not parent_to_replan:
                     raise RuntimeError("Could not determine main_plan to replan.")
 
-                # ALWAYS perform the strategic replan on each escalation cycle.
-                await self._handle_dynamic_implementation(
-                    parent_to_replan,
-                    is_strategic_replan=True,
-                    replan_reason=str(e),
-                )
-
-                # NOW, check if the escalation limit has been reached AFTER replanning.
-                if self.escalation_count >= self.MAX_ESCALATIONS:
+                if self.escalation_count > self.MAX_ESCALATIONS:
                     self._state = _HierarchicalPlanState.PAUSED_FOR_ESCALATION
                     err_msg = f"ESCALATION LIMIT: Max escalations ({self.MAX_ESCALATIONS}) reached. Pausing for intervention. Final reason: {e}"
                     self.action_log.append(err_msg)
                     await self.clarification_up_q.put(err_msg)
+                    self._set_final_result(err_msg)
                     return {
                         "status": "paused_for_escalation",
                         "message": err_msg,
                         "force_stop": True,
                     }
 
-                # If the limit is not reached, create a new iterator and continue the loop.
+                await self._handle_dynamic_implementation(
+                    parent_to_replan,
+                    is_strategic_replan=True,
+                    replan_reason=str(e),
+                )
                 plan_iterator = self._create_main_loop_iterator()
-
                 return {
                     "status": "in_progress",
                     "message": f"Strategically replanned '{parent_to_replan}' due to failure in child. Retrying.",
@@ -238,12 +311,13 @@ class HierarchicalPlan(BasePlan):
             except Exception as e:
                 logger.error(f"Plan step execution failed: {e}", exc_info=True)
                 self._state = _HierarchicalPlanState.ERROR
-                self._is_complete = True
                 self.action_log.append(f"ERROR: Plan execution failed: {e}")
+                self._set_final_result(f"ERROR: Plan execution failed: {e}")
                 return {"status": "error", "message": str(e), "force_stop": True}
 
         def dynamic_tool_policy(step_index, tools):
             if self._is_complete or self._state in (
+                _HierarchicalPlanState.PAUSED,
                 _HierarchicalPlanState.PAUSED_FOR_MODIFICATION,
                 _HierarchicalPlanState.PAUSED_FOR_ESCALATION,
             ):
@@ -361,7 +435,9 @@ class HierarchicalPlan(BasePlan):
 
             self.escalation_count = 0
             self._is_complete = False
-            self._state = _HierarchicalPlanState.RUNNING
+            self.exploratory_mode = False
+            self.exploration_summary = None
+
             self._execution_task = asyncio.create_task(self._initialize_and_run())
 
             return "Plan modified and resumed successfully."
@@ -391,8 +467,17 @@ class HierarchicalPlan(BasePlan):
                 return await self.planner.controller.act(instruction)
 
             correction_namespace["act"] = act_wrapper
+            correction_namespace["observe"] = self.planner.controller.observe
+            correction_namespace["verify"] = self.planner._create_verify_decorator(self)
+            correction_namespace["ReplanFromParentException"] = (
+                ReplanFromParentException
+            )
+            correction_namespace["_ForcedRetryException"] = _ForcedRetryException
+
+            sanitized_script = self.planner._sanitize_code(script)
+
             exec(
-                compile(script, "<correction_script>", "exec"),
+                compile(sanitized_script, "<correction_script>", "exec"),
                 correction_namespace,
             )
             correction_fn = correction_namespace.get("course_correction_main")
@@ -403,7 +488,6 @@ class HierarchicalPlan(BasePlan):
 
             await asyncio.wait_for(correction_fn(), timeout=60.0)
 
-            # Verification step
             assessment = await self.planner._check_state_against_goal(
                 function_name="course_correction",
                 function_docstring=f"Align state for new plan: {new_plan_code[:200]}...",
@@ -436,14 +520,11 @@ class HierarchicalPlan(BasePlan):
         return f"Plan restarted with new goal: '{new_goal}'"
 
     async def result(self) -> str:
-        if self._execution_task and not self._execution_task.done():
-            await self._execution_task
-
-        if not self.main_loop_handle:
-            final_log = self.action_log[-1] if self.action_log else "No log available."
-            return f"Plan concluded in state {self._state.name}. Final log: {final_log}"
-
-        return await self.main_loop_handle.result()
+        await self._completion_event.wait()
+        return (
+            self._final_result_str
+            or f"Plan finished in state {self._state.name} without a result."
+        )
 
     def done(self) -> bool:
         return self._is_complete
@@ -460,11 +541,15 @@ class HierarchicalPlan(BasePlan):
     async def stop(self) -> str:
         if not self._is_complete:
             self._state = _HierarchicalPlanState.STOPPED
-            self._is_complete = True
+            result_str = "Plan was stopped."
             if self.main_loop_handle and not self.main_loop_handle.done():
                 self.main_loop_handle.stop()
+            if self._execution_task and not self._execution_task.done():
+                self._execution_task.cancel()
+
             self.action_log.append("Plan stopped by user.")
-            return "Plan was stopped."
+            self._set_final_result(result_str)
+            return result_str
         return f"Plan already in terminal state: {self._state.name}."
 
     async def pause(self) -> str:
@@ -472,6 +557,7 @@ class HierarchicalPlan(BasePlan):
             self._state = _HierarchicalPlanState.PAUSED
             if self.main_loop_handle:
                 self.main_loop_handle.pause()
+            self.action_log.append("Plan paused by user.")
             return "Plan paused."
         return f"Cannot pause in state {self._state.name}."
 
@@ -480,12 +566,16 @@ class HierarchicalPlan(BasePlan):
             self._state = _HierarchicalPlanState.RUNNING
             if self.main_loop_handle:
                 self.main_loop_handle.resume()
+            self.action_log.append("Plan resumed by user.")
             return "Plan resumed."
         return f"Cannot resume from state {self._state.name}."
 
     async def ask(self, question: str) -> str:
-        if self._state == _HierarchicalPlanState.IDLE:
-            return "Plan has not started."
+        if self._state in (
+            _HierarchicalPlanState.IDLE,
+            _HierarchicalPlanState.EXPLORING,
+        ):
+            return "Plan has not started its main execution loop."
         try:
             browser_context = await self.planner.controller.observe(
                 "Summarize the current page.",
@@ -518,7 +608,10 @@ class HierarchicalPlan(BasePlan):
         if name == "resume":
             return self._state == _HierarchicalPlanState.PAUSED
         if name == "ask":
-            return self._state != _HierarchicalPlanState.IDLE
+            return self._state not in (
+                _HierarchicalPlanState.IDLE,
+                _HierarchicalPlanState.EXPLORING,
+            )
         if name == "interject":
             return self._state == _HierarchicalPlanState.RUNNING
         if name == "modify_plan":
@@ -548,7 +641,7 @@ class HierarchicalPlan(BasePlan):
         return tools
 
 
-class HierarchicalPlanner(BasePlanner[HierarchicalPlan]):
+class HierarchicalPlanner(BasePlanner):
     """Orchestrates task execution by generating and managing Python code."""
 
     def __init__(
@@ -565,12 +658,35 @@ class HierarchicalPlanner(BasePlanner[HierarchicalPlan]):
             os.environ.get("UNIFY_MODEL", "gpt-4o-mini@openai"),
         )
 
-    def _make_plan(self, task_description: str, **kwargs) -> HierarchicalPlan:
-        return HierarchicalPlan(planner=self, goal=task_description, **kwargs)
+    def _sanitize_code(self, code: str) -> str:
+        """Parses, sanitizes, and unparses code to enforce security."""
+        try:
+            tree = ast.parse(code)
+            sanitizer = PlanSanitizer()
+            sanitized_tree = sanitizer.visit(tree)
+            ast.fix_missing_locations(sanitized_tree)
+            return ast.unparse(sanitized_tree)
+        except SyntaxError as e:
+            logger.error(f"Generated code failed sanitization: {e}")
+            raise
+
+    def _execute_task_and_return_handle(
+        self,
+        task_description: str,
+        *,
+        exploratory_mode: bool = False,
+        **kwargs,
+    ) -> HierarchicalPlan:
+        return HierarchicalPlan(
+            planner=self,
+            goal=task_description,
+            exploratory_mode=exploratory_mode,
+            **kwargs,
+        )
 
     def _create_sandbox_globals(self) -> Dict[str, Any]:
         safe_builtins = {
-            k: __builtins__[k]
+            k: __builtins__.get(k)
             for k in [
                 "print",
                 "len",
@@ -596,7 +712,12 @@ class HierarchicalPlanner(BasePlanner[HierarchicalPlan]):
                 "sorted",
                 "enumerate",
                 "zip",
+                "ValueError",
+                "TypeError",
+                "KeyError",
+                "IndexError",
             ]
+            if __builtins__.get(k) is not None
         }
         return {"__builtins__": safe_builtins, "asyncio": asyncio}
 
@@ -617,6 +738,7 @@ class HierarchicalPlanner(BasePlanner[HierarchicalPlan]):
                 "verify": self._create_verify_decorator(plan),
                 "ReplanFromParentException": ReplanFromParentException,
                 "_ForcedRetryException": _ForcedRetryException,
+                "FatalVerificationError": FatalVerificationError,
             },
         )
 
@@ -662,9 +784,11 @@ class HierarchicalPlanner(BasePlanner[HierarchicalPlan]):
                                 f"Retrying '{fn.__name__}' after reimplementation.",
                             )
                             continue
-                        except ReplanFromParentException:
-                            raise
-                        except NotImplementedError:
+                        except (
+                            ReplanFromParentException,
+                            NotImplementedError,
+                            FatalVerificationError,
+                        ):
                             raise
                         except Exception as e:
                             logger.error(
@@ -677,8 +801,10 @@ class HierarchicalPlanner(BasePlanner[HierarchicalPlan]):
                         f"Function '{fn.__name__}' failed after multiple retries.",
                     )
                 finally:
-                    plan.call_stack.pop()
-                    plan.interaction_stack.pop()
+                    if plan.call_stack:
+                        plan.call_stack.pop()
+                    if plan.interaction_stack:
+                        plan.interaction_stack.pop()
 
             return wrapper
 
@@ -744,9 +870,15 @@ class HierarchicalPlanner(BasePlanner[HierarchicalPlan]):
                 f"Strategic failure in '{fn.__name__}': {assessment.reason}",
             )
         else:
-            raise RuntimeError(f"Fatal error in '{fn.__name__}': {assessment.reason}")
+            raise FatalVerificationError(
+                f"Fatal error in '{fn.__name__}': {assessment.reason}",
+            )
 
-    async def _generate_initial_plan(self, goal: str) -> str:
+    async def _generate_initial_plan(
+        self,
+        goal: str,
+        exploration_summary: Optional[str] = None,
+    ) -> str:
         max_retries = 3
         last_error = ""
         for attempt in range(max_retries):
@@ -764,20 +896,28 @@ class HierarchicalPlanner(BasePlanner[HierarchicalPlan]):
                         if attempt == 0
                         else f"Last attempt failed: {last_error}. Please fix."
                     ),
+                    exploration_summary,
                 )
                 response = await llm_call(self.llm_client, prompt)
                 code = (
                     response.strip().replace("```python", "").replace("```", "").strip()
                 )
-                ast.parse(code)
-                return code
+
+                return self._sanitize_code(code)
+
             except SyntaxError as e:
                 last_error = str(e)
                 if attempt == max_retries - 1:
                     raise
         raise RuntimeError("Failed to generate a valid plan after multiple retries.")
 
-    def _build_initial_plan_prompt(self, goal, existing_functions, retry_msg):
+    def _build_initial_plan_prompt(
+        self,
+        goal,
+        existing_functions,
+        retry_msg,
+        exploration_summary,
+    ):
         primitives_doc = (
             "- `await act(instruction: str)`\n- `await observe(query: str)`"
         )
@@ -788,11 +928,17 @@ class HierarchicalPlanner(BasePlanner[HierarchicalPlan]):
         full_existing_code = "\n\n".join(
             data["implementation"] for data in existing_functions.values()
         )
+        exploration_context = (
+            f"\n**Context from Initial Exploration:**\n{exploration_summary}\n"
+            if exploration_summary
+            else ""
+        )
         return textwrap.dedent(
             f"""
             You are an expert Python programmer. Decompose the goal into a Python script.
             {retry_msg}
             **Goal:** "{goal}"
+            {exploration_context}
             **Primitives:**\n{primitives_doc}
             **Existing Functions:**\n{existing_functions_doc or "None"}
             **Instructions:**
@@ -844,7 +990,8 @@ class HierarchicalPlanner(BasePlanner[HierarchicalPlan]):
             4. CRITICAL: You MUST NOT use any `import` statements.
         """,
         )
-        return await llm_call(self.llm_client, prompt)
+        code = await llm_call(self.llm_client, prompt)
+        return self._sanitize_code(code)
 
     async def _check_state_against_goal(
         self,
@@ -891,7 +1038,8 @@ class HierarchicalPlanner(BasePlanner[HierarchicalPlan]):
             CRITICAL: You MUST NOT use any `import` statements.
         """,
         )
-        return await llm_call(self.llm_client, prompt)
+        new_code = await llm_call(self.llm_client, prompt)
+        return self._sanitize_code(new_code)
 
     async def _generate_course_correction_script(self, old_code, new_code):
         current_state = await self.controller.observe("Describe current page.")
@@ -909,15 +1057,16 @@ class HierarchicalPlanner(BasePlanner[HierarchicalPlan]):
         """,
         )
         script = await llm_call(self.llm_client, prompt)
-        return (
-            None
-            if "None" in script
-            else script.strip().replace("```python", "").replace("```", "").strip()
+        if "None" in script:
+            return None
+
+        return self._sanitize_code(
+            script.strip().replace("```python", "").replace("```", "").strip(),
         )
 
     async def close(self):
-        if self._active_plan:
-            await self._active_plan.stop()
+        if self._active_task:
+            await self._active_task.stop()
         if self.controller:
             self.controller.stop()
         if self.coms_manager and hasattr(self.coms_manager, "stop"):

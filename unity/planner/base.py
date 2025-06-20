@@ -3,18 +3,18 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 import asyncio
-from typing import Callable, Dict, Generic, Optional, TypeVar
+from typing import Callable, Dict, Optional
 
 from unity.common.llm_helpers import SteerableToolHandle
 
-__all__ = ["BasePlan", "BasePlanner"]
+__all__ = ["ActiveTask", "BasePlanner"]
 
 # --------------------------------------------------------------------------- #
 # BasePlan
 # --------------------------------------------------------------------------- #
 
 
-class BasePlan(SteerableToolHandle, ABC):
+class ActiveTask(SteerableToolHandle, ABC):
     """
     Abstract contract that every concrete *plan* must satisfy.
 
@@ -40,7 +40,7 @@ class BasePlan(SteerableToolHandle, ABC):
     def valid_tools(self) -> Dict[str, Callable]:
         """
         Map of *public-name* ➜ *callable* for the user-accessible controls
-        that are *currently* valid in the plan’s lifecycle state.
+        that are *currently* valid in the plan's lifecycle state.
         """
 
 
@@ -48,10 +48,8 @@ class BasePlan(SteerableToolHandle, ABC):
 # BasePlanner
 # --------------------------------------------------------------------------- #
 
-PlanT = TypeVar("PlanT", bound=BasePlan)
 
-
-class BasePlanner(Generic[PlanT], ABC):
+class BasePlanner(ABC):
     """
     Abstract contract that every concrete *planner* must satisfy.
 
@@ -61,61 +59,61 @@ class BasePlanner(Generic[PlanT], ABC):
     """
 
     def __init__(self) -> None:
-        self._active_plan: Optional[PlanT] = None
+        self._active_task: Optional[ActiveTask] = None
 
     # ─────────────────────────── Plan management ────────────────────────── #
 
-    def plan(
+    def execute(
         self,
         task_description: str,
         *,
         parent_chat_context: list[dict] | None = None,
         clarification_up_q: Optional[asyncio.Queue[str]] = None,
         clarification_down_q: Optional[asyncio.Queue[str]] = None,
-    ) -> PlanT:
+    ) -> ActiveTask:
         """
-        Create (and start) a new plan.
+        Create (and start) a new active task.
 
         Sub-classes implement the actual creation logic in
         :meth:`_make_plan`.  This thin wrapper only enforces the
         *single-active-plan* rule and stores the reference.
         """
-        if self._active_plan is not None:
+        if self._active_task is not None:
             raise RuntimeError(
                 "Another plan is still active. Stop it or wait for "
                 "completion before starting a new one.",
             )
 
-        plan = self._make_plan(
+        active_task = self._execute_task_and_return_handle(
             task_description,
             parent_chat_context=parent_chat_context,
             clarification_up_q=clarification_up_q,
             clarification_down_q=clarification_down_q,
         )
-        self._active_plan = plan
-        return plan
+        self._active_task = active_task
+        return active_task
 
     @abstractmethod
-    def _make_plan(
+    def _execute_task_and_return_handle(
         self,
         task_description: str,
         *,
         parent_chat_context: list[dict] | None = None,
         clarification_up_q: Optional[asyncio.Queue[str]] = None,
         clarification_down_q: Optional[asyncio.Queue[str]] = None,
-    ) -> PlanT:
+    ) -> ActiveTask:
         """
-        Concrete planner must build **and start** a plan implementation
-        (e.g. ``SimulatedPlan``) and return it.
+        Concrete planner must build **and start** an active task implementation
+        (e.g. ``SimulatedActiveTask``) and return it.
         """
 
     # ────────────────────────── Convenience API ─────────────────────────── #
 
     @property
-    def active_plan(self) -> Optional[PlanT]:
-        """Return the currently running plan (or *None* if idle)."""
-        return self._active_plan
+    def active_task(self) -> Optional[ActiveTask]:
+        """Return the currently running task (or *None* if idle)."""
+        return self._active_task
 
-    def clear_active_plan(self) -> None:
-        """Forget the active plan (useful once it has completed)."""
-        self._active_plan = None
+    def clear_active_task(self) -> None:
+        """Forget the active task (useful once it has completed)."""
+        self._active_task = None

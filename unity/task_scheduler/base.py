@@ -101,7 +101,7 @@ class BaseTaskScheduler(ABC):
         """
 
     @abstractmethod
-    async def start_task(
+    async def execute_task(
         self,
         task_id: int,
         *,

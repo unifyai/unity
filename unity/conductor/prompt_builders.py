@@ -25,7 +25,7 @@ def _now() -> str:
 
 
 def build_ask_prompt(tools: Dict[str, Callable]) -> str:
-    """Dynamic **system** prompt for `TaskManager.ask`."""
+    """Dynamic **system** prompt for `Conductor.ask`."""
     sig_json = json.dumps(_sig_dict(tools), indent=4)
 
     return "\n".join(
@@ -49,7 +49,7 @@ def build_ask_prompt(tools: Dict[str, Callable]) -> str:
 
 
 def build_request_prompt(tools: Dict[str, Callable]) -> str:
-    """Dynamic **system** prompt for `TaskManager.request`."""
+    """Dynamic **system** prompt for `Conductor.request`."""
     sig_json = json.dumps(_sig_dict(tools), indent=4)
 
     return "\n".join(
@@ -61,7 +61,7 @@ def build_request_prompt(tools: Dict[str, Callable]) -> str:
             "If you are asked to perform a task, you should *always* proceed as follows:",
             "- Check if this task already exists via TaskScheduler.ask",
             "- Add a new task *if it doesn't already exist* in the task list via TaskScheduler.update",
-            "- Start the task via TaskScheduler.start_task if the user wants you to start now.",
+            "- Start the task via TaskScheduler.execute_task if the user wants you to start now.",
             "  Otherwise set the scheduled start date/time when calling TaskScheduler.update above."
             "",
             "Tools (name → argspec):",
@@ -78,8 +78,8 @@ def build_request_prompt(tools: Dict[str, Callable]) -> str:
     )
 
 
-def build_start_task_prompt(tools: Dict[str, Callable]) -> str:
-    """Dynamic **system** prompt for `TaskManager.start_task`."""
+def build_execute_task_prompt(tools: Dict[str, Callable]) -> str:
+    """Dynamic **system** prompt for `Conductor.execute_task`."""
     sig_json = json.dumps(_sig_dict(tools), indent=4)
 
     return "\n".join(

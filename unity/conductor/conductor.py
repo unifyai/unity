@@ -1,4 +1,4 @@
-# task_manager/task_manager.py
+# conductor/conductor.py
 from __future__ import annotations
 
 from typing import Callable, Dict, Optional, List, Any
@@ -26,16 +26,16 @@ from ..knowledge_manager.knowledge_manager import KnowledgeManager
 from ..planner.base import BasePlanner
 from ..planner.tool_loop_planner import ToolLoopPlanner
 from ..task_scheduler.base import BaseTaskScheduler
-from .base import BaseTaskManager
+from .base import BaseConductor
 from ..task_scheduler.task_scheduler import TaskScheduler
 from .prompt_builders import (
     build_ask_prompt,
     build_request_prompt,
-    build_start_task_prompt,
+    build_execute_task_prompt,
 )
 
 
-class TaskManager(BaseTaskManager):
+class Conductor(BaseConductor):
     """
     Top-level façade that *can* own a maximum of *one* live plan at a time and exposes two
     different tool surfaces which include the knowledge, task list, contacts, and transcript histories:
@@ -124,7 +124,7 @@ class TaskManager(BaseTaskManager):
                 self._transcript_manager.summarize,
                 self._knowledge_manager.update,
                 self._task_scheduler.update,
-                ToolSpec(self._task_scheduler.start_task, max_concurrent=1),
+                ToolSpec(self._task_scheduler.execute_task, max_concurrent=1),
                 include_class_name=True,
             ),
         }
@@ -134,7 +134,7 @@ class TaskManager(BaseTaskManager):
     #  Public API                                                        #
     # ------------------------------------------------------------------ #
 
-    @functools.wraps(BaseTaskManager.ask, updated=())
+    @functools.wraps(BaseConductor.ask, updated=())
     async def ask(
         self,
         text: str,
@@ -191,7 +191,7 @@ class TaskManager(BaseTaskManager):
     #  request  (write-capable)                                          #
     # ------------------------------------------------------------------ #
 
-    @functools.wraps(BaseTaskManager.request, updated=())
+    @functools.wraps(BaseConductor.request, updated=())
     async def request(
         self,
         text: str,
@@ -244,10 +244,10 @@ class TaskManager(BaseTaskManager):
         return handle
 
     # ------------------------------------------------------------------ #
-    #  start_task – new public surface (write-capable but focussed)      #
+    #  execute_task – new public surface (write-capable but focussed)      #
     # ------------------------------------------------------------------ #
-    @functools.wraps(BaseTaskManager.start_task, updated=())
-    async def start_task(
+    @functools.wraps(BaseConductor.execute_task, updated=())
+    async def execute_task(
         self,
         text: str,
         *,
@@ -263,14 +263,14 @@ class TaskManager(BaseTaskManager):
         # ---------------------------------------------------------------- #
         # Re-wrap so that we capture the returned ActiveTask handle and
         # remember it for future plan queries.
-        def _wrapped_start_task(
+        def _wrapped_execute_task(
             task_id: int,
             *,
             parent_chat_context=None,
             clarification_up_q=None,
             clarification_down_q=None,
         ):
-            handle = self._task_scheduler.start_task(
+            handle = self._task_scheduler.execute_task(
                 task_id,
                 parent_chat_context=parent_chat_context,
                 clarification_up_q=clarification_up_q,
@@ -279,7 +279,7 @@ class TaskManager(BaseTaskManager):
             self._current_plan = handle
             return handle
 
-        _wrapped_start_task.__name__ = "_start_task_call_"
+        _wrapped_execute_task.__name__ = "_execute_task_call_"
 
         tools: Dict[str, Callable[..., Any]] = {
             **methods_to_tool_dict(
@@ -287,7 +287,7 @@ class TaskManager(BaseTaskManager):
                 self._task_scheduler._nearest_tasks,
                 include_class_name=False,
             ),
-            _wrapped_start_task.__name__: _wrapped_start_task,
+            _wrapped_execute_task.__name__: _wrapped_execute_task,
         }
         if clarification_up_q is not None or clarification_down_q is not None:
 
@@ -307,13 +307,13 @@ class TaskManager(BaseTaskManager):
             cache=json.loads(os.environ.get("UNIFY_CACHE", "true")),
             traced=json.loads(os.environ.get("UNIFY_TRACED", "true")),
         )
-        client.set_system_message(build_start_task_prompt(tools))
+        client.set_system_message(build_execute_task_prompt(tools))
 
         handle = start_async_tool_use_loop(
             client,
             text,
             tools,
-            loop_id=f"{self.__class__.__name__}.{self.start_task.__name__}",
+            loop_id=f"{self.__class__.__name__}.{self.execute_task.__name__}",
             parent_chat_context=parent_chat_context,
             log_steps=_log_tool_steps,
             tool_policy=lambda i, _: ("required", _) if i < 1 else ("auto", _),

@@ -2,7 +2,7 @@ import pytest
 import functools
 import asyncio
 
-from unity.task_manager.simulated import SimulatedTaskManager
+from unity.conductor.simulated import SimulatedConductor
 from unity.knowledge_manager.simulated import SimulatedKnowledgeManager
 from tests.helpers import _handle_project
 
@@ -21,8 +21,10 @@ async def test_ask_calls_knowledge_manager_ask(monkeypatch):
 
     monkeypatch.setattr(SimulatedKnowledgeManager, "ask", spy, raising=True)
 
-    tm = SimulatedTaskManager("Demo – internal KB for product specs.")
-    handle = await tm.ask("What warranty info do we store about the X200 battery pack?")
+    cond = SimulatedConductor("Demo – internal KB for product specs.")
+    handle = await cond.ask(
+        "What warranty info do we store about the X200 battery pack?",
+    )
     await asyncio.wait_for(handle.result(), timeout=60)
 
     assert calls["count"] == 1, "KnowledgeManager.ask must be called exactly once."

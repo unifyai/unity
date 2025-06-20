@@ -14,7 +14,7 @@ from typing import Dict
 import pytest
 
 from unity.task_scheduler.active_task import ActiveTask
-from unity.planner.simulated import SimulatedPlanner, SimulatedPlan
+from unity.planner.simulated import SimulatedPlanner, SimulatedActiveTask
 
 #  The helper used in the existing test-suite – applies project-level monkey-
 #  patches (e.g. env vars, tracers) so we keep behaviour consistent.
@@ -35,18 +35,18 @@ async def test_active_task_ask(monkeypatch):
     planner = SimulatedPlanner(steps=1)
     calls: Dict[str, int] = {"ask": 0}
 
-    original_ask = SimulatedPlan.ask
+    original_ask = SimulatedActiveTask.ask
 
     @functools.wraps(original_ask)
     async def spy_ask(self, question: str) -> str:  # type: ignore[override]
         calls["ask"] += 1
         return await original_ask(self, question)
 
-    monkeypatch.setattr(SimulatedPlan, "ask", spy_ask, raising=True)
+    monkeypatch.setattr(SimulatedActiveTask, "ask", spy_ask, raising=True)
 
     task = ActiveTask("Analyse new product launch performance.", planner)
 
-    # Trigger a single ask call that should propagate to the plan.
+    # Trigger a single ask call that should propagate to the active task.
     await task.ask("Do we have any early metrics?")
     # Give the background worker a beat and await completion.
     await asyncio.sleep(0.2)
@@ -69,14 +69,14 @@ async def test_active_task_interject(monkeypatch):
     planner = SimulatedPlanner(steps=2)
     calls: Dict[str, int] = {"interject": 0}
 
-    original_interject = SimulatedPlan.interject
+    original_interject = SimulatedActiveTask.interject
 
     @functools.wraps(original_interject)
     async def spy_interject(self, instruction: str) -> str:  # type: ignore[override]
         calls["interject"] += 1
         return await original_interject(self, instruction)
 
-    monkeypatch.setattr(SimulatedPlan, "interject", spy_interject, raising=True)
+    monkeypatch.setattr(SimulatedActiveTask, "interject", spy_interject, raising=True)
 
     task = ActiveTask("Investigate competitor pricing.", planner)
 
@@ -104,8 +104,8 @@ async def test_active_task_pause_resume(monkeypatch):
     planner = SimulatedPlanner(steps=2)
     counts: Dict[str, int] = {"pause": 0, "resume": 0}
 
-    orig_pause = SimulatedPlan.pause
-    orig_resume = SimulatedPlan.resume
+    orig_pause = SimulatedActiveTask.pause
+    orig_resume = SimulatedActiveTask.resume
 
     @functools.wraps(orig_pause)
     def spy_pause(self) -> str:  # type: ignore[override]
@@ -117,8 +117,8 @@ async def test_active_task_pause_resume(monkeypatch):
         counts["resume"] += 1
         return orig_resume(self)
 
-    monkeypatch.setattr(SimulatedPlan, "pause", spy_pause, raising=True)
-    monkeypatch.setattr(SimulatedPlan, "resume", spy_resume, raising=True)
+    monkeypatch.setattr(SimulatedActiveTask, "pause", spy_pause, raising=True)
+    monkeypatch.setattr(SimulatedActiveTask, "resume", spy_resume, raising=True)
 
     task = ActiveTask("Run SEO audit for the website.", planner)
     # Pause, wait a moment to ensure the thread blocks, then resume.
@@ -146,14 +146,14 @@ async def test_active_task_stop(monkeypatch):
     planner = SimulatedPlanner(steps=5)  # value doesn't matter, we stop early
     called = {"stop": 0}
 
-    orig_stop = SimulatedPlan.stop
+    orig_stop = SimulatedActiveTask.stop
 
     @functools.wraps(orig_stop)
     def spy_stop(self) -> str:  # type: ignore[override]
         called["stop"] += 1
         return orig_stop(self)
 
-    monkeypatch.setattr(SimulatedPlan, "stop", spy_stop, raising=True)
+    monkeypatch.setattr(SimulatedActiveTask, "stop", spy_stop, raising=True)
 
     task = ActiveTask("Extract sentiment from reviews.", planner)
     task.stop()

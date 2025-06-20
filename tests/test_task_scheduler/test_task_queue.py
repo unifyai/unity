@@ -2,17 +2,7 @@ import pytest
 from tests.helpers import _handle_project
 from unity.task_scheduler.task_scheduler import TaskScheduler
 from unity.task_scheduler.types.schedule import Schedule
-
-
-# Convenience to make schedules quickly
-def _sch(prev_, next_):
-    from datetime import datetime, timezone
-
-    return Schedule(
-        prev_task=prev_,
-        next_task=next_,
-        start_at=datetime.now(timezone.utc).isoformat(),
-    )
+from datetime import datetime, timezone
 
 
 @_handle_project
@@ -24,17 +14,17 @@ def test_get_queue_and_reorder():
     t0 = ts._create_task(
         name="T0",
         description="first",
-        schedule=_sch(None, 1),
+        schedule=Schedule(start_at=datetime.now(timezone.utc)),
     )
     t1 = ts._create_task(
         name="T1",
         description="second",
-        schedule=_sch(0, 2),
+        schedule=Schedule(prev_task=0),
     )
     t2 = ts._create_task(
         name="T2",
         description="third",
-        schedule=_sch(1, None),
+        schedule=Schedule(prev_task=1),
     )
 
     queue = ts._get_task_queue()
@@ -94,20 +84,18 @@ def test_start_time_moves_with_front_swap():
         name="A",
         description="first",
         schedule=Schedule(
-            prev_task=None,
-            next_task=1,
             start_at="2025-06-23T09:00:00+00:00",
         ),
     )
     ts._create_task(
         name="B",
         description="second",
-        schedule=Schedule(prev_task=0, next_task=2, start_at=None),
+        schedule=Schedule(prev_task=0),
     )
     ts._create_task(
         name="C",
         description="third",
-        schedule=Schedule(prev_task=1, next_task=None, start_at=None),
+        schedule=Schedule(prev_task=1),
     )
 
     ts._update_task_queue(original=[0, 1, 2], new=[2, 0, 1])
@@ -131,15 +119,13 @@ def test_start_time_inherited_on_new_front_insert():
         name="Head",
         description="initial head",
         schedule=Schedule(
-            prev_task=None,
-            next_task=1,
             start_at="2025-06-23T09:00:00+00:00",
         ),
     )
     ts._create_task(
         name="Tail",
         description="initial tail",
-        schedule=Schedule(prev_task=0, next_task=None, start_at=None),
+        schedule=Schedule(prev_task=0),
     )
 
     new_front_id = ts._create_task(name="NewFront", description="inserted")["details"][
@@ -167,20 +153,18 @@ def test_start_time_after_multiple_reorders():
         name="A",
         description="first",
         schedule=Schedule(
-            prev_task=None,
-            next_task=1,
             start_at="2025-06-23T09:00:00+00:00",
         ),
     )
     ts._create_task(
         name="B",
         description="second",
-        schedule=Schedule(prev_task=0, next_task=2, start_at=None),
+        schedule=Schedule(prev_task=0),
     )
     ts._create_task(
         name="C",
         description="third",
-        schedule=Schedule(prev_task=1, next_task=None, start_at=None),
+        schedule=Schedule(prev_task=1),
     )
 
     # 1st reorder: B → C → A

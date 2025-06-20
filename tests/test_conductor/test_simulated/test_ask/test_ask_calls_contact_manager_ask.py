@@ -2,7 +2,7 @@ import pytest
 import functools
 import asyncio
 
-from unity.task_manager.simulated import SimulatedTaskManager
+from unity.conductor.simulated import SimulatedConductor
 from unity.contact_manager.simulated import SimulatedContactManager
 from tests.helpers import _handle_project
 
@@ -11,7 +11,7 @@ from tests.helpers import _handle_project
 @_handle_project
 async def test_ask_calls_contact_manager_ask(monkeypatch):
     """
-    SimulatedTaskManager.ask should consult SimulatedContactManager.ask once
+    SimulatedConductor.ask should consult SimulatedContactManager.ask once
     when the user’s question is clearly contact-related.
     """
     calls = {"count": 0}
@@ -24,8 +24,8 @@ async def test_ask_calls_contact_manager_ask(monkeypatch):
 
     monkeypatch.setattr(SimulatedContactManager, "ask", spy, raising=True)
 
-    tm = SimulatedTaskManager("Unit-test scenario – small team CRM.")
-    handle = await tm.ask("What's Alice Reynolds' mobile number so I can ping her?")
+    cond = SimulatedConductor("Unit-test scenario – small team CRM.")
+    handle = await cond.ask("What's Alice Reynolds' mobile number so I can ping her?")
     await asyncio.wait_for(handle.result(), timeout=60)
 
     assert calls["count"] == 1, "ContactManager.ask must be called exactly once."

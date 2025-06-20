@@ -2,13 +2,13 @@ import asyncio
 import functools
 from typing import Optional, Dict, Callable, TYPE_CHECKING
 
-from ..planner.base import BasePlanner, BasePlan
+from ..planner.base import BasePlanner, ActiveTask
 
 if TYPE_CHECKING:
     from .task_scheduler import TaskScheduler
 
 
-class ActiveTask(BasePlan):
+class ActiveTask(ActiveTask):
     def __init__(
         self,
         task_description: str,
@@ -30,12 +30,12 @@ class ActiveTask(BasePlan):
         description
             Human-readable task description (passed straight to the planner).
         planner
-            The concrete planner implementation responsible for spawning a plan.
+            The concrete planner implementation responsible for spawning an active task.
         task_id, scheduler
             When provided, every lifecycle transition (pause/resume/stop/finish)
             is mirrored back into the task list via ``scheduler._update_task_status``.
         """
-        self._plan = planner.plan(
+        self._active_task = planner.execute(
             task_description,
             parent_chat_context=parent_chat_context,
             clarification_up_q=clarification_up_q,
@@ -44,40 +44,40 @@ class ActiveTask(BasePlan):
         self._scheduler: Optional["TaskScheduler"] = scheduler
         self._task_id: Optional[int] = task_id
 
-    @functools.wraps(BasePlan.ask, updated=())
+    @functools.wraps(ActiveTask.ask, updated=())
     async def ask(self, message: str) -> str:
-        return await asyncio.to_thread(self._plan.ask, message)
+        return await asyncio.to_thread(self._active_task.ask, message)
 
-    @functools.wraps(BasePlan.interject, updated=())
+    @functools.wraps(ActiveTask.interject, updated=())
     async def interject(self, message: str) -> None:
-        await self._plan.interject(message)
+        await self._active_task.interject(message)
 
-    @functools.wraps(BasePlan.stop, updated=())
+    @functools.wraps(ActiveTask.stop, updated=())
     def stop(self) -> Optional[str]:
-        ret = self._plan.stop()
+        ret = self._active_task.stop()
         self._mirror_status("cancelled")
         self._clear_active_pointer()
         return ret
 
-    @functools.wraps(BasePlan.pause, updated=())
+    @functools.wraps(ActiveTask.pause, updated=())
     def pause(self) -> Optional[str]:
-        ret = self._plan.pause()
+        ret = self._active_task.pause()
         self._mirror_status("paused")
         return ret
 
-    @functools.wraps(BasePlan.resume, updated=())
+    @functools.wraps(ActiveTask.resume, updated=())
     def resume(self) -> Optional[str]:
-        return self._plan.resume()
+        return self._active_task.resume()
 
-    @functools.wraps(BasePlan.done, updated=())
+    @functools.wraps(ActiveTask.done, updated=())
     def done(self) -> bool:
-        ret = self._plan.done()
+        ret = self._active_task.done()
         self._mirror_status("active")
         return ret
 
-    @functools.wraps(BasePlan.result, updated=())
+    @functools.wraps(ActiveTask.result, updated=())
     async def result(self) -> str:
-        ret = await self._plan.result()
+        ret = await self._active_task.result()
         # If the task wasn't explicitly cancelled/failed, mark as completed.
         if self._scheduler and self._task_id is not None:
             row = self._scheduler._search_tasks(  # type: ignore[attr-defined]
@@ -111,10 +111,10 @@ class ActiveTask(BasePlan):
     # ── handy passthrough also exposed to the LLM ──────────────────────────
     def ask(self, question: str) -> str:  # type: ignore[override]
         """Ask the running plan a question (simply forwards the call)."""
-        return self._plan.ask(question)
+        return self._active_task.ask(question)
 
     @property
-    @functools.wraps(BasePlan.valid_tools, updated=())
+    @functools.wraps(ActiveTask.valid_tools, updated=())
     def valid_tools(self) -> Dict[str, Callable]:
         tools = {
             self.interject.__name__: self.interject,

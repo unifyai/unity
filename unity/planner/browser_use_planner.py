@@ -15,7 +15,7 @@ from unity.common.llm_helpers import (
     start_async_tool_use_loop,
     SteerableToolHandle,
 )
-from .base import BasePlan, BasePlanner
+from .base import ActiveTask, BasePlanner
 from unify import AsyncUnify
 import unify
 
@@ -38,7 +38,7 @@ class _BrowserPlannerState(enum.Enum):
     ERROR = enum.auto()
 
 
-class BrowserUsePlan(BasePlan):
+class BrowserUsePlan(ActiveTask):
     """
     Represents an active plan being executed by the BrowserUsePlanner.
     Inherits from SteerableToolHandle to provide a consistent interface for interaction.
@@ -285,7 +285,7 @@ class BrowserUsePlan(BasePlan):
             )
             self._overall_plan_completion_event.set()
 
-    @functools.wraps(BasePlan.result, updated=())
+    @functools.wraps(ActiveTask.result, updated=())
     async def result(self) -> str:
         await self._overall_plan_completion_event.wait()
         if self._error_str:
@@ -296,7 +296,7 @@ class BrowserUsePlan(BasePlan):
             else f"Plan {self._task_id} concluded without a specific result (State: {self._state.name})."
         )
 
-    @functools.wraps(BasePlan.done, updated=())
+    @functools.wraps(ActiveTask.done, updated=())
     def done(self) -> bool:
         return self._overall_plan_completion_event.is_set()
 
@@ -334,7 +334,7 @@ class BrowserUsePlan(BasePlan):
         return False
 
     # --- Public Control Methods ---
-    @functools.wraps(BasePlan.stop, updated=())
+    @functools.wraps(ActiveTask.stop, updated=())
     async def stop(self) -> str:
         if not self._is_valid_method("stop"):
             # If already stopped/completed/errored, result() will give the status.
@@ -378,7 +378,7 @@ class BrowserUsePlan(BasePlan):
 
         return self._result_str
 
-    @functools.wraps(BasePlan.pause, updated=())
+    @functools.wraps(ActiveTask.pause, updated=())
     async def pause(self) -> str:
         if not self._is_valid_method("pause"):
             raise RuntimeError(
@@ -418,7 +418,7 @@ class BrowserUsePlan(BasePlan):
         # Pause returns quickly; the overall plan's result() is still pending.
         return f"Plan {self._task_id} paused successfully. Awaiting resume."
 
-    @functools.wraps(BasePlan.resume, updated=())
+    @functools.wraps(ActiveTask.resume, updated=())
     async def resume(self) -> str:
         if not self._is_valid_method("resume"):
             raise RuntimeError(
@@ -432,7 +432,7 @@ class BrowserUsePlan(BasePlan):
         self._resume_requested_event.set()  # Signal _manage_plan_execution to continue
         return f"Plan {self._task_id} is resuming."
 
-    @functools.wraps(BasePlan.interject, updated=())
+    @functools.wraps(ActiveTask.interject, updated=())
     async def interject(self, message: str) -> str:
         if not self._is_valid_method("interject"):
             # Check current state for more accurate error.
@@ -448,7 +448,7 @@ class BrowserUsePlan(BasePlan):
         await self._loop_handle.interject(message)  # type: ignore
         return f"Interjection '{message}' sent to plan {self._task_id}."
 
-    @functools.wraps(BasePlan.ask, updated=())
+    @functools.wraps(ActiveTask.ask, updated=())
     async def ask(self, question: str) -> str:
         try:
             if not self._is_valid_method("ask"):
@@ -508,7 +508,7 @@ class BrowserUsePlan(BasePlan):
             return f"Error answering question due to LLM failure: {e}"
 
     @property
-    @functools.wraps(BasePlan.valid_tools, updated=())
+    @functools.wraps(ActiveTask.valid_tools, updated=())
     def valid_tools(self) -> Dict[str, Callable[..., Awaitable[Any]]]:
         tools = {}
         # valid_tools should reflect methods callable by an external LLM on this Plan instance
@@ -520,7 +520,7 @@ class BrowserUsePlan(BasePlan):
         return tools
 
 
-class BrowserUsePlanner(BasePlanner[BrowserUsePlan]):
+class BrowserUsePlanner(BasePlanner):
     def __init__(
         self,
         headless: bool = True,
@@ -697,7 +697,7 @@ class BrowserUsePlanner(BasePlanner[BrowserUsePlan]):
             tools[action_name] = _make_tool_wrapper
         return tools
 
-    def _make_plan(
+    def _execute_task_and_return_handle(
         self,
         task_description: str,
         *,
@@ -716,11 +716,11 @@ class BrowserUsePlanner(BasePlanner[BrowserUsePlan]):
                 # This might be redundant if BrowserUsePlan also does this, but harmless.
                 self._main_event_loop = asyncio.get_running_loop()
                 logger.info(
-                    f"BrowserUsePlanner._make_plan captured event loop: {self._main_event_loop}",
+                    f"BrowserUsePlanner._execute_task_and_return_handle captured event loop: {self._main_event_loop}",
                 )
             except RuntimeError:
                 logger.error(
-                    "BrowserUsePlanner._make_plan: No running event loop to pass to BrowserUsePlan.",
+                    "BrowserUsePlanner._execute_task_and_return_handle: No running event loop to pass to BrowserUsePlan.",
                 )
                 # Let BrowserUsePlan handle its own loop acquisition or failure.
 

@@ -1,5 +1,5 @@
 """
-Tests for `TaskScheduler.start_task` which returns an `ActiveTask` handle.
+Tests for `TaskScheduler.execute_task` which returns an `ActiveTask` handle.
 
 These largely mirror *test_active_task.py* but go through the full
 `TaskScheduler` surface so that we cover the integration layer that
@@ -16,7 +16,7 @@ from typing import Dict
 import pytest
 
 from unity.task_scheduler.task_scheduler import TaskScheduler
-from unity.planner.simulated import SimulatedPlanner, SimulatedPlan
+from unity.planner.simulated import SimulatedPlanner, SimulatedActiveTask
 
 #  The helper used in the existing test‑suite – applies project‑level monkey‐
 #  patches (e.g. env vars, tracers) so we keep behaviour consistent.
@@ -36,7 +36,7 @@ async def _make_scheduler_with_task(description: str, *, steps: int = 1):
     task_id = scheduler._create_task(name=description, description=description)[
         "details"
     ]["task_id"]
-    handle = await scheduler.start_task(task_id=task_id)
+    handle = await scheduler.execute_task(task_id=task_id)
     return scheduler, handle
 
 
@@ -47,19 +47,19 @@ async def _make_scheduler_with_task(description: str, *, steps: int = 1):
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_start_task_ask(monkeypatch):
+async def test_execute_task_ask(monkeypatch):
     """`ActiveTask.ask` should forward to the wrapped plan exactly once."""
 
     calls: Dict[str, int] = {"ask": 0}
 
-    original_ask = SimulatedPlan.ask
+    original_ask = SimulatedActiveTask.ask
 
     @functools.wraps(original_ask)
     async def spy_ask(self, question: str) -> str:  # type: ignore[override]
         calls["ask"] += 1
         return await original_ask(self, question)
 
-    monkeypatch.setattr(SimulatedPlan, "ask", spy_ask, raising=True)
+    monkeypatch.setattr(SimulatedActiveTask, "ask", spy_ask, raising=True)
 
     _scheduler, task = await _make_scheduler_with_task(
         "Analyse new product launch performance.",
@@ -81,19 +81,19 @@ async def test_start_task_ask(monkeypatch):
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_start_task_interject(monkeypatch):
+async def test_execute_task_interject(monkeypatch):
     """`ActiveTask.interject` should forward to the wrapped plan exactly once."""
 
     calls: Dict[str, int] = {"interject": 0}
 
-    original_interject = SimulatedPlan.interject
+    original_interject = SimulatedActiveTask.interject
 
     @functools.wraps(original_interject)
     async def spy_interject(self, instruction: str) -> str:  # type: ignore[override]
         calls["interject"] += 1
         return await original_interject(self, instruction)
 
-    monkeypatch.setattr(SimulatedPlan, "interject", spy_interject, raising=True)
+    monkeypatch.setattr(SimulatedActiveTask, "interject", spy_interject, raising=True)
 
     _scheduler, task = await _make_scheduler_with_task(
         "Investigate competitor pricing.",
@@ -117,13 +117,13 @@ async def test_start_task_interject(monkeypatch):
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_start_task_pause_resume(monkeypatch):
+async def test_execute_task_pause_resume(monkeypatch):
     """The wrapper should transparently forward `pause` and `resume`."""
 
     counts: Dict[str, int] = {"pause": 0, "resume": 0}
 
-    orig_pause = SimulatedPlan.pause
-    orig_resume = SimulatedPlan.resume
+    orig_pause = SimulatedActiveTask.pause
+    orig_resume = SimulatedActiveTask.resume
 
     @functools.wraps(orig_pause)
     def spy_pause(self) -> str:  # type: ignore[override]
@@ -135,8 +135,8 @@ async def test_start_task_pause_resume(monkeypatch):
         counts["resume"] += 1
         return orig_resume(self)
 
-    monkeypatch.setattr(SimulatedPlan, "pause", spy_pause, raising=True)
-    monkeypatch.setattr(SimulatedPlan, "resume", spy_resume, raising=True)
+    monkeypatch.setattr(SimulatedActiveTask, "pause", spy_pause, raising=True)
+    monkeypatch.setattr(SimulatedActiveTask, "resume", spy_resume, raising=True)
 
     _scheduler, task = await _make_scheduler_with_task(
         "Run SEO audit for the website.",
@@ -161,19 +161,19 @@ async def test_start_task_pause_resume(monkeypatch):
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_start_task_stop(monkeypatch):
+async def test_execute_task_stop(monkeypatch):
     """Calling `ActiveTask.stop` should proxy to the plan and mark it done."""
 
     called = {"stop": 0}
 
-    orig_stop = SimulatedPlan.stop
+    orig_stop = SimulatedActiveTask.stop
 
     @functools.wraps(orig_stop)
     def spy_stop(self) -> str:  # type: ignore[override]
         called["stop"] += 1
         return orig_stop(self)
 
-    monkeypatch.setattr(SimulatedPlan, "stop", spy_stop, raising=True)
+    monkeypatch.setattr(SimulatedActiveTask, "stop", spy_stop, raising=True)
 
     _scheduler, task = await _make_scheduler_with_task(
         "Extract sentiment from reviews.",
@@ -195,7 +195,7 @@ async def test_start_task_stop(monkeypatch):
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_start_task_result_and_done():
+async def test_execute_task_result_and_done():
     """A normal workflow should complete once enough steps have been taken."""
 
     _scheduler, task = await _make_scheduler_with_task(

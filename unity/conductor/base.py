@@ -1,5 +1,5 @@
 """
-*Public* contract for every **TaskManager** implementation.
+*Public* contract for every **Conductor** implementation.
 
 The top-level manager unifies four sub-domains
 
@@ -9,7 +9,7 @@ and it exposes exactly **three** conversational entry-points:
 
 1. `ask`        – read-only Q&A across all domains
 2. `request`    – read-write mutations (plus everything in *ask*)
-3. `start_task` – specialised surface for activating a queued task
+3. `execute_task` – specialised surface for activating a queued task
 """
 
 from __future__ import annotations
@@ -21,7 +21,7 @@ from typing import Any, Dict, List, Optional
 from ..common.llm_helpers import SteerableToolHandle
 
 
-class BaseTaskManager(ABC):
+class BaseConductor(ABC):
     # ------------------------------------------------------------------ #
     #  ask – read-only                                                   #
     # ------------------------------------------------------------------ #
@@ -87,10 +87,10 @@ class BaseTaskManager(ABC):
         """
 
     # ------------------------------------------------------------------ #
-    #  start_task – activate one queued task                             #
+    #  execute_task – activate one queued task                             #
     # ------------------------------------------------------------------ #
     @abstractmethod
-    async def start_task(
+    async def execute_task(
         self,
         text: str,
         *,

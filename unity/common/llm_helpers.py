@@ -789,7 +789,10 @@ async def _async_tool_use_loop_inner(
             # ───────────────────────────────────────────────────────────────
             #  Normal (non-handle) result – unchanged path
             # ───────────────────────────────────────────────────────────────
-            result = _dumps(raw, indent=4)
+            try:
+                result = _dumps(raw, indent=4)
+            except:
+                breakpoint()
             consecutive_failures = 0
         except Exception:
             consecutive_failures += 1
@@ -2371,7 +2374,7 @@ def start_async_tool_use_loop(
     parent_chat_context: Optional[list[dict]] = None,
     log_steps: bool = True,
     max_steps: Optional[int] = 30,
-    timeout: Optional[int] = 120,
+    timeout: Optional[int] = 300,
     raise_on_limit: bool = False,
     include_class_in_dynamic_tool_names: bool = False,
     tool_policy: Optional[
