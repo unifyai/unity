@@ -26,7 +26,7 @@ async def test_request_calls_execute_task(monkeypatch):
 
     cond = SimulatedConductor("Demo – deployment pipeline.")
     handle = await cond.request(
-        "Please start task with 'task id == 17' right away – we need the build running.",
+        "Please execute task with 'task id == 17' right away – we need the build running.",
     )
     await asyncio.wait_for(handle.result(), timeout=6000)
 

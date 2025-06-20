@@ -63,7 +63,7 @@ class BasePlanner(ABC):
 
     # ─────────────────────────── Plan management ────────────────────────── #
 
-    def execute(
+    async def execute(
         self,
         task_description: str,
         *,
@@ -91,10 +91,10 @@ class BasePlanner(ABC):
             clarification_down_q=clarification_down_q,
         )
         self._active_task = active_task
-        return active_task
+        return await active_task
 
     @abstractmethod
-    def _execute_task_and_return_handle(
+    async def _execute_task_and_return_handle(
         self,
         task_description: str,
         *,
