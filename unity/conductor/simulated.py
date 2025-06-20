@@ -80,26 +80,6 @@ class SimulatedConductor:
 
         # -------- build active helpers (passive + writers) ------------ #
 
-        # Wrapper to intercept execute_task and remember the returned handle
-        def _wrapped_execute_task(
-            task_id: int,
-            *,
-            parent_chat_context=None,
-            clarification_up_q=None,
-            clarification_down_q=None,
-        ):
-            handle = self._task_scheduler.execute_task(
-                task_id,
-                parent_chat_context=parent_chat_context,
-                clarification_up_q=clarification_up_q,
-                clarification_down_q=clarification_down_q,
-            )
-            # remember the plan so that subsequent questions can use it
-            self._active_task = handle
-            return handle
-
-        _wrapped_execute_task.__name__ = "_execute_task_call_"
-
         active = {
             **passive,  # read-only tools are also valid here
             **methods_to_tool_dict(
@@ -107,7 +87,7 @@ class SimulatedConductor:
                 self._transcript_manager.summarize,
                 self._knowledge_manager.update,
                 self._task_scheduler.update,
-                ToolSpec(_wrapped_execute_task, max_concurrent=1),
+                ToolSpec(self._task_scheduler.execute_task, max_concurrent=1),
                 include_class_name=True,
             ),
         }
