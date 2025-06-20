@@ -7,10 +7,9 @@ from collections import defaultdict
 import sys
 from dotenv import load_dotenv
 import json
-import logging
 import os
 import signal
-import unify
+from pydantic import BaseModel, Field
 from unity.contact_manager.contact_manager import ContactManager
 from unity.knowledge_manager.knowledge_manager import KnowledgeManager
 from unity.service.comms_agent import CommsAgent
@@ -19,8 +18,18 @@ from unity.task_manager.task_manager import TaskManager
 from unity.transcript_manager.transcript_manager import TranscriptManager
 
 load_dotenv()
-unify.activate("ContactManagerIntegration")
-LG = logging.getLogger("contact_manager_integration")
+
+
+# intents
+class _ContactIntent(BaseModel):
+    action: str = Field(..., pattern="^(ask|update)$")
+    cleaned_text: str
+
+
+class _KnowledgeIntent(BaseModel):
+    action: str = Field(..., pattern="^(retrieve|store|refactor)$")
+    cleaned_text: str
+
 
 # globals
 user_agent = None
@@ -29,6 +38,24 @@ manager_dict = {
     "knowledge": KnowledgeManager,
     "task": TaskManager,
     "transcript": TranscriptManager,
+}
+intent_sys_msg_dict = {
+    "knowledge": (
+        "Decide whether the user input is a *query* about existing knowledge "
+        "(`retrieve`), a *mutation* that adds/updates knowledge (`store`), "
+        "or a schema-level restructuring (`refactor`). "
+        "Return JSON "
+        "{'action':'retrieve'|'store'|'refactor','cleaned_text':<fixed_input>}."
+    ),
+    "contact": (
+        "Decide whether the user input is a *query* about existing contacts "
+        "or a *mutation* (create / update).  "
+        "Return JSON {'action':'ask'|'update','cleaned_text':<fixed_input>}."
+    ),
+}
+intent_output_format_dict = {
+    "knowledge": _KnowledgeIntent,
+    "contact": _ContactIntent,
 }
 
 
@@ -214,6 +241,8 @@ async def main(manager_name: str):
         main_user_agent=True,
         manager=manager_dict[manager_name](),
         manager_name=manager_name,
+        intent_sys_msg=intent_sys_msg_dict[manager_name],
+        intent_output_format=intent_output_format_dict[manager_name],
     )
     user_agent.set_event_manager(event_manager)
     user_agent.subscribe(

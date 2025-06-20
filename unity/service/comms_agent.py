@@ -38,13 +38,6 @@ class _Intent(BaseModel):
     cleaned_text: str
 
 
-_INTENT_SYS_MSG = (
-    "Decide whether the user input is a *query* about existing contacts "
-    "or a *mutation* (create / update).  "
-    "Return JSON {'action':'ask'|'update','cleaned_text':<fixed_input>}."
-)
-
-
 # new events to add:
 # task status update
 #
@@ -78,6 +71,8 @@ class CommsAgent:
         contact_number: str = None,
         manager: ABC = None,
         manager_name: str = "contact",
+        intent_sys_msg: str = None,
+        intent_output_format: BaseModel = None,
     ):
 
         self.main_user = main_user_agent
@@ -121,6 +116,8 @@ class CommsAgent:
         # manager
         self.manager = manager
         self.manager_name = manager_name
+        self.intent_sys_msg = intent_sys_msg
+        self.intent_output_format = intent_output_format
 
     def get_chat_history(self):
         chat_history = []
@@ -214,14 +211,14 @@ class CommsAgent:
                 messages=[
                     {
                         "role": "system",
-                        "content": _INTENT_SYS_MSG,
+                        "content": self.intent_sys_msg,
                     },
                     {
                         "role": "user",
                         "content": action.query,
                     },
                 ],
-                response_format=_Intent,
+                response_format=self.intent_output_format,
             )
             intent = res.choices[0].message.parsed
             fn = (
