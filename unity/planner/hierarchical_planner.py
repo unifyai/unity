@@ -65,6 +65,30 @@ async def llm_call(client: unify.AsyncUnify, prompt: str) -> str:
     return await client.generate(prompt)
 
 
+class PlanSanitizer(ast.NodeTransformer):
+    """
+    AST transformer to enforce security and correctness of plan code.
+    1. Disallows `import` and `import from` statements.
+    2. Ensures every `async def` function is decorated with `@verify`.
+    """
+
+    def visit_Import(self, node: ast.Import) -> Any:
+        raise SyntaxError("Import statements are not allowed in plans.")
+
+    def visit_ImportFrom(self, node: ast.ImportFrom) -> Any:
+        raise SyntaxError("Import statements are not allowed in plans.")
+
+    def visit_AsyncFunctionDef(
+        self, node: ast.AsyncFunctionDef
+    ) -> ast.AsyncFunctionDef:
+        has_verify = any(
+            isinstance(d, ast.Name) and d.id == "verify" for d in node.decorator_list
+        )
+        if not has_verify:
+            node.decorator_list.insert(0, ast.Name(id="verify", ctx=ast.Load()))
+        return self.generic_visit(node)
+
+
 class FunctionReplacer(ast.NodeTransformer):
     """AST transformer to replace a function definition in a module."""
 
@@ -429,8 +453,17 @@ class HierarchicalPlan(BasePlan):
                 return await self.planner.controller.act(instruction)
 
             correction_namespace["act"] = act_wrapper
+            correction_namespace["observe"] = self.planner.controller.observe
+            correction_namespace["verify"] = self.planner._create_verify_decorator(self)
+            correction_namespace["ReplanFromParentException"] = (
+                ReplanFromParentException
+            )
+            correction_namespace["_ForcedRetryException"] = _ForcedRetryException
+
+            sanitized_script = self.planner._sanitize_code(script)
+
             exec(
-                compile(script, "<correction_script>", "exec"),
+                compile(sanitized_script, "<correction_script>", "exec"),
                 correction_namespace,
             )
             correction_fn = correction_namespace.get("course_correction_main")
@@ -607,6 +640,18 @@ class HierarchicalPlanner(BasePlanner[HierarchicalPlan]):
         self.llm_client: unify.AsyncUnify = unify.AsyncUnify(
             os.environ.get("UNIFY_MODEL", "gpt-4o-mini@openai"),
         )
+
+    def _sanitize_code(self, code: str) -> str:
+        """Parses, sanitizes, and unparses code to enforce security."""
+        try:
+            tree = ast.parse(code)
+            sanitizer = PlanSanitizer()
+            sanitized_tree = sanitizer.visit(tree)
+            ast.fix_missing_locations(sanitized_tree)
+            return ast.unparse(sanitized_tree)
+        except SyntaxError as e:
+            logger.error(f"Generated code failed sanitization: {e}")
+            raise
 
     def _make_plan(
         self,
@@ -829,8 +874,9 @@ class HierarchicalPlanner(BasePlanner[HierarchicalPlan]):
                 code = (
                     response.strip().replace("```python", "").replace("```", "").strip()
                 )
-                ast.parse(code)
-                return code
+
+                return self._sanitize_code(code)
+
             except SyntaxError as e:
                 last_error = str(e)
                 if attempt == max_retries - 1:
@@ -912,7 +958,8 @@ class HierarchicalPlanner(BasePlanner[HierarchicalPlan]):
             4. CRITICAL: You MUST NOT use any `import` statements.
         """,
         )
-        return await llm_call(self.llm_client, prompt)
+        code = await llm_call(self.llm_client, prompt)
+        return self._sanitize_code(code)
 
     async def _check_state_against_goal(
         self,
@@ -959,7 +1006,8 @@ class HierarchicalPlanner(BasePlanner[HierarchicalPlan]):
             CRITICAL: You MUST NOT use any `import` statements.
         """,
         )
-        return await llm_call(self.llm_client, prompt)
+        new_code = await llm_call(self.llm_client, prompt)
+        return self._sanitize_code(new_code)
 
     async def _generate_course_correction_script(self, old_code, new_code):
         current_state = await self.controller.observe("Describe current page.")
@@ -977,10 +1025,11 @@ class HierarchicalPlanner(BasePlanner[HierarchicalPlan]):
         """,
         )
         script = await llm_call(self.llm_client, prompt)
-        return (
-            None
-            if "None" in script
-            else script.strip().replace("```python", "").replace("```", "").strip()
+        if "None" in script:
+            return None
+
+        return self._sanitize_code(
+            script.strip().replace("```python", "").replace("```", "").strip()
         )
 
     async def close(self):
