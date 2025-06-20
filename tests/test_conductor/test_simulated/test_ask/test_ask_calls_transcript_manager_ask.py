@@ -21,8 +21,8 @@ async def test_ask_calls_transcript_manager_ask(monkeypatch):
 
     monkeypatch.setattr(SimulatedTranscriptManager, "ask", spy, raising=True)
 
-    tm = SimulatedConductor("Demo – support-team chat archive.")
-    handle = await tm.ask(
+    cond = SimulatedConductor("Demo – support-team chat archive.")
+    handle = await cond.ask(
         "Show me the last Slack message Frank sent about ticket #381.",
     )
     await asyncio.wait_for(handle.result(), timeout=60)

@@ -21,8 +21,8 @@ async def test_request_calls_task_scheduler_update(monkeypatch):
 
     monkeypatch.setattr(SimulatedTaskScheduler, "update", spy, raising=True)
 
-    tm = SimulatedConductor("Demo – marketing backlog.")
-    handle = await tm.request(
+    cond = SimulatedConductor("Demo – marketing backlog.")
+    handle = await cond.request(
         "Add a task: 'Design new landing page', due next Tuesday.",
     )
     await asyncio.wait_for(handle.result(), timeout=60)

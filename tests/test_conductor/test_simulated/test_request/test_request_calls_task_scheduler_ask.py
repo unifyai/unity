@@ -23,8 +23,8 @@ async def test_request_calls_task_scheduler_ask(monkeypatch):
 
     monkeypatch.setattr(SimulatedTaskScheduler, "ask", spy, raising=True)
 
-    tm = SimulatedConductor("Sprint board demo.")
-    handle = await tm.request(
+    cond = SimulatedConductor("Sprint board demo.")
+    handle = await cond.request(
         "List all of the tasks which are still due this week, and then update them all to be high priority",
     )
     await asyncio.wait_for(handle.result(), timeout=60)

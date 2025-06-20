@@ -21,8 +21,8 @@ async def test_request_calls_transcript_manager_summarize(monkeypatch):
 
     monkeypatch.setattr(SimulatedTranscriptManager, "summarize", spy, raising=True)
 
-    tm = SimulatedConductor("Demo – sales-call recordings.")
-    handle = await tm.request(
+    cond = SimulatedConductor("Demo – sales-call recordings.")
+    handle = await cond.request(
         "Summarise yesterday’s call with ACME Corp (with exchange id 123) and save it.",
     )
     await asyncio.wait_for(handle.result(), timeout=60)

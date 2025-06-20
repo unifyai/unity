@@ -106,23 +106,23 @@ async def test_update_phone_number_then_call(monkeypatch):
     )
 
     # task manager
-    tm = SimulatedConductor("CRM scenario – follow-up meeting scheduling.")
+    cond = SimulatedConductor("CRM scenario – follow-up meeting scheduling.")
 
     # Read-only lookup
     usr_msg = "What is Alice Reynolds phone number?"
-    h1 = await tm.ask(usr_msg)
+    h1 = await cond.ask(usr_msg)
     assistant_resp = await asyncio.wait_for(h1.result(), timeout=60000)
     chat = [{"user": usr_msg}, {"assistant": assistant_resp}]
 
     # Update the number
     usr_msg = "Please update it to '+123456789', she recently changed it."
-    h2 = await tm.request(usr_msg, parent_chat_context=chat)
+    h2 = await cond.request(usr_msg, parent_chat_context=chat)
     assistant_resp = await asyncio.wait_for(h2.result(), timeout=60000)
     chat += [{"user": usr_msg}, {"assistant": assistant_resp}]
 
     # create task to call her and start it
     usr_msg = "Give Alice a call and ask when she is next free."
-    h3 = await tm.request(usr_msg, parent_chat_context=chat)
+    h3 = await cond.request(usr_msg, parent_chat_context=chat)
     assistant_resp = await asyncio.wait_for(h3.result(), timeout=60000)
 
     # check + update contact
@@ -175,24 +175,24 @@ async def test_transcript_summary_followups(monkeypatch):
     monkeypatch.setattr(SimulatedTranscriptManager, "ask", spy_t_ask, raising=True)
     monkeypatch.setattr(SimulatedTaskScheduler, "update", spy_ts_update, raising=True)
 
-    tm = SimulatedConductor("Support-call archive demo.")
+    cond = SimulatedConductor("Support-call archive demo.")
 
     # 1️⃣ Summarise & store
     usr_msg = (
         "Summarise support call with exchange_id == 123 from yesterday and store it."
     )
-    r1 = await tm.request(usr_msg)
+    r1 = await cond.request(usr_msg)
     assistant_resp = await asyncio.wait_for(r1.result(), timeout=60)
     chat = [{"user": usr_msg}, {"assistant": assistant_resp}]
 
     # 2️⃣ Follow-up read query
     usr_msg = "What was the main action item in that summary?"
-    q2 = await tm.ask(usr_msg)
+    q2 = await cond.ask(usr_msg)
     assistant_resp = await asyncio.wait_for(q2.result(), timeout=60)
     chat += [{"user": usr_msg}, {"assistant": assistant_resp}]
 
     # 3️⃣ Unrelated mutation (no additional transcript calls required)
-    r3 = await tm.request(
+    r3 = await cond.request(
         "Create a high-priority task for that action item and assign it to DevOps.",
         parent_chat_context=chat,
     )
@@ -239,11 +239,11 @@ async def test_knowledge_change_audit(monkeypatch):
     monkeypatch.setattr(SimulatedKnowledgeManager, "update", spy_store, raising=True)
     monkeypatch.setattr(SimulatedTaskScheduler, "update", spy_ts_update, raising=True)
 
-    tm = SimulatedConductor("HR policy KB audit.")
+    cond = SimulatedConductor("HR policy KB audit.")
 
     # 1️⃣ Initial read
     usr_msg = "How many months of severance do we record for exec layoffs?"
-    q1 = await tm.ask(usr_msg)
+    q1 = await cond.ask(usr_msg)
     assistant_msg = await asyncio.wait_for(q1.result(), timeout=60)
     chat = [{"user": usr_msg}, {"assistant": assistant_msg}]
 
@@ -252,7 +252,7 @@ async def test_knowledge_change_audit(monkeypatch):
         "If it isn't recorded as six months, update it to six months and "
         "create a task noting the previous value."
     )
-    r2 = await tm.request(usr_msg, parent_chat_context=chat)
+    r2 = await cond.request(usr_msg, parent_chat_context=chat)
     assistant_msg = await asyncio.wait_for(r2.result(), timeout=60)
     chat += [{"user": usr_msg}, {"assistant": assistant_msg}]
 
@@ -286,17 +286,17 @@ async def test_task_scheduler_rollover(monkeypatch):
     monkeypatch.setattr(SimulatedTaskScheduler, "ask", spy_ask, raising=True)
     monkeypatch.setattr(SimulatedTaskScheduler, "update", spy_upd, raising=True)
 
-    tm = SimulatedConductor("Engineering sprint rollover.")
+    cond = SimulatedConductor("Engineering sprint rollover.")
 
     # 1️⃣ Query backlog
     usr_msg = "Which tasks are currently 'queued'?"
-    q1 = await tm.ask(usr_msg)
+    q1 = await cond.ask(usr_msg)
     assistant_resp = await asyncio.wait_for(q1.result(), timeout=60)
     chat = [{"user": usr_msg}, {"assistant": assistant_resp}]
 
     # 2️⃣ Bulk carry-over
     usr_msg = "Mark all of these tasks as cancelled."
-    r2 = await tm.request(
+    r2 = await cond.request(
         usr_msg,
         parent_chat_context=chat,
     )
@@ -304,7 +304,7 @@ async def test_task_scheduler_rollover(monkeypatch):
     chat += [{"user": usr_msg}, {"assistant": assistant_resp}]
 
     # 3️⃣ Confirm empty
-    q3 = await tm.ask(
+    q3 = await cond.ask(
         "Double-check the queue backlog is now empty.",
         parent_chat_context=chat,
     )
@@ -348,10 +348,10 @@ async def test_plan_activation_and_interjection(monkeypatch):
         raising=True,
     )
 
-    tm = SimulatedConductor("Nightly data-sync demo.")
+    cond = SimulatedConductor("Nightly data-sync demo.")
 
     # 1️⃣ Kick-off the task (this spawns _execute_task_call_)
-    r1 = await tm.request(
+    r1 = await cond.request(
         "Run task with task_id == 123 (nightly data sync) immediately.",
     )
 
@@ -426,9 +426,9 @@ async def test_interleaved_tools(monkeypatch):
     monkeypatch.setattr(SimulatedTranscriptManager, "ask", spy_tm_ask, raising=True)
     monkeypatch.setattr(SimulatedTaskScheduler, "update", spy_ts_upd, raising=True)
 
-    tm = SimulatedConductor("Contract-renewal campaign demo.")
+    cond = SimulatedConductor("Contract-renewal campaign demo.")
 
-    h = await tm.request(
+    h = await cond.request(
         "Create a task for updating client contracts. "
         "Include the latest contract template from the knowledge-base, "
         "tag every contact we currently have, "
