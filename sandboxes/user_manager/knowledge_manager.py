@@ -31,7 +31,6 @@ async def build_scenario():
     km = KnowledgeManager()
     store = ScenarioStore()
 
-    km = KnowledgeManager()
     scenario_text = (
         "Generate 20 diverse facts about electric-vehicle manufacturers. "
         "Cover launch years, battery capacities, warranty terms and sales "
