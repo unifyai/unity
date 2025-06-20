@@ -687,6 +687,41 @@ async def _async_tool_use_loop_inner(
                 Event(type=event_type, payload={"message": message}),
             )
 
+    # ── small helper: add completion tool message pair ──────────────
+    async def _emit_completion_pair(result: str, call_id: str) -> dict:
+        """
+        Append a synthetic assistant→tool pair that carries the *final*
+        outcome for `call_id`.  Returns the tool-message so callers can
+        reuse it for logging / event-bus.
+        """
+        dummy_id = f"{call_id}_status"
+
+        assistant_stub = {
+            "role": "assistant",
+            "tool_calls": [
+                {
+                    "id": dummy_id,
+                    "type": "function",
+                    "function": {
+                        "name": f"check_status_{call_id}",
+                        "arguments": "{}",
+                    },
+                },
+            ],
+            "content": "",
+        }
+        tool_msg = {
+            "role": "tool",
+            "tool_call_id": dummy_id,
+            "name": f"check_status_{call_id}",
+            "content": result,
+        }
+
+        _append_msgs([assistant_stub, tool_msg])
+        await _to_event_bus(assistant_stub)
+        await _to_event_bus(tool_msg)
+        return tool_msg
+
     # ── *single* authoritative implementation of "task finished" handling ──
     async def _process_completed_task(task: asyncio.Task) -> bool:
         """
@@ -702,12 +737,18 @@ async def _async_tool_use_loop_inner(
         6.  Enforce the *max_consecutive_failures* safety valve.
         """
 
+        def _at_tail(msg: dict) -> bool:
+            """True when *msg* is the very last entry in client.messages."""
+            return bool(client.messages) and client.messages[-1] is msg
+
         nonlocal consecutive_failures
 
         pending.discard(task)
         info = task_info.pop(task)
         name = info["name"]
         call_id = info["call_id"]
+        fn = info["call_dict"]["function"]["name"]
+        arg = info["call_dict"]["function"]["arguments"]
 
         # 2️⃣  obtain result -------------------------------------------------
         try:
@@ -805,36 +846,43 @@ async def _async_tool_use_loop_inner(
 
         # 4️⃣  update / insert tool-result message --------------------------
         asst_msg = info["assistant_msg"]
-        meta = assistant_meta[id(asst_msg)]
-
         continue_msg = info.get("continue_msg")
+        clarify_ph = info.get("clarify_placeholder")
+        tool_reply_msg = info.get("tool_reply_msg")
+
         if continue_msg is not None:
-            continue_msg["content"] = result
-            fn = info["call_dict"]["function"]["name"]
-            arg = info["call_dict"]["function"]["arguments"]
-            continue_msg["name"] = (
-                f"{fn}({arg}) completed successfully, "
-                "the return values are in the `content` field below."
-            )
-            tool_msg = continue_msg
-        else:
-            clarify_ph = info.get("clarify_placeholder")
-            if clarify_ph is not None:
+            if _at_tail(continue_msg):  # ✅ safe to overwrite
+                continue_msg["content"] = result
+                continue_msg["name"] = (
+                    f"{fn}({arg}) completed successfully, "
+                    "the return values are in the `content` field below."
+                )
+                tool_msg = continue_msg
+            else:  # 🆕 keep history stable
+                tool_msg = await _emit_completion_pair(result, call_id)
+
+        elif clarify_ph is not None:
+            if _at_tail(clarify_ph):
                 clarify_ph["content"] = result
                 tool_msg = clarify_ph
             else:
-                tool_reply_msg = info.get("tool_reply_msg")
-                if tool_reply_msg is not None:
-                    tool_reply_msg["content"] = result
-                    tool_msg = tool_reply_msg
-                else:
-                    tool_msg = {
-                        "role": "tool",
-                        "tool_call_id": call_id,
-                        "name": name,
-                        "content": result,
-                    }
-                    _insert_after_assistant(asst_msg, tool_msg)
+                tool_msg = await _emit_completion_pair(result, call_id)
+
+        elif tool_reply_msg is not None:
+            if _at_tail(tool_reply_msg):
+                tool_reply_msg["content"] = result
+                tool_msg = tool_reply_msg
+            else:
+                tool_msg = await _emit_completion_pair(result, call_id)
+
+        else:
+            tool_msg = {
+                "role": "tool",
+                "tool_call_id": call_id,
+                "name": name,
+                "content": result,
+            }
+            _insert_after_assistant(asst_msg, tool_msg)
 
         await _to_event_bus(tool_msg)
 
