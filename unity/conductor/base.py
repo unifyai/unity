@@ -85,34 +85,3 @@ class BaseConductor(ABC):
 
         All parameters & return value mirror :py:meth:`ask`.
         """
-
-    # ------------------------------------------------------------------ #
-    #  execute_task – activate one queued task                             #
-    # ------------------------------------------------------------------ #
-    @abstractmethod
-    async def execute_task(
-        self,
-        text: str,
-        *,
-        _return_reasoning_steps: bool = False,
-        _log_tool_steps: bool = True,
-        parent_chat_context: Optional[List[Dict[str, Any]]] = None,
-        clarification_up_q: Optional[asyncio.Queue[str]] = None,
-        clarification_down_q: Optional[asyncio.Queue[str]] = None,
-    ) -> SteerableToolHandle:
-        """
-        Promote a queued / scheduled task to the **active** state based on a
-        natural-language instruction.
-
-        Parameters
-        ----------
-        text : str
-            User instruction, e.g. *"Start the database-migration task now"*.
-        Other keyword arguments
-            Same semantics as in :py:meth:`ask`.
-
-        Returns
-        -------
-        SteerableToolHandle
-            Handle driving the subsequent **task-specific** dialogue.
-        """
