@@ -2,7 +2,7 @@ import pytest
 import functools
 import asyncio
 
-from unity.task_manager.simulated import SimulatedTaskManager
+from unity.conductor.simulated import SimulatedConductor
 from unity.task_scheduler.simulated import SimulatedTaskScheduler
 from tests.helpers import _handle_project
 
@@ -23,7 +23,7 @@ async def test_request_calls_task_scheduler_ask(monkeypatch):
 
     monkeypatch.setattr(SimulatedTaskScheduler, "ask", spy, raising=True)
 
-    tm = SimulatedTaskManager("Sprint board demo.")
+    tm = SimulatedConductor("Sprint board demo.")
     handle = await tm.request(
         "List all of the tasks which are still due this week, and then update them all to be high priority",
     )

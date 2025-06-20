@@ -1,11 +1,11 @@
 """
-Multi-step integration tests for SimulatedTaskManager.
+Multi-step integration tests for SimulatedConductor.
 
 Each test:
 
 • monkey-patches one (or several) subordinate simulated-manager methods,
   incrementing a counter and delegating to the original implementation;
-• spins up a fresh SimulatedTaskManager (so the patches are active);
+• spins up a fresh SimulatedConductor (so the patches are active);
 • performs two-or-more serial calls to `.ask()` / `.request()`;
 • awaits each handle to ensure full completion; and
 • finally asserts the patched method(s) were invoked the expected number
@@ -22,7 +22,7 @@ from unity.transcript_manager.simulated import SimulatedTranscriptManager
 from unity.knowledge_manager.simulated import SimulatedKnowledgeManager
 from unity.planner.simulated import SimulatedActiveTask
 from unity.task_scheduler.simulated import SimulatedTaskScheduler
-from unity.task_manager.simulated import SimulatedTaskManager
+from unity.conductor.simulated import SimulatedConductor
 from tests.helpers import _handle_project
 
 
@@ -106,7 +106,7 @@ async def test_update_phone_number_then_call(monkeypatch):
     )
 
     # task manager
-    tm = SimulatedTaskManager("CRM scenario – follow-up meeting scheduling.")
+    tm = SimulatedConductor("CRM scenario – follow-up meeting scheduling.")
 
     # Read-only lookup
     usr_msg = "What is Alice Reynolds phone number?"
@@ -175,7 +175,7 @@ async def test_transcript_summary_followups(monkeypatch):
     monkeypatch.setattr(SimulatedTranscriptManager, "ask", spy_t_ask, raising=True)
     monkeypatch.setattr(SimulatedTaskScheduler, "update", spy_ts_update, raising=True)
 
-    tm = SimulatedTaskManager("Support-call archive demo.")
+    tm = SimulatedConductor("Support-call archive demo.")
 
     # 1️⃣ Summarise & store
     usr_msg = (
@@ -239,7 +239,7 @@ async def test_knowledge_change_audit(monkeypatch):
     monkeypatch.setattr(SimulatedKnowledgeManager, "update", spy_store, raising=True)
     monkeypatch.setattr(SimulatedTaskScheduler, "update", spy_ts_update, raising=True)
 
-    tm = SimulatedTaskManager("HR policy KB audit.")
+    tm = SimulatedConductor("HR policy KB audit.")
 
     # 1️⃣ Initial read
     usr_msg = "How many months of severance do we record for exec layoffs?"
@@ -286,7 +286,7 @@ async def test_task_scheduler_rollover(monkeypatch):
     monkeypatch.setattr(SimulatedTaskScheduler, "ask", spy_ask, raising=True)
     monkeypatch.setattr(SimulatedTaskScheduler, "update", spy_upd, raising=True)
 
-    tm = SimulatedTaskManager("Engineering sprint rollover.")
+    tm = SimulatedConductor("Engineering sprint rollover.")
 
     # 1️⃣ Query backlog
     usr_msg = "Which tasks are currently 'queued'?"
@@ -348,7 +348,7 @@ async def test_plan_activation_and_interjection(monkeypatch):
         raising=True,
     )
 
-    tm = SimulatedTaskManager("Nightly data-sync demo.")
+    tm = SimulatedConductor("Nightly data-sync demo.")
 
     # 1️⃣ Kick-off the task (this spawns _execute_task_call_)
     r1 = await tm.request(
@@ -426,7 +426,7 @@ async def test_interleaved_tools(monkeypatch):
     monkeypatch.setattr(SimulatedTranscriptManager, "ask", spy_tm_ask, raising=True)
     monkeypatch.setattr(SimulatedTaskScheduler, "update", spy_ts_upd, raising=True)
 
-    tm = SimulatedTaskManager("Contract-renewal campaign demo.")
+    tm = SimulatedConductor("Contract-renewal campaign demo.")
 
     h = await tm.request(
         "Create a task for updating client contracts. "

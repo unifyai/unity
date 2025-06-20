@@ -2,7 +2,7 @@ import pytest
 import functools
 import asyncio
 
-from unity.task_manager.simulated import SimulatedTaskManager
+from unity.conductor.simulated import SimulatedConductor
 from unity.transcript_manager.simulated import SimulatedTranscriptManager
 from tests.helpers import _handle_project
 
@@ -21,7 +21,7 @@ async def test_ask_calls_transcript_manager_summarize(monkeypatch):
 
     monkeypatch.setattr(SimulatedTranscriptManager, "summarize", spy, raising=True)
 
-    tm = SimulatedTaskManager("Demo – sales-call recordings.")
+    tm = SimulatedConductor("Demo – sales-call recordings.")
     handle = await tm.request(
         "Can you please give me a summary of the recent exchange with id==123.",
     )

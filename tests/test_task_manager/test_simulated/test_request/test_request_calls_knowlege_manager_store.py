@@ -2,7 +2,7 @@ import pytest
 import functools
 import asyncio
 
-from unity.task_manager.simulated import SimulatedTaskManager
+from unity.conductor.simulated import SimulatedConductor
 from unity.knowledge_manager.simulated import SimulatedKnowledgeManager
 from tests.helpers import _handle_project
 
@@ -21,7 +21,7 @@ async def test_request_calls_knowledge_manager_store(monkeypatch):
 
     monkeypatch.setattr(SimulatedKnowledgeManager, "update", spy, raising=True)
 
-    tm = SimulatedTaskManager("Demo – ops run-book KB.")
+    tm = SimulatedConductor("Demo – ops run-book KB.")
     handle = await tm.request("Remember that the new Wi-Fi password is 'P@ssw0rd2025'.")
     await asyncio.wait_for(handle.result(), timeout=60)
 

@@ -1,4 +1,4 @@
-# task_manager/task_manager.py
+# conductor/conductor.py
 from __future__ import annotations
 
 from typing import Callable, Dict
@@ -23,7 +23,7 @@ from ..knowledge_manager.simulated import SimulatedKnowledgeManager
 from ..task_scheduler.simulated import SimulatedTaskScheduler
 
 
-class SimulatedTaskManager:
+class SimulatedConductor:
     """
     Top-level façade that *can* own a maximum of *one* live plan at a time and exposes two
     different tool surfaces which include the knowledge, task list, contacts, and transcript histories:

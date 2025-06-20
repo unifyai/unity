@@ -2,7 +2,7 @@ import pytest
 import functools
 import asyncio
 
-from unity.task_manager.simulated import SimulatedTaskManager
+from unity.conductor.simulated import SimulatedConductor
 from unity.task_scheduler.simulated import SimulatedTaskScheduler
 from tests.helpers import _handle_project
 
@@ -21,7 +21,7 @@ async def test_ask_calls_task_scheduler_ask(monkeypatch):
 
     monkeypatch.setattr(SimulatedTaskScheduler, "ask", spy, raising=True)
 
-    tm = SimulatedTaskManager("Demo – engineering sprint board.")
+    tm = SimulatedConductor("Demo – engineering sprint board.")
     handle = await tm.ask("Which tasks are due before Friday?")
     await asyncio.wait_for(handle.result(), timeout=6000)
 

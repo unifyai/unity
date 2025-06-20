@@ -1,8 +1,8 @@
 """
-System prompts for the **real** TaskManager's three public
+System prompts for the **real** Conductor's three public
 entry-points – ask, request and execute_task.
 
-The TaskManager orchestrates four sub-managers:
+The Conductor orchestrates four sub-managers:
 • TaskScheduler         – tasks / queue / activation
 • ContactManager        – contacts CRUD
 • TranscriptManager     – conversation search & summarisation

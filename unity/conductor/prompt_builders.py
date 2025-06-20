@@ -25,7 +25,7 @@ def _now() -> str:
 
 
 def build_ask_prompt(tools: Dict[str, Callable]) -> str:
-    """Dynamic **system** prompt for `TaskManager.ask`."""
+    """Dynamic **system** prompt for `Conductor.ask`."""
     sig_json = json.dumps(_sig_dict(tools), indent=4)
 
     return "\n".join(
@@ -49,7 +49,7 @@ def build_ask_prompt(tools: Dict[str, Callable]) -> str:
 
 
 def build_request_prompt(tools: Dict[str, Callable]) -> str:
-    """Dynamic **system** prompt for `TaskManager.request`."""
+    """Dynamic **system** prompt for `Conductor.request`."""
     sig_json = json.dumps(_sig_dict(tools), indent=4)
 
     return "\n".join(
@@ -79,7 +79,7 @@ def build_request_prompt(tools: Dict[str, Callable]) -> str:
 
 
 def build_execute_task_prompt(tools: Dict[str, Callable]) -> str:
-    """Dynamic **system** prompt for `TaskManager.execute_task`."""
+    """Dynamic **system** prompt for `Conductor.execute_task`."""
     sig_json = json.dumps(_sig_dict(tools), indent=4)
 
     return "\n".join(

@@ -1,4 +1,4 @@
-# task_manager/task_manager.py
+# conductor/conductor.py
 from __future__ import annotations
 
 from typing import Callable, Dict, Optional, List, Any
@@ -26,7 +26,7 @@ from ..knowledge_manager.knowledge_manager import KnowledgeManager
 from ..planner.base import BasePlanner
 from ..planner.tool_loop_planner import ToolLoopPlanner
 from ..task_scheduler.base import BaseTaskScheduler
-from .base import BaseTaskManager
+from .base import BaseConductor
 from ..task_scheduler.task_scheduler import TaskScheduler
 from .prompt_builders import (
     build_ask_prompt,
@@ -35,7 +35,7 @@ from .prompt_builders import (
 )
 
 
-class TaskManager(BaseTaskManager):
+class Conductor(BaseConductor):
     """
     Top-level façade that *can* own a maximum of *one* live plan at a time and exposes two
     different tool surfaces which include the knowledge, task list, contacts, and transcript histories:
@@ -134,7 +134,7 @@ class TaskManager(BaseTaskManager):
     #  Public API                                                        #
     # ------------------------------------------------------------------ #
 
-    @functools.wraps(BaseTaskManager.ask, updated=())
+    @functools.wraps(BaseConductor.ask, updated=())
     async def ask(
         self,
         text: str,
@@ -191,7 +191,7 @@ class TaskManager(BaseTaskManager):
     #  request  (write-capable)                                          #
     # ------------------------------------------------------------------ #
 
-    @functools.wraps(BaseTaskManager.request, updated=())
+    @functools.wraps(BaseConductor.request, updated=())
     async def request(
         self,
         text: str,
@@ -246,7 +246,7 @@ class TaskManager(BaseTaskManager):
     # ------------------------------------------------------------------ #
     #  execute_task – new public surface (write-capable but focussed)      #
     # ------------------------------------------------------------------ #
-    @functools.wraps(BaseTaskManager.execute_task, updated=())
+    @functools.wraps(BaseConductor.execute_task, updated=())
     async def execute_task(
         self,
         text: str,

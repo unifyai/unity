@@ -1,5 +1,5 @@
 """
-*Public* contract for every **TaskManager** implementation.
+*Public* contract for every **Conductor** implementation.
 
 The top-level manager unifies four sub-domains
 
@@ -21,7 +21,7 @@ from typing import Any, Dict, List, Optional
 from ..common.llm_helpers import SteerableToolHandle
 
 
-class BaseTaskManager(ABC):
+class BaseConductor(ABC):
     # ------------------------------------------------------------------ #
     #  ask – read-only                                                   #
     # ------------------------------------------------------------------ #
