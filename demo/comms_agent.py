@@ -194,7 +194,10 @@ class CommsAgent:
 
     async def handle_contact_manager_action(self, action: ContactManagerAction):
         """Handle contact manager actions asynchronously"""
+        # get chat history
         chat_history = self.get_chat_history()
+
+        # check if the query is a mutation
         if action.query.lower().startswith(
             ("add ", "create ", "update ", "change ", "delete ")
         ):
@@ -230,6 +233,7 @@ class CommsAgent:
                 _return_reasoning_steps=action.show_steps,
             )
 
+        # publish start event
         self.publish(
             {
                 "topic": "user_agent",
@@ -239,30 +243,42 @@ class CommsAgent:
             },
         )
 
-        while not self.contact_manager_handle.done(): pass
-        answer = await self.contact_manager_handle.result()
+        # wait for the handle to be done
+        while not self.contact_manager_handle.done():
+            print("waiting for handle to be done")
+            await asyncio.sleep(1)
 
+        # get handle result
+        answer = await self.contact_manager_handle.result()
+        self.contact_manager_handle = None
         if isinstance(answer, tuple):
             answer, _ = answer
+
+        # publish end event
         self.publish(
             {
                 "topic": "user_agent",
-                "event": ContactManagerEndedEvent(
-                    self.agent_id, answer
-                ).to_dict(),
+                "event": ContactManagerEndedEvent(self.agent_id, answer).to_dict(),
             },
         )
 
-    async def handle_contact_manager_interject_action(self, action: ContactManagerInterjectAction):
-        await self.contact_manager_handle.interject(action.query)
-        self.publish(
-            {
-                "topic": "user_agent",
-                "event": ContactManagerInterjectedEvent(
-                    self.agent_id, action.query
-                ).to_dict(),
-            },
-        )
+    async def handle_contact_manager_interject_action(
+        self, action: ContactManagerInterjectAction
+    ):
+        """Handle contact manager interject actions asynchronously"""
+        # check if the contact manager is running
+        if not self.contact_manager_handle:
+            # interject failed
+            event = ContactManagerInterjectFailedEvent(
+                self.agent_id,
+                "Contact manager is not running currently, "
+                "please create a new action instead",
+            )
+        else:
+            # interject
+            await self.contact_manager_handle.interject(action.query)
+            event = ContactManagerInterjectedEvent(self.agent_id, action.query)
+        self.publish({"topic": "user_agent", "event": event.to_dict()})
 
     def on_run_end(self, t: asyncio.Task):
         try:
@@ -318,10 +334,14 @@ class CommsAgent:
                             )
 
                         elif isinstance(action, ContactManagerAction):
-                            asyncio.create_task(self.handle_contact_manager_action(action))
+                            asyncio.create_task(
+                                self.handle_contact_manager_action(action)
+                            )
 
                         elif isinstance(action, ContactManagerInterjectAction):
-                            asyncio.create_task(self.handle_contact_manager_interject_action(action))
+                            asyncio.create_task(
+                                self.handle_contact_manager_interject_action(action)
+                            )
 
         except asyncio.CancelledError:
             pass
@@ -498,9 +518,9 @@ class CommsAgent:
         self.curr_task_id += 1
         print("created task")
         contact_comms_agent.attach_task(task)
-        self.contact_num_to_comm_agent[contact_number.replace(" ", "")] = (
-            contact_comms_agent
-        )
+        self.contact_num_to_comm_agent[
+            contact_number.replace(" ", "")
+        ] = contact_comms_agent
         self.attach_task(task)
         print("attached tasks")
 
@@ -551,7 +571,8 @@ class CommsAgent:
             },
         )
 
-    async def wait_for_seconds_or_next_event(self, time: int): ...
+    async def wait_for_seconds_or_next_event(self, time: int):
+        ...
 
     def subscribe(self, topics):
         if not self.event_manager:
