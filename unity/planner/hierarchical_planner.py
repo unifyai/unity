@@ -145,10 +145,20 @@ class HierarchicalPlan(BasePlan):
         self.escalation_count = 0
         self._is_complete = False
         self.main_loop_handle: Optional[AsyncToolUseLoopHandle] = None
-        self._execution_task = asyncio.create_task(self._initialize_and_run())
+        self._execution_task: Optional[asyncio.Task] = None
         self._state = _HierarchicalPlanState.IDLE
+        self._completion_event = asyncio.Event()
+        self._final_result_str: Optional[str] = None
         self.clarification_up_q = clarification_up_q or asyncio.Queue()
         self.clarification_down_q = clarification_down_q or asyncio.Queue()
+        self._execution_task = asyncio.create_task(self._initialize_and_run())
+
+    def _set_final_result(self, result: str):
+        """Sets the final result and the completion event."""
+        if not self._completion_event.is_set():
+            self._final_result_str = result
+            self._is_complete = True
+            self._completion_event.set()
 
     async def _initialize_and_run(self):
         self.action_log.append("Initializing plan...")
@@ -156,7 +166,9 @@ class HierarchicalPlan(BasePlan):
             if self.exploratory_mode:
                 await self._perform_exploration()
 
-            self._state = _HierarchicalPlanState.RUNNING
+            if not self._is_complete:
+                self._state = _HierarchicalPlanState.RUNNING
+
             if self.plan_source_code is None:
                 self.action_log.append("Generating new plan from goal...")
                 self.plan_source_code = await self.planner._generate_initial_plan(
@@ -171,11 +183,8 @@ class HierarchicalPlan(BasePlan):
             await self._start_main_execution_loop()
         except Exception as e:
             logger.error(f"Plan initialization failed: {e}", exc_info=True)
-            self.action_log.append(f"ERROR: Plan initialization failed: {e}")
             self._state = _HierarchicalPlanState.ERROR
-            self._is_complete = True
-            if self.main_loop_handle and not self.main_loop_handle.done():
-                self.main_loop_handle.stop()
+            self._set_final_result(f"ERROR: Plan initialization failed: {e}")
 
     async def _perform_exploration(self):
         self._state = _HierarchicalPlanState.EXPLORING
@@ -242,8 +251,8 @@ class HierarchicalPlan(BasePlan):
                 main_coro = next(plan_iterator)
                 result = await main_coro
                 self._state = _HierarchicalPlanState.COMPLETED
-                self._is_complete = True
                 self.action_log.append(f"Plan completed. Result: {result}")
+                self._set_final_result(f"Plan completed. Result: {result}")
                 return {
                     "status": "completed",
                     "message": f"Plan finished. Result: {result}",
@@ -251,8 +260,8 @@ class HierarchicalPlan(BasePlan):
                 }
             except StopIteration:
                 self._state = _HierarchicalPlanState.COMPLETED
-                self._is_complete = True
                 self.action_log.append("Plan finished.")
+                self._set_final_result("Plan finished.")
                 return {
                     "status": "completed",
                     "message": "Plan finished.",
@@ -276,25 +285,24 @@ class HierarchicalPlan(BasePlan):
                 if not parent_to_replan:
                     raise RuntimeError("Could not determine main_plan to replan.")
 
-                await self._handle_dynamic_implementation(
-                    parent_to_replan,
-                    is_strategic_replan=True,
-                    replan_reason=str(e),
-                )
-
-                if self.escalation_count >= self.MAX_ESCALATIONS:
+                if self.escalation_count > self.MAX_ESCALATIONS:
                     self._state = _HierarchicalPlanState.PAUSED_FOR_ESCALATION
                     err_msg = f"ESCALATION LIMIT: Max escalations ({self.MAX_ESCALATIONS}) reached. Pausing for intervention. Final reason: {e}"
                     self.action_log.append(err_msg)
                     await self.clarification_up_q.put(err_msg)
+                    self._set_final_result(err_msg)
                     return {
                         "status": "paused_for_escalation",
                         "message": err_msg,
                         "force_stop": True,
                     }
 
+                await self._handle_dynamic_implementation(
+                    parent_to_replan,
+                    is_strategic_replan=True,
+                    replan_reason=str(e),
+                )
                 plan_iterator = self._create_main_loop_iterator()
-
                 return {
                     "status": "in_progress",
                     "message": f"Strategically replanned '{parent_to_replan}' due to failure in child. Retrying.",
@@ -302,12 +310,13 @@ class HierarchicalPlan(BasePlan):
             except Exception as e:
                 logger.error(f"Plan step execution failed: {e}", exc_info=True)
                 self._state = _HierarchicalPlanState.ERROR
-                self._is_complete = True
                 self.action_log.append(f"ERROR: Plan execution failed: {e}")
+                self._set_final_result(f"ERROR: Plan execution failed: {e}")
                 return {"status": "error", "message": str(e), "force_stop": True}
 
         def dynamic_tool_policy(step_index, tools):
             if self._is_complete or self._state in (
+                _HierarchicalPlanState.PAUSED,
                 _HierarchicalPlanState.PAUSED_FOR_MODIFICATION,
                 _HierarchicalPlanState.PAUSED_FOR_ESCALATION,
             ):
@@ -510,14 +519,11 @@ class HierarchicalPlan(BasePlan):
         return f"Plan restarted with new goal: '{new_goal}'"
 
     async def result(self) -> str:
-        if self._execution_task and not self._execution_task.done():
-            await self._execution_task
-
-        if not self.main_loop_handle:
-            final_log = self.action_log[-1] if self.action_log else "No log available."
-            return f"Plan concluded in state {self._state.name}. Final log: {final_log}"
-
-        return await self.main_loop_handle.result()
+        await self._completion_event.wait()
+        return (
+            self._final_result_str
+            or f"Plan finished in state {self._state.name} without a result."
+        )
 
     def done(self) -> bool:
         return self._is_complete
@@ -534,11 +540,15 @@ class HierarchicalPlan(BasePlan):
     async def stop(self) -> str:
         if not self._is_complete:
             self._state = _HierarchicalPlanState.STOPPED
-            self._is_complete = True
+            result_str = "Plan was stopped."
             if self.main_loop_handle and not self.main_loop_handle.done():
                 self.main_loop_handle.stop()
+            if self._execution_task and not self._execution_task.done():
+                self._execution_task.cancel()
+
             self.action_log.append("Plan stopped by user.")
-            return "Plan was stopped."
+            self._set_final_result(result_str)
+            return result_str
         return f"Plan already in terminal state: {self._state.name}."
 
     async def pause(self) -> str:
@@ -546,6 +556,7 @@ class HierarchicalPlan(BasePlan):
             self._state = _HierarchicalPlanState.PAUSED
             if self.main_loop_handle:
                 self.main_loop_handle.pause()
+            self.action_log.append("Plan paused by user.")
             return "Plan paused."
         return f"Cannot pause in state {self._state.name}."
 
@@ -554,6 +565,7 @@ class HierarchicalPlan(BasePlan):
             self._state = _HierarchicalPlanState.RUNNING
             if self.main_loop_handle:
                 self.main_loop_handle.resume()
+            self.action_log.append("Plan resumed by user.")
             return "Plan resumed."
         return f"Cannot resume from state {self._state.name}."
 
