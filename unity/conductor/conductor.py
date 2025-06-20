@@ -1,7 +1,7 @@
 # conductor/conductor.py
 from __future__ import annotations
 
-from typing import Callable, Dict, Optional, List, Any
+from typing import Callable, Dict, Optional
 
 import functools
 import asyncio
@@ -10,7 +10,7 @@ import os
 
 import unify
 
-from typing import Callable, Dict, Optional, List, Any
+from typing import Callable, Dict, Optional
 
 from ..common.llm_helpers import (
     methods_to_tool_dict,
@@ -31,7 +31,6 @@ from ..task_scheduler.task_scheduler import TaskScheduler
 from .prompt_builders import (
     build_ask_prompt,
     build_request_prompt,
-    build_execute_task_prompt,
 )
 
 
@@ -240,92 +239,5 @@ class Conductor(BaseConductor):
                 return answer, client.messages
 
             handle.result = _wrapped_result
-
-        return handle
-
-    # ------------------------------------------------------------------ #
-    #  execute_task – new public surface (write-capable but focussed)      #
-    # ------------------------------------------------------------------ #
-    @functools.wraps(BaseConductor.execute_task, updated=())
-    async def execute_task(
-        self,
-        text: str,
-        *,
-        _return_reasoning_steps: bool = False,
-        _log_tool_steps: bool = True,
-        parent_chat_context: Optional[List[dict]] = None,
-        clarification_up_q: asyncio.Queue[str] | None = None,
-        clarification_down_q: asyncio.Queue[str] | None = None,
-    ):
-
-        # ---------------------------------------------------------------- #
-        #  1. Build a dedicated tool-dict for this surface                  #
-        # ---------------------------------------------------------------- #
-        # Re-wrap so that we capture the returned ActiveTask handle and
-        # remember it for future plan queries.
-        def _wrapped_execute_task(
-            task_id: int,
-            *,
-            parent_chat_context=None,
-            clarification_up_q=None,
-            clarification_down_q=None,
-        ):
-            handle = self._task_scheduler.execute_task(
-                task_id,
-                parent_chat_context=parent_chat_context,
-                clarification_up_q=clarification_up_q,
-                clarification_down_q=clarification_down_q,
-            )
-            self._current_plan = handle
-            return handle
-
-        _wrapped_execute_task.__name__ = "_execute_task_call_"
-
-        tools: Dict[str, Callable[..., Any]] = {
-            **methods_to_tool_dict(
-                self._task_scheduler._search_tasks,
-                self._task_scheduler._nearest_tasks,
-                include_class_name=False,
-            ),
-            _wrapped_execute_task.__name__: _wrapped_execute_task,
-        }
-        if clarification_up_q is not None or clarification_down_q is not None:
-
-            async def request_clarification(question: str) -> str:
-                if clarification_up_q is None or clarification_down_q is None:
-                    raise RuntimeError("Clarification queues missing.")
-                await clarification_up_q.put(question)
-                return await clarification_down_q.get()
-
-            tools["request_clarification"] = request_clarification
-
-        # ---------------------------------------------------------------- #
-        #  2. Fire up the interactive loop                                 #
-        # ---------------------------------------------------------------- #
-        client = unify.AsyncUnify(
-            "o4-mini@openai",
-            cache=json.loads(os.environ.get("UNIFY_CACHE", "true")),
-            traced=json.loads(os.environ.get("UNIFY_TRACED", "true")),
-        )
-        client.set_system_message(build_execute_task_prompt(tools))
-
-        handle = start_async_tool_use_loop(
-            client,
-            text,
-            tools,
-            loop_id=f"{self.__class__.__name__}.{self.execute_task.__name__}",
-            parent_chat_context=parent_chat_context,
-            log_steps=_log_tool_steps,
-            tool_policy=lambda i, _: ("required", _) if i < 1 else ("auto", _),
-        )
-
-        if _return_reasoning_steps:
-            orig_res = handle.result
-
-            async def _wrapped():
-                answer = await orig_res()
-                return answer, client.messages
-
-            handle.result = _wrapped
 
         return handle
