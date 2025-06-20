@@ -19,7 +19,7 @@ class SimulatedActiveTask(ActiveTask):
 
     def __init__(
         self,
-        llm: unify.Unify,
+        llm: unify.AsyncUnify,
         task: str,
         steps: int,
         timeout: float | None = None,
