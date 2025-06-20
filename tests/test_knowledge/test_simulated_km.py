@@ -262,10 +262,12 @@ async def test_refactor_simulated_km():
     h = await km.refactor(
         "Please remove duplicated columns and introduce proper primary keys.",
     )
-    plan = await h.result()
+    migration_plan = await h.result()
 
-    assert isinstance(plan, str) and plan.strip(), "Migration plan should be non-empty"
-    assert "column" in plan.lower() or "table" in plan.lower(), (
+    assert (
+        isinstance(migration_plan, str) and migration_plan.strip()
+    ), "Migration plan should be non-empty"
+    assert "column" in migration_plan.lower() or "table" in migration_plan.lower(), (
         "Plan should mention schema elements (columns/tables).",
-        plan,
+        migration_plan,
     )

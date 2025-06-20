@@ -50,7 +50,7 @@ class SimulatedTaskManager:
         self._task_scheduler = SimulatedTaskScheduler(description=description)
 
         #  Run-time state & tool-dict helpers
-        self._current_plan = None  # type: ignore
+        self._active_task = None  # type: ignore
 
         # These two dicts are rebuilt lazily before every ask/request
         self._passive_tools: Dict[str, Callable] = {}
@@ -61,7 +61,7 @@ class SimulatedTaskManager:
     # ------------------------------------------------------------------ #
 
     def _refresh_tool_dicts(self) -> None:
-        """Re-compute passive / active tool maps based on current plan."""
+        """Re-compute passive / active tool maps based on current active task."""
 
         # -------- base passive helpers -------------------------------- #
         passive = methods_to_tool_dict(
@@ -72,12 +72,12 @@ class SimulatedTaskManager:
             include_class_name=True,
         )
 
-        # -------- add plan.ask when a plan is alive ------------------- #
-        if self._current_plan is not None and not self._current_plan.done():
+        # -------- add active_task.ask when a plan is alive ------------------- #
+        if self._active_task is not None and not self._active_task.done():
 
             # We expose _ask_plan_call_ (Unify expects this naming)
             async def _plan_ask_proxy(question: str):
-                return await self._current_plan.ask(question)  # type: ignore[attr-defined]
+                return await self._active_task.ask(question)  # type: ignore[attr-defined]
 
             _plan_ask_proxy.__name__ = "_ask_plan_call_"
             passive[_plan_ask_proxy.__name__] = _plan_ask_proxy
@@ -86,25 +86,25 @@ class SimulatedTaskManager:
 
         # -------- build active helpers (passive + writers) ------------ #
 
-        # Wrapper to intercept start_task and remember the returned handle
-        def _wrapped_start_task(
+        # Wrapper to intercept execute_task and remember the returned handle
+        def _wrapped_execute_task(
             task_id: int,
             *,
             parent_chat_context=None,
             clarification_up_q=None,
             clarification_down_q=None,
         ):
-            handle = self._task_scheduler.start_task(
+            handle = self._task_scheduler.execute_task(
                 task_id,
                 parent_chat_context=parent_chat_context,
                 clarification_up_q=clarification_up_q,
                 clarification_down_q=clarification_down_q,
             )
             # remember the plan so that subsequent questions can use it
-            self._current_plan = handle
+            self._active_task = handle
             return handle
 
-        _wrapped_start_task.__name__ = "_start_task_call_"
+        _wrapped_execute_task.__name__ = "_execute_task_call_"
 
         active = {
             **passive,  # read-only tools are also valid here
@@ -113,7 +113,7 @@ class SimulatedTaskManager:
                 self._transcript_manager.summarize,
                 self._knowledge_manager.update,
                 self._task_scheduler.update,
-                ToolSpec(_wrapped_start_task, max_concurrent=1),
+                ToolSpec(_wrapped_execute_task, max_concurrent=1),
                 include_class_name=True,
             ),
         }
@@ -135,7 +135,7 @@ class SimulatedTaskManager:
         clarification_down_q: asyncio.Queue[str] | None = None,
     ):
         """
-        Read-only question: exposes *passive* helpers (+ plan.ask when available).
+        Read-only question: exposes *passive* helpers (+ active_task.ask when available).
         """
         self._refresh_tool_dicts()
 
@@ -194,7 +194,7 @@ class SimulatedTaskManager:
     ):
         """
         Full-access entry-point – exposes every passive tool **plus** all
-        write-capable helpers and `start_task` (which unlocks plan steering).
+        write-capable helpers and `execute_task` (which unlocks plan steering).
         """
         self._refresh_tool_dicts()
 

@@ -99,7 +99,7 @@ async def sign_in():
     monkeypatch.setattr("unity.planner.hierarchical_planner.llm_call", mock_llm)
 
     # --- Act ---
-    plan = planner.plan(
+    plan = planner.execute(
         "Sign in to the website. Once signed in, respond **only** with 'Signed in successfully.'",
     )
     final_result = await plan.result()
@@ -183,7 +183,7 @@ async def main_plan():
     monkeypatch.setattr(planner, "_generate_initial_plan", mock_generate_plan_llm)
 
     # --- Act ---
-    plan = planner.plan("Find the company email.")
+    plan = planner.execute("Find the company email.")
     await plan.result()
 
     # --- Assert ---
@@ -261,7 +261,7 @@ async def main_plan():
     )
 
     # --- Act ---
-    plan = planner.plan("Execute a plan with a flawed child task.")
+    plan = planner.execute("Execute a plan with a flawed child task.")
 
     # --- Assert ---
     # 1. Wait for the escalation message. This is the correct way to sync.
@@ -375,7 +375,7 @@ async def course_correction_main():
     )
 
     # --- Act ---
-    plan = planner.plan("Go to site A and click B.")
+    plan = planner.execute("Go to site A and click B.")
 
     # Wait until the first 'act' call completes. This ensures the plan is
     # now running and paused inside the second 'act' call, waiting on our event.
@@ -442,7 +442,7 @@ async def main_plan():
     )
 
     # --- Act ---
-    plan = planner.plan("Do the original task.")
+    plan = planner.execute("Do the original task.")
     await asyncio.sleep(0.5)  # Let it start
 
     modification_result = await plan.modify_plan("This modification will fail.")

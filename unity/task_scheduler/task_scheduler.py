@@ -234,8 +234,8 @@ class TaskScheduler(BaseTaskScheduler):
 
     # Start Task
 
-    @functools.wraps(BaseTaskScheduler.start_task, updated=())
-    async def start_task(
+    @functools.wraps(BaseTaskScheduler.execute_task, updated=())
+    async def execute_task(
         self,
         task_id: int,
         *,
@@ -754,13 +754,13 @@ class TaskScheduler(BaseTaskScheduler):
             return rows[0] if rows else None
 
         # ----------------  starting node  ---------------- #
-        start_task: Optional[dict] = None
+        execute_task: Optional[dict] = None
 
         # ── 0.  Pick a starting node ─────────────────────────────────────
         if task_id is None:
             if self._primed_task:
-                start_task = self._primed_task
-                task_id = start_task["task_id"]
+                execute_task = self._primed_task
+                task_id = execute_task["task_id"]
             else:
                 # Derive the head: the runnable task whose `prev_task` is None
                 head_candidates = self._search_tasks(
@@ -777,13 +777,13 @@ class TaskScheduler(BaseTaskScheduler):
                 assert (
                     len(head_candidates) == 1
                 ), f"Multiple heads detected: {head_candidates}"
-                start_task = head_candidates[0]
-                task_id = start_task["task_id"]
+                execute_task = head_candidates[0]
+                task_id = execute_task["task_id"]
 
-        if start_task is None and task_id is not None:
-            start_task = _get_task_by_task_id(task_id)
+        if execute_task is None and task_id is not None:
+            execute_task = _get_task_by_task_id(task_id)
 
-        if start_task is None:
+        if execute_task is None:
             # fall back to queue head: node with no prev_task and non-terminal status
             head_candidates = self._search_tasks(
                 filter=(
@@ -796,16 +796,16 @@ class TaskScheduler(BaseTaskScheduler):
             assert (
                 len(head_candidates) == 1
             ), f"Multiple heads detected: {head_candidates}"
-            start_task = head_candidates[0]
+            execute_task = head_candidates[0]
 
         # not in queue yet? return list with only start task
-        if start_task is not None and start_task["schedule"] is None:
+        if execute_task is not None and execute_task["schedule"] is None:
             # Task exists but has no schedule pointers; therefore the
             # queue only has one item (the start task).
-            return [Task(**start_task)]
+            return [Task(**execute_task)]
 
         # ----------------  walk backwards to head  ---------------- #
-        cur = start_task
+        cur = execute_task
         while True:
             prev_id = self._sched_prev(cur["schedule"])
             if prev_id is None:
@@ -1092,7 +1092,7 @@ class TaskScheduler(BaseTaskScheduler):
         allow_active : bool, default ``False``
             Guard-rail – when *False* the method refuses to set the status to
             ``'active'`` or to touch the *currently* active task.  Internal
-            helpers (e.g. *start_task*) pass *True* when they *really* need to.
+            helpers (e.g. *execute_task*) pass *True* when they *really* need to.
 
         Returns
         -------

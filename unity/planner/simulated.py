@@ -6,13 +6,13 @@ import os
 import json
 
 import unify
-from .base import BasePlanner, BasePlan
+from .base import BasePlanner, ActiveTask
 from typing import Optional
 
 
-class SimulatedPlan(BasePlan):
+class SimulatedActiveTask(ActiveTask):
     """
-    A dummy plan class that simulates task execution and question answering.
+    A dummy active task class that simulates task execution and question answering.
     Public API surface (stop, ask, interject, pause, resume) is determined dynamically
     based on whether a task is running and whether it is paused.
     """
@@ -29,7 +29,7 @@ class SimulatedPlan(BasePlan):
         clarification_down_q: asyncio.Queue[str] | None = None,
     ) -> None:
         """
-        Initialize a simulated plan.
+        Initialize a simulated active task.
 
         Args:
             task:       The task description to simulate.
@@ -177,14 +177,14 @@ class SimulatedPlan(BasePlan):
 
     # Pubic
 
-    @functools.wraps(BasePlan.result, updated=())
+    @functools.wraps(ActiveTask.result, updated=())
     async def result(self) -> str:
         await asyncio.to_thread(self._done_event.wait)
         return self._result_str  # type: ignore
 
     # Dynamic Methods (Public vs Private Depending on State)
 
-    @functools.wraps(BasePlan.stop, updated=())
+    @functools.wraps(ActiveTask.stop, updated=())
     def stop(self) -> str:
         if not self._task:
             raise Exception("No tasks are currently being performed.")
@@ -193,7 +193,7 @@ class SimulatedPlan(BasePlan):
         self._complete(msg)
         return msg
 
-    @functools.wraps(BasePlan.interject, updated=())
+    @functools.wraps(ActiveTask.interject, updated=())
     async def interject(self, instruction: str) -> None:
         if not self._task:
             raise Exception("No tasks are currently being performed.")
@@ -204,7 +204,7 @@ class SimulatedPlan(BasePlan):
         )
         await self._llm.generate(prompt)
 
-    @functools.wraps(BasePlan.pause, updated=())
+    @functools.wraps(ActiveTask.pause, updated=())
     def pause(self) -> str:
         if not self._task:
             raise Exception("No task is running, so nothing to pause.")
@@ -215,7 +215,7 @@ class SimulatedPlan(BasePlan):
         self._count_step()
         return f"Paused task '{self._task}'."
 
-    @functools.wraps(BasePlan.resume, updated=())
+    @functools.wraps(ActiveTask.resume, updated=())
     def resume(self) -> str:
         if not self._task:
             raise Exception("No task is running, so nothing to resume.")
@@ -226,7 +226,7 @@ class SimulatedPlan(BasePlan):
         self._count_step()
         return f"Resumed task '{self._task}'."
 
-    @functools.wraps(BasePlan.ask, updated=())
+    @functools.wraps(ActiveTask.ask, updated=())
     async def ask(self, question: str) -> str:
         if not self._task:
             raise Exception("No tasks are currently being performed.")
@@ -237,12 +237,12 @@ class SimulatedPlan(BasePlan):
         )
         return await self._llm.generate(prompt)
 
-    @functools.wraps(BasePlan.done, updated=())
+    @functools.wraps(ActiveTask.done, updated=())
     def done(self) -> bool:
         return self._done_event.is_set()
 
     @property
-    @functools.wraps(BasePlan.valid_tools, updated=())
+    @functools.wraps(ActiveTask.valid_tools, updated=())
     def valid_tools(self):
         if self._task is None:
             return {}
@@ -259,7 +259,7 @@ class SimulatedPlan(BasePlan):
         return available
 
 
-class SimulatedPlanner(BasePlanner[SimulatedPlan]):
+class SimulatedPlanner(BasePlanner[SimulatedActiveTask]):
     def __init__(
         self,
         *,
@@ -294,15 +294,15 @@ class SimulatedPlanner(BasePlanner[SimulatedPlan]):
             "across multiple plans and calls.",
         )
 
-    def _make_plan(
+    def _execute_task_and_return_handle(
         self,
         task_description: str,
         *,
         parent_chat_context: list[dict] | None = None,
         clarification_up_q: Optional[asyncio.Queue[str]] = None,
         clarification_down_q: Optional[asyncio.Queue[str]] = None,
-    ) -> SimulatedPlan:
-        return SimulatedPlan(
+    ) -> SimulatedActiveTask:
+        return SimulatedActiveTask(
             self._llm,
             task_description,
             self._steps,

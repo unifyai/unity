@@ -20,7 +20,7 @@ import pytest
 from unity.contact_manager.simulated import SimulatedContactManager
 from unity.transcript_manager.simulated import SimulatedTranscriptManager
 from unity.knowledge_manager.simulated import SimulatedKnowledgeManager
-from unity.planner.simulated import SimulatedPlan
+from unity.planner.simulated import SimulatedActiveTask
 from unity.task_scheduler.simulated import SimulatedTaskScheduler
 from unity.task_manager.simulated import SimulatedTaskManager
 from tests.helpers import _handle_project
@@ -35,7 +35,7 @@ async def test_update_phone_number_then_call(monkeypatch):
     """
     • 1st turn: asks for Alice's phone number → needs ContactManager.ask
     • 2nd turn: change this → needs ContactManager.update
-    • 3rd turn: call here → needs start_task
+    • 3rd turn: call here → needs execute_task
     Expected: ContactManager.ask called exactly twice.
     """
 
@@ -90,18 +90,18 @@ async def test_update_phone_number_then_call(monkeypatch):
     monkeypatch.setattr(SimulatedTaskScheduler, "update", spy_ts_update, raising=True)
 
     # start phonecall task via task scheduler
-    counts["ts_start_task"] = 0
-    original_ts_start_task = SimulatedTaskScheduler.start_task
+    counts["ts_execute_task"] = 0
+    original_ts_execute_task = SimulatedTaskScheduler.execute_task
 
-    @functools.wraps(original_ts_start_task)
-    async def spy_ts_start_task(self, text: str, **kw):
-        counts["ts_start_task"] += 1
-        return await original_ts_start_task(self, text, **kw)
+    @functools.wraps(original_ts_execute_task)
+    async def spy_ts_execute_task(self, text: str, **kw):
+        counts["ts_execute_task"] += 1
+        return await original_ts_execute_task(self, text, **kw)
 
     monkeypatch.setattr(
         SimulatedTaskScheduler,
-        "start_task",
-        spy_ts_start_task,
+        "execute_task",
+        spy_ts_execute_task,
         raising=True,
     )
 
@@ -135,8 +135,8 @@ async def test_update_phone_number_then_call(monkeypatch):
         1,
     ), "TaskScheduler.update should be called either no times or once."
     assert (
-        counts["ts_start_task"] == 1
-    ), "TaskScheduler.start_task should be called once."
+        counts["ts_execute_task"] == 1
+    ), "TaskScheduler.execute_task should be called once."
 
 
 # --------------------------------------------------------------------------- #
@@ -322,8 +322,8 @@ async def test_plan_activation_and_interjection(monkeypatch):
     counts = {"start": 0, "plan_interject": 0}
     start_called = asyncio.Event()
 
-    # --- patch start_task -------------------------------------------------- #
-    orig_start = SimulatedTaskScheduler.start_task
+    # --- patch execute_task -------------------------------------------------- #
+    orig_start = SimulatedTaskScheduler.execute_task
 
     @functools.wraps(orig_start)
     async def spy_start(self, task_id: int, **kw):
@@ -331,26 +331,31 @@ async def test_plan_activation_and_interjection(monkeypatch):
         start_called.set()
         return await orig_start(self, task_id, **kw)
 
-    monkeypatch.setattr(SimulatedTaskScheduler, "start_task", spy_start, raising=True)
+    monkeypatch.setattr(SimulatedTaskScheduler, "execute_task", spy_start, raising=True)
 
     # --- patch SimulatedPlan.interject (called via _interject_plan_call_) -- #
-    orig_plan_interject = SimulatedPlan.interject
+    orig_plan_interject = SimulatedActiveTask.interject
 
     @functools.wraps(orig_plan_interject)
     async def spy_plan_interject(self, instruction: str):
         counts["plan_interject"] += 1
         return await orig_plan_interject(self, instruction)
 
-    monkeypatch.setattr(SimulatedPlan, "interject", spy_plan_interject, raising=True)
+    monkeypatch.setattr(
+        SimulatedActiveTask,
+        "interject",
+        spy_plan_interject,
+        raising=True,
+    )
 
     tm = SimulatedTaskManager("Nightly data-sync demo.")
 
-    # 1️⃣ Kick-off the task (this spawns _start_task_call_)
+    # 1️⃣ Kick-off the task (this spawns _execute_task_call_)
     r1 = await tm.request(
         "Run task with task_id == 123 (nightly data sync) immediately.",
     )
 
-    # 2️⃣ Wait until we are *sure* start_task has been invoked
+    # 2️⃣ Wait until we are *sure* execute_task has been invoked
     await asyncio.wait_for(start_called.wait(), timeout=60)
 
     # 3️⃣ Now interject – guaranteed to hit the running plan
