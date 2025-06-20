@@ -578,6 +578,100 @@ async def main_plan():
 
 
 @pytest.mark.asyncio
+async def test_exploratory_mode_with_clarification(
+    planner: HierarchicalPlanner,
+    monkeypatch,
+):
+    """
+    Objective: Verify that the enhanced exploratory mode can run an interactive
+    tool loop, use the clarification queues to get user input, and then use
+    the resulting summary to generate the main plan.
+    """
+    # --- Arrange ---
+    goal = "Find the contact email for ExampleCorp."
+    final_plan_code = """
+@verify
+async def main_plan():
+    '''A plan generated from exploration.'''
+    await act("Navigate to example.com based on user input.")
+    return "Plan complete."
+    """
+    expected_summary = "Based on user input, the target website is example.com."
+
+    queue_holder = {}
+
+    async def mock_exploration_result(*args, **kwargs):
+        question_to_ask = "What is the URL of ExampleCorp's website?"
+        await queue_holder["up_q"].put(question_to_ask)
+        plan.action_log.append(
+            f"Exploration: Asking for clarification: '{question_to_ask}'",
+        )
+        answer = await queue_holder["down_q"].get()
+        assert "example.com" in answer
+        return expected_summary
+
+    # 1. Create the mock handle specifically for the exploration phase
+    mock_exploration_handle = MagicMock(spec=AsyncToolUseLoopHandle)
+    mock_exploration_handle.result = AsyncMock(side_effect=mock_exploration_result)
+
+    # 2. Store the original function so we can call it for the main loop
+    original_start_loop = hierarchical_planner_module.start_async_tool_use_loop
+
+    def smart_mock_start_loop(*args, **kwargs):
+        """
+        This mock distinguishes which loop is being started.
+        - If it's the exploration loop, it returns our mock handle.
+        - Otherwise, it calls the original, real function.
+        """
+        # The exploration loop is identifiable by the 'request_clarification' tool
+        tools = kwargs.get("tools", {})
+        if "request_clarification" in tools:
+            return mock_exploration_handle
+        else:
+            return original_start_loop(*args, **kwargs)
+
+    # 3. Apply the new, smarter mock function
+    monkeypatch.setattr(
+        hierarchical_planner_module,
+        "start_async_tool_use_loop",
+        smart_mock_start_loop,
+    )
+
+    # 4. Mock the plan generation and final verification as before.
+    mock_generate_plan = AsyncMock(return_value=final_plan_code)
+    monkeypatch.setattr(planner, "_generate_initial_plan", mock_generate_plan)
+    monkeypatch.setattr(
+        planner,
+        "_check_state_against_goal",
+        AsyncMock(return_value=VerificationAssessment(status="ok", reason="OK")),
+    )
+
+    # --- Act ---
+    plan = planner.execute(goal, exploratory_mode=True)
+    queue_holder["up_q"] = plan.clarification_up_q
+    queue_holder["down_q"] = plan.clarification_down_q
+
+    async def clarification_handler():
+        question = await asyncio.wait_for(plan.clarification_up_q.get(), timeout=5)
+        assert "What is the URL" in question
+        await plan.clarification_down_q.put("The URL is example.com")
+
+    await asyncio.gather(plan.result(), clarification_handler())
+
+    # --- Assert ---
+    assert plan._state == _HierarchicalPlanState.COMPLETED
+    mock_generate_plan.assert_called_once()
+    call_args_tuple = mock_generate_plan.call_args.args
+    assert len(call_args_tuple) == 2
+    actual_summary = call_args_tuple[1]
+    assert actual_summary == expected_summary
+    action_log_str = " ".join(plan.action_log)
+    assert "Starting interactive exploratory phase" in action_log_str
+    assert "Exploration: Asking for clarification" in action_log_str
+    assert f"Exploration Summary: {expected_summary}" in action_log_str
+
+
+@pytest.mark.asyncio
 async def test_user_initiated_stop(planner: HierarchicalPlanner, mock_controller):
     """
     Objective: Test that a user can cleanly stop a running plan.
