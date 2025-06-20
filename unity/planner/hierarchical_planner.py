@@ -674,7 +674,7 @@ class HierarchicalPlanner(BasePlanner):
         self,
         task_description: str,
         *,
-        exploratory_mode: bool = False,
+        exploratory_mode: bool = True,
         **kwargs,
     ) -> HierarchicalPlan:
         return HierarchicalPlan(
