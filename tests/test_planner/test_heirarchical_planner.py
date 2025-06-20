@@ -489,7 +489,7 @@ async def test_fatal_error_in_verification(planner: HierarchicalPlanner, monkeyp
     )
 
     # --- Act ---
-    plan = planner.plan("Test fatal error handling.")
+    plan = planner.execute("Test fatal error handling.")
     await plan.result()
 
     # --- Assert ---
@@ -535,7 +535,7 @@ async def main_plan():
     )
 
     # --- Act ---
-    plan = planner.plan("A task that will fail and escalate.")
+    plan = planner.execute("A task that will fail and escalate.")
     # The plan will escalate and pause, so we get the message. This waits for the *entire*
     # escalation process to finish.
     await asyncio.wait_for(plan.clarification_up_q.get(), timeout=20)
@@ -572,7 +572,7 @@ async def test_user_initiated_stop(planner: HierarchicalPlanner, mock_controller
     )
 
     # --- Act ---
-    plan = planner.plan("A long running plan to stop.")
+    plan = planner.execute("A long running plan to stop.")
     await asyncio.sleep(0.1)  # Ensure the plan has started and is waiting
     assert not plan.done()
 
@@ -603,7 +603,7 @@ async def test_user_initiated_pause_and_resume(
     )
 
     # --- Act ---
-    plan = planner.plan("A long running plan to pause.")
+    plan = planner.execute("A long running plan to pause.")
     await asyncio.sleep(0.1)
     assert plan._state == _HierarchicalPlanState.RUNNING
 
