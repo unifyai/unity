@@ -298,7 +298,7 @@ async def test_interject_nested_handle(monkeypatch):
     await asyncio.sleep(5)
     await top_handle.interject("switch to dogs")
 
-    final_reply = await top_handle.result()
+    await top_handle.result()
 
     # 5. Assertions
     msgs = client.messages
@@ -306,12 +306,12 @@ async def test_interject_nested_handle(monkeypatch):
     # a) The assistant should have invoked `outer_tool` in its first tool call
     assert msgs[2]["tool_calls"][0]["function"]["name"] == "outer_tool"
 
-    # b) The tool should then return the raw string "done"
+    # b) The tool should then return a message indicating the loop started
     assert msgs[3]["role"] == "tool"
     assert msgs[3]["name"] == "outer_tool"
-    assert msgs[3]["content"] == '"done"'
+    assert msgs[3]["content"].startswith("Nested async tool loop started")
 
-    # c) Find the user message "switch to dogs" (could be at any index due to extra assistant messages)
+    # c) Find the user message "switch to dogs"
     user_interject_msg = next(
         (m for m in msgs if m["role"] == "user" and "switch to dogs" in m["content"]),
         None,
@@ -335,9 +335,9 @@ async def test_interject_nested_handle(monkeypatch):
     )
     assert (
         interject_call_msg is not None
-    ), "Assistant call to _interject helper not found"
+    ), "Assistant call to interject helper not found"
 
-    # Verify the interject call has correct arguments
+    # Confirm correct arguments were passed in interject helper call
     interj_call = next(
         call
         for call in interject_call_msg["tool_calls"]
@@ -360,7 +360,35 @@ async def test_interject_nested_handle(monkeypatch):
         interject_response_msg is not None
     ), "Tool response from interject helper not found"
 
-    # f) Finally, the assistant's last message must be "outer done"
+    # f) Assistant should later perform a status check on the outer_tool loop
+    status_check_msg = next(
+        (
+            m
+            for m in msgs
+            if m.get("tool_calls")
+            and any(
+                call["function"]["name"].startswith("check_status_call_")
+                for call in m["tool_calls"]
+            )
+        ),
+        None,
+    )
+    assert status_check_msg is not None, "Assistant did not perform a status check"
+
+    # g) Tool response to status check should be '"done"'
+    status_response_msg = next(
+        (
+            m
+            for m in msgs
+            if m["role"] == "tool"
+            and m["name"].startswith("check_status_call_")
+            and m["content"] == '"done"'
+        ),
+        None,
+    )
+    assert status_response_msg is not None, "Tool response with '\"done\"' not found"
+
+    # h) Assistant's final message should be "outer done"
     assert msgs[-1]["role"] == "assistant"
     assert msgs[-1]["content"].strip().lower() == "outer done"
 
