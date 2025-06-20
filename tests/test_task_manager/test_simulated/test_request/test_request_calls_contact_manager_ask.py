@@ -2,7 +2,7 @@ import pytest
 import functools
 import asyncio
 
-from unity.task_manager.simulated import SimulatedTaskManager
+from unity.conductor.simulated import SimulatedConductor
 from unity.contact_manager.simulated import SimulatedContactManager
 from tests.helpers import _handle_project
 
@@ -23,7 +23,7 @@ async def test_request_calls_contact_manager_ask(monkeypatch):
 
     monkeypatch.setattr(SimulatedContactManager, "ask", spy, raising=True)
 
-    tm = SimulatedTaskManager("CRM demo – add reminder tasks.")
+    tm = SimulatedConductor("CRM demo – add reminder tasks.")
     handle = await tm.request(
         "Create a reminder task to call Alice Reynolds next Wednesday; "
         "look up her direct mobile number and include it in the task notes.",

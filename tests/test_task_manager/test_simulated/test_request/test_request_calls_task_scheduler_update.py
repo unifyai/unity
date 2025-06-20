@@ -2,7 +2,7 @@ import pytest
 import functools
 import asyncio
 
-from unity.task_manager.simulated import SimulatedTaskManager
+from unity.conductor.simulated import SimulatedConductor
 from unity.task_scheduler.simulated import SimulatedTaskScheduler
 from tests.helpers import _handle_project
 
@@ -21,7 +21,7 @@ async def test_request_calls_task_scheduler_update(monkeypatch):
 
     monkeypatch.setattr(SimulatedTaskScheduler, "update", spy, raising=True)
 
-    tm = SimulatedTaskManager("Demo – marketing backlog.")
+    tm = SimulatedConductor("Demo – marketing backlog.")
     handle = await tm.request(
         "Add a task: 'Design new landing page', due next Tuesday.",
     )

@@ -2,7 +2,7 @@ import pytest
 import functools
 import asyncio
 
-from unity.task_manager.simulated import SimulatedTaskManager
+from unity.conductor.simulated import SimulatedConductor
 from unity.transcript_manager.simulated import SimulatedTranscriptManager
 from tests.helpers import _handle_project
 
@@ -23,7 +23,7 @@ async def test_request_calls_transcript_manager_ask(monkeypatch):
 
     monkeypatch.setattr(SimulatedTranscriptManager, "ask", spy, raising=True)
 
-    tm = SimulatedTaskManager("Support chats demo.")
+    tm = SimulatedConductor("Support chats demo.")
     handle = await tm.request(
         "Archive yesterday's Slack conversation about bug #4321. "
         "Before archiving, tell me the final message in that thread so I can paste it in the ticket.",

@@ -4,10 +4,10 @@
 ## Queues
 
 ### Transcript Queue
-The latest user-agent transcript segment (since the last user message). `ComsManager` publishes after **every new user message**, and `TaskManager` subscribes.
+The latest user-agent transcript segment (since the last user message). `ComsManager` publishes after **every new user message**, and `Conductor` subscribes.
 
 ### Task Queue
-User task trigger and task update requests, in text form. `TaskManager` publishes, and `Planner` subscribes.
+User task trigger and task update requests, in text form. `Conductor` publishes, and `Planner` subscribes.
 
 ### Action Queue
 Low-level browser actions in text form. `Planner` publishes, and `Controller` subscribes.
@@ -22,7 +22,7 @@ The state of the browser (y axis scroll in pixels , "in text-box" bool etc). `Br
 Actions which have been completed, referenced by their title (plain text). `Controller` publishes, `Planner` subscribes.
 
 ### Task Completion Queue
-Tasks which have been completed, referenced by their title (plan text). `Planner` publishes, `TaskManager` and `ComsManager` both subscribe.
+Tasks which have been completed, referenced by their title (plan text). `Planner` publishes, `Conductor` and `ComsManager` both subscribe.
 
 
 ## ComsManager
@@ -88,7 +88,7 @@ TBD - A pretty expressive set of tools (built of top of our logging backend), ex
 The `ComsManager` is able to ask general questions, which the `KnowledgeManager` must then try to answer as well as possible using the available tools.
 
 
-## TaskManager
+## Conductor
 
 Listens to the Transcript Queue, and for every new segment that arrives, the manager checks if the new segment is requesting a new task to be triggered or an existing task to be modified. This is combined with the prior context of the conversation as well. The manager also has access to the `TranscriptManager`, which it can use if the fixed context window provided isn't enough for full clarity (ie "Could you start working on the task I mentioned last week?"). For every segment of dialogue which **is** deemed to represent a task-related request, the manager parses the dialogue and extracts a clean and clearly written request, sends the update to the TaskScheduler to update the flat set of tasks (name + description) stored on the user account (if needed), potentially including pending tasks and scheduled tasks. Then, if (a) a *new* task is requested to start *immediately* or (b) a *change* is requested for a task *currently* underway, then also publuish the task request on the Task Queue (for the active `Planner` to receive, and either trigger a new task or update a live one).
 
@@ -96,7 +96,7 @@ Listens to the Transcript Queue, and for every new segment that arrives, the man
 
 #### Probe Transcript
 
-The `TaskManager` can send text-based queries to the `TranscriptManager.ask`, asking anything related to the prior communications, in rare cases where the immediate context isn't enough to determine the task, such as "Could you start working on the task I mentioned last week?".
+The `Conductor` can send text-based queries to the `TranscriptManager.ask`, asking anything related to the prior communications, in rare cases where the immediate context isn't enough to determine the task, such as "Could you start working on the task I mentioned last week?".
 
 #### Probe Task List
 
@@ -151,9 +151,9 @@ Combine multiple tasks into a single task
 
 ### Called By
 
-#### TaskManager
+#### Conductor
 
-The `TaskManager` is able to ask general questions and submit general requests, both in plain text form, which the `TaskScheduler` must then answer and/or perform for the task manager.
+The `Conductor` is able to ask general questions and submit general requests, both in plain text form, which the `TaskScheduler` must then answer and/or perform for the task manager.
 
 
 ## Planner
