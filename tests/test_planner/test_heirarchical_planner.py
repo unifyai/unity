@@ -354,10 +354,14 @@ async def course_correction_main():
 
     # Mock the LLM calls
     monkeypatch.setattr(
-        planner, "_generate_initial_plan", AsyncMock(return_value=initial_code)
+        planner,
+        "_generate_initial_plan",
+        AsyncMock(return_value=initial_code),
     )
     monkeypatch.setattr(
-        planner, "_perform_plan_surgery", AsyncMock(return_value=modified_code)
+        planner,
+        "_perform_plan_surgery",
+        AsyncMock(return_value=modified_code),
     )
     monkeypatch.setattr(
         planner,
@@ -469,15 +473,18 @@ async def test_fatal_error_in_verification(planner: HierarchicalPlanner, monkeyp
     # --- Arrange ---
     plan_code = '@verify\nasync def main_plan(): await act("Do something")'
     monkeypatch.setattr(
-        planner, "_generate_initial_plan", AsyncMock(return_value=plan_code)
+        planner,
+        "_generate_initial_plan",
+        AsyncMock(return_value=plan_code),
     )
     monkeypatch.setattr(
         planner,
         "_check_state_against_goal",
         AsyncMock(
             return_value=VerificationAssessment(
-                status="fatal_error", reason="Unrecoverable error."
-            )
+                status="fatal_error",
+                reason="Unrecoverable error.",
+            ),
         ),
     )
 
@@ -489,3 +496,134 @@ async def test_fatal_error_in_verification(planner: HierarchicalPlanner, monkeyp
     assert plan._state == _HierarchicalPlanState.ERROR
     assert "fatal_error" in " ".join(plan.action_log)
     assert "Unrecoverable error" in " ".join(plan.action_log)
+
+
+@pytest.mark.asyncio
+async def test_retry_exhaustion_leads_to_escalation(
+    planner: HierarchicalPlanner,
+    monkeypatch,
+):
+    """
+    Objective: Verify that a function failing repeatedly with a generic exception
+    exhausts its local retries and escalates to replan the parent.
+    """
+    # --- Arrange ---
+    failing_code = """
+@verify
+async def failing_task():
+    raise ValueError("This will always fail")
+
+@verify
+async def main_plan():
+    await failing_task()
+"""
+    monkeypatch.setattr(
+        planner,
+        "_generate_initial_plan",
+        AsyncMock(return_value=failing_code),
+    )
+    monkeypatch.setattr(
+        planner,
+        "_check_state_against_goal",
+        AsyncMock(return_value=VerificationAssessment(status="ok", reason="OK")),
+    )
+    mock_handle_dynamic_implementation = AsyncMock()
+    monkeypatch.setattr(
+        HierarchicalPlan,
+        "_handle_dynamic_implementation",
+        mock_handle_dynamic_implementation,
+    )
+
+    # --- Act ---
+    plan = planner.plan("A task that will fail and escalate.")
+    # The plan will escalate and pause, so we get the message. This waits for the *entire*
+    # escalation process to finish.
+    await asyncio.wait_for(plan.clarification_up_q.get(), timeout=20)
+
+    # --- Assert ---
+    log_str = "".join(plan.action_log)
+
+    # It should have tried the failing task (MAX_ESCALATIONS + MAX_LOCAL_RETRIES) times.
+    expected_failure_count = plan.MAX_ESCALATIONS + plan.MAX_LOCAL_RETRIES
+    assert log_str.count("Function 'failing_task' failed") == expected_failure_count
+
+    # The parent function ('main_plan') should have been replanned MAX_ESCALATIONS times.
+    assert mock_handle_dynamic_implementation.call_count == plan.MAX_ESCALATIONS
+
+    # Check the last replan call to ensure it was for the right function and reason.
+    last_call = mock_handle_dynamic_implementation.call_args_list[-1]
+    assert last_call.args[0] == "main_plan"
+    assert last_call.kwargs["is_strategic_replan"] is True
+
+
+@pytest.mark.asyncio
+async def test_user_initiated_stop(planner: HierarchicalPlanner, mock_controller):
+    """
+    Objective: Test that a user can cleanly stop a running plan.
+    """
+    # --- Arrange ---
+    pause_event = asyncio.Event()
+    mock_controller.act.side_effect = pause_event.wait  # This will wait forever
+
+    plan_code = '@verify\nasync def main_plan(): await act("long running action")'
+    planner._generate_initial_plan = AsyncMock(return_value=plan_code)
+    planner._check_state_against_goal = AsyncMock(
+        return_value=VerificationAssessment(status="ok", reason="OK"),
+    )
+
+    # --- Act ---
+    plan = planner.plan("A long running plan to stop.")
+    await asyncio.sleep(0.1)  # Ensure the plan has started and is waiting
+    assert not plan.done()
+
+    stop_result = await plan.stop()
+
+    # --- Assert ---
+    assert "Plan was stopped" in stop_result
+    assert plan.done()
+    assert plan._state == _HierarchicalPlanState.STOPPED
+
+
+@pytest.mark.asyncio
+async def test_user_initiated_pause_and_resume(
+    planner: HierarchicalPlanner,
+    mock_controller,
+):
+    """
+    Objective: Test that a user can pause and then resume a running plan.
+    """
+    # --- Arrange ---
+    pause_event = asyncio.Event()
+    mock_controller.act.side_effect = pause_event.wait
+
+    plan_code = '@verify\nasync def main_plan():\n    await act("long running action")\n    return "Done"'
+    planner._generate_initial_plan = AsyncMock(return_value=plan_code)
+    planner._check_state_against_goal = AsyncMock(
+        return_value=VerificationAssessment(status="ok", reason="OK"),
+    )
+
+    # --- Act ---
+    plan = planner.plan("A long running plan to pause.")
+    await asyncio.sleep(0.1)
+    assert plan._state == _HierarchicalPlanState.RUNNING
+
+    # Pause the plan
+    pause_result = await plan.pause()
+    assert "Plan paused" in pause_result
+    assert plan._state == _HierarchicalPlanState.PAUSED
+
+    # Ensure it's actually paused by trying to await the result with a timeout
+    with pytest.raises(asyncio.TimeoutError):
+        await asyncio.wait_for(plan.result(), timeout=0.2)
+
+    # Resume the plan
+    resume_result = await plan.resume()
+    assert "Plan resumed" in resume_result
+    assert plan._state == _HierarchicalPlanState.RUNNING
+
+    # Unblock the paused action and get the final result
+    pause_event.set()
+    await plan.result()
+
+    # --- Assert ---
+    assert plan._state == _HierarchicalPlanState.COMPLETED

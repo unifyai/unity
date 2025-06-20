@@ -83,7 +83,8 @@ class PlanSanitizer(ast.NodeTransformer):
         raise SyntaxError("Import statements are not allowed in plans.")
 
     def visit_AsyncFunctionDef(
-        self, node: ast.AsyncFunctionDef
+        self,
+        node: ast.AsyncFunctionDef,
     ) -> ast.AsyncFunctionDef:
         has_verify = any(
             isinstance(d, ast.Name) and d.id == "verify" for d in node.decorator_list
@@ -200,7 +201,7 @@ class HierarchicalPlan(BasePlan):
                 **Current Page State:** "{initial_state}"
                 **Task:** Formulate a single, concise `observe` query to gather the most critical information from this page to achieve the main goal. Your query should be a simple string.
                 **Example Query:** "What are the main navigation links in the header?"
-                """
+                """,
             )
             exploration_query = await llm_call(self.planner.llm_client, prompt)
             self.action_log.append(f"Exploration query: '{exploration_query}'")
@@ -212,7 +213,7 @@ class HierarchicalPlan(BasePlan):
         except Exception as e:
             logger.error(f"Exploration phase failed: {e}", exc_info=True)
             self.action_log.append(
-                f"WARNING: Exploration failed: {e}. Proceeding without extra context."
+                f"WARNING: Exploration failed: {e}. Proceeding without extra context.",
             )
             self.exploration_summary = None
         finally:
@@ -870,11 +871,13 @@ class HierarchicalPlanner(BasePlanner[HierarchicalPlan]):
             )
         else:
             raise FatalVerificationError(
-                f"Fatal error in '{fn.__name__}': {assessment.reason}"
+                f"Fatal error in '{fn.__name__}': {assessment.reason}",
             )
 
     async def _generate_initial_plan(
-        self, goal: str, exploration_summary: Optional[str] = None
+        self,
+        goal: str,
+        exploration_summary: Optional[str] = None,
     ) -> str:
         max_retries = 3
         last_error = ""
@@ -909,7 +912,11 @@ class HierarchicalPlanner(BasePlanner[HierarchicalPlan]):
         raise RuntimeError("Failed to generate a valid plan after multiple retries.")
 
     def _build_initial_plan_prompt(
-        self, goal, existing_functions, retry_msg, exploration_summary
+        self,
+        goal,
+        existing_functions,
+        retry_msg,
+        exploration_summary,
     ):
         primitives_doc = (
             "- `await act(instruction: str)`\n- `await observe(query: str)`"
@@ -1054,7 +1061,7 @@ class HierarchicalPlanner(BasePlanner[HierarchicalPlan]):
             return None
 
         return self._sanitize_code(
-            script.strip().replace("```python", "").replace("```", "").strip()
+            script.strip().replace("```python", "").replace("```", "").strip(),
         )
 
     async def close(self):
