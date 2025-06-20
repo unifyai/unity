@@ -1,6 +1,18 @@
+"""
+run_in_new_terminal.py  –  launches a script in its *own* window and
+returns a handle so you can later stop it.
+
+Usage
+-----
+proc = run_in_new_terminal("my_script.py", "arg1", "arg2")
+# ... do stuff ...
+proc.terminate()       # send polite SIGTERM / CTRL_BREAK_EVENT
+# or
+proc.kill()            # force-kill
+"""
+
 from __future__ import annotations
 import os
-import requests
 import signal
 import sys
 import shutil
@@ -10,36 +22,6 @@ from pathlib import Path
 import time
 from typing import Union
 import psutil
-from unity.constants import PROJECT_ROOT, VENV_DIR
-
-
-def _find_project_frame(start):
-    """Return first frame in our project tree but *not* in the venv dir."""
-    frame = start
-    while frame is not None:
-        p = Path(frame.f_code.co_filename).resolve()
-
-        # True if p is inside PROJECT_ROOT (handles Py 3.8–3.10 gracefully)
-        in_project = (
-            p.is_relative_to(PROJECT_ROOT)
-            if hasattr(p, "is_relative_to")
-            else str(p).startswith(str(PROJECT_ROOT))
-        )
-
-        # Treat it as external if it lives in the venv folder
-        in_venv = VENV_DIR in p.parents
-
-        if in_project and not in_venv:
-            return frame  # ← first “real” project frame
-        frame = frame.f_back
-    return None
-
-
-def _handle_exceptions(response):
-    try:
-        response.raise_for_status()
-    except requests.HTTPError as e:
-        raise RuntimeError(f"HTTP {response.status_code}: {response.text}") from e
 
 
 def _find_unix_terminal() -> str | None:
@@ -190,3 +172,26 @@ def terminate_process(proc: subprocess.Popen) -> None:
             proc.wait()
     except Exception as e:
         print(f"Error during process termination: {e}")
+
+
+# DEMO ----------------------------------------------------------------------
+if __name__ == "__main__":
+    if len(sys.argv) < 2:
+        print("Usage: python run_in_new_terminal.py <your_script.py> [args …]")
+        sys.exit(1)
+
+    child = run_script(sys.argv[1], *sys.argv[2:])
+    print(f"Started {child.pid=}.  Press Enter to stop it.")
+    input()
+    # Try a graceful shutdown first
+    if sys.platform.startswith("win"):
+        # Windows: send CTRL+BREAK to the whole group
+        child.send_signal(signal.CTRL_BREAK_EVENT)
+    else:
+        child.terminate()
+
+    try:
+        child.wait(timeout=5)
+    except subprocess.TimeoutExpired:
+        print("Graceful exit failed; killing...")
+        child.kill()
