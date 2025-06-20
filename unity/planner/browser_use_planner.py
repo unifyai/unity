@@ -520,7 +520,7 @@ class BrowserUsePlan(ActiveTask):
         return tools
 
 
-class BrowserUsePlanner(BasePlanner[BrowserUsePlan]):
+class BrowserUsePlanner(BasePlanner):
     def __init__(
         self,
         headless: bool = True,
