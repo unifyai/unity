@@ -103,7 +103,7 @@ def _monitor_process() -> None:
             break
 
 
-def _run_async_start() -> bool:
+def _run_async_start(manager_name: str = "contact") -> bool:
     """Internal async function to start the service"""
     async def _async_start():
         global _process, _start_time, _shutdown_reason
@@ -120,7 +120,7 @@ def _run_async_start() -> bool:
             print(f"Starting Unity service (main.py) for assistant {assistant_id}")
 
             _process = subprocess.Popen(
-                [sys.executable, "unity/service/main.py"],
+                [sys.executable, "unity/service/main.py", manager_name],
                 start_new_session=True,
             )
 
@@ -162,14 +162,14 @@ def _run_async_start() -> bool:
             loop.close()
 
 
-def start() -> bool:
+def start(manager_name: str = "contact") -> bool:
     """
     Start the Unity service as a subprocess.
     
     Returns:
         bool: True if service started successfully, False otherwise
     """
-    return _run_async_start()
+    return _run_async_start(manager_name)
 
 
 def _run_async_stop(reason: str) -> bool:

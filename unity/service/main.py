@@ -4,6 +4,7 @@
 # urgent event is sent, and cancel any running llm calls
 import asyncio
 from collections import defaultdict
+import sys
 from dotenv import load_dotenv
 import json
 import logging
@@ -11,8 +12,11 @@ import os
 import signal
 import unify
 from unity.contact_manager.contact_manager import ContactManager
+from unity.knowledge_manager.knowledge_manager import KnowledgeManager
 from unity.service.comms_agent import CommsAgent
 from unity.service.comms_manager import CommsManager
+from unity.task_manager.task_manager import TaskManager
+from unity.transcript_manager.transcript_manager import TranscriptManager
 
 load_dotenv()
 unify.activate("ContactManagerIntegration")
@@ -20,6 +24,12 @@ LG = logging.getLogger("contact_manager_integration")
 
 # globals
 user_agent = None
+manager_dict = {
+    "contact": ContactManager,
+    "knowledge": KnowledgeManager,
+    "task": TaskManager,
+    "transcript": TranscriptManager,
+}
 
 
 class EventManager:
@@ -184,7 +194,7 @@ def loop_exception_handler(loop, context):
     print("Error:", context.get("message"), context.get("exception"))
 
 
-async def main():
+async def main(manager_name: str):
     global user_agent
 
     loop = asyncio.get_running_loop()
@@ -202,8 +212,8 @@ async def main():
         os.getenv("USER_PHONE_NUMBER", ""),
         past_events=[],
         main_user_agent=True,
-        manager=ContactManager(),
-        manager_name="contact",
+        manager=manager_dict[manager_name](),
+        manager_name=manager_name,
     )
     user_agent.set_event_manager(event_manager)
     user_agent.subscribe(
@@ -221,4 +231,5 @@ async def main():
 
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    manager_name = sys.argv[1]
+    asyncio.run(main(manager_name))

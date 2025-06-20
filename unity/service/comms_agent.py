@@ -496,6 +496,8 @@ class CommsAgent:
                 contact_number.replace(" ", "").strip(),
                 contact_name=contact_name,
                 agent_id=self.curr_id,
+                manager_name=self.manager_name,
+                manager=self.manager,
             )
             print("created comms agent")
             self.curr_id += 1
