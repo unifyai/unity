@@ -1648,7 +1648,7 @@ async def _async_tool_use_loop_inner(
                             (
                                 t
                                 for t, inf in task_info.items()
-                                if inf["call_id"] == call_id
+                                if call_id in inf["call_id"]
                             ),
                             None,
                         )
@@ -1836,7 +1836,7 @@ async def _async_tool_use_loop_inner(
                             (
                                 t
                                 for t, inf in task_info.items()
-                                if inf["call_id"] == call_id
+                                if call_id in inf["call_id"]
                             ),
                             None,
                         )
@@ -1847,7 +1847,7 @@ async def _async_tool_use_loop_inner(
                             )  # down-queue
                             # ✔️ the tool is un-blocked – start watching it again
                             for _t, _inf in task_info.items():
-                                if _inf["call_id"] == call_id:
+                                if _call_id in inf["call_id"]:
                                     _inf["waiting_for_clarification"] = False
                                     break
                         tool_reply_msg = {
@@ -1879,7 +1879,7 @@ async def _async_tool_use_loop_inner(
                             (
                                 t
                                 for t, inf in task_info.items()
-                                if inf["call_id"] == call_id
+                                if call_id in inf["call_id"]
                             ),
                             None,
                         )
