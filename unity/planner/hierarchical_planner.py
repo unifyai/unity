@@ -50,6 +50,7 @@ class _HierarchicalPlanState(enum.Enum):
     """Manages the detailed lifecycle state of a hierarchical plan."""
 
     IDLE = enum.auto()
+    EXPLORING = enum.auto()
     RUNNING = enum.auto()
     PAUSED = enum.auto()
     PAUSED_FOR_MODIFICATION = enum.auto()
@@ -101,9 +102,12 @@ class HierarchicalPlan(BasePlan):
         clarification_up_q: Optional[asyncio.Queue[str]] = None,
         clarification_down_q: Optional[asyncio.Queue[str]] = None,
         parent_chat_context: Optional[str] = None,
+        exploratory_mode: bool = False,
     ):
         self.planner = planner
         self.goal = goal
+        self.exploratory_mode = exploratory_mode
+        self.exploration_summary: Optional[str] = None
         self.plan_source_code: Optional[str] = None
         self.execution_namespace: Dict[str, Any] = {}
         self.call_stack: List[str] = []
@@ -119,14 +123,17 @@ class HierarchicalPlan(BasePlan):
         self.clarification_down_q = clarification_down_q or asyncio.Queue()
 
     async def _initialize_and_run(self):
-        self._state = _HierarchicalPlanState.RUNNING
-
         self.action_log.append("Initializing plan...")
         try:
+            if self.exploratory_mode:
+                await self._perform_exploration()
+
+            self._state = _HierarchicalPlanState.RUNNING
             if self.plan_source_code is None:
                 self.action_log.append("Generating new plan from goal...")
                 self.plan_source_code = await self.planner._generate_initial_plan(
-                    self.goal
+                    self.goal,
+                    self.exploration_summary,
                 )
                 self.action_log.append("Initial plan generated successfully.")
             else:
@@ -141,6 +148,38 @@ class HierarchicalPlan(BasePlan):
             self._is_complete = True
             if self.main_loop_handle and not self.main_loop_handle.done():
                 self.main_loop_handle.stop()
+
+    async def _perform_exploration(self):
+        self._state = _HierarchicalPlanState.EXPLORING
+        self.action_log.append("Starting exploratory phase...")
+        try:
+            initial_state = await self.planner.controller.observe(
+                "Describe the current page and its URL for initial context.",
+            )
+            prompt = textwrap.dedent(
+                f"""
+                You are an exploration agent. Your goal is to gather information to help create a better plan.
+                **Main Goal:** "{self.goal}"
+                **Current Page State:** "{initial_state}"
+                **Task:** Formulate a single, concise `observe` query to gather the most critical information from this page to achieve the main goal. Your query should be a simple string.
+                **Example Query:** "What are the main navigation links in the header?"
+                """
+            )
+            exploration_query = await llm_call(self.planner.llm_client, prompt)
+            self.action_log.append(f"Exploration query: '{exploration_query}'")
+            observation_result = await self.planner.controller.observe(
+                exploration_query,
+            )
+            self.exploration_summary = f"Initial observation of the page for the goal '{self.goal}' revealed: {observation_result}"
+            self.action_log.append("Exploratory phase completed.")
+        except Exception as e:
+            logger.error(f"Exploration phase failed: {e}", exc_info=True)
+            self.action_log.append(
+                f"WARNING: Exploration failed: {e}. Proceeding without extra context."
+            )
+            self.exploration_summary = None
+        finally:
+            self._state = _HierarchicalPlanState.RUNNING
 
     def _create_main_loop_iterator(self):
         main_fn_name = self._get_main_function_name()
@@ -209,14 +248,12 @@ class HierarchicalPlan(BasePlan):
                 if not parent_to_replan:
                     raise RuntimeError("Could not determine main_plan to replan.")
 
-                # ALWAYS perform the strategic replan on each escalation cycle.
                 await self._handle_dynamic_implementation(
                     parent_to_replan,
                     is_strategic_replan=True,
                     replan_reason=str(e),
                 )
 
-                # NOW, check if the escalation limit has been reached AFTER replanning.
                 if self.escalation_count >= self.MAX_ESCALATIONS:
                     self._state = _HierarchicalPlanState.PAUSED_FOR_ESCALATION
                     err_msg = f"ESCALATION LIMIT: Max escalations ({self.MAX_ESCALATIONS}) reached. Pausing for intervention. Final reason: {e}"
@@ -228,7 +265,6 @@ class HierarchicalPlan(BasePlan):
                         "force_stop": True,
                     }
 
-                # If the limit is not reached, create a new iterator and continue the loop.
                 plan_iterator = self._create_main_loop_iterator()
 
                 return {
@@ -361,7 +397,9 @@ class HierarchicalPlan(BasePlan):
 
             self.escalation_count = 0
             self._is_complete = False
-            self._state = _HierarchicalPlanState.RUNNING
+            self.exploratory_mode = False
+            self.exploration_summary = None
+
             self._execution_task = asyncio.create_task(self._initialize_and_run())
 
             return "Plan modified and resumed successfully."
@@ -403,7 +441,6 @@ class HierarchicalPlan(BasePlan):
 
             await asyncio.wait_for(correction_fn(), timeout=60.0)
 
-            # Verification step
             assessment = await self.planner._check_state_against_goal(
                 function_name="course_correction",
                 function_docstring=f"Align state for new plan: {new_plan_code[:200]}...",
@@ -484,8 +521,11 @@ class HierarchicalPlan(BasePlan):
         return f"Cannot resume from state {self._state.name}."
 
     async def ask(self, question: str) -> str:
-        if self._state == _HierarchicalPlanState.IDLE:
-            return "Plan has not started."
+        if self._state in (
+            _HierarchicalPlanState.IDLE,
+            _HierarchicalPlanState.EXPLORING,
+        ):
+            return "Plan has not started its main execution loop."
         try:
             browser_context = await self.planner.controller.observe(
                 "Summarize the current page.",
@@ -518,7 +558,10 @@ class HierarchicalPlan(BasePlan):
         if name == "resume":
             return self._state == _HierarchicalPlanState.PAUSED
         if name == "ask":
-            return self._state != _HierarchicalPlanState.IDLE
+            return self._state not in (
+                _HierarchicalPlanState.IDLE,
+                _HierarchicalPlanState.EXPLORING,
+            )
         if name == "interject":
             return self._state == _HierarchicalPlanState.RUNNING
         if name == "modify_plan":
@@ -565,12 +608,23 @@ class HierarchicalPlanner(BasePlanner[HierarchicalPlan]):
             os.environ.get("UNIFY_MODEL", "gpt-4o-mini@openai"),
         )
 
-    def _make_plan(self, task_description: str, **kwargs) -> HierarchicalPlan:
-        return HierarchicalPlan(planner=self, goal=task_description, **kwargs)
+    def _make_plan(
+        self,
+        task_description: str,
+        *,
+        exploratory_mode: bool = False,
+        **kwargs,
+    ) -> HierarchicalPlan:
+        return HierarchicalPlan(
+            planner=self,
+            goal=task_description,
+            exploratory_mode=exploratory_mode,
+            **kwargs,
+        )
 
     def _create_sandbox_globals(self) -> Dict[str, Any]:
         safe_builtins = {
-            k: __builtins__[k]
+            k: __builtins__.get(k)
             for k in [
                 "print",
                 "len",
@@ -597,6 +651,7 @@ class HierarchicalPlanner(BasePlanner[HierarchicalPlan]):
                 "enumerate",
                 "zip",
             ]
+            if __builtins__.get(k) is not None
         }
         return {"__builtins__": safe_builtins, "asyncio": asyncio}
 
@@ -677,8 +732,10 @@ class HierarchicalPlanner(BasePlanner[HierarchicalPlan]):
                         f"Function '{fn.__name__}' failed after multiple retries.",
                     )
                 finally:
-                    plan.call_stack.pop()
-                    plan.interaction_stack.pop()
+                    if plan.call_stack:
+                        plan.call_stack.pop()
+                    if plan.interaction_stack:
+                        plan.interaction_stack.pop()
 
             return wrapper
 
@@ -746,7 +803,9 @@ class HierarchicalPlanner(BasePlanner[HierarchicalPlan]):
         else:
             raise RuntimeError(f"Fatal error in '{fn.__name__}': {assessment.reason}")
 
-    async def _generate_initial_plan(self, goal: str) -> str:
+    async def _generate_initial_plan(
+        self, goal: str, exploration_summary: Optional[str] = None
+    ) -> str:
         max_retries = 3
         last_error = ""
         for attempt in range(max_retries):
@@ -764,6 +823,7 @@ class HierarchicalPlanner(BasePlanner[HierarchicalPlan]):
                         if attempt == 0
                         else f"Last attempt failed: {last_error}. Please fix."
                     ),
+                    exploration_summary,
                 )
                 response = await llm_call(self.llm_client, prompt)
                 code = (
@@ -777,7 +837,9 @@ class HierarchicalPlanner(BasePlanner[HierarchicalPlan]):
                     raise
         raise RuntimeError("Failed to generate a valid plan after multiple retries.")
 
-    def _build_initial_plan_prompt(self, goal, existing_functions, retry_msg):
+    def _build_initial_plan_prompt(
+        self, goal, existing_functions, retry_msg, exploration_summary
+    ):
         primitives_doc = (
             "- `await act(instruction: str)`\n- `await observe(query: str)`"
         )
@@ -788,11 +850,17 @@ class HierarchicalPlanner(BasePlanner[HierarchicalPlan]):
         full_existing_code = "\n\n".join(
             data["implementation"] for data in existing_functions.values()
         )
+        exploration_context = (
+            f"\n**Context from Initial Exploration:**\n{exploration_summary}\n"
+            if exploration_summary
+            else ""
+        )
         return textwrap.dedent(
             f"""
             You are an expert Python programmer. Decompose the goal into a Python script.
             {retry_msg}
             **Goal:** "{goal}"
+            {exploration_context}
             **Primitives:**\n{primitives_doc}
             **Existing Functions:**\n{existing_functions_doc or "None"}
             **Instructions:**
