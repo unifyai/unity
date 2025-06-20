@@ -36,6 +36,10 @@ class _ForcedRetryException(Exception):
     """Internal exception to force a retry loop after a successful reimplementation."""
 
 
+class FatalVerificationError(Exception):
+    """Raised when verification results in a fatal, unrecoverable error."""
+
+
 class VerificationAssessment(BaseModel):
     """Structured output for the _check_state_against_goal LLM call."""
 
@@ -695,6 +699,10 @@ class HierarchicalPlanner(BasePlanner[HierarchicalPlan]):
                 "sorted",
                 "enumerate",
                 "zip",
+                "ValueError",
+                "TypeError",
+                "KeyError",
+                "IndexError",
             ]
             if __builtins__.get(k) is not None
         }
@@ -717,6 +725,7 @@ class HierarchicalPlanner(BasePlanner[HierarchicalPlan]):
                 "verify": self._create_verify_decorator(plan),
                 "ReplanFromParentException": ReplanFromParentException,
                 "_ForcedRetryException": _ForcedRetryException,
+                "FatalVerificationError": FatalVerificationError,
             },
         )
 
@@ -762,9 +771,11 @@ class HierarchicalPlanner(BasePlanner[HierarchicalPlan]):
                                 f"Retrying '{fn.__name__}' after reimplementation.",
                             )
                             continue
-                        except ReplanFromParentException:
-                            raise
-                        except NotImplementedError:
+                        except (
+                            ReplanFromParentException,
+                            NotImplementedError,
+                            FatalVerificationError,
+                        ):
                             raise
                         except Exception as e:
                             logger.error(
@@ -846,7 +857,9 @@ class HierarchicalPlanner(BasePlanner[HierarchicalPlan]):
                 f"Strategic failure in '{fn.__name__}': {assessment.reason}",
             )
         else:
-            raise RuntimeError(f"Fatal error in '{fn.__name__}': {assessment.reason}")
+            raise FatalVerificationError(
+                f"Fatal error in '{fn.__name__}': {assessment.reason}"
+            )
 
     async def _generate_initial_plan(
         self, goal: str, exploration_summary: Optional[str] = None
