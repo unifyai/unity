@@ -23,8 +23,8 @@ from .base import BaseTranscriptManager
 class TranscriptManager(BaseTranscriptManager):
 
     # Vector embedding column names
-    _MSG_EMB = "content_emb"
-    _SUM_EMB = "summary_emb"
+    _MSG_EMB = "_content_emb"
+    _SUM_EMB = "_summary_emb"
 
     def __init__(
         self,
