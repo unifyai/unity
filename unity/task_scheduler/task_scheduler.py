@@ -28,7 +28,7 @@ import json
 
 class TaskScheduler(BaseTaskScheduler):
 
-    _VEC_TASK = "task_emb"
+    _VEC_TASK = "_task_emb"
 
     _HEAD_FILTER = (
         "schedule is not None and "
@@ -1315,7 +1315,7 @@ class TaskScheduler(BaseTaskScheduler):
         ensure_vector_column(
             context=self._ctx,
             embed_column=self._VEC_TASK,
-            source_column="name_plus_desc",
+            source_column="_name_plus_desc",
             derived_expr=expr,
         )
 
