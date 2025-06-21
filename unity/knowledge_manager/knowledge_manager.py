@@ -871,7 +871,7 @@ class KnowledgeManager(BaseKnowledgeManager):
         tables : str | list[str]
             Candidate tables (each must contain *source* column); ``None`` → all tables.
         source : str
-            Text column to embed (an auxiliary ``<source>_emb`` column is
+            Text column to embed (an auxiliary ``_<source>_emb`` column is
             auto-created if missing). MUST be *snake case*.
         text : str
             Query text to embed and compare against.
@@ -891,7 +891,7 @@ class KnowledgeManager(BaseKnowledgeManager):
         results = dict()
         for table in tables:
             context = self._ctx_for_table(table)
-            column_emb = f"{source}_emb"
+            column_emb = f"_{source}_emb"
             self._vectorize_column(table, source, column_emb)
             results[table] = [
                 log.entries
