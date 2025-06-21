@@ -34,6 +34,7 @@ import pytest
 
 from unity.contact_manager.contact_manager import ContactManager
 from unity.conductor.conductor import Conductor
+from tests.helpers import _handle_project
 
 
 # --------------------------------------------------------------------------- #
@@ -55,6 +56,7 @@ def _extract_int(text: str) -> int:
 # Main integration test                                                       #
 # --------------------------------------------------------------------------- #
 @pytest.mark.asyncio
+@_handle_project
 async def test_two_tier_ask_propagation():
 
     # 1️⃣  Ensure we have exactly **one** “Daniel Smith” contact up-front
