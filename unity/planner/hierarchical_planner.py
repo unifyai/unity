@@ -152,6 +152,7 @@ class HierarchicalPlan(BaseActiveTask):
         self._final_result_str: Optional[str] = None
         self.clarification_up_q = clarification_up_q or asyncio.Queue()
         self.clarification_down_q = clarification_down_q or asyncio.Queue()
+        self.completed_functions: set = set()
         self._execution_task = asyncio.create_task(self._initialize_and_run())
 
     def _set_final_result(self, result: str):
@@ -410,6 +411,16 @@ class HierarchicalPlan(BaseActiveTask):
         return None
 
     def _update_plan_with_new_code(self, function_name: str, new_code: str):
+        keys_to_remove = {
+            key for key in self.completed_functions if key[0] == function_name
+        }
+        for key in keys_to_remove:
+            self.completed_functions.remove(key)
+        if keys_to_remove:
+            logger.info(
+                f"CACHE INVALIDATE: Removed {len(keys_to_remove)} cache entries for '{function_name}'.",
+            )
+
         try:
             new_code_module = ast.parse(textwrap.dedent(new_code))
             if not new_code_module.body or not isinstance(
@@ -480,6 +491,12 @@ class HierarchicalPlan(BaseActiveTask):
             self.plan_source_code = new_source_code
             self.action_log.append("Plan successfully modified.")
 
+            if self.completed_functions:
+                logger.info(
+                    "CACHE INVALIDATE: Clearing entire cache due to plan modification."
+                )
+                self.completed_functions.clear()
+
             self.escalation_count = 0
             self._is_complete = False
             self.exploratory_mode = False
@@ -505,6 +522,13 @@ class HierarchicalPlan(BaseActiveTask):
     async def _execute_correction_script(self, script: str, new_plan_code: str):
         logger.info("Executing course correction script...")
         self.action_log.append("Executing course correction script.")
+
+        if self.completed_functions:
+            logger.info(
+                "CACHE INVALIDATE: Clearing entire cache due to course correction.",
+            )
+            self.completed_functions.clear()
+
         interactions = []
         try:
             correction_namespace = self.planner._create_sandbox_globals()
@@ -811,6 +835,21 @@ class HierarchicalPlanner(BasePlanner):
         def verify(fn):
             @functools.wraps(fn)
             async def wrapper(*args, **kwargs):
+                try:
+                    sig = inspect.signature(fn)
+                    bound_args = sig.bind(*args, **kwargs)
+                    bound_args.apply_defaults()
+                    cache_key = (fn.__name__, frozenset(bound_args.arguments.items()))
+                except (TypeError, ValueError):
+                    cache_key = (fn.__name__, str(args), str(kwargs))
+
+                if cache_key in plan.completed_functions:
+
+                    logger.info(
+                        f"CACHE HIT: Skipping already completed call to '{fn.__name__}' with args {args}, {kwargs}",
+                    )
+                    return
+
                 plan.call_stack.append(fn.__name__)
                 plan.interaction_stack.append([])
                 logger.info(f"VERIFY: Entering '{fn.__name__}'")
@@ -903,6 +942,19 @@ class HierarchicalPlanner(BasePlanner):
         )
 
         if assessment.status == "ok":
+            try:
+                sig = inspect.signature(fn)
+                bound_args = sig.bind(*args, **kwargs)
+                bound_args.apply_defaults()
+                cache_key = (fn.__name__, frozenset(bound_args.arguments.items()))
+            except (TypeError, ValueError):
+                cache_key = (fn.__name__, str(args), str(kwargs))
+
+            plan.completed_functions.add(cache_key)
+            logger.info(
+                f"CACHE ADD: Added call to '{fn.__name__}' to completed functions cache.",
+            )
+
             if func_source and self.function_manager:
                 self.function_manager.add_functions(implementations=[func_source])
             return result
