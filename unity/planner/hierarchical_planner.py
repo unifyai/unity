@@ -750,9 +750,10 @@ class HierarchicalPlanner(BasePlanner):
         """
         prompt = textwrap.dedent(
             f"""
-            You are a senior engineer assessing a task description for an autonomous agent.
+            You are a web browser agent assessing a task description from a user.
             The agent's goal is to generate a complete Python script to accomplish a task.
             The available tools are high-level: `act(instruction)` and `observe(query)`.
+            The agent will be using the `act` tool to navigate the web and the `observe` tool to get information about the page.
 
             Analyze the following goal:
             **Goal:** "{goal}"
