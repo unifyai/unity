@@ -3,7 +3,7 @@
     "configurations": [
         {
             "name": "Python: Debug Tests",
-            "type": "python",
+            "type": "debugpy",
             "request": "launch",
             "program": "${file}",
             "purpose": ["debug-test"],
@@ -15,7 +15,7 @@
         },
         {
             "name": "Contact Manager Sandbox",
-            "type": "python",
+            "type": "debugpy",
             "request": "launch",
             "program": "${workspaceFolder}/sandboxes/contact_manager.py",
             "args": ["--voice"],
@@ -26,7 +26,7 @@
           },
           {
             "name": "Knowledge Manager Sandbox",
-            "type": "python",
+            "type": "debugpy",
             "request": "launch",
             "program": "${workspaceFolder}/sandboxes/knowledge_manager.py",
             "args": ["--voice"],
@@ -37,7 +37,7 @@
           },
           {
             "name": "Task Scheduler Sandbox",
-            "type": "python",
+            "type": "debugpy",
             "request": "launch",
             "program": "${workspaceFolder}/sandboxes/task_scheduler.py",
             "args": ["--voice"],
@@ -48,7 +48,7 @@
           },
           {
             "name": "User Manager",
-            "type": "python",
+            "type": "debugpy",
             "request": "launch",
             "program": "${workspaceFolder}/demo/main.py",
             "args": [],
