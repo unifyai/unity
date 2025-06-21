@@ -193,7 +193,8 @@ async def test_transcript_summary_followups(monkeypatch):
 
     # 3️⃣ Unrelated mutation (no additional transcript calls required)
     r3 = await cond.request(
-        "Create a high-priority task for that action item and assign it to DevOps.",
+        "Create a high-priority task for that action item and assign it to DevOps. "
+        "Schedule it to start immediately, please don't request any clarifications.",
         parent_chat_context=chat,
     )
     await asyncio.wait_for(r3.result(), timeout=60)
