@@ -30,6 +30,12 @@ class TaskScheduler(BaseTaskScheduler):
 
     _VEC_TASK = "task_emb"
 
+    _HEAD_FILTER = (
+        "schedule is not None and "
+        "status not in ('completed','cancelled','failed') and "
+        "schedule.get('prev_task') is None"
+    )
+
     def __init__(
         self,
         *,
@@ -767,12 +773,7 @@ class TaskScheduler(BaseTaskScheduler):
             else:
                 # Derive the head: the runnable task whose `prev_task` is None
                 head_candidates = self._search_tasks(
-                    filter=(
-                        "schedule is not None and \n"
-                        "                    status not in "
-                        "('completed','cancelled','failed') and \n"
-                        "                    schedule.get('prev_task') is None"
-                    ),
+                    filter=self._HEAD_FILTER,
                     limit=2,
                 )
                 if not head_candidates:
@@ -789,9 +790,7 @@ class TaskScheduler(BaseTaskScheduler):
         if execute_task is None:
             # fall back to queue head: node with no prev_task and non-terminal status
             head_candidates = self._search_tasks(
-                filter=(
-                    "schedule is not None and \n                    status not in ('completed','cancelled','failed', 'scheduled') and \n                    schedule.get('prev_task') is None"
-                ),
+                filter=self._HEAD_FILTER,
                 limit=2,
             )
             if not head_candidates:

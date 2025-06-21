@@ -167,6 +167,10 @@ def test_start_time_after_multiple_reorders():
         schedule=Schedule(prev_task=1),
     )
 
+    # original order
+    q0 = ts._get_task_queue()
+    assert [t.task_id for t in q0] == [0, 1, 2]
+
     # 1st reorder: B → C → A
     ts._update_task_queue(original=[0, 1, 2], new=[1, 2, 0])
     q1 = ts._get_task_queue()
