@@ -90,15 +90,12 @@ class Conductor(BaseConductor):
         else:
             self._knowledge_manager = KnowledgeManager()
 
-        if planner is not None:
-            self._planner = planner
-        else:
-            self._planner = ToolLoopPlanner()
-
         if task_scheduler is not None:
             self._task_scheduler = task_scheduler
         else:
-            self._task_scheduler = TaskScheduler(planner=self._planner)
+            if planner is None:
+                planner = ToolLoopPlanner()
+            self._task_scheduler = TaskScheduler(planner=planner)
 
         #  Run-time state & tool-dict helpers
         self._current_plan = None
