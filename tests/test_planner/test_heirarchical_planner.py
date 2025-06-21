@@ -997,3 +997,219 @@ async def test_failed_course_correction_triggers_rollback(
     assert plan.plan_source_code == initial_code
     mock_controller.act.assert_called_with("original action")
     assert plan._state == _HierarchicalPlanState.COMPLETED
+
+
+@pytest.mark.asyncio
+async def test_dynamic_implementation_relies_on_cache(
+    planner: HierarchicalPlanner,
+    mock_controller,
+    monkeypatch,
+):
+    import logging
+
+    logging.basicConfig(level=logging.INFO)
+    """
+    Objective: Verify that after a dynamic implementation causes the plan to
+    restart, previously completed steps are fetched from the cache and are
+    not re-executed.
+    """
+    # --- Arrange ---
+
+    # 1. Define a plan with one successful step followed by a stub.
+    # The execution will complete step_A, then fail and restart on step_B_stub.
+    initial_code = """
+@verify
+async def step_A():
+    '''This step will run and be cached on the first pass.'''
+    await act("Performing Step A")
+    return "Step A is done."
+
+@verify
+async def step_B_stub():
+    '''This step will trigger the dynamic implementation and restart.'''
+    raise NotImplementedError
+
+@verify
+async def main_plan():
+    '''The main plan that will be restarted.'''
+    await step_A()
+    await step_B_stub()
+    return "Plan fully complete."
+"""
+
+    # 2. Define the code that the LLM will "generate" to implement the stub.
+    implemented_step_b = """
+@verify
+async def step_B_stub():
+    '''This is the new implementation for Step B.'''
+    await act("Performing NEWLY IMPLEMENTED Step B")
+    return "Step B is now done."
+"""
+
+    # 3. Mock the LLM calls to provide the initial plan, then the implementation.
+    mock_llm = AsyncMock()
+    mock_llm.side_effect = [initial_code, implemented_step_b]
+    monkeypatch.setattr("unity.planner.hierarchical_planner.llm_call", mock_llm)
+
+    # 4. Mock the verification to always succeed to isolate the caching logic.
+    monkeypatch.setattr(
+        planner,
+        "_check_state_against_goal",
+        AsyncMock(return_value=VerificationAssessment(status="ok", reason="OK")),
+    )
+
+    # 5. This is the key to the test. We will inspect the calls to this mock.
+    mock_act = AsyncMock()
+    monkeypatch.setattr(mock_controller, "act", mock_act)
+
+    # --- Act ---
+
+    # Execute the plan and wait for it to run to completion.
+    # This process involves:
+    # - First run: Executes step_A(), hits NotImplementedError on step_B_stub().
+    # - Recovery: Implements step_B_stub() and restarts main_plan().
+    # - Second run: Should hit cache for step_A() and execute new step_B_stub().
+    plan = await planner.execute(
+        "A plan that tests the cache hit on restart.",
+        exploratory_mode=False,
+    )
+    await plan.result()
+
+    # --- Assert ---
+
+    # 1. The plan should complete successfully after the dynamic implementation.
+    assert plan._state == _HierarchicalPlanState.COMPLETED
+
+    # 2. **CRUCIAL ASSERTION:** The action from `step_A` should have been
+    #    executed exactly once. The cache hit on the second run should have
+    #    prevented its re-execution. We check this by inspecting the call list.
+    from unittest.mock import call
+
+    step_a_calls = [
+        c for c in mock_act.call_args_list if c == call("Performing Step A")
+    ]
+    assert (
+        len(step_a_calls) == 1
+    ), "The action for step_A should only have been called once."
+
+    # 3. As a sanity check, ensure the action from the newly implemented
+    #    step was also called, confirming the plan ran to completion after the cache hit.
+    mock_act.assert_any_call("Performing NEWLY IMPLEMENTED Step B")
+
+    # 4. The total number of calls to act() should be exactly 2.
+    assert mock_act.call_count == 2
+
+
+@pytest.mark.asyncio
+async def test_skip_cache_lifecycle(
+    planner: HierarchicalPlanner, mock_controller, monkeypatch
+):
+    """
+    Objective: Verify that the skip cache correctly prevents re-execution
+    of completed functions and that it is correctly invalidated upon modification.
+    """
+    # --- Arrange ---
+    # This event will be set by the mock 'act' function to signal it has paused.
+    plan_is_paused_event = asyncio.Event()
+
+    initial_code = """
+@verify
+async def repeatable_task(param: str):
+    '''A task that can be called multiple times.'''
+    await act(f"Performing task for {param}")
+
+@verify
+async def main_plan():
+    await repeatable_task(param="A")
+    await repeatable_task(param="B")
+    await repeatable_task(param="A") # This call should be cached
+    return "Completed repeatable tasks."
+"""
+    modified_code = """
+@verify
+async def repeatable_task(param: str):
+    '''A modified task that does something new.'''
+    await act(f"Performing NEW task for {param}")
+
+@verify
+async def main_plan():
+    await repeatable_task(param="A") # This should now execute the new version
+    return "Completed modified task."
+"""
+
+    # This side effect will let the first call pass, then block on the second.
+    async def act_side_effect(instruction: str):
+        # The first call for "A" completes quickly.
+        if "Performing task for A" in instruction:
+            await asyncio.sleep(0.01)
+            return f"Action '{instruction}' completed."
+
+        # The second call for "B" signals the test and then blocks.
+        if "Performing task for B" in instruction:
+            plan_is_paused_event.set()
+            # This task will now block indefinitely. It will be cancelled when
+            # the test calls `plan.modify_plan()`.
+            await asyncio.sleep(60)
+
+        return f"Action '{instruction}' completed."
+
+    # Mock the planner's dependencies
+    monkeypatch.setattr(
+        planner, "_generate_initial_plan", AsyncMock(return_value=initial_code)
+    )
+    monkeypatch.setattr(
+        planner,
+        "_check_state_against_goal",
+        AsyncMock(return_value=VerificationAssessment(status="ok", reason="OK")),
+    )
+    monkeypatch.setattr(
+        planner, "_perform_plan_surgery", AsyncMock(return_value=modified_code)
+    )
+    monkeypatch.setattr(
+        planner, "_generate_course_correction_script", AsyncMock(return_value=None)
+    )
+
+    # Correctly configure and apply the mock for the 'act' function.
+    mock_act = AsyncMock(side_effect=act_side_effect)
+    monkeypatch.setattr(mock_controller, "act", mock_act)
+
+    # --- Act 1: Initial Run & Caching ---
+    plan = await planner.execute("Test caching.", exploratory_mode=False)
+
+    # Wait for the plan to hit the pause point inside the second `act` call.
+    await asyncio.wait_for(plan_is_paused_event.wait(), timeout=5)
+
+    # The plan is now paused. We sleep briefly to ensure the @verify wrapper
+    # for the *first* task has finished and populated the cache.
+    await asyncio.sleep(0.1)
+
+    # --- Assert 1: State Before Modification ---
+    # The plan is blocked inside the `act` call for task "B".
+    # Therefore, task "A" is complete and cached, but task "B" is not.
+    assert mock_act.call_count == 2
+
+    # The cache should contain ONLY the result for the first call.
+    assert len(plan.completed_functions) == 1
+    key_a = ("repeatable_task", frozenset([("param", "A")]))
+    assert key_a in plan.completed_functions
+
+    # --- Act 2: Modification & Final Result ---
+    # Now that the plan is paused in the RUNNING state, modify it.
+    # This will cancel the currently blocked plan task.
+    modification_result = await plan.modify_plan(
+        "Change the repeatable_task implementation."
+    )
+
+    # Await the final result of the NEW, modified plan.
+    await plan.result()
+
+    # --- Assert 2: State After Modification ---
+    assert "modified and resumed successfully" in modification_result
+    assert plan._state == _HierarchicalPlanState.COMPLETED
+
+    # The call count is 3 (A, B from the first run, and new A from the second run).
+    assert mock_act.call_count == 3
+    mock_act.assert_called_with("Performing NEW task for A")
+
+    # The new cache should have 2 items: the new repeatable_task(A) and the new main_plan.
+    assert len(plan.completed_functions) == 2
