@@ -246,7 +246,7 @@ class ContactManager(BaseContactManager):
         Parameters
         ----------
         column : str
-            The vector column name (e.g. "notes_emb").
+            The (private) vector column name (e.g. "_notes_emb").
         source : str
             The source column name (e.g. "notes").
         """
@@ -622,7 +622,7 @@ class ContactManager(BaseContactManager):
         List[Dict[str, Any]]
             Rows sorted by ascending cosine distance.
         """
-        vec_col = f"{column}_emb"
+        vec_col = f"_{column}_emb"
         self._ensure_table_vector(column=vec_col, source=column)
         logs = unify.get_logs(
             context=self._ctx,
