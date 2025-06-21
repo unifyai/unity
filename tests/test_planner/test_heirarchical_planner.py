@@ -107,11 +107,10 @@ async def sign_in():
         successful_verification_json,  # For main_plan verification
     ]
     monkeypatch.setattr("unity.planner.hierarchical_planner.llm_call", mock_llm)
-
+    monkeypatch.setattr(planner, "_should_explore", AsyncMock(return_value=False))
     # --- Act ---
     plan = await planner.execute(
         "Sign in to the website. Once signed in, respond **only** with 'Signed in successfully.'",
-        exploratory_mode=False,
     )
     await plan.result()
 
@@ -194,7 +193,8 @@ async def main_plan():
     monkeypatch.setattr(planner, "_generate_initial_plan", mock_generate_plan_llm)
 
     # --- Act ---
-    plan = await planner.execute("Find the company email.", exploratory_mode=False)
+    monkeypatch.setattr(planner, "_should_explore", AsyncMock(return_value=False))
+    plan = await planner.execute("Find the company email.")
     await plan.result()
 
     # --- Assert ---
@@ -272,9 +272,9 @@ async def main_plan():
     )
 
     # --- Act ---
+    monkeypatch.setattr(planner, "_should_explore", AsyncMock(return_value=False))
     plan = await planner.execute(
         "Execute a plan with a flawed child task.",
-        exploratory_mode=False,
     )
 
     # --- Assert ---
@@ -391,7 +391,8 @@ async def course_correction_main():
     )
 
     # --- Act ---
-    plan = await planner.execute("Go to site A and click B.", exploratory_mode=False)
+    monkeypatch.setattr(planner, "_should_explore", AsyncMock(return_value=False))
+    plan = await planner.execute("Go to site A and click B.")
 
     # Wait until the first 'act' call completes. This ensures the plan is
     # now running and paused inside the second 'act' call, waiting on our event.
@@ -460,7 +461,8 @@ async def main_plan():
     # --- Act ---
     mock_act = AsyncMock()
     monkeypatch.setattr(mock_controller, "act", mock_act)
-    plan = await planner.execute("Do the original task.", exploratory_mode=False)
+    monkeypatch.setattr(planner, "_should_explore", AsyncMock(return_value=False))
+    plan = await planner.execute("Do the original task.")
     await asyncio.sleep(0.5)  # Let it start
 
     modification_result = await plan.modify_plan("This modification will fail.")
@@ -507,7 +509,8 @@ async def test_fatal_error_in_verification(planner: HierarchicalPlanner, monkeyp
     )
 
     # --- Act ---
-    plan = await planner.execute("Test fatal error handling.", exploratory_mode=False)
+    monkeypatch.setattr(planner, "_should_explore", AsyncMock(return_value=False))
+    plan = await planner.execute("Test fatal error handling.")
     await plan.result()
 
     # --- Assert ---
@@ -553,9 +556,9 @@ async def main_plan():
     )
 
     # --- Act ---
+    monkeypatch.setattr(planner, "_should_explore", AsyncMock(return_value=False))
     plan = await planner.execute(
         "A task that will fail and escalate.",
-        exploratory_mode=False,
     )
     # The plan will escalate and pause, so we get the message. This waits for the *entire*
     # escalation process to finish.
@@ -647,7 +650,8 @@ async def main_plan():
     )
 
     # --- Act ---
-    plan = await planner.execute(goal, exploratory_mode=True)
+    monkeypatch.setattr(planner, "_should_explore", AsyncMock(return_value=True))
+    plan = await planner.execute(goal)
     queue_holder["up_q"] = plan.clarification_up_q
     queue_holder["down_q"] = plan.clarification_down_q
 
@@ -672,7 +676,9 @@ async def main_plan():
 
 
 @pytest.mark.asyncio
-async def test_user_initiated_stop(planner: HierarchicalPlanner, mock_controller):
+async def test_user_initiated_stop(
+    planner: HierarchicalPlanner, mock_controller, monkeypatch
+):
     """
     Objective: Test that a user can cleanly stop a running plan.
     """
@@ -687,7 +693,8 @@ async def test_user_initiated_stop(planner: HierarchicalPlanner, mock_controller
     )
 
     # --- Act ---
-    plan = await planner.execute("A long running plan to stop.", exploratory_mode=False)
+    monkeypatch.setattr(planner, "_should_explore", AsyncMock(return_value=False))
+    plan = await planner.execute("A long running plan to stop.")
     await asyncio.sleep(0.1)  # Ensure the plan has started and is waiting
     assert not plan.done()
 
@@ -703,6 +710,7 @@ async def test_user_initiated_stop(planner: HierarchicalPlanner, mock_controller
 async def test_user_initiated_pause_and_resume(
     planner: HierarchicalPlanner,
     mock_controller,
+    monkeypatch,
 ):
     """
     Objective: Test that a user can pause and then resume a running plan.
@@ -718,9 +726,8 @@ async def test_user_initiated_pause_and_resume(
     )
 
     # --- Act ---
-    plan = await planner.execute(
-        "A long running plan to pause.", exploratory_mode=False
-    )
+    monkeypatch.setattr(planner, "_should_explore", AsyncMock(return_value=False))
+    plan = await planner.execute("A long running plan to pause.")
     await asyncio.sleep(0.1)
     assert plan._state == _HierarchicalPlanState.RUNNING
 
@@ -792,9 +799,8 @@ async def parent_task():
     )
 
     # --- Act ---
-    plan = await planner.execute(
-        "Execute a plan with nested stubs.", exploratory_mode=False
-    )
+    monkeypatch.setattr(planner, "_should_explore", AsyncMock(return_value=False))
+    plan = await planner.execute("Execute a plan with nested stubs.")
     final_result = await plan.result()
 
     # --- Assert ---
@@ -860,10 +866,8 @@ async def test_modify_plan_while_paused(
     # --- Act ---
     mock_act = AsyncMock()
     monkeypatch.setattr(mock_controller, "act", mock_act)
-    plan = await planner.execute(
-        "A plan to be modified while paused.",
-        exploratory_mode=False,
-    )
+    monkeypatch.setattr(planner, "_should_explore", AsyncMock(return_value=False))
+    plan = await planner.execute("A plan to be modified while paused.")
     await asyncio.sleep(0.1)  # Let the plan start and hit the waiting act()
 
     # Pause the running plan
@@ -912,10 +916,8 @@ async def test_invalid_code_generation_handling(
     monkeypatch.setattr("unity.planner.hierarchical_planner.llm_call", mock_llm)
 
     # --- Act ---
-    plan = await planner.execute(
-        "A plan that will fail code generation.",
-        exploratory_mode=False,
-    )
+    monkeypatch.setattr(planner, "_should_explore", AsyncMock(return_value=False))
+    plan = await planner.execute("A plan that will fail code generation.")
     result = await plan.result()
 
     # --- Assert ---
@@ -973,10 +975,8 @@ async def test_failed_course_correction_triggers_rollback(
     # --- Act ---
     mock_act = AsyncMock()
     monkeypatch.setattr(mock_controller, "act", mock_act)
-    plan = await planner.execute(
-        "A plan with a failing course correction.",
-        exploratory_mode=False,
-    )
+    monkeypatch.setattr(planner, "_should_explore", AsyncMock(return_value=False))
+    plan = await planner.execute("A plan with a failing course correction.")
     await asyncio.sleep(0.1)  # Let the plan start
 
     modification_result = await plan.modify_plan(
@@ -1005,9 +1005,6 @@ async def test_dynamic_implementation_relies_on_cache(
     mock_controller,
     monkeypatch,
 ):
-    import logging
-
-    logging.basicConfig(level=logging.INFO)
     """
     Objective: Verify that after a dynamic implementation causes the plan to
     restart, previously completed steps are fetched from the cache and are
@@ -1068,11 +1065,9 @@ async def step_B_stub():
     # This process involves:
     # - First run: Executes step_A(), hits NotImplementedError on step_B_stub().
     # - Recovery: Implements step_B_stub() and restarts main_plan().
-    # - Second run: Should hit cache for step_A() and execute new step_B_stub().
-    plan = await planner.execute(
-        "A plan that tests the cache hit on restart.",
-        exploratory_mode=False,
-    )
+    # - Second run: Should hit cache for step_A() and execute new s tep_B_stub().
+    monkeypatch.setattr(planner, "_should_explore", AsyncMock(return_value=False))
+    plan = await planner.execute("A plan that tests the cache hit on restart.")
     await plan.result()
 
     # --- Assert ---
@@ -1174,7 +1169,8 @@ async def main_plan():
     monkeypatch.setattr(mock_controller, "act", mock_act)
 
     # --- Act 1: Initial Run & Caching ---
-    plan = await planner.execute("Test caching.", exploratory_mode=False)
+    monkeypatch.setattr(planner, "_should_explore", AsyncMock(return_value=False))
+    plan = await planner.execute("Test caching.")
 
     # Wait for the plan to hit the pause point inside the second `act` call.
     await asyncio.wait_for(plan_is_paused_event.wait(), timeout=5)
