@@ -717,14 +717,19 @@ class HierarchicalPlanner(BasePlanner):
 
     def __init__(
         self,
-        function_manager: "FunctionManager",
-        controller: "Controller",
-        coms_manager: "ComsManager",
+        function_manager: Optional["FunctionManager"] = None,
+        controller: Optional["Controller"] = None,
+        coms_manager: Optional["ComsManager"] = None,
+        session_connect_url: Optional[str] = None,
+        headless: bool = False,
     ):
         super().__init__()
-        self.function_manager = function_manager
-        self.controller = controller
-        self.coms_manager = coms_manager
+        self.function_manager = function_manager or FunctionManager()
+        self.controller = controller or Controller(
+            session_connect_url=session_connect_url,
+            headless=headless,
+        )
+        self.coms_manager = coms_manager or ComsManager()
         self.llm_client: unify.AsyncUnify = unify.AsyncUnify(
             os.environ.get("UNIFY_MODEL", "gpt-4o-mini@openai"),
         )
