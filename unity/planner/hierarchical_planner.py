@@ -131,11 +131,9 @@ class HierarchicalPlan(BaseActiveTask):
         clarification_up_q: Optional[asyncio.Queue[str]] = None,
         clarification_down_q: Optional[asyncio.Queue[str]] = None,
         parent_chat_context: Optional[str] = None,
-        exploratory_mode: bool = True,
     ):
         self.planner = planner
         self.goal = goal
-        self.exploratory_mode = exploratory_mode
         self.exploration_summary: Optional[str] = None
         self.plan_source_code: Optional[str] = None
         self.execution_namespace: Dict[str, Any] = {}
@@ -165,7 +163,7 @@ class HierarchicalPlan(BaseActiveTask):
     async def _initialize_and_run(self):
         self.action_log.append("Initializing plan...")
         try:
-            if self.exploratory_mode:
+            if await self.planner._should_explore(self.goal):
                 await self._perform_exploration()
 
             if not self._is_complete:
@@ -499,7 +497,6 @@ class HierarchicalPlan(BaseActiveTask):
 
             self.escalation_count = 0
             self._is_complete = False
-            self.exploratory_mode = False
             self.exploration_summary = None
 
             self._execution_task = asyncio.create_task(self._initialize_and_run())
@@ -746,18 +743,49 @@ class HierarchicalPlanner(BasePlanner):
             logger.error(f"Generated code failed sanitization: {e}")
             raise
 
+    async def _should_explore(self, goal: str) -> bool:
+        """
+        Uses an LLM to assess if the goal is ambiguous and requires an
+        exploratory phase before generating the main plan.
+        """
+        prompt = textwrap.dedent(
+            f"""
+            You are a senior engineer assessing a task description for an autonomous agent.
+            The agent's goal is to generate a complete Python script to accomplish a task.
+            The available tools are high-level: `act(instruction)` and `observe(query)`.
+
+            Analyze the following goal:
+            **Goal:** "{goal}"
+
+            Is the goal specific and actionable enough to directly write a Python script?
+            Or is the goal ambiguous, broad, or lacking key details (like URLs, exact button text, or a clear workflow)
+            that the agent would need to discover first using the `observe` and `request_clarification` tools?
+
+            - If the goal is **clear and specific**, respond with the single word: **EXECUTE**.
+            - If the goal is **ambiguous or requires information gathering**, respond with the single word: **EXPLORE**.
+            """
+        )
+        assessment_client = unify.AsyncUnify(
+            os.environ.get("UNIFY_MODEL", "gpt-4o-mini@openai"),
+        )
+        response = await llm_call(assessment_client, prompt)
+        logger.info(f"Exploration assessment for goal '{goal}': {response.strip()}")
+        return "EXPLORE" in response.strip().upper()
+
     async def _execute_task_and_return_handle(
         self,
         task_description: str,
         *,
-        exploratory_mode: bool = True,
-        **kwargs,
+        parent_chat_context: list[dict] | None = None,
+        clarification_up_q: Optional[asyncio.Queue[str]] = None,
+        clarification_down_q: Optional[asyncio.Queue[str]] = None,
     ) -> HierarchicalPlan:
         return HierarchicalPlan(
             planner=self,
             goal=task_description,
-            exploratory_mode=exploratory_mode,
-            **kwargs,
+            parent_chat_context=parent_chat_context,
+            clarification_up_q=clarification_up_q,
+            clarification_down_q=clarification_down_q,
         )
 
     def _create_sandbox_globals(self) -> Dict[str, Any]:
