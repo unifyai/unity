@@ -10,11 +10,13 @@ import unify
 
 from ..contact_manager.contact_manager import ContactManager
 from ..transcript_manager.transcript_manager import TranscriptManager
+from ..knowledge_manager.knowledge_manager import KnowledgeManager
 from ..common.llm_helpers import methods_to_tool_dict, start_async_tool_use_loop
 from .prompt_builders import (
     build_contact_update_prompt,
     build_bio_prompt,
     build_rolling_prompt,
+    build_knowledge_prompt,
 )
 from .base import BaseMemoryManager
 
@@ -29,11 +31,13 @@ class MemoryManager(BaseMemoryManager):
         *,
         contact_manager: Optional[ContactManager] = None,
         transcript_manager: Optional[TranscriptManager] = None,
+        knowledge_manager: Optional[KnowledgeManager] = None,
     ):
         self._contact_manager = contact_manager or ContactManager()
         self._transcript_manager = transcript_manager or TranscriptManager(
             contact_manager=self._contact_manager,
         )
+        self._knowledge_manager = knowledge_manager or KnowledgeManager()
 
     # ------------------------------------------------------------------ #
     # 1  update_contacts                                                 #
@@ -174,6 +178,40 @@ class MemoryManager(BaseMemoryManager):
             tools,
             loop_id="MemoryManager.update_contact_rolling_summary",
             tool_policy=lambda i, _: ("required", _) if i < 1 else ("auto", _),
+        )
+
+        return await handle.result()
+
+    # ------------------------------------------------------------------ #
+    # 4  update_knowledge                                                #
+    # ------------------------------------------------------------------ #
+    async def update_knowledge(self, transcript: str) -> str:
+        """
+        Mine reusable information and persist to the long-term knowledge base.
+        """
+
+        tools: Dict[str, Callable[..., Any]] = methods_to_tool_dict(
+            self._contact_manager.ask,
+            self._transcript_manager.ask,
+            self._knowledge_manager.ask,
+            self._knowledge_manager.refactor,
+            self._knowledge_manager.update,
+            include_class_name=True,
+        )
+
+        llm = unify.AsyncUnify(
+            "o4-mini@openai",
+            cache=json.loads(os.getenv("UNIFY_CACHE", "true")),
+            traced=json.loads(os.getenv("UNIFY_TRACED", "true")),
+        )
+        llm.set_system_message(build_knowledge_prompt(tools))
+
+        handle = start_async_tool_use_loop(
+            llm,
+            transcript,
+            tools,
+            loop_id="MemoryManager.update_knowledge",
+            tool_policy=lambda i, _: ("required", _) if i < 2 else ("auto", _),
         )
 
         return await handle.result()
