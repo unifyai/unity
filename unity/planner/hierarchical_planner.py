@@ -989,6 +989,12 @@ class HierarchicalPlanner(BasePlanner):
                 f"CACHE ADD: Added call to '{fn.__name__}' to completed functions cache.",
             )
 
+            if len(plan.interaction_stack) > 1:
+                child_interactions = plan.interaction_stack[-1]
+                parent_interactions = plan.interaction_stack[-2]
+                parent_interactions.extend(child_interactions)
+                logger.debug(f"Rolled up {len(child_interactions)} interactions from '{fn.__name__}' to its parent.")
+            # =================================================================
             if func_source and self.function_manager:
                 self.function_manager.add_functions(implementations=[func_source])
             return result
