@@ -25,6 +25,7 @@ import pytest
 
 from unity.memory_manager.simulated import SimulatedMemoryManager
 from unity.contact_manager.simulated import SimulatedContactManager
+from unity.knowledge_manager.simulated import SimulatedKnowledgeManager
 
 # shared helper used throughout the test-suite – isolates each test run
 from tests.helpers import _handle_project
@@ -150,3 +151,36 @@ async def test_mm_update_contact_rolling_summary_invocations(monkeypatch):
 
     assert isinstance(new_summary, str) and new_summary.strip()
     assert counts["_upd"] == 1, "_update_contact should be invoked once"
+
+
+# --------------------------------------------------------------------------- #
+# 4. update_knowledge – should call KnowledgeManager.update at least once     #
+# --------------------------------------------------------------------------- #
+@pytest.mark.asyncio
+@_handle_project
+async def test_mm_update_knowledge_invokes_kb_update(monkeypatch):
+    counts = {"kb_update": 0}
+
+    orig_kb_update = SimulatedKnowledgeManager.update
+
+    @functools.wraps(orig_kb_update)
+    async def spy_kb_update(self, text: str, **kw):
+        counts["kb_update"] += 1
+        return await orig_kb_update(self, text, **kw)
+
+    monkeypatch.setattr(
+        SimulatedKnowledgeManager,
+        "update",
+        spy_kb_update,
+        raising=True,
+    )
+
+    mm = SimulatedMemoryManager("Knowledge ingestion demo.")
+    transcript = _build_transcript(
+        "Fun fact: The company standardised on Kubernetes for all deployments back in 2021.",
+    )
+
+    result = await mm.update_knowledge(transcript)
+
+    assert isinstance(result, str) and result.strip()
+    assert counts["kb_update"] >= 1, "KnowledgeManager.update should be invoked"
