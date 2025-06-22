@@ -41,6 +41,14 @@ class Contact(BaseModel):
         default=None,
         description="Free-form notes about the contact.",
     )
+    bio: Optional[str] = Field(
+        default=None,
+        description="Concise biographic profile of the contact (role, background, why they matter).",
+    )
+    rolling_summary: Optional[str] = Field(
+        default=None,
+        description="Short rolling conversation summary and current objectives with this contact.",
+    )
 
     @model_validator(mode="before")
     @classmethod
@@ -59,6 +67,8 @@ class Contact(BaseModel):
         "phone_number",
         "whatsapp_number",
         "description",
+        "bio",
+        "rolling_summary",
         mode="before",
     )
     @classmethod

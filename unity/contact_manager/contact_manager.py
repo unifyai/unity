@@ -63,6 +63,8 @@ class ContactManager(BaseContactManager):
             "phone_number",
             "whatsapp_number",
             "description",
+            "bio",
+            "rolling_summary",
         }
 
         # ── schema-management internal tools (mirrors KnowledgeManager) ──
@@ -396,6 +398,8 @@ class ContactManager(BaseContactManager):
         phone_number: Optional[str] = None,
         whatsapp_number: Optional[str] = None,
         description: Optional[str] = None,
+        bio: Optional[str] = None,
+        rolling_summary: Optional[str] = None,
         custom_fields: Optional[Dict[str, ColumnType]] = None,
     ) -> ToolOutcome:
         """
@@ -446,6 +450,8 @@ class ContactManager(BaseContactManager):
             "phone_number": phone_number,
             "whatsapp_number": whatsapp_number,
             "description": description,
+            "bio": bio,
+            "rolling_summary": rolling_summary,
             **(custom_fields if custom_fields is not None else {}),
         }
         assert any(
@@ -499,6 +505,8 @@ class ContactManager(BaseContactManager):
         phone_number: Optional[str] = None,
         whatsapp_number: Optional[str] = None,
         description: Optional[str] = None,
+        bio: Optional[str] = None,
+        rolling_summary: Optional[str] = None,
         custom_fields: Optional[Dict[str, ColumnType]] = None,
     ) -> ToolOutcome:
         """
