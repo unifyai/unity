@@ -121,9 +121,6 @@ class HierarchicalPlan(BaseActiveTask):
     This class is a steerable handle managing the plan's lifecycle.
     """
 
-    MAX_ESCALATIONS = 3
-    MAX_LOCAL_RETRIES = 2
-
     def __init__(
         self,
         planner: "HierarchicalPlanner",
@@ -131,6 +128,8 @@ class HierarchicalPlan(BaseActiveTask):
         clarification_up_q: Optional[asyncio.Queue[str]] = None,
         clarification_down_q: Optional[asyncio.Queue[str]] = None,
         parent_chat_context: Optional[str] = None,
+        max_escalations: Optional[int] = None,
+        max_local_retries: Optional[int] = None,
     ):
         self.planner = planner
         self.goal = goal
@@ -152,6 +151,8 @@ class HierarchicalPlan(BaseActiveTask):
         self.clarification_down_q = clarification_down_q or asyncio.Queue()
         self.completed_functions: set = set()
         self._execution_task = asyncio.create_task(self._initialize_and_run())
+        self.MAX_ESCALATIONS = max_escalations
+        self.MAX_LOCAL_RETRIES = max_local_retries
 
     def _set_final_result(self, result: str):
         """Sets the final result and the completion event."""
@@ -725,6 +726,8 @@ class HierarchicalPlanner(BasePlanner):
         coms_manager: Optional["ComsManager"] = None,
         session_connect_url: Optional[str] = None,
         headless: bool = False,
+        max_escalations: Optional[int] = None,
+        max_local_retries: Optional[int] = None,
     ):
         super().__init__()
         self.function_manager = function_manager or FunctionManager()
@@ -736,6 +739,8 @@ class HierarchicalPlanner(BasePlanner):
         self.llm_client: unify.AsyncUnify = unify.AsyncUnify(
             os.environ.get("UNIFY_MODEL", "gpt-4o-mini@openai"),
         )
+        self.max_escalations = max_escalations or 3
+        self.max_local_retries = max_local_retries or 2
 
     def _sanitize_code(self, code: str) -> str:
         """Parses, sanitizes, and unparses code to enforce security."""
@@ -793,6 +798,8 @@ class HierarchicalPlanner(BasePlanner):
             parent_chat_context=parent_chat_context,
             clarification_up_q=clarification_up_q,
             clarification_down_q=clarification_down_q,
+            max_escalations=self.max_escalations,
+            max_local_retries=self.max_local_retries,
         )
 
     def _create_sandbox_globals(self) -> Dict[str, Any]:
