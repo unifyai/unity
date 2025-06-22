@@ -18,6 +18,7 @@ import unify
 # ── new helpers & simulated back-ends ────────────────────────────────────────
 from ..contact_manager.simulated import SimulatedContactManager
 from ..transcript_manager.simulated import SimulatedTranscriptManager
+from ..knowledge_manager.simulated import SimulatedKnowledgeManager
 from ..common.llm_helpers import (
     methods_to_tool_dict,
     start_async_tool_use_loop,
@@ -26,6 +27,7 @@ from .prompt_builders import (
     build_contact_update_prompt,
     build_bio_prompt,
     build_rolling_prompt,
+    build_knowledge_prompt,
 )
 from .base import BaseMemoryManager
 
@@ -41,8 +43,9 @@ class SimulatedMemoryManager(BaseMemoryManager):
         # ── plug into the *other* simulated services so state is shared ─────
         self._contact_manager = SimulatedContactManager(description=description)
         self._transcript_manager = SimulatedTranscriptManager(description=description)
+        self._knowledge_manager = SimulatedKnowledgeManager(description=description)
 
-        # Light-weight overlay that remembers the *latest* bio / rolling values
+        # Light-weight overlay that remembers the *latest* bio / rolling / knowledge writes
         # without touching an external store – key = contact_id
         self._overlays: Dict[int, Dict[str, str]] = {}
 
@@ -169,6 +172,43 @@ class SimulatedMemoryManager(BaseMemoryManager):
             tools,
             loop_id="SimulatedMemoryManager.update_contact_rolling_summary",
             tool_policy=lambda i, _: ("required", _) if i < 1 else ("auto", _),
+        )
+
+        return await handle.result()
+
+    async def update_knowledge(self, transcript: str) -> str:
+        """
+        Pass transcript through a tool-loop wired to the simulated
+        KnowledgeManager; store any harvested facts in `_overlays['kb']`
+        for rudimentary statefulness.
+        """
+
+        async def _kb_update(card_id: int | None, content: str) -> str:
+            """
+            Tiny wrapper that calls the simulated `.update` and records the
+            content locally so tests can assert changes between calls.
+            """
+            self._overlays.setdefault("kb", []).append(content)
+            return await self._knowledge_manager.update(
+                f"Update knowledge card {card_id}: {content}",
+            )
+
+        tools: Dict[str, Callable[..., Any]] = {
+            "contact_ask": self._contact_manager.ask,
+            "transcript_ask": self._transcript_manager.ask,
+            "kb_ask": self._knowledge_manager.ask,
+            "kb_refactor": self._knowledge_manager.refactor,
+            "kb_update": _kb_update,
+        }
+
+        self._llm.set_system_message(build_knowledge_prompt(tools))
+
+        handle = start_async_tool_use_loop(
+            self._llm,
+            transcript,
+            tools,
+            loop_id="SimulatedMemoryManager.update_knowledge",
+            tool_policy=lambda i, _: ("required", _) if i < 2 else ("auto", _),
         )
 
         return await handle.result()

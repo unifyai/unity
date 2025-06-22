@@ -74,3 +74,28 @@ def build_rolling_prompt(tools: Dict[str, Callable]) -> str:
             "Current UTC time: " + _now(),
         ],
     )
+
+
+def build_knowledge_prompt(tools: Dict[str, Callable]) -> str:
+    return "\n".join(
+        [
+            "You are the **MemoryManager** tasked with mining *long-term*",
+            "knowledge from the latest 50-message transcript chunk.",
+            "",
+            "• Identify *reusable* facts about people, projects, company",
+            "  processes, requirements, or domain knowledge.",
+            "• Before writing, call `KnowledgeManager.refactor` to check if an",
+            "  existing card should be merged / extended instead of creating",
+            "  duplication.",
+            "• Finally, persist using `KnowledgeManager.update` (or skip if",
+            "  nothing valuable was found).",
+            "",
+            "Return a short, human-readable summary of what you stored; if",
+            "nothing was stored, just return 'no-op'.",
+            "",
+            "Tools (name → argspec):",
+            json.dumps(_sig_dict(tools), indent=4),
+            "",
+            "Current UTC time: " + _now(),
+        ],
+    )
