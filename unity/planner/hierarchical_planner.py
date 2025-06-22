@@ -754,6 +754,7 @@ class HierarchicalPlanner(BasePlanner):
         Uses an LLM to assess if the goal is ambiguous and requires an
         exploratory phase before generating the main plan.
         """
+        return False
         prompt = textwrap.dedent(
             f"""
             You are a web browser agent assessing a task description from a user.
