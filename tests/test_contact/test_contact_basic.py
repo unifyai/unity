@@ -23,6 +23,8 @@ def test_create_contact():
         "phone_number": None,
         "whatsapp_number": None,
         "description": "A bit of a loser",
+        "bio": None,
+        "rolling_summary": None,
     }
 
 
@@ -48,6 +50,8 @@ def test_update_contact():
         "phone_number": None,
         "whatsapp_number": None,
         "description": None,
+        "bio": None,
+        "rolling_summary": None,
     }
 
     # update
@@ -69,6 +73,8 @@ def test_update_contact():
         "phone_number": None,
         "whatsapp_number": None,
         "description": "He's alright",
+        "bio": None,
+        "rolling_summary": None,
     }
 
 
@@ -92,6 +98,8 @@ def test_create_contacts():
         "phone_number": None,
         "whatsapp_number": None,
         "description": None,
+        "bio": None,
+        "rolling_summary": None,
     }
 
     # second
@@ -109,6 +117,8 @@ def test_create_contacts():
         "phone_number": None,
         "whatsapp_number": None,
         "description": None,
+        "bio": None,
+        "rolling_summary": None,
     }
 
 
