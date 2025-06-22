@@ -1068,23 +1068,34 @@ class HierarchicalPlanner(BasePlanner):
         )
         return textwrap.dedent(
             f"""
-            You are an expert Python programmer. Decompose the goal into a Python script.
+            You are an expert Python programmer. Your task is to generate a single, complete Python script to achieve a goal.
             {retry_msg}
             **Goal:** "{goal}"
             {exploration_context}
-            **Primitives:**\n{primitives_doc}
-            **Existing Functions:**\n{existing_functions_doc or "None"}
-            **Instructions:**
-            1. Main entry MUST be `async def main_plan()`.
-            2. All functions MUST be `async def` and decorated with `@verify`.
-            3. Stub complex new tasks with `raise NotImplementedError`.
-            4. The script must be complete, including any reused function code.
-            5. CRITICAL: You MUST NOT use any `import` statements. Rely only on provided primitives.
+
+            **CRITICAL INSTRUCTIONS:**
+            1. Your entire response MUST be a single, valid Python code block. Do NOT include any preamble, introductory text, explanations, or markdown fences.
+            2. The main entry point for the script MUST be a function named `async def main_plan()`.
+            3. All functions you define MUST be `async def` and MUST be decorated with `@verify`.
+            4. For browser interaction, you have ONLY TWO tools available:
+               - `await act(instruction: str)`
+               - `await observe(query: str)`
+            5. You MUST NOT invent other primitives. ALL browser actions must go through `act` or `observe`.
+            6. You MUST NOT use any `import` statements.
+            7. You MUST use the `await` keyword before any call to an `async def` function, including `act`, `observe`, and any other helper functions you define.
+            8. The `main_plan` function MUST return the final answer as a string. It MUST NOT use `print()` for the final output.
+            **Primitives Reference:**
+            {primitives_doc}
+
+            **Existing Functions Library (if any):**
+            {existing_functions_doc or "None"}
+
             **Code of available functions:**
             ```python
             {full_existing_code or "# None"}
             ```
-            Generate the complete script.
+
+            Begin your response now. Your response should start immediately with the code.
         """,
         )
 
@@ -1110,21 +1121,43 @@ class HierarchicalPlanner(BasePlanner):
         )
         prompt = textwrap.dedent(
             f"""
-            You are an expert Python programmer. Implement the function below.
-            {replan_context}
-            **Goal:** "{plan.goal}"
-            **Function to Implement:** `async def {function_name}{func_sig}:`
-            **Parent Function Code:**\n```python\n{parent_code}\n```
+            You are an expert Python programmer. Implement the function body for `{function_name}`.
+
+            **Overall Goal:** "{plan.goal}"
+            **Function to Implement:** `async def {function_name}{func_sig}`
+            **Parent Function Code (for context):**
+            ```python
+            {parent_code or "N/A"}
+            ```
             **Current Browser State:** "{browser_state}"
-            **Instructions:**
-            1. Write the full `async def` implementation for `{function_name}`.
-            2. The function MUST be decorated with `@verify`.
-            3. Provide a complete function (decorator, signature, docstring, body).
-            4. CRITICAL: You MUST NOT use any `import` statements.
+            {replan_context}
+
+            **CRITICAL INSTRUCTIONS:**
+            1. Your output MUST be ONLY the Python code for the function, starting with the `@verify` decorator. Do not include explanations.
+            2. For browser interaction, you have ONLY TWO tools available:
+               - `await act(instruction: str)`
+               - `await observe(query: str)`
+            3. You MUST NOT invent other primitives. All browser control must be done via `act` and `observe`.
+            4. You MUST NOT use any `import` statements.
+
+            Begin your response now.
         """,
         )
-        code = await llm_call(self.llm_client, prompt)
-        return self._sanitize_code(code)
+        implementation_client = unify.AsyncUnify(
+            os.environ.get("UNIFY_MODEL", "gpt-4o-mini@openai"),
+        )
+        code = await llm_call(implementation_client, prompt)
+        logger.debug(f"LLM response for dynamic implementation of '{function_name}':\n--- LLM RAW RESPONSE START ---\n{code}\n--- LLM RAW RESPONSE END ---")
+        
+        try:
+            sanitized_code = self._sanitize_code(
+                code.strip().replace("```python", "").replace("```", "").strip()
+            )
+            logger.debug(f"Sanitized code for '{function_name}':\n--- CODE START ---\n{sanitized_code}\n--- CODE END ---")
+            return sanitized_code
+        except SyntaxError as e:
+            logger.error(f"Syntax error implementing '{function_name}'. Reason: {e}\nProblematic Code:\n---\n{code}\n---")
+            raise
 
     async def _check_state_against_goal(
         self,
