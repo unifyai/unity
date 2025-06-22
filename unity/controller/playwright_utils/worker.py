@@ -485,6 +485,7 @@ class BrowserWorker(threading.Thread):
                         "screenshot": screenshot,
                         "history": self.runner.hist.dump(),
                         "state": vars(self.runner.state),
+                        "ts": time.time(),
                     }
                     try:
                         self._redis_client.publish("browser_state", json.dumps(payload))
