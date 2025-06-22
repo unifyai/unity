@@ -1,127 +1,95 @@
+# memory_manager/simulated.py
+"""
+A lightweight, *offline-only* stand-in for the real `MemoryManager`.
+
+It keeps an **internal, in-memory dictionary** of “contacts” so that calls to
+`update_contact_bio` and `update_contact_rolling_summary` appear to mutate
+state across invocations – but nothing ever touches an external store.
+"""
+
 from __future__ import annotations
 
 import json
 import os
-import threading
-from typing import Any, Dict, List, Optional
+from typing import Dict, Optional
 
 import unify
 
 from .base import BaseMemoryManager
-from ..common.llm_helpers import SteerableToolHandle
 
 
-# ––– tiny helper handle ––––––––––––––––––––––––––––––––––––––––––––––––––––
-class _SimulatedMemoryHandle(SteerableToolHandle):
-    def __init__(
-        self,
-        llm: unify.Unify,
-        initial_prompt: str,
-        *,
-        _return_reasoning_steps: bool,
-    ) -> None:
-        self._llm = llm
-        self._prompt = initial_prompt
-        self._want_steps = _return_reasoning_steps
-        self._done = threading.Event()
-        self._answer: Optional[str] = None
-        self._messages: List[Dict[str, Any]] = []
-
-    async def result(self):
-        if not self._done.is_set():
-            self._answer = await self._llm.generate(self._prompt)
-            self._messages = [
-                {"role": "user", "content": self._prompt},
-                {"role": "assistant", "content": self._answer},
-            ]
-            self._done.set()
-        return (self._answer, self._messages) if self._want_steps else self._answer
-
-    # trivial stubs – no real interactivity required for tests / demos
-    def pause(self):
-        return "Paused (simulated)."
-
-    def resume(self):
-        return "Resumed (simulated)."
-
-    def stop(self):
-        self._done.set()
-        return "Stopped (simulated)."
-
-    def interject(self, message: str):
-        return "Cannot interject – simulated handle."  # no‑op
-
-    def done(self):
-        return self._done.is_set()
-
-    @property
-    def valid_tools(self):
-        return {}
-
-
-# ––– simulated manager ––––––––––––––––––––––––––––––––––––––––––––––––––––
 class SimulatedMemoryManager(BaseMemoryManager):
-    """Lightweight stand‑in that *imagines* all operations."""
+    """
+    Drop-in replacement for tests / demos that runs entirely in RAM and
+    fabricates plausible replies with an LLM.
+    """
 
-    def __init__(self) -> None:
+    def __init__(self, description: str = "imaginary scenario") -> None:
+        # Tiny fake “database” keyed by contact_id
+        self._contacts: Dict[int, Dict[str, str]] = {}
+
+        # Shared stateful LLM so the simulation feels coherent
         self._llm = unify.AsyncUnify(
             "gpt-4o@openai",
             cache=json.loads(os.getenv("UNIFY_CACHE", "true")),
             traced=json.loads(os.getenv("UNIFY_TRACED", "true")),
             stateful=True,
         )
-        # no tools; we just answer directly
-
-    async def _fake(
-        self,
-        prompt: str,
-        *,
-        _return_reasoning_steps: bool,
-    ) -> SteerableToolHandle:
-        return _SimulatedMemoryHandle(
-            self._llm,
-            prompt,
-            _return_reasoning_steps=_return_reasoning_steps,
+        self._llm.set_system_message(
+            "You are a *simulated* MemoryManager.  There is **no** real DB – "
+            "invent sensible answers and pretend state updates succeed.\n\n"
+            f"Back-story: {description}",
         )
 
-    async def update_contacts(
-        self,
-        transcript: str,
-        *,
-        _return_reasoning_steps: bool = False,
-        **_,
-    ) -> SteerableToolHandle:  # noqa: D401,E501 – signature inherited
-        prompt = "Simulate update_contacts. Transcript:\n" + transcript
-        return await self._fake(prompt, _return_reasoning_steps=_return_reasoning_steps)
+    # ------------------------------------------------------------------ #
+    # Public API                                                          #
+    # ------------------------------------------------------------------ #
+    async def update_contacts(self, transcript: str) -> str:  # noqa: D401
+        """
+        Pretend to parse the transcript and add / update contacts.
+        Simply returns a short, human-readable summary.
+        """
+        prompt = (
+            "You are pretending to scan a 50-message transcript and create or "
+            "update contacts.  Return a 1-sentence summary of what changed.\n\n"
+            f"Transcript:\n{transcript}"
+        )
+        return await self._llm.generate(prompt)
 
     async def update_contact_bio(
         self,
         transcript: str,
         latest_bio: Optional[str] = None,
-        *,
-        _return_reasoning_steps: bool = False,
-        **_,
-    ) -> SteerableToolHandle:  # noqa: D401,E501
+    ) -> str:
+        """
+        Fabricates a new bio (or keeps the old one) and stores it in RAM.
+        """
         prompt = (
-            "Simulate update_contact_bio. Transcript:\n"
-            + transcript
-            + "\nExisting bio:"
-            + str(latest_bio)
+            "You are updating ONE contact’s *bio* based on a 50-message chunk.\n"
+            f"Existing bio (may be null): {latest_bio}\n\n"
+            f"Transcript:\n{transcript}\n\n"
+            "Return only the *new* bio text (≤ 80 words)."
         )
-        return await self._fake(prompt, _return_reasoning_steps=_return_reasoning_steps)
+        new_bio = await self._llm.generate(prompt)
+        # Simulated persistence – always assumes contact_id == 1 for demo
+        self._contacts.setdefault(1, {})["bio"] = new_bio
+        return new_bio
 
     async def update_contact_rolling_summary(
         self,
         transcript: str,
         latest_rolling_summary: Optional[str] = None,
-        *,
-        _return_reasoning_steps: bool = False,
-        **_,
-    ) -> SteerableToolHandle:  # noqa: D401,E501
+    ) -> str:
+        """
+        Generates a fresh ≤120-word rolling summary and stores it in RAM.
+        """
         prompt = (
-            "Simulate update_contact_rolling_summary. Transcript:\n"
-            + transcript
-            + "\nExisting summary:"
-            + str(latest_rolling_summary)
+            "Update the 50-message *rolling summary* for ONE contact.\n"
+            f"Previous summary (may be null): {latest_rolling_summary}\n\n"
+            f"Transcript:\n{transcript}\n\n"
+            "Return the new concise rolling summary (≤ 120 words)."
         )
-        return await self._fake(prompt, _return_reasoning_steps=_return_reasoning_steps)
+        new_summary = await self._llm.generate(prompt)
+        # Again, pretend the contact_id is 1
+        self._contacts.setdefault(1, {})["rolling_summary"] = new_summary
+        return new_summary

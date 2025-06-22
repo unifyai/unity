@@ -1,52 +1,34 @@
+# memory_manager/base.py
 from __future__ import annotations
 
-import asyncio
 from abc import ABC, abstractmethod
-from typing import Any, Dict, List, Optional
-
-from ..common.llm_helpers import SteerableToolHandle
+from typing import Optional
 
 
 class BaseMemoryManager(ABC):
-    """Public contract for the *MemoryManager* family.
+    """
+    *Offline* memory-maintenance helper that is invoked every 50 messages.
 
-    The manager is responsible for *maintaining* auxiliary per‑contact memory
-    (bios and rolling summaries) as well as performing bulk contact updates
-    derived from freshly ingested transcripts.
+    All public methods consume **one** request and return a final value
+    (they do **not** expose live, steerable handles).
     """
 
-    # ––– Public interface ––––––––––––––––––––––––––––––––––––––––––––––––
     @abstractmethod
-    async def update_contacts(
-        self,
-        transcript: str,
-        *,
-        _return_reasoning_steps: bool = False,
-        parent_chat_context: Optional[List[Dict[str, Any]]] = None,
-        clarification_up_q: Optional[asyncio.Queue[str]] = None,
-        clarification_down_q: Optional[asyncio.Queue[str]] = None,
-    ) -> SteerableToolHandle: ...
+    async def update_contacts(self, transcript: str) -> str:  # new / updated contacts
+        ...
 
     @abstractmethod
     async def update_contact_bio(
         self,
         transcript: str,
         latest_bio: Optional[str] = None,
-        *,
-        _return_reasoning_steps: bool = False,
-        parent_chat_context: Optional[List[Dict[str, Any]]] = None,
-        clarification_up_q: Optional[asyncio.Queue[str]] = None,
-        clarification_down_q: Optional[asyncio.Queue[str]] = None,
-    ) -> SteerableToolHandle: ...
+    ) -> str:  # new bio
+        ...
 
     @abstractmethod
     async def update_contact_rolling_summary(
         self,
         transcript: str,
         latest_rolling_summary: Optional[str] = None,
-        *,
-        _return_reasoning_steps: bool = False,
-        parent_chat_context: Optional[List[Dict[str, Any]]] = None,
-        clarification_up_q: Optional[asyncio.Queue[str]] = None,
-        clarification_down_q: Optional[asyncio.Queue[str]] = None,
-    ) -> SteerableToolHandle: ...
+    ) -> str:  # new rolling summary
+        ...
