@@ -983,6 +983,7 @@ class HierarchicalPlanner(BasePlanner):
             f"   - Interactions:\n{json.dumps(all_interactions, indent=4)}",
         )
         assessment = await self._check_state_against_goal(
+            plan,
             fn.__name__,
             fn.__doc__,
             all_interactions,
@@ -1121,16 +1122,18 @@ class HierarchicalPlanner(BasePlanner):
         ### Instructions & Rules
         1.  **Single Code Block:** Your entire response MUST be a single, valid Python code block. Do NOT include any preamble, explanations, or markdown fences.
         2.  **Entry Point:** The main entry point for the script MUST be a function named `async def main_plan()`.
-        3.  **Required Decorator:** All functions you define MUST be `async def` and MUST be decorated with `@verify`.
-        4.  **No Imports:** You MUST NOT use any `import` statements. The execution environment is sandboxed.
-        5.  **Asynchronous Calls:** You MUST use the `await` keyword before any call to an `async def` function, including the primitives (`act`, `observe`) and any helper functions you define.
-        6.  **Decomposition:** Break down complex problems into smaller, logical helper functions. If a suitable function exists in the library, use it. If not, you may define it, or if its implementation is not immediately obvious, you may leave it as a stub (e.g., `raise NotImplementedError`).
-        7.  **Final Output:** The `main_plan` function MUST return the final answer as a string. It MUST NOT use `print()` for the final output.
+        3.  **Docstrings Required:** Each function you define MUST include a concise one-line docstring explaining its purpose.
+        4.  **Required Decorator:** All functions you define MUST be `async def` and MUST be decorated with `@verify`.
+        5.  **No Imports:** You MUST NOT use any `import` statements. The execution environment is sandboxed.
+        6.  **Asynchronous Calls:** You MUST use the `await` keyword before any call to an `async def` function, including the primitives (`act`, `observe`) and any helper functions you define.
+        7.  **Decomposition:** Break down complex problems into smaller, logical helper functions. If a suitable function exists in the library, use it. If not, you may define it, or if its implementation is not immediately obvious, you may leave it as a stub (e.g., `raise NotImplementedError`).
+        8.  **Final Output:** The `main_plan` function MUST return the final answer as a string. It MUST NOT use `print()` for the final output.
 
         ---
         ### Primitives Reference
         You have ONLY TWO primitive tools for browser interaction:
         {primitives_doc}
+        Primitive Signatures: The act and observe primitives each take only one string argument (e.g., await act("click the login button")). You MUST NOT pass dictionaries or multiple arguments.
 
         ---
         ### Existing Functions Library
@@ -1185,8 +1188,9 @@ class HierarchicalPlanner(BasePlanner):
             ---
             ### Instructions & Rules
             1.  **Code Only:** Your output MUST be ONLY the Python code for the function, starting with the `@verify` decorator and the function definition. Do not include explanations or markdown.
-            2.  **Primitives Only:** For browser interaction, use ONLY `await act(...)` and `await observe(...)`.
-            3.  **No Imports:** `import` statements are forbidden.
+            2.  **Add a Docstring:** The function implementation MUST include a concise one-line docstring explaining its purpose.
+            3.  **Primitives Only:** For browser interaction, use ONLY `await act(...)` and `await observe(...)`. Primitive Signatures: The act and observe primitives each take only one string argument (e.g., await act("click the login button")). You MUST NOT pass dictionaries or multiple arguments.
+            4.  **No Imports:** `import` statements are forbidden.
 
             Begin your response now.
             """,
@@ -1231,6 +1235,7 @@ class HierarchicalPlanner(BasePlanner):
 
     def _build_verification_prompt(
         self,
+        plan: HierarchicalPlan,
         function_name: str,
         function_docstring: str | None,
         interactions: list,
@@ -1250,27 +1255,30 @@ class HierarchicalPlanner(BasePlanner):
 
         return textwrap.dedent(
             f"""
-            You are a meticulous verification agent. Your task is to assess if the executed actions successfully achieved the function's intended purpose.
+        You are a meticulous verification agent. Your task is to assess if the executed actions successfully achieved the function's intended purpose, in the context of the overall goal.
 
-            **Function Under Review:** `{function_name}`
-            **Purpose:** {function_docstring or 'No docstring provided.'}
+        **Overall User Goal:** "{plan.goal}"
+        **Function Under Review:** `{function_name}`
+        **Purpose of this function:** {function_docstring or 'No docstring provided.'}
 
-            **Execution Log (Primitives Used):**
-            {interactions_log}
+        **Execution Log (Primitives Used):**
+        {interactions_log}
 
-            ---
-            ### Assessment Task
-            Based on the function's purpose and the execution log, provide your assessment as a single JSON object.
+        ---
+        ### Assessment Task
+        Based on the function's purpose and the execution log, provide your assessment as a single JSON object.
+        - **Be pragmatic:** If the function's purpose is to gather data (like search results), and the log shows that the data was successfully retrieved, this should be considered a success (`ok`). The function does not need to perform extra analysis unless explicitly asked.
+        - **Consider the overall goal:** If a function's individual purpose is unclear but its actions logically progress toward the overall user goal, you should also consider it a success (`ok`).
 
-            **Response Schema:**
-            `{{"status": "...", "reason": "..."}}`
+        **Response Schema:**
+        `{{"status": "...", "reason": "..."}}`
 
-            **Valid Statuses:**
-            - `ok`: The function's purpose was fully and correctly achieved.
-            - `reimplement_local`: A tactical error occurred. The goal is correct, but the actions were wrong. The function needs to be re-written.
-            - `replan_parent`: A strategic error occurred. The function itself is flawed or was called at the wrong time. The parent function needs to be replanned.
-            - `fatal_error`: An unrecoverable error occurred that prevents any further progress.
-            """,
+        **Valid Statuses:**
+        - `ok`: The function's purpose was fully and correctly achieved.
+        - `reimplement_local`: A tactical error occurred. The goal is correct, but the actions were wrong. The function needs to be re-written.
+        - `replan_parent`: A strategic error occurred. The function itself is flawed or was called at the wrong time. The parent function needs to be replanned.
+        - `fatal_error`: An unrecoverable error occurred that prevents any further progress.
+        """
         )
 
     def _build_plan_surgery_prompt(self, current_code: str, request: str) -> str:
@@ -1292,8 +1300,9 @@ class HierarchicalPlanner(BasePlanner):
             ### Instructions & Rules
             1.  **Rewrite the Whole Script:** You must return a new, complete, and valid Python script that incorporates the requested change.
             2.  **Code Only:** Your response MUST be a single Python code block. Do NOT include any preamble, explanations, or markdown fences.
-            3.  **Preserve Decorators:** All `async def` functions MUST retain their `@verify` decorator.
-            4.  **No Imports:** You MUST NOT use any `import` statements.
+            3.  **Preserve Docstrings:** All functions should have a concise one-line docstring explaining their purpose.
+            4.  **Preserve Decorators:** All `async def` functions MUST retain their `@verify` decorator.
+            5.  **No Imports:** You MUST NOT use any `import` statements.
 
             Begin your response now. Your response must start immediately with the code.
             """,
@@ -1338,11 +1347,13 @@ class HierarchicalPlanner(BasePlanner):
 
     async def _check_state_against_goal(
         self,
+        plan: HierarchicalPlan,
         function_name,
         function_docstring,
         interactions,
     ):
         prompt = self._build_verification_prompt(
+            plan,
             function_name,
             function_docstring,
             interactions,
