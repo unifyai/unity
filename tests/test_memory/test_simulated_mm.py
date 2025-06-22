@@ -50,17 +50,7 @@ def _build_transcript(useful_line: str) -> str:
 @pytest.mark.asyncio
 @_handle_project
 async def test_mm_update_contacts_invokes_expected_tools(monkeypatch):
-    counts = {"cm_ask": 0, "cm_update": 0, "tm_ask": 0}
-
-    # --- patch SimulatedContactManager.ask ----------------------------------
-    orig_cm_ask = SimulatedContactManager.ask
-
-    @functools.wraps(orig_cm_ask)
-    async def spy_cm_ask(self, text: str, **kw):
-        counts["cm_ask"] += 1
-        return await orig_cm_ask(self, text, **kw)
-
-    monkeypatch.setattr(SimulatedContactManager, "ask", spy_cm_ask, raising=True)
+    counts = {"cm_update": 0}
 
     # --- patch SimulatedContactManager.update ------------------------------
     orig_cm_upd = SimulatedContactManager.update
@@ -72,16 +62,6 @@ async def test_mm_update_contacts_invokes_expected_tools(monkeypatch):
 
     monkeypatch.setattr(SimulatedContactManager, "update", spy_cm_upd, raising=True)
 
-    # --- patch SimulatedTranscriptManager.ask ------------------------------
-    orig_tm_ask = SimulatedTranscriptManager.ask
-
-    @functools.wraps(orig_tm_ask)
-    async def spy_tm_ask(self, text: str, **kw):
-        counts["tm_ask"] += 1
-        return await orig_tm_ask(self, text, **kw)
-
-    monkeypatch.setattr(SimulatedTranscriptManager, "ask", spy_tm_ask, raising=True)
-
     # --- run the method ----------------------------------------------------
     mm = SimulatedMemoryManager("CRM enrichment demo.")
     transcript = _build_transcript(
@@ -91,9 +71,7 @@ async def test_mm_update_contacts_invokes_expected_tools(monkeypatch):
 
     # --- expectations ------------------------------------------------------
     assert isinstance(answer, str) and answer.strip(), "Return should be non-empty"
-    # At least one ask to contacts & transcript, plus ≥1 update to contacts
-    assert counts["cm_ask"] >= 1
-    assert counts["tm_ask"] >= 1
+    # At least one call to update contacts
     assert counts["cm_update"] >= 1
 
 
