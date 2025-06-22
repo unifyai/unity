@@ -491,7 +491,7 @@ class HierarchicalPlan(BaseActiveTask):
 
             if self.completed_functions:
                 logger.info(
-                    "CACHE INVALIDATE: Clearing entire cache due to plan modification."
+                    "CACHE INVALIDATE: Clearing entire cache due to plan modification.",
                 )
                 self.completed_functions.clear()
 
@@ -532,7 +532,13 @@ class HierarchicalPlan(BaseActiveTask):
 
             async def act_wrapper(instruction: str):
                 interactions.append(("act", instruction, None))
-                return await self.planner.controller.act(instruction)
+                result = await self.planner.controller.act(instruction)
+                logger.debug(
+                    "Waiting for 3 seconds for browser state to settle after action...",
+                )
+                await asyncio.sleep(3)
+                logger.debug("...settling wait complete.")
+                return result
 
             correction_namespace["act"] = act_wrapper
             correction_namespace["observe"] = self.planner.controller.observe
@@ -764,7 +770,7 @@ class HierarchicalPlanner(BasePlanner):
 
             - If the goal is **clear and specific**, respond with the single word: **EXECUTE**.
             - If the goal is **ambiguous or requires information gathering**, respond with the single word: **EXPLORE**.
-            """
+            """,
         )
         assessment_client = unify.AsyncUnify(
             os.environ.get("UNIFY_MODEL", "gpt-4o-mini@openai"),
@@ -883,7 +889,9 @@ class HierarchicalPlanner(BasePlanner):
                         f"CACHE HIT: Skipping already completed call to '{fn.__name__}' with args {args}, {kwargs}",
                     )
                     return
-
+                logger.info(
+                    f"CACHE MISS: Proceeding with execution for '{fn.__name__}'.",
+                )
                 plan.call_stack.append(fn.__name__)
                 plan.interaction_stack.append([])
                 logger.info(f"VERIFY: Entering '{fn.__name__}'")
@@ -941,7 +949,13 @@ class HierarchicalPlanner(BasePlanner):
     ):
         async def act_wrapper(instruction: str):
             interactions.append(("act", instruction, None))
-            return await self.controller.act(instruction)
+            result = await self.controller.act(instruction)
+            logger.debug(
+                "Waiting for 3 seconds for browser state to settle after action...",
+            )
+            await asyncio.sleep(3)
+            logger.debug("...settling wait complete.")
+            return result
 
         async def observe_wrapper(query: str, **opts):
             res = await self.controller.observe(query, **opts)
@@ -966,10 +980,18 @@ class HierarchicalPlanner(BasePlanner):
         all_interactions = [
             item for sublist in plan.interaction_stack for item in sublist
         ]
+        logger.info(
+            f"🕵️ VERIFICATION INPUT for '{fn.__name__}':\n"
+            f"   - Purpose: {fn.__doc__ or 'N/A'}\n"
+            f"   - Interactions:\n{json.dumps(all_interactions, indent=4)}",
+        )
         assessment = await self._check_state_against_goal(
             fn.__name__,
             fn.__doc__,
             all_interactions,
+        )
+        logger.info(
+            f"🕵️ VERIFICATION ASSESSMENT for '{fn.__name__}': {assessment.model_dump_json(indent=2)}",
         )
         plan.action_log.append(
             f"Verification for {fn.__name__}: {assessment.status} - '{assessment.reason}'",
@@ -993,8 +1015,10 @@ class HierarchicalPlanner(BasePlanner):
                 child_interactions = plan.interaction_stack[-1]
                 parent_interactions = plan.interaction_stack[-2]
                 parent_interactions.extend(child_interactions)
-                logger.debug(f"Rolled up {len(child_interactions)} interactions from '{fn.__name__}' to its parent.")
-            # =================================================================
+                logger.debug(
+                    f"Rolled up {len(child_interactions)} interactions from '{fn.__name__}' to its parent.",
+                )
+
             if func_source and self.function_manager:
                 self.function_manager.add_functions(implementations=[func_source])
             return result
@@ -1038,14 +1062,24 @@ class HierarchicalPlanner(BasePlanner):
                     exploration_summary,
                 )
                 response = await llm_call(self.llm_client, prompt)
+                logger.debug(
+                    f"LLM response for initial plan (attempt {attempt+1}):\n--- LLM RAW RESPONSE START ---\n{response}\n--- LLM RAW RESPONSE END ---",
+                )
+
                 code = (
                     response.strip().replace("```python", "").replace("```", "").strip()
+                )
+                logger.debug(
+                    f"Stripped code for initial plan:\n--- CODE START ---\n{code}\n--- CODE END ---",
                 )
 
                 return self._sanitize_code(code)
 
             except SyntaxError as e:
-                last_error = str(e)
+                last_error = f"{e}\nProblematic Code:\n---\n{code}\n---"
+                logger.error(
+                    f"Attempt {attempt+1} to generate plan failed. Reason: {last_error}",
+                )
                 if attempt == max_retries - 1:
                     raise
         raise RuntimeError("Failed to generate a valid plan after multiple retries.")
@@ -1153,16 +1187,22 @@ class HierarchicalPlanner(BasePlanner):
             os.environ.get("UNIFY_MODEL", "gpt-4o-mini@openai"),
         )
         code = await llm_call(implementation_client, prompt)
-        logger.debug(f"LLM response for dynamic implementation of '{function_name}':\n--- LLM RAW RESPONSE START ---\n{code}\n--- LLM RAW RESPONSE END ---")
-        
+        logger.debug(
+            f"LLM response for dynamic implementation of '{function_name}':\n--- LLM RAW RESPONSE START ---\n{code}\n--- LLM RAW RESPONSE END ---",
+        )
+
         try:
             sanitized_code = self._sanitize_code(
-                code.strip().replace("```python", "").replace("```", "").strip()
+                code.strip().replace("```python", "").replace("```", "").strip(),
             )
-            logger.debug(f"Sanitized code for '{function_name}':\n--- CODE START ---\n{sanitized_code}\n--- CODE END ---")
+            logger.debug(
+                f"Sanitized code for '{function_name}':\n--- CODE START ---\n{sanitized_code}\n--- CODE END ---",
+            )
             return sanitized_code
         except SyntaxError as e:
-            logger.error(f"Syntax error implementing '{function_name}'. Reason: {e}\nProblematic Code:\n---\n{code}\n---")
+            logger.error(
+                f"Syntax error implementing '{function_name}'. Reason: {e}\nProblematic Code:\n---\n{code}\n---",
+            )
             raise
 
     async def _check_state_against_goal(
