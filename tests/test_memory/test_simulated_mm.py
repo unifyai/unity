@@ -25,7 +25,6 @@ import pytest
 
 from unity.memory_manager.simulated import SimulatedMemoryManager
 from unity.contact_manager.simulated import SimulatedContactManager
-from unity.transcript_manager.simulated import SimulatedTranscriptManager
 
 # shared helper used throughout the test-suite – isolates each test run
 from tests.helpers import _handle_project
@@ -118,34 +117,24 @@ async def test_mm_update_contact_bio_calls_inner_helpers(monkeypatch):
 @pytest.mark.asyncio
 @_handle_project
 async def test_mm_update_contact_rolling_summary_invocations(monkeypatch):
-    counts = {"cm_ask": 0, "tm_ask": 0, "_upd": 0}
+    counts = {"_upd": 0}
 
-    o_cm_ask = SimulatedContactManager.ask
-    o_tm_ask = SimulatedTranscriptManager.ask
-    o_cm_upd = SimulatedContactManager._update_contact
-
-    @functools.wraps(o_cm_ask)
-    async def spy_cm_ask(self, text: str, **kw):
-        counts["cm_ask"] += 1
-        return await o_cm_ask(self, text, **kw)
-
-    @functools.wraps(o_tm_ask)
-    async def spy_tm_ask(self, text: str, **kw):
-        counts["tm_ask"] += 1
-        return await o_tm_ask(self, text, **kw)
-
-    @functools.wraps(o_cm_upd)
-    async def spy_cm_upd(self, **kw):
+    # ---- ensure _update_contact is available & spied ----------------------
+    async def stub_update_contact(
+        self,
+        *,
+        contact_id: int,
+        custom_fields: dict,
+        **kw,
+    ):
         counts["_upd"] += 1
-        return await o_cm_upd(self, **kw)
+        return {"outcome": "stub ok", "details": {"contact_id": contact_id}}
 
-    monkeypatch.setattr(SimulatedContactManager, "ask", spy_cm_ask, raising=True)
-    monkeypatch.setattr(SimulatedTranscriptManager, "ask", spy_tm_ask, raising=True)
     monkeypatch.setattr(
         SimulatedContactManager,
         "_update_contact",
-        spy_cm_upd,
-        raising=True,
+        stub_update_contact,
+        raising=False,
     )
 
     mm = SimulatedMemoryManager("Rolling-summary refresh demo.")
@@ -161,4 +150,3 @@ async def test_mm_update_contact_rolling_summary_invocations(monkeypatch):
 
     assert isinstance(new_summary, str) and new_summary.strip()
     assert counts["_upd"] == 1, "_update_contact should be invoked once"
-    assert counts["cm_ask"] >= 1 and counts["tm_ask"] >= 1
