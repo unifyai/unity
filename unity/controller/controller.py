@@ -2,6 +2,7 @@ import threading
 import asyncio
 from datetime import datetime, timezone
 from typing import Any, Type, Optional
+import json
 
 import redis
 
@@ -66,17 +67,20 @@ class Controller(threading.Thread):
             except Exception:
                 browser_state = {}
             if isinstance(browser_state, dict):
+                self._observe_ctx["ts"] = browser_state.get("ts", 0.0)
                 raw_elements = browser_state.get("elements", [])
                 elements: list[tuple[Any, Any]] = []
                 for item in raw_elements:
                     if isinstance(item, (list, tuple)) and len(item) >= 2:
                         elements.append((item[0], item[1]))
-                self._observe_ctx = {
-                    "state": browser_state.get("state", {}),
-                    "elements": elements,
-                    "tabs": browser_state.get("tabs", []),
-                    "history": browser_state.get("history", []),
-                }
+                self._observe_ctx.update(
+                    {
+                        "state": browser_state.get("state", {}),
+                        "elements": elements,
+                        "tabs": browser_state.get("tabs", []),
+                        "history": browser_state.get("history", []),
+                    }
+                )
                 self._last_shot = browser_state.get("screenshot", b"")
 
     def stop(self) -> None:
@@ -94,7 +98,7 @@ class Controller(threading.Thread):
     # ------------------------------------------------------------------
     def _perform_action(self, actions: str | list[str]) -> None:
         # if given a list of commands, execute each in sequence
-        for action in actions:
+        for action in actions if isinstance(actions, list) else [actions]:
             # action is a single string
             # ── browser life-cycle primitives ────────────────────────────
             if action == "open_browser" and not self._browser_open:
@@ -153,15 +157,10 @@ class Controller(threading.Thread):
     # ------------------------------------------------------------------
     #  Public helper – synchronous one-shot action
     # ------------------------------------------------------------------
-    async def act(self, action: str) -> Optional[str]:
+    async def act(self, action: str, timeout: float = 7.0) -> Optional[str]:
         """
-        Convert natural-language text to a browser action and execute it.
-
-        Args:
-            action: The natural-language instruction to convert into a browser primitive.
-
-        Returns:
-            Optional[str]: The executed action string, or None if no action was selected by the LLM.
+        Convert natural-language text to a browser action and execute it,
+        waiting for the browser state to confirm the update.
         """
 
         cmd = await asyncio.to_thread(
@@ -176,6 +175,49 @@ class Controller(threading.Thread):
 
         assert cmd is not None, f"requested action {action} returned empty command"
         actions = cmd.get("action")
-        # execute the primitive action
+
+        if not actions:
+            LOGGER.warning(f"LLM returned no action for instruction: '{action}'")
+            return None
+
+        # --- MODIFICATION: Wait for browser state to update (Corrected Version) ---
+        before_ts = self._observe_ctx.get("ts", 0.0)
+
+        # This future will bridge the asyncio event loop with the redis thread
+        loop = asyncio.get_running_loop()
+        fut = loop.create_future()
+
+        # Create a new pubsub instance for this temporary, precise listener
+        ps = self._redis_client.pubsub(ignore_subscribe_messages=True)
+
+        def _waiter(msg):
+            """The handler that runs in the listener thread."""
+            if msg["type"] != "message":
+                return
+            try:
+                data = json.loads(msg["data"])
+                if data.get("ts", 0.0) > before_ts:
+                    # Safely set the future's result from the background thread
+                    loop.call_soon_threadsafe(fut.set_result, None)
+            except (json.JSONDecodeError, KeyError):
+                pass
+
+        # Subscribe and start the listener in a background thread
+        await asyncio.to_thread(ps.subscribe, **{"browser_state": _waiter})
+        listener_thread = ps.run_in_thread(daemon=True)
+
+        # Now, perform the action. The listener is already running.
         await asyncio.to_thread(self._perform_action, actions)
+
+        try:
+            # Wait for the future to be resolved by the _waiter
+            await asyncio.wait_for(fut, timeout)
+            LOGGER.info(f"✅ State confirmation received for action: {actions}")
+        except asyncio.TimeoutError:
+            LOGGER.warning(f"Timed out waiting for DOM refresh after action: {actions}")
+        finally:
+            # Crucially, stop the listener thread to clean up resources
+            listener_thread.stop()
+            await asyncio.to_thread(ps.close)
+
         return actions

@@ -534,11 +534,6 @@ class HierarchicalPlan(BaseActiveTask):
             async def act_wrapper(instruction: str):
                 interactions.append(("act", instruction, None))
                 result = await self.planner.controller.act(instruction)
-                logger.debug(
-                    "Waiting for 3 seconds for browser state to settle after action...",
-                )
-                await asyncio.sleep(3)
-                logger.debug("...settling wait complete.")
                 return result
 
             correction_namespace["act"] = act_wrapper
@@ -957,11 +952,6 @@ class HierarchicalPlanner(BasePlanner):
         async def act_wrapper(instruction: str):
             interactions.append(("act", instruction, None))
             result = await self.controller.act(instruction)
-            logger.debug(
-                "Waiting for 3 seconds for browser state to settle after action...",
-            )
-            await asyncio.sleep(3)
-            logger.debug("...settling wait complete.")
             return result
 
         async def observe_wrapper(query: str, **opts):
