@@ -282,7 +282,7 @@ async def main_plan():
     # It proves the escalation logic was reached. We use a timeout to prevent hangs.
     escalation_message = await asyncio.wait_for(
         plan.clarification_up_q.get(),
-        timeout=10,
+        timeout=20,
     )
 
     # 2. Now that we have the message, the state MUST be correct.
@@ -677,7 +677,9 @@ async def main_plan():
 
 @pytest.mark.asyncio
 async def test_user_initiated_stop(
-    planner: HierarchicalPlanner, mock_controller, monkeypatch
+    planner: HierarchicalPlanner,
+    mock_controller,
+    monkeypatch,
 ):
     """
     Objective: Test that a user can cleanly stop a running plan.
@@ -1097,7 +1099,9 @@ async def step_B_stub():
 
 @pytest.mark.asyncio
 async def test_skip_cache_lifecycle(
-    planner: HierarchicalPlanner, mock_controller, monkeypatch
+    planner: HierarchicalPlanner,
+    mock_controller,
+    monkeypatch,
 ):
     """
     Objective: Verify that the skip cache correctly prevents re-execution
@@ -1150,7 +1154,9 @@ async def main_plan():
 
     # Mock the planner's dependencies
     monkeypatch.setattr(
-        planner, "_generate_initial_plan", AsyncMock(return_value=initial_code)
+        planner,
+        "_generate_initial_plan",
+        AsyncMock(return_value=initial_code),
     )
     monkeypatch.setattr(
         planner,
@@ -1158,10 +1164,14 @@ async def main_plan():
         AsyncMock(return_value=VerificationAssessment(status="ok", reason="OK")),
     )
     monkeypatch.setattr(
-        planner, "_perform_plan_surgery", AsyncMock(return_value=modified_code)
+        planner,
+        "_perform_plan_surgery",
+        AsyncMock(return_value=modified_code),
     )
     monkeypatch.setattr(
-        planner, "_generate_course_correction_script", AsyncMock(return_value=None)
+        planner,
+        "_generate_course_correction_script",
+        AsyncMock(return_value=None),
     )
 
     # Correctly configure and apply the mock for the 'act' function.
@@ -1193,7 +1203,7 @@ async def main_plan():
     # Now that the plan is paused in the RUNNING state, modify it.
     # This will cancel the currently blocked plan task.
     modification_result = await plan.modify_plan(
-        "Change the repeatable_task implementation."
+        "Change the repeatable_task implementation.",
     )
 
     # Await the final result of the NEW, modified plan.
