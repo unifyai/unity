@@ -11,34 +11,47 @@ from __future__ import annotations
 
 import json
 import os
-from typing import Dict, Optional
+from typing import Dict, Optional, Callable, Any
 
 import unify
 
+# ── new helpers & simulated back-ends ────────────────────────────────────────
+from ..contact_manager.simulated import SimulatedContactManager
+from ..transcript_manager.simulated import SimulatedTranscriptManager
+from ..common.llm_helpers import (
+    methods_to_tool_dict,
+    start_async_tool_use_loop,
+)
+from .prompt_builders import (
+    build_contact_update_prompt,
+    build_bio_prompt,
+    build_rolling_prompt,
+)
 from .base import BaseMemoryManager
 
 
 class SimulatedMemoryManager(BaseMemoryManager):
     """
-    Drop-in replacement for tests / demos that runs entirely in RAM and
-    fabricates plausible replies with an LLM.
+    Test-double that **really uses** the simulated contact & transcript
+    managers instead of hallucinating everything from scratch.  Still
+    returns *plain strings* (no steerable handles).
     """
 
     def __init__(self, description: str = "imaginary scenario") -> None:
-        # Tiny fake “database” keyed by contact_id
-        self._contacts: Dict[int, Dict[str, str]] = {}
+        # ── plug into the *other* simulated services so state is shared ─────
+        self._contact_manager = SimulatedContactManager(description=description)
+        self._transcript_manager = SimulatedTranscriptManager(description=description)
 
-        # Shared stateful LLM so the simulation feels coherent
+        # Light-weight overlay that remembers the *latest* bio / rolling values
+        # without touching an external store – key = contact_id
+        self._overlays: Dict[int, Dict[str, str]] = {}
+
+        # One shared, stateful LLM that orchestrates tool-use loops
         self._llm = unify.AsyncUnify(
-            "gpt-4o@openai",
+            "o4-mini@openai",
             cache=json.loads(os.getenv("UNIFY_CACHE", "true")),
             traced=json.loads(os.getenv("UNIFY_TRACED", "true")),
             stateful=True,
-        )
-        self._llm.set_system_message(
-            "You are a *simulated* MemoryManager.  There is **no** real DB – "
-            "invent sensible answers and pretend state updates succeed.\n\n"
-            f"Back-story: {description}",
         )
 
     # ------------------------------------------------------------------ #
@@ -49,12 +62,25 @@ class SimulatedMemoryManager(BaseMemoryManager):
         Pretend to parse the transcript and add / update contacts.
         Simply returns a short, human-readable summary.
         """
-        prompt = (
-            "You are pretending to scan a 50-message transcript and create or "
-            "update contacts.  Return a 1-sentence summary of what changed.\n\n"
-            f"Transcript:\n{transcript}"
+        # Build a *dynamic* tool-set: contact ask / update  +  transcript ask
+        tools: Dict[str, Callable[..., Any]] = methods_to_tool_dict(
+            self._contact_manager.ask,
+            self._contact_manager.update,
+            self._transcript_manager.ask,
+            include_class_name=True,
         )
-        return await self._llm.generate(prompt)
+
+        self._llm.set_system_message(build_contact_update_prompt(tools))
+
+        handle = start_async_tool_use_loop(
+            self._llm,
+            transcript,
+            tools,
+            loop_id="SimulatedMemoryManager.update_contacts",
+            tool_policy=lambda i, _: ("required", _) if i < 2 else ("auto", _),
+        )
+        # returns a **string** – the tool-loop terminates internally
+        return await handle.result()
 
     async def update_contact_bio(
         self,
@@ -64,16 +90,43 @@ class SimulatedMemoryManager(BaseMemoryManager):
         """
         Fabricates a new bio (or keeps the old one) and stores it in RAM.
         """
-        prompt = (
-            "You are updating ONE contact’s *bio* based on a 50-message chunk.\n"
-            f"Existing bio (may be null): {latest_bio}\n\n"
-            f"Transcript:\n{transcript}\n\n"
-            "Return only the *new* bio text (≤ 80 words)."
+
+        # --- scoped mutator --------------------------------------------------
+        async def set_bio(contact_id: int, bio: str) -> str:
+            # overlay for the test's benefit
+            self._overlays.setdefault(contact_id, {})["bio"] = bio
+            # forward to the simulated contact-manager (updates its LLM memory)
+            await self._contact_manager._update_contact(
+                contact_id=contact_id,
+                custom_fields={"bio": bio},
+            )
+            return "bio updated"
+
+        tools: Dict[str, Callable[..., Any]] = {
+            "transcript_ask": self._transcript_manager.ask,
+            "contact_ask": self._contact_manager.ask,
+            "set_bio": set_bio,
+        }
+
+        self._llm.set_system_message(build_bio_prompt(tools))
+
+        payload = json.dumps(
+            {
+                "latest_bio": latest_bio,
+                "transcript": transcript,
+            },
+            indent=2,
         )
-        new_bio = await self._llm.generate(prompt)
-        # Simulated persistence – always assumes contact_id == 1 for demo
-        self._contacts.setdefault(1, {})["bio"] = new_bio
-        return new_bio
+
+        handle = start_async_tool_use_loop(
+            self._llm,
+            payload,
+            tools,
+            loop_id="SimulatedMemoryManager.update_contact_bio",
+            tool_policy=lambda i, _: ("required", _) if i < 1 else ("auto", _),
+        )
+
+        return await handle.result()
 
     async def update_contact_rolling_summary(
         self,
@@ -83,13 +136,39 @@ class SimulatedMemoryManager(BaseMemoryManager):
         """
         Generates a fresh ≤120-word rolling summary and stores it in RAM.
         """
-        prompt = (
-            "Update the 50-message *rolling summary* for ONE contact.\n"
-            f"Previous summary (may be null): {latest_rolling_summary}\n\n"
-            f"Transcript:\n{transcript}\n\n"
-            "Return the new concise rolling summary (≤ 120 words)."
+
+        async def set_rolling_summary(contact_id: int, rolling_summary: str) -> str:
+            self._overlays.setdefault(contact_id, {})[
+                "rolling_summary"
+            ] = rolling_summary
+            await self._contact_manager._update_contact(
+                contact_id=contact_id,
+                custom_fields={"rolling_summary": rolling_summary},
+            )
+            return "rolling_summary updated"
+
+        tools: Dict[str, Callable[..., Any]] = {
+            "transcript_ask": self._transcript_manager.ask,
+            "contact_ask": self._contact_manager.ask,
+            "set_rolling_summary": set_rolling_summary,
+        }
+
+        self._llm.set_system_message(build_rolling_prompt(tools))
+
+        payload = json.dumps(
+            {
+                "latest_rolling_summary": latest_rolling_summary,
+                "transcript": transcript,
+            },
+            indent=2,
         )
-        new_summary = await self._llm.generate(prompt)
-        # Again, pretend the contact_id is 1
-        self._contacts.setdefault(1, {})["rolling_summary"] = new_summary
-        return new_summary
+
+        handle = start_async_tool_use_loop(
+            self._llm,
+            payload,
+            tools,
+            loop_id="SimulatedMemoryManager.update_contact_rolling_summary",
+            tool_policy=lambda i, _: ("required", _) if i < 1 else ("auto", _),
+        )
+
+        return await handle.result()
