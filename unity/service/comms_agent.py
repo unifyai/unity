@@ -127,7 +127,7 @@ class CommsAgent:
                     {
                         "role": event["payload"]["role"].lower(),
                         "content": event["payload"]["content"],
-                    }
+                    },
                 )
         return chat_history
 
@@ -198,7 +198,7 @@ class CommsAgent:
 
         # check if the query is a mutation
         if action.query.lower().startswith(
-            ("add ", "create ", "update ", "change ", "delete ")
+            ("add ", "create ", "update ", "change ", "delete "),
         ):
             self.manager_handle = await self.manager.update(
                 action.query,
@@ -233,7 +233,10 @@ class CommsAgent:
             {
                 "topic": "user_agent",
                 "event": ManagerStartedEvent(
-                    self.agent_id, self.manager_name, chat_history, action.query
+                    self.agent_id,
+                    self.manager_name,
+                    chat_history,
+                    action.query,
                 ).to_dict(),
             },
         )
@@ -254,7 +257,9 @@ class CommsAgent:
             {
                 "topic": "user_agent",
                 "event": ManagerEndedEvent(
-                    self.agent_id, self.manager_name, answer
+                    self.agent_id,
+                    self.manager_name,
+                    answer,
                 ).to_dict(),
             },
         )
@@ -274,7 +279,9 @@ class CommsAgent:
             # interject
             await self.manager_handle.interject(action.query)
             event = ManagerInterjectedEvent(
-                self.agent_id, self.manager_name, action.query
+                self.agent_id,
+                self.manager_name,
+                action.query,
             )
         self.publish({"topic": "user_agent", "event": event.to_dict()})
 
@@ -336,7 +343,7 @@ class CommsAgent:
 
                         elif isinstance(action, ManagerInterjectAction):
                             asyncio.create_task(
-                                self.handle_manager_interject_action(action)
+                                self.handle_manager_interject_action(action),
                             )
 
         except asyncio.CancelledError:

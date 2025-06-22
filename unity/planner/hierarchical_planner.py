@@ -1098,52 +1098,108 @@ class HierarchicalPlanner(BasePlanner):
         retry_msg,
         exploration_summary,
     ):
+        """Builds the system prompt for generating an initial plan."""
         primitives_doc = (
-            "- `await act(instruction: str)`\n- `await observe(query: str)`"
+            "- `await act(instruction: str)`: Executes a high-level action in the browser (e.g., 'click the login button', 'type 'hello' into the search bar').\n"
+            "- `await observe(query: str)`: Asks a question about the current browser state (e.g., 'what is the text of the main heading?', 'are there any error messages?')."
         )
-        existing_functions_doc = "\n".join(
-            f'- `{name}{data["argspec"]}`: {data["docstring"]}'
-            for name, data in existing_functions.items()
+        existing_functions_doc = (
+            "\n".join(
+                f'- `{name}{data["argspec"]}`: {data["docstring"]}'
+                for name, data in existing_functions.items()
+            )
+            or "None."
         )
         full_existing_code = "\n\n".join(
             data["implementation"] for data in existing_functions.values()
         )
+
         exploration_context = (
-            f"\n**Context from Initial Exploration:**\n{exploration_summary}\n"
+            f"**Context from Initial Exploration:**\n{exploration_summary}"
             if exploration_summary
             else ""
         )
         return textwrap.dedent(
             f"""
-            You are an expert Python programmer. Your task is to generate a single, complete Python script to achieve a goal.
-            {retry_msg}
-            **Goal:** "{goal}"
-            {exploration_context}
+        You are an expert Python programmer tasked with generating a complete, single-file script to achieve a user's goal in a web browser.
 
-            **CRITICAL INSTRUCTIONS:**
-            1. Your entire response MUST be a single, valid Python code block. Do NOT include any preamble, introductory text, explanations, or markdown fences.
-            2. The main entry point for the script MUST be a function named `async def main_plan()`.
-            3. All functions you define MUST be `async def` and MUST be decorated with `@verify`.
-            4. For browser interaction, you have ONLY TWO tools available:
-               - `await act(instruction: str)`
-               - `await observe(query: str)`
-            5. You MUST NOT invent other primitives. ALL browser actions must go through `act` or `observe`.
-            6. You MUST NOT use any `import` statements.
-            7. You MUST use the `await` keyword before any call to an `async def` function, including `act`, `observe`, and any other helper functions you define.
-            8. The `main_plan` function MUST return the final answer as a string. It MUST NOT use `print()` for the final output.
-            **Primitives Reference:**
-            {primitives_doc}
+        **Primary Goal:** "{goal}"
+        {exploration_context}
+        {retry_msg}
 
-            **Existing Functions Library (if any):**
-            {existing_functions_doc or "None"}
+        ---
+        ### Instructions & Rules
+        1.  **Single Code Block:** Your entire response MUST be a single, valid Python code block. Do NOT include any preamble, explanations, or markdown fences.
+        2.  **Entry Point:** The main entry point for the script MUST be a function named `async def main_plan()`.
+        3.  **Required Decorator:** All functions you define MUST be `async def` and MUST be decorated with `@verify`.
+        4.  **No Imports:** You MUST NOT use any `import` statements. The execution environment is sandboxed.
+        5.  **Asynchronous Calls:** You MUST use the `await` keyword before any call to an `async def` function, including the primitives (`act`, `observe`) and any helper functions you define.
+        6.  **Decomposition:** Break down complex problems into smaller, logical helper functions. If a suitable function exists in the library, use it. If not, you may define it, or if its implementation is not immediately obvious, you may leave it as a stub (e.g., `raise NotImplementedError`).
+        7.  **Final Output:** The `main_plan` function MUST return the final answer as a string. It MUST NOT use `print()` for the final output.
 
-            **Code of available functions:**
-            ```python
-            {full_existing_code or "# None"}
-            ```
+        ---
+        ### Primitives Reference
+        You have ONLY TWO primitive tools for browser interaction:
+        {primitives_doc}
 
-            Begin your response now. Your response should start immediately with the code.
+        ---
+        ### Existing Functions Library
+        You have access to the following pre-existing functions. You should use them if they help achieve the goal.
+        {existing_functions_doc}
+
+        ---
+        ### Code of Available Functions
+        ```python
+        {full_existing_code or "# No pre-existing functions were provided."}
+        ```
+
+        Begin your response now. Your response must start immediately with the code.
         """,
+        )
+
+    def _build_dynamic_implement_prompt(
+        self,
+        plan: HierarchicalPlan,
+        function_name: str,
+        browser_state: str,
+        **kwargs,
+    ) -> str:
+        """Builds the system prompt for filling in the implementation of a function."""
+        replan_context = (
+            f"**REPLANNING NOTE:** The previous attempt failed because: '{kwargs.get('replan_reason', 'No reason provided.')}'. Please devise a new and improved strategy."
+            if kwargs.get("is_strategic_replan")
+            else ""
+        )
+        func_sig = inspect.signature(plan.execution_namespace[function_name])
+        parent_code = (
+            plan.function_source_map.get(plan.call_stack[-2], "")
+            if len(plan.call_stack) > 1
+            else "N/A (This is a top-level function call)"
+        )
+
+        return textwrap.dedent(
+            f"""
+            You are an expert Python programmer. Your task is to write the implementation for the function `{function_name}`.
+
+            **Overall Goal:** "{plan.goal}"
+            **Function to Implement:** `async def {function_name}{func_sig}`
+            **Parent Function (for context):**
+            ```python
+            {parent_code}
+            ```
+            **Current Browser State:**
+            {browser_state}
+
+            {replan_context}
+
+            ---
+            ### Instructions & Rules
+            1.  **Code Only:** Your output MUST be ONLY the Python code for the function, starting with the `@verify` decorator and the function definition. Do not include explanations or markdown.
+            2.  **Primitives Only:** For browser interaction, use ONLY `await act(...)` and `await observe(...)`.
+            3.  **No Imports:** `import` statements are forbidden.
+
+            Begin your response now.
+            """,
         )
 
     async def _dynamic_implement(
@@ -1155,40 +1211,11 @@ class HierarchicalPlanner(BasePlanner):
         browser_state = await self.controller.observe(
             "Describe current page for context.",
         )
-        replan_context = (
-            f"**REPLANNING:** Previous attempt failed: '{kwargs.get('replan_reason', '')}'. Devise a new strategy."
-            if kwargs.get("is_strategic_replan")
-            else ""
-        )
-        func_sig = inspect.signature(plan.execution_namespace[function_name])
-        parent_code = (
-            plan.function_source_map.get(plan.call_stack[-2], "")
-            if len(plan.call_stack) > 1
-            else ""
-        )
-        prompt = textwrap.dedent(
-            f"""
-            You are an expert Python programmer. Implement the function body for `{function_name}`.
-
-            **Overall Goal:** "{plan.goal}"
-            **Function to Implement:** `async def {function_name}{func_sig}`
-            **Parent Function Code (for context):**
-            ```python
-            {parent_code or "N/A"}
-            ```
-            **Current Browser State:** "{browser_state}"
-            {replan_context}
-
-            **CRITICAL INSTRUCTIONS:**
-            1. Your output MUST be ONLY the Python code for the function, starting with the `@verify` decorator. Do not include explanations.
-            2. For browser interaction, you have ONLY TWO tools available:
-               - `await act(instruction: str)`
-               - `await observe(query: str)`
-            3. You MUST NOT invent other primitives. All browser control must be done via `act` and `observe`.
-            4. You MUST NOT use any `import` statements.
-
-            Begin your response now.
-        """,
+        prompt = self._build_dynamic_implement_prompt(
+            plan,
+            function_name,
+            browser_state,
+            **kwargs,
         )
         implementation_client = unify.AsyncUnify(
             os.environ.get("UNIFY_MODEL", "gpt-4o-mini@openai"),
@@ -1212,28 +1239,123 @@ class HierarchicalPlanner(BasePlanner):
             )
             raise
 
+    def _build_verification_prompt(
+        self,
+        function_name: str,
+        function_docstring: str | None,
+        interactions: list,
+    ) -> str:
+        """Builds the system prompt for verifying whether a function's implementation correctly achieves its purpose."""
+        interactions_log = (
+            "\n".join(
+                (
+                    f"- Action: `{act}`, Observation: `{obs or 'N/A'}`"
+                    if kind == "observe"
+                    else f"- Action: `{act}`"
+                )
+                for kind, act, obs in interactions
+            )
+            or "No browser actions were recorded."
+        )
+
+        return textwrap.dedent(
+            f"""
+            You are a meticulous verification agent. Your task is to assess if the executed actions successfully achieved the function's intended purpose.
+
+            **Function Under Review:** `{function_name}`
+            **Purpose:** {function_docstring or 'No docstring provided.'}
+
+            **Execution Log (Primitives Used):**
+            {interactions_log}
+
+            ---
+            ### Assessment Task
+            Based on the function's purpose and the execution log, provide your assessment as a single JSON object.
+
+            **Response Schema:**
+            `{{"status": "...", "reason": "..."}}`
+
+            **Valid Statuses:**
+            - `ok`: The function's purpose was fully and correctly achieved.
+            - `reimplement_local`: A tactical error occurred. The goal is correct, but the actions were wrong. The function needs to be re-written.
+            - `replan_parent`: A strategic error occurred. The function itself is flawed or was called at the wrong time. The parent function needs to be replanned.
+            - `fatal_error`: An unrecoverable error occurred that prevents any further progress.
+            """,
+        )
+
+    def _build_plan_surgery_prompt(self, current_code: str, request: str) -> str:
+        """Builds the system prompt for modifying an existing plan script."""
+        return textwrap.dedent(
+            f"""
+            You are an expert Python programmer specializing in code modification. Your task is to rewrite an entire script to incorporate a user's change request.
+
+            **Modification Request:**
+            "{request}"
+
+            ---
+            ### Current Script
+            ```python
+            {current_code}
+            ```
+
+            ---
+            ### Instructions & Rules
+            1.  **Rewrite the Whole Script:** You must return a new, complete, and valid Python script that incorporates the requested change.
+            2.  **Code Only:** Your response MUST be a single Python code block. Do NOT include any preamble, explanations, or markdown fences.
+            3.  **Preserve Decorators:** All `async def` functions MUST retain their `@verify` decorator.
+            4.  **No Imports:** You MUST NOT use any `import` statements.
+
+            Begin your response now. Your response must start immediately with the code.
+            """,
+        )
+
+    def _build_course_correction_prompt(
+        self,
+        old_code: str,
+        new_code: str,
+        current_state: str,
+    ) -> str:
+        """Builds the system prompt to generate a script to transition between plan states."""
+        return textwrap.dedent(
+            f"""
+            You are a state transition analyst. An agent's plan has been modified, and you must determine if its current state is compatible with the new plan. If not, you must generate a Python script to fix it.
+
+            ---
+            ### Context
+            **Current Browser State:**
+            {current_state}
+
+            **Old Plan Snippet (for context):**
+            ```python
+            {old_code[:1000]}...
+            ```
+
+            **New Plan Code:**
+            ```python
+            {new_code}
+            ```
+
+            ---
+            ### Task
+            1.  Analyze if the **Current Browser State** is a suitable starting point for executing the **New Plan Code**.
+            2.  If it is NOT suitable, write a script containing an `async def course_correction_main()` function. This script must use `await act(...)` and `await observe(...)` to navigate to the correct starting state for the new plan. The script must be a single code block.
+            3.  If the current state is already suitable, respond ONLY with the single word: `None`.
+            4.  **CRITICAL**: The script MUST NOT use any `import` statements.
+
+            Begin your response now.
+            """,
+        )
+
     async def _check_state_against_goal(
         self,
         function_name,
         function_docstring,
         interactions,
     ):
-        interactions_log = "\n".join(
-            (
-                f"- Action: `{act}`, Observation: `{obs or 'N/A'}`"
-                if kind == "observe"
-                else f"- Action: `{act}`"
-            )
-            for kind, act, obs in interactions
-        )
-        prompt = textwrap.dedent(
-            f"""
-            You are a verification agent. Assess if the actions met the function's goal.
-            **Function:** `{function_name}` (Purpose: {function_docstring or 'N/A'})
-            **Action Log:**\n{interactions_log or "No actions recorded."}
-            **Task:** Respond with a single JSON object: {{"status": "...", "reason": "..."}}.
-            Valid statuses: "ok", "reimplement_local" (tactical error), "replan_parent" (strategic error), "fatal_error".
-        """,
+        prompt = self._build_verification_prompt(
+            function_name,
+            function_docstring,
+            interactions,
         )
         verification_client = unify.AsyncUnify(
             os.environ.get("UNIFY_MODEL", "gpt-4o-mini@openai"),
@@ -1251,33 +1373,13 @@ class HierarchicalPlanner(BasePlanner):
             )
 
     async def _perform_plan_surgery(self, current_code, request):
-        prompt = textwrap.dedent(
-            f"""
-            You are a master programmer modifying a script.
-            **Modification Request:** "{request}"
-            **Current Code:**\n```python\n{current_code}\n```
-            **Instructions:** Rewrite the entire script to incorporate the change. Ensure all functions retain their `@verify` decorators. Output only the new, complete Python script. Do not include any explanation.
-            CRITICAL: You MUST NOT use any `import` statements.
-        """,
-        )
+        prompt = self._build_plan_surgery_prompt(current_code, request)
         new_code = await llm_call(self.llm_client, prompt)
         return self._sanitize_code(new_code)
 
     async def _generate_course_correction_script(self, old_code, new_code):
         current_state = await self.controller.observe("Describe current page.")
-        prompt = textwrap.dedent(
-            f"""
-            You are a state transition analyst. An agent's plan has changed. If the agent's current state is incompatible with the start of the new plan, generate a Python script to fix it.
-            **Current Browser State:** {current_state}
-            **Old Plan Snippet:**\n```python\n{old_code[:1000]}...\n```
-            **New Plan Code:**\n```python\n{new_code}\n```
-            **Task:**
-            1. Analyze if the **Current Browser State** is a suitable starting point for the **New Plan Code**.
-            2. If it is NOT suitable, write a script with an `async def course_correction_main()` function that uses `await act()` and `await observe()` to navigate to the correct state.
-            3. If the state is already suitable, respond ONLY with the word "None".
-            4. CRITICAL: The script MUST NOT use any `import` statements.
-        """,
-        )
+        prompt = self._build_course_correction_prompt(old_code, new_code, current_state)
         script = await llm_call(self.llm_client, prompt)
         if "None" in script:
             return None
