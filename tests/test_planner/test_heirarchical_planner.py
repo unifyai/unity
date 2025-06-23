@@ -244,7 +244,7 @@ async def main_plan():
 """
 
     # Mock verification to always fail strategically for the child task
-    async def mock_check_state_against_goal(function_name: str, *args, **kwargs):
+    async def mock_check_state_against_goal(plan, function_name: str, *args, **kwargs):
         if function_name == "child_task":
             return VerificationAssessment(
                 status="replan_parent",
