@@ -10,3 +10,4 @@ logs.txt
 test.py
 .env.old
 .env.temp
+dump.rdb
