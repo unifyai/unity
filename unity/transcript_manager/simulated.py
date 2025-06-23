@@ -208,7 +208,9 @@ class SimulatedTranscriptManager(BaseTranscriptManager):
     async def summarize(
         self,
         *,
-        exchange_ids: Union[int, List[int]],
+        from_exchanges: Optional[Union[int, List[int]]] = None,
+        from_messages: Optional[Union[int, List[int]]] = None,
+        omit_messages: Optional[List[int]] = None,
         guidance: Optional[str] = None,
         parent_chat_context: list[dict] | None = None,
         _return_reasoning_steps: bool = False,
@@ -226,8 +228,16 @@ class SimulatedTranscriptManager(BaseTranscriptManager):
             instruction += (
                 f"Calling chat context:\n{json.dumps(parent_chat_context, indent=4)}"
             )
-        if not isinstance(exchange_ids, list):
-            exchange_ids = [exchange_ids]
+        if from_exchanges is None and from_messages is None:
+            raise ValueError(
+                "Either 'from_exchanges' or 'from_messages' must be provided.",
+            )
+        if isinstance(from_exchanges, int):
+            from_exchanges = [from_exchanges]
+        if isinstance(from_messages, int):
+            from_messages = [from_messages]
+
+        # Construct a lightweight “instruction” narrative for the fake LLM
 
         if _requests_clarification and (
             not clarification_up_q or not clarification_down_q
@@ -250,9 +260,17 @@ class SimulatedTranscriptManager(BaseTranscriptManager):
         else:
             clar = None
 
-        prompt_parts = [instruction] + [
-            f"\nSummarise imaginary exchange(s) with id(s): {exchange_ids}.",
-        ]
+        prompt_parts = [instruction]
+        if from_exchanges:
+            prompt_parts.append(
+                f"\nSummarise imaginary exchange(s) with id(s): {from_exchanges}.",
+            )
+        if from_messages:
+            prompt_parts.append(
+                f"\nAlso include explicit message id(s): {from_messages}.",
+            )
+        if omit_messages:
+            prompt_parts.append(f"\nOmit message id(s): {omit_messages}.")
         if guidance:
             prompt_parts.append(f"Guidance: {guidance}")
         if clar:

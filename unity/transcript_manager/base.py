@@ -63,7 +63,9 @@ class BaseTranscriptManager(ABC):
     async def summarize(
         self,
         *,
-        exchange_ids: Union[int, List[int]],
+        from_exchanges: Optional[Union[int, List[int]]] = None,
+        from_messages: Optional[Union[int, List[int]]] = None,
+        omit_messages: Optional[List[int]] = None,
         guidance: Optional[str] = None,
         parent_chat_context: Optional[List[Dict[str, Any]]] = None,
         clarification_up_q: Optional[asyncio.Queue[str]] = None,
@@ -75,8 +77,17 @@ class BaseTranscriptManager(ABC):
 
         Parameters
         ----------
-        exchange_ids : int | list[int]
-            Identifier(s) of the exchange(s) to summarise.
+        from_exchanges : int | list[int] | None
+            One or more **exchange-IDs** whose constituent messages should be
+            summarised.  *Optional* but at least one of *from_exchanges* or
+            *from_messages* **must** be supplied.
+        from_messages : int | list[int] | None
+            Explicit **message-ID(s)** to include in the summary.  Useful for
+            stitching together snippets drawn from multiple exchanges.
+        omit_messages : list[int] | None
+            Message-IDs that should be **excluded** even if they appear in the
+            two inclusion lists above.  Applied *last* and therefore
+            overrides any overlap.
         guidance : str | None, default ``None``
             Optional *caller-supplied* hints that influence style or focus
             (e.g. *"Emphasise next-steps and deadlines"*).
@@ -86,5 +97,5 @@ class BaseTranscriptManager(ABC):
         Returns
         -------
         str
-            The generated summary (also written to persistent storage).
+            The generated summary text (also written to persistent storage).
         """

@@ -119,7 +119,7 @@ class ConductorScenarioBuilder:
         ]
         await asyncio.to_thread(self.tm._log_messages, log_entries)
         # Pre-generate a summary for one of the exchanges
-        await self.tm.summarize(exchange_ids=[1])
+        await self.tm.summarize(from_exchanges=[1])
 
     async def _seed_tasks(self):
         """Seed tasks and populate the ID map."""

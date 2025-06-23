@@ -97,7 +97,7 @@ def build_ask_prompt(tools: Dict[str, Callable]) -> str:  # noqa: C901 – long,
           `{search_messages_name}(filter="contact_id == 7 and medium == 'whatsapp_message'", limit=1, offset=0)`
 
         • **Summarise** two exchanges (23 & 24) before answering
-          `{summarise_name}(exchange_ids=[23, 24])`
+          `{summarise_name}(from_exchanges=[23, 24])`
 
         Important: if the question, refers to message *content* (topic etc.) rather than meta-data (datetime, medium etc.) then you should *almost always* use {nearest_messages_name} before trying exact string matching via {search_messages_name}. You're much more likely to get a match on your first attempt.
     """,
