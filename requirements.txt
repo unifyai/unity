@@ -6,7 +6,7 @@ browser-use
 browserbase
 deepgram-sdk>=4
 # -e ../unify # dev mode
-# git+https://github.com/unifyai/unify # deploy mode
+git+https://github.com/unifyai/unify.git # deploy mode
 fastapi>=0.104.0
 google-auth>=2.17.0
 google-cloud-pubsub>=2.18.0
