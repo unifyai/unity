@@ -71,8 +71,8 @@ class BrowserUsePlan(BaseActiveTask):
         self._result_str: Optional[str] = None
         self._error_str: Optional[str] = None
 
-        self._overall_plan_completion_event = asyncio.Event()  # For the final result()
-        self._resume_requested_event = asyncio.Event()  # To signal resume
+        self._overall_plan_completion_event = asyncio.Event()
+        self._resume_requested_event = asyncio.Event()
 
         self._task_id = str(uuid.uuid4())
         self._main_event_loop = main_event_loop
@@ -99,8 +99,7 @@ class BrowserUsePlan(BaseActiveTask):
                 )
                 self._state = _BrowserPlannerState.ERROR
                 self._error_str = f"Initialization failed: no event loop. {e}"
-                self._overall_plan_completion_event.set()  # Ensure result() doesn't hang
-                # No need to raise here, result() will return the error.
+                self._overall_plan_completion_event.set()
                 return
 
         logger.info(
@@ -120,8 +119,6 @@ class BrowserUsePlan(BaseActiveTask):
                 f"BrowserUsePlan {self._task_id}: LLM (internal loop) requesting clarification: '{question}'",
             )
             await self._clar_up_q_internal.put(question)
-            # NOTE: This might block if the outer entity doesn't respond.
-            # Consider adding timeout or cancellation mechanisms if needed.
             answer = await self._clar_down_q_internal.get()
             logger.info(
                 f"BrowserUsePlan {self._task_id}: User (via plan) provided clarification: '{answer}'",
@@ -146,10 +143,10 @@ class BrowserUsePlan(BaseActiveTask):
         """
         current_task_description = self._initial_task_description
         current_parent_chat_context = None
-        self._state = _BrowserPlannerState.IDLE  # Will become RUNNING shortly
+        self._state = _BrowserPlannerState.IDLE
 
         try:
-            while True:  # Loop for each active (potentially resumed) execution phase
+            while True:
                 if (
                     self._state == _BrowserPlannerState.STOPPED
                     or self._state == _BrowserPlannerState.ERROR
@@ -164,7 +161,6 @@ class BrowserUsePlan(BaseActiveTask):
                     f"BrowserUsePlan {self._task_id}: Starting/Resuming internal loop with description: '{current_task_description}'",
                 )
 
-                # Reset and prepare the internal Unify client
                 self._plan_client.reset_messages()
                 self._plan_client.reset_system_message()
                 self._plan_client.set_system_message(
@@ -173,7 +169,7 @@ class BrowserUsePlan(BaseActiveTask):
                 if current_parent_chat_context:
                     self._plan_client.append_messages(current_parent_chat_context)
 
-                current_parent_chat_context = None  # Consume context
+                current_parent_chat_context = None
 
                 internal_tools = self._get_internal_tools()
                 self._loop_handle = start_async_tool_use_loop(
@@ -189,36 +185,27 @@ class BrowserUsePlan(BaseActiveTask):
 
                 try:
                     loop_result_str = await self._loop_handle.result()
-                    # This point is reached if the internal loop completes normally,
-                    # or if it's stopped by self._loop_handle.stop() called from pause() or stop().
-
-                    if (
-                        self._state == _BrowserPlannerState.RUNNING
-                    ):  # Normal completion of internal loop
+                    if self._state == _BrowserPlannerState.RUNNING:
                         self._state = _BrowserPlannerState.COMPLETED
                         self._result_str = loop_result_str
                         logger.info(
                             f"BrowserUsePlan {self._task_id}: Internal loop COMPLETED. Result: {self._result_str}",
                         )
                     elif self._state == _BrowserPlannerState.PAUSED:
-                        # Pause was called, loop was stopped. _result_str might be "Plan paused"
                         logger.info(
                             f"BrowserUsePlan {self._task_id}: Internal loop stopped for PAUSE.",
                         )
-                        # self._result_str is not the final result yet.
                     elif self._state == _BrowserPlannerState.STOPPED:
                         logger.info(
                             f"BrowserUsePlan {self._task_id}: Internal loop stopped for STOP.",
                         )
-                        if self._result_str is None:  # stop() might set it
+                        if self._result_str is None:
                             self._result_str = f"Plan {self._task_id} was stopped."
 
                 except asyncio.CancelledError:
                     logger.info(
                         f"BrowserUsePlan {self._task_id}: Internal loop task was cancelled. Current state: {self._state.name}",
                     )
-                    # If self.stop() was called, state would be STOPPED.
-                    # If _manage_plan_execution itself is cancelled.
                     if self._state == _BrowserPlannerState.RUNNING:
                         self._state = _BrowserPlannerState.STOPPED
                     if self._result_str is None:
@@ -232,20 +219,15 @@ class BrowserUsePlan(BaseActiveTask):
                     self._error_str = str(e)
                     self._result_str = f"Task failed with error: {self._error_str}"
 
-                self._loop_handle = (
-                    None  # Mark internal loop as finished for this phase
-                )
+                self._loop_handle = None
 
-                # Decision point after an internal loop instance concludes
                 if self._state == _BrowserPlannerState.PAUSED:
                     logger.info(
                         f"BrowserUsePlan {self._task_id}: Execution PAUSED, awaiting resume signal.",
                     )
                     await self._resume_requested_event.wait()
                     self._resume_requested_event.clear()
-                    if (
-                        self._state == _BrowserPlannerState.STOPPED
-                    ):  # Stop might have been called while paused
+                    if self._state == _BrowserPlannerState.STOPPED:
                         logger.info(
                             f"BrowserUsePlan {self._task_id}: Stop called while paused. Terminating.",
                         )
@@ -253,16 +235,15 @@ class BrowserUsePlan(BaseActiveTask):
                     logger.info(f"BrowserUsePlan {self._task_id}: RESUMING execution.")
                     current_task_description = "The task was paused and is now resumed. Please review the history and continue."
                     current_parent_chat_context = self._parent_chat_context_on_pause
-                    self._parent_chat_context_on_pause = None  # Consume
-                    # State will be set to RUNNING at the top of the loop
+                    self._parent_chat_context_on_pause = None
                     continue
-                else:  # COMPLETED, STOPPED, ERROR
+                else:
                     logger.info(
                         f"BrowserUsePlan {self._task_id}: Execution ended with state {self._state.name}. Finalizing.",
                     )
-                    break  # Exit the while True loop, plan is done.
+                    break
 
-        except Exception as e:  # Catch errors in _manage_plan_execution itself
+        except Exception as e:
             logger.error(
                 f"BrowserUsePlan {self._task_id}: Unexpected error in _manage_plan_execution: {e}",
                 exc_info=True,
@@ -321,7 +302,6 @@ class BrowserUsePlan(BaseActiveTask):
         if name == "resume":
             return self._state == _BrowserPlannerState.PAUSED
         if name == "interject":
-            # Interjection should only go to an *active* internal loop handle
             return (
                 self._state == _BrowserPlannerState.RUNNING
                 and self._loop_handle is not None
@@ -333,12 +313,9 @@ class BrowserUsePlan(BaseActiveTask):
             )
         return False
 
-    # --- Public Control Methods ---
     @functools.wraps(BaseActiveTask.stop, updated=())
     async def stop(self) -> str:
         if not self._is_valid_method("stop"):
-            # If already stopped/completed/errored, result() will give the status.
-            # Or, we can allow stop to be called multiple times idempotently.
             if self.done():
                 return await self.result()
             raise RuntimeError(
@@ -353,27 +330,19 @@ class BrowserUsePlan(BaseActiveTask):
         self._result_str = f"Plan {self._task_id} was stopped."
 
         if previous_state == _BrowserPlannerState.PAUSED:
-            # If paused, _manage_plan_execution is waiting on _resume_requested_event.
-            # Set it so it can wake up, see the STOPPED state, and terminate.
             self._resume_requested_event.set()
 
         if self._loop_handle and not self._loop_handle.done():
-            # If there's an active internal loop, stop it.
-            # _manage_plan_execution will handle its completion.
             self._loop_handle.stop()
         elif (
             previous_state == _BrowserPlannerState.IDLE
             and not self._overall_plan_completion_event.is_set()
         ):
-            # If called very early before _manage_plan_execution even starts its first loop,
-            # or if it somehow got stuck in IDLE, ensure overall completion is set.
-            # This case might indicate an issue in _manage_plan_execution startup.
             logger.warning(
                 f"BrowserUsePlan {self._task_id}: Stop called in IDLE state. Forcing overall completion.",
             )
             self._overall_plan_completion_event.set()
 
-        # Wait for _manage_plan_execution to fully terminate and set the event
         await self._overall_plan_completion_event.wait()
 
         return self._result_str
@@ -390,7 +359,6 @@ class BrowserUsePlan(BaseActiveTask):
         )
         self._state = _BrowserPlannerState.PAUSED
 
-        # Save context from the currently active internal LLM instance
         if self._plan_client and self._plan_client.messages:
             self._parent_chat_context_on_pause = copy.deepcopy(
                 self._plan_client.messages,
@@ -409,13 +377,11 @@ class BrowserUsePlan(BaseActiveTask):
                 f"BrowserUsePlan {self._task_id}: Requesting stop of current internal loop for pause.",
             )
             self._loop_handle.stop()
-            # _manage_plan_execution will await its completion and then wait for resume.
         else:
             logger.warning(
                 f"BrowserUsePlan {self._task_id}: Pause called but no active internal loop_handle to stop.",
             )
 
-        # Pause returns quickly; the overall plan's result() is still pending.
         return f"Plan {self._task_id} paused successfully. Awaiting resume."
 
     @functools.wraps(BaseActiveTask.resume, updated=())
@@ -428,24 +394,21 @@ class BrowserUsePlan(BaseActiveTask):
         logger.info(
             f"BrowserUsePlan {self._task_id}: Requesting resume. Current state: {self._state.name}",
         )
-        # State will be set to RUNNING by _manage_plan_execution when it starts the new loop.
-        self._resume_requested_event.set()  # Signal _manage_plan_execution to continue
+        self._resume_requested_event.set()
         return f"Plan {self._task_id} is resuming."
 
     @functools.wraps(BaseActiveTask.interject, updated=())
     async def interject(self, message: str) -> str:
         if not self._is_valid_method("interject"):
-            # Check current state for more accurate error.
             if self._state != _BrowserPlannerState.RUNNING:
                 return f"Error: Plan {self._task_id} is not in RUNNING state (current: {self._state.name}), cannot interject."
             if not self._loop_handle:
                 return f"Error: Plan {self._task_id} is RUNNING but has no active internal loop to interject."
-            # This case should ideally not happen if state is RUNNING.
 
         logger.info(
             f"BrowserUsePlan {self._task_id}: Interjecting message: '{message}' into active internal loop.",
         )
-        await self._loop_handle.interject(message)  # type: ignore
+        await self._loop_handle.interject(message)
         return f"Interjection '{message}' sent to plan {self._task_id}."
 
     @functools.wraps(BaseActiveTask.ask, updated=())
@@ -511,8 +474,6 @@ class BrowserUsePlan(BaseActiveTask):
     @functools.wraps(BaseActiveTask.valid_tools, updated=())
     def valid_tools(self) -> Dict[str, Callable[..., Awaitable[Any]]]:
         tools = {}
-        # valid_tools should reflect methods callable by an external LLM on this Plan instance
-        # Their validity is checked by _is_valid_method
         potential_tools = ["stop", "pause", "resume", "interject", "ask"]
         for method_name in potential_tools:
             if self._is_valid_method(method_name):
@@ -568,7 +529,7 @@ class BrowserUsePlanner(BasePlanner):
         This involves wrapping the actions from BrowserUseController.
         """
         tools: Dict[str, Callable[..., Awaitable[str]]] = {}
-        from pydantic import BaseModel  # type: ignore
+        from pydantic import BaseModel
         import inspect
 
         for (
@@ -623,7 +584,7 @@ class BrowserUsePlanner(BasePlanner):
             if param_model and hasattr(
                 param_model,
                 "model_fields",
-            ):  # Check for Pydantic v2
+            ):
                 fields = param_model.model_fields
                 sig_params: list[inspect.Parameter] = []
                 for fname, field_info in fields.items():
@@ -633,7 +594,6 @@ class BrowserUsePlanner(BasePlanner):
                         if not is_required
                         else inspect.Parameter.empty
                     )
-                    # Pydantic annotation might be Optional[T], keep it that way for inspect
                     annotation = field_info.rebuild_annotation()
 
                     sig_params.append(
@@ -653,19 +613,22 @@ class BrowserUsePlanner(BasePlanner):
                     logger.warning(
                         f"Could not build signature for {action_name} (Pydantic v2): {e}",
                     )
-                    # Fallback signature
                     _make_tool_wrapper.__signature__ = inspect.Signature(
                         [inspect.Parameter("kwargs", inspect.Parameter.VAR_KEYWORD)],
                         return_annotation=str,
                     )
 
-            elif param_model and hasattr(param_model, "__fields__"):  # Pydantic v1
-                fields = param_model.__fields__  # type: ignore
+            elif param_model and hasattr(param_model, "__fields__"):
+                fields = param_model.__fields__
                 sig_params = []
-                for fname, field_info in fields.items():  # type: ignore
+                for fname, field_info in fields.items():
                     is_required = getattr(field_info, "required", True)
-                    default_val = field_info.default if not is_required else inspect.Parameter.empty  # type: ignore
-                    annotation = field_info.outer_type_  # type: ignore
+                    default_val = (
+                        field_info.default
+                        if not is_required
+                        else inspect.Parameter.empty
+                    )
+                    annotation = field_info.outer_type_
 
                     sig_params.append(
                         inspect.Parameter(
@@ -688,7 +651,7 @@ class BrowserUsePlanner(BasePlanner):
                         [inspect.Parameter("kwargs", inspect.Parameter.VAR_KEYWORD)],
                         return_annotation=str,
                     )
-            else:  # No param_model or not recognized Pydantic model
+            else:
                 _make_tool_wrapper.__signature__ = inspect.Signature(
                     [inspect.Parameter("kwargs", inspect.Parameter.VAR_KEYWORD)],
                     return_annotation=str,
@@ -710,11 +673,8 @@ class BrowserUsePlanner(BasePlanner):
         Initiates a new plan for the given task description using browser_use tools.
         """
         logger.info(f"BrowserUsePlanner: Planning task: '{task_description}'")
-        # Ensure event loop is available for the plan
         if not self._main_event_loop:
             try:
-                # Attempt to get loop here if planner didn't capture one.
-                # This might be redundant if BrowserUsePlan also does this, but harmless.
                 self._main_event_loop = asyncio.get_running_loop()
                 logger.info(
                     f"BrowserUsePlanner._execute_task_and_return_handle captured event loop: {self._main_event_loop}",
@@ -723,7 +683,6 @@ class BrowserUsePlanner(BasePlanner):
                 logger.error(
                     "BrowserUsePlanner._execute_task_and_return_handle: No running event loop to pass to BrowserUsePlan.",
                 )
-                # Let BrowserUsePlan handle its own loop acquisition or failure.
 
         try:
             plan = BrowserUsePlan(
@@ -736,7 +695,7 @@ class BrowserUsePlanner(BasePlanner):
             )
         except Exception as e:
             logger.error(f"BrowserUsePlanner: Error creating plan: {e}", exc_info=True)
-            raise e  # Re-raise to indicate plan creation failure
+            raise e
         return plan
 
     async def close(self):
