@@ -77,7 +77,7 @@ External Service → Cloud Function → Pub/Sub Topic → Cloud Run Service → 
 ```
 
 1. **Incoming Notification**: External service (Twilio, etc.) sends webhook to cloud function
-2. **Service Activation**: Cloud function calls `/start` endpoint on the wrapper app in `demo/`
+2. **Service Activation**: Cloud function calls `/start` endpoint on the wrapper app in `/`
 3. **Message Routing**: Notification is sent to the appropriate Pub/Sub topic (`unity-{assistant_id}`)
 4. **Processing**: Cloud Run service processes the message
 5. **Outbound Action**: Service uses Communications endpoints for responses
@@ -102,9 +102,6 @@ External Service → Cloud Function → Pub/Sub Topic → Cloud Run Service → 
 
 ```
 unity/
-├── demo/                          # Assistant runtime and deployment configs
-│   ├── INFRA.md                  # Original infrastructure notes
-│   └── INFRASTRUCTURE.md         # This documentation
 ├── cloudbuild.yaml               # Docker image build configuration
 └── cloudbuild-deploy.yaml        # Deployment configuration
 
