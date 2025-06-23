@@ -3,8 +3,8 @@ import builtins
 import inspect
 import threading
 from typing import Dict, List, Set, Union, Tuple, Any, Optional
-
 import unify
+from ..common.embed_utils import EMBED_MODEL, ensure_vector_column
 
 
 class FunctionManager(threading.Thread):
@@ -18,6 +18,7 @@ class FunctionManager(threading.Thread):
     # ------------------------------------------------------------------ #
     #  Construction                                                      #
     # ------------------------------------------------------------------ #
+    _FUNC_EMB = "_function_embedding"
 
     def __init__(self, *, daemon: bool = True, traced: bool = False) -> None:
         super().__init__(daemon=daemon)
@@ -217,6 +218,11 @@ class FunctionManager(threading.Thread):
             docstring = inspect.getdoc(fn_obj) or ""
             calls = list(self._collect_function_calls(node))
 
+            # Create a combined string for embedding
+            embedding_text = (
+                f"Function Name: {name}\nSignature: {signature}\nDocstring: {docstring}"
+            )
+
             unify.log(
                 context=self._ctx,
                 function_id=next_id,
@@ -225,12 +231,14 @@ class FunctionManager(threading.Thread):
                 docstring=docstring,
                 implementation=source,
                 calls=calls,
+                embedding_text=embedding_text,
                 new=True,
             )
 
             results[name] = "added"
             next_id += 1
 
+        self._next_id = next_id
         return results
 
     # 2. Listing -------------------------------------------------------- #
@@ -320,5 +328,48 @@ class FunctionManager(threading.Thread):
             filter=filter,
             offset=offset,
             limit=limit,
+        )
+        return [lg.entries for lg in logs]
+
+    # 5. Semantic Search ------------------------------------------------ #
+    def _ensure_function_embedding(self) -> None:
+        """
+        Ensure that the function embedding column exists.
+        """
+        ensure_vector_column(
+            self._ctx,
+            embed_column=self._FUNC_EMB,
+            source_column="embedding_text",
+        )
+
+    def search_functions_by_similarity(
+        self,
+        *,
+        query: str,
+        n: int = 5,
+    ) -> List[Dict[str, Any]]:
+        """
+        Search for functions by semantic similarity.
+
+        Parameters
+        ----------
+        query : str
+            The natural language query to search for.
+        n : int, default 5
+            The number of similar functions to return.
+
+        Returns
+        -------
+        List[Dict[str, Any]]
+            A list of the n most similar functions.
+        """
+        self._ensure_function_embedding()
+        logs = unify.get_logs(
+            context=self._ctx,
+            sorting={
+                f"cosine({self._FUNC_EMB}, embed('{query}', model='{EMBED_MODEL}'))": "ascending",
+            },
+            limit=n,
+            exclude_fields=[self._FUNC_EMB],
         )
         return [lg.entries for lg in logs]
