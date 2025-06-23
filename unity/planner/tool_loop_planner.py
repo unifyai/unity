@@ -29,7 +29,7 @@ if not logger.hasHandlers():
 class ComsManager:
     async def communicate(self, description: str) -> str:
         logger.info(f"Dummy ComsManager.communicate called with: {description}")
-        await asyncio.sleep(0.1)  # Simulate async work
+        await asyncio.sleep(0.1)
         return f"Communication task initiated for: {description}"
 
     async def stop(self):
@@ -79,8 +79,8 @@ class ToolLoopPlan(BaseActiveTask):
         self._result_str: Optional[str] = None
         self._error_str: Optional[str] = None
 
-        self._overall_plan_completion_event = asyncio.Event()  # For the final result()
-        self._resume_requested_event = asyncio.Event()  # To signal resume
+        self._overall_plan_completion_event = asyncio.Event()
+        self._resume_requested_event = asyncio.Event()
 
         self._task_id = str(uuid.uuid4())
         self._main_event_loop = main_event_loop
@@ -392,13 +392,13 @@ class ToolLoopPlan(BaseActiveTask):
         if not self._is_valid_method("interject"):
             if self._state != _PlanState.RUNNING:
                 return f"Error: Plan {self._task_id} is not in RUNNING state (current: {self._state.name}), cannot interject."
-            if not self._loop_handle:  # Should not happen if RUNNING
+            if not self._loop_handle:
                 return f"Error: Plan {self._task_id} is RUNNING but has no active internal loop to interject."
 
         logger.info(
             f"ToolLoopPlan {self._task_id}: Interjecting message: '{message}' into active internal loop.",
         )
-        await self._loop_handle.interject(message)  # type: ignore
+        await self._loop_handle.interject(message)
         return f"Interjection '{message}' sent to plan {self._task_id}."
 
     @functools.wraps(BaseActiveTask.ask, updated=())
@@ -422,7 +422,6 @@ class ToolLoopPlan(BaseActiveTask):
         if not current_context_to_share:
             return "No context available to answer the question for the current plan state."
 
-        # Ensure _ask_client uses its own separate message history for each ask
         self._ask_client.reset_messages()
         self._ask_client.reset_system_message()
         self._ask_client.set_system_message(
@@ -489,7 +488,6 @@ class ToolLoopPlanner(BasePlanner):
         return self._tools_cache
 
     def _build_tools(self) -> Dict[str, Callable[..., Awaitable[Any]]]:
-        # This remains the same as it defines tools for the *internal* loop
         async def act(action: str) -> str:
             logger.info(f"Planner: Calling Controller.act with '{action}'")
             result = await self._controller.act(action)
