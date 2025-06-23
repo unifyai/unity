@@ -1285,8 +1285,30 @@ class HierarchicalPlanner(BasePlanner):
                 )
 
             if func_source and self.function_manager:
-                pass  # TODO: add function manager integration
-                # self.function_manager.add_functions(implementations=[func_source])
+                try:
+                    existing_funcs = self.function_manager.list_functions(
+                        include_implementations=True,
+                    )
+                    is_duplicate = any(
+                        data.get("implementation") == func_source
+                        for data in existing_funcs.values()
+                    )
+
+                    if not is_duplicate:
+                        plan.action_log.append(
+                            f"Persisting verified function '{fn.__name__}' as a new skill.",
+                        )
+                        self.function_manager.add_functions(
+                            implementations=[func_source],
+                        )
+                    else:
+                        plan.action_log.append(
+                            f"Skipping persistence for '{fn.__name__}'; identical skill already exists.",
+                        )
+                except Exception as e:
+                    plan.action_log.append(
+                        f"WARNING: Could not persist function '{fn.__name__}': {e}",
+                    )
             return result
         elif assessment.status == "reimplement_local":
             await plan._handle_dynamic_implementation(
@@ -1322,11 +1344,23 @@ class HierarchicalPlanner(BasePlanner):
         last_error = ""
         for attempt in range(max_retries):
             try:
-                existing_functions = (
-                    self.function_manager.list_functions(include_implementations=True)
-                    if self.function_manager
-                    else {}
-                )
+                if self.function_manager:
+                    try:
+                        relevant_functions = (
+                            self.function_manager.search_functions_by_similarity(
+                                query=goal,
+                                n=5,
+                            )
+                        )
+                        existing_functions = {f["name"]: f for f in relevant_functions}
+                    except Exception as e:
+                        logger.warning(
+                            f"Could not retrieve functions from FunctionManager: {e}",
+                        )
+                        existing_functions = {}
+                else:
+                    existing_functions = {}
+
                 prompt = self._build_initial_plan_prompt(
                     goal,
                     existing_functions,
@@ -1597,7 +1631,7 @@ class HierarchicalPlanner(BasePlanner):
         - `reimplement_local`: A tactical error occurred. The goal is correct, but the actions were wrong. The function needs to be re-written.
         - `replan_parent`: A strategic error occurred. The function itself is flawed or was called at the wrong time. The parent function needs to be replanned.
         - `fatal_error`: An unrecoverable error occurred that prevents any further progress.
-        """
+        """,
         )
 
     def _build_plan_surgery_prompt(self, current_code: str, request: str) -> str:
