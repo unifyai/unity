@@ -156,16 +156,29 @@ class TranscriptManager(BaseTranscriptManager):
     async def summarize(
         self,
         *,
-        exchange_ids: Union[int, List[int]],
+        from_exchanges: Optional[Union[int, List[int]]] = None,
+        from_messages: Optional[Union[int, List[int]]] = None,
+        omit_messages: Optional[List[int]] = None,
         guidance: Optional[str] = None,
         parent_chat_context: Optional[List[Dict[str, Any]]] = None,
         clarification_up_q: asyncio.Queue[str] | None = None,
         clarification_down_q: asyncio.Queue[str] | None = None,
     ) -> SteerableToolHandle:
-        if not isinstance(exchange_ids, list):
-            exchange_ids = [exchange_ids]
+        # -- 0.  Validate & canonicalise ------------------------------------
+        if from_exchanges is None and from_messages is None:
+            raise ValueError(
+                "Either 'from_exchanges' or 'from_messages' must be provided.",
+            )
 
-        # ── 0.  Build LLM client ────────────────────────────────────────────
+        if isinstance(from_exchanges, int):
+            from_exchanges = [from_exchanges]
+        if isinstance(from_messages, int):
+            from_messages = [from_messages]
+        from_exchanges = list(from_exchanges or [])
+        from_messages = list(from_messages or [])
+        omit_messages = set(omit_messages or [])
+
+        # ── 1.  Build LLM client ────────────────────────────────────────────
         client = unify.AsyncUnify(
             "o4-mini@openai",
             cache=json.loads(os.environ.get("UNIFY_CACHE", "true")),
@@ -173,14 +186,39 @@ class TranscriptManager(BaseTranscriptManager):
         )
         client.set_system_message(build_summarize_prompt(guidance))
 
-        # ── 1.  Collect raw messages → JSON blob for the prompt ────────────
-        msgs = self._search_messages(filter=f"exchange_id in {exchange_ids}")
-        exchanges = {
-            id: [m.content for m in msgs if m.exchange_id == id] for id in exchange_ids
-        }
+        # ── 2.  Collect raw messages ---------------------------------------
+        selected: list[Message] = []
+
+        if from_exchanges:
+            selected.extend(
+                self._search_messages(
+                    filter=f"exchange_id in {from_exchanges}",
+                    limit=None,
+                ),
+            )
+        if from_messages:
+            selected.extend(
+                self._search_messages(
+                    filter=f"message_id in {from_messages}",
+                    limit=None,
+                ),
+            )
+
+        #  De-duplicate & apply omissions
+        by_id: dict[int, Message] = {m.message_id: m for m in selected}
+        for mid in omit_messages:
+            by_id.pop(mid, None)
+        msgs: list[Message] = list(by_id.values())
+
+        #  Group by exchange so the LLM can see conversation structure
+        exchanges: dict[int, list[str]] = {}
+        for m in msgs:
+            exchanges.setdefault(m.exchange_id, []).append(m.content)
+
+        message_ids_sorted = sorted(by_id)
         exchanges_json = json.dumps(exchanges, indent=2)
 
-        # ── 2.  Optional request_clarification helper tool ─────────────────
+        # ── 3.  Optional request_clarification helper tool ─────────────────
         tools: dict[str, Callable] = {}
         if (
             clarification_up_q is not None
@@ -198,11 +236,13 @@ class TranscriptManager(BaseTranscriptManager):
 
             tools["request_clarification"] = request_clarification
 
-        # ── 3.  Kick off the interactive loop (even if no tools) ───────────
+        # ── 4.  Kick off the interactive loop (even if no tools) ───────────
         from unity.common.llm_helpers import start_async_tool_use_loop
 
         prompt = (
-            f"Here are the raw messages for exchange_id(s) {exchange_ids}:\n"
+            "Here are the raw messages selected for this summary "
+            f"(grouped by exchange_id):\n{exchanges_json}\n\nPlease "
+            "produce a concise cross-exchange summary."
             f"{exchanges_json}\n\nPlease produce a concise summary."
             + (f"\n\nAdditional guidance:\n{guidance}" if guidance else "")
         )
@@ -223,9 +263,11 @@ class TranscriptManager(BaseTranscriptManager):
 
         async def wrapped_result():
             summary = await original_result()
+            ex_ids_for_log = sorted(exchanges.keys())
             unify.log(
                 context=self._summaries_ctx,
-                exchange_ids=exchange_ids,
+                exchange_ids=ex_ids_for_log,
+                message_ids=message_ids_sorted,
                 summary=summary,
                 new=True,
                 mutable=True,

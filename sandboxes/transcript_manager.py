@@ -152,7 +152,7 @@ async def _dispatch_with_context(
             )
         # Guidance is whatever remains after stripping the first word & IDs
         guidance = " ".join(w for w in raw.split()[1:] if not w.isdigit()).strip()
-        summary = await tm.summarize(exchange_ids=ids, guidance=guidance or None)
+        summary = await tm.summarize(from_exchanges=ids, guidance=guidance or None)
         return "summarize", summary
 
     # ───── otherwise maybe ask an LLM judge (rare) ───────────────────────
@@ -170,7 +170,7 @@ async def _dispatch_with_context(
         guidance = " ".join(
             w for w in intent.cleaned_text.split() if not w.isdigit()
         ).strip()
-        summary = await tm.summarize(exchange_ids=ids, guidance=guidance or None)
+        summary = await tm.summarize(from_exchanges=ids, guidance=guidance or None)
         return "summarize", summary
 
     # default: ask

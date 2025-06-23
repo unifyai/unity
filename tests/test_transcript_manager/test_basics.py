@@ -203,14 +203,19 @@ async def test_summarize_exchanges():
     )
 
     # summarize
-    handle = await tm.summarize(exchange_ids=[0, 1, 2])
+    handle = await tm.summarize(from_exchanges=[0, 1, 2])
     summary = await handle.result()
 
     # retrieve summary
     summaries = tm._search_summaries()
     assert len(summaries) == 1
-    assert summaries[0].model_dump() == {
+    summ = summaries[0].model_dump()
+    # a) new column exists and is non-empty list
+    assert isinstance(summ["message_ids"], list) and summ["message_ids"]
+    # b) remaining keys still as expected
+    for k, v in {
         "summary_id": 0,
         "exchange_ids": [0, 1, 2],
         "summary": summary,
-    }
+    }.items():
+        assert summ[k] == v

@@ -21,7 +21,7 @@ async def test_summarize_uses_parent_context(tm_scenario: TranscriptManager):
     ]
 
     handle = await tm.summarize(
-        exchange_ids=[2],  # Carlos ⇆ Dan e-mail seeded by ScenarioBuilder
+        from_exchanges=[2],  # Carlos ⇆ Dan e-mail seeded by ScenarioBuilder
         guidance="Use the abbreviation we discussed earlier for Carlos.",
         parent_chat_context=parent_ctx,
     )
@@ -44,7 +44,7 @@ async def test_summarize_requests_clarification(tm_scenario: TranscriptManager):
     down_q: asyncio.Queue[str] = asyncio.Queue()
 
     handle = await tm.summarize(
-        exchange_ids=[2],
+        from_exchanges=[2],
         guidance="Include Carlos' surname in the summary.",
         clarification_up_q=up_q,
         clarification_down_q=down_q,

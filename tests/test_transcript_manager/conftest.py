@@ -87,7 +87,7 @@ class ScenarioBuilder:
         await self._seed_filler()
 
         # Store an initial summary so that summaries exist
-        await self.tm.summarize(exchange_ids=[0, 1])
+        await self.tm.summarize(from_exchanges=[0, 1])
 
         return self
 

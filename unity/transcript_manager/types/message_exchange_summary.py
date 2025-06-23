@@ -12,6 +12,10 @@ class MessageExchangeSummary(BaseModel):
     exchange_ids: List[int] = Field(
         description="List of message exchange IDs that this summary covers",
     )
+    message_ids: List[int] = Field(
+        description="Exact message IDs that the assistant used when generating the summary",
+        default_factory=list,
+    )
     summary: str = Field(
         description="A concise summary of the key points and outcomes from the message exchanges",
     )
