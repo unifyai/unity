@@ -48,6 +48,10 @@ class FunctionManager(threading.Thread):
     # ------------------------------------------------------------------ #
 
     _ALLOWED_BUILTINS: Set[str] = {
+         # --- Planner Primitives ---
+        "act",
+        "observe",
+        # --- Standard Built-ins ---
         "range",
         "enumerate",
         "len",
