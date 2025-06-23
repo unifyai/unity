@@ -5,7 +5,8 @@ import threading
 from typing import Dict, List, Set, Union, Tuple, Any, Optional
 import unify
 from ..common.embed_utils import EMBED_MODEL, ensure_vector_column
-
+from .types.function import Function
+from ..common.model_to_fields import model_to_fields
 
 class FunctionManager(threading.Thread):
     """
@@ -38,7 +39,17 @@ class FunctionManager(threading.Thread):
         self._ctx = f"{read_ctx}/Functions" if read_ctx else "Functions"
 
         if self._ctx not in unify.get_contexts():
-            unify.create_context(self._ctx)
+            unify.create_context(
+                self._ctx,
+                unique_id_column=True,
+                unique_id_name="function_id",
+                description="List of functions, with all function details stored.",
+            )
+            fields = model_to_fields(Function)
+            unify.create_fields(
+                fields,
+                context=self._ctx,
+            )
         # Add tracing
         if traced:
             self = unify.traced(self)
