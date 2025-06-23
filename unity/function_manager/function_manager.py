@@ -8,6 +8,7 @@ from ..common.embed_utils import EMBED_MODEL, ensure_vector_column
 from .types.function import Function
 from ..common.model_to_fields import model_to_fields
 
+
 class FunctionManager(threading.Thread):
     """
     Keeps a catalogue of user-supplied Python functions that can reference
@@ -59,7 +60,7 @@ class FunctionManager(threading.Thread):
     # ------------------------------------------------------------------ #
 
     _ALLOWED_BUILTINS: Set[str] = {
-         # --- Planner Primitives ---
+        # --- Planner Primitives ---
         "act",
         "observe",
         # --- Standard Built-ins ---
@@ -116,7 +117,9 @@ class FunctionManager(threading.Thread):
         except SyntaxError as e:
             raise ValueError(f"Syntax error:\n{e.text}") from e
 
-        if len(tree.body) != 1 or not isinstance(tree.body[0], (ast.FunctionDef, ast.AsyncFunctionDef)):
+        if len(tree.body) != 1 or not isinstance(
+            tree.body[0], (ast.FunctionDef, ast.AsyncFunctionDef)
+        ):
             raise ValueError(
                 "Each implementation must contain exactly one top-level function.",
             )
@@ -134,7 +137,9 @@ class FunctionManager(threading.Thread):
         if any(isinstance(n, (ast.Import, ast.ImportFrom)) for n in ast.walk(tree)):
             raise ValueError(f"Imports are not allowed (found in {fn_name}()).")
 
-    def _collect_function_calls(self, fn_node: Union[ast.FunctionDef, ast.AsyncFunctionDef]) -> Set[str]:
+    def _collect_function_calls(
+        self, fn_node: Union[ast.FunctionDef, ast.AsyncFunctionDef]
+    ) -> Set[str]:
         calls: Set[str] = set()
         for node in ast.walk(fn_node):
             if isinstance(node, ast.Call):
@@ -177,16 +182,6 @@ class FunctionManager(threading.Thread):
         assert len(logs) == 1, f"No function with id {function_id!r} exists."
         return logs[0]
 
-    def _next_function_id(self) -> int:
-        if self._next_id is not None:
-            return self._next_id
-        if self._ctx not in unify.get_contexts():
-            return 0
-        logs = unify.get_logs(context=self._ctx)
-        next_id = max(lg.entries["function_id"] for lg in logs) + 1 if logs else 0
-        self._next_id = next_id
-        return next_id
-
     # ------------------------------------------------------------------ #
     #  Public API                                                        #
     # ------------------------------------------------------------------ #
@@ -222,7 +217,6 @@ class FunctionManager(threading.Thread):
 
         # Compile & persist
         results: Dict[str, str] = {}
-        next_id = self._next_function_id()
 
         for name, _, node, source in parsed:
             namespace: Dict[str, object] = {}
@@ -240,7 +234,6 @@ class FunctionManager(threading.Thread):
 
             unify.log(
                 context=self._ctx,
-                function_id=next_id,
                 name=name,
                 argspec=signature,
                 docstring=docstring,
@@ -251,9 +244,6 @@ class FunctionManager(threading.Thread):
             )
 
             results[name] = "added"
-            next_id += 1
-
-        self._next_id = next_id
         return results
 
     # 2. Listing -------------------------------------------------------- #
