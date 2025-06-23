@@ -116,12 +116,12 @@ class FunctionManager(threading.Thread):
         except SyntaxError as e:
             raise ValueError(f"Syntax error:\n{e.text}") from e
 
-        if len(tree.body) != 1 or not isinstance(tree.body[0], ast.FunctionDef):
+        if len(tree.body) != 1 or not isinstance(tree.body[0], (ast.FunctionDef, ast.AsyncFunctionDef)):
             raise ValueError(
                 "Each implementation must contain exactly one top-level function.",
             )
 
-        fn_node: ast.FunctionDef = tree.body[0]
+        fn_node: Union[ast.FunctionDef, ast.AsyncFunctionDef] = tree.body[0]
         if fn_node.col_offset != 0:
             raise ValueError(
                 f"Function {fn_node.name!r} must start at column 0 (no indentation).",
@@ -134,7 +134,7 @@ class FunctionManager(threading.Thread):
         if any(isinstance(n, (ast.Import, ast.ImportFrom)) for n in ast.walk(tree)):
             raise ValueError(f"Imports are not allowed (found in {fn_name}()).")
 
-    def _collect_function_calls(self, fn_node: ast.FunctionDef) -> Set[str]:
+    def _collect_function_calls(self, fn_node: Union[ast.FunctionDef, ast.AsyncFunctionDef]) -> Set[str]:
         calls: Set[str] = set()
         for node in ast.walk(fn_node):
             if isinstance(node, ast.Call):
@@ -379,10 +379,11 @@ class FunctionManager(threading.Thread):
             A list of the n most similar functions.
         """
         self._ensure_function_embedding()
+        escaped_query = query.replace("'", "\\'")
         logs = unify.get_logs(
             context=self._ctx,
             sorting={
-                f"cosine({self._FUNC_EMB}, embed('{query}', model='{EMBED_MODEL}'))": "ascending",
+                f"cosine({self._FUNC_EMB}, embed('{escaped_query}', model='{EMBED_MODEL}'))": "ascending",
             },
             limit=n,
             exclude_fields=[self._FUNC_EMB],
