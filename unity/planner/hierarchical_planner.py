@@ -1286,6 +1286,16 @@ class HierarchicalPlanner(BasePlanner):
 
             if func_source and self.function_manager:
                 try:
+                    func_tree = ast.parse(func_source)
+                    func_node = func_tree.body[0]
+                    
+                    if isinstance(func_node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                        func_node.decorator_list = [
+                            d for d in func_node.decorator_list
+                            if not (isinstance(d, ast.Name) and d.id == 'verify')
+                        ]
+                    
+                    clean_func_source = ast.unparse(func_tree)
                     existing_funcs = self.function_manager.list_functions(
                         include_implementations=True,
                     )
@@ -1298,16 +1308,26 @@ class HierarchicalPlanner(BasePlanner):
                         plan.action_log.append(
                             f"Persisting verified function '{fn.__name__}' as a new skill.",
                         )
+                        logger.info(    
+                            f"Adding function '{fn.__name__}' to FunctionManager.",
+                        )
+                        logger.info('clean_func_source: %s', clean_func_source)
                         self.function_manager.add_functions(
-                            implementations=[func_source],
+                            implementations=[clean_func_source],
                         )
                     else:
                         plan.action_log.append(
                             f"Skipping persistence for '{fn.__name__}'; identical skill already exists.",
                         )
+                        logger.info(
+                            f"Skipping adding function '{fn.__name__}' to FunctionManager; identical function already exists.",
+                        )
                 except Exception as e:
                     plan.action_log.append(
                         f"WARNING: Could not persist function '{fn.__name__}': {e}",
+                    )
+                    logger.warning(
+                        f"Could not add function '{fn.__name__}' to FunctionManager: {e}",
                     )
             return result
         elif assessment.status == "reimplement_local":
@@ -1372,15 +1392,11 @@ class HierarchicalPlanner(BasePlanner):
                     exploration_summary,
                 )
                 response = await llm_call(self.plan_generation_client, prompt)
-                logger.debug(
-                    f"LLM response for initial plan (attempt {attempt+1}):\n--- LLM RAW RESPONSE START ---\n{response}\n--- LLM RAW RESPONSE END ---",
-                )
-
                 code = (
                     response.strip().replace("```python", "").replace("```", "").strip()
                 )
                 logger.debug(
-                    f"Stripped code for initial plan:\n--- CODE START ---\n{code}\n--- CODE END ---",
+                    f"LLM response for initial plan (attempt {attempt+1}):\n--- LLM RAW RESPONSE START ---\n{response}\n--- LLM RAW RESPONSE END ---",
                 )
 
                 return self._sanitize_code(code)
