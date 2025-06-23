@@ -5,6 +5,7 @@ import functools
 import inspect
 import sys
 import traceback
+from os import sep
 from typing import Any, Callable
 
 
@@ -26,7 +27,7 @@ def _handle_project(
     # ---------- helper -------------------------------------------------
     def _ctx_name(fn: Callable) -> str:
         file_path = fn.__code__.co_filename
-        test_path = "/".join(file_path.split("/tests/")[1].split("/"))[:-3]
+        test_path = "/".join(file_path.split(f"{sep}tests{sep}")[1].split(sep))[:-3]
         return f"{test_path}/{fn.__name__}" if test_path else fn.__name__
 
     async def _call(fn: Callable, *a: Any, **kw: Any):
