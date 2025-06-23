@@ -13,6 +13,7 @@ from livekit.plugins import (
     openai,
     cartesia,
     deepgram,
+    elevenlabs,
     # noise_cancellation,
     silero,
 )
@@ -136,8 +137,13 @@ async def entrypoint(ctx: agents.JobContext):
     session = AgentSession(
         stt=deepgram.STT(model="nova-3", language="multi"),
         llm=openai.LLM(model="gpt-4o"),
-        tts=cartesia.TTS(
-            voice=voice_id if voice_id != "" else cartesia.tts.TTSDefaultVoiceId,
+        tts=(
+            elevenlabs.TTS(
+                voice_id=voice_id if voice_id != "" else elevenlabs.DEFAULT_VOICE_ID,
+                model="eleven_multilingual_v2"
+            ) if tts_provider == "elevenlabs" else cartesia.TTS(
+                voice=voice_id if voice_id != "" else cartesia.tts.TTSDefaultVoiceId,
+            )
         ),
         vad=silero.VAD.load(),
         turn_detection=MultilingualModel(),
@@ -324,18 +330,21 @@ if __name__ == "__main__":
     from_number = ""
     assistant_number = ""
     to_number = ""
+    tts_provider = "cartesia"
     voice_id = ""
     outbound = ""
-    if len(sys.argv) > 5:
+    if len(sys.argv) > 6:
         # Remove phone numbers from sys.argv to prevent them from being passed to agents.cli
         from_number = sys.argv[2]
         assistant_number = sys.argv[3]
+        tts_provider = sys.argv[6] if sys.argv[6] != "None" else "cartesia"
         voice_id = sys.argv[4]
         outbound = sys.argv[5] if sys.argv[5] != "None" else ""
         sys.argv = sys.argv[:2]  # Keep only script name and "dev" command
 
     # Store phone numbers in environment variables to be accessed by entrypoint
     os.environ["CALL_FROM_NUMBER"] = from_number
+    os.environ["TTS_PROVIDER"] = tts_provider
     if voice_id != "None":
         os.environ["VOICE_ID"] = voice_id
     # os.environ["CALL_TO_NUMBER"] = to_number
