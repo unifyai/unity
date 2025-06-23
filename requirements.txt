@@ -5,7 +5,7 @@ black
 browser-use
 browserbase
 deepgram-sdk>=4
--e ../unify # dev mode
+# -e ../unify # dev mode
 # git+https://github.com/unifyai/unify # deploy mode
 fastapi>=0.104.0
 google-auth>=2.17.0
