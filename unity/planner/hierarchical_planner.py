@@ -917,6 +917,8 @@ class HierarchicalPlanner(BasePlanner):
             session_connect_url=session_connect_url,
             headless=headless,
         )
+        if not self.controller.is_alive():
+            self.controller.start()
         self.coms_manager = coms_manager or ComsManager()
         self.max_escalations = max_escalations or 3
         self.max_local_retries = max_local_retries or 2
@@ -1283,7 +1285,8 @@ class HierarchicalPlanner(BasePlanner):
                 )
 
             if func_source and self.function_manager:
-                self.function_manager.add_functions(implementations=[func_source])
+                pass  # TODO: add function manager integration
+                # self.function_manager.add_functions(implementations=[func_source])
             return result
         elif assessment.status == "reimplement_local":
             await plan._handle_dynamic_implementation(
