@@ -113,7 +113,8 @@ async def health_check(auth: bool = Depends(require_auth)):
 def signal_handler(signum, frame):
     print("Shutting down Unity service...")
     unity.service.stop("signal_shutdown")
-    exit(0)
+    # Don't exit the container - let uvicorn handle the shutdown
+    # exit(0)  # Removed this line to prevent container exit
 
 
 signal.signal(signal.SIGTERM, signal_handler)
