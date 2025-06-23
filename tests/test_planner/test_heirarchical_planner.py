@@ -40,6 +40,7 @@ def mock_function_manager():
     fm = MagicMock(spec=FunctionManager)
     fm.list_functions = MagicMock(return_value={})
     fm.add_functions = MagicMock()
+    fm.search_functions_by_similarity = MagicMock(return_value=[])
     return fm
 
 
@@ -1219,3 +1220,114 @@ async def main_plan():
 
     # The new cache should have 2 items: the new repeatable_task(A) and the new main_plan.
     assert len(plan.completed_functions) == 2
+
+
+@pytest.mark.asyncio
+async def test_planner_reuses_skills_from_function_manager(
+    planner: HierarchicalPlanner,
+    mock_function_manager: MagicMock,
+    mock_controller: MagicMock,
+    monkeypatch,
+):
+    """
+    Objective: Verify that the planner retrieves an existing, relevant skill
+    from the FunctionManager and uses it in the generated plan, avoiding
+    unnecessary reimplementation.
+    """
+    # --- Arrange ---
+    goal = "Go to LinkedIn and check for new messages."
+    prompt_capture = {}
+
+    # 1. Define the pre-existing skill that the FunctionManager will "store".
+    navigate_skill_code = """
+@verify
+async def navigate_to_linkedin():
+    '''Navigates the browser to the main LinkedIn homepage.'''
+    await act("Go to linkedin.com")
+"""
+    navigate_skill_dict = {
+        "name": "navigate_to_linkedin",
+        "argspec": "()",
+        "docstring": "Navigates the browser to the main LinkedIn homepage.",
+        "implementation": navigate_skill_code,
+    }
+
+    # 2. Mock the FunctionManager to return this skill upon a semantic search.
+    mock_function_manager.search_functions_by_similarity.return_value = [
+        navigate_skill_dict,
+    ]
+
+    # 3. This is the plan the LLM should generate after seeing the existing skill.
+    #    It should directly call the function instead of implementing navigation itself.
+    expected_plan_code = f"""
+{navigate_skill_code}
+
+@verify
+async def check_messages():
+    '''Checks for new messages after navigation.'''
+    raise NotImplementedError # We don't care about this part for the test
+
+@verify
+async def main_plan():
+    '''Main plan to check LinkedIn messages.'''
+    await navigate_to_linkedin()
+    await check_messages()
+    return "Finished checking messages."
+"""
+
+    # Mock llm_call instead of the entire _generate_initial_plan method
+    async def mock_llm_call(client, prompt: str):
+        # We only want to mock the response for the plan generation prompt
+        if "### Existing Functions Library" in prompt and "main_plan" in prompt:
+            prompt_capture["initial_plan_prompt"] = prompt
+            return expected_plan_code
+        # For other calls (like verification), return a generic success
+        return '{"status": "ok", "reason": "OK"}'
+
+    # Apply the mock to the correct target in the module
+    monkeypatch.setattr(
+        "unity.planner.hierarchical_planner.llm_call",
+        AsyncMock(side_effect=mock_llm_call),
+    )
+
+    # To simplify, we'll stop the test after the first part of the plan runs.
+    # We rig the 'check_messages' implementation to end the plan.
+    monkeypatch.setattr(
+        planner,
+        "_dynamic_implement",
+        AsyncMock(
+            return_value="@verify\nasync def check_messages(): return 'Test complete.'",
+        ),
+    )
+    monkeypatch.setattr(
+        planner,
+        "_check_state_against_goal",
+        AsyncMock(return_value=VerificationAssessment(status="ok", reason="OK")),
+    )
+
+    # --- Act ---
+    mock_act = AsyncMock()
+    monkeypatch.setattr(mock_controller, "act", mock_act)
+    monkeypatch.setattr(planner, "_should_explore", AsyncMock(return_value=False))
+    plan = await planner.execute(goal)
+    await plan.result()
+
+    # --- Assert ---
+    # 1. The planner should have searched for relevant skills.
+    mock_function_manager.search_functions_by_similarity.assert_called_once_with(
+        query=goal,
+        n=5,
+    )
+
+    # 2. The retrieved skill's code MUST have been included in the prompt to the LLM.
+    assert "prompt_capture" in locals() and "initial_plan_prompt" in prompt_capture
+    assert navigate_skill_code in prompt_capture["initial_plan_prompt"]
+
+    # 3. The final plan code should include the call to the retrieved skill.
+    assert "await navigate_to_linkedin()" in plan.plan_source_code
+
+    # 4. The action from within the retrieved skill should have been executed.
+    mock_controller.act.assert_any_call("Go to linkedin.com")
+
+    # 5. The plan should complete.
+    assert plan._state == _HierarchicalPlanState.COMPLETED

@@ -79,7 +79,7 @@ class Controller(threading.Thread):
                         "elements": elements,
                         "tabs": browser_state.get("tabs", []),
                         "history": browser_state.get("history", []),
-                    }
+                    },
                 )
                 self._last_shot = browser_state.get("screenshot", b"")
 
