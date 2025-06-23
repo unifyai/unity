@@ -149,6 +149,7 @@ class CommsAgent:
                             "dev",
                             self.user_phone_call_number,  # "console" if a local call is needed
                             self.assistant_number,
+                            new_event["tts_provider"] if new_event["tts_provider"] else "cartesia",
                             new_event["voice_id"] if new_event["voice_id"] else "None",
                             "--outbound" if new_event.get("outbound") else "None",
                         )

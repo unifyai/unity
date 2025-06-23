@@ -231,7 +231,7 @@ def loop_exception_handler(loop, context):
     print("Error:", context.get("message"), context.get("exception"))
 
 
-async def main(manager_name: str):
+async def main(manager_name: str = "contact"):
     global user_agent
 
     loop = asyncio.get_running_loop()

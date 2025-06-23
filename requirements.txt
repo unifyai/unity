@@ -11,7 +11,7 @@ fastapi>=0.104.0
 google-auth>=2.17.0
 google-cloud-pubsub>=2.18.0
 langchain-openai
-livekit-agents[deepgram,openai,cartesia,silero,turn-detector]==1.0.17
+livekit-agents[deepgram,openai,cartesia,silero,elevenlabs,turn-detector]==1.0.17
 livekit-plugins-noise-cancellation~=0.2
 openai>=1.0.0
 playwright
