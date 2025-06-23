@@ -55,8 +55,6 @@ Create `run_hp.py` and execute it with `python run_hp.py`.
 # run_hp.py
 import asyncio
 import unify
-from unity.controller.controller import Controller
-from unity.function_manager.function_manager import FunctionManager
 from unity.planner.hierarchical_planner import HierarchicalPlanner
 import logging
 import sys
@@ -76,12 +74,9 @@ if not root_logger.handlers:
 async def main():
     """Initializes and runs the HierarchicalPlanner for a browser task."""
     unify.activate("hp_demo")
-    controller = Controller(headless=False)
-    controller.start()
 
     planner = HierarchicalPlanner(
-        controller=controller,
-        function_manager=FunctionManager(),
+        headless=True,
     )
 
     task = "Go to google.com, search for 'latest news on AI agents', and return the title of the first result."
@@ -128,10 +123,9 @@ async def main():
     """Initializes and runs the ToolLoopPlanner for a browser task."""
     unify.activate("tlp_demo")
 
-    # The TLP initializes its own controller internally
     planner = ToolLoopPlanner(headless=False)
 
-    task = "Go to unify.ai and observe the main heading of the page."
+    task = "Go to google.com, search for 'latest news on AI agents', and return the title of the first result."
     print(f"Executing task: {task}")
 
     active_task = await planner.execute(task)
@@ -174,10 +168,9 @@ async def main():
     """Initializes and runs the BrowserUsePlanner for a browser task."""
     unify.activate("bup_demo")
 
-    # The BUP initializes its own controller and browser from the browser_use library
     planner = BrowserUsePlanner(headless=False)
 
-    task = "Navigate to [https://www.unify.ai/](https://www.unify.ai/) and extract the text from the main hero banner."
+    task = "Go to google.com, search for 'latest news on AI agents', and return the title of the first result."
     print(f"Executing task: {task}")
 
     active_task = await planner.execute(task)
