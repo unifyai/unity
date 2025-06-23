@@ -31,6 +31,9 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Copy all application files
 COPY . .
 
+# Set environment variables
+ENV PYTHONPATH=/app
+
 # Download the turn detector model files
 # Set memory-efficient environment variables for model loading
 ENV OMP_NUM_THREADS=1
@@ -45,9 +48,6 @@ ENV TOKENIZERS_PARALLELISM=false
 
 # Expose the ports that the applications use
 EXPOSE 8000
-
-# Set environment variables
-ENV PYTHONPATH=/app
 
 # Use Uvicorn for production ASGI server
 CMD ["uvicorn", "wrapper_app:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "1"]
