@@ -17,6 +17,7 @@ RUN apt-get update && apt-get install -y \
     python3-dev \
     pkg-config \
     tini \
+    git \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy requirements file
