@@ -1288,13 +1288,14 @@ class HierarchicalPlanner(BasePlanner):
                 try:
                     func_tree = ast.parse(func_source)
                     func_node = func_tree.body[0]
-                    
+
                     if isinstance(func_node, (ast.FunctionDef, ast.AsyncFunctionDef)):
                         func_node.decorator_list = [
-                            d for d in func_node.decorator_list
-                            if not (isinstance(d, ast.Name) and d.id == 'verify')
+                            d
+                            for d in func_node.decorator_list
+                            if not (isinstance(d, ast.Name) and d.id == "verify")
                         ]
-                    
+
                     clean_func_source = ast.unparse(func_tree)
                     existing_funcs = self.function_manager.list_functions(
                         include_implementations=True,
@@ -1308,10 +1309,10 @@ class HierarchicalPlanner(BasePlanner):
                         plan.action_log.append(
                             f"Persisting verified function '{fn.__name__}' as a new skill.",
                         )
-                        logger.info(    
+                        logger.info(
                             f"Adding function '{fn.__name__}' to FunctionManager.",
                         )
-                        logger.info('clean_func_source: %s', clean_func_source)
+                        logger.info("clean_func_source: %s", clean_func_source)
                         self.function_manager.add_functions(
                             implementations=[clean_func_source],
                         )

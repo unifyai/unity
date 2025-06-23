@@ -140,8 +140,10 @@ async def entrypoint(ctx: agents.JobContext):
         tts=(
             elevenlabs.TTS(
                 voice_id=voice_id if voice_id != "" else elevenlabs.DEFAULT_VOICE_ID,
-                model="eleven_multilingual_v2"
-            ) if tts_provider == "elevenlabs" else cartesia.TTS(
+                model="eleven_multilingual_v2",
+            )
+            if tts_provider == "elevenlabs"
+            else cartesia.TTS(
                 voice=voice_id if voice_id != "" else cartesia.tts.TTSDefaultVoiceId,
             )
         ),
