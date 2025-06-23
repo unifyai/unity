@@ -65,27 +65,37 @@ class _HierarchicalPlanState(enum.Enum):
 
 
 async def llm_call(client: unify.AsyncUnify, prompt: str) -> str:
-    """Convenience wrapper for a simple LLM call."""
+    """
+    Convenience wrapper for a simple, stateless LLM call.
+
+    This helper automatically resets the client's message history before making
+    the call to ensure no context is leaked from previous interactions.
+    """
+    client.reset_messages()
     return await client.generate(prompt)
 
 
 class PlanSanitizer(ast.NodeTransformer):
     """
     AST transformer to enforce security and correctness of plan code.
+
     1. Disallows `import` and `import from` statements.
     2. Ensures every `async def` function is decorated with `@verify`.
     """
 
     def visit_Import(self, node: ast.Import) -> Any:
+        """Blocks `import` statements."""
         raise SyntaxError("Import statements are not allowed in plans.")
 
     def visit_ImportFrom(self, node: ast.ImportFrom) -> Any:
+        """Blocks `from ... import` statements."""
         raise SyntaxError("Import statements are not allowed in plans.")
 
     def visit_AsyncFunctionDef(
         self,
         node: ast.AsyncFunctionDef,
     ) -> ast.AsyncFunctionDef:
+        """Ensures all async functions have a @verify decorator."""
         has_verify = any(
             isinstance(d, ast.Name) and d.id == "verify" for d in node.decorator_list
         )
@@ -98,17 +108,26 @@ class FunctionReplacer(ast.NodeTransformer):
     """AST transformer to replace a function definition in a module."""
 
     def __init__(self, target_name: str, new_function_node: ast.FunctionDef):
+        """
+        Initializes the transformer.
+
+        Args:
+            target_name: The name of the function to replace.
+            new_function_node: The new AST node for the function.
+        """
         self.target_name = target_name
         self.new_function_node = new_function_node
         self.replaced = False
 
     def visit_FunctionDef(self, node: ast.FunctionDef) -> Any:
+        """Visits and potentially replaces a synchronous function definition."""
         if node.name == self.target_name:
             self.replaced = True
             return self.new_function_node
         return self.generic_visit(node)
 
     def visit_AsyncFunctionDef(self, node: ast.AsyncFunctionDef) -> Any:
+        """Visits and potentially replaces an asynchronous function definition."""
         if node.name == self.target_name:
             self.replaced = True
             return self.new_function_node
@@ -118,7 +137,9 @@ class FunctionReplacer(ast.NodeTransformer):
 class HierarchicalPlan(BaseActiveTask):
     """
     Represents and executes a single, dynamically generated hierarchical plan.
-    This class is a steerable handle managing the plan's lifecycle.
+
+    This class is a steerable handle managing the plan's lifecycle, including
+    generation, execution, self-correction, and modification.
     """
 
     def __init__(
@@ -131,6 +152,18 @@ class HierarchicalPlan(BaseActiveTask):
         max_escalations: Optional[int] = None,
         max_local_retries: Optional[int] = None,
     ):
+        """
+        Initializes the Hierarchical Plan active task.
+
+        Args:
+            planner: The parent HierarchicalPlanner instance.
+            goal: The high-level user goal for this plan.
+            clarification_up_q: Queue for sending clarification questions to the user.
+            clarification_down_q: Queue for receiving answers from the user.
+            parent_chat_context: The chat context from a parent process, if any.
+            max_escalations: Max number of strategic replans before pausing.
+            max_local_retries: Max number of tactical retries for a function.
+        """
         self.planner = planner
         self.goal = goal
         self.exploration_summary: Optional[str] = None
@@ -162,6 +195,9 @@ class HierarchicalPlan(BaseActiveTask):
             self._completion_event.set()
 
     async def _initialize_and_run(self):
+        """
+        Manages the entire lifecycle of the plan from initialization to completion.
+        """
         self.action_log.append("Initializing plan...")
         try:
             if await self.planner._should_explore(self.goal):
@@ -188,6 +224,9 @@ class HierarchicalPlan(BaseActiveTask):
             self._set_final_result(f"ERROR: Plan initialization failed: {e}")
 
     async def _perform_exploration(self):
+        """
+        Runs an interactive conversational loop to gather information before planning.
+        """
         self._state = _HierarchicalPlanState.EXPLORING
         self.action_log.append("Starting interactive exploratory phase...")
         try:
@@ -225,13 +264,12 @@ class HierarchicalPlan(BaseActiveTask):
                 """,
             )
 
-            exploration_client = unify.AsyncUnify(
-                os.environ.get("UNIFY_MODEL", "gpt-4o-mini@openai"),
-            )
-            exploration_client.set_system_message(research_prompt)
+            client = self.planner.exploration_client
+            client.reset_messages()
+            client.set_system_message(research_prompt)
 
             exploration_loop_handle = start_async_tool_use_loop(
-                client=exploration_client,
+                client=client,
                 message="Begin your research based on the main objective.",
                 tools=exploratory_tools,
                 loop_id="ExploratoryPhase",
@@ -253,6 +291,12 @@ class HierarchicalPlan(BaseActiveTask):
             self._state = _HierarchicalPlanState.RUNNING
 
     def _create_main_loop_iterator(self):
+        """
+        Creates a generator that yields the main plan coroutine to be executed.
+
+        Yields:
+            The main plan's coroutine object.
+        """
         main_fn_name = self._get_main_function_name()
         if not main_fn_name:
             raise RuntimeError("Could not determine main entry point 'main_plan'.")
@@ -260,10 +304,18 @@ class HierarchicalPlan(BaseActiveTask):
         yield main_fn()
 
     async def _start_main_execution_loop(self):
-        self.planner.llm_client.reset_messages()
+        """
+        Starts the primary execution loop, driven by `start_async_tool_use_loop`.
+
+        This loop uses a single tool, `_run_one_plan_step`, to advance the plan's
+        execution, allowing for pausing, interjection, and control.
+        """
+        client = self.planner.main_loop_client
+        client.reset_messages()
         plan_iterator = self._create_main_loop_iterator()
 
         async def _run_one_plan_step():
+            """Executes a single step of the plan, handling state transitions."""
             nonlocal plan_iterator
             if self._is_complete:
                 return {
@@ -363,6 +415,7 @@ class HierarchicalPlan(BaseActiveTask):
                 return {"status": "error", "message": str(e), "force_stop": True}
 
         def dynamic_tool_policy(step_index, tools):
+            """Defines the tool usage policy for the main execution loop."""
             if self._is_complete or self._state in (
                 _HierarchicalPlanState.PAUSED_FOR_MODIFICATION,
                 _HierarchicalPlanState.PAUSED_FOR_ESCALATION,
@@ -372,7 +425,7 @@ class HierarchicalPlan(BaseActiveTask):
                 return "required", {"_run_one_plan_step": _run_one_plan_step}
 
         self.main_loop_handle = start_async_tool_use_loop(
-            client=self.planner.llm_client,
+            client=client,
             message="Executing hierarchical plan...",
             tools={"_run_one_plan_step": _run_one_plan_step},
             loop_id=f"HierarchicalPlan-{self.goal[:20]}",
@@ -383,6 +436,13 @@ class HierarchicalPlan(BaseActiveTask):
         await self.main_loop_handle.result()
 
     async def _handle_dynamic_implementation(self, function_name: str, **kwargs):
+        """
+        Orchestrates the dynamic implementation of a stub function.
+
+        Args:
+            function_name: The name of the function to implement.
+            **kwargs: Additional context for implementation (e.g., replan reason).
+        """
         new_code = await self.planner._dynamic_implement(
             plan=self,
             function_name=function_name,
@@ -392,11 +452,23 @@ class HierarchicalPlan(BaseActiveTask):
         self.action_log.append(f"Implemented function: {function_name}")
 
     def _get_unimplemented_function_name(self) -> str:
+        """
+        Inspects the traceback to find the name of the unimplemented function.
+
+        Returns:
+            The name of the function that raised NotImplementedError.
+        """
         _, _, exc_tb = sys.exc_info()
         frame_summary = traceback.extract_tb(exc_tb)[-1]
         return frame_summary.name
 
     def _get_main_function_name(self) -> str | None:
+        """
+        Parses the plan's source code to find the main entry point.
+
+        Returns:
+            The name of the main function ('main_plan') or None if not found.
+        """
         try:
             tree = ast.parse(self.plan_source_code or "")
             for node in ast.walk(tree):
@@ -410,6 +482,13 @@ class HierarchicalPlan(BaseActiveTask):
         return None
 
     def _update_plan_with_new_code(self, function_name: str, new_code: str):
+        """
+        Updates the plan's source code with a new function implementation using AST.
+
+        Args:
+            function_name: The name of the function to replace or add.
+            new_code: The full source code of the new function implementation.
+        """
         keys_to_remove = {
             key for key in self.completed_functions if key[0] == function_name
         }
@@ -455,6 +534,18 @@ class HierarchicalPlan(BaseActiveTask):
             raise
 
     async def modify_plan(self, modification_request: str) -> str:
+        """
+        Modifies the current plan based on a user request.
+
+        This involves pausing, rewriting the code, generating a course-correction
+        script, and resuming execution.
+
+        Args:
+            modification_request: The user's instruction for how to change the plan.
+
+        Returns:
+            A status message indicating the outcome of the modification.
+        """
         if not self._is_valid_method("modify_plan"):
             return f"Plan cannot be modified in state: {self._state.name}"
 
@@ -518,6 +609,13 @@ class HierarchicalPlan(BaseActiveTask):
             return "Failed to modify the plan. Rolled back to previous version and resumed."
 
     async def _execute_correction_script(self, script: str, new_plan_code: str):
+        """
+        Executes a course-correction script to align the browser state with a new plan.
+
+        Args:
+            script: The Python script to execute for course correction.
+            new_plan_code: The source code of the new plan for context.
+        """
         logger.info("Executing course correction script...")
         self.action_log.append("Executing course correction script.")
 
@@ -532,6 +630,7 @@ class HierarchicalPlan(BaseActiveTask):
             correction_namespace = self.planner._create_sandbox_globals()
 
             async def act_wrapper(instruction: str):
+                """Wraps the act primitive to log interactions."""
                 interactions.append(("act", instruction, None))
                 result = await self.planner.controller.act(instruction)
                 return result
@@ -559,6 +658,7 @@ class HierarchicalPlan(BaseActiveTask):
             await asyncio.wait_for(correction_fn(), timeout=60.0)
 
             assessment = await self.planner._check_state_against_goal(
+                self,
                 function_name="course_correction",
                 function_docstring=f"Align state for new plan: {new_plan_code[:200]}...",
                 interactions=interactions,
@@ -574,6 +674,15 @@ class HierarchicalPlan(BaseActiveTask):
             raise RuntimeError(f"Course correction script failed: {e}") from e
 
     async def resolve_escalation_with_new_goal(self, new_goal: str) -> str:
+        """
+        Resolves a plan that is paused due to excessive escalations by restarting with a new goal.
+
+        Args:
+            new_goal: The new, revised goal from the user.
+
+        Returns:
+            A status message.
+        """
         if self._state != _HierarchicalPlanState.PAUSED_FOR_ESCALATION:
             return f"Error: Plan is not paused for escalation. Current state: {self._state.name}"
 
@@ -590,6 +699,12 @@ class HierarchicalPlan(BaseActiveTask):
         return f"Plan restarted with new goal: '{new_goal}'"
 
     async def result(self) -> str:
+        """
+        Waits for the plan to complete and returns its final result.
+
+        Returns:
+            The final result string of the plan.
+        """
         await self._completion_event.wait()
         return (
             self._final_result_str
@@ -597,9 +712,24 @@ class HierarchicalPlan(BaseActiveTask):
         )
 
     def done(self) -> bool:
+        """
+        Checks if the plan has completed.
+
+        Returns:
+            True if the plan is in a terminal state, False otherwise.
+        """
         return self._is_complete
 
     async def interject(self, message: str) -> str:
+        """
+        Sends an interjection message to the running plan's execution loop.
+
+        Args:
+            message: The user's interjection.
+
+        Returns:
+            A status message.
+        """
         if not self._is_valid_method("interject"):
             return "Cannot interject: plan not running."
         if self.main_loop_handle:
@@ -609,6 +739,12 @@ class HierarchicalPlan(BaseActiveTask):
         return "Error: No active loop to interject into."
 
     async def stop(self) -> str:
+        """
+        Stops the plan's execution permanently.
+
+        Returns:
+            A status message.
+        """
         if not self._is_complete:
             self._state = _HierarchicalPlanState.STOPPED
             result_str = "Plan was stopped."
@@ -623,6 +759,12 @@ class HierarchicalPlan(BaseActiveTask):
         return f"Plan already in terminal state: {self._state.name}."
 
     async def pause(self) -> str:
+        """
+        Pauses the plan's execution.
+
+        Returns:
+            A status message.
+        """
         if self._state == _HierarchicalPlanState.RUNNING:
             self._state = _HierarchicalPlanState.PAUSED
             if self.main_loop_handle:
@@ -632,6 +774,12 @@ class HierarchicalPlan(BaseActiveTask):
         return f"Cannot pause in state {self._state.name}."
 
     async def resume(self) -> str:
+        """
+        Resumes a paused plan.
+
+        Returns:
+            A status message.
+        """
         if self._state == _HierarchicalPlanState.PAUSED:
             self._state = _HierarchicalPlanState.RUNNING
             if self.main_loop_handle:
@@ -641,11 +789,18 @@ class HierarchicalPlan(BaseActiveTask):
         return f"Cannot resume from state {self._state.name}."
 
     async def ask(self, question: str) -> str:
-        if self._state in (
-            _HierarchicalPlanState.IDLE,
-            _HierarchicalPlanState.EXPLORING,
-        ):
-            return "Plan has not started its main execution loop."
+        """
+        Asks a question about the current state of the plan.
+
+        Args:
+            question: The user's question.
+
+        Returns:
+            An answer generated by an LLM based on the plan's current context.
+        """
+        if not self._is_valid_method("ask"):
+            return "Cannot ask: plan is not in a suitable state."
+
         try:
             browser_context = await self.planner.controller.observe(
                 "Summarize the current page.",
@@ -666,11 +821,20 @@ class HierarchicalPlan(BaseActiveTask):
                 **Answer:**
             """,
             )
-            return await llm_call(self.planner.llm_client, prompt)
+            return await llm_call(self.planner.ask_client, prompt)
         except Exception as e:
             return f"Could not answer question. Current state: {self._state.name}. Error: {e}"
 
     def _is_valid_method(self, name: str) -> bool:
+        """
+        Checks if a given control method is valid in the current plan state.
+
+        Args:
+            name: The name of the method to check.
+
+        Returns:
+            True if the method is valid, False otherwise.
+        """
         if name == "stop":
             return not self._is_complete
         if name == "pause":
@@ -695,6 +859,12 @@ class HierarchicalPlan(BaseActiveTask):
 
     @property
     def valid_tools(self) -> Dict[str, Callable]:
+        """
+        Gets a dictionary of currently valid user-accessible controls.
+
+        Returns:
+            A mapping of public tool names to their callable methods.
+        """
         tools = {}
         potential_tools = [
             "stop",
@@ -712,7 +882,12 @@ class HierarchicalPlan(BaseActiveTask):
 
 
 class HierarchicalPlanner(BasePlanner):
-    """Orchestrates task execution by generating and managing Python code."""
+    """
+    Orchestrates task execution by generating and managing Python code.
+
+    This planner takes a high-level goal, generates a Python script representing
+    the plan, and then executes it in a controlled, self-correcting manner.
+    """
 
     def __init__(
         self,
@@ -724,6 +899,18 @@ class HierarchicalPlanner(BasePlanner):
         max_escalations: Optional[int] = None,
         max_local_retries: Optional[int] = None,
     ):
+        """
+        Initializes the HierarchicalPlanner.
+
+        Args:
+            function_manager: Manages a library of reusable functions.
+            controller: The browser controller for executing `act` and `observe`.
+            coms_manager: Manages communication with the user.
+            session_connect_url: URL for connecting to an existing browser session.
+            headless: Whether to run the browser in headless mode.
+            max_escalations: Default max number of strategic replans for plans.
+            max_local_retries: Default max number of tactical retries for plans.
+        """
         super().__init__()
         self.function_manager = function_manager or FunctionManager()
         self.controller = controller or Controller(
@@ -731,14 +918,28 @@ class HierarchicalPlanner(BasePlanner):
             headless=headless,
         )
         self.coms_manager = coms_manager or ComsManager()
-        self.llm_client: unify.AsyncUnify = unify.AsyncUnify(
-            os.environ.get("UNIFY_MODEL", "gpt-4o-mini@openai"),
-        )
         self.max_escalations = max_escalations or 3
         self.max_local_retries = max_local_retries or 2
 
+        model = os.environ.get("UNIFY_MODEL", "gpt-4o-mini@openai")
+        self.main_loop_client: unify.AsyncUnify = unify.AsyncUnify(model)
+        self.plan_generation_client: unify.AsyncUnify = unify.AsyncUnify(model)
+        self.verification_client: unify.AsyncUnify = unify.AsyncUnify(model)
+        self.implementation_client: unify.AsyncUnify = unify.AsyncUnify(model)
+        self.modification_client: unify.AsyncUnify = unify.AsyncUnify(model)
+        self.exploration_client: unify.AsyncUnify = unify.AsyncUnify(model)
+        self.ask_client: unify.AsyncUnify = unify.AsyncUnify(model)
+
     def _sanitize_code(self, code: str) -> str:
-        """Parses, sanitizes, and unparses code to enforce security."""
+        """
+        Parses, sanitizes, and unparses code to enforce security.
+
+        Args:
+            code: The Python code string to sanitize.
+
+        Returns:
+            The sanitized code string.
+        """
         try:
             tree = ast.parse(code)
             sanitizer = PlanSanitizer()
@@ -751,8 +952,13 @@ class HierarchicalPlanner(BasePlanner):
 
     async def _should_explore(self, goal: str) -> bool:
         """
-        Uses an LLM to assess if the goal is ambiguous and requires an
-        exploratory phase before generating the main plan.
+        Uses an LLM to assess if the goal is ambiguous and requires exploration.
+
+        Args:
+            goal: The user's goal.
+
+        Returns:
+            True if exploration is needed, False otherwise.
         """
         return False
         prompt = textwrap.dedent(
@@ -773,10 +979,7 @@ class HierarchicalPlanner(BasePlanner):
             - If the goal is **ambiguous or requires information gathering**, respond with the single word: **EXPLORE**.
             """,
         )
-        assessment_client = unify.AsyncUnify(
-            os.environ.get("UNIFY_MODEL", "gpt-4o-mini@openai"),
-        )
-        response = await llm_call(assessment_client, prompt)
+        response = await llm_call(self.exploration_client, prompt)
         logger.info(f"Exploration assessment for goal '{goal}': {response.strip()}")
         return "EXPLORE" in response.strip().upper()
 
@@ -788,6 +991,18 @@ class HierarchicalPlanner(BasePlanner):
         clarification_up_q: Optional[asyncio.Queue[str]] = None,
         clarification_down_q: Optional[asyncio.Queue[str]] = None,
     ) -> HierarchicalPlan:
+        """
+        Creates and starts a new HierarchicalPlan active task.
+
+        Args:
+            task_description: The high-level goal for the task.
+            parent_chat_context: Chat context from a parent process.
+            clarification_up_q: Queue for sending clarification questions.
+            clarification_down_q: Queue for receiving clarification answers.
+
+        Returns:
+            An active handle to the running HierarchicalPlan.
+        """
         return HierarchicalPlan(
             planner=self,
             goal=task_description,
@@ -799,6 +1014,12 @@ class HierarchicalPlanner(BasePlanner):
         )
 
     def _create_sandbox_globals(self) -> Dict[str, Any]:
+        """
+        Creates a dictionary of safe, sandboxed global functions for plan execution.
+
+        Returns:
+            A dictionary of globals allowed within the execution environment.
+        """
         safe_builtins = {
             k: __builtins__.get(k)
             for k in [
@@ -836,9 +1057,19 @@ class HierarchicalPlanner(BasePlanner):
         return {"__builtins__": safe_builtins, "asyncio": asyncio}
 
     async def _prepare_execution_environment(self, plan: HierarchicalPlan):
+        """
+        Prepares the sandboxed execution environment for a plan.
+
+        This involves setting up global functions (`act`, `observe`, `verify`)
+        and compiling the plan's source code into the execution namespace.
+
+        Args:
+            plan: The HierarchicalPlan instance.
+        """
         sandbox_globals = self._create_sandbox_globals()
 
         async def request_clarification_primitive(question: str) -> str:
+            """Allows the plan to ask for clarification during execution."""
             await plan.clarification_up_q.put(question)
             return await plan.clarification_down_q.get()
 
@@ -875,9 +1106,25 @@ class HierarchicalPlanner(BasePlanner):
         )
 
     def _create_verify_decorator(self, plan: HierarchicalPlan):
+        """
+        Creates the @verify decorator for a given plan instance.
+
+        The decorator wraps each function in the plan to implement the
+        execution, verification, and correction loop.
+
+        Args:
+            plan: The HierarchicalPlan this decorator is associated with.
+
+        Returns:
+            The configured `verify` decorator.
+        """
+
         def verify(fn):
+            """The actual decorator that wraps plan functions."""
+
             @functools.wraps(fn)
             async def wrapper(*args, **kwargs):
+                """The wrapper that performs verification and correction."""
                 try:
                     sig = inspect.signature(fn)
                     bound_args = sig.bind(*args, **kwargs)
@@ -950,12 +1197,29 @@ class HierarchicalPlanner(BasePlanner):
         kwargs,
         interactions: list,
     ):
+        """
+        Executes one function call and verifies its outcome.
+
+        Args:
+            plan: The active plan instance.
+            fn: The function to execute.
+            func_source: The source code of the function.
+            args: Positional arguments for the function.
+            kwargs: Keyword arguments for the function.
+            interactions: A list to log interactions within this step.
+
+        Returns:
+            The result of the function call if verification passes.
+        """
+
         async def act_wrapper(instruction: str):
+            """Wraps the act primitive to log interactions."""
             interactions.append(("act", instruction, None))
             result = await self.controller.act(instruction)
             return result
 
         async def observe_wrapper(query: str, **opts):
+            """Wraps the observe primitive to log interactions."""
             res = await self.controller.observe(query, **opts)
             interactions.append(("observe", query, res))
             return res
@@ -1041,6 +1305,16 @@ class HierarchicalPlanner(BasePlanner):
         goal: str,
         exploration_summary: Optional[str] = None,
     ) -> str:
+        """
+        Generates the initial Python script for the plan from a user goal.
+
+        Args:
+            goal: The high-level user goal.
+            exploration_summary: A summary from a preceding exploration phase.
+
+        Returns:
+            A string containing the generated Python code for the plan.
+        """
         max_retries = 3
         last_error = ""
         for attempt in range(max_retries):
@@ -1060,7 +1334,7 @@ class HierarchicalPlanner(BasePlanner):
                     ),
                     exploration_summary,
                 )
-                response = await llm_call(self.llm_client, prompt)
+                response = await llm_call(self.plan_generation_client, prompt)
                 logger.debug(
                     f"LLM response for initial plan (attempt {attempt+1}):\n--- LLM RAW RESPONSE START ---\n{response}\n--- LLM RAW RESPONSE END ---",
                 )
@@ -1085,12 +1359,23 @@ class HierarchicalPlanner(BasePlanner):
 
     def _build_initial_plan_prompt(
         self,
-        goal,
-        existing_functions,
-        retry_msg,
-        exploration_summary,
-    ):
-        """Builds the system prompt for generating an initial plan."""
+        goal: str,
+        existing_functions: dict,
+        retry_msg: str,
+        exploration_summary: str | None,
+    ) -> str:
+        """
+        Builds the system prompt for generating an initial plan.
+
+        Args:
+            goal: The user's goal.
+            existing_functions: A dictionary of reusable functions from the library.
+            retry_msg: A message to include if a previous attempt failed.
+            exploration_summary: Context from the exploration phase.
+
+        Returns:
+            The complete prompt string.
+        """
         primitives_doc = (
             "- `await act(instruction: str)`: Executes a high-level action in the browser (e.g., 'click the login button', 'type 'hello' into the search bar').\n"
             "- `await observe(query: str)`: Asks a question about the current browser state (e.g., 'what is the text of the main heading?', 'are there any error messages?')."
@@ -1158,7 +1443,18 @@ class HierarchicalPlanner(BasePlanner):
         browser_state: str,
         **kwargs,
     ) -> str:
-        """Builds the system prompt for filling in the implementation of a function."""
+        """
+        Builds the system prompt for dynamically implementing a function.
+
+        Args:
+            plan: The active plan instance.
+            function_name: The name of the function to implement.
+            browser_state: A description of the current browser state.
+            **kwargs: Additional context, like a replan reason.
+
+        Returns:
+            The complete prompt string.
+        """
         replan_context = (
             f"**REPLANNING NOTE:** The previous attempt failed because: '{kwargs.get('replan_reason', 'No reason provided.')}'. Please devise a new and improved strategy."
             if kwargs.get("is_strategic_replan")
@@ -1203,6 +1499,17 @@ class HierarchicalPlanner(BasePlanner):
         function_name: str,
         **kwargs,
     ) -> str:
+        """
+        Generates and returns the implementation for a stub function.
+
+        Args:
+            plan: The active plan instance.
+            function_name: The name of the function to implement.
+            **kwargs: Additional context for the implementation prompt.
+
+        Returns:
+            The sanitized source code for the new function implementation.
+        """
         browser_state = await self.controller.observe(
             "Describe current page for context.",
         )
@@ -1212,10 +1519,7 @@ class HierarchicalPlanner(BasePlanner):
             browser_state,
             **kwargs,
         )
-        implementation_client = unify.AsyncUnify(
-            os.environ.get("UNIFY_MODEL", "gpt-4o-mini@openai"),
-        )
-        code = await llm_call(implementation_client, prompt)
+        code = await llm_call(self.implementation_client, prompt)
         logger.debug(
             f"LLM response for dynamic implementation of '{function_name}':\n--- LLM RAW RESPONSE START ---\n{code}\n--- LLM RAW RESPONSE END ---",
         )
@@ -1241,7 +1545,18 @@ class HierarchicalPlanner(BasePlanner):
         function_docstring: str | None,
         interactions: list,
     ) -> str:
-        """Builds the system prompt for verifying whether a function's implementation correctly achieves its purpose."""
+        """
+        Builds the prompt for verifying a function's execution.
+
+        Args:
+            plan: The active plan instance.
+            function_name: The name of the function being verified.
+            function_docstring: The docstring of the function.
+            interactions: A log of `act` and `observe` calls made.
+
+        Returns:
+            The complete prompt string for the verification LLM call.
+        """
         interactions_log = (
             "\n".join(
                 (
@@ -1283,7 +1598,16 @@ class HierarchicalPlanner(BasePlanner):
         )
 
     def _build_plan_surgery_prompt(self, current_code: str, request: str) -> str:
-        """Builds the system prompt for modifying an existing plan script."""
+        """
+        Builds the prompt for modifying an existing plan script.
+
+        Args:
+            current_code: The current source code of the plan.
+            request: The user's modification request.
+
+        Returns:
+            The complete prompt string.
+        """
         return textwrap.dedent(
             f"""
             You are an expert Python programmer specializing in code modification. Your task is to rewrite an entire script to incorporate a user's change request.
@@ -1315,7 +1639,17 @@ class HierarchicalPlanner(BasePlanner):
         new_code: str,
         current_state: str,
     ) -> str:
-        """Builds the system prompt to generate a script to transition between plan states."""
+        """
+        Builds the prompt to generate a course-correction script.
+
+        Args:
+            old_code: The previous version of the plan's code.
+            new_code: The new version of the plan's code.
+            current_state: A description of the current browser state.
+
+        Returns:
+            The complete prompt string.
+        """
         return textwrap.dedent(
             f"""
             You are a state transition analyst. An agent's plan has been modified, and you must determine if its current state is compatible with the new plan. If not, you must generate a Python script to fix it.
@@ -1349,20 +1683,29 @@ class HierarchicalPlanner(BasePlanner):
     async def _check_state_against_goal(
         self,
         plan: HierarchicalPlan,
-        function_name,
-        function_docstring,
-        interactions,
-    ):
+        function_name: str,
+        function_docstring: str | None,
+        interactions: list,
+    ) -> VerificationAssessment:
+        """
+        Uses an LLM to assess if a function's execution achieved its goal.
+
+        Args:
+            plan: The active plan instance.
+            function_name: The name of the function being verified.
+            function_docstring: The docstring of the function.
+            interactions: A log of interactions that occurred.
+
+        Returns:
+            A VerificationAssessment object with the outcome.
+        """
         prompt = self._build_verification_prompt(
             plan,
             function_name,
             function_docstring,
             interactions,
         )
-        verification_client = unify.AsyncUnify(
-            os.environ.get("UNIFY_MODEL", "gpt-4o-mini@openai"),
-        )
-        response_str = await llm_call(verification_client, prompt)
+        response_str = await llm_call(self.verification_client, prompt)
         try:
             clean_response = (
                 response_str.strip().replace("```json", "").replace("```", "")
@@ -1374,15 +1717,39 @@ class HierarchicalPlanner(BasePlanner):
                 reason="LLM provided malformed JSON assessment.",
             )
 
-    async def _perform_plan_surgery(self, current_code, request):
+    async def _perform_plan_surgery(self, current_code: str, request: str) -> str:
+        """
+        Uses an LLM to rewrite the plan's source code based on a request.
+
+        Args:
+            current_code: The current source code of the plan.
+            request: The user's modification request.
+
+        Returns:
+            The new, sanitized source code for the plan.
+        """
         prompt = self._build_plan_surgery_prompt(current_code, request)
-        new_code = await llm_call(self.llm_client, prompt)
+        new_code = await llm_call(self.modification_client, prompt)
         return self._sanitize_code(new_code)
 
-    async def _generate_course_correction_script(self, old_code, new_code):
+    async def _generate_course_correction_script(
+        self,
+        old_code: str,
+        new_code: str,
+    ) -> str | None:
+        """
+        Generates a script to transition from an old plan state to a new one.
+
+        Args:
+            old_code: The old plan's source code.
+            new_code: The new plan's source code.
+
+        Returns:
+            A sanitized Python script for course correction, or None if not needed.
+        """
         current_state = await self.controller.observe("Describe current page.")
         prompt = self._build_course_correction_prompt(old_code, new_code, current_state)
-        script = await llm_call(self.llm_client, prompt)
+        script = await llm_call(self.modification_client, prompt)
         if "None" in script:
             return None
 
@@ -1391,6 +1758,7 @@ class HierarchicalPlanner(BasePlanner):
         )
 
     async def close(self):
+        """Shuts down the planner and its associated resources gracefully."""
         if self._active_task:
             await self._active_task.stop()
         if self.controller:
