@@ -186,36 +186,28 @@ class TranscriptManager(BaseTranscriptManager):
         )
         client.set_system_message(build_summarize_prompt(guidance))
 
-        # ── 2.  Collect raw messages ---------------------------------------
-        selected: list[Message] = []
-
+        # ── 2.  Collect raw messages – single back-end filter ---------------
+        inc_clauses: list[str] = []
         if from_exchanges:
-            selected.extend(
-                self._search_messages(
-                    filter=f"exchange_id in {from_exchanges}",
-                    limit=None,
-                ),
-            )
+            inc_clauses.append(f"exchange_id in {from_exchanges}")
         if from_messages:
-            selected.extend(
-                self._search_messages(
-                    filter=f"message_id in {from_messages}",
-                    limit=None,
-                ),
+            inc_clauses.append(f"message_id in {from_messages}")
+
+        include_expr = " or ".join(f"({c})" for c in inc_clauses)
+        filter_expr = include_expr
+        if omit_messages:
+            filter_expr = (
+                f"({include_expr}) and (message_id not in {list(omit_messages)})"
             )
 
-        #  De-duplicate & apply omissions
-        by_id: dict[int, Message] = {m.message_id: m for m in selected}
-        for mid in omit_messages:
-            by_id.pop(mid, None)
-        msgs: list[Message] = list(by_id.values())
+        msgs: list[Message] = self._search_messages(filter=filter_expr, limit=None)
 
         #  Group by exchange so the LLM can see conversation structure
         exchanges: dict[int, list[str]] = {}
         for m in msgs:
             exchanges.setdefault(m.exchange_id, []).append(m.content)
 
-        message_ids_sorted = sorted(by_id)
+        message_ids_sorted = sorted(m.message_id for m in msgs)
         exchanges_json = json.dumps(exchanges, indent=2)
 
         # ── 3.  Optional request_clarification helper tool ─────────────────
@@ -243,7 +235,6 @@ class TranscriptManager(BaseTranscriptManager):
             "Here are the raw messages selected for this summary "
             f"(grouped by exchange_id):\n{exchanges_json}\n\nPlease "
             "produce a concise cross-exchange summary."
-            f"{exchanges_json}\n\nPlease produce a concise summary."
             + (f"\n\nAdditional guidance:\n{guidance}" if guidance else "")
         )
 
