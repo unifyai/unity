@@ -131,6 +131,7 @@ async def entrypoint(ctx: agents.JobContext):
 
     # Get phone numbers from environment variables
     from_number = os.environ.get("CALL_FROM_NUMBER", "")
+    tts_provider = os.environ.get("TTS_PROVIDER", "cartesia")
     voice_id = os.environ.get("VOICE_ID", "")
     # to_number = os.environ.get("CALL_TO_NUMBER", "")
 
@@ -328,7 +329,6 @@ async def entrypoint(ctx: agents.JobContext):
 
 if __name__ == "__main__":
     # Extract phone numbers before passing to agents.cli
-    print(sys.argv)
     from_number = ""
     assistant_number = ""
     to_number = ""
@@ -339,9 +339,9 @@ if __name__ == "__main__":
         # Remove phone numbers from sys.argv to prevent them from being passed to agents.cli
         from_number = sys.argv[2]
         assistant_number = sys.argv[3]
-        tts_provider = sys.argv[6] if sys.argv[6] != "None" else "cartesia"
-        voice_id = sys.argv[4]
-        outbound = sys.argv[5] if sys.argv[5] != "None" else ""
+        tts_provider = sys.argv[4] if sys.argv[4] != "None" else "cartesia"
+        voice_id = sys.argv[5]
+        outbound = sys.argv[6] if sys.argv[6] != "None" else ""
         sys.argv = sys.argv[:2]  # Keep only script name and "dev" command
 
     # Store phone numbers in environment variables to be accessed by entrypoint

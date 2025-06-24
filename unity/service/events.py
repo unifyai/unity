@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 from typing import Any, Dict, Type
+from unity.events.event_bus import Event as BusEvent
 
 
 class _EventRegistry(type):
@@ -62,6 +63,21 @@ class Event(metaclass=_EventRegistry):
         }
         return {"event_name": self.__class__.__name__, "payload": payload}
 
+    def to_bus_event(self) -> BusEvent:
+        payload = self.to_dict()["payload"]
+        print("calling_id", "")
+        print("type", self.__class__.__name__)
+        print("timestamp", self.timestamp.isoformat())
+        print("payload", payload)
+        print("payload_cls", self.__class__.__name__)
+        return BusEvent(
+            calling_id="",
+            type=self.__class__.__name__,
+            timestamp=self.timestamp.isoformat(),
+            payload=payload,
+            payload_cls=self.__class__.__name__,
+        )
+
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "Event":
         # If wrapper present, pick subclass and recurse
@@ -75,6 +91,11 @@ class Event(metaclass=_EventRegistry):
         if "timestamp" in payload:
             payload["timestamp"] = cls._parse_timestamp(payload["timestamp"])
         return cls(**payload)  # type: ignore[arg-type]
+
+    @classmethod
+    def from_bus_event(cls, event: BusEvent) -> "Event":
+        data = {"event_name": event.type, "payload": event.payload}
+        return cls.from_dict(data)
 
     def humanize_time_ago(self) -> str:
         now = datetime.now(timezone.utc) if self.timestamp.tzinfo else datetime.now()
