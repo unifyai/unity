@@ -86,6 +86,11 @@ class TranscriptManager(BaseTranscriptManager):
                 context=self._summaries_ctx,
             )
 
+        # ── Async logging (mirrors EventBus) ────────────────────────────────
+        # Using a dedicated logger means log_create() returns immediately,
+        # leaving the actual network I/O to an internal worker thread.
+        self._logger = unify.AsyncLoggerManager()
+
     # Public #
     # -------#
 
@@ -286,16 +291,30 @@ class TranscriptManager(BaseTranscriptManager):
             ``content``, ``exchange_id`` …).  A single dictionary is accepted
             as a convenience and will be wrapped in a list.
         """
-        if not entries:  # nothing to do
+        # Fast-return if nothing to log --------------------------------------
+        if not entries:
             return
 
-        if isinstance(entries, dict):  # allow singular call-style
+        # Normalise caller convenience forms → list[dict]
+        if isinstance(entries, dict):  # allow single-row call
             entries = [entries]
 
-        unify.create_logs(
-            context=self._messages_ctx,
-            entries=entries,  # type: ignore[arg-type] – now definitely list[dict]
-        )
+        project = unify.active_project()
+
+        # Schedule log-writes on the async logger thread – one call per row.
+        # (AsyncLoggerManager can batch these automatically.)
+        for row in entries:  # type: ignore[arg-type]
+            self._logger.log_create(
+                project=project,
+                context=self._messages_ctx,
+                params={},
+                entries=row,
+            )
+
+        # Flush so test-suites & scenario builders can see the rows instantly.
+        # In production this is usually a no-op because the writer thread
+        # drains so quickly, but it guarantees determinism for unit-tests.
+        self._logger.join()
 
     # Tools #
     # ------#
