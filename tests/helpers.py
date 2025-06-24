@@ -25,10 +25,10 @@ def _handle_project(
         )
 
     # ---------- helper -------------------------------------------------
-    def _ctx_name(fn: Callable) -> str:
+    def _ctx_name(fn: Callable, fn_name: str) -> str:
         file_path = fn.__code__.co_filename
         test_path = "/".join(file_path.split(f"{sep}tests{sep}")[1].split(sep))[:-3]
-        return f"{test_path}/{fn.__name__}" if test_path else fn.__name__
+        return f"{test_path}/{fn_name}" if test_path else fn_name
 
     async def _call(fn: Callable, *a: Any, **kw: Any):
         """Call *fn* and await it if it returns an awaitable."""
@@ -45,7 +45,12 @@ def _handle_project(
         # -------- ASYNC TESTS ------------------------------------------
         @functools.wraps(test_fn)
         async def wrapper(*args, **kwargs):
-            ctx = _ctx_name(test_fn)
+            try:
+                test_fn_name = getattr(wrapper, "_unity_pytest_nodeid")
+            except AttributeError:
+                test_fn_name = test_fn.__name__
+
+            ctx = _ctx_name(test_fn, test_fn_name)
 
             if not try_reuse_prev_ctx and unify.get_contexts(prefix=ctx):
                 unify.delete_context(ctx)
@@ -70,7 +75,12 @@ def _handle_project(
         # -------- SYNC TESTS -------------------------------------------
         @functools.wraps(test_fn)
         def wrapper(*args, **kwargs):
-            ctx = _ctx_name(test_fn)
+            try:
+                test_fn_name = getattr(wrapper, "_unity_pytest_nodeid")
+            except AttributeError:
+                test_fn_name = test_fn.__name__
+
+            ctx = _ctx_name(test_fn, test_fn_name)
 
             if not try_reuse_prev_ctx and unify.get_contexts(prefix=ctx):
                 unify.delete_context(ctx)
