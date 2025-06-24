@@ -318,7 +318,7 @@ async def test_ask_respects_parent_context(
         (cid["dan"], cid["julia"], "Did you catch the **basketball** game?"),
         (cid["julia"], cid["dan"], "Absolutely – great conversation!"),
     ]:
-        tm._log_messages(
+        tm.log_message(
             {
                 "medium": "phone_call",
                 "sender_id": s,
@@ -328,6 +328,7 @@ async def test_ask_respects_parent_context(
                 "exchange_id": 99,
             },
         )
+    tm.join_published()
 
     # ── 2.  Outer chat context in which `ask` will be called ────────────
     parent_ctx = [
@@ -377,7 +378,7 @@ async def test_ask_requests_clarification_when_context_missing(
         (dan, julia, "Did you catch the basketball game last night?"),
         (julia, dan, "Absolutely – it was great!"),
     ]:
-        tm._log_messages(
+        tm.log_message(
             {
                 "medium": "phone_call",
                 "sender_id": s,
@@ -392,7 +393,7 @@ async def test_ask_requests_clarification_when_context_missing(
         (dan, julia, "When are you next going on holiday?"),
         (julia, dan, "I'm hoping to go in August, but lets see what my boss says."),
     ]:
-        tm._log_messages(
+        tm.log_message(
             {
                 "medium": "email",
                 "sender_id": s,
@@ -402,6 +403,7 @@ async def test_ask_requests_clarification_when_context_missing(
                 "exchange_id": 321,
             },
         )
+    tm.join_published()
 
     # ── 2.  Prepare clarification channels ────────────────────────────────
     up_q: asyncio.Queue[str] = asyncio.Queue()

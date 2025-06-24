@@ -117,7 +117,7 @@ class ConductorScenarioBuilder:
             ).to_post_json()
             for s, r, ts, txt in messages
         ]
-        await asyncio.to_thread(self.tm._log_messages, log_entries)
+        await asyncio.to_thread(self.tm.log_message, log_entries)
         # Pre-generate a summary for one of the exchanges
         await self.tm.summarize(from_exchanges=[1])
 
