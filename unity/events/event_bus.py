@@ -198,12 +198,9 @@ class EventBus:
                 self._window_sizes[event_type] = self._default_window
 
     async def publish(self, event: Event) -> None:
-        self.register_event_types(event.type)
-        window = self._window_sizes[event.type]
         if event.type not in self._specific_ctxs:
-            if event.type not in unify.get_contexts():
-                unify.create_context()
-
+            self.register_event_types(event.type)
+        window = self._window_sizes[event.type]
         async with self._lock:
             dq = self._deques.setdefault(event.type, deque())
             dq.append(event)
