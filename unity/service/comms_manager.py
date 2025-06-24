@@ -67,6 +67,7 @@ class CommsManager:
                             "event": {
                                 **PhoneCallInitiatedEvent().to_dict(),
                                 "voice_id": event.get("voice_id", None),
+                                "tts_provider": event.get("tts_provider", None),
                             },
                         },
                     )

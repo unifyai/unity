@@ -11,9 +11,11 @@ import os
 import signal
 from pydantic import BaseModel, Field
 from unity.contact_manager.contact_manager import ContactManager
+from unity.events.event_bus import EventBus
 from unity.knowledge_manager.knowledge_manager import KnowledgeManager
 from unity.service.comms_agent import CommsAgent
 from unity.service.comms_manager import CommsManager
+from unity.service.events import Event
 from unity.transcript_manager.transcript_manager import TranscriptManager
 
 load_dotenv()
@@ -83,6 +85,13 @@ class EventManager:
         self.last_activity_time = asyncio.get_event_loop().time()
         self.is_shutting_down = False
 
+        # Event bus
+        self.event_bus = EventBus()
+
+    async def get_bus_events(self, limit: int = 100):
+        bus_events = await self.event_bus.search(limit=limit)
+        return [e.payload for e in bus_events]
+
     async def serve(self):
         self.servers["call"] = await asyncio.start_server(
             self.handle_call_client,
@@ -117,6 +126,8 @@ class EventManager:
                 self.writers["call"].write((json.dumps(event) + "\n").encode("utf-8"))
                 await self.writers["call"].drain()
             else:
+                bus_event = Event.from_dict(event["event"]).to_bus_event()
+                asyncio.create_task(self.event_bus.publish(bus_event))
                 for client in self.topic_to_subs[event["topic"]]:
                     client.handle_event(event)
 
@@ -242,12 +253,14 @@ async def main(manager_name: str = "contact"):
     signal.signal(signal.SIGINT, signal_handler)
 
     event_manager = EventManager()
+    past_events = await event_manager.get_bus_events(limit=10)
+    print("past_events", past_events)
     user_agent = CommsAgent(
         os.getenv("USER_NAME", ""),
         os.getenv("ASSISTANT_NUMBER", ""),
         os.getenv("USER_NUMBER", ""),
         os.getenv("USER_PHONE_NUMBER", ""),
-        past_events=[],
+        past_events=past_events,
         main_user_agent=True,
         manager=manager_dict[manager_name](),
         manager_name=manager_name,
