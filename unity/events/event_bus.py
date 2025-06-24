@@ -363,7 +363,45 @@ class EventBus:
             need_backend[etype] = still_needed
 
         # ----------------------------------------------------------------------
-        # 3. fetch from *global* Events table – concurrently -------------------
+        # 3a. FAST-PATH: one backend call when we are in "global window" mode
+        #     *and* have no in-memory events yet (cold start). This avoids N
+        #     serial/parallel round-trips while staying trivial to reason about.
+        # ----------------------------------------------------------------------
+        if combined_window and all(len(dq) == 0 for dq in self._deques.values()):
+
+            if need_backend:  # only when something is actually missing
+                types_in = ", ".join(f'"{et}"' for et in need_backend)
+                global_limit = offset + limit
+                full_filter = f"type in ({types_in})"
+                if filter:
+                    full_filter += f" and ({filter})"
+
+                logs = await asyncio.to_thread(
+                    unify.get_logs,
+                    context=self._global_ctx,
+                    filter=full_filter,
+                    sorting={"timestamp": "descending"},
+                    offset=0,
+                    limit=global_limit,
+                )
+
+                for lg in logs:
+                    e = lg.entries.copy()
+                    evt = Event(
+                        event_id=e.pop("event_id"),
+                        calling_id=e.pop("calling_id"),
+                        type=e.pop("type"),
+                        timestamp=e.pop("timestamp"),
+                        payload_cls=e.pop("payload_cls", ""),
+                        payload=e.pop("payload"),
+                    )
+                    in_memory.setdefault(evt.type, []).append(evt)
+
+                # We've satisfied the need; skip the per-type fetch branch
+                need_backend.clear()
+
+        # ----------------------------------------------------------------------
+        # 3b. Per-type backend fetches – concurrently (as before) --------------
         async def _fetch_one(etype: str, want: int) -> tuple[str, list[Event]]:
             """
             Run the blocking ``unify.get_logs`` call in a worker thread and
