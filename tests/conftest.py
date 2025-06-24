@@ -23,6 +23,7 @@ from typing import Any, Dict, List, Optional
 import httpx
 import asyncio
 import pytest
+import re
 
 import unify
 
@@ -185,6 +186,47 @@ def pytest_runtest_setup(item):
     if any(mark.name == "requires_real_unify" for mark in item.iter_markers()):
         if is_using_unify_stub():
             pytest.skip("Test requires real unify implementation")
+
+
+def _normalize_pytest_nodeid(nodeid):
+    """
+    Try to normalize the pytest nodeid to an alphanumeric string that is
+    accepted for unify.Context path. If not possible, return None.
+    Will fallback to invocation count if empty.
+    """
+    bracket_match = re.search(r"\[([^\]]+)\]", nodeid)
+    if bracket_match:
+        bracket_content = bracket_match.group(1)
+    else:
+        bracket_content = ""
+
+    # Try to normalize to alphanumeric
+    normalized = re.sub(r"[^a-zA-Z0-9]", "", bracket_content)
+
+    if len(normalized) == 0:
+        return None
+
+    return normalized[:24]
+
+
+def _is_test_parametrized(item):
+    return any(i.name == "parametrize" for i in item.iter_markers())
+
+
+def pytest_runtest_call(item):
+    func_name = item.originalname
+    if _is_test_parametrized(item):
+        # Need to keep track of invocation count for parametrized tests
+        # In case of a later failure.
+        current_count = getattr(item.obj, "_unity_pytest_invocation_count", 0)
+        setattr(item.obj, "_unity_pytest_invocation_count", current_count + 1)
+
+        normalized_id = _normalize_pytest_nodeid(item.nodeid)
+        if normalized_id is None:
+            normalized_id = f"_{current_count}_"
+        func_name = f"{func_name}/{normalized_id}"
+
+    setattr(item.obj, "_unity_pytest_nodeid", func_name)
 
 
 # Pytest fixture to skip tests that require the real unify
