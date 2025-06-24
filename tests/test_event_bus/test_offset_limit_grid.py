@@ -40,7 +40,7 @@ def ts(i: int) -> str:
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_offset_int_limit_int__global_window() -> None:
+async def test_offset_int_limit_int_global_window() -> None:
     """
     With both parameters as scalars, ``search`` must apply the window **after**
     merging all event-types into one timeline.
@@ -78,7 +78,7 @@ async def test_offset_int_limit_int__global_window() -> None:
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_offset_dict_limit_dict__per_type_window() -> None:
+async def test_offset_dict_limit_dict_per_type_window() -> None:
     """
     Independent offset/limit per event-type.
 
@@ -114,7 +114,7 @@ async def test_offset_dict_limit_dict__per_type_window() -> None:
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_offset_dict_limit_int__mixed_window() -> None:
+async def test_offset_dict_limit_int_mixed_window() -> None:
     """
     Only *offset* varies per type; *limit* caps the **total** number returned.
 
@@ -159,7 +159,7 @@ async def test_offset_dict_limit_int__mixed_window() -> None:
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_offset_int_limit_dict__mixed_window() -> None:
+async def test_offset_int_limit_dict_mixed_window() -> None:
     """
     Scalar *offset* applies **inside each type**, because *limit* is a dict.
 
