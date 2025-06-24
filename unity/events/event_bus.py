@@ -252,35 +252,58 @@ class EventBus:
         self,
         *,
         filter: Optional[str] = None,
-        offset: int = 0,
+        offset: Union[int, Dict[str, int]] = 0,
         limit: Union[int, Dict[str, int]] = 100,
         grouped_by_type: bool = False,
     ) -> Union[List[Event], Dict[str, List[Event]]]:
         """
-        Return the most-recent *limit* events that satisfy *filter*.
+        Return events that satisfy *filter*, applying *offset*/**limit** rules as
+        follows
 
-        Parameters
-        ----------
-        filter
-            A Python expression evaluated against every event.
-            • Use ``event_type`` or ``type`` for the event-type
-            • The whole ``Event`` object is available as ``evt``
-              (e.g. ``evt.payload.user_id == 7``)
-        offset
-            Number of matching events to **skip first** (newest→oldest
-            chronology – identical to Unify's *offset* semantics).
-        limit
-            Either a single integer applied to *every* event-type or a
-            ``{event_type: int}`` dict for per-type limits.
-        grouped_by_type
-            ``False``  → flat list (each element *includes* its ``type``)
-            ``True``   → ``{etype: [events...]}``
+        ``offset`` & ``limit`` can **each** be either
+
+        * ``int``               – apply the same value to **all** event-types
+        * ``{event_type: int}`` – independent per-type value
+
+        The *interaction* of the two parameters is important:
+
+        ┌──────────────┬──────────────┬────────────────────────────────────────────┐
+        │ ``offset``   │ ``limit``    │ Interpretation                             │
+        ├──────────────┼──────────────┼────────────────────────────────────────────┤
+        │ *dict*       │ *dict*       │ Per-type window (dict values respected)    │
+        │ *dict*       │ *int*        │ Per-type window – reuse the *int* for      │
+        │              │              │ every missing key in *offset*              │
+        │ *int*        │ *dict*       │ Per-type window – reuse the *int* for      │
+        │              │              │ every missing key in *offset*              │
+        │ *int*        │ *int*        │ **Global** window – *offset*/*limit* are   │
+        │              │              │ applied **after combining & interweaving** │
+        │              │              │ all matching event-types                   │
+        └──────────────┴──────────────┴────────────────────────────────────────────┘
+
+        When *both* parameters are simple ``int`` s, the method behaves like a
+        traditional "single table" query: imagine all relevant event-types
+        merged into one time-ordered list, then drop the first *offset* entries
+        and return up to *limit* that follow.
         """
-        # 0. figure the per-type limits we should respect -----------------
-        if isinstance(limit, int):
-            per_type_limit = {t: limit for t in self._deques}
+        # 0. Work out which semantics we're in ---------------------------------
+        combined_window = isinstance(offset, int) and isinstance(limit, int)
+
+        # ----- per-type helpers ----------------------------------------------
+        if combined_window:
+            # grab *enough* from every queue (offset + limit) so the global
+            # pass later has material to slice from
+            per_type_limit = {t: offset + limit for t in self._deques}
+            per_type_offset = {t: 0 for t in self._deques}  # skip globally later
         else:
-            per_type_limit = {t: limit.get(t, 0) for t in self._deques}
+            if isinstance(limit, int):
+                per_type_limit = {t: limit for t in self._deques}
+            else:
+                per_type_limit = {t: limit.get(t, 0) for t in self._deques}
+
+            if isinstance(offset, int):
+                per_type_offset = {t: offset for t in self._deques}
+            else:
+                per_type_offset = {t: offset.get(t, 0) for t in self._deques}
 
         # ----------------------------------------------------------------------
         # 1. scan the deque -----------------------------------------------------
@@ -312,7 +335,7 @@ class EventBus:
                     if not _matches(evt):
                         continue
 
-                    if skipped < offset:  # still burning offset
+                    if skipped < per_type_offset[etype]:  # still burning offset
                         skipped += 1
                         continue
 
@@ -336,7 +359,7 @@ class EventBus:
                 continue
 
             # offset still missing from deque + duplicates we already collected
-            backend_offsets[etype] = offset + collected
+            backend_offsets[etype] = per_type_offset[etype] + collected
             need_backend[etype] = still_needed
 
         # ----------------------------------------------------------------------
@@ -375,12 +398,21 @@ class EventBus:
                 et: evts[: per_type_limit[et]] for et, evts in in_memory.items() if evts
             }
 
-        # flatten + truncate globally (to respect int-style limit)
+        # ── Build the final flat list ────────────────────────────────────────
         flat: List[Event] = []
-        for et, evts in in_memory.items():
-            flat.extend(evts[: per_type_limit[et]])
-        # newest-first global ordering
+        for evts in in_memory.values():
+            flat.extend(evts)
+
+        # Global ordering (newest-first)
         flat.sort(key=lambda e: e.timestamp, reverse=True)
+
+        if combined_window:
+            # apply global windowing now
+            return flat[offset : offset + limit]
+
+        # classic per-type limits (already enforced), but we may still need
+        # to truncate if the caller passed a *dict* for limit *and* wants
+        # fewer rows overall – honour only the per-type caps here.
         if isinstance(limit, int):
             flat = flat[:limit]
         return flat
