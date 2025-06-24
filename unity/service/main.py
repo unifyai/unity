@@ -38,6 +38,7 @@ class _TranscriptIntent(BaseModel):
 
 
 # globals
+conv_context_length = 50
 user_agent = None
 manager_dict = {
     "contact": ContactManager,
@@ -253,7 +254,7 @@ async def main(manager_name: str = "contact"):
     signal.signal(signal.SIGINT, signal_handler)
 
     event_manager = EventManager()
-    past_events = await event_manager.get_bus_events(limit=10)
+    past_events = await event_manager.get_bus_events(limit=conv_context_length)
     print("past_events", past_events)
     user_agent = CommsAgent(
         os.getenv("USER_NAME", ""),

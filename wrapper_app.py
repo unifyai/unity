@@ -114,7 +114,7 @@ def signal_handler(signum, frame):
     print("Shutting down Unity service...")
     unity.service.stop("signal_shutdown")
     # Don't exit the container - let uvicorn handle the shutdown
-    # exit(0)  # Removed this line to prevent container exit
+    exit(0)  # Removed this line to prevent container exit
 
 
 signal.signal(signal.SIGTERM, signal_handler)
