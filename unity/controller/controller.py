@@ -218,6 +218,12 @@ class Controller(threading.Thread):
         finally:
             # Crucially, stop the listener thread to clean up resources
             listener_thread.stop()
-            await asyncio.to_thread(ps.close)
+            try:
+                await asyncio.to_thread(ps.close)
+            except AttributeError:
+                # Connection already closed by listener thread
+                pass
+            except Exception as e:
+                LOGGER.warning(f"Error closing pubsub connection: {e}")
 
         return actions

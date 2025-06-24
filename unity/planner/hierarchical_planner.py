@@ -1312,7 +1312,6 @@ class HierarchicalPlanner(BasePlanner):
                         logger.info(
                             f"Adding function '{fn.__name__}' to FunctionManager.",
                         )
-                        logger.info("clean_func_source: %s", clean_func_source)
                         self.function_manager.add_functions(
                             implementations=[clean_func_source],
                         )
