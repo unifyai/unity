@@ -363,11 +363,16 @@ class EventBus:
             need_backend[etype] = still_needed
 
         # ----------------------------------------------------------------------
-        # 3. fetch from *global* Events table ----------------------------------
-        for etype, want in need_backend.items():
+        # 3. fetch from *global* Events table – concurrently -------------------
+        async def _fetch_one(etype: str, want: int) -> tuple[str, list[Event]]:
+            """
+            Run the blocking ``unify.get_logs`` call in a worker thread and
+            re-wrap the raw log rows as :class:`Event` objects.
+            """
             full_filter = f'type == "{etype}"' + (f" and ({filter})" if filter else "")
 
-            logs = unify.get_logs(
+            logs = await asyncio.to_thread(
+                unify.get_logs,
                 context=self._global_ctx,
                 filter=full_filter,
                 sorting={"timestamp": "descending"},
@@ -375,10 +380,10 @@ class EventBus:
                 limit=want,
             )
 
-            fetched = []
-            for lg in logs:  # lg.entries uses Event schema
+            evts: list[Event] = []
+            for lg in logs:
                 e = lg.entries.copy()
-                fetched.append(
+                evts.append(
                     Event(
                         event_id=e.pop("event_id"),
                         calling_id=e.pop("calling_id"),
@@ -388,8 +393,16 @@ class EventBus:
                         payload=e.pop("payload"),
                     ),
                 )
+            return etype, evts
 
-            in_memory.setdefault(etype, []).extend(fetched)
+        # Kick off all remaining I/O in parallel (if any)
+        backend_tasks = [
+            _fetch_one(et, want) for et, want in need_backend.items() if want > 0
+        ]
+        if backend_tasks:
+            results = await asyncio.gather(*backend_tasks, return_exceptions=False)
+            for etype, fetched in results:
+                in_memory.setdefault(etype, []).extend(fetched)
 
         # 4. shape the result --------------------------------------------
         if grouped_by_type:
