@@ -48,8 +48,8 @@ def _create_contacts():
 @_handle_project
 async def test_log_messages():
     tm = TranscriptManager()
-    tm._log_messages(
-        [
+    [
+        tm.log_message(
             Message(
                 medium=random.choice(VALID_MEDIA),
                 sender_id=random.randint(0, 2),
@@ -57,10 +57,11 @@ async def test_log_messages():
                 timestamp=datetime.now(UTC),
                 content=random.choice(MESSAGES),
                 exchange_id=i,
-            ).to_post_json()
-            for i in range(10)
-        ],
-    )
+            ),
+        )
+        for i in range(10)
+    ]
+    tm.join_published()
 
 
 @pytest.mark.unit
@@ -73,8 +74,8 @@ async def test_get_messages():
     tm = TranscriptManager()
 
     # log messages
-    tm._log_messages(
-        [
+    for i in range(10):
+        tm.log_message(
             Message(
                 medium=random.choice(VALID_MEDIA),
                 sender_id=random.randint(0, 2),
@@ -82,10 +83,9 @@ async def test_get_messages():
                 timestamp=datetime.now(UTC),
                 content=random.choice(MESSAGES),
                 exchange_id=i,
-            ).to_post_json()
-            for i in range(10)
-        ],
-    )
+            ),
+        )
+    tm.join_published()
 
     ## get all
 
@@ -139,8 +139,16 @@ async def test_summarize_exchanges():
     _create_contacts()
 
     # phone call
-    tm._log_messages(
+    for i, msg in enumerate(
         [
+            "Hey, how's it going?",
+            "Yeah good thanks, how can I help you?",
+            "How are your office staplers doing? Are they underperforming?",
+            "Actually yeah, they're a bit rusty, but I can't make any buying decisions. My manager can.",
+            "Okay, no worries. Let's catch up again soon.",
+        ],
+    ):
+        tm.log_message(
             Message(
                 medium="phone_call",
                 sender_id=i % 2,
@@ -148,22 +156,18 @@ async def test_summarize_exchanges():
                 timestamp=datetime.now(UTC),
                 content=msg,
                 exchange_id=0,
-            ).to_post_json()
-            for i, msg in enumerate(
-                [
-                    "Hey, how's it going?",
-                    "Yeah good thanks, how can I help you?",
-                    "How are your office staplers doing? Are they underperforming?",
-                    "Actually yeah, they're a bit rusty, but I can't make any buying decisions. My manager can.",
-                    "Okay, no worries. Let's catch up again soon.",
-                ],
-            )
-        ],
-    )
+            ),
+        )
 
     # email exchange
-    tm._log_messages(
+    for i, msg in enumerate(
         [
+            "Great catching up the other day, did you manage to talk to your manager?",
+            "Hey, yeah I did actually. I'll reach out soon.",
+            "Okay great, thanks!",
+        ],
+    ):
+        tm.log_message(
             Message(
                 medium="email",
                 sender_id=i % 2,
@@ -171,20 +175,17 @@ async def test_summarize_exchanges():
                 timestamp=datetime.now(UTC),
                 content=msg,
                 exchange_id=1,
-            ).to_post_json()
-            for i, msg in enumerate(
-                [
-                    "Great catching up the other day, did you manage to talk to your manager?",
-                    "Hey, yeah I did actually. I'll reach out soon.",
-                    "Okay great, thanks!",
-                ],
-            )
-        ],
-    )
+            ),
+        )
 
     # whatsapp exchange
-    tm._log_messages(
+    for i, msg in enumerate(
         [
+            "Hey, yeah we'd love to buy your staplers!",
+            "Great! Excited to hear :)",
+        ],
+    ):
+        tm.log_message(
             Message(
                 medium="whatsapp_message",
                 sender_id=(i + 1) % 2,
@@ -192,15 +193,9 @@ async def test_summarize_exchanges():
                 timestamp=datetime.now(UTC),
                 content=msg,
                 exchange_id=2,
-            ).to_post_json()
-            for i, msg in enumerate(
-                [
-                    "Hey, yeah we'd love to buy your staplers!",
-                    "Great! Excited to hear :)",
-                ],
-            )
-        ],
-    )
+            ),
+        )
+    tm.join_published()
 
     # summarize
     handle = await tm.summarize(from_exchanges=[0, 1, 2])

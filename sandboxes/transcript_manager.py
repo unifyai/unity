@@ -91,7 +91,7 @@ async def _build_scenario(custom: Optional[str] = None) -> Optional[str]:
     builder = ScenarioBuilder(
         description=description,
         tools={
-            "_log_messages": tm._log_messages,  # IMPORTANT: private helper
+            "_log_messages": tm.log_message,  # IMPORTANT: private helper
             "ask": tm.ask,
             "summarize": tm.summarize,
         },

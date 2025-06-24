@@ -276,44 +276,33 @@ class TranscriptManager(BaseTranscriptManager):
 
     # Helpers #
     # --------#
-    def _log_messages(self, entries: list[dict] | dict) -> None:
+    def log_message(self, message: Union[Dict, Message]) -> None:
         """
-        **Internal helper** used by tests and scenario-builders to insert raw
-        transcript messages into the backing store *without* repeating the
-        private ``_transcripts_ctx`` implementation detail everywhere.
+        Insert messages into the backing store.
 
         Parameters
         ----------
-        entries : dict | list[dict]
-            One or more dictionaries whose keys conform to the
+        message : dict | Message
+            Either a dictionary whose keys conform to the
             :class:`unity.transcript_manager.types.message.Message` schema
             (``medium``, ``sender_id``, ``receiver_id``, ``timestamp``,
-            ``content``, ``exchange_id`` …).  A single dictionary is accepted
-            as a convenience and will be wrapped in a list.
+            ``content``, ``exchange_id`` …), or a Message object.
         """
         # Fast-return if nothing to log --------------------------------------
-        if not entries:
+        if not message:
             return
 
-        # Normalise caller convenience forms → list[dict]
-        if isinstance(entries, dict):  # allow single-row call
-            entries = [entries]
+        if isinstance(message, Message):
+            message = message.to_post_json()
 
-        project = unify.active_project()
+        self._logger.log_create(
+            project=unify.active_project(),
+            context=self._messages_ctx,
+            params={},
+            entries=message,
+        )
 
-        # Schedule log-writes on the async logger thread – one call per row.
-        # (AsyncLoggerManager can batch these automatically.)
-        for row in entries:  # type: ignore[arg-type]
-            self._logger.log_create(
-                project=project,
-                context=self._messages_ctx,
-                params={},
-                entries=row,
-            )
-
-        # Flush so test-suites & scenario builders can see the rows instantly.
-        # In production this is usually a no-op because the writer thread
-        # drains so quickly, but it guarantees determinism for unit-tests.
+    def join_published(self):
         self._logger.join()
 
     # Tools #
