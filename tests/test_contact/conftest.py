@@ -158,8 +158,9 @@ def contact_scenario(
     """
     os.environ["TQDM_DISABLE"] = "1"
 
-    unify.set_context("test_contact")
-    existing_contexts = unify.get_contexts(prefix="test_contact")
+    ctx = "test_contact/Scenario"
+    unify.set_context(ctx)
+    existing_contexts = unify.get_contexts(prefix=ctx)
     no_reuse_scenario = request.config.getoption("--no-reuse-scenario")
 
     # If --no-reuse-scenario is explicitly set, override reuse_scenario
@@ -202,6 +203,10 @@ def contact_scenario(
 
     # --- One-time setup (per session) ---
     builder = ScenarioBuilderContacts()
+    existing_contexts = unify.get_contexts(
+        prefix=ctx,
+    )  # fetch newly created contexts by builder
+
     if not SCENARIO_COMMIT_HASHES:
         print("Seeding contact manager scenario...")
         event_loop.run_until_complete(
@@ -221,6 +226,7 @@ def contact_scenario(
             mode="asyncio",
         )
 
+    unify.unset_context()
     return builder.cm, _ID_BY_NAME_CONTACTS
 
 
