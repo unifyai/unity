@@ -65,11 +65,6 @@ class Event(metaclass=_EventRegistry):
 
     def to_bus_event(self) -> BusEvent:
         payload = self.to_dict()["payload"]
-        print("calling_id", "")
-        print("type", self.__class__.__name__)
-        print("timestamp", self.timestamp.isoformat())
-        print("payload", payload)
-        print("payload_cls", self.__class__.__name__)
         return BusEvent(
             calling_id="",
             type=self.__class__.__name__,
@@ -94,7 +89,8 @@ class Event(metaclass=_EventRegistry):
 
     @classmethod
     def from_bus_event(cls, event: BusEvent) -> "Event":
-        data = {"event_name": event.type, "payload": event.payload}
+        event_dump = event.model_dump()
+        data = {"event_name": event_dump["type"], "payload": event_dump["payload"]}
         return cls.from_dict(data)
 
     def humanize_time_ago(self) -> str:

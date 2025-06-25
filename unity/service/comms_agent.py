@@ -6,10 +6,13 @@ import os
 from pydantic import BaseModel
 from typing import Literal
 
+from unity.events.event_bus import EventBus
 from unity.helpers import run_script, terminate_process
 from unity.service import comms_actions
 from unity.service.actions import *
 from unity.service.events import *
+from unity.transcript_manager.transcript_manager import TranscriptManager
+from unity.transcript_manager.types.message import Message
 
 client = openai.AsyncOpenAI(api_key=os.environ["OPENAI_API_KEY"])
 
@@ -64,7 +67,7 @@ class CommsAgent:
         assistant_number: str,
         user_number: str,
         user_phone_call_number: str = None,
-        past_events: list = None,
+        past_events: list | None = None,
         main_user_agent: bool = False,
         agent_id: str = None,
         contact_name: str = None,
@@ -73,6 +76,7 @@ class CommsAgent:
         manager_name: str = "contact",
         intent_sys_msg: str = None,
         intent_output_format: BaseModel = None,
+        conv_context_length: int = 50,
     ):
 
         self.main_user = main_user_agent
@@ -91,7 +95,12 @@ class CommsAgent:
         # events (history)
         self.events_listener_task = None
         self.events_queue = asyncio.Queue()
-        self.past_events = past_events or []
+        if past_events is None:
+            self.past_events = []
+            task = asyncio.create_task(self.get_bus_events(conv_context_length))
+            task.add_done_callback(self.set_past_events)
+        else:
+            self.past_events = past_events
         self.pending_events = []
         self.inflight_events = []
 
@@ -118,6 +127,17 @@ class CommsAgent:
         self.manager_name = manager_name
         self.intent_sys_msg = intent_sys_msg
         self.intent_output_format = intent_output_format
+
+        # logging
+        self.event_bus = EventBus()
+        self.transcript_manager = TranscriptManager()
+
+    def set_past_events(self, task: asyncio.Task):
+        self.past_events = task.result()
+
+    async def get_bus_events(self, limit: int = 100):
+        bus_events = await self.event_bus.search(limit=limit)
+        return [Event.from_bus_event(e).to_dict() for e in bus_events]
 
     def get_chat_history(self):
         chat_history = []
@@ -454,20 +474,24 @@ class CommsAgent:
             message=msg,
         )
         if status:
-            event = WhatsappMessageSentEvent(
-                content=msg,
-            ).to_dict()
+            event = WhatsappMessageSentEvent(role="Assistant", content=msg).to_dict()
             if self.call_mode:
                 self.events_queue.put_nowait(event)
             else:
                 self.past_events.append(event)
 
     async def send_sms(self, msg):
-        return await comms_actions.send_sms(
+        status = await comms_actions.send_sms(
             from_number=self.assistant_number,
             to_number=self.user_number,
             message=msg,
         )
+        if status:
+            event = SMSMessageSentEvent(role="Assistant", content=msg).to_dict()
+            if self.call_mode:
+                self.events_queue.put_nowait(event)
+            else:
+                self.past_events.append(event)
 
     async def send_call(self):
         print(self.assistant_number, self.user_phone_call_number)
@@ -664,9 +688,60 @@ class CommsAgent:
             except Exception as e:
                 print(f"Error terminating call process for agent {self.agent_id}: {e}")
 
+    def handle_logging(self, event: dict):
+        try:
+            print("event", event)
+            bus_event = Event.from_dict(event["event"]).to_bus_event()
+            asyncio.create_task(self.event_bus.publish(bus_event))
+            if event["event"]["event_name"] in [
+                "PhoneUtteranceEvent",
+                "WhatsappMessageSentEvent",
+                "SMSMessageSentEvent",
+                "WhatsappMessageRecievedEvent",
+                "SMSMessageRecievedEvent",
+            ]:
+                event_name = event["event"]["event_name"]
+                role = event["event"]["payload"]["role"]
+                content = event["event"]["payload"]["content"]
+                timestamp = event["event"]["payload"]["timestamp"]
+                medium = (
+                    "phone" if "phone" in event_name
+                    else "sms" if "sms" in event_name
+                    else "whatsapp"
+                )
+                sender_id, receiver_id = "", ""
+                if medium == "phone":
+                    if role == "Assistant":
+                        sender_id = self.assistant_number
+                        receiver_id = self.user_phone_call_number
+                    else:
+                        sender_id = self.user_phone_call_number
+                        receiver_id = self.assistant_number
+                else:
+                    if "recieved" in event_name.lower():
+                        sender_id = self.user_number
+                        receiver_id = self.assistant_number
+                    else:
+                        sender_id = self.assistant_number
+                        receiver_id = self.user_number
+                self.transcript_manager.log_message(
+                    Message(
+                        medium=medium,
+                        sender_id=sender_id,
+                        receiver_id=receiver_id,
+                        timestamp=timestamp,
+                        content=content,
+                    )
+                )
+        except Exception as e:
+            print(f"Error handling logging: {e}")
+            import traceback
+            traceback.print_exc()
+
     def handle_event(self, event: dict):
         global ONGOING_CALL
         to = event.get("to")
+        self.handle_logging(event)
         if event["event"]["event_name"] == "CommsTaskDoneEvent":
             self.running_tasks = [
                 t

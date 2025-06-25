@@ -50,11 +50,11 @@
             "name": "User Manager",
             "type": "debugpy",
             "request": "launch",
-            "program": "${workspaceFolder}/demo/main.py",
+            "program": "${workspaceFolder}/wrapper_app.py",
             "args": [],
             "cwd": "${workspaceFolder}",
             "env": { "PYTHONPATH": "${workspaceFolder}" },
-            "envFile": "${workspaceFolder}/demo/.env",
+            "envFile": "${workspaceFolder}/.env",
             "console": "integratedTerminal",
             "justMyCode": false
           }
