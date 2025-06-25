@@ -705,9 +705,9 @@ class CommsAgent:
                 content = event["event"]["payload"]["content"]
                 timestamp = event["event"]["payload"]["timestamp"]
                 medium = (
-                    "phone" if "phone" in event_name
-                    else "sms" if "sms" in event_name
-                    else "whatsapp"
+                    "phone"
+                    if "phone" in event_name
+                    else "sms" if "sms" in event_name else "whatsapp"
                 )
                 sender_id, receiver_id = "", ""
                 if medium == "phone":
@@ -736,6 +736,7 @@ class CommsAgent:
         except Exception as e:
             print(f"Error handling logging: {e}")
             import traceback
+
             traceback.print_exc()
 
     def handle_event(self, event: dict):
