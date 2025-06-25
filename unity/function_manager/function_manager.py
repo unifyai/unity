@@ -118,7 +118,8 @@ class FunctionManager(threading.Thread):
             raise ValueError(f"Syntax error:\n{e.text}") from e
 
         if len(tree.body) != 1 or not isinstance(
-            tree.body[0], (ast.FunctionDef, ast.AsyncFunctionDef)
+            tree.body[0],
+            (ast.FunctionDef, ast.AsyncFunctionDef),
         ):
             raise ValueError(
                 "Each implementation must contain exactly one top-level function.",
@@ -138,7 +139,8 @@ class FunctionManager(threading.Thread):
             raise ValueError(f"Imports are not allowed (found in {fn_name}()).")
 
     def _collect_function_calls(
-        self, fn_node: Union[ast.FunctionDef, ast.AsyncFunctionDef]
+        self,
+        fn_node: Union[ast.FunctionDef, ast.AsyncFunctionDef],
     ) -> Set[str]:
         calls: Set[str] = set()
         for node in ast.walk(fn_node):

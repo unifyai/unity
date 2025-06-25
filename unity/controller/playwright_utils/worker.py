@@ -323,6 +323,9 @@ class BrowserWorker(threading.Thread):
                                     self.log("No CAPTCHA widgets detected on this page")
                             continue  # skip further processing
                         else:
+                            self.log(
+                                f"DEBUG: Command {cmd!r} not handled by worker, delegating to CommandRunner.",
+                            )
                             self.runner.run(cmd)
 
                     # -- 2) ensure active page is valid ------------------- NEW
