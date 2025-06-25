@@ -6,11 +6,10 @@ UNASSIGNED = -1
 
 
 class Medium(StrEnum):
-    SMS_MESSAGE = "sms_message"
+    SMS = "sms"
     EMAIL = "email"
-    WHATSAPP_MSG = "whatsapp_message"
-    PHONE_CALL = "phone_call"
-    WHATSAPP_CALL = "whatsapp_call"
+    WHATSAPP = "whatsapp"
+    PHONE = "phone"
 
 
 class Message(BaseModel):
@@ -24,7 +23,8 @@ class Message(BaseModel):
         description="When the message was sent/received in ISO-8601 format",
     )
     content: str = Field(description="The actual text content of the message")
-    exchange_id: int = Field(
+    exchange_id: int | None = Field(
+        default=None,
         description="ID of the conversation thread this message belongs to",
     )
 
