@@ -7,7 +7,7 @@ import json
 import redis
 
 from .playwright_utils.worker import BrowserWorker
-from .agent import text_to_browser_action, ask_llm
+from .agent import InvalidActionError, ask_llm, text_to_browser_action
 from ..constants import LOGGER
 
 
@@ -162,16 +162,19 @@ class Controller(threading.Thread):
         Convert natural-language text to a browser action and execute it,
         waiting for the browser state to confirm the update.
         """
-
-        cmd = await asyncio.to_thread(
-            text_to_browser_action,
-            text=action,
-            screenshot=self._last_shot,
-            tabs=self._observe_ctx.get("tabs", []),
-            buttons=self._observe_ctx.get("elements", []),
-            history=self._observe_ctx.get("history", []),
-            state=self._observe_ctx.get("state", {}),
-        )
+        try:
+            cmd = await asyncio.to_thread(
+                text_to_browser_action,
+                text=action,
+                screenshot=self._last_shot,
+                tabs=self._observe_ctx.get("tabs", []),
+                buttons=self._observe_ctx.get("elements", []),
+                history=self._observe_ctx.get("history", []),
+                state=self._observe_ctx.get("state", {}),
+            )
+        except InvalidActionError as e:
+            LOGGER.error(f"Error converting action to browser command: {e}")
+            raise e
 
         assert cmd is not None, f"requested action {action} returned empty command"
         actions = cmd.get("action")

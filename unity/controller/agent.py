@@ -35,6 +35,10 @@ ADVANCED_MODE = False
 # helpers #
 
 
+class InvalidActionError(Exception):
+    pass
+
+
 def _list_valid_actions(tabs, buttons, state) -> list[str]:
     """
     Return the flat list of valid primitive strings for the current state.
@@ -895,9 +899,10 @@ def text_to_browser_action(
         reply = response_format.model_validate_json(raw)
         actions = reply.actions if multi_step_mode else [reply.action]
 
-        assert all(
-            action.split(" ")[0] in valid_actions for action in actions
-        ), f"Invalid action is present: {actions}"
+        if not all(action.split(" ")[0] in valid_actions for action in actions):
+            raise InvalidActionError(
+                f"Invalid action is present: {reply.model_dump_json()}",
+            )
 
         if not multi_step_mode and reply.value:
             actions = [f"{actions[0]} {str(reply.value)}"]
