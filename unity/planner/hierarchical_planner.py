@@ -1216,15 +1216,15 @@ class HierarchicalPlanner(BasePlanner):
 
         async def act_wrapper(instruction: str):
             """Wraps the act primitive to log interactions."""
-            interactions.append(("act", instruction, None))
             result = await self.controller.act(instruction)
+            interactions.append(("act", instruction, result))
             return result
 
         async def observe_wrapper(query: str, **opts):
             """Wraps the observe primitive to log interactions."""
-            res = await self.controller.observe(query, **opts)
-            interactions.append(("observe", query, res))
-            return res
+            result = await self.controller.observe(query, **opts)
+            interactions.append(("observe", query, result))
+            return result
 
         original_act, original_observe = plan.execution_namespace.get(
             "act",
