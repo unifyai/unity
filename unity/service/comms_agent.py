@@ -37,11 +37,6 @@ class CommTask:
     task_description: str
 
 
-class _Intent(BaseModel):
-    action: str = Field(..., pattern="^(ask|update)$")
-    cleaned_text: str
-
-
 # new events to add:
 # task status update
 #
