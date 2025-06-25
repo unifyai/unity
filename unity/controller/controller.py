@@ -100,6 +100,14 @@ class Controller(threading.Thread):
         # if given a list of commands, execute each in sequence
         for action in actions if isinstance(actions, list) else [actions]:
             # action is a single string
+            if action.startswith("click_button_"):
+                try:
+                    idx = action.split("_")[2]
+                    if idx.isdigit():
+                        action = f"click {idx}"
+                except IndexError:
+                    pass
+
             # ── browser life-cycle primitives ────────────────────────────
             if action == "open_browser" and not self._browser_open:
                 self._browser_worker.start()
