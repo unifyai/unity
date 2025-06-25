@@ -1216,15 +1216,15 @@ class HierarchicalPlanner(BasePlanner):
 
         async def act_wrapper(instruction: str):
             """Wraps the act primitive to log interactions."""
-            interactions.append(("act", instruction, None))
             result = await self.controller.act(instruction)
+            interactions.append(("act", instruction, result))
             return result
 
         async def observe_wrapper(query: str, **opts):
             """Wraps the observe primitive to log interactions."""
-            res = await self.controller.observe(query, **opts)
-            interactions.append(("observe", query, res))
-            return res
+            result = await self.controller.observe(query, **opts)
+            interactions.append(("observe", query, result))
+            return result
 
         original_act, original_observe = plan.execution_namespace.get(
             "act",
@@ -1396,7 +1396,7 @@ class HierarchicalPlanner(BasePlanner):
                     response.strip().replace("```python", "").replace("```", "").strip()
                 )
                 logger.debug(
-                    f"LLM response for initial plan (attempt {attempt+1}):\n--- LLM RAW RESPONSE START ---\n{response}\n--- LLM RAW RESPONSE END ---",
+                    f"LLM response for initial plan (attempt {attempt+1}):\n\n--- LLM RAW RESPONSE START ---\n{response}\n--- LLM RAW RESPONSE END ---\n\n",
                 )
 
                 return self._sanitize_code(code)
@@ -1462,7 +1462,7 @@ class HierarchicalPlanner(BasePlanner):
         1.  **Single Code Block:** Your entire response MUST be a single, valid Python code block. Do NOT include any preamble, explanations, or markdown fences.
         2.  **Entry Point:** The main entry point for the script MUST be a function named `async def main_plan()`.
         3.  **Docstrings Required:** Each function you define MUST include a concise one-line docstring explaining its purpose.
-        4.  **Required Decorator:** All functions you define MUST be `async def` and MUST be decorated with `@verify`.
+        4.  **Required Decorator:** All functions you define MUST be `async def` and MUST be decorated with `@verify`. You MUST NOT define this @verify decorator yourself as it is already defined in the execution environment.
         5.  **No Imports:** You MUST NOT use any `import` statements. The execution environment is sandboxed.
         6.  **Asynchronous Calls:** You MUST use the `await` keyword before any call to an `async def` function, including the primitives (`act`, `observe`) and any helper functions you define.
         7.  **Decomposition:** Break down complex problems into smaller, logical helper functions. If a suitable function exists in the library, use it. If not, you may define it, or if its implementation is not immediately obvious, you may leave it as a stub (e.g., `raise NotImplementedError`).
@@ -1573,16 +1573,13 @@ class HierarchicalPlanner(BasePlanner):
             **kwargs,
         )
         code = await llm_call(self.implementation_client, prompt)
-        logger.debug(
-            f"LLM response for dynamic implementation of '{function_name}':\n--- LLM RAW RESPONSE START ---\n{code}\n--- LLM RAW RESPONSE END ---",
-        )
 
         try:
             sanitized_code = self._sanitize_code(
                 code.strip().replace("```python", "").replace("```", "").strip(),
             )
             logger.debug(
-                f"Sanitized code for '{function_name}':\n--- CODE START ---\n{sanitized_code}\n--- CODE END ---",
+                f"LLM response for dynamic implementation of '{function_name}':\n\n--- LLM RAW RESPONSE START ---\n{code}\n--- LLM RAW RESPONSE END ---\n\n",
             )
             return sanitized_code
         except SyntaxError as e:

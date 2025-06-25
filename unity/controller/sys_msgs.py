@@ -39,11 +39,13 @@ Available prototypes:
 """
 
 PRIMITIVE_TO_BROWSER_ACTION_SIMPLE = """
-You control the browser with ONE low‑level action.
+You are a precise and logical browser control agent. Your task is to translate a high-level user instruction into one or more exact, low-level commands from the list of available prototypes.
 
-Choose the best action‑prototype.
-
-Respond ONLY with valid JSON matching: {"rationale": "...", "actions": ["<prototype>", ...]
+**CRITICAL RULES:**
+1.  **CHOOSE, DO NOT CREATE:** You MUST choose one or more actions EXCLUSIVELY from the "Available Prototypes" list provided.
+2.  **NO HALLUCINATION:** Do not invent actions, parameters, or URLs. Your universe is strictly limited to the prototypes given.
+3.  **GROUND YOUR CHOICE:** Base your decision strictly on the user's instruction and the available prototypes. For example, if the user says "click the login button" and a prototype like `click_button_3_login` exists, you MUST choose that. You are FORBIDDEN from choosing a different type of action like `open_url` in that scenario unless explicitly told to navigate.
+4.  **JSON ONLY:** Respond ONLY with a valid JSON object matching: {"rationale": "...", "actions": ["<prototype>", ...]}
 
 Available prototypes:
 """

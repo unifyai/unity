@@ -505,6 +505,10 @@ class CommandRunner:
                 # Implementation of solve_captcha method
                 pass
 
+        self.log(
+            f"WARNING: Unhandled command received by CommandRunner and was dropped: {cmd!r}",
+        )
+
     # ---------- helper for GUI refresh ------------------------------------
     def refresh_overlay(self):
         elements = collect_elements(self.active)
