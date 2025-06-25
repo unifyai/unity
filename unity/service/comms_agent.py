@@ -4,6 +4,7 @@ from dataclasses import dataclass
 import openai
 import os
 from pydantic import BaseModel
+import traceback
 from typing import Literal
 
 from unity.events.event_bus import EventBus
@@ -690,7 +691,6 @@ class CommsAgent:
 
     def handle_logging(self, event: dict):
         try:
-            print("event", event)
             bus_event = Event.from_dict(event["event"]).to_bus_event()
             asyncio.create_task(self.event_bus.publish(bus_event))
             if event["event"]["event_name"] in [
@@ -735,8 +735,6 @@ class CommsAgent:
                 )
         except Exception as e:
             print(f"Error handling logging: {e}")
-            import traceback
-
             traceback.print_exc()
 
     def handle_event(self, event: dict):
