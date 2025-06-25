@@ -51,7 +51,7 @@ class EventManager:
 
             # print(self.topic_to_subs)
             event = await self.events_queue.get()
-            print("EVENT MANAGER:", event)
+            # print("EVENT MANAGER:", event)
 
             # Update activity time on any event
             self.last_activity_time = asyncio.get_event_loop().time()

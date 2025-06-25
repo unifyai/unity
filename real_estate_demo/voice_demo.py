@@ -13,6 +13,8 @@ from demo_flow import flow, get_action_event, GoBack, GoNext, EndSession, SYS_SO
 
 client = openai.AsyncOpenAI(api_key=os.environ["OPENAI_API_KEY"])
 
+
+NO_RESPONSE_COUNTER = 0
 class Agent:
     def __init__(self):
         self.flow = flow
@@ -64,10 +66,17 @@ class Agent:
                 self.pending_events.clear()
 
     def on_run_end(self, t: asyncio.Task):
+        global NO_RESPONSE_COUNTER
         try:
             agent_output = t.result()
             if agent_output.response:
+                NO_RESPONSE_COUNTER = 0
                 self.event_stream.append({"content": f"Agent: {agent_output.response}"})
+            else:
+                NO_RESPONSE_COUNTER += 1
+                if NO_RESPONSE_COUNTER >= 3:
+                    self.event_stream.append({"content": "SYSTEM: You have not responded to the user for three consecutive actions, give them a progress cue"})
+
             if agent_output.action:
                 self.flow.play_actions(agent_output.action)
                 print(self.flow.current_node.title)
@@ -107,12 +116,16 @@ class Agent:
         event_stream_str = "\n".join([e["content"] for e in self.event_stream + self.inflight_events])
         user_msg = f"<event_stream>\n{event_stream_str}\n</event_stream>\n\n<agent_script>\n{flow.render()}\n</agent_script>"
         print("\033[32m" + user_msg + "\033[0m", flush=True)
+        
+        with open("real_estate_demo\prompts\v1.md") as f:
+            sys = f.read()
+        
         async with client.beta.chat.completions.stream(
                     model="gpt-4.1",
                     messages=[
                         {
                             "role": "system",
-                            "content": SYS_SONNET_2,
+                            "content": sys,
                         },
                         {
                             "role": "user",

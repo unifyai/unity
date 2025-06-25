@@ -308,7 +308,7 @@ async def entrypoint(ctx: agents.JobContext):
                 if not raw:
                     break
                 msg = json.loads(raw.decode())
-                print("GOT", msg)
+                # print("GOT", msg)
                 # Update activity time on any event
                 last_activity_time = asyncio.get_event_loop().time()
                 # handle msg

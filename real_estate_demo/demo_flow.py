@@ -6,15 +6,30 @@ from dotenv import load_dotenv
 load_dotenv()
 
 
-from wizard import Node, Flow, InputField, RadioField, GoBack, GoNext, EndSession
+from wizard import Node, Flow, InputField, RadioField, CheckBoxField, GoBack, GoNext, EndSession
 
 from pydantic import BaseModel, Field
 import openai
 
+start_call_screen = Node(
+    "start_call_screen",
+    "Call Start",
+    instructions="""Greet the user, Inroduce yourself, then Learn what kind of service does the user need, raise a repair ticket, or update an existing one.""",
+    fields=[
+        RadioField("service_type", "Service Type", ["Raise repair ticket", "Update existing ticket"])
+    ],
+    next={
+        "Raise repair ticket": "profile_screen",
+        "Update existing ticket": ...
+    }
+)
+
 profile_screen = Node(
     "profile_screen",
     "Profile",
-    instructions="""Greet the user (If you have not greeted them before), introduce yourself, then ask the user for their name and address.""",
+    instructions="""Steps to perform:
+1- Ask the user about their issue (let them describe their problem)
+2- Then ask the user for their name and address to start the flow.""",
     fields=[
         InputField("tenant_name", "Tenant Name"),
         InputField("tenant_address", "Tenant Address")
@@ -142,7 +157,7 @@ Issue: {area_tier_2} > {area_tier_2_issue}""".strip(),
 fields=[
     RadioField(
         "confirm_repair_details",
-        "Confirmed repair details out loud with the tenant and recieved consent",
+        "Confirmeded Ticket Details?",
         options=["Yes"]
     ),
     InputField(
@@ -187,137 +202,7 @@ fields=[RadioField("user_informed", "User has been informed and has consented?",
 next=None
 )
 
-SYS_SONNET_2 = """You are a customer-support AI agent embedded in our repair-ticket scripting platform.
-Your mission: resolve tenants' maintenance requests fast, accurately and with minimal back-and-forth.
-
-<event_stream>
-  A chronological log of everything so far.
-  • User messages → [User: …]  
-  • Your messages → [Agent: …]  
-  • Your actions  → [Agent took action: …]
-</event_stream>
-
-<agent_script>
-  Shows the current node, its instructions and any input / option fields visible on-screen.
-</agent_script>
-
-<actions>
-  You can:
-    • fill_* or select_* fields  
-    • GoNext (advance)  
-    • GoBack (return)  
-  Always obey the STRICT single-action rule (see <action_policy/>).
-</actions>
-
-<action_policy>
-  • One action per turn — **inside the `ActionModel` only ONE of the keys may be non-null**.  
-    - `fill_*` **or** `select_*` **or** `go_next` **or** `go_back`  
-  • `go_next` must be issued by itself; all other keys MUST be null.  
-  • Smart auto-selection — use context clues from user's problem description to pre-select obvious options.  
-  • Batch logical sequences: process related user-provided data efficiently, one action per turn.  
-  • Node completion — when every mandatory field is filled, issue GoNext (and say nothing).  
-  • Never duplicate — don't re-fill or re-select values that are already correct  
-    **unless** one of these is true:  
-      1. You just executed `GoBack` to this node.  
-      2. The user explicitly says the previous value was wrong or supplies new data.  
-  • Immediate advance  
-    After you fill/select the *last* required field in a node,  
-    your very next action must be `GoNext` (unless the user interrupts with new info).
-</action_policy>
-
-<context_awareness>
-  • Analyze user's opening message for key problem indicators and use throughout conversation.
-  • Auto-select obvious field mappings based on initial context:
-    - "ceiling" → auto-select ceiling-related categories
-    - "leak/water" → auto-select plumbing-related paths  
-    - "door/lock" → auto-select access-related categories
-    - "heat/cold" → auto-select HVAC categories
-  • Only ask for user confirmation on genuinely ambiguous choices.
-  • Don't make users confirm obvious mappings from their problem description.
-</context_awareness>
-
-<input_parsing_rules>
-  • Fill fields only with user-supplied data; never invent values.  
-  • **Treat tentative language (“I think…”, “maybe…”, “let me check…”,  
-    “one sec…”, “not sure yet”) as *no data provided*.  
-    → Do NOT fill the field.**  
-  • Process all user-provided data in logical sequence, one action per turn.
-  • If a field is empty and the user hasn't provided the data, **ask once** with specific options.
-  • When user provides multiple data points, prioritize by form field order.
-  • Validate before filling; skip if the correct value is already set.
-
-  <worked_example>
-    User: "I'm Sara Smith at 12 Main Street."
-    Turn 1 → fill Tenant Name = "Sara Smith" (no chat)  
-    Turn 2 → fill Tenant Address = "12 Main Street", then GoNext
-  </worked_example>
-
-  <worked_example tentative>
-  Agent: “[SOME QUESTION]”
-  User:  “Hmm, I’m not sure—let me check.”
-  Turn →  response = “Sure—take your time.”  
-          action = None         <!-- wait for clear answer -->
-  </worked_example>
-</input_parsing_rules>
-
-<response_rules>
-  • Replies ≤ 8 words.  
-  • Prefer silence when the action itself speaks.  
-  • **Progress cues sparingly:** after two or more consecutive silent
-    navigation steps (e.g. multiple `GoNext` in a row) or when the
-    user has been waiting >10 s, send a brief filler such as
-    “Okay—give me a moment…”, “One sec…”, or “Almost done…”.
-    Do **not** add a filler after every single action.  
-  • Strategic acknowledgments only:
-    - "Got it." for user-provided information
-    - "Perfect." for completing sections  
-  • Direct prompts with specific options: "Kitchen, bedroom, or bathroom?"
-  • No closings until the terminal node.
-  • Remember: the tenant cannot see the form on your screen.
-    Whenever you expect them to supply or confirm something,
-    you must include **all the information they need** right in your
-    message — options, summaries, previously captured details, etc.
-</response_rules>
-
-<language_style>
-  • Friendly, efficient, human.  
-  • Natural transitions: "Got it." "One sec."  
-  • Rotate between "Perfect." "Noted." or silence after field actions.  
-  • Brief, occasional progress cues while working — roughly every
-    2-3 nodes, not every turn.  
-  • Occasionally indicate progress: "Almost done..." "Last question..."
-</language_style>
-
-<agent_script_rules>
-  • Never combine field-fill and navigation in the same turn.  
-  • **When you send `go_next`, every `fill_*` and `select_*` key MUST be null.** 
-  • Use GoBack only if the user explicitly asks to change earlier data.  
-  • Auto-advance through obvious selections when the user's intent is clear.
-</agent_script_rules>
-
-<error_handling_rules>
-  • If user seems confused by a question, provide brief context with specific options.
-  • If the user signals they need time or is uncertain,  
-    reply briefly (e.g. “Sure—take your time.”) and set `action=None`.
-  • For "what do you mean?" responses, rephrase with concrete choices.
-  • If the user says "as I said…" or similar, apologise briefly ("Sorry — right, ceilings.") and proceed.  
-  • For missing data, ask precisely what's missing with specific options.
-  • If unclear, ask a single clarifying question; do not guess.
-</error_handling_rules>
-
-<emergency_cue>
-  If the user's description hints at structural danger (e.g. ceiling may collapse, live wires), prepend:  
-    "That sounds serious — I'll mark this as urgent."
-</emergency_cue>
-
-<completion_behavior>
-  • Only at the final node may you close with "Anything else I can help with today?"  
-  • Until then, every message must either collect missing data or take the next scripted action.
-  • Focus questions on actionable details rather than obvious categorizations.
-</completion_behavior>""".strip()
-
-
-async def call_llm(flow: Flow, event_stream: list):
+async def call_llm(sys: str, flow: Flow, event_stream: list, model="gpt-4.1"):
     client = openai.AsyncOpenAI(api_key=os.environ["OPENAI_API_KEY"])
 
     class AgentOutput(BaseModel):
@@ -330,11 +215,11 @@ async def call_llm(flow: Flow, event_stream: list):
     user_msg = f"<event_stream>\n{event_stream_str}\n</event_stream>\n\n<agent_script>\n{flow.render()}\n</agent_script>"
     print("\033[32m" + user_msg + "\033[0m", flush=True)
     res = await client.beta.chat.completions.parse(
-                model="gpt-4.1",
+                model=model,
                 messages=[
                     {
                         "role": "system",
-                        "content": SYS_SONNET_2,
+                        "content": sys,
                     },
                     {
                         "role": "user",
@@ -344,10 +229,11 @@ async def call_llm(flow: Flow, event_stream: list):
                 response_format=AgentOutput,
             )
     message = res.choices[0].message
+    print(message)
     agent_output = message.parsed
     print(agent_output, flush=True)
     if agent_output.response:
-        event_stream.append(f"Agent: {agent_output.response}")
+        event_stream.append(f"You: {agent_output.response}")
     if agent_output.action:
         flow.play_actions(agent_output.action)
         print(flow.current_node.title)
@@ -357,10 +243,11 @@ async def call_llm(flow: Flow, event_stream: list):
                     action_event = get_action_event(flow, action)
                 else:
                     if isinstance(action, GoNext):
-                        action_event = f"GoNext and has advanced to the next node: '{flow.current_node.title}'"
+                        action_event = f"go_next and has advanced to the next node: '{flow.current_node.title}'"
                     else:
-                        action_event = f"GoBack and went back to the previous node: '{flow.current_node.title}'"
-                event_stream.append(f"Agent took action: {action_event}")
+                        action_event = f"go_back and went back to the previous node: '{flow.current_node.title}'"
+                event_stream.append(f"You took action: {action_event}")
+                break
     return agent_output
 
 
@@ -371,10 +258,14 @@ def get_action_event(flow, action):
         return f"Input field '{field.label}' has been successfully filled with value: '{action.value}'"
     elif isinstance(field, RadioField):
         return f"Option '{action.value}' has been successfully selected for radio field '{field.label}'"
+    elif isinstance(field, CheckBoxField):
+        return f"Option {action.value}"
 
 
 
-flow = Flow([profile_screen, 
+flow = Flow([
+      start_call_screen,
+            profile_screen, 
              location_screen, 
              inside_home_area_screen, 
              floors_walls_stairs_screen, 

@@ -46,6 +46,23 @@ class RadioField:
         return dedent(f"""
 {self.label} (Radio Field)
 {str_options}""").strip()
+    
+class CheckBoxField:
+    def __init__(self, id: str, label: str, options: list[str], value=None):
+        self.id = id
+        self.label = label
+        self.options = options
+        self.original_value = value.copy() if value is not None else None
+        self.value = value
+    
+    def set_value(self, value):
+        self.value = value
+    
+    def render(self):
+        str_options = "\n".join([f"[ ] {o}" if o not in self.value else f"[x] {o} <- checked" for o in self.options])
+        return dedent(f"""
+{self.label} (CheckBox Field)
+{str_options}""").strip()
 
 class Node:
     def __init__(self, id: str, title: str, instructions: str, fields: list, next: str|Callable=None):
@@ -53,6 +70,10 @@ class Node:
         self.title = title
         self.instructions = instructions
         self.fields = fields
+
+        # if self.fields:
+        #     self.instructions += "\nConsult the <event_stream> if any of the fields can be filled by already provided information."
+
 
         # bind input fields to data values
         self.data = {}
@@ -86,8 +107,8 @@ class Node:
             if isinstance(field, InputField):
                 pascal_action_name = f'Fill{"".join([w.title() for w in field.label.split(" ")])}'
                 snake_case_action_name = f'fill_{"_".join([w.lower() for w in field.label.split(" ")])}'
-                pascal_action_name = re.sub(r"[\?\!\/]", "", pascal_action_name)
-                snake_case_action_name = re.sub(r"[\?\!\/]", "", snake_case_action_name)
+                pascal_action_name = re.sub(r"[\?\!\/\\]", "", pascal_action_name)
+                snake_case_action_name = re.sub(r"[\?\!\/\\]", "", snake_case_action_name)
                 field_action_model = create_model(
                     pascal_action_name,
                     value=(str, Field(..., description="value to input"))
@@ -97,20 +118,32 @@ class Node:
             elif isinstance(field, RadioField):
                 pascal_action_name = f'Select{"".join([w.title() for w in field.label.split(" ")])}'
                 snake_case_action_name = f'select_{"_".join([w.lower() for w in field.label.split(" ")])}'
-                pascal_action_name = re.sub(r"[\?\!\/]", "", pascal_action_name)
-                snake_case_action_name = re.sub(r"[\?\!\/]", "", snake_case_action_name)
+                pascal_action_name = re.sub(r"[\?\!\/\\]", "", pascal_action_name)
+                snake_case_action_name = re.sub(r"[\?\!\/\\]", "", snake_case_action_name)
                 field_action_model = create_model(
                     pascal_action_name,
                     value=(Literal[*field.options], Field(..., description="option to select"))
                 )
                 description = f"Selects an option for radio field '{field.label}' and reflects it to the agent script UI"
+            
+            elif isinstance(field, CheckBoxField):
+                pascal_action_name = f'Check{"".join([w.title() for w in field.label.split(" ")])}'
+                snake_case_action_name = f'check_{"_".join([w.lower() for w in field.label.split(" ")])}'
+                pascal_action_name = re.sub(r"[\?\!\/\\]", "", pascal_action_name)
+                snake_case_action_name = re.sub(r"[\?\!\/\\]", "", snake_case_action_name)
+                field_action_model = create_model(
+                    pascal_action_name,
+                    value=(list[Literal[*field.options]], Field(..., description="options to check"))
+                )
+                description = f"Checks options for checkbox field '{field.label}' and reflects it to the agent script UI"
+
             self.action_to_field[field_action_model] = field.id
             fields_action_models.append((snake_case_action_name, field, field_action_model))
         # fields_action_models.append(Next)
         
         self.action_model = create_model(
             "ActionModel",
-            **{k:(Optional[v], Field(..., description=description)) for k, f, v in fields_action_models}
+            **{k:(Optional[v], Field(default=None, description=description)) for k, f, v in fields_action_models}
         )
     
     def play_actions(self, action: BaseModel):
@@ -199,7 +232,7 @@ class Flow:
         if self.current_node != self.root_node:
             extra_actions.append(("go_back", "go to previous node", GoBack))
         if not self.current_node.is_terminal:
-            extra_actions.append(("go_next", "go to the next node", GoNext))
+            extra_actions.append(("go_next", "advance to the next node", GoNext))
         if self.current_node.is_terminal:
             extra_actions.append(("end_session", 
                                   "conclude the session, can only be used in a terminal node, never conclude the session until you make sure you have met all of the user's needs", 
@@ -207,7 +240,7 @@ class Flow:
         return create_model(
             "ActionModel",
             __base__=self.current_node.action_model,
-            **{k:(Optional[v], Field(..., description=d)) for k, d, v in extra_actions}
+            **{k:(Optional[v], Field(default=None, description=d)) for k, d, v in extra_actions}
         )
     
     def render(self):
