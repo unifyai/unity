@@ -16,10 +16,7 @@ from typing import Any, Callable, Dict, List, Optional, Tuple
 import unify
 from pydantic import BaseModel, Field
 
-from unity.common.llm_helpers import (
-    AsyncToolUseLoopHandle,
-    start_async_tool_use_loop,
-)
+from unity.common.llm_helpers import AsyncToolUseLoopHandle, start_async_tool_use_loop
 from unity.controller.controller import Controller
 from unity.function_manager.function_manager import FunctionManager
 from unity.planner.base import (
@@ -35,6 +32,7 @@ from unity.planner.prompt_builders import (
     build_exploration_prompt,
     build_initial_plan_prompt,
     build_plan_surgery_prompt,
+    build_should_explore_prompt,
     build_verification_prompt,
 )
 
@@ -322,44 +320,26 @@ class HierarchicalPlan(BaseActiveTask):
         self._state = _HierarchicalPlanState.EXPLORING
         self.action_log.append("Starting interactive exploratory phase...")
         try:
+            research_prompt = build_exploration_prompt(
+                goal=self.goal, tools=self.planner.tools
+            )
 
-            async def request_clarification(question: str) -> str:
-                """Asks the user for clarification when blocked or needs more input."""
-                self.action_log.append(
-                    f"Exploration: Asking for clarification: '{question}'",
-                )
-                await self.clarification_up_q.put(question)
-                answer = await self.clarification_down_q.get()
-                self.action_log.append(f"Exploration: Received answer: '{answer}'")
-                return f"Received user clarification: '{answer}'"
+            client = self.planner.exploration_client
+            client.reset_messages()
+            client.set_system_message(research_prompt)
 
-            exploratory_tools = {}
-            async with self.planner.coms_manager.start_browser_session() as browser_session_handle:
-                exploratory_tools = {
-                    "observe": browser_session_handle.observe,
-                    "request_clarification": request_clarification,
-                }
+            exploration_loop_handle = start_async_tool_use_loop(
+                client=client,
+                message="Begin your research based on the main objective.",
+                tools=self.planner.tools,
+                loop_id="ExploratoryPhase",
+                max_steps=10,
+            )
 
-                research_prompt = build_exploration_prompt(
-                    goal=self.goal, tools=exploratory_tools
-                )
-
-                client = self.planner.exploration_client
-                client.reset_messages()
-                client.set_system_message(research_prompt)
-
-                exploration_loop_handle = start_async_tool_use_loop(
-                    client=client,
-                    message="Begin your research based on the main objective.",
-                    tools=exploratory_tools,
-                    loop_id="ExploratoryPhase",
-                    max_steps=10,
-                )
-
-                summary = await exploration_loop_handle.result()
-                self.exploration_summary = summary
-                self.action_log.append("Exploratory phase completed.")
-                self.action_log.append(f"Exploration Summary: {summary}")
+            summary = await exploration_loop_handle.result()
+            self.exploration_summary = summary
+            self.action_log.append("Exploratory phase completed.")
+            self.action_log.append(f"Exploration Summary: {summary}")
 
         except Exception as e:
             logger.error(f"Exploration phase failed: {e}", exc_info=True)
@@ -995,6 +975,11 @@ class HierarchicalPlanner(BasePlanner):
         if not self.controller.is_alive():
             self.controller.start()
         self.coms_manager = coms_manager or ComsManager(controller=self.controller)
+        self.tools = {
+            name: attr
+            for name, attr in inspect.getmembers(self.coms_manager)
+            if not name.startswith("_") and callable(attr)
+        }
         self.max_escalations = max_escalations or 3
         self.max_local_retries = max_local_retries or 2
 
@@ -1038,7 +1023,7 @@ class HierarchicalPlanner(BasePlanner):
             True if exploration is needed, False otherwise.
         """
         return False
-        prompt = build_exploration_prompt(goal, self.function_manager.list_functions())
+        prompt = build_should_explore_prompt(goal)
         response = await llm_call(self.exploration_client, prompt)
         logger.info(f"Exploration assessment for goal '{goal}': {response.strip()}")
         return "EXPLORE" in response.strip().upper()
@@ -1398,12 +1383,6 @@ class HierarchicalPlanner(BasePlanner):
         last_error = ""
         for attempt in range(max_retries):
             try:
-                coms_tools = {
-                    name: attr
-                    for name, attr in inspect.getmembers(self.coms_manager)
-                    if not name.startswith("_") and callable(attr)
-                }
-
                 if self.function_manager:
                     try:
                         relevant_functions = (
@@ -1423,7 +1402,7 @@ class HierarchicalPlanner(BasePlanner):
 
                 prompt = build_initial_plan_prompt(
                     goal=goal,
-                    tools=coms_tools,
+                    tools=self.tools,
                     existing_functions=existing_functions,
                     retry_msg=(
                         ""
@@ -1498,6 +1477,7 @@ class HierarchicalPlanner(BasePlanner):
             parent_code=parent_code,
             browser_state=browser_state,
             replan_context=replan_context,
+            tools=self.tools,
         )
         logger.debug(f"Prompt for dynamic implementation: {prompt}")
         code = await llm_call(self.implementation_client, prompt)
@@ -1564,7 +1544,11 @@ class HierarchicalPlanner(BasePlanner):
         Returns:
             The new, sanitized source code for the plan.
         """
-        prompt = build_plan_surgery_prompt(current_code, request)
+        prompt = build_plan_surgery_prompt(
+            current_code,
+            request,
+            tools=self.tools,
+        )
         new_code = await llm_call(self.modification_client, prompt)
         return self._sanitize_code(new_code)
 
@@ -1586,7 +1570,12 @@ class HierarchicalPlanner(BasePlanner):
         async with self.coms_manager.start_browser_session() as browser_handle:
             current_state = await browser_handle.observe("Describe current page.")
 
-        prompt = build_course_correction_prompt(old_code, new_code, current_state)
+        prompt = build_course_correction_prompt(
+            old_code,
+            new_code,
+            current_state,
+            tools=self.tools,
+        )
         script = await llm_call(self.modification_client, prompt)
         if "None" in script:
             return None

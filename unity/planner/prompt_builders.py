@@ -11,44 +11,46 @@ from unity.common.llm_helpers import (
 )
 
 
+def _build_tool_signatures(tool_dict: Dict[str, Callable]) -> str:
+    sigs = {name: str(inspect.signature(fn)) for name, fn in tool_dict.items()}
+    return json.dumps(sigs, indent=4)
+
+
+def _build_handle_apis(tool_dict: Dict[str, Callable]) -> str:
+    handle_docs = []
+    for name, func in tool_dict.items():
+        try:
+            hints = get_type_hints(func)
+            return_type = hints.get("return")
+            if (
+                return_type
+                and inspect.isclass(return_type)
+                and issubclass(return_type, SteerableToolHandle)
+            ):
+                doc = f"**`{return_type.__name__}` (returned by `{name}`)**\n"
+                doc += "This handle represents an interactive session. Its available methods are:\n"
+                doc += class_api_overview(return_type)
+                handle_docs.append(doc)
+        except Exception:
+            continue
+
+    if not handle_docs:
+        return "There are no special handle APIs for the available tools."
+
+    return "\n\n".join(handle_docs)
+
 
 def build_initial_plan_prompt(
     goal: str,
-    tools: Dict[str, Callable],
     existing_functions: Dict[str, Any],
     retry_msg: str,
     exploration_summary: Optional[str] = None,
+    *,
+    tools: Dict[str, Callable],
 ) -> str:
     """
     Dynamically builds the system prompt for the Hierarchical Planner.
     """
-    def _build_tool_signatures(tool_dict: Dict[str, Callable]) -> str:
-        sigs = {name: str(inspect.signature(fn)) for name, fn in tool_dict.items()}
-        return json.dumps(sigs, indent=4)
-
-    def _build_handle_apis(tool_dict: Dict[str, Callable]) -> str:
-        handle_docs = []
-        for name, func in tool_dict.items():
-            try:
-                hints = get_type_hints(func)
-                return_type = hints.get("return")
-                if (
-                    return_type
-                    and inspect.isclass(return_type)
-                    and issubclass(return_type, SteerableToolHandle)
-                ):
-                    doc = f"**`{return_type.__name__}` (returned by `{name}`)**\n"
-                    doc += "This handle represents an interactive session. Its available methods are:\n"
-                    doc += class_api_overview(return_type)
-                    handle_docs.append(doc)
-            except Exception:
-                continue
-
-        if not handle_docs:
-            return "There are no special handle APIs for the available tools."
-
-        return "\n\n".join(handle_docs)
-
     tool_reference = _build_tool_signatures(tools)
     handle_apis = _build_handle_apis(tools)
 
@@ -125,6 +127,8 @@ def build_dynamic_implement_prompt(
     parent_code: str,
     browser_state: str | None,
     replan_context: str,
+    *,
+    tools: Dict[str, Callable],
 ) -> str:
     """
     Builds the system prompt for dynamically implementing a function.
@@ -139,10 +143,15 @@ def build_dynamic_implement_prompt(
         parent_code: The source code of the calling function.
         browser_state: An optional description of the current browser state.
         replan_context: A message providing context for a replan.
+        tools: The tools available to the function.
 
     Returns:
         The complete prompt string.
     """
+
+    tool_reference = _build_tool_signatures(tools)
+    handle_apis = _build_handle_apis(tools)
+
     browser_context_section = ""
     strategy_instruction = """2.  **Strategy:** You are likely being asked to implement this because a previous attempt failed. Your first step should be to **re-assess the situation** and devise a new, robust plan to achieve the goal."""
     tool_usage_instruction = """6.  **Tool Usage:** Use the `coms_manager` global object to interact with the environment. Available tools and their handle APIs have been described in the initial system prompt."""
@@ -177,6 +186,19 @@ def build_dynamic_implement_prompt(
         5.  **Use Context Managers:** For tools that return a handle (`make_call`, `start_browser_session`), you MUST use an `async with` block.
         {tool_usage_instruction}
         7.  **No Imports:** `import` statements are forbidden.
+
+         ---
+        ### Tools Reference
+        You have access to a global `coms_manager` object with the following methods. You must call them with the correct arguments as specified here.
+        ```json
+        {tool_reference}
+        ```
+
+        ---
+        ### Handle APIs
+        Some tools return a "handle" object for ongoing interaction. The available methods for these handles are listed below. You MUST only use the methods listed.
+        
+        {handle_apis}
 
         Begin your response now.
         """,
@@ -243,17 +265,22 @@ def build_verification_prompt(
     )
 
 
-def build_plan_surgery_prompt(current_code: str, request: str) -> str:
+def build_plan_surgery_prompt(
+    current_code: str, request: str, *, tools: Dict[str, Callable]
+) -> str:
     """
     Builds the prompt for modifying an existing plan script.
 
     Args:
         current_code: The current source code of the plan.
         request: The user's modification request.
-
+        tools: The tools available to the function.
     Returns:
         The complete prompt string.
     """
+    tool_reference = _build_tool_signatures(tools)
+    handle_apis = _build_handle_apis(tools)
+
     return textwrap.dedent(
         f"""
         You are an expert Python programmer specializing in code modification. Your task is to rewrite an entire script to incorporate a user's change request.
@@ -275,6 +302,20 @@ def build_plan_surgery_prompt(current_code: str, request: str) -> str:
         4.  **Preserve Decorators:** All `async def` functions MUST retain their `@verify` decorator.
         5.  **No Imports:** You MUST NOT use any `import` statements.
         6.  **Use Context Managers:** For tools that return a handle (`make_call`, `start_browser_session`), you MUST use an `async with` block.
+        
+
+        ---
+        ### Tools Reference
+        You have access to a global `coms_manager` object with the following methods. You must call them with the correct arguments as specified here.
+        ```json
+        {tool_reference}
+        ```
+
+        ---
+        ### Handle APIs
+        Some tools return a "handle" object for ongoing interaction. The available methods for these handles are listed below. You MUST only use the methods listed.
+        
+        {handle_apis}
 
         Begin your response now. Your response must start immediately with the code.
         """,
@@ -285,6 +326,8 @@ def build_course_correction_prompt(
     old_code: str,
     new_code: str,
     current_state: str,
+    *,
+    tools: Dict[str, Callable],
 ) -> str:
     """
     Builds the prompt to generate a course-correction script.
@@ -293,10 +336,13 @@ def build_course_correction_prompt(
         old_code: The previous version of the plan's code.
         new_code: The new version of the plan's code.
         current_state: A description of the current browser state.
-
+        tools: The tools available to the function.
     Returns:
         The complete prompt string.
     """
+    tool_reference = _build_tool_signatures(tools)
+    handle_apis = _build_handle_apis(tools)
+
     return textwrap.dedent(
         f"""
         You are a state transition analyst. An agent's plan has been modified, and you must determine if its current state is compatible with the new plan. If not, you must generate a Python script to fix it.
@@ -323,12 +369,25 @@ def build_course_correction_prompt(
         3.  If the current state is already suitable, respond ONLY with the single word: `None`.
         4.  **CRITICAL**: The script MUST NOT use any `import` statements.
 
+        ---
+        ### Tools Reference
+        You have access to a global `coms_manager` object with the following methods. You must call them with the correct arguments as specified here.
+        ```json
+        {tool_reference}
+        ```
+
+        ---
+        ### Handle APIs
+        Some tools return a "handle" object for ongoing interaction. The available methods for these handles are listed below. You MUST only use the methods listed.
+        
+        {handle_apis}
+
         Begin your response now.
         """,
     )
 
 
-def build_exploration_prompt(goal: str, tools: Dict[str, Callable]) -> str:
+def build_exploration_prompt(goal: str, *, tools: Dict[str, Callable]) -> str:
     """
     Builds the system prompt for the pre-planning exploration phase.
 
@@ -339,24 +398,62 @@ def build_exploration_prompt(goal: str, tools: Dict[str, Callable]) -> str:
     Returns:
         The complete prompt string.
     """
-    tool_doc = "\n".join(
-        f"- `{name}{str(inspect.signature(func))}`" for name, func in tools.items()
-    )
+    tool_reference = _build_tool_signatures(tools)
+    handle_apis = _build_handle_apis(tools)
+
     return textwrap.dedent(
         f"""
         You are an intelligent Research Assistant. Your goal is to gather critical information to create a robust plan for the main objective.
 
         **Main Objective:** "{goal}"
 
-        **Your Tools:**
-        {tool_doc}
-
         **Your Task:**
         1. Think step-by-step to determine what information is needed.
         2. Use the `observe` tool to gather this information.
         3. If necessary, use `request_clarification` to ask for guidance.
         4. When you have gathered all necessary information, provide a final, concise summary of your findings. This summary will be used to generate the main plan. DO NOT say that you are ready; your final output MUST BE the summary itself.
+        
+         ---
+        ### Tools Reference
+        You have access to a global `coms_manager` object with the following methods. You must call them with the correct arguments as specified here.
+        ```json
+        {tool_reference}
+        ```
+
+        ---
+        ### Handle APIs
+        Some tools return a "handle" object for ongoing interaction. The available methods for these handles are listed below. You MUST only use the methods listed.
+        
+        {handle_apis}
+
+        Begin your response now. Your response must start immediately with the code.
+        
         """,
+    )
+
+
+def build_should_explore_prompt(goal: str) -> str:
+    """
+    Builds the system prompt for determining if exploration is needed.
+    """
+    return textwrap.dedent(
+        f"""
+            You are a web browser agent assessing a task description from a user.
+            The agent's goal is to generate a complete Python script to accomplish a task.
+            The available tools are high-level: `act(instruction)` and `observe(query)`.
+            The agent will be using the `act` tool to navigate the web and the `observe` tool to get information about the page.
+
+            Analyze the following goal:
+            **Goal:** "{goal}"
+
+            Is the goal specific and actionable enough to directly write a Python script?
+            Or is the goal ambiguous, broad, or lacking key details (like URLs, exact button text, or a clear workflow)
+            that the agent would need to discover first using the `observe` and `request_clarification` tools?
+
+            - If the goal is **clear and specific**, respond with the single word: **EXECUTE**.
+            - If the goal is **ambiguous or requires information gathering**, respond with the single word: **EXPLORE**.
+
+            """,
     )
 
 
