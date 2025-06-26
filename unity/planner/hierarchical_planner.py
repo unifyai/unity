@@ -16,7 +16,11 @@ from typing import Any, Callable, Dict, List, Optional, Tuple
 import unify
 from pydantic import BaseModel, Field
 
-from unity.common.llm_helpers import AsyncToolUseLoopHandle, start_async_tool_use_loop
+from unity.common.llm_helpers import (
+    AsyncToolUseLoopHandle,
+    start_async_tool_use_loop,
+    methods_to_tool_dict,
+)
 from unity.controller.controller import Controller
 from unity.function_manager.function_manager import FunctionManager
 from unity.planner.base import (
@@ -1350,9 +1354,9 @@ class HierarchicalPlanner(BasePlanner):
         for attempt in range(max_retries):
             try:
                 coms_tools = {
-                    name: func
-                    for name, func in inspect.getmembers(self.coms_manager)
-                    if not name.startswith("_") and inspect.isfunction(func)
+                    name: attr
+                    for name, attr in inspect.getmembers(self.coms_manager)
+                    if not name.startswith("_") and callable(attr)
                 }
 
                 if self.function_manager:
