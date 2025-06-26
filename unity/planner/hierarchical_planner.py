@@ -134,6 +134,45 @@ class FunctionReplacer(ast.NodeTransformer):
         return self.generic_visit(node)
 
 
+class _ComsManagerProxy:
+    """
+    A proxy to the real ComsManager that injects plan-specific context.
+
+    This class is an internal implementation detail of the HierarchicalPlanner.
+    It allows the planner to intercept calls to `start_browser_session` and
+    inject the current interaction log into the created handle, enabling
+    automatic logging for verification without changing the API surface
+    that the generated Python code uses.
+    """
+
+    def __init__(self, real_coms_manager: ComsManager, plan: "HierarchicalPlan"):
+        self._real_coms_manager = real_coms_manager
+        self._plan = plan
+
+    def start_browser_session(self) -> BrowserSessionHandle:
+        """
+        Starts a browser session, injecting the current interaction log.
+        """
+        if not self._plan.interaction_stack:
+            logger.warning(
+                "start_browser_session called outside a valid interaction context. Cannot log interactions.",
+            )
+            interactions_log = None
+        else:
+            interactions_log = self._plan.interaction_stack[-1]
+
+        return self._real_coms_manager.start_browser_session(
+            interactions_log=interactions_log,
+        )
+
+    def __getattr__(self, name: str) -> Any:
+        """
+        Forwards all other attribute access to the real ComsManager.
+        This makes the proxy transparent for all other methods like `send_email`, etc.
+        """
+        return getattr(self._real_coms_manager, name)
+
+
 class HierarchicalPlan(BaseActiveTask):
     """
     Represents and executes a single, dynamically generated hierarchical plan.
@@ -628,15 +667,11 @@ class HierarchicalPlan(BaseActiveTask):
         interactions = []
         try:
             correction_namespace = self.planner._create_sandbox_globals()
+            correction_namespace["coms_manager"] = _ComsManagerProxy(
+                self.planner.coms_manager,
+                self,
+            )
 
-            async def act_wrapper(instruction: str):
-                """Wraps the act primitive to log interactions."""
-                interactions.append(("act", instruction, None))
-                result = await self.planner.controller.act(instruction)
-                return result
-
-            correction_namespace["act"] = act_wrapper
-            correction_namespace["observe"] = self.planner.controller.observe
             correction_namespace["verify"] = self.planner._create_verify_decorator(self)
             correction_namespace["ReplanFromParentException"] = (
                 ReplanFromParentException
@@ -655,6 +690,7 @@ class HierarchicalPlan(BaseActiveTask):
                     "Script must define 'async def course_correction_main'.",
                 )
 
+            self.interaction_stack.append(interactions)
             await asyncio.wait_for(correction_fn(), timeout=60.0)
 
             assessment = await self.planner._check_state_against_goal(
@@ -672,6 +708,9 @@ class HierarchicalPlan(BaseActiveTask):
         except Exception as e:
             self.action_log.append(f"ERROR: Course correction failed: {e}")
             raise RuntimeError(f"Course correction script failed: {e}") from e
+        finally:
+            if self.interaction_stack:
+                self.interaction_stack.pop()
 
     async def resolve_escalation_with_new_goal(self, new_goal: str) -> str:
         """
@@ -1079,8 +1118,7 @@ class HierarchicalPlanner(BasePlanner):
         plan.execution_namespace.update(sandbox_globals)
         plan.execution_namespace.update(
             {
-                "act": self.controller.act,
-                "observe": self.controller.observe,
+                "coms_manager": _ComsManagerProxy(self.coms_manager, plan),
                 "request_clarification": request_clarification_primitive,
                 "verify": self._create_verify_decorator(plan),
                 "ReplanFromParentException": ReplanFromParentException,
