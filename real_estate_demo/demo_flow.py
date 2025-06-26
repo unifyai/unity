@@ -6,7 +6,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 
-from wizard import Node, Flow, InputField, RadioField, CheckBoxField, GoBack, GoNext, EndSession
+from wizard import Node, Flow, InputField, RadioField, CheckBoxField, GoBack, GoNext, BaseGoToNode ,EndSession
 
 from pydantic import BaseModel, Field
 import openai
@@ -239,20 +239,22 @@ async def call_llm(sys: str, flow: Flow, event_stream: list, model="gpt-4.1"):
         event_stream.append(f"[Assistant: {agent_output.response}]")
     if agent_output.action:
         flow.play_actions(agent_output.action)
+        action = agent_output.action
         # print(flow.current_node.title)
-        for label, action in agent_output.action:
-            if action is not None:
-                if isinstance(EndSession):
-                    return
-                elif not isinstance(action, GoNext) and not isinstance(action, GoBack):
-                    action_event = get_action_event(flow, action)
+        
+        if action is not None:
+            if isinstance(action, EndSession):
+                return
+            elif isinstance(action, BaseGoToNode):
+                action_event = f"went to node `{action.node_id}`"
+            elif not isinstance(action, GoNext) and not isinstance(action, GoBack):
+                action_event = get_action_event(flow, action)
+            else:
+                if isinstance(action, GoNext):
+                    action_event = f"advanced to the next node: '{flow.current_node.title}'"
                 else:
-                    if isinstance(action, GoNext):
-                        action_event = f"go_next and has advanced to the next node: '{flow.current_node.title}'"
-                    else:
-                        action_event = f"go_back and went back to the previous node: '{flow.current_node.title}'"
-                event_stream.append(f"[Assistant took action `{label}`: {action_event}]")
-                break
+                    action_event = f"`went back to the previous node: '{flow.current_node.title}'"
+            event_stream.append(f"[Assistant took action `{action.__class__.__name__}`: {action_event}]")
     return agent_output
 
 

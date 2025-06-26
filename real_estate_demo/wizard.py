@@ -5,14 +5,19 @@ from textwrap import dedent
 from pydantic import BaseModel, Field, create_model
 
 class GoNext(BaseModel):
-    next: bool = Literal[True]
+    "go to previous node"
+    next: Literal[True] = True
 
 class GoBack(BaseModel):
-    back: bool = Literal[True]
+    "advance to the next node"
+    back: Literal[True] = True
 
 class EndSession(BaseModel):
-    end_session: bool = Literal[True]
+    "conclude the session, can only be used in a terminal node, never conclude the session until you make sure you have met all of the user's needs"
+    end_session: Literal[True] = True
 
+class BaseGoToNode(BaseModel):
+    pass
 
 class InputField:
     def __init__(self, id: str, label: str=None, value=None, required: bool = True):
@@ -112,51 +117,55 @@ class Node:
                 snake_case_action_name = f'fill_{"_".join([w.lower() for w in field.label.split(" ")])}'
                 pascal_action_name = re.sub(r"[\?\!\/\\]", "", pascal_action_name)
                 snake_case_action_name = re.sub(r"[\?\!\/\\]", "", snake_case_action_name)
+                docs = f"Fills input field '{field.label}' and reflects it to the agent script UI." + (f" Current value is `{self.data.get(field.id)}`" if self.data.get(field.id) is not None else "")
                 field_action_model = create_model(
                     pascal_action_name,
-                    value=(str, Field(..., description="value to input"))
+                    field_label=(Literal[field.label], field.label),
+                    value=(str, Field(..., description="value to input")),
+                    __doc__=docs
                 )
-                description = f"Fills input field '{field.label}' and reflects it to the agent script UI." + (f" Current value is `{self.data.get(field.id)}`" if self.data.get(field.id) is not None else "")
                 
             elif isinstance(field, RadioField):
                 pascal_action_name = f'Select{"".join([w.title() for w in field.label.split(" ")])}'
                 snake_case_action_name = f'select_{"_".join([w.lower() for w in field.label.split(" ")])}'
                 pascal_action_name = re.sub(r"[\?\!\/\\]", "", pascal_action_name)
                 snake_case_action_name = re.sub(r"[\?\!\/\\]", "", snake_case_action_name)
+                docs = f"Selects an option for radio field '{field.label}' and reflects it to the agent script UI." + (f" Current value is `{self.data.get(field.id)}`" if self.data.get(field.id) is not None else "")
                 field_action_model = create_model(
                     pascal_action_name,
-                    value=(Literal[*field.options], Field(..., description="option to select"))
+                    field_label=(Literal[field.label], field.label),
+                    value=(Literal[*field.options], Field(..., description="option to select")),
+                    __doc__= docs
                 )
-                description = f"Selects an option for radio field '{field.label}' and reflects it to the agent script UI." + (f" Current value is `{self.data.get(field.id)}`" if self.data.get(field.id) is not None else "")
             
             elif isinstance(field, CheckBoxField):
                 pascal_action_name = f'Check{"".join([w.title() for w in field.label.split(" ")])}'
                 snake_case_action_name = f'check_{"_".join([w.lower() for w in field.label.split(" ")])}'
                 pascal_action_name = re.sub(r"[\?\!\/\\]", "", pascal_action_name)
                 snake_case_action_name = re.sub(r"[\?\!\/\\]", "", snake_case_action_name)
+                docs = f"Checks options for checkbox field '{field.label}' and reflects it to the agent script UI." +  (f" Current value is `{self.data.get(field.id)}`" if self.data.get(field.id) is not None else "")
                 field_action_model = create_model(
                     pascal_action_name,
-                    value=(list[Literal[*field.options]], Field(..., description="options to check"))
+                    field_label=(Literal[field.label], field.label),
+                    value=(list[Literal[*field.options]], Field(..., description="options to check")),
+                    __doc__=docs
                 )
-                description = f"Checks options for checkbox field '{field.label}' and reflects it to the agent script UI." +  (f" Current value is `{self.data.get(field.id)}`" if self.data.get(field.id) is not None else "")
 
             self.action_to_field[field_action_model] = field.id
-            fields_action_models.append((snake_case_action_name, description, field_action_model))
-        # fields_action_models.append(Next)
+            fields_action_models.append(field_action_model)
         
-        self.action_model = create_model(
-            "ActionModel",
-            **{k:(Optional[v], Field(default=None, description=d)) for k, d, v in fields_action_models}
-        )
+        # self.action_model = create_model(
+        #     "ActionModel",
+        #     **{k:(Optional[v], Field(default=None, description=d)) for k, d, v in fields_action_models}
+        # )
+
+        self.action_model = Union[*fields_action_models]
         
     
     def play_actions(self, action: BaseModel):
-        for k, v in action:
-            if v is not None:
-                action_cls = v.__class__
-                field_id = self.action_to_field[action_cls]
-                self.data[field_id] = v.value
-                break
+        action_cls = action.__class__
+        field_id = self.action_to_field[action_cls]
+        self.data[field_id] = action.value
         self.can_advance = all([self.data.get(f.id) is not None for f in self.fields if f.required])
         
         # refresh action model after each action taken
@@ -207,48 +216,54 @@ class Flow:
 
     def play_actions(self, action):
         if self.flow_done: return
-        for l, a in action:
-            if a is not None:
-                if isinstance(a, GoBack):
-                    self.path.pop()
-                    self.current_node = self.path[-1]
-                    return
-                elif isinstance(a, GoNext):
-                    if self.current_node.can_advance:
-                        next_screen_id = self.current_node.next(self.ctx)
-                        # print(next_screen_id)
-                        self.current_node = list(filter(lambda s: s.id==next_screen_id, self.screens))[0]
-                        self.ctx |= self.current_node.data
-                        self.path.append(self.current_node)
-                        return
-                elif isinstance(a, EndSession):
-                    self.flow_done = True
-                    return
-                else:
-                    self.current_node.play_actions(action)
-                    # update ctx
-                    self.ctx |= self.current_node.data
-                    return
+        if isinstance(action, GoBack):
+            self.path.pop()
+            self.current_node = self.path[-1]
+            return
+        elif isinstance(action, GoNext):
+            if self.current_node.can_advance:
+                next_screen_id = self.current_node.next(self.ctx)
+                # print(next_screen_id)
+                self.current_node = list(filter(lambda s: s.id==next_screen_id, self.screens))[0]
+                self.ctx |= self.current_node.data
+                self.path.append(self.current_node)
+                return
+        elif isinstance(action, BaseGoToNode):
+            self.current_node = list(filter(lambda s: s.id==action.node_id, self.screens))[0] 
+        elif isinstance(action, EndSession):
+            self.flow_done = True
+            return
+        else:
+            self.current_node.play_actions(action)
+            # update ctx
+            self.ctx |= self.current_node.data
+            return
         
     def current_action_model(self) -> BaseModel:
         # we should check if node is terminal (or has no begning) or not actually
         # before adding both Next and Back
         extra_actions = []
         # TODO: also add a gotonode action dynamically
-        GoToNode = ...
-        if self.current_node != self.root_node:
-            extra_actions.append(("go_back", "go to previous node", GoBack))
-        if not self.current_node.is_terminal and self.current_node.can_advance:
-            extra_actions.append(("go_next", "advance to the next node", GoNext))
-        if self.current_node.is_terminal:
-            extra_actions.append(("end_session", 
-                                  "conclude the session, can only be used in a terminal node, never conclude the session until you make sure you have met all of the user's needs", 
-                                  EndSession))
-        return create_model(
-            "ActionModel",
-            __base__=self.current_node.action_model,
-            **{k:(Optional[v], Field(default=None, description=d)) for k, d, v in extra_actions}
+        GoToNode = create_model(
+            "GoToNode",
+            node_id = (Literal[*[n.id for n in self.path]], Field(..., description="Node ID to go to")),
+            __doc__="Goes to the chosen node that you have already visited in your path. Useful when you need to go back to a specific node to modify data or start-over.",
+            __base__=BaseGoToNode
         )
+        if self.current_node != self.root_node:
+            extra_actions.append(GoBack)
+        if not self.current_node.is_terminal and self.current_node.can_advance:
+            extra_actions.append(GoNext)
+        if len(self.path) > 3:
+            extra_actions.append(GoToNode)
+        if self.current_node.is_terminal:
+            extra_actions.append(EndSession)
+        # return create_model(
+        #     "ActionModel",
+        #     __base__=self.current_node.action_model,
+        #     **{k:(Optional[v], Field(default=None, description=d)) for k, d, v in extra_actions}
+        # )
+        return Union[self.current_node.action_model, *extra_actions] 
     
     def render(self):
         return f"""
