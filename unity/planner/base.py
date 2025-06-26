@@ -2,10 +2,13 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
+import json
 import uuid
 from abc import ABC, abstractmethod
 from typing import Any, Awaitable, Callable, Dict, List, Optional, Tuple
 
+import unify
 from unity.common.llm_helpers import SteerableToolHandle
 from unity.controller.controller import Controller
 
@@ -146,17 +149,22 @@ class PhoneCallHandle(BaseActiveTask):
         self,
         contact_id: int,
         purpose: str,
+        interactions_log: Optional[List[Tuple[str, str, Optional[str]]]] = None,
     ):
         self._contact_id = contact_id
         self._purpose = purpose
-
+        self.interactions_log = interactions_log
         self._call_id = f"call_{uuid.uuid4().hex[:6]}"
         self._is_active = True
         self._is_complete = False
         self._final_result: Optional[str] = None
         self._completion_event = asyncio.Event()
         self._call_task = asyncio.create_task(self._simulate_call())
-
+        self._llm_client = unify.AsyncUnify(
+            "o4-mini@openai",
+            cache=json.loads(os.environ.get("UNIFY_CACHE", "true")),
+            traced=json.loads(os.environ.get("UNIFY_TRACED", "true")),
+        )
         logger.info(
             f"[{self._call_id}] Phone call initiated with contact {self._contact_id} for purpose: '{self._purpose}'",
         )
@@ -184,13 +192,23 @@ class PhoneCallHandle(BaseActiveTask):
         """
         Asks a question to the person on the other end of the call.
         In a real implementation, this would connect to a telephony service.
-        Here, we just return a static answer.
+        Here, we just return a random answer from the LLM.
         """
         if not self._is_active:
             return "The call has already ended."
 
         logger.info(f"[{self._call_id}] Asking question: '{question}'")
-        return "Answer to the question"
+        prompt = (
+            f"You are roleplaying as a person on a phone call. "
+            f"The purpose of the call is '{self._purpose}'. "
+            f"You were just asked: '{question}'. "
+            f"Provide a short, plausible, conversational answer."
+        )
+        answer = await self._llm_client.generate(prompt)
+        logger.info(f"[{self._call_id}] Received simulated answer: '{answer}'")
+        if self.interactions_log is not None:
+            self.interactions_log.append(("ask_call", question, answer))
+        return answer
 
     async def __aenter__(self):
         """Enter the async context manager."""
@@ -399,6 +417,7 @@ class ComsManager:
         self,
         contact_id: int,
         purpose: str,
+        interactions_log: Optional[List[Tuple[str, str, Optional[str]]]] = None,
     ) -> PhoneCallHandle:
         """
         Initiates a 'call' and returns an interactive handle.
@@ -409,6 +428,7 @@ class ComsManager:
         return PhoneCallHandle(
             contact_id,
             purpose,
+            interactions_log=interactions_log,
         )
 
     def start_browser_session(
