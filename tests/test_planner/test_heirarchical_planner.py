@@ -563,7 +563,6 @@ async def test_retry_exhaustion_leads_to_escalation(
     """
     Objective: Verify that a function failing repeatedly with a generic exception
     exhausts its local retries and escalates to replan the parent.
-    NO CHANGE NEEDED: This test does not involve browser actions.
     """
     # --- Arrange ---
     failing_code = """
@@ -991,7 +990,6 @@ async def test_invalid_code_generation_handling(
     """
     Objective: Verify that the system handles a SyntaxError from LLM-generated
     code gracefully and enters an ERROR state.
-    NO CHANGE NEEDED: This test does not involve browser actions.
     """
     # --- Arrange ---
     initial_code = "@verify\nasync def main_plan(): raise NotImplementedError"
