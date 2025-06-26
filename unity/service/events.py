@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+import json
 from typing import Any, Dict, Type
 from unity.events.event_bus import Event as BusEvent
 
@@ -195,303 +196,95 @@ class InterruptEvent(Event):
         return f"[INTERRUPT @ {self.fmt_timestamp}] User interrupted"
 
 
-# Task events
-class CommsTaskCreatedEvent(Event):
+class ConductorStartedEvent(Event):
     def __init__(
         self,
-        contact_name: str,
-        contact_number: str,
-        task_desc: str,
-        agent_id: str,
-        task_id: str,
-        *args,
-        **kwargs,
-    ):
-        # Remove potential duplicates coming from deserialisation
-        kwargs.pop("contact_name", None)
-        kwargs.pop("contact_number", None)
-        kwargs.pop("task_desc", None)
-        kwargs.pop("agent_id", None)
-
-        self.agent_id = agent_id
-        self.task_id = task_id
-        self.contact_name = contact_name
-        self.contact_number = contact_number
-        self.task_desc = task_desc
-        super().__init__(*args, **kwargs)
-
-    def to_dict(self) -> dict[str, Any]:
-        base_dict = super().to_dict()
-        base_dict["payload"].update(
-            {
-                "agent_id": self.agent_id,
-                "task_id": self.task_id,
-                "contact_name": self.contact_name,
-                "contact_number": self.contact_number,
-                "task_desc": self.task_desc,
-            },
-        )
-        return base_dict
-
-    def __str__(self):
-        return f"""[COMMS TASK CREATED AND HANDLED BY AGENT ID: {self.agent_id} @ {self.fmt_timestamp}]
-TASK CONTACT NAME: {self.contact_name}
-TASK CONTACT NUMBER: {self.contact_number}
-TASK DESC: {self.task_desc}
-"""
-
-
-class CommsTaskStartedEvent(Event):
-    def __init__(
-        self,
-        contact_name: str,
-        contact_number: str,
-        task_desc: str,
-        agent_id: str,
-        task_id: str,
-        *args,
-        **kwargs,
-    ):
-        # Remove potential duplicates coming from deserialisation
-        kwargs.pop("contact_name", None)
-        kwargs.pop("contact_number", None)
-        kwargs.pop("task_desc", None)
-        kwargs.pop("agent_id", None)
-        kwargs.pop("task_id", None)
-
-        self.agent_id = agent_id
-        self.task_id = task_id
-        self.contact_name = contact_name
-        self.contact_number = contact_number
-        self.task_desc = task_desc
-        super().__init__(*args, **kwargs)
-
-    def to_dict(self) -> dict[str, Any]:
-        base_dict = super().to_dict()
-        base_dict["payload"].update(
-            {
-                "agent_id": self.agent_id,
-                "task_id": self.task_id,
-                "contact_name": self.contact_name,
-                "contact_number": self.contact_number,
-                "task_desc": self.task_desc,
-            },
-        )
-        return base_dict
-
-    def __str__(self):
-        return f"""[COMMS TASK CREATED @ {self.fmt_timestamp}]
-TASK CONTACT NAME: {self.contact_name}
-TASK CONTACT NUMBER: {self.contact_number}
-TASK DESC: {self.task_desc}
-"""
-
-
-class CommsTaskDoneEvent(Event):
-    def __init__(
-        self,
-        agent_id: str,
-        task_id: int,
-        task_status: str,
-        task_result: str,
-        *args,
-        **kwargs,
-    ):
-        # Remove potential duplicates coming from deserialisation
-        kwargs.pop("agent_id", None)
-        kwargs.pop("task_status", None)
-        kwargs.pop("task_result", None)
-        kwargs.pop("task_id", None)
-
-        self.agent_id = agent_id
-        self.task_id = task_id
-        self.task_status = task_status
-        self.task_result = task_result
-        super().__init__(*args, **kwargs)
-
-    def to_dict(self) -> dict[str, Any]:
-        base_dict = super().to_dict()
-        base_dict["payload"].update(
-            {
-                "agent_id": self.agent_id,
-                "task_id": self.task_id,
-                "task_status": self.task_status,
-                "task_result": self.task_result,
-            },
-        )
-        return base_dict
-
-    def __str__(self):
-        return f"""[TASK DONE BY AGENT ID: {self.agent_id} @ {self.fmt_timestamp}]
-TASK STATUS: {self.task_status}
-TASK RESULT: {self.task_result}"""
-
-
-class AskUserAgentEvent(Event):
-    def __init__(self, agent_id: str, task_id: str, query: str, *args, **kwargs):
-        kwargs.pop("agent_id", None)
-        kwargs.pop("task_id", None)
-        kwargs.pop("query", None)
-
-        self.agent_id = agent_id
-        self.task_id = task_id
-        self.query = query
-        super().__init__(*args, **kwargs)
-
-    def to_dict(self) -> dict[str, Any]:
-        base_dict = super().to_dict()
-        base_dict["payload"].update(
-            {
-                "agent_id": self.agent_id,
-                "task_id": self.task_id,
-                "query": self.query,
-            },
-        )
-        return base_dict
-
-    def __str__(self):
-        return f"""[AGENT {self.agent_id} NEEDS SOME CLARIFICATION REGARDING THE FOLLOWING QUERY FOR TASK {self.task_id} @ {self.fmt_timestamp}]
-{self.query}"""
-
-
-class UserAgentResponseEvent(Event):
-    def __init__(self, task_id: str, response: str, *args, **kwargs):
-        kwargs.pop("task_id", None)
-        kwargs.pop("response", None)
-
-        self.task_id = task_id
-        self.response = response
-        super().__init__(*args, **kwargs)
-
-    def to_dict(self) -> dict[str, Any]:
-        base_dict = super().to_dict()
-        base_dict["payload"].update(
-            {
-                "task_id": self.task_id,
-                "response": self.response,
-            },
-        )
-        return base_dict
-
-    def __str__(self):
-        return f"""[USER AGENT RESPONDED TO YOUR QUERY REGARDING {self.task_id} @ {self.fmt_timestamp}]
-        {self.response}"""
-
-
-class ManagerStartedEvent(Event):
-    def __init__(
-        self,
-        agent_id: str,
-        manager_name: str,
         chat_history: list[dict[str, str]],
         query: str,
         *args,
         **kwargs,
     ):
-        kwargs.pop("agent_id", None)
-        kwargs.pop("manager_name", None)
         kwargs.pop("chat_history", None)
         kwargs.pop("query", None)
 
-        self.agent_id = agent_id
-        self.manager_name = manager_name
         self.chat_history = chat_history
-        self.query = query
-        super().__init__(*args, **kwargs, transient=True)
-
-    def to_dict(self) -> dict[str, Any]:
-        base_dict = super().to_dict()
-        base_dict["payload"].update(
-            {
-                "agent_id": self.agent_id,
-                "manager_name": self.manager_name.upper(),
-                "chat_history": self.chat_history,
-                "query": self.query,
-            },
-        )
-        return base_dict
-
-    def __str__(self):
-        return f"""[{self.manager_name.upper()} MANAGER STARTED @ {self.fmt_timestamp}]
-        {self.query}"""
-
-
-class ManagerInterjectedEvent(Event):
-    def __init__(self, agent_id: str, manager_name: str, query: str, *args, **kwargs):
-        kwargs.pop("agent_id", None)
-        kwargs.pop("manager_name", None)
-        kwargs.pop("query", None)
-
-        self.agent_id = agent_id
-        self.manager_name = manager_name
-        self.query = query
-        super().__init__(*args, **kwargs, transient=True)
-
-    def to_dict(self) -> dict[str, Any]:
-        base_dict = super().to_dict()
-        base_dict["payload"].update(
-            {
-                "agent_id": self.agent_id,
-                "manager_name": self.manager_name.upper(),
-                "query": self.query,
-            },
-        )
-        return base_dict
-
-    def __str__(self):
-        return f"""[{self.manager_name.upper()} MANAGER INTERJECTED @ {self.fmt_timestamp}]
-        {self.query}"""
-
-
-class ManagerInterjectFailedEvent(Event):
-    def __init__(self, agent_id: str, manager_name: str, query: str, *args, **kwargs):
-        kwargs.pop("agent_id", None)
-        kwargs.pop("manager_name", None)
-        kwargs.pop("query", None)
-
-        self.agent_id = agent_id
-        self.manager_name = manager_name
-        self.query = query
-        super().__init__(*args, **kwargs, transient=True)
-
-    def to_dict(self) -> dict[str, Any]:
-        base_dict = super().to_dict()
-        base_dict["payload"].update(
-            {
-                "agent_id": self.agent_id,
-                "manager_name": self.manager_name,
-                "query": self.query,
-            },
-        )
-        return base_dict
-
-    def __str__(self):
-        return f"""[{self.manager_name.upper()} MANAGER INTERJECT FAILED @ {self.fmt_timestamp}]
-        {self.query}"""
-
-
-class ManagerEndedEvent(Event):
-    def __init__(self, agent_id: str, manager_name: str, query: str, *args, **kwargs):
-        kwargs.pop("agent_id", None)
-        kwargs.pop("manager_name", None)
-        kwargs.pop("query", None)
-
-        self.agent_id = agent_id
-        self.manager_name = manager_name
         self.query = query
         super().__init__(*args, **kwargs)
 
     def to_dict(self) -> dict[str, Any]:
         base_dict = super().to_dict()
         base_dict["payload"].update(
-            {
-                "agent_id": self.agent_id,
-                "manager_name": self.manager_name,
-                "query": self.query,
-            },
+            {"chat_history": self.chat_history, "query": self.query}
         )
         return base_dict
 
     def __str__(self):
-        return f"""[{self.manager_name.upper()} MANAGER ENDED @ {self.fmt_timestamp}]
+        return f"""[CONDUCTOR STARTED @ {self.fmt_timestamp}]
+        {self.query}"""
+
+
+class ConductorProgressEvent(Event):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+
+    def to_dict(self) -> dict[str, Any]:
+        base_dict = super().to_dict()
+        base_dict["payload"].update({"query": self.query})
+        return base_dict
+
+    def __str__(self):
+        return f"""[CONDUCTOR PROGRESS @ {self.fmt_timestamp}] 
+        {json.dumps(self.payload)}"""
+
+
+class ConductorInterjectedEvent(Event):
+    def __init__(self, query: str, *args, **kwargs):
+        kwargs.pop("query", None)
+
+        self.query = query
+        super().__init__(*args, **kwargs)
+
+    def to_dict(self) -> dict[str, Any]:
+        base_dict = super().to_dict()
+        base_dict["payload"].update({"query": self.query})
+        return base_dict
+
+    def __str__(self):
+        return f"""[CONDUCTOR INTERJECTED @ {self.fmt_timestamp}]
+        {self.query}"""
+
+
+class ConductorInterjectFailedEvent(Event):
+    def __init__(self, query: str, *args, **kwargs):
+        kwargs.pop("query", None)
+
+        self.query = query
+        super().__init__(*args, **kwargs)
+
+    def to_dict(self) -> dict[str, Any]:
+        base_dict = super().to_dict()
+        base_dict["payload"].update({"query": self.query})
+        return base_dict
+
+    def __str__(self):
+        return f"""[CONDUCTOR INTERJECT FAILED @ {self.fmt_timestamp}]
+        {self.query}"""
+
+
+class ConductorEndedEvent(Event):
+    def __init__(self, manager_name: str, query: str, *args, **kwargs):
+        kwargs.pop("manager_name", None)
+        kwargs.pop("query", None)
+
+        self.manager_name = manager_name
+        self.query = query
+        super().__init__(*args, **kwargs)
+
+    def to_dict(self) -> dict[str, Any]:
+        base_dict = super().to_dict()
+        base_dict["payload"].update({"query": self.query})
+        return base_dict
+
+    def __str__(self):
+        return f"""[CONDUCTOR ENDED @ {self.fmt_timestamp}]
         {self.query}"""

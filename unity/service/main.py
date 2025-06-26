@@ -9,68 +9,16 @@ from dotenv import load_dotenv
 import json
 import os
 import signal
-from pydantic import BaseModel, Field
-from unity.contact_manager.contact_manager import ContactManager
-from unity.events.event_bus import EventBus
-from unity.knowledge_manager.knowledge_manager import KnowledgeManager
+import traceback
 from unity.service.comms_agent import CommsAgent
 from unity.service.comms_manager import CommsManager
-from unity.service.events import Event
-from unity.transcript_manager.transcript_manager import TranscriptManager
-from unity.transcript_manager.types.message import Message
 
 load_dotenv()
-
-
-# intents
-class _ContactIntent(BaseModel):
-    action: str = Field(..., pattern="^(ask|update)$")
-    cleaned_text: str
-
-
-class _KnowledgeIntent(BaseModel):
-    action: str = Field(..., pattern="^(retrieve|store|refactor)$")
-    cleaned_text: str
-
-
-class _TranscriptIntent(BaseModel):
-    action: str = Field(..., pattern=r"^(ask|summarize)$")
-    cleaned_text: str
 
 
 # globals
 conv_context_length = 50
 user_agent = None
-manager_dict = {
-    "contact": ContactManager,
-    "knowledge": KnowledgeManager,
-    "transcript": TranscriptManager,
-}
-intent_sys_msg_dict = {
-    "knowledge": (
-        "Decide whether the user input is a *query* about existing knowledge "
-        "(`retrieve`), a *mutation* that adds/updates knowledge (`store`), "
-        "or a schema-level restructuring (`refactor`). "
-        "Return JSON "
-        "{'action':'retrieve'|'store'|'refactor','cleaned_text':<fixed_input>}."
-    ),
-    "contact": (
-        "Decide whether the user input is a *query* about existing contacts "
-        "or a *mutation* (create / update).  "
-        "Return JSON {'action':'ask'|'update','cleaned_text':<fixed_input>}."
-    ),
-    "transcript": (
-        "Decide whether the user input is a question about the transcripts "
-        "(`ask`) or a summarisation request (`summarize`). Summarisation inputs "
-        "may mention one or more *exchange IDs* (integers). Return JSON "
-        "{'action':'ask'|'summarize','cleaned_text':<fixed_input>}."
-    ),
-}
-intent_output_format_dict = {
-    "contact": _ContactIntent,
-    "knowledge": _KnowledgeIntent,
-    "transcript": _TranscriptIntent,
-}
 
 
 class EventManager:
@@ -114,6 +62,9 @@ class EventManager:
             # Update activity time on any event
             self.last_activity_time = asyncio.get_event_loop().time()
 
+            if event["topic"] == "ping":
+                print("ping")
+                continue
             if event["topic"] == "call_process":
                 print("recieved call event")
                 # handle messages going to the call process
@@ -146,6 +97,7 @@ class EventManager:
                 self.last_activity_time = asyncio.get_event_loop().time()
                 self.events_queue.put_nowait(msg)
             except Exception as e:
+                traceback.print_exc()
                 print(str(e))
                 print("CALL CLOSED")
                 writer.close()
@@ -252,10 +204,6 @@ async def main(manager_name: str = "contact"):
         os.getenv("USER_NUMBER", ""),
         os.getenv("USER_PHONE_NUMBER", ""),
         main_user_agent=True,
-        manager=manager_dict[manager_name](),
-        manager_name=manager_name,
-        intent_sys_msg=intent_sys_msg_dict[manager_name],
-        intent_output_format=intent_output_format_dict[manager_name],
         conv_context_length=conv_context_length,
     )
     user_agent.set_event_manager(event_manager)

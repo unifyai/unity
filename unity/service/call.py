@@ -31,19 +31,11 @@ load_dotenv()
 
 from unity.service.events import *
 from unity.service.actions import AssistantOutput
+from unity.service.utils import publish_event, close_connection, get_reader
 
 events_queue = asyncio.Queue()
 chunk_queue = asyncio.Queue()
 current_running_response: asyncio.Task = None
-READER: asyncio.StreamReader | None = None
-WRITER: asyncio.StreamWriter | None = None
-
-
-async def publish_event(ev: dict):
-    global WRITER
-    ev = json.dumps(ev) + "\n"
-    WRITER.write(ev.encode())
-    await WRITER.drain()
 
 
 async def process_structured_output(
@@ -172,24 +164,22 @@ async def entrypoint(ctx: agents.JobContext):
                 print(f"Error during task cancellation: {e}")
 
         # Close the connection gracefully
-        if WRITER and not WRITER.is_closing():
-            try:
-                # Send end call event before closing connection
-                await publish_event(
-                    {
-                        "topic": from_number,
-                        "to": "past",
-                        "event": PhoneCallEndedEvent().to_dict(),
-                    },
-                )
-                print("End call event sent")
+        try:
+            # Send end call event before closing connection
+            await publish_event(
+                {
+                    "topic": from_number,
+                    "to": "past",
+                    "event": PhoneCallEndedEvent().to_dict(),
+                },
+            )
+            print("End call event sent")
 
-                # Close the writer
-                WRITER.close()
-                await WRITER.wait_closed()
-                print("Connection closed gracefully")
-            except Exception as e:
-                print(f"Error during connection cleanup: {e}")
+            # Close the connection using utility function
+            await close_connection()
+            print("Connection closed gracefully")
+        except Exception as e:
+            print(f"Error during connection cleanup: {e}")
 
         print("Graceful shutdown completed")
 
@@ -229,8 +219,7 @@ async def entrypoint(ctx: agents.JobContext):
         ),
     )
 
-    global READER, WRITER
-    READER, WRITER = await asyncio.open_connection("127.0.0.1", 8090)
+    # Initialize connection using utility function
     await publish_event(
         {
             "topic": from_number,
@@ -296,9 +285,17 @@ async def entrypoint(ctx: agents.JobContext):
     async def collect_events():
         nonlocal last_activity_time
         global chunk_queue
+
         while True:
             try:
-                raw = await READER.readline()
+                # Use the reader from utils module
+                reader = get_reader()
+                if reader is None:
+                    print("No connection available, waiting...")
+                    await asyncio.sleep(1)
+                    continue
+
+                raw = await reader.readline()
                 if not raw:
                     break
                 msg = json.loads(raw.decode())
@@ -316,12 +313,7 @@ async def entrypoint(ctx: agents.JobContext):
                     chunk_queue.put_nowait(msg)
             except Exception as e:
                 print(f"Error in collect_events: {e}")
-                if WRITER and not WRITER.is_closing():
-                    try:
-                        WRITER.close()
-                        await WRITER.wait_closed()
-                    except Exception as close_error:
-                        print(f"Error closing writer: {close_error}")
+                # Connection will be handled by utils module
                 break  # Exit the loop on error
 
     asyncio.create_task(collect_events())
