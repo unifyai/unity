@@ -6,10 +6,11 @@ UNASSIGNED = -1
 
 
 class Medium(StrEnum):
-    SMS = "sms"
+    SMS_MESSAGE = "sms_message"
     EMAIL = "email"
-    WHATSAPP = "whatsapp"
-    PHONE = "phone"
+    WHATSAPP_MSG = "whatsapp_message"
+    PHONE_CALL = "phone_call"
+    WHATSAPP_CALL = "whatsapp_call"
 
 
 class Message(BaseModel):
