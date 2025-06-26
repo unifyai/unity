@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import ast
 import asyncio
 import enum
 import functools
@@ -11,19 +12,28 @@ import sys
 import textwrap
 import traceback
 from typing import Any, Callable, Dict, List, Optional, Tuple
-import ast
 
 import unify
 from pydantic import BaseModel, Field
 
-from unity.common.llm_helpers import (
-    AsyncToolUseLoopHandle,
-    start_async_tool_use_loop,
-)
+from unity.common.llm_helpers import AsyncToolUseLoopHandle, start_async_tool_use_loop
 from unity.controller.controller import Controller
 from unity.function_manager.function_manager import FunctionManager
-from unity.planner.base import BaseActiveTask, BasePlanner
-from unity.planner.tool_loop_planner import ComsManager
+from unity.planner.base import (
+    BaseActiveTask,
+    BasePlanner,
+    BrowserSessionHandle,
+    ComsManager,
+)
+from unity.planner.prompt_builders import (
+    build_ask_prompt,
+    build_course_correction_prompt,
+    build_dynamic_implement_prompt,
+    build_exploration_prompt,
+    build_initial_plan_prompt,
+    build_plan_surgery_prompt,
+    build_verification_prompt,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -280,45 +290,33 @@ class HierarchicalPlan(BaseActiveTask):
                 self.action_log.append(f"Exploration: Received answer: '{answer}'")
                 return f"Received user clarification: '{answer}'"
 
-            exploratory_tools = {
-                "observe": self.planner.controller.observe,
-                "request_clarification": request_clarification,
-            }
+            exploratory_tools = {}
+            async with self.planner.coms_manager.start_browser_session() as browser_session_handle:
+                exploratory_tools = {
+                    "observe": browser_session_handle.observe,
+                    "request_clarification": request_clarification,
+                }
 
-            research_prompt = textwrap.dedent(
-                f"""
-                You are an intelligent Research Assistant. Your goal is to gather critical information to create a robust plan for the main objective.
+                research_prompt = build_exploration_prompt(
+                    goal=self.goal, tools=exploratory_tools
+                )
 
-                **Main Objective:** "{self.goal}"
+                client = self.planner.exploration_client
+                client.reset_messages()
+                client.set_system_message(research_prompt)
 
-                **Your Tools:**
-                - `observe(query: str)`: Use this to inspect the current environment and gather information.
-                - `request_clarification(question: str)`: If you are blocked, missing information, or need user input, use this tool to ask a question.
+                exploration_loop_handle = start_async_tool_use_loop(
+                    client=client,
+                    message="Begin your research based on the main objective.",
+                    tools=exploratory_tools,
+                    loop_id="ExploratoryPhase",
+                    max_steps=10,
+                )
 
-                **Your Task:**
-                1. Think step-by-step to determine what information is needed.
-                2. Use the `observe` tool to gather this information.
-                3. If necessary, use `request_clarification` to ask for guidance.
-                4. When you have gathered all necessary information, provide a final, concise summary of your findings. This summary will be used to generate the main plan. DO NOT say that you are ready; your final output MUST BE the summary itself.
-                """,
-            )
-
-            client = self.planner.exploration_client
-            client.reset_messages()
-            client.set_system_message(research_prompt)
-
-            exploration_loop_handle = start_async_tool_use_loop(
-                client=client,
-                message="Begin your research based on the main objective.",
-                tools=exploratory_tools,
-                loop_id="ExploratoryPhase",
-                max_steps=10,
-            )
-
-            summary = await exploration_loop_handle.result()
-            self.exploration_summary = summary
-            self.action_log.append("Exploratory phase completed.")
-            self.action_log.append(f"Exploration Summary: {summary}")
+                summary = await exploration_loop_handle.result()
+                self.exploration_summary = summary
+                self.action_log.append("Exploratory phase completed.")
+                self.action_log.append(f"Exploration Summary: {summary}")
 
         except Exception as e:
             logger.error(f"Exploration phase failed: {e}", exc_info=True)
@@ -841,24 +839,19 @@ class HierarchicalPlan(BaseActiveTask):
             return "Cannot ask: plan is not in a suitable state."
 
         try:
-            browser_context = await self.planner.controller.observe(
-                "Summarize the current page.",
-            )
+            async with self.planner.coms_manager.start_browser_session() as browser_handle:
+                browser_context = await browser_handle.observe(
+                    "Summarize the current page.",
+                )
+
             context_log = "\n".join(f"- {log}" for log in self.action_log[-10:])
-            prompt = textwrap.dedent(
-                f"""
-                You are an assistant analyzing an agent's state. Answer the user's question concisely based *only* on the provided context.
-
-                **Goal:** {self.goal}
-                **State:** {self._state.name}
-                **Call Stack:** {' -> '.join(self.call_stack) or 'None'}
-                **Browser State:** {browser_context}
-                **Recent Log:**
-                {context_log}
-
-                **Question:** "{question}"
-                **Answer:**
-            """,
+            prompt = build_ask_prompt(
+                goal=self.goal,
+                state=self._state.name,
+                call_stack=" -> ".join(self.call_stack) or "None",
+                browser_context=browser_context,
+                context_log=context_log,
+                question=question,
             )
             return await llm_call(self.planner.ask_client, prompt)
         except Exception as e:
@@ -958,7 +951,7 @@ class HierarchicalPlanner(BasePlanner):
         )
         if not self.controller.is_alive():
             self.controller.start()
-        self.coms_manager = coms_manager or ComsManager()
+        self.coms_manager = coms_manager or ComsManager(controller=self.controller)
         self.max_escalations = max_escalations or 3
         self.max_local_retries = max_local_retries or 2
 
@@ -1002,24 +995,7 @@ class HierarchicalPlanner(BasePlanner):
             True if exploration is needed, False otherwise.
         """
         return False
-        prompt = textwrap.dedent(
-            f"""
-            You are a web browser agent assessing a task description from a user.
-            The agent's goal is to generate a complete Python script to accomplish a task.
-            The available tools are high-level: `act(instruction)` and `observe(query)`.
-            The agent will be using the `act` tool to navigate the web and the `observe` tool to get information about the page.
-
-            Analyze the following goal:
-            **Goal:** "{goal}"
-
-            Is the goal specific and actionable enough to directly write a Python script?
-            Or is the goal ambiguous, broad, or lacking key details (like URLs, exact button text, or a clear workflow)
-            that the agent would need to discover first using the `observe` and `request_clarification` tools?
-
-            - If the goal is **clear and specific**, respond with the single word: **EXECUTE**.
-            - If the goal is **ambiguous or requires information gathering**, respond with the single word: **EXPLORE**.
-            """,
-        )
+        prompt = build_exploration_prompt(goal, self.function_manager.list_functions())
         response = await llm_call(self.exploration_client, prompt)
         logger.info(f"Exploration assessment for goal '{goal}': {response.strip()}")
         return "EXPLORE" in response.strip().upper()
@@ -1101,7 +1077,7 @@ class HierarchicalPlanner(BasePlanner):
         """
         Prepares the sandboxed execution environment for a plan.
 
-        This involves setting up global functions (`act`, `observe`, `verify`)
+        This involves setting up global functions (`coms_manager`, `verify`)
         and compiling the plan's source code into the execution namespace.
 
         Args:
@@ -1247,37 +1223,8 @@ class HierarchicalPlanner(BasePlanner):
             args: Positional arguments for the function.
             kwargs: Keyword arguments for the function.
             interactions: A list to log interactions within this step.
-
-        Returns:
-            The result of the function call if verification passes.
         """
-
-        async def act_wrapper(instruction: str):
-            """Wraps the act primitive to log interactions."""
-            result = await self.controller.act(instruction)
-            interactions.append(("act", instruction, result))
-            return result
-
-        async def observe_wrapper(query: str, **opts):
-            """Wraps the observe primitive to log interactions."""
-            result = await self.controller.observe(query, **opts)
-            interactions.append(("observe", query, result))
-            return result
-
-        original_act, original_observe = plan.execution_namespace.get(
-            "act",
-        ), plan.execution_namespace.get("observe")
-        plan.execution_namespace["act"], plan.execution_namespace["observe"] = (
-            act_wrapper,
-            observe_wrapper,
-        )
-        try:
-            result = await fn(*args, **kwargs)
-        finally:
-            plan.execution_namespace["act"], plan.execution_namespace["observe"] = (
-                original_act,
-                original_observe,
-            )
+        result = await fn(*args, **kwargs)
 
         all_interactions = [
             item for sublist in plan.interaction_stack for item in sublist
@@ -1402,6 +1349,12 @@ class HierarchicalPlanner(BasePlanner):
         last_error = ""
         for attempt in range(max_retries):
             try:
+                coms_tools = {
+                    name: func
+                    for name, func in inspect.getmembers(self.coms_manager)
+                    if not name.startswith("_") and inspect.isfunction(func)
+                }
+
                 if self.function_manager:
                     try:
                         relevant_functions = (
@@ -1419,16 +1372,18 @@ class HierarchicalPlanner(BasePlanner):
                 else:
                     existing_functions = {}
 
-                prompt = self._build_initial_plan_prompt(
-                    goal,
-                    existing_functions,
-                    (
+                prompt = build_initial_plan_prompt(
+                    goal=goal,
+                    tools=coms_tools,
+                    existing_functions=existing_functions,
+                    retry_msg=(
                         ""
                         if attempt == 0
                         else f"Last attempt failed: {last_error}. Please fix."
                     ),
-                    exploration_summary,
+                    exploration_summary=exploration_summary,
                 )
+
                 response = await llm_call(self.plan_generation_client, prompt)
                 code = (
                     response.strip().replace("```python", "").replace("```", "").strip()
@@ -1448,142 +1403,6 @@ class HierarchicalPlanner(BasePlanner):
                     raise
         raise RuntimeError("Failed to generate a valid plan after multiple retries.")
 
-    def _build_initial_plan_prompt(
-        self,
-        goal: str,
-        existing_functions: dict,
-        retry_msg: str,
-        exploration_summary: str | None,
-    ) -> str:
-        """
-        Builds the system prompt for generating an initial plan.
-
-        Args:
-            goal: The user's goal.
-            existing_functions: A dictionary of reusable functions from the library.
-            retry_msg: A message to include if a previous attempt failed.
-            exploration_summary: Context from the exploration phase.
-
-        Returns:
-            The complete prompt string.
-        """
-        primitives_doc = (
-            "- `await act(instruction: str)`: Executes a high-level action in the browser (e.g., 'click the login button', 'type 'hello' into the search bar').\n"
-            "- `await observe(query: str)`: Asks a question about the current browser state (e.g., 'what is the text of the main heading?', 'are there any error messages?')."
-        )
-        existing_functions_doc = (
-            "\n".join(
-                f'- `{name}{data["argspec"]}`: {data["docstring"]}'
-                for name, data in existing_functions.items()
-            )
-            or "None."
-        )
-        full_existing_code = "\n\n".join(
-            data["implementation"] for data in existing_functions.values()
-        )
-
-        exploration_context = (
-            f"**Context from Initial Exploration:**\n{exploration_summary}"
-            if exploration_summary
-            else ""
-        )
-        return textwrap.dedent(
-            f"""
-        You are an expert Python programmer tasked with generating a complete, single-file script to achieve a user's goal in a web browser.
-
-        **Primary Goal:** "{goal}"
-        {exploration_context}
-        {retry_msg}
-
-        ---
-        ### Instructions & Rules
-        1.  **Single Code Block:** Your entire response MUST be a single, valid Python code block. Do NOT include any preamble, explanations, or markdown fences.
-        2.  **Entry Point:** The main entry point for the script MUST be a function named `async def main_plan()`.
-        3.  **Docstrings Required:** Each function you define MUST include a concise one-line docstring explaining its purpose.
-        4.  **Required Decorator:** All functions you define MUST be `async def` and MUST be decorated with `@verify`. You MUST NOT define this @verify decorator yourself as it is already defined in the execution environment.
-        5.  **No Imports:** You MUST NOT use any `import` statements. The execution environment is sandboxed.
-        6.  **Asynchronous Calls:** You MUST use the `await` keyword before any call to an `async def` function, including the primitives (`act`, `observe`) and any helper functions you define.
-        7.  **Decomposition:** Break down complex problems into smaller, logical helper functions. If a suitable function exists in the library, use it. If not, you may define it, or if its implementation is not immediately obvious, you may leave it as a stub (e.g., `raise NotImplementedError`).
-        8.  **Final Output:** The `main_plan` function MUST return the final answer as a string. It MUST NOT use `print()` for the final output.
-
-        ---
-        ### Primitives Reference
-        You have ONLY TWO primitive tools for browser interaction:
-        {primitives_doc}
-        Primitive Signatures: The act and observe primitives each take only one string argument (e.g., await act("click the login button")). You MUST NOT pass dictionaries or multiple arguments.
-
-        ---
-        ### Existing Functions Library
-        You have access to the following pre-existing functions. You should use them if they help achieve the goal.
-        {existing_functions_doc}
-
-        ---
-        ### Code of Available Functions
-        ```python
-        {full_existing_code or "# No pre-existing functions were provided."}
-        ```
-
-        Begin your response now. Your response must start immediately with the code.
-        """,
-        )
-
-    def _build_dynamic_implement_prompt(
-        self,
-        plan: HierarchicalPlan,
-        function_name: str,
-        browser_state: str,
-        **kwargs,
-    ) -> str:
-        """
-        Builds the system prompt for dynamically implementing a function.
-
-        Args:
-            plan: The active plan instance.
-            function_name: The name of the function to implement.
-            browser_state: A description of the current browser state.
-            **kwargs: Additional context, like a replan reason.
-
-        Returns:
-            The complete prompt string.
-        """
-        replan_context = (
-            f"**REPLANNING NOTE:** The previous attempt failed because: '{kwargs.get('replan_reason', 'No reason provided.')}'. Please devise a new and improved strategy."
-            if kwargs.get("is_strategic_replan")
-            else ""
-        )
-        func_sig = inspect.signature(plan.execution_namespace[function_name])
-        parent_code = (
-            plan.function_source_map.get(plan.call_stack[-2], "")
-            if len(plan.call_stack) > 1
-            else "N/A (This is a top-level function call)"
-        )
-
-        return textwrap.dedent(
-            f"""
-            You are an expert Python programmer. Your task is to write the implementation for the function `{function_name}`.
-
-            **Overall Goal:** "{plan.goal}"
-            **Function to Implement:** `async def {function_name}{func_sig}`
-            **Parent Function (for context):**
-            ```python
-            {parent_code}
-            ```
-            **Current Browser State:**
-            {browser_state}
-
-            {replan_context}
-
-            ---
-            ### Instructions & Rules
-            1.  **Code Only:** Your output MUST be ONLY the Python code for the function, starting with the `@verify` decorator and the function definition. Do not include explanations or markdown.
-            2.  **Add a Docstring:** The function implementation MUST include a concise one-line docstring explaining its purpose.
-            3.  **Primitives Only:** For browser interaction, use ONLY `await act(...)` and `await observe(...)`. Primitive Signatures: The act and observe primitives each take only one string argument (e.g., await act("click the login button")). You MUST NOT pass dictionaries or multiple arguments.
-            4.  **No Imports:** `import` statements are forbidden.
-
-            Begin your response now.
-            """,
-        )
-
     async def _dynamic_implement(
         self,
         plan: HierarchicalPlan,
@@ -1601,14 +1420,30 @@ class HierarchicalPlanner(BasePlanner):
         Returns:
             The sanitized source code for the new function implementation.
         """
-        browser_state = await self.controller.observe(
-            "Describe current page for context.",
+        async with self.coms_manager.start_browser_session() as browser_handle:
+            browser_state = await browser_handle.observe(
+                "Describe current page for context.",
+            )
+
+        replan_context = (
+            f"**REPLANNING NOTE:** The previous attempt failed because: '{kwargs.get('replan_reason', 'No reason provided.')}'. Please devise a new and improved strategy."
+            if kwargs.get("is_strategic_replan")
+            else ""
         )
-        prompt = self._build_dynamic_implement_prompt(
-            plan,
-            function_name,
-            browser_state,
-            **kwargs,
+        func_sig = inspect.signature(plan.execution_namespace[function_name])
+        parent_code = (
+            plan.function_source_map.get(plan.call_stack[-2], "")
+            if len(plan.call_stack) > 1
+            else "N/A (This is a top-level function call)"
+        )
+
+        prompt = build_dynamic_implement_prompt(
+            function_name=function_name,
+            func_sig=func_sig,
+            goal=plan.goal,
+            parent_code=parent_code,
+            browser_state=browser_state,
+            replan_context=replan_context,
         )
         code = await llm_call(self.implementation_client, prompt)
 
@@ -1625,148 +1460,6 @@ class HierarchicalPlanner(BasePlanner):
                 f"Syntax error implementing '{function_name}'. Reason: {e}\nProblematic Code:\n---\n{code}\n---",
             )
             raise
-
-    def _build_verification_prompt(
-        self,
-        plan: HierarchicalPlan,
-        function_name: str,
-        function_docstring: str | None,
-        interactions: list,
-    ) -> str:
-        """
-        Builds the prompt for verifying a function's execution.
-
-        Args:
-            plan: The active plan instance.
-            function_name: The name of the function being verified.
-            function_docstring: The docstring of the function.
-            interactions: A log of `act` and `observe` calls made.
-
-        Returns:
-            The complete prompt string for the verification LLM call.
-        """
-        interactions_log = (
-            "\n".join(
-                (
-                    f"- Action: `{act}`, Observation: `{obs or 'N/A'}`"
-                    if kind == "observe"
-                    else f"- Action: `{act}`"
-                )
-                for kind, act, obs in interactions
-            )
-            or "No browser actions were recorded."
-        )
-
-        return textwrap.dedent(
-            f"""
-        You are a meticulous verification agent. Your task is to assess if the executed actions successfully achieved the function's intended purpose, in the context of the overall goal.
-
-        **Overall User Goal:** "{plan.goal}"
-        **Function Under Review:** `{function_name}`
-        **Purpose of this function:** {function_docstring or 'No docstring provided.'}
-
-        **Execution Log (Primitives Used):**
-        {interactions_log}
-
-        ---
-        ### Assessment Task
-        Based on the function's purpose and the execution log, provide your assessment as a single JSON object.
-        - **Be pragmatic:** If the function's purpose is to gather data (like search results), and the log shows that the data was successfully retrieved, this should be considered a success (`ok`). The function does not need to perform extra analysis unless explicitly asked.
-        - **Consider the overall goal:** If a function's individual purpose is unclear but its actions logically progress toward the overall user goal, you should also consider it a success (`ok`).
-
-        **Response Schema:**
-        `{{"status": "...", "reason": "..."}}`
-
-        **Valid Statuses:**
-        - `ok`: The function's purpose was fully and correctly achieved.
-        - `reimplement_local`: A tactical error occurred. The goal is correct, but the actions were wrong. The function needs to be re-written.
-        - `replan_parent`: A strategic error occurred. The function itself is flawed or was called at the wrong time. The parent function needs to be replanned.
-        - `fatal_error`: An unrecoverable error occurred that prevents any further progress.
-        """,
-        )
-
-    def _build_plan_surgery_prompt(self, current_code: str, request: str) -> str:
-        """
-        Builds the prompt for modifying an existing plan script.
-
-        Args:
-            current_code: The current source code of the plan.
-            request: The user's modification request.
-
-        Returns:
-            The complete prompt string.
-        """
-        return textwrap.dedent(
-            f"""
-            You are an expert Python programmer specializing in code modification. Your task is to rewrite an entire script to incorporate a user's change request.
-
-            **Modification Request:**
-            "{request}"
-
-            ---
-            ### Current Script
-            ```python
-            {current_code}
-            ```
-
-            ---
-            ### Instructions & Rules
-            1.  **Rewrite the Whole Script:** You must return a new, complete, and valid Python script that incorporates the requested change.
-            2.  **Code Only:** Your response MUST be a single Python code block. Do NOT include any preamble, explanations, or markdown fences.
-            3.  **Preserve Docstrings:** All functions should have a concise one-line docstring explaining their purpose.
-            4.  **Preserve Decorators:** All `async def` functions MUST retain their `@verify` decorator.
-            5.  **No Imports:** You MUST NOT use any `import` statements.
-
-            Begin your response now. Your response must start immediately with the code.
-            """,
-        )
-
-    def _build_course_correction_prompt(
-        self,
-        old_code: str,
-        new_code: str,
-        current_state: str,
-    ) -> str:
-        """
-        Builds the prompt to generate a course-correction script.
-
-        Args:
-            old_code: The previous version of the plan's code.
-            new_code: The new version of the plan's code.
-            current_state: A description of the current browser state.
-
-        Returns:
-            The complete prompt string.
-        """
-        return textwrap.dedent(
-            f"""
-            You are a state transition analyst. An agent's plan has been modified, and you must determine if its current state is compatible with the new plan. If not, you must generate a Python script to fix it.
-
-            ---
-            ### Context
-            **Current Browser State:**
-            {current_state}
-
-            **Old Plan Snippet (for context):**
-            ```python
-            {old_code[:1000]}...
-            ```
-
-            **New Plan Code:**
-            ```python
-            {new_code}
-            ```
-
-            ---
-            ### Task
-            1.  Analyze if the **Current Browser State** is a suitable starting point for executing the **New Plan Code**.
-            2.  If it is NOT suitable, write a script containing an `async def course_correction_main()` function. This script must use `await act(...)` and `await observe(...)` to navigate to the correct starting state for the new plan. The script must be a single code block.
-            3.  If the current state is already suitable, respond ONLY with the single word: `None`.
-            4.  **CRITICAL**: The script MUST NOT use any `import` statements.
-
-            Begin your response now.
-            """,
-        )
 
     async def _check_state_against_goal(
         self,
@@ -1787,11 +1480,11 @@ class HierarchicalPlanner(BasePlanner):
         Returns:
             A VerificationAssessment object with the outcome.
         """
-        prompt = self._build_verification_prompt(
-            plan,
-            function_name,
-            function_docstring,
-            interactions,
+        prompt = build_verification_prompt(
+            goal=plan.goal,
+            function_name=function_name,
+            function_docstring=function_docstring,
+            interactions=interactions,
         )
         response_str = await llm_call(self.verification_client, prompt)
         try:
@@ -1816,7 +1509,7 @@ class HierarchicalPlanner(BasePlanner):
         Returns:
             The new, sanitized source code for the plan.
         """
-        prompt = self._build_plan_surgery_prompt(current_code, request)
+        prompt = build_plan_surgery_prompt(current_code, request)
         new_code = await llm_call(self.modification_client, prompt)
         return self._sanitize_code(new_code)
 
@@ -1835,8 +1528,10 @@ class HierarchicalPlanner(BasePlanner):
         Returns:
             A sanitized Python script for course correction, or None if not needed.
         """
-        current_state = await self.controller.observe("Describe current page.")
-        prompt = self._build_course_correction_prompt(old_code, new_code, current_state)
+        async with self.coms_manager.start_browser_session() as browser_handle:
+            current_state = await browser_handle.observe("Describe current page.")
+
+        prompt = build_course_correction_prompt(old_code, new_code, current_state)
         script = await llm_call(self.modification_client, prompt)
         if "None" in script:
             return None
