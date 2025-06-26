@@ -139,29 +139,22 @@ class PhoneCallHandle(BaseActiveTask):
     A steerable handle for a simulated, long-running phone call.
 
     This handle allows the planner to interact with the "call" in real-time,
-    primarily by asking questions and receiving answers. It uses the same
-    clarification queue mechanism as the HierarchicalPlanner for interaction.
+    primarily by asking questions and receiving answers.
     """
 
     def __init__(
         self,
         contact_id: int,
         purpose: str,
-        clarification_up_q: asyncio.Queue[str],
-        clarification_down_q: asyncio.Queue[str],
     ):
         self._contact_id = contact_id
         self._purpose = purpose
-        self.clarification_up_q = clarification_up_q
-        self.clarification_down_q = clarification_down_q
 
         self._call_id = f"call_{uuid.uuid4().hex[:6]}"
         self._is_active = True
         self._is_complete = False
         self._final_result: Optional[str] = None
         self._completion_event = asyncio.Event()
-
-        # The main task that simulates the call's duration and logic.
         self._call_task = asyncio.create_task(self._simulate_call())
 
         logger.info(
@@ -190,20 +183,14 @@ class PhoneCallHandle(BaseActiveTask):
     async def ask(self, question: str) -> str:
         """
         Asks a question to the person on the other end of the call.
-
-        This uses the clarification queues to pass the question to an external
-        agent (e.g., the user or another LLM) and wait for a response.
+        In a real implementation, this would connect to a telephony service.
+        Here, we just return a static answer.
         """
         if not self._is_active:
             return "The call has already ended."
 
         logger.info(f"[{self._call_id}] Asking question: '{question}'")
-        await self.clarification_up_q.put(
-            f"[{self._call_id}] Person on call was asked: '{question}'. What did they say?",
-        )
-        answer = await self.clarification_down_q.get()
-        logger.info(f"[{self._call_id}] Received answer: '{answer}'")
-        return answer
+        return "Answer to the question"
 
     async def __aenter__(self):
         """Enter the async context manager."""
@@ -412,22 +399,16 @@ class ComsManager:
         self,
         contact_id: int,
         purpose: str,
-        *,
-        clarification_up_q: asyncio.Queue[str],
-        clarification_down_q: asyncio.Queue[str],
     ) -> PhoneCallHandle:
         """
         Initiates a 'call' and returns an interactive handle.
 
         This function doesn't need to be `async` because it returns the handle
         immediately. The handle itself manages the asynchronous call process.
-        The clarification queues are crucial for the handle's `ask` method to work.
         """
         return PhoneCallHandle(
             contact_id,
             purpose,
-            clarification_up_q,
-            clarification_down_q,
         )
 
     def start_browser_session(
