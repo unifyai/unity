@@ -4,6 +4,7 @@ from typing import Optional, List
 from .priority import Priority
 from .status import Status
 from .schedule import Schedule
+from .trigger import Trigger
 from .repetition import RepeatPattern
 from datetime import datetime
 
@@ -27,6 +28,10 @@ class Task(BaseModel):
         default=None,
         description="Information about task scheduling, including adjacent tasks in the queue and ideal start time",
     )
+    trigger: Optional[Trigger] = Field(
+        default=None,
+        description="Event definition that starts the task (mutually exclusive with *schedule*)",
+    )
     deadline: Optional[datetime] = Field(
         default=None,
         description="Due date/time for the task in ISO-8601 format",
@@ -44,6 +49,28 @@ class Task(BaseModel):
     def _inject_sentinel(cls, data: dict) -> dict:
         data.setdefault("task_id", UNASSIGNED)
         return data
+
+    @model_validator(mode="after")
+    def _mutually_exclusive_schedule_trigger(self):
+        """
+        * `schedule` **xor** `trigger` &nbsp;– never both.
+        * If `trigger` is present the status **must** be *triggerable*.
+        * Status *triggerable* **requires** a non-null trigger.
+        """
+        if self.schedule is not None and self.trigger is not None:
+            raise ValueError("A task cannot have both *schedule* and *trigger*.")
+
+        if self.trigger is not None and self.status != Status.triggerable:
+            raise ValueError(
+                "When *trigger* is set the status must be 'triggerable'.",
+            )
+
+        if self.status == Status.triggerable and self.trigger is None:
+            raise ValueError(
+                "Status 'triggerable' requires a non-null *trigger* definition.",
+            )
+
+        return self
 
     def to_post_json(self) -> dict:
         exclude = {"task_id"} if self.task_id == UNASSIGNED else {}
