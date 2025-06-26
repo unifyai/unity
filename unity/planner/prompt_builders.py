@@ -41,7 +41,8 @@ def build_initial_plan_prompt(
         The complete prompt string.
     """
     tools_doc = _get_tools_doc(tools)
-    usage_examples = textwrap.dedent("""
+    usage_examples = textwrap.dedent(
+        """
         ### Tool Usage Examples
 
         **Browser Interaction:**
@@ -66,7 +67,8 @@ def build_initial_plan_prompt(
                 response = await call.ask("Are you still available for our 2pm meeting tomorrow?")
             return response
         ```
-    """)
+    """
+    )
     existing_functions_doc = (
         "\n".join(
             f'- `{name}{data["argspec"]}`: {data["docstring"]}'
