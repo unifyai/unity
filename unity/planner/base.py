@@ -251,3 +251,105 @@ class PhoneCallHandle(BaseActiveTask):
             return {"ask": self.ask, "stop": self.stop}
         return {}
 
+
+# --------------------------------------------------------------------------- #
+# Browser Handle
+# --------------------------------------------------------------------------- #
+
+
+class BrowserSessionHandle(BaseActiveTask):
+    """
+    A steerable handle for an active browser session.
+
+    This encapsulates the browser controller, exposing `act` and `observe`
+    as methods on the handle. This aligns browser interaction with the
+    handle-based pattern used for other complex tools like `make_call`.
+    """
+
+    def __init__(
+        self,
+        controller: Controller,
+        interactions_log: Optional[List[Tuple[str, str, Optional[str]]]] = None,
+    ):
+        self.controller = controller
+        self._is_active = True
+        self._is_complete = False
+        self._completion_event = asyncio.Event()
+        self.session_id = f"browser_{uuid.uuid4().hex[:6]}"
+        self.interactions_log = interactions_log
+        logger.info(f"[{self.session_id}] Browser session handle created.")
+
+    async def __aenter__(self):
+        """Enter the async context manager."""
+        return self
+
+    async def __aexit__(self, exc_type, exc_val, exc_tb):
+        """Exit the async context manager, ensuring the handle is stopped."""
+        await self.stop()
+
+    # --- Public API for the Planner ---
+
+    async def act(self, instruction: str) -> str:
+        """Executes a high-level action in the browser and logs the interaction."""
+        if not self._is_active:
+            return "Browser session has been closed."
+        logger.info(f"[{self.session_id}] Executing act: '{instruction}'")
+        result = await self.controller.act(instruction)
+        if self.interactions_log is not None:
+            self.interactions_log.append(("act", instruction, result))
+        return result
+
+    async def observe(self, query: str) -> str:
+        """Observes the current state of the browser and logs the interaction."""
+        if not self._is_active:
+            return "Browser session has been closed."
+        logger.info(f"[{self.session_id}] Executing observe: '{query}'")
+        result = await self.controller.observe(query)
+        if self.interactions_log is not None:
+            self.interactions_log.append(("observe", query, result))
+        return result
+
+    # --- Implementation of Abstract Steerable Methods ---
+
+    async def stop(self) -> str:
+        """Closes the browser session (handle)."""
+        if not self._is_active:
+            return "Browser session already closed."
+        logger.info(f"[{self.session_id}] Closing browser session handle.")
+        self._is_active = False
+        self._is_complete = True
+        self._completion_event.set()
+        return "Browser session handle closed."
+
+    async def result(self) -> str:
+        """Waits for the session to be stopped."""
+        await self._completion_event.wait()
+        return "Browser session ended."
+
+    def done(self) -> bool:
+        return self._is_complete
+
+    async def ask(self, question: str) -> str:
+        """For browser handles, 'ask' is just an alias for 'observe'."""
+        return await self.observe(question)
+
+    async def pause(self) -> str:
+        return "Pause is not supported for this browser handle."
+
+    async def resume(self) -> str:
+        return "Resume is not supported for this browser handle."
+
+    async def interject(self, message: str) -> str:
+        return "Interject is not supported for this browser handle."
+
+    @property
+    def valid_tools(self) -> Dict[str, Callable[..., Awaitable[Any]]]:
+        """Exposes the core browser primitives to the planner."""
+        if self._is_active:
+            return {
+                "act": self.act,
+                "observe": self.observe,
+                "stop": self.stop,
+            }
+        return {}
+
