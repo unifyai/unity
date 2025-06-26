@@ -19,7 +19,6 @@ from pydantic import BaseModel, Field
 from unity.common.llm_helpers import (
     AsyncToolUseLoopHandle,
     start_async_tool_use_loop,
-    methods_to_tool_dict,
 )
 from unity.controller.controller import Controller
 from unity.function_manager.function_manager import FunctionManager
@@ -1269,7 +1268,13 @@ class HierarchicalPlanner(BasePlanner):
             interactions: A list to log interactions within this step.
         """
         result = await fn(*args, **kwargs)
-
+        if inspect.isawaitable(result):
+            logger.warning(
+                f"Function '{fn.__name__}' returned a coroutine. "
+                f"This suggests a missing 'await' in the generated code. "
+                f"Awaiting it now to recover."
+            )
+            result = await result
         all_interactions = [
             item for sublist in plan.interaction_stack for item in sublist
         ]
@@ -1427,7 +1432,7 @@ class HierarchicalPlanner(BasePlanner):
                     ),
                     exploration_summary=exploration_summary,
                 )
-
+                logger.debug(f"Prompt for initial plan generation: {prompt}")
                 response = await llm_call(self.plan_generation_client, prompt)
                 code = (
                     response.strip().replace("```python", "").replace("```", "").strip()
@@ -1464,10 +1469,15 @@ class HierarchicalPlanner(BasePlanner):
         Returns:
             The sanitized source code for the new function implementation.
         """
-        async with self.coms_manager.start_browser_session() as browser_handle:
-            browser_state = await browser_handle.observe(
-                "Describe current page for context.",
-            )
+        func_source = plan.function_source_map.get(function_name, "")
+        is_browser_task = "coms_manager.start_browser_session" in func_source
+
+        browser_state = None
+        if is_browser_task:
+            async with self.coms_manager.start_browser_session() as browser_handle:
+                browser_state = await browser_handle.observe(
+                    "Describe current page for context.",
+                )
 
         replan_context = (
             f"**REPLANNING NOTE:** The previous attempt failed because: '{kwargs.get('replan_reason', 'No reason provided.')}'. Please devise a new and improved strategy."
@@ -1489,6 +1499,7 @@ class HierarchicalPlanner(BasePlanner):
             browser_state=browser_state,
             replan_context=replan_context,
         )
+        logger.debug(f"Prompt for dynamic implementation: {prompt}")
         code = await llm_call(self.implementation_client, prompt)
 
         try:
