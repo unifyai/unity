@@ -6,6 +6,7 @@ from typing import Dict, Any
 
 from unity.contact_manager.contact_manager import ContactManager
 from unity.contact_manager.types.contact import Contact
+from tests.helpers import _handle_project
 
 
 def _programmatic_contact_check(
@@ -39,6 +40,7 @@ def _programmatic_contact_check(
     return actual_contact
 
 
+@_handle_project
 @pytest.mark.eval
 @pytest.mark.asyncio
 async def test_update_create_new_contact(
@@ -67,6 +69,7 @@ async def test_update_create_new_contact(
     )
 
 
+@_handle_project
 @pytest.mark.eval
 @pytest.mark.asyncio
 async def test_update_existing_contact_details(
@@ -102,6 +105,7 @@ async def test_update_existing_contact_details(
     )
 
 
+@_handle_project
 @pytest.mark.eval
 @pytest.mark.asyncio
 async def test_update_with_parent_context_identification(
@@ -141,6 +145,7 @@ async def test_update_with_parent_context_identification(
     )
 
 
+@_handle_project
 @pytest.mark.eval
 @pytest.mark.asyncio
 async def test_update_with_clarification_needed(
@@ -186,6 +191,7 @@ async def test_update_with_clarification_needed(
     assert alice_smith_contacts[0].surname == "Smith"
 
 
+@_handle_project
 @pytest.mark.eval
 @pytest.mark.asyncio
 async def test_update_interjection_modification(
@@ -208,6 +214,7 @@ async def test_update_interjection_modification(
     )
 
 
+@_handle_project
 @pytest.mark.eval
 @pytest.mark.asyncio
 async def test_update_stop_operation(
@@ -232,6 +239,7 @@ async def test_update_stop_operation(
     ), "Contact should ideally not be created if stopped early."
 
 
+@_handle_project
 @pytest.mark.eval
 @pytest.mark.asyncio
 async def test_update_add_description(
