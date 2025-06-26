@@ -159,6 +159,13 @@ class _ComsManagerProxy:
     that the generated Python code uses.
     """
 
+    LOGGED_METHODS = {
+        "send_email",
+        "send_sms_message",
+        "send_whatsapp_message",
+        "make_call",
+    }
+
     def __init__(self, real_coms_manager: ComsManager, plan: "HierarchicalPlan"):
         self._real_coms_manager = real_coms_manager
         self._plan = plan
@@ -181,10 +188,43 @@ class _ComsManagerProxy:
 
     def __getattr__(self, name: str) -> Any:
         """
-        Forwards all other attribute access to the real ComsManager.
-        This makes the proxy transparent for all other methods like `send_email`, etc.
+        Forwards attribute access to the real ComsManager, wrapping specific
+        methods to inject interaction logging.
         """
-        return getattr(self._real_coms_manager, name)
+        real_attr = getattr(self._real_coms_manager, name)
+
+        if name not in self.LOGGED_METHODS or not callable(real_attr):
+            return real_attr
+
+        @functools.wraps(real_attr)
+        def wrapper(*args, **kwargs):
+            async def do_log_and_call():
+                result = await real_attr(*args, **kwargs)
+
+                if self._plan.interaction_stack:
+                    log_list = self._plan.interaction_stack[-1]
+                    arg_str = ", ".join(map(repr, args))
+                    kwarg_str = ", ".join(f"{k}={v!r}" for k, v in kwargs.items())
+                    call_repr = f"coms_manager.{name}({arg_str}, {kwarg_str})"
+
+                    log_list.append(("tool_call", call_repr, str(result)))
+                return result
+
+            if inspect.iscoroutinefunction(real_attr):
+                return do_log_and_call()
+            else:
+                if name in self.LOGGED_METHODS and self._plan.interaction_stack:
+                    kwargs["interactions_log"] = self._plan.interaction_stack[-1]
+                result = real_attr(*args, **kwargs)
+                if self._plan.interaction_stack and name in self.LOGGED_METHODS:
+                    log_list = self._plan.interaction_stack[-1]
+                    arg_str = ", ".join(map(repr, args))
+                    kwarg_str = ", ".join(f"{k}={v!r}" for k, v in kwargs.items())
+                    call_repr = f"coms_manager.{name}({arg_str}, {kwarg_str})"
+                    log_list.append(("tool_call", call_repr, str(result)))
+                return result
+
+        return wrapper
 
 
 class HierarchicalPlan(BaseActiveTask):
