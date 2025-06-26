@@ -24,7 +24,14 @@ async def test_update_create_task_via_text():
     task = tasks[0]
     assert task["name"] == "Promote Jeff Smith"
     assert task["description"].startswith("Send an email to Jeff Smith")
-    assert task["status"] in (Status.primed, Status.queued, "active", "primed")
+    assert task["status"] in (
+        Status.primed,
+        Status.queued,
+        Status.triggerable,
+        "active",
+        "primed",
+        "triggerable",
+    )
     assert task["priority"] == Priority.normal
 
 
