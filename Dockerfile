@@ -9,7 +9,7 @@ RUN apt-get update && apt-get install -y \
 # Set working directory
 WORKDIR /app
 
-# Install system dependencies including tini
+# Install system dependencies including tini and redis
 RUN apt-get update && apt-get install -y \
     gcc \
     g++ \
@@ -18,6 +18,7 @@ RUN apt-get update && apt-get install -y \
     pkg-config \
     tini \
     git \
+    redis-server \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy requirements file
@@ -28,6 +29,10 @@ RUN pip install --no-cache-dir torch torchvision torchaudio --index-url https://
 
 # Install Python dependencies
 RUN pip install --no-cache-dir -r requirements.txt
+
+# Copy startup script first
+COPY start.sh /app/start.sh
+RUN chmod +x /app/start.sh
 
 # Copy all application files
 COPY . .
@@ -48,10 +53,10 @@ ENV MKL_NUM_THREADS=1
 ENV TOKENIZERS_PARALLELISM=false
 
 # Expose the ports that the applications use
-EXPOSE 8000
+EXPOSE 8000 6379
 
 # Use Tini as init system to handle signals properly
 ENTRYPOINT ["/usr/bin/tini", "--"]
 
-# Use Uvicorn for production ASGI server
-CMD ["uvicorn", "wrapper_app:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "1"]
+# Use the startup script
+CMD ["/app/start.sh"]
