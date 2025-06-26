@@ -7,6 +7,7 @@ class Status(StrEnum):
     paused = "paused"
     primed = "primed"
     active = "active"
+    triggerable = "triggerable"
     completed = "completed"
     cancelled = "cancelled"
     failed = "failed"

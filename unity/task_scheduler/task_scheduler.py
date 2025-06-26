@@ -15,6 +15,7 @@ from ..common.tool_outcome import ToolOutcome
 from .types.status import Status
 from .types.priority import Priority
 from .types.schedule import Schedule
+from .types.trigger import Trigger
 from .types.repetition import RepeatPattern
 from .types.task import Task
 from ..common.model_to_fields import model_to_fields
@@ -74,6 +75,7 @@ class TaskScheduler(BaseTaskScheduler):
                 self._update_task_deadline,
                 self._update_task_repetition,
                 self._update_task_priority,
+                self._update_task_trigger,
                 include_class_name=False,  # redundant, all same class (this one)
             ),
         }
@@ -295,6 +297,7 @@ class TaskScheduler(BaseTaskScheduler):
         *,
         status: Status | str,
         schedule: Optional[Union[Schedule, Dict[str, Any]]],
+        trigger: Optional[Union["Trigger", Dict[str, Any]]] = None,
         err_prefix: str = "Invalid task state:",
     ) -> None:
         """
@@ -314,6 +317,10 @@ class TaskScheduler(BaseTaskScheduler):
         ValueError
             If the rule is violated.
         """
+        # ── Trigger-based tasks are **not** subject to the schedule rules ──
+        if trigger is not None:
+            return
+
         # normalise
         status = Status(status)
 
@@ -402,6 +409,7 @@ class TaskScheduler(BaseTaskScheduler):
         description: str,
         status: Optional[Status] = None,
         schedule: Optional[Union[Schedule, Dict[str, Any]]] = None,
+        trigger: Optional[Union[Trigger, Dict[str, Any]]] = None,
         deadline: Optional[str] = None,
         repeat: Optional[List[Union[RepeatPattern, Dict[str, Any]]]] = None,
         priority: Priority = Priority.normal,
@@ -471,12 +479,19 @@ class TaskScheduler(BaseTaskScheduler):
         if schedule is not None and isinstance(schedule, dict):
             schedule = Schedule(**schedule)
 
-        # Convert repeat dicts to RepeatPattern models if needed
+        # Convert trigger / repeat dicts to strong models if needed
+        if trigger is not None and isinstance(trigger, dict):
+            trigger = Trigger(**trigger)
+
         if repeat is not None:
             repeat = [RepeatPattern(**r) if isinstance(r, dict) else r for r in repeat]
 
+        #  Trigger / schedule exclusivity
+        if schedule is not None and trigger is not None:
+            raise ValueError("`schedule` and `trigger` are mutually exclusive.")
+
         # figure out if schedule is "future"
-        future_start = False
+        future_start = False  # ← only meaningful for *schedule*-tasks
         if schedule and schedule.start_at:
             future_start = _parse_maybe_iso(schedule.start_at) > datetime.now(
                 timezone.utc,
@@ -486,7 +501,16 @@ class TaskScheduler(BaseTaskScheduler):
         # and that task is not terminal, we NEVER mark the newcomer as *primed*.
         prev_ptr = self._sched_prev(schedule)
 
-        if status is None:
+        if trigger is not None:
+            # --------  event-driven task  -------- #
+            if status is None:
+                status = Status.triggerable
+            elif Status(status) != Status.triggerable:
+                raise ValueError(
+                    "Tasks with a *trigger* must start in the 'triggerable' state.",
+                )
+
+        elif status is None:
             if prev_ptr is not None:
                 # Already queued behind another runnable task → never primed
                 status = Status.scheduled if future_start else Status.queued
@@ -503,6 +527,7 @@ class TaskScheduler(BaseTaskScheduler):
         self._validate_scheduled_invariants(
             status=status,
             schedule=schedule,
+            trigger=trigger,
             err_prefix="While creating a task:",
         )
 
@@ -529,6 +554,7 @@ class TaskScheduler(BaseTaskScheduler):
             description=description,
             status=status,
             schedule=schedule,
+            trigger=trigger,
             deadline=deadline,
             repeat=repeat,
             priority=priority,
@@ -890,6 +916,12 @@ class TaskScheduler(BaseTaskScheduler):
         ), f"update cannot remove existing tasks; cancel them first. Missing tasks: {set(original) - set(new)}"
 
         # -------  gather existing logs  -------
+        for tid in new:
+            row = self._search_tasks(filter=f"task_id == {tid}", limit=1)[0]
+            if row.get("trigger") is not None:
+                raise ValueError(
+                    f"Task {tid} is trigger-based and cannot be placed in the queue.",
+                )
         # Collect every task that already has a schedule entry – we need its
         # linkage pointers *and* any existing start_at value.
         existing_logs = {
@@ -1000,6 +1032,60 @@ class TaskScheduler(BaseTaskScheduler):
         return {
             "outcome": "queue reordered",
             "details": {"new_order": new},
+        }
+
+    def _update_task_trigger(
+        self,
+        *,
+        task_id: int,
+        new_trigger: Optional[Union[Trigger, Dict[str, Any]]],
+    ) -> ToolOutcome:
+        """
+        Set, replace **or clear** a task's *trigger*.
+
+        • Disallowed when the task already has a *schedule*.<br>
+        • When a *trigger* is introduced the status becomes **triggerable**.<br>
+        • When a *trigger* is removed and the task was *triggerable* it falls
+          back to **queued** (idle, waiting for manual start or queue insert).
+        """
+
+        self._ensure_not_active_task(task_id)
+
+        current_rows = self._search_tasks(filter=f"task_id == {task_id}", limit=1)
+        if not current_rows:
+            raise ValueError(f"No task found with id={task_id}")
+
+        current = current_rows[0]
+
+        if current.get("schedule") is not None and new_trigger is not None:
+            raise ValueError(
+                "Cannot add a *trigger* while a *schedule* exists. "
+                "Remove the schedule first.",
+            )
+
+        if isinstance(new_trigger, dict):
+            new_trigger = Trigger(**new_trigger)
+
+        entries: Dict[str, Any] = {"trigger": new_trigger}
+
+        # ── status transitions ───────────────────────────────────────────
+        cur_status = Status(current["status"])
+        if new_trigger is not None and cur_status != Status.triggerable:
+            entries["status"] = Status.triggerable
+        elif new_trigger is None and cur_status == Status.triggerable:
+            entries["status"] = Status.queued
+
+        log_id = self._get_logs_by_task_ids(task_ids=task_id)
+        unify.update_logs(
+            logs=log_id,
+            context=self._ctx,
+            entries=entries,
+            overwrite=True,
+        )
+
+        return {
+            "outcome": "trigger updated",
+            "details": {"task_id": task_id},
         }
 
     # Update Name / Description
@@ -1176,8 +1262,13 @@ class TaskScheduler(BaseTaskScheduler):
         if isinstance(new_start_at, datetime):
             new_start_at = new_start_at.isoformat()
 
-        # Fetch the current task row to preserve linkage information if present
+        # Fetch current row (needed for invariants & trigger check)
         current_rows = self._search_tasks(filter=f"task_id == {task_id}", limit=1)
+
+        if current_rows and current_rows[0].get("trigger") is not None:
+            raise ValueError(
+                "Cannot add/update *start_at* – the task is trigger-based.",
+            )
         current_sched = current_rows[0].get("schedule") if current_rows else None
 
         # Guard-rail: tasks inside a queue can't own a start_at
