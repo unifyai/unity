@@ -1,8 +1,8 @@
 import asyncio
 import json
-import os
 import time
 from typing import Optional
+import unify
 
 # Configuration
 EVENT_SERVER_HOST = "127.0.0.1"
@@ -28,7 +28,7 @@ async def _ensure_connection():
             _writer.write(
                 (
                     json.dumps({"topic": "ping", "to": "past", "event": {}}) + "\n"
-                ).encode()
+                ).encode(),
             )
             await _writer.drain()
             return
@@ -49,11 +49,12 @@ async def _ensure_connection():
     for attempt in range(MAX_RETRIES):
         try:
             _reader, _writer = await asyncio.open_connection(
-                EVENT_SERVER_HOST, EVENT_SERVER_PORT
+                EVENT_SERVER_HOST,
+                EVENT_SERVER_PORT,
             )
             _connection_established = True
             print(
-                f"Connected to event server at {EVENT_SERVER_HOST}:{EVENT_SERVER_PORT}"
+                f"Connected to event server at {EVENT_SERVER_HOST}:{EVENT_SERVER_PORT}",
             )
             return
         except Exception as e:
@@ -62,7 +63,7 @@ async def _ensure_connection():
                 await asyncio.sleep(RETRY_DELAY * (attempt + 1))  # Exponential backoff
             else:
                 print(
-                    f"Failed to connect to event server at {EVENT_SERVER_HOST}:{EVENT_SERVER_PORT} after {MAX_RETRIES} attempts"
+                    f"Failed to connect to event server at {EVENT_SERVER_HOST}:{EVENT_SERVER_PORT} after {MAX_RETRIES} attempts",
                 )
                 raise
 
@@ -133,3 +134,24 @@ async def test_connection():
     except Exception as e:
         print(f"Connection test failed: {e}")
         return False
+
+
+def get_contact_details(contact_id: int) -> str:
+    ctxs = unify.get_active_context()
+    read_ctx, write_ctx = ctxs["read"], ctxs["write"]
+    assert (
+        read_ctx == write_ctx
+    ), "read and write contexts must be the same when instantiating a TranscriptManager."
+    if read_ctx:
+        _ctx = f"{read_ctx}/Contacts"
+    else:
+        _ctx = "Contacts"
+
+    logs = unify.get_logs(
+        context=_ctx,
+        filter=f"contact_id == {contact_id}",
+        exclude_fields=[
+            k for k in unify.get_fields(context=_ctx).keys() if k.endswith("_emb")
+        ],
+    )
+    return logs[0].entries
