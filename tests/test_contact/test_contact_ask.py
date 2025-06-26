@@ -10,6 +10,7 @@ import unify
 from unity.contact_manager.contact_manager import ContactManager
 from unity.contact_manager.types.contact import Contact
 from tests.assertion_helpers import assertion_failed
+from tests.helpers import _handle_project
 
 
 def _llm_judge_contact_retrieval(
@@ -87,6 +88,7 @@ QUESTIONS_CONTACT_ASK = [
 ]
 
 
+@_handle_project
 @pytest.mark.eval
 @pytest.mark.asyncio
 @pytest.mark.parametrize("question, expected_fragment", QUESTIONS_CONTACT_ASK)
@@ -113,6 +115,7 @@ async def test_ask_semantic_queries(
     )
 
 
+@_handle_project
 @pytest.mark.eval
 @pytest.mark.asyncio
 async def test_ask_with_parent_context(
@@ -147,6 +150,7 @@ async def test_ask_with_parent_context(
     assert "alice.wonder@example.com" not in candidate_answer.lower()
 
 
+@_handle_project
 @pytest.mark.eval
 @pytest.mark.asyncio
 async def test_ask_with_clarification(
@@ -188,6 +192,7 @@ async def test_ask_with_clarification(
     assert "1112223333" not in candidate_answer  # Phone of Alice Smith
 
 
+@_handle_project
 @pytest.mark.eval
 @pytest.mark.asyncio
 async def test_ask_interjection(
@@ -223,6 +228,7 @@ async def test_ask_interjection(
     )
 
 
+@_handle_project
 @pytest.mark.eval
 @pytest.mark.asyncio
 async def test_ask_stop_operation(
