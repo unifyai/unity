@@ -173,6 +173,27 @@ class PhoneCallInitiatedEvent(Event):
         return f"[Phone Call Initiated... @ {self.fmt_timestamp}]"
 
 
+class PhoneCallInitiatedCustomEvent(Event):
+    def __init__(self, contact_id: int, purpose: str, **kwargs):
+        kwargs.pop("content", None)
+        kwargs.pop("purpose", None)
+        kwargs.pop("contact_id", None)
+
+        self.contact_id = contact_id
+        self.purpose = purpose
+        super().__init__(**kwargs)
+
+    def to_dict(self) -> dict[str, Any]:
+        base_dict = super().to_dict()
+        base_dict["payload"].update(
+            {"contact_id": self.contact_id, "purpose": self.purpose},
+        )
+        return base_dict
+
+    def __str__(self):
+        return f"[Phone Call Initiated to ID {self.contact_id} for {self.purpose}... @ {self.fmt_timestamp}]"
+
+
 class PhoneCallEndedEvent(Event):
     def __str__(self):
         return f"[Phone Call Ended @ {self.fmt_timestamp}]"
@@ -214,7 +235,7 @@ class ConductorStartedEvent(Event):
     def to_dict(self) -> dict[str, Any]:
         base_dict = super().to_dict()
         base_dict["payload"].update(
-            {"chat_history": self.chat_history, "query": self.query}
+            {"chat_history": self.chat_history, "query": self.query},
         )
         return base_dict
 
@@ -233,7 +254,7 @@ class ConductorProgressEvent(Event):
         return base_dict
 
     def __str__(self):
-        return f"""[CONDUCTOR PROGRESS @ {self.fmt_timestamp}] 
+        return f"""[CONDUCTOR PROGRESS @ {self.fmt_timestamp}]
         {json.dumps(self.payload)}"""
 
 
