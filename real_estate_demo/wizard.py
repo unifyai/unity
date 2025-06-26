@@ -15,11 +15,12 @@ class EndSession(BaseModel):
 
 
 class InputField:
-    def __init__(self, id: str, label: str=None, value=None):
+    def __init__(self, id: str, label: str=None, value=None, required: bool = True):
         self.id = id
         self.label = label if label is not None else self.id
         self.original_value = value.copy() if value is not None else None
         self.value = value
+        self.required = required
     
     def set_value(self, value):
         self.value = value
@@ -31,12 +32,13 @@ class InputField:
 
 
 class RadioField:
-    def __init__(self, id: str, label: str, options: list[str], value=None):
+    def __init__(self, id: str, label: str, options: list[str], value=None, required: bool=True):
         self.id = id
         self.label = label
         self.options = options
         self.original_value = value.copy() if value is not None else None
         self.value = value
+        self.required = required
     
     def set_value(self, value):
         self.value = value
@@ -48,12 +50,13 @@ class RadioField:
 {str_options}""").strip()
     
 class CheckBoxField:
-    def __init__(self, id: str, label: str, options: list[str], value=None):
+    def __init__(self, id: str, label: str, options: list[str], value=None, required: bool=True):
         self.id = id
         self.label = label
         self.options = options
         self.original_value = value.copy() if value is not None else None
         self.value = value
+        self.required = required
     
     def set_value(self, value):
         self.value = value
@@ -95,8 +98,8 @@ class Node:
             self.is_terminal = True
         else:
             self.next = next
-
-        self.is_submitted = False
+        
+        self.can_advance = all([self.data.get(f.id) is not None for f in self.fields if f.required])
 
     def set_up_action_model(self):
         # dynamically create the pydantic model representing 
@@ -113,7 +116,7 @@ class Node:
                     pascal_action_name,
                     value=(str, Field(..., description="value to input"))
                 )
-                description = f"Fills input field '{field.label}' and reflects it to the agent script UI"
+                description = f"Fills input field '{field.label}' and reflects it to the agent script UI." + (f" Current value is `{self.data.get(field.id)}`" if self.data.get(field.id) is not None else "")
                 
             elif isinstance(field, RadioField):
                 pascal_action_name = f'Select{"".join([w.title() for w in field.label.split(" ")])}'
@@ -124,7 +127,7 @@ class Node:
                     pascal_action_name,
                     value=(Literal[*field.options], Field(..., description="option to select"))
                 )
-                description = f"Selects an option for radio field '{field.label}' and reflects it to the agent script UI"
+                description = f"Selects an option for radio field '{field.label}' and reflects it to the agent script UI." + (f" Current value is `{self.data.get(field.id)}`" if self.data.get(field.id) is not None else "")
             
             elif isinstance(field, CheckBoxField):
                 pascal_action_name = f'Check{"".join([w.title() for w in field.label.split(" ")])}'
@@ -135,26 +138,31 @@ class Node:
                     pascal_action_name,
                     value=(list[Literal[*field.options]], Field(..., description="options to check"))
                 )
-                description = f"Checks options for checkbox field '{field.label}' and reflects it to the agent script UI"
+                description = f"Checks options for checkbox field '{field.label}' and reflects it to the agent script UI." +  (f" Current value is `{self.data.get(field.id)}`" if self.data.get(field.id) is not None else "")
 
             self.action_to_field[field_action_model] = field.id
-            fields_action_models.append((snake_case_action_name, field, field_action_model))
+            fields_action_models.append((snake_case_action_name, description, field_action_model))
         # fields_action_models.append(Next)
         
         self.action_model = create_model(
             "ActionModel",
-            **{k:(Optional[v], Field(default=None, description=description)) for k, f, v in fields_action_models}
+            **{k:(Optional[v], Field(default=None, description=d)) for k, d, v in fields_action_models}
         )
+        
     
     def play_actions(self, action: BaseModel):
         for k, v in action:
             if v is not None:
-                if isinstance(v, GoNext):
-                    self.is_submitted = True
-                else:
-                    action_cls = v.__class__
-                    field_id = self.action_to_field[action_cls]
-                    self.data[field_id] = v.value
+                action_cls = v.__class__
+                field_id = self.action_to_field[action_cls]
+                self.data[field_id] = v.value
+                break
+        self.can_advance = all([self.data.get(f.id) is not None for f in self.fields if f.required])
+        
+        # refresh action model after each action taken
+        self.set_up_action_model()
+        print("can advance", self.can_advance)
+        
 
 
     def render(self, ctx={}):
@@ -176,7 +184,7 @@ Instructions: {self.instructions.format(**ctx)}
         for field in self.fields:
             field.set_value(field.original_value)
             self.data[field.id] = field.value
-        self.is_submitted = False
+        self.can_advance = all([self.data.get(f.id) is not None for f in self.fields if f.required])
         # action model dict
         self.action_to_field = {}
         self.set_up_action_model()
@@ -204,25 +212,24 @@ class Flow:
                 if isinstance(a, GoBack):
                     self.path.pop()
                     self.current_node = self.path[-1]
-                    self.current_node.is_submitted = False
-                    print(self.current_node.title)
                     return
+                elif isinstance(a, GoNext):
+                    if self.current_node.can_advance:
+                        next_screen_id = self.current_node.next(self.ctx)
+                        # print(next_screen_id)
+                        self.current_node = list(filter(lambda s: s.id==next_screen_id, self.screens))[0]
+                        self.ctx |= self.current_node.data
+                        self.path.append(self.current_node)
+                        return
                 elif isinstance(a, EndSession):
                     self.flow_done = True
                     return
+                else:
+                    self.current_node.play_actions(action)
+                    # update ctx
+                    self.ctx |= self.current_node.data
+                    return
         
-        self.current_node.play_actions(action)
-        # update ctx
-        self.ctx |= self.current_node.data
-
-        # check if the current screen has been submitted
-        if self.current_node.is_submitted:
-            next_screen_id = self.current_node.next(self.ctx)
-            # print(next_screen_id)
-            self.current_node = list(filter(lambda s: s.id==next_screen_id, self.screens))[0]
-            self.ctx |= self.current_node.data
-            self.path.append(self.current_node)
-    
     def current_action_model(self) -> BaseModel:
         # we should check if node is terminal (or has no begning) or not actually
         # before adding both Next and Back
@@ -231,7 +238,7 @@ class Flow:
         GoToNode = ...
         if self.current_node != self.root_node:
             extra_actions.append(("go_back", "go to previous node", GoBack))
-        if not self.current_node.is_terminal:
+        if not self.current_node.is_terminal and self.current_node.can_advance:
             extra_actions.append(("go_next", "advance to the next node", GoNext))
         if self.current_node.is_terminal:
             extra_actions.append(("end_session", 

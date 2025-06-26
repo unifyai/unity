@@ -163,6 +163,7 @@ fields=[
     InputField(
         "additional_notes",
         "Additional Notes by Tenant",
+        required=False
     )
 ],
 next="appointment_screen"
@@ -206,11 +207,13 @@ async def call_llm(sys: str, flow: Flow, event_stream: list, model="gpt-4.1"):
     client = openai.AsyncOpenAI(api_key=os.environ["OPENAI_API_KEY"])
 
     class AgentOutput(BaseModel):
+        thoughts: str = Field(..., description="Your inner thoughts before responding or taking actions, your actions and response should be based on your thoughts")
         response: Optional[str] = Field(..., 
-                                        description="Your response to the user if, show as [Agent: ...] in the event stream")
+                                        description="Your response to the user, shown as [Assistant: ...] in the event stream, you can remain silent if simply navigating or taking mundane actions.")
         action: Optional[flow.current_action_model()] = Field(..., 
-                                        description="action to take given the current state (state = events stream and agent script UI)")
+                                        description="action to take given the current state (state = events stream and agent script), shown as [Assistant took action `action_name`: ...] in the event_stream")
     
+    # print(flow.current_action_model().model_json_schema())
     event_stream_str = "\n".join(event_stream)
     user_msg = f"<event_stream>\n{event_stream_str}\n</event_stream>\n\n<agent_script>\n{flow.render()}\n</agent_script>"
     print("\033[32m" + user_msg + "\033[0m", flush=True)
@@ -233,20 +236,22 @@ async def call_llm(sys: str, flow: Flow, event_stream: list, model="gpt-4.1"):
     agent_output = message.parsed
     print(agent_output, flush=True)
     if agent_output.response:
-        event_stream.append(f"You: {agent_output.response}")
+        event_stream.append(f"[Assistant: {agent_output.response}]")
     if agent_output.action:
         flow.play_actions(agent_output.action)
-        print(flow.current_node.title)
+        # print(flow.current_node.title)
         for label, action in agent_output.action:
             if action is not None:
-                if not isinstance(action, GoNext) and not isinstance(action, GoBack):
+                if isinstance(EndSession):
+                    return
+                elif not isinstance(action, GoNext) and not isinstance(action, GoBack):
                     action_event = get_action_event(flow, action)
                 else:
                     if isinstance(action, GoNext):
                         action_event = f"go_next and has advanced to the next node: '{flow.current_node.title}'"
                     else:
                         action_event = f"go_back and went back to the previous node: '{flow.current_node.title}'"
-                event_stream.append(f"You took action: {action_event}")
+                event_stream.append(f"[Assistant took action `{label}`: {action_event}]")
                 break
     return agent_output
 
