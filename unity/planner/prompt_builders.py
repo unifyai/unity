@@ -2,96 +2,61 @@ from __future__ import annotations
 
 import inspect
 import textwrap
-from typing import Callable, Dict
+import json
+from typing import Callable, Dict, Any, Optional
+from unity.common.llm_helpers import (
+    class_api_overview,
+    get_type_hints,
+    SteerableToolHandle,
+)
 
-
-def _get_tools_doc(tools: Dict[str, Callable]) -> str:
-    """Generates a markdown list of tools and their signatures."""
-    doc_lines = []
-    for name, func in tools.items():
-        try:
-            sig = str(inspect.signature(func))
-            sig = sig.replace("(self, ", "(")
-            sig = sig.replace("-> 'BrowserSessionHandle'", "")
-            sig = sig.replace("-> 'PhoneCallHandle'", "")
-            doc_lines.append(f"- `coms_manager.{name}{sig}`")
-        except (ValueError, TypeError):
-            doc_lines.append(f"- `coms_manager.{name}` (signature not available)")
-    return "\n".join(doc_lines)
 
 
 def build_initial_plan_prompt(
     goal: str,
     tools: Dict[str, Callable],
-    existing_functions: dict,
+    existing_functions: Dict[str, Any],
     retry_msg: str,
-    exploration_summary: str | None,
+    exploration_summary: Optional[str] = None,
 ) -> str:
     """
-    Builds the system prompt for generating an initial plan.
-
-    Args:
-        goal: The user's goal.
-        tools: A dictionary of available tools from the ComsManager.
-        existing_functions: A dictionary of reusable functions from the library.
-        retry_msg: A message to include if a previous attempt failed.
-        exploration_summary: Context from the exploration phase.
-
-    Returns:
-        The complete prompt string.
+    Dynamically builds the system prompt for the Hierarchical Planner.
     """
-    tools_doc = _get_tools_doc(tools)
-    usage_examples = textwrap.dedent(
-        """
-        ### Tool Usage Examples
+    def _build_tool_signatures(tool_dict: Dict[str, Callable]) -> str:
+        sigs = {name: str(inspect.signature(fn)) for name, fn in tool_dict.items()}
+        return json.dumps(sigs, indent=4)
 
-        **Browser Interaction:**
-        ```python
-        @verify
-        async def check_unify_blog():
-            # Each function needing browser access must start its own session.
-            async with coms_manager.start_browser_session() as browser:
-                # Use 'act' for all actions. Describe what you want to do.
-                await browser.act("Navigate to unify.ai")
-                await browser.act("Click the 'Blog' link in the main navigation")
-                # Use 'observe' to get information from the page.
-                blog_title = await browser.observe("What is the title of the first blog post?")
-            return blog_title
-        ```
+    def _build_handle_apis(tool_dict: Dict[str, Callable]) -> str:
+        handle_docs = []
+        for name, func in tool_dict.items():
+            try:
+                hints = get_type_hints(func)
+                return_type = hints.get("return")
+                if (
+                    return_type
+                    and inspect.isclass(return_type)
+                    and issubclass(return_type, SteerableToolHandle)
+                ):
+                    doc = f"**`{return_type.__name__}` (returned by `{name}`)**\n"
+                    doc += "This handle represents an interactive session. Its available methods are:\n"
+                    doc += class_api_overview(return_type)
+                    handle_docs.append(doc)
+            except Exception:
+                continue
 
-        **Making a Call:**
-        ```python
-        @verify
-        async def confirm_appointment():
-            async with coms_manager.make_call(contact_id=123, purpose="Confirm appointment") as call:
-                response = await call.ask("Are you still available for our 2pm meeting tomorrow?")
-            return response
-        ```
-    """
-    )
-    existing_functions_doc = (
-        "\n".join(
-            f'- `{name}{data["argspec"]}`: {data["docstring"]}'
-            for name, data in existing_functions.items()
-        )
-        or "None."
-    )
-    full_existing_code = "\n\n".join(
-        data["implementation"] for data in existing_functions.values()
-    )
+        if not handle_docs:
+            return "There are no special handle APIs for the available tools."
 
-    exploration_context = (
-        f"**Context from Initial Exploration:**\n{exploration_summary}"
-        if exploration_summary
-        else ""
-    )
+        return "\n\n".join(handle_docs)
+
+    tool_reference = _build_tool_signatures(tools)
+    handle_apis = _build_handle_apis(tools)
+
     return textwrap.dedent(
         f"""
         You are an expert Python programmer tasked with generating a complete, single-file script to achieve a user's goal.
 
         **Primary Goal:** "{goal}"
-        {exploration_context}
-        {retry_msg}
 
         ---
         ### Core Instructions & Rules
@@ -100,45 +65,57 @@ def build_initial_plan_prompt(
         3.  **Decomposition:** Break down complex problems into smaller, logical, self-contained `async def` helper functions.
         4.  **Decorators & Docstrings:** Every function you define MUST be decorated with `@verify` and include a concise one-line docstring.
         5.  **No Imports:** You MUST NOT use any `import` statements.
-
-        ---
-        ### Tool Usage Rules
-        1.  **Strategy:** Your primary strategy MUST be to **Observe, then Act**. Before performing an action on an unfamiliar screen, use `browser.observe()` to understand the page structure and available elements. This will help you write more accurate `act()` commands.
-        2.  **Granularity:** Break down complex UI interactions into a series of simple, single-purpose `act()` calls. Instead of a single command like `act("Select Urdu from the dropdown")`, you should generate:
-            ```python
-            await browser.act("Click the target language dropdown")
-            await browser.act("Click the 'Urdu' option in the language list")
-            ```
-        3.  **Toolbox:** You have access to a global `coms_manager` object for all external interactions.
-        4.  **Context Managers (`async with`):** Tools that create a session (`start_browser_session`, `Phone`) MUST be used within an `async with` block to ensure they are safely closed.
-        5.  **Browser Handle API:** The `browser` handle returned by `start_browser_session` has **ONLY TWO** available methods:
-            - `act(instruction: str)`: Give a natural language command for what to DO.
-            - `observe(query: str)`: Ask a natural language question to GET information from the page.
-            - **CRITICAL:** You MUST NOT attempt to call any other methods like `.click()`, `.navigate_to_url()`, or `.get_text()` on the `browser` handle. All actions are done through `act()`.
-        6.  **Self-Contained Functions:** Each helper function should be independent. If a function needs to use the browser, it must create its own session using `async with coms_manager.start_browser_session() as browser:`. Do NOT pass browser handles as arguments to other functions.
+        6.  **Context Managers (`async with`):** Tools that return a "handle" (documented in the Handle APIs section) MUST be used within an `async with` block to ensure they are safely closed.
 
         ---
         ### Tools Reference
-        You have access to a global `coms_manager` object with the following methods:
-        {tools_doc}
+        You have access to a global `coms_manager` object with the following methods. You must call them with the correct arguments as specified here.
+        ```json
+        {tool_reference}
+        ```
+
+        ---
+        ### Handle APIs
+        Some tools return a "handle" object for ongoing interaction. The available methods for these handles are listed below. You MUST only use the methods listed.
+        
+        {handle_apis}
 
         ---
         ### Usage Examples
-        {usage_examples}
+        
+        **Making a Call:**
+        ```python
+        @verify
+        async def confirm_appointment():
+            # The make_call tool returns a PhoneCallHandle.
+            async with coms_manager.make_call(contact_id=123, purpose="Confirm appointment") as call:
+                # The handle's 'ask' method is used for interaction.
+                response = await call.ask("Are you still available for our 2pm meeting tomorrow?")
+            return response
+        ```
+        
+        **Browser Interaction:**
+        ```python
+        @verify
+        async def check_unify_blog():
+            async with coms_manager.start_browser_session() as browser:
+                await browser.act("Navigate to unify.ai")
+                await browser.act("Click the 'Blog' link in the main navigation")
+                blog_title = await browser.observe("What is the title of the first blog post?")
+            return blog_title
+        ```
+
         ---
         ### Existing Functions Library
         You may use these pre-existing functions if they are suitable.
-        {existing_functions_doc}
-
+        {json.dumps(existing_functions) if existing_functions else "None."}
+        
         ---
-        ### Code of Available Functions
-        ```python
-        {full_existing_code or "# No pre-existing functions were provided."}
-        ```
+        {retry_msg}
 
         Begin your response now. Your response must start immediately with the code.
-        """,
-    )
+    """
+    ).strip()
 
 
 def build_dynamic_implement_prompt(
@@ -146,23 +123,38 @@ def build_dynamic_implement_prompt(
     func_sig: inspect.Signature,
     goal: str,
     parent_code: str,
-    browser_state: str,
+    browser_state: str | None,
     replan_context: str,
 ) -> str:
     """
     Builds the system prompt for dynamically implementing a function.
+
+    This function is now context-aware. It will only include browser-specific
+    instructions and state if the `browser_state` argument is provided.
 
     Args:
         function_name: The name of the function to implement.
         func_sig: The signature of the function to implement.
         goal: The overall user goal.
         parent_code: The source code of the calling function.
-        browser_state: A description of the current browser state.
+        browser_state: An optional description of the current browser state.
         replan_context: A message providing context for a replan.
 
     Returns:
         The complete prompt string.
     """
+    browser_context_section = ""
+    strategy_instruction = """2.  **Strategy:** You are likely being asked to implement this because a previous attempt failed. Your first step should be to **re-assess the situation** and devise a new, robust plan to achieve the goal."""
+    tool_usage_instruction = """6.  **Tool Usage:** Use the `coms_manager` global object to interact with the environment. Available tools and their handle APIs have been described in the initial system prompt."""
+
+    if browser_state:
+        browser_context_section = f"""
+**Current Browser State:**
+{browser_state}
+"""
+        strategy_instruction = """2.  **Strategy:** You are likely being asked to implement this because a previous attempt failed. Your first step should be to **re-assess the environment**. Use `browser.observe()` to confirm the current page is correct before attempting any actions. If the state is wrong, generate code to correct it first."""
+        tool_usage_instruction = """6.  **Tool Usage:** Use the `coms_manager` global object to interact with the environment. The `browser` handle from `start_browser_session` has ONLY two methods: `act(instruction: str)` and `observe(query: str)`. You MUST NOT call hallucinated methods like `.click()` or `.navigate()`."""
+
     return textwrap.dedent(
         f"""
         You are an expert Python programmer. Your task is to write the implementation for the function `{function_name}`.
@@ -173,19 +165,17 @@ def build_dynamic_implement_prompt(
         ```python
         {parent_code}
         ```
-        **Current Browser State:**
-        {browser_state}
-
+        {browser_context_section}
         {replan_context}
 
         ---
         ### Instructions & Rules
         1.  **Code Only:** Your output MUST be ONLY the Python code for the function, starting with the `@verify` decorator and the function definition. Do not include explanations or markdown.
-        2.  **Strategy:** You are likely being asked to implement this because a previous attempt failed. Your first step should be to **re-assess the environment**. Use `browser.observe()` to confirm the current page is correct before attempting any actions. If the state is wrong, generate code to correct it first.
-        3.  **Granularity:** Break down complex UI interactions into a series of simple, single-purpose `act()` calls.
+        {strategy_instruction}
+        3.  **Granularity:** Break down complex interactions into a series of simple, single-purpose steps.
         4.  **Add a Docstring:** The function implementation MUST include a concise one-line docstring explaining its purpose.
-        5.  **Use Context Managers:** For tools that return a handle (`Phone`, `start_browser_session`), you MUST use an `async with` block.
-        6.  **Tool Usage:** Use the `coms_manager` global object to interact with the environment. The `browser` handle from `start_browser_session` has ONLY two methods: `act(instruction: str)` and `observe(query: str)`. You MUST NOT call hallucinated methods like `.click()` or `.navigate()`.
+        5.  **Use Context Managers:** For tools that return a handle (`make_call`, `start_browser_session`), you MUST use an `async with` block.
+        {tool_usage_instruction}
         7.  **No Imports:** `import` statements are forbidden.
 
         Begin your response now.
