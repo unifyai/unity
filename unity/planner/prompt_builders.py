@@ -14,14 +14,6 @@ def _get_tools_doc(tools: Dict[str, Callable]) -> str:
             sig = sig.replace("(self, ", "(")
             sig = sig.replace("-> 'BrowserSessionHandle'", "")
             sig = sig.replace("-> 'PhoneCallHandle'", "")
-            sig = sig.replace(
-                "clarification_up_q: asyncio.Queue[str], clarification_down_q: asyncio.Queue[str]",
-                "...",
-            )
-            sig = sig.replace(
-                "*, clarification_up_q: asyncio.Queue[str], clarification_down_q: asyncio.Queue[str]",
-                "...",
-            )
             doc_lines.append(f"- `coms_manager.{name}{sig}`")
         except (ValueError, TypeError):
             doc_lines.append(f"- `coms_manager.{name}` (signature not available)")
@@ -49,6 +41,32 @@ def build_initial_plan_prompt(
         The complete prompt string.
     """
     tools_doc = _get_tools_doc(tools)
+    usage_examples = textwrap.dedent("""
+        ### Tool Usage Examples
+
+        **Browser Interaction:**
+        ```python
+        @verify
+        async def check_unify_blog():
+            # Each function needing browser access must start its own session.
+            async with coms_manager.start_browser_session() as browser:
+                # Use 'act' for all actions. Describe what you want to do.
+                await browser.act("Navigate to unify.ai")
+                await browser.act("Click the 'Blog' link in the main navigation")
+                # Use 'observe' to get information from the page.
+                blog_title = await browser.observe("What is the title of the first blog post?")
+            return blog_title
+        ```
+
+        **Making a Call:**
+        ```python
+        @verify
+        async def confirm_appointment():
+            async with coms_manager.make_call(contact_id=123, purpose="Confirm appointment") as call:
+                response = await call.ask("Are you still available for our 2pm meeting tomorrow?")
+            return response
+        ```
+    """)
     existing_functions_doc = (
         "\n".join(
             f'- `{name}{data["argspec"]}`: {data["docstring"]}'
@@ -74,24 +92,28 @@ def build_initial_plan_prompt(
         {retry_msg}
 
         ---
-        ### Instructions & Rules
-        1.  **Single Code Block:** Your entire response MUST be a single, valid Python code block. Do NOT include any preamble, explanations, or markdown fences.
-        2.  **Entry Point:** The main entry point for the script MUST be a function named `async def main_plan()`.
-        3.  **Docstrings Required:** Each function you define MUST include a concise one-line docstring explaining its purpose.
-        4.  **Required Decorator:** All functions you define MUST be `async def` and MUST be decorated with `@verify`. You MUST NOT define this @verify decorator yourself as it is already defined in the execution environment.
-        5.  **No Imports:** You MUST NOT use any `import` statements. The execution environment is sandboxed.
-        6.  **Asynchronous Calls:** You MUST use the `await` keyword for all tool and helper function calls.
-        7.  **Use Context Managers:** For tools that return a handle (`make_call`, `start_browser_session`), you MUST use an `async with` block to ensure they are properly closed.
-            Example:
-            ```python
-            async with coms_manager.start_browser_session() as browser:
-                await browser.act("Go to google.com")
+        ### Core Instructions & Rules
+        1.  **Single Code Block:** Your entire response MUST be a single, valid Python code block.
+        2.  **Entry Point:** The script's main entry point MUST be `async def main_plan()`.
+        3.  **Decomposition:** Break down complex problems into smaller, logical, self-contained `async def` helper functions.
+        4.  **Decorators & Docstrings:** Every function you define MUST be decorated with `@verify` and include a concise one-line docstring.
+        5.  **No Imports:** You MUST NOT use any `import` statements.
 
-            async with coms_manager.make_call(contact_id=123, purpose="order food") as call:
-                response = await call.ask("What are the specials?")
+        ---
+        ### Tool Usage Rules
+        1.  **Strategy:** Your primary strategy MUST be to **Observe, then Act**. Before performing an action on an unfamiliar screen, use `browser.observe()` to understand the page structure and available elements. This will help you write more accurate `act()` commands.
+        2.  **Granularity:** Break down complex UI interactions into a series of simple, single-purpose `act()` calls. Instead of a single command like `act("Select Urdu from the dropdown")`, you should generate:
+            ```python
+            await browser.act("Click the target language dropdown")
+            await browser.act("Click the 'Urdu' option in the language list")
             ```
-        8.  **Decomposition:** Break down complex problems into smaller, logical helper functions. If a suitable function exists in the library, use it. If not, you may define it, or if its implementation is not immediately obvious, you may leave it as a stub (e.g., `raise NotImplementedError`).
-        9.  **Final Output:** The `main_plan` function MUST return the final answer as a string. It MUST NOT use `print()` for the final output.
+        3.  **Toolbox:** You have access to a global `coms_manager` object for all external interactions.
+        4.  **Context Managers (`async with`):** Tools that create a session (`start_browser_session`, `Phone`) MUST be used within an `async with` block to ensure they are safely closed.
+        5.  **Browser Handle API:** The `browser` handle returned by `start_browser_session` has **ONLY TWO** available methods:
+            - `act(instruction: str)`: Give a natural language command for what to DO.
+            - `observe(query: str)`: Ask a natural language question to GET information from the page.
+            - **CRITICAL:** You MUST NOT attempt to call any other methods like `.click()`, `.navigate_to_url()`, or `.get_text()` on the `browser` handle. All actions are done through `act()`.
+        6.  **Self-Contained Functions:** Each helper function should be independent. If a function needs to use the browser, it must create its own session using `async with coms_manager.start_browser_session() as browser:`. Do NOT pass browser handles as arguments to other functions.
 
         ---
         ### Tools Reference
@@ -99,8 +121,11 @@ def build_initial_plan_prompt(
         {tools_doc}
 
         ---
+        ### Usage Examples
+        {usage_examples}
+        ---
         ### Existing Functions Library
-        You have access to the following pre-existing functions. You should use them if they help achieve the goal.
+        You may use these pre-existing functions if they are suitable.
         {existing_functions_doc}
 
         ---
@@ -154,10 +179,12 @@ def build_dynamic_implement_prompt(
         ---
         ### Instructions & Rules
         1.  **Code Only:** Your output MUST be ONLY the Python code for the function, starting with the `@verify` decorator and the function definition. Do not include explanations or markdown.
-        2.  **Add a Docstring:** The function implementation MUST include a concise one-line docstring explaining its purpose.
-        3.  **Use Context Managers:** For tools that return a handle (`make_call`, `start_browser_session`), you MUST use an `async with` block.
-        4.  **Tool Usage:** Use the `coms_manager` global object to interact with the environment.
-        5.  **No Imports:** `import` statements are forbidden.
+        2.  **Strategy:** You are likely being asked to implement this because a previous attempt failed. Your first step should be to **re-assess the environment**. Use `browser.observe()` to confirm the current page is correct before attempting any actions. If the state is wrong, generate code to correct it first.
+        3.  **Granularity:** Break down complex UI interactions into a series of simple, single-purpose `act()` calls.
+        4.  **Add a Docstring:** The function implementation MUST include a concise one-line docstring explaining its purpose.
+        5.  **Use Context Managers:** For tools that return a handle (`Phone`, `start_browser_session`), you MUST use an `async with` block.
+        6.  **Tool Usage:** Use the `coms_manager` global object to interact with the environment. The `browser` handle from `start_browser_session` has ONLY two methods: `act(instruction: str)` and `observe(query: str)`. You MUST NOT call hallucinated methods like `.click()` or `.navigate()`.
+        7.  **No Imports:** `import` statements are forbidden.
 
         Begin your response now.
         """,
