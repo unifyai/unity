@@ -353,3 +353,88 @@ class BrowserSessionHandle(BaseActiveTask):
             }
         return {}
 
+
+# --------------------------------------------------------------------------- #
+# Communications Manager (Dummy)
+# --------------------------------------------------------------------------- #
+
+
+class ComsManager:
+    """
+    A manager for handling various communication and session-based tools.
+
+    This class would be instantiated and passed to the HierarchicalPlanner.
+    The planner would then expose the public methods of this class as tools
+    to the generated Python plans.
+    """
+
+    def __init__(self, controller: Controller):
+        """
+        Args:
+            controller: A running instance of the browser Controller,
+                        required for the BrowserSessionHandle.
+        """
+        self._controller = controller
+
+    # --- Simple Communication Stubs ---
+
+    async def send_email(
+        self,
+        contact_id: int,
+        content: str,
+        exchange_id: Optional[int] = None,
+    ) -> str:
+        """Sends an email to a specified contact."""
+        log_msg = f"Simulating sending email to contact {contact_id}."
+        if exchange_id:
+            log_msg += f" (Replying to thread {exchange_id})"
+        log_msg += f"\nContent: {content}"
+        logger.info(log_msg)
+        return f"Success: Email queued for delivery to contact {contact_id}."
+
+    async def send_sms_message(self, contact_id: int, content: str) -> str:
+        """Sends an SMS message to a specified contact."""
+        logger.info(
+            f"Simulating sending SMS to contact {contact_id}.\nContent: {content}",
+        )
+        return f"Success: SMS queued for delivery to contact {contact_id}."
+
+    async def send_whatsapp_message(self, contact_id: int, content: str) -> str:
+        """Sends a WhatsApp message to a specified contact."""
+        logger.info(
+            f"Simulating sending WhatsApp message to contact {contact_id}.\nContent: {content}",
+        )
+        return f"Success: WhatsApp message queued for delivery to contact {contact_id}."
+
+    # --- Handle-based Tool Stubs ---
+
+    def make_call(
+        self,
+        contact_id: int,
+        purpose: str,
+        *,
+        clarification_up_q: asyncio.Queue[str],
+        clarification_down_q: asyncio.Queue[str],
+    ) -> PhoneCallHandle:
+        """
+        Initiates a 'call' and returns an interactive handle.
+
+        This function doesn't need to be `async` because it returns the handle
+        immediately. The handle itself manages the asynchronous call process.
+        The clarification queues are crucial for the handle's `ask` method to work.
+        """
+        return PhoneCallHandle(
+            contact_id,
+            purpose,
+            clarification_up_q,
+            clarification_down_q,
+        )
+
+    def start_browser_session(
+        self,
+        interactions_log: Optional[List[Tuple[str, str, Optional[str]]]] = None,
+    ) -> BrowserSessionHandle:
+        """
+        Starts a browser session and returns an interactive handle.
+        """
+        return BrowserSessionHandle(self._controller, interactions_log=interactions_log)
