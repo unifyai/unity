@@ -28,7 +28,6 @@ import unify
 from ..constants import LOGGER
 from dataclasses import dataclass
 from ..events.event_bus import EventBus, Event
-from ..service.utils import publish_event
 
 
 def short_id(length=4):
@@ -687,20 +686,6 @@ async def _async_tool_use_loop_inner(
             await event_bus.publish(
                 Event(type=event_type, payload={"message": message}),
             )
-        else:
-            try:
-                await publish_event(
-                    {
-                        "topic": "tool_loop",
-                        "to": "past",
-                        "event": {
-                            "event_name": "ConductorProgressEvent",
-                            "payload": message,
-                        },
-                    }
-                )
-            except Exception as e:
-                LOGGER.error(f"Error publishing to event manager: {e}")
 
     # ── small helper: add completion tool message pair ──────────────
     async def _emit_completion_pair(result: str, call_id: str) -> dict:
