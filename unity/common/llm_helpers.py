@@ -631,8 +631,9 @@ async def _async_tool_use_loop_inner(
         last_activity_ts = time.perf_counter()
         last_msg_count = 0 if not client.messages else len(client.messages)
 
-    def _append_msgs(msgs: list[dict]) -> None:
+    async def _append_msgs(msgs: list[dict]) -> None:
         client.append_messages(msgs)
+        await _to_event_bus(msgs)
         _reset_timeout_timer()
 
     if log_steps:
@@ -653,7 +654,7 @@ async def _async_tool_use_loop_inner(
     # -----------------------------------------------------------------------
 
     # ── small helper: keep assistant→tool chronology DRY ────────────────────
-    def _insert_after_assistant(parent_msg: dict, tool_msg: dict) -> None:
+    async def _insert_after_assistant(parent_msg: dict, tool_msg: dict) -> None:
         """
         Append *tool_msg* and move it directly after *parent_msg*, while
         updating the per-assistant `results_count` bookkeeping.
@@ -662,30 +663,31 @@ async def _async_tool_use_loop_inner(
             id(parent_msg),
             {"original_tool_calls": [], "results_count": 0},
         )
-        _append_msgs([tool_msg])
+        await _append_msgs([tool_msg])
         insert_pos = client.messages.index(parent_msg) + 1 + meta["results_count"]
         client.messages.insert(insert_pos, client.messages.pop())
         meta["results_count"] += 1
 
     # ── small helper: publish to the EventBus (if configured) ──────────────
-    async def _to_event_bus(message: dict) -> None:
+    async def _to_event_bus(messages: list[dict]) -> None:
         """
-        Emit *message* to the shared EventBus (if configured).
+        Emit *messages* to the shared EventBus (if configured).
 
         Every `ToolLoop` event now carries **both** the raw chat *message*
         and the *public method* that spawned the loop so downstream
         subscribers can easily group / filter events.
         """
         if EVENT_BUS:
-            await EVENT_BUS.publish(
-                Event(
-                    type="ToolLoop",
-                    payload={
-                        "message": message,
-                        "method": loop_id,
-                    },
-                ),
-            )
+            for message in messages:
+                await EVENT_BUS.publish(
+                    Event(
+                        type="ToolLoop",
+                        payload={
+                            "message": message,
+                            "method": loop_id,
+                        },
+                    ),
+                )
 
     # ── small helper: add completion tool message pair ──────────────
     async def _emit_completion_pair(result: str, call_id: str) -> dict:
@@ -717,9 +719,7 @@ async def _async_tool_use_loop_inner(
             "content": result,
         }
 
-        _append_msgs([assistant_stub, tool_msg])
-        await _to_event_bus(assistant_stub)
-        await _to_event_bus(tool_msg)
+        await _append_msgs([assistant_stub, tool_msg])
         return tool_msg
 
     # ── *single* authoritative implementation of "task finished" handling ──
@@ -805,14 +805,12 @@ async def _async_tool_use_loop_inner(
                             "Nested async tool loop started… waiting for result."
                         ),
                     }
-                    _insert_after_assistant(info["assistant_msg"], ph)
+                    await _insert_after_assistant(info["assistant_msg"], ph)
                     info["tool_reply_msg"] = ph  # remember on *parent*
                 else:
                     ph["content"] = (
                         "Nested async tool loop started… waiting for result."
                     )
-
-                await _to_event_bus(ph)
 
                 # 3️⃣ book-keeping for the *new* task (inherit + share placeholder)
                 task_info[nested_task] = {
@@ -882,9 +880,7 @@ async def _async_tool_use_loop_inner(
                 "name": name,
                 "content": result,
             }
-            _insert_after_assistant(asst_msg, tool_msg)
-
-        await _to_event_bus(tool_msg)
+            await _insert_after_assistant(asst_msg, tool_msg)
 
         # ── optional console logging for every finished tool call ────────────
         #     (mirrors the assistant-message logging above)
@@ -912,7 +908,7 @@ async def _async_tool_use_loop_inner(
                 "Resolve the *next* user request in light of this."
             ),
         }
-        _append_msgs([sys_msg])
+        await _append_msgs([sys_msg])
 
     # ── initial prompt ───────────────────────────────────────────────────────
     # ── 0-b. Coerce tools → ToolSpec & helper lambdas ───────────────────────
@@ -933,8 +929,7 @@ async def _async_tool_use_loop_inner(
         return lim is None or _active_count(t_name) < lim
 
     msg = {"role": "user", "content": message}
-    await _to_event_bus(msg)
-    _append_msgs([msg])
+    await _append_msgs([msg])
 
     consecutive_failures = 0
     pending: Set[asyncio.Task] = set()
@@ -976,8 +971,7 @@ async def _async_tool_use_loop_inner(
             "role": "assistant",
             "content": f"🔚 Terminating early: {reason}",
         }
-        _append_msgs([notice])
-        await _to_event_bus(notice)
+        await _append_msgs([notice])
         if log_steps:
             LOGGER.info(f"⏹️ [{loop_id}] Early exit – {reason}")
         return notice["content"]
@@ -1072,8 +1066,7 @@ async def _async_tool_use_loop_inner(
 
                 llm_turn_required = True
                 msg = {"role": "user", "content": extra}
-                await _to_event_bus(msg)
-                _append_msgs([msg])
+                await _append_msgs([msg])
 
             # ── A.  Wait for tool completion OR cancellation  ───────────────
             # If a child just asked for clarification we also want to give
@@ -1169,7 +1162,7 @@ async def _async_tool_use_loop_inner(
                                 "name": f"clarification_request_{call_id}",
                                 "content": "",  # will fill below
                             }
-                            _insert_after_assistant(
+                            await _insert_after_assistant(
                                 task_info[src_task]["assistant_msg"],
                                 ph,
                             )
@@ -1182,7 +1175,6 @@ async def _async_tool_use_loop_inner(
                             f"tool execution:\n{question}"
                         )
                         tool_msg = ph  # for event_bus
-                        await _to_event_bus(tool_msg)
 
                     # let the assistant answer immediately
                     llm_turn_required = True
@@ -1519,7 +1511,7 @@ async def _async_tool_use_loop_inner(
                         "to interact with this tool call while it is in progress."
                     ),
                 }
-                _insert_after_assistant(asst_msg, placeholder)
+                await _insert_after_assistant(asst_msg, placeholder)
 
                 # remember so we can patch later
                 inf["tool_reply_msg"] = placeholder
@@ -1647,7 +1639,6 @@ async def _async_tool_use_loop_inner(
 
             # LLM has just spoken – reset the flag
             llm_turn_required = False
-            await _to_event_bus(msg)
             # one full assistant turn completed
             step_index += 1
 
@@ -1725,7 +1716,7 @@ async def _async_tool_use_loop_inner(
                                     f" • {name}({arg_json}) → cancel_{call['id']} / continue_{call['id']}"
                                 ),
                             }
-                            _insert_after_assistant(msg, tool_reply_msg)
+                            await _insert_after_assistant(msg, tool_reply_msg)
                             info["continue_msg"] = tool_reply_msg
                         else:  # the original tool already finished
                             finished = completed_results.get(
@@ -1741,7 +1732,10 @@ async def _async_tool_use_loop_inner(
                                 "name": pretty_name,
                                 "content": finished,
                             }
-                            _insert_after_assistant(info["assistant_msg"], tool_msg)
+                            await _insert_after_assistant(
+                                info["assistant_msg"],
+                                tool_msg,
+                            )
                         continue  # completed handling of this _continue
 
                     if name.startswith("stop_") and not name.startswith(
@@ -1795,7 +1789,7 @@ async def _async_tool_use_loop_inner(
                                 f"The tool call [{call_id}] has been stopped successfully."
                             ),
                         }
-                        _insert_after_assistant(msg, tool_msg)
+                        await _insert_after_assistant(msg, tool_msg)
 
                         continue  # nothing else to schedule
 
@@ -1834,7 +1828,7 @@ async def _async_tool_use_loop_inner(
                             "name": pretty_name,
                             "content": f"The tool call [{call_id}] has been paused successfully.",
                         }
-                        _insert_after_assistant(msg, tool_msg)
+                        await _insert_after_assistant(msg, tool_msg)
                         continue  # helper handled, move on
 
                     # ── _resume helper ───────────────────────────────────────────────
@@ -1872,7 +1866,7 @@ async def _async_tool_use_loop_inner(
                             "name": pretty_name,
                             "content": f"The tool call [{call_id}] has been resumed successfully.",
                         }
-                        _insert_after_assistant(msg, tool_msg)
+                        await _insert_after_assistant(msg, tool_msg)
                         continue  # helper handled
 
                     if name.startswith("clarify_"):
@@ -1907,7 +1901,7 @@ async def _async_tool_use_loop_inner(
                                 "⏳ Waiting for the original tool to finish…"
                             ),
                         }
-                        _insert_after_assistant(msg, tool_reply_msg)
+                        await _insert_after_assistant(msg, tool_reply_msg)
                         if tgt_task is not None:
                             task_info[tgt_task]["clarify_placeholder"] = tool_reply_msg
                         continue
@@ -1955,7 +1949,7 @@ async def _async_tool_use_loop_inner(
                             "name": pretty_name,
                             "content": f'Guidance "{new_text}" forwarded to the running tool.',
                         }
-                        _insert_after_assistant(msg, tool_msg)
+                        await _insert_after_assistant(msg, tool_msg)
 
                         continue  # nothing else to schedule
 
@@ -1978,7 +1972,7 @@ async def _async_tool_use_loop_inner(
                                 "finish or stop one before retrying."
                             ),
                         }
-                        _insert_after_assistant(msg, tool_msg)
+                        await _insert_after_assistant(msg, tool_msg)
                         continue
 
                     # first check any dynamic helpers we generated for long-running handles
