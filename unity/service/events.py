@@ -222,15 +222,17 @@ class ConductorStartedEvent(Event):
         self,
         chat_history: list[dict[str, str]],
         query: str,
-        *args,
+        *,
+        is_urgent: bool = True,
         **kwargs,
     ):
         kwargs.pop("chat_history", None)
         kwargs.pop("query", None)
+        kwargs.pop("is_urgent", None)
 
         self.chat_history = chat_history
         self.query = query
-        super().__init__(*args, **kwargs)
+        super().__init__(is_urgent=is_urgent, **kwargs)
 
     def to_dict(self) -> dict[str, Any]:
         base_dict = super().to_dict()
@@ -244,62 +246,13 @@ class ConductorStartedEvent(Event):
         {self.query}"""
 
 
-class ConductorProgressEvent(Event):
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
-
-    def to_dict(self) -> dict[str, Any]:
-        base_dict = super().to_dict()
-        base_dict["payload"].update({"query": self.query})
-        return base_dict
-
-    def __str__(self):
-        return f"""[CONDUCTOR PROGRESS @ {self.fmt_timestamp}]
-        {json.dumps(self.payload)}"""
-
-
-class ConductorInterjectedEvent(Event):
-    def __init__(self, query: str, *args, **kwargs):
-        kwargs.pop("query", None)
-
-        self.query = query
-        super().__init__(*args, **kwargs)
-
-    def to_dict(self) -> dict[str, Any]:
-        base_dict = super().to_dict()
-        base_dict["payload"].update({"query": self.query})
-        return base_dict
-
-    def __str__(self):
-        return f"""[CONDUCTOR INTERJECTED @ {self.fmt_timestamp}]
-        {self.query}"""
-
-
-class ConductorInterjectFailedEvent(Event):
-    def __init__(self, query: str, *args, **kwargs):
-        kwargs.pop("query", None)
-
-        self.query = query
-        super().__init__(*args, **kwargs)
-
-    def to_dict(self) -> dict[str, Any]:
-        base_dict = super().to_dict()
-        base_dict["payload"].update({"query": self.query})
-        return base_dict
-
-    def __str__(self):
-        return f"""[CONDUCTOR INTERJECT FAILED @ {self.fmt_timestamp}]
-        {self.query}"""
-
-
 class ConductorEndedEvent(Event):
-    def __init__(self, manager_name: str, query: str, *args, **kwargs):
-        kwargs.pop("manager_name", None)
+    def __init__(self, query: str, *, is_urgent: bool = True, **kwargs):
         kwargs.pop("query", None)
+        kwargs.pop("is_urgent", None)
 
-        self.manager_name = manager_name
         self.query = query
-        super().__init__(*args, **kwargs)
+        super().__init__(is_urgent=is_urgent, **kwargs)
 
     def to_dict(self) -> dict[str, Any]:
         base_dict = super().to_dict()
@@ -309,3 +262,56 @@ class ConductorEndedEvent(Event):
     def __str__(self):
         return f"""[CONDUCTOR ENDED @ {self.fmt_timestamp}]
         {self.query}"""
+
+
+class ConductorHandleSuccessEvent(Event):
+    def __init__(
+        self,
+        query: str,
+        handle_type: str,
+        *,
+        is_urgent: bool = True,
+        **kwargs,
+    ):
+        kwargs.pop("query", None)
+        kwargs.pop("handle_type", None)
+        kwargs.pop("is_urgent", None)
+
+        self.query = query
+        self.handle_type = handle_type
+        super().__init__(is_urgent=is_urgent, **kwargs)
+
+    def to_dict(self) -> dict[str, Any]:
+        base_dict = super().to_dict()
+        base_dict["payload"].update({"query": self.query})
+        return base_dict
+
+    def __str__(self):
+        return f"""[CONDUCTOR HANDLE ACTION @ {self.fmt_timestamp}]
+        {self.handle_type}: {self.query}"""
+
+
+class ConductorHandleFailedEvent(Event):
+    def __init__(self, query: str, handle_type: str, **kwargs):
+        kwargs.pop("query", None)
+        kwargs.pop("handle_type", None)
+
+        self.query = query
+        self.handle_type = handle_type
+        super().__init__(**kwargs)
+
+    def to_dict(self) -> dict[str, Any]:
+        base_dict = super().to_dict()
+        base_dict["payload"].update({"query": self.query})
+        return base_dict
+
+    def __str__(self):
+        return f"""[CONDUCTOR HANDLE FAILED @ {self.fmt_timestamp}]
+        {self.handle_type}: {self.query}"""
+
+
+# Public variable with all event class names (excluding internal/abstract ones)
+EVENT_TYPES = [
+    name for name in _EventRegistry._registry.keys()
+    if not name.startswith("_") and name != "Event"
+]

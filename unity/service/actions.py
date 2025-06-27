@@ -23,9 +23,10 @@ class ConductorAction(BaseModel):
     )
 
 
-class ConductorInterjectAction(BaseModel):
-    type: Literal["interject"]
-    query: str = Field(..., description="The query to perform")
+class ConductorHandleAction(BaseModel):
+    handle_id: int = Field(..., description="The id of the conductor handle")
+    type: Literal["ask", "interject", "stop", "pause", "resume"]
+    query: str = Field(None, description="The query to perform")
 
 
 # -------- discriminated union --------
@@ -34,7 +35,7 @@ class ConductorInterjectAction(BaseModel):
 ActionModel = Union[
     SendCallAction,
     ConductorAction,
-    ConductorInterjectAction,
+    ConductorHandleAction,
 ]
 
 
