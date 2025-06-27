@@ -187,7 +187,7 @@ def loop_exception_handler(loop, context):
     print("Error:", context.get("message"), context.get("exception"))
 
 
-async def main(manager_name: str = "contact"):
+async def main():
     global user_agent
 
     loop = asyncio.get_running_loop()
@@ -203,7 +203,6 @@ async def main(manager_name: str = "contact"):
         os.getenv("ASSISTANT_NUMBER", ""),
         os.getenv("USER_NUMBER", ""),
         os.getenv("USER_PHONE_NUMBER", ""),
-        main_user_agent=True,
         conv_context_length=conv_context_length,
     )
     user_agent.set_event_manager(event_manager)
@@ -223,4 +222,4 @@ async def main(manager_name: str = "contact"):
 
 if __name__ == "__main__":
     manager_name = sys.argv[1]
-    asyncio.run(main(manager_name))
+    asyncio.run(main())

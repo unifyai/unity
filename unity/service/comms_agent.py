@@ -53,14 +53,6 @@ class CommsAgent:
         user_number: str,
         user_phone_call_number: str = None,
         past_events: list | None = None,
-        main_user_agent: bool = False,
-        agent_id: str = None,
-        contact_name: str = None,
-        contact_number: str = None,
-        manager: ABC = None,
-        manager_name: str = "contact",
-        intent_sys_msg: str = None,
-        intent_output_format: BaseModel = None,
         conv_context_length: int = 50,
     ):
         # contact data
@@ -391,12 +383,13 @@ class CommsAgent:
                 content = event["event"]["payload"]["content"]
                 timestamp = event["event"]["payload"]["timestamp"]
                 medium = (
-                    "phone"
+                    "phone_call"
                     if "phone" in event_name
-                    else "sms" if "sms" in event_name else "whatsapp"
+                    else "sms_message" if "sms" in event_name
+                    else "whatsapp_message"
                 )
                 sender_id, receiver_id = "", ""
-                if medium == "phone":
+                if medium == "phone_call":
                     if role == "Assistant":
                         sender_id = self.assistant_number
                         receiver_id = self.user_phone_call_number
