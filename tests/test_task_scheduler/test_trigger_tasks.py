@@ -163,3 +163,47 @@ def test_update_queue_rejects_trigger_tasks():
 
     with pytest.raises(ValueError):
         ts._update_task_queue(original=[0], new=[trig_tid, 0])
+
+
+# --------------------------------------------------------------------------- #
+# 7.  Instance cloning when a triggerable task is started                     #
+# --------------------------------------------------------------------------- #
+
+
+@_handle_project
+@pytest.mark.asyncio
+async def test_triggerable_start_clones_instance():
+    """
+    Starting a **triggerable** task should:
+
+    • promote the *oldest* instance (`instance_id` 0) to **active**
+    • create a **new** row with the same `task_id` but `instance_id` 1
+      that remains in the *triggerable* state
+    """
+    ts = TaskScheduler()
+
+    trig = Trigger(medium=Medium.EMAIL, recurring=False)
+    tid = ts._create_task(
+        name="Wait for invoice approval",
+        description="Start when finance emails us.",
+        trigger=trig,
+    )["details"]["task_id"]
+
+    # One physical row before activation
+    rows_before = ts._search_tasks(filter=f"task_id == {tid}")
+    assert len(rows_before) == 1 and rows_before[0]["instance_id"] == 0
+
+    # Activate
+    handle = await ts.execute_task(task_id=tid)
+
+    # Two rows should now exist: 0 (active) and 1 (still triggerable)
+    rows_after = ts._search_tasks(filter=f"task_id == {tid}")
+    assert len(rows_after) == 2
+
+    status_by_inst = {r["instance_id"]: r["status"] for r in rows_after}
+    assert status_by_inst[0] == "active"
+    assert status_by_inst[1] == "triggerable"
+
+    # Clean-up (avoid background thread leaks)
+    handle.stop()
+    await handle.result()

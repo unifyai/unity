@@ -25,6 +25,7 @@ def test_create_task():
             "repeat": None,
             "priority": Priority.normal,
             "task_id": 0,
+            "instance_id": 0,
         },
     ]
 
