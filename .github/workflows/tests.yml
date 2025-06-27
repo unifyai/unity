@@ -86,12 +86,22 @@ jobs:
         # 5) Install unify package from GitHub
         uv pip install git+https://github.com/unifyai/unify
 
-        # 6) cleanup
+        # 6) Install pygments
+        uv pip install pygments
+
+        # 7) cleanup
         rm temp_requirements.txt
 
     - name: Run unit tests
       run: |
-        .unity/bin/python -m pytest --timeout=120 -p no:warnings -vv .
+        .unity/bin/python -m pytest \
+          --timeout=120 \
+          -p no:warnings \
+          -vv \
+          --log-cli-level=ERROR \
+          --log-file-level=INFO \
+          --test-log-enable \
+          --test-log-file="tests.log" .
       env:
         UNIFY_KEY: ${{ secrets.USER_API_KEY }}
         UNIFY_BASE_URL: https://api.unify.ai/v0
@@ -104,3 +114,12 @@ jobs:
         AGENT_FIRST: Rick
         AGENT_LAST: Morty
         AGENT_AGE: 29
+
+    - name: Dump test logs
+      if: always()
+      run: |
+        if [ -f tests.log ]; then
+          pygmentize -l python tests.log
+        else
+          echo "No logs found"
+        fi
