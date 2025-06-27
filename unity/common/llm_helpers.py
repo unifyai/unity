@@ -27,7 +27,7 @@ from typing import (
 import unify
 from ..constants import LOGGER
 from dataclasses import dataclass
-from ..events.event_bus import EventBus, Event
+from ..events.event_bus import Event, EVENT_BUS
 
 
 def short_id(length=4):
@@ -491,8 +491,6 @@ async def _async_tool_use_loop_inner(
     client: unify.AsyncUnify,
     message: str,
     tools: Dict[str, Union[Callable, ToolSpec]],
-    event_type: Optional[str] = None,
-    event_bus: Optional[EventBus] = None,
     *,
     loop_id: Optional[str] = None,
     interject_queue: asyncio.Queue[str],
@@ -555,12 +553,6 @@ async def _async_tool_use_loop_inner(
         invoke.  Each function must be fully type-hinted and have a concise
         docstring – these are automatically converted to an OpenAI *tool
         schema* via :pyfunc:`method_to_schema`.
-
-    event_type, event_bus : ``str | None``, ``EventBus | None``
-        Optional pub-sub hooks.  When both are provided every message
-        exchanged inside the loop is emitted as
-        ``Event(type=event_type, payload={"message": msg})`` which lets a
-        UI or logger stay in sync without tight coupling.
 
     interject_queue : ``asyncio.Queue[str]``
         Thread-safe channel through which the *outer* application can push
@@ -643,10 +635,6 @@ async def _async_tool_use_loop_inner(
         client.append_messages(msgs)
         _reset_timeout_timer()
 
-    assert (event_bus and event_type) or (
-        not event_bus and not event_type
-    ), "event_bus and event_type must either both be specified or both be unspecified"
-
     if log_steps:
         if parent_chat_context:
             LOGGER.info(
@@ -688,10 +676,10 @@ async def _async_tool_use_loop_inner(
         and the *public method* that spawned the loop so downstream
         subscribers can easily group / filter events.
         """
-        if event_bus:
-            await event_bus.publish(
+        if EVENT_BUS:
+            await EVENT_BUS.publish(
                 Event(
-                    type=event_type,
+                    type="ToolLoop",
                     payload={
                         "message": message,
                         "method": loop_id,
@@ -2422,8 +2410,6 @@ def start_async_tool_use_loop(
     tools: Dict[str, Callable],
     *,
     loop_id: Optional[str] = None,
-    event_type: Optional[str] = None,
-    event_bus: Optional[EventBus] = None,
     max_consecutive_failures: int = 3,
     prune_tool_duplicates=True,
     interrupt_llm_with_interjections: bool = True,
@@ -2452,8 +2438,6 @@ def start_async_tool_use_loop(
             client,
             message,
             tools,
-            event_type=event_type,
-            event_bus=event_bus,
             loop_id=loop_id,
             interject_queue=interject_queue,
             cancel_event=cancel_event,
