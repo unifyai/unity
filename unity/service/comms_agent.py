@@ -5,8 +5,10 @@ import os
 from pydantic import BaseModel
 import traceback
 
+from unity.common.llm_helpers import AsyncToolUseLoopHandle
 from unity.conductor.conductor import Conductor
 from unity.events.event_bus import EventBus
+from unity.events.event_bus import EVENT_BUS
 from unity.helpers import run_script, terminate_process
 from unity.service import comms_actions
 from unity.service.actions import *
@@ -64,11 +66,12 @@ class CommsAgent:
         )
 
         # events (history)
+        self.conv_context_length = conv_context_length
         self.events_listener_task = None
         self.events_queue = asyncio.Queue()
         if past_events is None:
             self.past_events = []
-            task = asyncio.create_task(self.get_bus_events(conv_context_length))
+            task = asyncio.create_task(self.get_bus_events())
             task.add_done_callback(self.set_past_events)
         else:
             self.past_events = past_events
@@ -82,17 +85,20 @@ class CommsAgent:
 
         # conductor
         self.conductor = Conductor()
-        self.conductor_handle = None
+        self.conductor_handles: dict[int, dict[str, AsyncToolUseLoopHandle | str]] = {}
+        self.handle_count = 0
 
         # logging
-        self.event_bus = EventBus()
         self.transcript_manager = TranscriptManager()
 
     def set_past_events(self, task: asyncio.Task):
         self.past_events = task.result()
 
-    async def get_bus_events(self, limit: int = 100):
-        bus_events = await self.event_bus.search(limit=limit)
+    async def get_bus_events(self):
+        bus_events = await EVENT_BUS.search(
+            filter=f'event_type in {json.dumps(EVENT_TYPES)}',
+            limit=self.conv_context_length
+        )
         return [Event.from_bus_event(e).to_dict() for e in bus_events]
 
     def get_chat_history(self):
@@ -178,53 +184,70 @@ class CommsAgent:
 
         # query the conductor
         fn = self.conductor.ask if action.type == "ask" else self.conductor.request
-        self.conductor_handle = await fn(
+        conductor_handle = await fn(
             action.query,
             parent_chat_context=chat_history,
             _return_reasoning_steps=action.show_steps,
         )
+        handle_id = self.handle_count
+        self.conductor_handles[handle_id] = {
+            "handle": conductor_handle,
+            "query": action.query,
+        }
+        self.handle_count += 1
 
         # publish start event
         self.publish(
             {
-                "topic": "user_agent",
+                "topic": "conductor",
                 "event": ConductorStartedEvent(chat_history, action.query).to_dict(),
             },
         )
 
         # wait for the handle to be done
-        while not self.conductor_handle.done():
+        while not conductor_handle.done():
             print("waiting for handle to be done")
             await asyncio.sleep(1)
 
         # get handle result
-        answer = await self.conductor_handle.result()
-        self.conductor_handle = None
+        answer = await conductor_handle.result()
+        self.conductor_handles.pop(handle_id)
         if isinstance(answer, tuple):
             answer, _ = answer
 
         # publish end event
         self.publish(
             {
-                "topic": "user_agent",
+                "topic": "conductor",
                 "event": ConductorEndedEvent(answer).to_dict(),
             },
         )
 
-    async def conductor_interject_action(self, action: ConductorInterjectAction):
-        """Handle manager interject actions asynchronously"""
-        # check if the manager is running
-        if not self.manager_handle:
-            # interject failed
-            event = ConductorInterjectFailedEvent(
+    async def conductor_handle_action(self, action: ConductorHandleAction):
+        """Handle conductor handle actions asynchronously"""
+        # check if the conductor is running
+        if not self.conductor_handles.get(action.handle_id):
+            # handle failed
+            event = ConductorHandleFailedEvent(
                 f"conductor is not running currently, "
                 "please create a new action instead",
+                action.type,
             )
         else:
-            # interject
-            await self.manager_handle.interject(action.query)
-            event = ConductorInterjectedEvent(action.query)
-        self.publish({"topic": "user_agent", "event": event.to_dict()})
+            # handle
+            handle = self.conductor_handles[action.handle_id]["handle"]
+            if action.type == "ask":
+                await handle.ask(action.query)
+            elif action.type == "interject":
+                await handle.interject(action.query)
+            elif action.type == "stop":
+                handle.stop()
+            elif action.type == "pause":
+                handle.pause()
+            elif action.type == "resume":
+                handle.resume()
+            event = ConductorHandleSuccessEvent(action.query, action.type)
+        self.publish({"topic": "conductor", "event": event.to_dict()})
 
     def on_run_end(self, t: asyncio.Task):
         try:
@@ -243,8 +266,8 @@ class CommsAgent:
                             asyncio.create_task(self.send_call())
                         elif isinstance(action, ConductorAction):
                             asyncio.create_task(self.conductor_action(action))
-                        elif isinstance(action, ConductorInterjectAction):
-                            asyncio.create_task(self.conductor_interject_action(action))
+                        elif isinstance(action, ConductorHandleAction):
+                            asyncio.create_task(self.conductor_handle_action(action))
 
         except asyncio.CancelledError:
             pass
@@ -343,11 +366,18 @@ class CommsAgent:
         new_events_str = "\n".join(
             str(Event.from_dict(e)) for e in self.inflight_events
         )
+        conductor_handles_str = "\n".join(
+            f"Handle ID {h}: {self.conductor_handles[h]['query']}"
+            for h in self.conductor_handles
+        )
         user_msg = f"""Events Stream:
 ** PAST EVENTS **
 {past_events_str.strip()}
 ** NEW EVENTS **
-{new_events_str.strip()}"""
+{new_events_str.strip()}
+** CONDUCTOR HANDLES (USE THESE FOR THE CONDUCTOR HANDLE ACTION) **
+{conductor_handles_str.strip()}
+"""
         return user_msg
 
     def publish(self, event: dict):
@@ -370,7 +400,7 @@ class CommsAgent:
     def handle_logging(self, event: dict):
         try:
             bus_event = Event.from_dict(event["event"]).to_bus_event()
-            asyncio.create_task(self.event_bus.publish(bus_event))
+            asyncio.create_task(EVENT_BUS.publish(bus_event))
             if event["event"]["event_name"] in [
                 "PhoneUtteranceEvent",
                 "WhatsappMessageSentEvent",

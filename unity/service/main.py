@@ -65,7 +65,7 @@ class EventManager:
             if event["topic"] == "ping":
                 print("ping")
                 continue
-            if event["topic"] == "call_process":
+            elif event["topic"] == "call_process":
                 print("recieved call event")
                 # handle messages going to the call process
                 # like gen
@@ -135,11 +135,6 @@ class EventManager:
             try:
                 # Clean up main user agent call process
                 user_agent.cleanup()
-
-                # Clean up all comm agents' call processes
-                if hasattr(user_agent, "contact_num_to_comm_agent"):
-                    for comm_agent in user_agent.contact_num_to_comm_agent.values():
-                        comm_agent.cleanup()
             except Exception as e:
                 print(f"Error during user agent cleanup: {e}")
 
@@ -177,11 +172,6 @@ def signal_handler(signum, frame):
         # Clean up main user agent call process
         user_agent.cleanup()
 
-        # Clean up all comm agents' call processes
-        if hasattr(user_agent, "contact_num_to_comm_agent"):
-            for comm_agent in user_agent.contact_num_to_comm_agent.values():
-                comm_agent.cleanup()
-
 
 def loop_exception_handler(loop, context):
     print("Error:", context.get("message"), context.get("exception"))
@@ -189,9 +179,6 @@ def loop_exception_handler(loop, context):
 
 async def main():
     global user_agent
-
-    loop = asyncio.get_running_loop()
-    # loop.set_exception_handler(loop_exception_handler)
 
     # Set up signal handlers
     signal.signal(signal.SIGTERM, signal_handler)
@@ -215,8 +202,8 @@ async def main():
     )
     comms_manager = CommsManager(events_queue=event_manager.events_queue)
     event_manager_task = asyncio.create_task(event_manager.serve())
-    comms_task = asyncio.create_task(comms_manager.start())
-    user_manager_task = asyncio.create_task(user_agent.listen_for_events())
+    asyncio.create_task(comms_manager.start())
+    asyncio.create_task(user_agent.listen_for_events())
     await event_manager_task
 
 
