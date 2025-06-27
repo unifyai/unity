@@ -312,6 +312,7 @@ class ConductorHandleFailedEvent(Event):
 
 # Public variable with all event class names (excluding internal/abstract ones)
 EVENT_TYPES = [
-    name for name in _EventRegistry._registry.keys()
+    name
+    for name in _EventRegistry._registry.keys()
     if not name.startswith("_") and name != "Event"
 ]
