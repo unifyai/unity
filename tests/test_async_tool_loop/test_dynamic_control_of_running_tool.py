@@ -152,16 +152,18 @@ async def test_stop_removes_tool_and_yields_no_result(client):
     """
     handle = start_async_tool_use_loop(
         client,
-        message=("Run the tool `slow` then reply ACK (nothing else)."),
+        message=("Run the tool `slow`."),
         tools={"slow": slow},
         interrupt_llm_with_interjections=False,
     )
 
     await asyncio.sleep(0.05)  # tool in-flight
-    await handle.interject("Please stop that run right away.")
+    await handle.interject(
+        "Please stop that run right away, and inform the user that it has been stopped.",
+    )
 
     final = await handle.result()
-    assert "ACK" in final.upper()
+    assert "stop" in final.lower()
 
     msgs = client.messages
     assert _tool_results(msgs, "slow") == 1, "stopping tool expected after stop"
