@@ -669,7 +669,7 @@ async def _async_tool_use_loop_inner(
         meta["results_count"] += 1
 
     # ── small helper: publish to the EventBus (if configured) ──────────────
-    async def _to_event_bus(messages: list[dict]) -> None:
+    async def _to_event_bus(messages: Union[Dict, List[Dict]]) -> None:
         """
         Emit *messages* to the shared EventBus (if configured).
 
@@ -677,17 +677,20 @@ async def _async_tool_use_loop_inner(
         and the *public method* that spawned the loop so downstream
         subscribers can easily group / filter events.
         """
-        if EVENT_BUS:
-            for message in messages:
-                await EVENT_BUS.publish(
-                    Event(
-                        type="ToolLoop",
-                        payload={
-                            "message": message,
-                            "method": loop_id,
-                        },
-                    ),
-                )
+        if not EVENT_BUS:
+            return
+        if isinstance(messages, dict):
+            messages = [messages]
+        for message in messages:
+            await EVENT_BUS.publish(
+                Event(
+                    type="ToolLoop",
+                    payload={
+                        "message": message,
+                        "method": loop_id,
+                    },
+                ),
+            )
 
     # ── small helper: add completion tool message pair ──────────────
     async def _emit_completion_pair(result: str, call_id: str) -> dict:
@@ -1622,6 +1625,7 @@ async def _async_tool_use_loop_inner(
                     )
 
             msg = client.messages[-1]
+            await _to_event_bus(msg)
 
             if log_steps:
                 LOGGER.info(f"🤖 [{loop_id}] {json.dumps(msg, indent=4)}\n")
