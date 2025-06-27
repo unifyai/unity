@@ -13,6 +13,7 @@ class ActiveTask(BaseActiveTask):
         active_task: BaseActiveTask,
         *,
         task_id: Optional[int] = None,
+        instance_id: Optional[int] = None,
         scheduler: Optional["TaskScheduler"] = None,
     ):
         """
@@ -26,7 +27,7 @@ class ActiveTask(BaseActiveTask):
             Human-readable task description (passed straight to the planner).
         planner
             The concrete planner implementation responsible for spawning an active task.
-        task_id, scheduler
+        task_id, instance_id, scheduler
             When provided, every lifecycle transition (pause/resume/stop/finish)
             is mirrored back into the task list via ``scheduler._update_task_status``.
         """
