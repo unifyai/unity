@@ -153,7 +153,7 @@ def test_start_time_after_multiple_reorders():
         name="A",
         description="first",
         schedule=Schedule(
-            start_at="2025-06-23T09:00:00+00:00",
+            start_at="2030-06-23T09:00:00+00:00",
         ),
     )
     ts._create_task(
