@@ -567,7 +567,7 @@ async def test_pause_nested_loop_calls_pause():
         AsyncToolUseLoopHandle
     ):  # returns quickly, but "long" enough to pause
         handle = AsyncToolUseLoopHandle(
-            task=asyncio.create_task(asyncio.sleep(4)),
+            task=asyncio.create_task(asyncio.sleep(16)),
             interject_queue=asyncio.Queue(),
             cancel_event=asyncio.Event(),
         )
@@ -608,7 +608,7 @@ async def test_pause_nested_loop_calls_pause():
     )
 
     # helper exists next turn – now ask to pause
-    await asyncio.sleep(2)
+    await asyncio.sleep(8)
     await top.interject("pause")
 
     final = await top.result()
