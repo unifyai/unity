@@ -2,7 +2,7 @@ anticaptchaofficial
 aiohttp>=3.8.0
 autoflake
 black
-browser-use
+browser-use>=0.1.4
 browserbase
 deepgram-sdk>=4
 # -e ../unify # dev mode
@@ -22,9 +22,9 @@ pydantic>=2.0.0
 pydantic-core>=2.0.0
 pygments
 pytest
-python-dotenv==1.0.0
+python-dotenv>=1.0.0
 redis
-requests==2.31.0
+requests>=2.31.0
 textual>=0.40.0
 textual-dev>=1.2.0
 twilio>=8.0.0
