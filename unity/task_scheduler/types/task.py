@@ -17,6 +17,15 @@ class Task(BaseModel):
         description="Unique identifier for the task",
         ge=UNASSIGNED,
     )
+    instance_id: int = Field(
+        default=UNASSIGNED,
+        description=(
+            "Auto-incrementing counter that distinguishes multiple *instances* "
+            "of the same logical task.  The very first row receives `0`; "
+            "each subsequent clone is incremented by the backend."
+        ),
+        ge=UNASSIGNED,
+    )
     name: str = Field(description="Short title of the task")
     description: str = Field(
         description="Detailed explanation of what the task involves",
@@ -48,6 +57,7 @@ class Task(BaseModel):
     @classmethod
     def _inject_sentinel(cls, data: dict) -> dict:
         data.setdefault("task_id", UNASSIGNED)
+        data.setdefault("instance_id", UNASSIGNED)
         return data
 
     @model_validator(mode="after")
@@ -73,5 +83,9 @@ class Task(BaseModel):
         return self
 
     def to_post_json(self) -> dict:
-        exclude = {"task_id"} if self.task_id == UNASSIGNED else {}
+        exclude: set[str] = set()
+        if self.task_id == UNASSIGNED:
+            exclude.add("task_id")
+        if self.instance_id == UNASSIGNED:
+            exclude.add("instance_id")
         return self.model_dump(mode="json", exclude=exclude)
