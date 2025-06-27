@@ -161,7 +161,7 @@ def pytest_addoption(parser):
 # -------------------------
 
 
-class TestContextFilter(logging.Filter):
+class TestNameLogFilter(logging.Filter):
     def __init__(self):
         super().__init__()
         self.test_name = None
@@ -177,7 +177,7 @@ class TestContextFilter(logging.Filter):
         return True
 
 
-test_context_filter = TestContextFilter()
+test_name_log_filter = TestNameLogFilter()
 
 
 @pytest.fixture(scope="session", autouse=True)
@@ -193,7 +193,7 @@ def configure_logging(request):
         datefmt="%Y-%m-%d %H:%M:%S",
     )
     file_handler.setFormatter(formatter)
-    file_handler.addFilter(test_context_filter)
+    file_handler.addFilter(test_name_log_filter)
     logger.addHandler(file_handler)
 
 
@@ -261,7 +261,7 @@ def pytest_runtest_setup(item):
         if is_using_unify_stub():
             pytest.skip("Test requires real unify implementation")
 
-    test_context_filter.set_test_name(item.nodeid)
+    test_name_log_filter.set_test_name(item.nodeid)
 
 
 def _normalize_pytest_nodeid(nodeid):
@@ -306,7 +306,7 @@ def pytest_runtest_call(item):
 
 
 def pytest_runtest_teardown(item):
-    test_context_filter.reset_test_name()
+    test_name_log_filter.reset_test_name()
 
 
 # Pytest fixture to skip tests that require the real unify
