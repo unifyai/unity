@@ -97,8 +97,13 @@ class TaskScheduler(BaseTaskScheduler):
             unify.create_context(
                 self._ctx,
                 unique_id_column=True,
-                unique_id_name="task_id",
-                description="List of all tasks with their name, description, status (completed, queued, cancelled etc.), schedule, deadline, repeat pattern, and priority.",
+                unique_id_names=["task_id", "instance_id"],
+                description=(
+                    "List of all tasks with their name, description, status, "
+                    "schedule, deadline, repeat pattern, priority **and** "
+                    "`instance_id` which tracks multiple executions of the "
+                    "same logical task."
+                ),
             )
             fields = model_to_fields(Task)
             unify.create_fields(
@@ -109,6 +114,7 @@ class TaskScheduler(BaseTaskScheduler):
         # ID of the *single* task that is allowed to be in the **active**
         # state at any moment.  This will be maintained by a forthcoming
         # tool; until then it may legitimately stay as ``None``.
+        # {'task_id': int, 'instance_id': int, 'handle': ActiveTask}
         self._active_task: Optional[Dict[str, Any]] = None
         primed_tasks = self._search_tasks(filter="status == 'primed'")
         if primed_tasks:
@@ -255,11 +261,20 @@ class TaskScheduler(BaseTaskScheduler):
         if self._active_task is not None:
             raise RuntimeError("Another task is already running – stop it first.")
 
-        rows = self._search_tasks(filter=f"task_id == {task_id}", limit=1)
-        if not rows:
-            raise ValueError(f"No task found with id={task_id}")
+        candidate_rows = self._search_tasks(
+            filter=(
+                f"task_id == {task_id} and status not in "
+                "('completed','cancelled','failed','active')"
+            ),
+        )
+        if not candidate_rows:
+            raise ValueError(f"No runnable task found with id={task_id}")
 
-        task_row = rows[0]
+        # Pick the *oldest* runnable instance (lowest instance_id)
+        task_row = sorted(
+            candidate_rows,
+            key=lambda r: r.get("instance_id", 0),
+        )[0]
         if task_row["status"] in ("completed", "cancelled", "failed", "active"):
             raise ValueError(f"Task {task_id} is already {task_row['status']!r}.")
 
@@ -274,20 +289,78 @@ class TaskScheduler(BaseTaskScheduler):
         handle = ActiveTask(
             plan_handle,
             task_id=task_id,
+            instance_id=task_row["instance_id"],
             scheduler=self,
         )
-        self._active_task = {"task_id": task_id, "handle": handle}
+        self._active_task = {
+            "task_id": task_id,
+            "instance_id": task_row["instance_id"],
+            "handle": handle,
+        }
+
+        # ── Clone if this is a triggerable or recurring task ──────────────
+        if task_row["status"] == Status.triggerable.value or task_row.get("repeat"):
+            self._clone_task_instance(task_row)
 
         # 3. Promote status → active and clear primed pointer if needed
-        self._update_task_status(
-            task_ids=task_id,
+        self._update_task_status_instance(
+            task_id=task_id,
+            instance_id=task_row["instance_id"],
             new_status="active",
-            allow_active=True,
         )
         if self._primed_task and self._primed_task["task_id"] == task_id:
             self._primed_task = None
 
         return handle
+
+    #  Per-instance helpers
+
+    def _update_task_status_instance(
+        self,
+        *,
+        task_id: int,
+        instance_id: int,
+        new_status: str,
+    ) -> Dict[str, str]:
+        """
+        Same semantics as `_update_task_status` but scoped to a single
+        **(task_id, instance_id)** pair.
+        """
+        log_objs = unify.get_logs(
+            context=self._ctx,
+            filter=f"task_id == {task_id} and instance_id == {instance_id}",
+            return_ids_only=False,
+        )
+        if not log_objs:
+            raise ValueError(
+                f"No task instance ({task_id}.{instance_id}) found.",
+            )
+        assert len(log_objs) == 1, "Composite primary key must be unique."
+        return unify.update_logs(
+            logs=log_objs[0].id if hasattr(log_objs[0], "id") else log_objs[0],
+            context=self._ctx,
+            entries={"status": new_status},
+            overwrite=True,
+        )
+
+    def _clone_task_instance(self, task_row: Dict[str, Any]) -> None:
+        """
+        Create a *fresh* row for the **next** instance of a triggerable or
+        recurring task.  We copy every user-facing field, keep the *same*
+        `task_id`, intentionally **omit** `instance_id` (so the backend
+        auto-increments it) and leave the status unchanged (*triggerable*
+        or *scheduled*).
+        """
+        allowed = set(Task.model_json_schema()["properties"].keys())
+        clone_payload = {
+            k: v for k, v in task_row.items() if k in allowed and k != "instance_id"
+        }
+        # Drop any internal bookkeeping injected by Unify (_id, _log_id …)
+        unify.log(
+            context=self._ctx,
+            new=True,
+            **clone_payload,
+        )
 
     # Private Helpers #
     # ----------------#

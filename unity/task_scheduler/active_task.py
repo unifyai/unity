@@ -33,6 +33,7 @@ class ActiveTask(BaseActiveTask):
         self._active_task = active_task
         self._scheduler: Optional["TaskScheduler"] = scheduler
         self._task_id: Optional[int] = task_id
+        self._instance_id: Optional[int] = instance_id
 
     @functools.wraps(BaseActiveTask.ask, updated=())
     async def ask(self, message: str) -> str:
@@ -71,7 +72,7 @@ class ActiveTask(BaseActiveTask):
         # If the task wasn't explicitly cancelled/failed, mark as completed.
         if self._scheduler and self._task_id is not None:
             row = self._scheduler._search_tasks(  # type: ignore[attr-defined]
-                filter=f"task_id == {self._task_id}",
+                filter=f"task_id == {self._task_id} and instance_id == {self._instance_id}",
                 limit=1,
             )[0]
             if row["status"] not in ("cancelled", "failed"):
@@ -85,17 +86,25 @@ class ActiveTask(BaseActiveTask):
 
     def _mirror_status(self, new_status: str) -> None:
         """Update the task-row status if we were instantiated by a scheduler."""
-        if self._scheduler and self._task_id is not None:
-            self._scheduler._update_task_status(  # type: ignore[attr-defined]
-                task_ids=self._task_id,
+        if (
+            self._scheduler
+            and self._task_id is not None
+            and self._instance_id is not None
+        ):
+            self._scheduler._update_task_status_instance(  # type: ignore[attr-defined]
+                task_id=self._task_id,
+                instance_id=self._instance_id,
                 new_status=new_status,
-                allow_active=True,
             )
 
     def _clear_active_pointer(self) -> None:
         """Free the scheduler's active-task slot, if any."""
         if self._scheduler and getattr(self._scheduler, "_active_task", None):
-            if self._scheduler._active_task["task_id"] == self._task_id:  # type: ignore[attr-defined]
+            active = self._scheduler._active_task  # type: ignore[attr-defined]
+            if (
+                active["task_id"] == self._task_id
+                and active["instance_id"] == self._instance_id
+            ):
                 self._scheduler._active_task = None  # type: ignore[attr-defined]
 
     # ── handy passthrough also exposed to the LLM ──────────────────────────
