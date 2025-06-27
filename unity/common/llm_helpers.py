@@ -681,10 +681,22 @@ async def _async_tool_use_loop_inner(
 
     # ── small helper: publish to the EventBus (if configured) ──────────────
     async def _to_event_bus(message: dict) -> None:
-        """Emit *message* to the EventBus iff one was provided."""
+        """
+        Emit *message* to the shared EventBus (if configured).
+
+        Every `ToolLoop` event now carries **both** the raw chat *message*
+        and the *public method* that spawned the loop so downstream
+        subscribers can easily group / filter events.
+        """
         if event_bus:
             await event_bus.publish(
-                Event(type=event_type, payload={"message": message}),
+                Event(
+                    type=event_type,
+                    payload={
+                        "message": message,
+                        "method": loop_id,
+                    },
+                ),
             )
 
     # ── small helper: add completion tool message pair ──────────────

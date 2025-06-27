@@ -22,7 +22,7 @@ from pydantic import (
 )
 from uuid import uuid4
 
-__all__ = ["Event", "EventBus", "Subscription"]
+__all__ = ["Event", "EventBus", "Subscription", "EVENT_BUS"]
 
 
 # ───────────────────────────   Event envelope   ─────────────────────────────
@@ -506,3 +506,7 @@ class EventBus:
     @property
     def ctxs(self):
         return self._specific_ctxs
+
+
+# ─────────────────────────   Global singleton   ──────────────────────────
+EVENT_BUS: "EventBus" = EventBus()
