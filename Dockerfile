@@ -1,6 +1,9 @@
 # Use Python 3.11 slim image as base
 FROM python:3.11-slim
 
+# Accept build argument for UNIFY_KEY
+ARG UNIFY_KEY
+
 # Install system dependencies
 RUN apt-get update && apt-get install -y \
     build-essential \
@@ -39,6 +42,7 @@ COPY . .
 
 # Set environment variables
 ENV PYTHONPATH=/app
+ENV UNIFY_KEY=${UNIFY_KEY}
 
 # Download the turn detector model files
 # Set memory-efficient environment variables for model loading

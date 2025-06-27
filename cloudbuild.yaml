@@ -2,7 +2,7 @@ steps:
   # Build Docker Image
 - name: 'gcr.io/cloud-builders/docker'
   id: 'build-image'
-  args: ['build', '-t', '${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPOSITORY}/unity:${SHORT_SHA}', '-t', '${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPOSITORY}/unity:latest', '.']
+  args: ['build', '--build-arg', 'UNIFY_KEY=${UNIFY_KEY}', '-t', '${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPOSITORY}/unity:${SHORT_SHA}', '-t', '${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPOSITORY}/unity:latest', '.']
   secretEnv: ['UNIFY_KEY']
 
   # Push Docker Image (SHA Tag)
