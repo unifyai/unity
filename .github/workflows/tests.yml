@@ -100,9 +100,8 @@ jobs:
           -vv \
           --log-cli-level=ERROR \
           --log-file-level=INFO \
-          --log-file="tests_logs.log" \
-          --log-file-format="%(asctime)s %(levelname)s %(message)s" \
-          --log-file-date-format="%Y-%m-%d %H:%M:%S" .
+          --test-log-enable \
+          --test-log-file="tests.log" .
       env:
         UNIFY_KEY: ${{ secrets.USER_API_KEY }}
         UNIFY_BASE_URL: https://api.unify.ai/v0
@@ -119,8 +118,8 @@ jobs:
     - name: Dump test logs
       if: always()
       run: |
-        if [ -f tests_logs.log ]; then
-          pygmentize -l python tests_logs.log
+        if [ -f tests.log ]; then
+          pygmentize -l python tests.log
         else
           echo "No logs found"
         fi

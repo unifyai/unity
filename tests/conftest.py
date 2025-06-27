@@ -14,6 +14,7 @@ Global pytest configuration.
 
 from __future__ import annotations
 
+import logging
 import json
 import os
 import sys
@@ -134,6 +135,79 @@ def pytest_addoption(parser):
         help="Force fresh scenario creation.",
     )
 
+    group = parser.getgroup("custom-logging")
+    group.addoption(
+        "--test-log-enable",
+        action="store_true",
+        default=False,
+        help="Enable test-aware logging (adds test name to log records).",
+    )
+    group.addoption(
+        "--test-log-file",
+        action="store",
+        default="tests.log",
+        help="Filename to write test-aware logs to (only applies if --test-log-enable is used).",
+    )
+    group.addoption(
+        "--test-log-format",
+        action="store",
+        default="[%(levelname)s] %(asctime)s - %(test_name)s: %(message)s",
+        help="Custom log format string (only applies if --test-log-enable is used).",
+    )
+
+
+# -------------------------
+# Custom Logging Helpers
+# -------------------------
+
+
+class TestContextFilter(logging.Filter):
+    def __init__(self):
+        super().__init__()
+        self.test_name = None
+
+    def set_test_name(self, test_name):
+        self.test_name = test_name.split("tests/")[-1]
+
+    def reset_test_name(self):
+        self.test_name = ""
+
+    def filter(self, record):
+        record.test_name = self.test_name or "UNKNOWN"
+        return True
+
+
+test_context_filter = TestContextFilter()
+
+
+@pytest.fixture(scope="session", autouse=True)
+def configure_logging(request):
+    config = request.config
+    if not is_test_logging_enabled(config):
+        return
+
+    logger = logging.getLogger()
+    file_handler = logging.FileHandler(get_test_log_file(config), mode="w")
+    formatter = logging.Formatter(
+        get_test_log_format(config),
+        datefmt="%Y-%m-%d %H:%M:%S",
+    )
+    file_handler.setFormatter(formatter)
+    file_handler.addFilter(test_context_filter)
+    logger.addHandler(file_handler)
+
+
+def is_test_logging_enabled(config):
+    return config.getoption("--test-log-enable")
+
+
+def get_test_log_file(config):
+    return config.getoption("--test-log-file")
+
+
+def get_test_log_format(config):
+    return config.getoption("--test-log-format")
+
 
 # --------------------------------------------------------------------------- #
 #  Session-wide hook – install stub *before* any project imports              #
@@ -187,6 +261,8 @@ def pytest_runtest_setup(item):
         if is_using_unify_stub():
             pytest.skip("Test requires real unify implementation")
 
+    test_context_filter.set_test_name(item.nodeid)
+
 
 def _normalize_pytest_nodeid(nodeid):
     """
@@ -227,6 +303,10 @@ def pytest_runtest_call(item):
         func_name = f"{func_name}/{normalized_id}"
 
     setattr(item.obj, "_unity_pytest_nodeid", func_name)
+
+
+def pytest_runtest_teardown(item):
+    test_context_filter.reset_test_name()
 
 
 # Pytest fixture to skip tests that require the real unify
