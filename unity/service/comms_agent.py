@@ -96,8 +96,8 @@ class CommsAgent:
 
     async def get_bus_events(self):
         bus_events = await EVENT_BUS.search(
-            filter=f'event_type in {json.dumps(EVENT_TYPES)}',
-            limit=self.conv_context_length
+            filter=f"event_type in {json.dumps(EVENT_TYPES)}",
+            limit=self.conv_context_length,
         )
         return [Event.from_bus_event(e).to_dict() for e in bus_events]
 
@@ -415,8 +415,7 @@ class CommsAgent:
                 medium = (
                     "phone_call"
                     if "phone" in event_name
-                    else "sms_message" if "sms" in event_name
-                    else "whatsapp_message"
+                    else "sms_message" if "sms" in event_name else "whatsapp_message"
                 )
                 sender_id, receiver_id = "", ""
                 if medium == "phone_call":
