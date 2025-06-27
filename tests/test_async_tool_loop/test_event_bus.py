@@ -18,7 +18,7 @@ from unity.common.llm_helpers import (
     _async_tool_use_loop_inner,
     start_async_tool_use_loop,
 )
-from unity.events.event_bus import EventBus
+from unity.events.event_bus import EVENT_BUS
 from tests.helpers import _handle_project
 import os
 import json
@@ -41,8 +41,6 @@ async def test_basic_event_flow() -> None:
 
         user/msg → assistant/tool-call → tool/result → assistant/final-text
     """
-    bus = EventBus()
-    bus.register_event_types("TEST")
 
     client = unify.AsyncUnify(
         "gpt-4o@openai",
@@ -55,12 +53,10 @@ async def test_basic_event_flow() -> None:
     pause_event = asyncio.Event()
     pause_event.set()  # start un-paused
 
-    result = await _async_tool_use_loop_inner(
+    await _async_tool_use_loop_inner(
         client=client,
         message="world",
         tools={"echo": echo},
-        event_type="TEST",
-        event_bus=bus,
         interject_queue=asyncio.Queue(),
         cancel_event=asyncio.Event(),
         pause_event=pause_event,
@@ -70,7 +66,9 @@ async def test_basic_event_flow() -> None:
 
     # Exactly four events should have been published for the run
     #    (newest-first order → reverse for readability).
-    events = list(reversed(await bus.search(filter="type == 'TEST'", limit=10)))
+    events = list(
+        reversed(await EVENT_BUS.search(filter="type == 'ToolLoop'", limit=10)),
+    )
     assert len(events) == 4
 
     roles = [evt.payload["message"]["role"] for evt in events]
@@ -97,8 +95,6 @@ async def test_interjection_publishes_user_event() -> None:
     Run the *wrapper* helper so that we can inject an extra user turn while the
     loop is still thinking, then confirm that the event bus recorded it.
     """
-    bus = EventBus()
-    bus.register_event_types("CHAT")
 
     client = unify.AsyncUnify(
         "gpt-4o@openai",
@@ -113,8 +109,6 @@ async def test_interjection_publishes_user_event() -> None:
         client=client,
         message="first",
         tools={},  # no tools needed
-        event_type="CHAT",
-        event_bus=bus,
         max_consecutive_failures=1,
     )
 
@@ -124,7 +118,7 @@ async def test_interjection_publishes_user_event() -> None:
     final = await handle.result()
     assert final == "You said: second"
 
-    events = await bus.search(filter="type == 'CHAT'", limit=10)
+    events = await EVENT_BUS.search(filter="type == 'ToolLoop'", limit=10)
     roles = [evt.payload["message"]["role"] for evt in events]
     assert "user" in roles  # initial user
     assert roles.count("user") == 2  # + the interjection
