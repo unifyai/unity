@@ -43,7 +43,7 @@ class FunctionManager(threading.Thread):
             unify.create_context(
                 self._ctx,
                 unique_id_column=True,
-                unique_id_name="function_id",
+                unique_id_names="function_id",
                 description="List of functions, with all function details stored.",
             )
             fields = model_to_fields(Function)
