@@ -362,7 +362,6 @@ class KnowledgeManager(BaseKnowledgeManager):
         ctx = f"{self._ctx}/{name}"
         unify.create_context(
             ctx,
-            unique_id_column=True,
             unique_id_names=unique_column_name,
             description=description,
         )
