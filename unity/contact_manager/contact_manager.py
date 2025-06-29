@@ -44,7 +44,6 @@ class ContactManager(BaseContactManager):
         if self._ctx not in unify.get_contexts():
             unify.create_context(
                 self._ctx,
-                unique_id_column=True,
                 unique_id_names="contact_id",
                 description="List of contacts, with all contact details stored.",
             )

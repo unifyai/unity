@@ -64,7 +64,6 @@ class TranscriptManager(BaseTranscriptManager):
         if self._messages_ctx not in ctxs:
             unify.create_context(
                 self._messages_ctx,
-                unique_id_column=True,
                 unique_id_names="message_id",
                 description="List of *all* timestamped messages sent between *all* contacts across *all* mediums.",
             )
@@ -76,7 +75,6 @@ class TranscriptManager(BaseTranscriptManager):
         if self._summaries_ctx not in ctxs:
             unify.create_context(
                 self._summaries_ctx,
-                unique_id_column=True,
                 unique_id_names="summary_id",
                 description="List of all message exchange summaries, with each summary covering a fixed number of exchanges.",
             )
