@@ -88,7 +88,7 @@ time.sleep(duration)
 browser.stop_recording()
 
 
-def perform_task(past_failures: list[str]):
+def perform_task(past_task_desc_failures: list[str]):
 
     # Task description
 
@@ -102,9 +102,8 @@ def perform_task(past_failures: list[str]):
     sys_msg = "given the following timestamped transcript, past failed task decomposition explanations, and a tool to extract full images at any timestamp, please extract an overall high-level description of the task that is being performed."
     task_description: str = multi_step_reason(
         sys_msg,
-        past_failures,
+        past_task_desc_failures,
         browser.transcript,
-        task_steps,
         tools=extract_image,
     )
 
@@ -129,7 +128,7 @@ def perform_task(past_failures: list[str]):
     task_steps: dict[datetime, TaskStep] = dict()
     task_completed = False
 
-    sys_msg = "given the following overall task description, timestamped transcript, preceeding task steps, and a tool to extract full images at any timestamp, please detect the {nth} step in the overall task, and return the timestamps at which this task is started and completed in the video."
+    sys_msg = "given the following overall task description, past failed task decomposition explanations, timestamped transcript, preceeding task steps, and a tool to extract full images at any timestamp, please detect the {nth} step in the overall task, and return the timestamps at which this task is started and completed in the video."
 
     browser.multi_step("clear all tabs, but keep the browser open")
 
@@ -137,6 +136,7 @@ def perform_task(past_failures: list[str]):
     while not task_completed:
         task_step, end_ts = multi_step_reason(
             sys_msg,
+            past_task_desc_failures,
             start_ts,
             task_description,
             browser.transcript,
@@ -146,10 +146,10 @@ def perform_task(past_failures: list[str]):
 
         browser_state = browser.state
         step_completed = False
-        past_failures = list()
+        past_action_failures = list()
         while not step_completed:
             browser.seed(browser_state)
-            browser.multi_step(task_step, past_failures)
+            browser.multi_step(task_step, past_action_failures)
             step_completed, error = multi_step_reason(
                 f"has the following step been performed correctly?\n"
                 "Task step to check:{task_step}\n"
@@ -157,7 +157,7 @@ def perform_task(past_failures: list[str]):
                 "If not, was it due to an error in the task execution, or an error in the task description?",
             )
             if error.type == "exection":
-                past_failures.append(error.explanation)
+                past_action_failures.append(error.explanation)
                 continue
             elif error.type == "description":
                 return False, error.explanation
@@ -169,9 +169,9 @@ def perform_task(past_failures: list[str]):
 
 # run until the task completes, potentially re-parsing the task if there are errors:
 task_completed = False
-past_failures = list()
+past_task_desc_failures = list()
 while not task_completed:
-    task_completed, explanation = perform_task(past_failures)
-    past_failures.append(explanation)
+    task_completed, explanation = perform_task(past_task_desc_failures)
+    past_task_desc_failures.append(explanation)
 
 # Finally, take the full *correct* list of browser actions, and decompose into repeatable functions
