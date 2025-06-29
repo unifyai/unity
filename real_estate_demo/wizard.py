@@ -117,7 +117,7 @@ class Node:
                 snake_case_action_name = f'fill_{"_".join([w.lower() for w in field.label.split(" ")])}'
                 pascal_action_name = re.sub(r"[\?\!\/\\]", "", pascal_action_name)
                 snake_case_action_name = re.sub(r"[\?\!\/\\]", "", snake_case_action_name)
-                docs = f"Fills input field '{field.label}' and reflects it to the agent script UI." + (f" Current value is `{self.data.get(field.id)}`" if self.data.get(field.id) is not None else "")
+                docs = f"Fills input field '{field.label}' and reflects it to the agent script current node." + (f" Current value is `{self.data.get(field.id)}`" if self.data.get(field.id) is not None else "")
                 field_action_model = create_model(
                     pascal_action_name,
                     field_label=(Literal[field.label], field.label),
@@ -130,7 +130,7 @@ class Node:
                 snake_case_action_name = f'select_{"_".join([w.lower() for w in field.label.split(" ")])}'
                 pascal_action_name = re.sub(r"[\?\!\/\\]", "", pascal_action_name)
                 snake_case_action_name = re.sub(r"[\?\!\/\\]", "", snake_case_action_name)
-                docs = f"Selects an option for radio field '{field.label}' and reflects it to the agent script UI." + (f" Current value is `{self.data.get(field.id)}`" if self.data.get(field.id) is not None else "")
+                docs = f"Selects an option for radio field '{field.label}' and reflects it to the agent script current node." + (f" Current value is `{self.data.get(field.id)}`" if self.data.get(field.id) is not None else "")
                 field_action_model = create_model(
                     pascal_action_name,
                     field_label=(Literal[field.label], field.label),
@@ -143,7 +143,7 @@ class Node:
                 snake_case_action_name = f'check_{"_".join([w.lower() for w in field.label.split(" ")])}'
                 pascal_action_name = re.sub(r"[\?\!\/\\]", "", pascal_action_name)
                 snake_case_action_name = re.sub(r"[\?\!\/\\]", "", snake_case_action_name)
-                docs = f"Checks options for checkbox field '{field.label}' and reflects it to the agent script UI." +  (f" Current value is `{self.data.get(field.id)}`" if self.data.get(field.id) is not None else "")
+                docs = f"Checks options for checkbox field '{field.label}' and reflects it to the agent script current node." +  (f" Current value is `{self.data.get(field.id)}`" if self.data.get(field.id) is not None else "")
                 field_action_model = create_model(
                     pascal_action_name,
                     field_label=(Literal[field.label], field.label),

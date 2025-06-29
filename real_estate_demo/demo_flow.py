@@ -11,6 +11,17 @@ from wizard import Node, Flow, InputField, RadioField, CheckBoxField, GoBack, Go
 from pydantic import BaseModel, Field
 import openai
 
+from datetime import datetime, timedelta
+
+def create_human_readable_delta(t):
+    delta = datetime.now() - t
+    seconds = delta.seconds
+    minutes = delta.seconds // 60
+    if minutes:
+        return f'{minutes} minute{"s" if minutes > 1 else ""} ago'
+    else:
+        return f'{"just now" if seconds <= 1 else str(seconds) + " seconds ago"}'
+
 start_call_screen = Node(
     "start_call_screen",
     "Call Start",
@@ -157,7 +168,7 @@ Issue: {area_tier_2} > {area_tier_2_issue}""".strip(),
 fields=[
     RadioField(
         "confirm_repair_details",
-        "Confirmeded Ticket Details?",
+        "Confirmed Ticket Details?",
         options=["Yes"]
     ),
     InputField(
@@ -203,19 +214,33 @@ fields=[RadioField("user_informed", "User has been informed and has consented?",
 next=None
 )
 
-async def call_llm(sys: str, flow: Flow, event_stream: list, model="gpt-4.1"):
+async def call_llm(sys: str, flow: Flow, conversation_history: list[str], action_log: list[str], model="gpt-4.1"):
     client = openai.AsyncOpenAI(api_key=os.environ["OPENAI_API_KEY"])
 
     class AgentOutput(BaseModel):
         thoughts: str = Field(..., description="Your inner thoughts before responding or taking actions, your actions and response should be based on your thoughts")
         response: Optional[str] = Field(..., 
-                                        description="Your response to the user, shown as [Assistant: ...] in the event stream, you can remain silent if simply navigating or taking mundane actions.")
+                                        description="Your response to the user, shown as [Assistant] ... in the conversation history, you can remain silent if simply navigating or taking mundane actions.")
         action: Optional[flow.current_action_model()] = Field(..., 
-                                        description="action to take given the current state (state = events stream and agent script), shown as [Assistant took action `action_name`: ...] in the event_stream")
+                                        description="action to take given the current state.")
     
     # print(flow.current_action_model().model_json_schema())
-    event_stream_str = "\n".join(event_stream)
-    user_msg = f"<event_stream>\n{event_stream_str}\n</event_stream>\n\n<agent_script>\n{flow.render()}\n</agent_script>"
+    # event_stream_str = "\n".join(event_stream)
+    conversation_history_str = "\n".join([f'[{m["role"].title()}, {create_human_readable_delta(m["timestamp"])}]: {m["message"]}' for m in conversation_history])
+    conversation_history_prompt = f'<conversation_history>\n{conversation_history_str}\n</conversation_history>'
+
+    action_log_str = "\n".join([f'[{m["action"]}, {create_human_readable_delta(m["timestamp"])}]: {m["message"]}' for m in action_log])
+    agent_script_prompt = f"""
+<agent_script>
+<action_log>
+{action_log_str if action_log_str else 'No Actions Taken Yet'}
+</action_log>
+
+<current_node>
+{flow.render()}
+</current_node>
+</agent_script>""".strip()
+    user_msg = f"{conversation_history_prompt}\n\n{agent_script_prompt}"
     print("\033[32m" + user_msg + "\033[0m", flush=True)
     res = await client.beta.chat.completions.parse(
                 model=model,
@@ -236,7 +261,7 @@ async def call_llm(sys: str, flow: Flow, event_stream: list, model="gpt-4.1"):
     agent_output = message.parsed
     print(agent_output, flush=True)
     if agent_output.response:
-        event_stream.append(f"[Assistant: {agent_output.response}]")
+        conversation_history.append({"message": agent_output.response, "role": "assistant", "timestamp": datetime.now()})
     if agent_output.action:
         flow.play_actions(agent_output.action)
         action = agent_output.action
@@ -254,7 +279,7 @@ async def call_llm(sys: str, flow: Flow, event_stream: list, model="gpt-4.1"):
                     action_event = f"advanced to the next node: '{flow.current_node.title}'"
                 else:
                     action_event = f"`went back to the previous node: '{flow.current_node.title}'"
-            event_stream.append(f"[Assistant took action `{action.__class__.__name__}`: {action_event}]")
+            action_log.append({"action": action.__class__.__name__, "message": action_event, "timestamp": datetime.now()})
     return agent_output
 
 
