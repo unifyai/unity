@@ -23,40 +23,51 @@
             "env": { "PYTHONPATH": "${workspaceFolder}" },
             "console": "integratedTerminal",
             "justMyCode": false
-          },
-          {
-            "name": "Knowledge Manager Sandbox",
-            "type": "debugpy",
-            "request": "launch",
-            "program": "${workspaceFolder}/sandboxes/knowledge_manager.py",
-            "args": ["--voice"],
-            "cwd": "${workspaceFolder}",
-            "env": { "PYTHONPATH": "${workspaceFolder}" },
-            "console": "integratedTerminal",
-            "justMyCode": false
-          },
-          {
-            "name": "Task Scheduler Sandbox",
-            "type": "debugpy",
-            "request": "launch",
-            "program": "${workspaceFolder}/sandboxes/task_scheduler.py",
-            "args": ["--voice"],
-            "cwd": "${workspaceFolder}",
-            "env": { "PYTHONPATH": "${workspaceFolder}" },
-            "console": "integratedTerminal",
-            "justMyCode": false
-          },
-          {
-            "name": "User Manager",
-            "type": "debugpy",
-            "request": "launch",
-            "program": "${workspaceFolder}/wrapper_app.py",
-            "args": [],
-            "cwd": "${workspaceFolder}",
-            "env": { "PYTHONPATH": "${workspaceFolder}" },
-            "envFile": "${workspaceFolder}/.env",
-            "console": "integratedTerminal",
-            "justMyCode": false
-          }
+        },
+        {
+          "name": "Transcript Manager Sandbox",
+          "type": "debugpy",
+          "request": "launch",
+          "program": "${workspaceFolder}/sandboxes/transcript_manager.py",
+          "args": ["--voice"],
+          "cwd": "${workspaceFolder}",
+          "env": { "PYTHONPATH": "${workspaceFolder}" },
+          "console": "integratedTerminal",
+          "justMyCode": false
+        },
+        {
+          "name": "Knowledge Manager Sandbox",
+          "type": "debugpy",
+          "request": "launch",
+          "program": "${workspaceFolder}/sandboxes/knowledge_manager.py",
+          "args": ["--voice"],
+          "cwd": "${workspaceFolder}",
+          "env": { "PYTHONPATH": "${workspaceFolder}" },
+          "console": "integratedTerminal",
+          "justMyCode": false
+        },
+        {
+          "name": "Task Scheduler Sandbox",
+          "type": "debugpy",
+          "request": "launch",
+          "program": "${workspaceFolder}/sandboxes/task_scheduler.py",
+          "args": ["--voice"],
+          "cwd": "${workspaceFolder}",
+          "env": { "PYTHONPATH": "${workspaceFolder}" },
+          "console": "integratedTerminal",
+          "justMyCode": false
+        },
+        {
+          "name": "User Manager",
+          "type": "debugpy",
+          "request": "launch",
+          "program": "${workspaceFolder}/wrapper_app.py",
+          "args": [],
+          "cwd": "${workspaceFolder}",
+          "env": { "PYTHONPATH": "${workspaceFolder}" },
+          "envFile": "${workspaceFolder}/.env",
+          "console": "integratedTerminal",
+          "justMyCode": false
+        }
     ]
 }
