@@ -36,9 +36,6 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Copy all application files
 COPY . .
 
-# Make startup script executable
-RUN chmod +x /app/start.sh
-
 # Set environment variables
 ENV PYTHONPATH=/app
 ENV UNIFY_KEY=${UNIFY_KEY}
@@ -61,5 +58,5 @@ EXPOSE 8000 6379
 # Use Tini as init system to handle signals properly
 ENTRYPOINT ["/usr/bin/tini", "--"]
 
-# Use the startup script
-CMD ["/app/start.sh"]
+# Use bash to run the startup script
+CMD ["/bin/bash", "/app/start.sh"]
