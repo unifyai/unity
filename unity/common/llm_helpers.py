@@ -38,6 +38,34 @@ def short_id(length=4):
 TYPE_MAP = {str: "string", int: "integer", float: "number", bool: "boolean"}
 
 # ─────────────────────────────────────────────────────────────────────────────
+# Image-handling helpers
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+# Recursively collect *every* base-64 image that lives under "image" key
+def _collect_images(obj, acc: list[str]) -> None:
+    if isinstance(obj, dict):
+        if "image" in obj and isinstance(obj["image"], str):
+            acc.append(obj["image"])
+        for v in obj.values():
+            _collect_images(v, acc)
+    elif isinstance(obj, list):
+        for v in obj:
+            _collect_images(v, acc)
+
+
+# Deep-copy *obj* **without** any "image" keys so we can still present the
+# textual part of a tool result next to the promoted image blocks.
+def _strip_image_keys(obj):
+    if isinstance(obj, dict):
+        return {k: _strip_image_keys(v) for k, v in obj.items() if k != "image"}
+    elif isinstance(obj, list):
+        return [_strip_image_keys(v) for v in obj]
+    else:
+        return obj
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # 0.  metadata wrapper - lets us attach `max_concurrent` to a tool
 # ─────────────────────────────────────────────────────────────────────────────
 
@@ -831,7 +859,27 @@ async def _async_tool_use_loop_inner(
             # ───────────────────────────────────────────────────────────────
             #  Normal (non-handle) result – unchanged path
             # ───────────────────────────────────────────────────────────────
-            result = _dumps(raw, indent=4)
+            # ── finished successfully – promote any embedded images ─────────
+            images: list[str] = []
+            _collect_images(raw, images)
+
+            text_repr = _dumps(_strip_image_keys(raw), indent=4)
+
+            if images:
+                content_blocks: list = []
+                if text_repr and text_repr != "{}":
+                    content_blocks.append({"type": "text", "text": text_repr})
+                content_blocks.extend(
+                    {
+                        "type": "image_url",
+                        "image_url": {"url": f"data:image/png;base64,{b64}"},
+                    }
+                    for b64 in images
+                )
+                result = content_blocks
+            else:
+                result = text_repr
+
             consecutive_failures = 0
         except Exception:
             consecutive_failures += 1
@@ -931,8 +979,13 @@ async def _async_tool_use_loop_inner(
         lim = norm_tools[t_name].max_concurrent
         return lim is None or _active_count(t_name) < lim
 
-    msg = {"role": "user", "content": message}
-    await _append_msgs([msg])
+    # ── initial **user** message
+    if isinstance(message, dict):
+        initial_user_msg = message
+    else:
+        initial_user_msg = {"role": "user", "content": message}
+
+    await _append_msgs([initial_user_msg])
 
     consecutive_failures = 0
     pending: Set[asyncio.Task] = set()
