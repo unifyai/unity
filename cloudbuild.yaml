@@ -2,7 +2,13 @@ steps:
   # Build Docker Image
 - name: 'gcr.io/cloud-builders/docker'
   id: 'build-image'
-  args: ['build', '--build-arg', 'UNIFY_KEY=$$ORCHESTRA_API_KEY', '-t', '${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPOSITORY}/unity:${SHORT_SHA}', '-t', '${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPOSITORY}/unity:latest', '.']
+  entrypoint: 'bash'
+  args:
+  - '-c'
+  - |
+    docker build --build-arg UNIFY_KEY=$$ORCHESTRA_API_KEY \
+      -t ${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPOSITORY}/unity:${SHORT_SHA} \
+      -t ${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPOSITORY}/unity:latest .
   secretEnv: ['ORCHESTRA_API_KEY']
 
   # Push Docker Image (SHA Tag)
