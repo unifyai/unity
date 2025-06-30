@@ -1,13 +1,10 @@
-from abc import ABC
 import asyncio
 import openai
 import os
-from pydantic import BaseModel
 import traceback
 
 from unity.common.llm_helpers import AsyncToolUseLoopHandle
 from unity.conductor.conductor import Conductor
-from unity.events.event_bus import EventBus
 from unity.events.event_bus import EVENT_BUS
 from unity.helpers import run_script, terminate_process
 from unity.service import comms_actions
@@ -84,7 +81,7 @@ class CommsAgent:
         self.call_mode = False
 
         # conductor
-        self.conductor = Conductor()
+        self.conductor = None
         self.conductor_handles: dict[int, dict[str, AsyncToolUseLoopHandle | str]] = {}
         self.handle_count = 0
 
@@ -179,6 +176,9 @@ class CommsAgent:
 
     async def conductor_action(self, action: ConductorAction):
         """Handle conductor actions asynchronously"""
+        if self.conductor is None:
+            self.conductor = Conductor()
+
         # get chat history
         chat_history = self.get_chat_history()
 
