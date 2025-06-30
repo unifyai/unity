@@ -470,6 +470,8 @@ class ToolLoopPlanner(BasePlanner):
             session_connect_url=session_connect_url,
             headless=headless,
         )
+        if not self._controller.is_alive():
+            self._controller.start()
         self._coms_manager = ComsManager()
         self._tools_cache: Optional[Dict[str, Callable[..., Awaitable[Any]]]] = None
         self._main_event_loop: Optional[asyncio.AbstractEventLoop] = None
@@ -612,20 +614,3 @@ class ToolLoopPlanner(BasePlanner):
             self._controller.stop()
         if self._coms_manager:
             await self._coms_manager.stop()
-
-    async def execute(
-        self,
-        task_description: str,
-        *,
-        parent_chat_context: list[dict] | None = None,
-        clarification_up_q: Optional[asyncio.Queue[str]] = None,
-        clarification_down_q: Optional[asyncio.Queue[str]] = None,
-    ) -> BaseActiveTask:
-        if not self._controller.is_alive():
-            self._controller.start()
-        return await super().execute(
-            task_description,
-            parent_chat_context=parent_chat_context,
-            clarification_up_q=clarification_up_q,
-            clarification_down_q=clarification_down_q,
-        )

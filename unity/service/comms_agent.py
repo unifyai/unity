@@ -81,7 +81,7 @@ class CommsAgent:
         self.call_mode = False
 
         # conductor
-        self.conductor = Conductor()
+        self.conductor = None
         self.conductor_handles: dict[int, dict[str, AsyncToolUseLoopHandle | str]] = {}
         self.handle_count = 0
 
@@ -176,6 +176,9 @@ class CommsAgent:
 
     async def conductor_action(self, action: ConductorAction):
         """Handle conductor actions asynchronously"""
+        if self.conductor is None:
+            self.conductor = Conductor()
+
         # get chat history
         chat_history = self.get_chat_history()
 
