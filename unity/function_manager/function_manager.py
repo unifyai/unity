@@ -42,7 +42,7 @@ class FunctionManager(threading.Thread):
         if self._ctx not in unify.get_contexts():
             unify.create_context(
                 self._ctx,
-                unique_id_names="function_id",
+                unique_column_ids="function_id",
                 description="List of functions, with all function details stored.",
             )
             fields = model_to_fields(Function)
