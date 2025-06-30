@@ -88,10 +88,16 @@ async def _build_scenario(custom: Optional[str] = None) -> Optional[str]:
         "`ask` to confirm, and finally `summarize` important threads."
     )
 
+    def log_messages(messages: list[dict]) -> str:
+        for msg in messages:
+            tm.log_message(msg)
+        tm.join_published()
+        return "messages logged successfully"
+
     builder = ScenarioBuilder(
         description=description,
         tools={
-            "_log_messages": tm.log_message,  # IMPORTANT: private helper
+            "log_messages": log_messages,
             "ask": tm.ask,
             "summarize": tm.summarize,
         },
