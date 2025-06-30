@@ -44,7 +44,7 @@ class ContactManager(BaseContactManager):
         if self._ctx not in unify.get_contexts():
             unify.create_context(
                 self._ctx,
-                unique_id_names="contact_id",
+                unique_column_ids="contact_id",
                 description="List of contacts, with all contact details stored.",
             )
             fields = model_to_fields(Contact)

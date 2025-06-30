@@ -362,7 +362,7 @@ class KnowledgeManager(BaseKnowledgeManager):
         ctx = f"{self._ctx}/{name}"
         unify.create_context(
             ctx,
-            unique_id_names=unique_column_name,
+            unique_column_ids=unique_column_name,
             description=description,
         )
 
@@ -560,7 +560,7 @@ class KnowledgeManager(BaseKnowledgeManager):
             Backend confirmation or error.
         """
         table_ctx = unify.get_context(self._ctx_for_table(table))
-        unique_column_name = table_ctx["unique_id_names"]
+        unique_column_name = table_ctx["unique_column_ids"]
         # Guard against removal of mandatory columns
         if (table == "Contacts" and column_name in self._CONTACT_REQUIRED_COLUMNS) or (
             table != "Contacts" and column_name == unique_column_name
@@ -812,7 +812,7 @@ class KnowledgeManager(BaseKnowledgeManager):
         """
         ctx = self._ctx_for_table(table)
         ctx_info = unify.get_context(ctx)
-        unique_column_name = ctx_info["unique_id_names"]
+        unique_column_name = ctx_info["unique_column_ids"]
         unique_ids = sorted([int(k) for k in updates.keys()])
         log_ids: List[int] = sorted(
             unify.get_logs(
