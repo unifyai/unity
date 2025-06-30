@@ -8,9 +8,6 @@ import json
 import copy
 import uuid
 
-from browser_use.controller.service import Controller as BrowserUseController
-from browser_use import Browser, BrowserConfig
-from browser_use.browser.context import BrowserContext as BrowserUseBrowserContext
 from unity.common.llm_helpers import (
     start_async_tool_use_loop,
     SteerableToolHandle,
@@ -487,6 +484,10 @@ class BrowserUsePlanner(BasePlanner):
         headless: bool = True,
         disable_browser_security: bool = False,
     ):
+        from browser_use.controller.service import Controller as BrowserUseController
+        from browser_use import Browser, BrowserConfig
+        from browser_use.browser.context import BrowserContext as BrowserUseBrowserContext
+
         super().__init__()
         self._browser = Browser(
             config=BrowserConfig(

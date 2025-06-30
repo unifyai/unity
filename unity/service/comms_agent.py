@@ -1,13 +1,10 @@
-from abc import ABC
 import asyncio
 import openai
 import os
-from pydantic import BaseModel
 import traceback
 
 from unity.common.llm_helpers import AsyncToolUseLoopHandle
 from unity.conductor.conductor import Conductor
-from unity.events.event_bus import EventBus
 from unity.events.event_bus import EVENT_BUS
 from unity.helpers import run_script, terminate_process
 from unity.service import comms_actions
