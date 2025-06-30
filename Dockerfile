@@ -33,12 +33,11 @@ RUN pip install --no-cache-dir torch torchvision torchaudio --index-url https://
 # Install Python dependencies
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Copy startup script first
-COPY start.sh /app/start.sh
-RUN chmod +x /app/start.sh
-
 # Copy all application files
 COPY . .
+
+# Make startup script executable
+RUN chmod +x /app/start.sh
 
 # Set environment variables
 ENV PYTHONPATH=/app

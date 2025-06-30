@@ -26,8 +26,13 @@ cleanup() {
 trap cleanup SIGTERM SIGINT
 
 echo "Starting Redis server..."
-# Start Redis in the background
-redis-server --daemonize yes
+
+# Clear any existing Redis data to avoid format compatibility issues
+echo "Clearing existing Redis data..."
+rm -f /app/dump.rdb /tmp/dump.rdb /var/lib/redis/dump.rdb 2>/dev/null || true
+
+# Start Redis in the background with specific configuration
+redis-server --daemonize yes --save "" --appendonly no
 
 # Wait a moment for Redis to start
 echo "Waiting for Redis to start..."
