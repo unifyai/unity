@@ -381,8 +381,11 @@ def annotation_to_schema(ann: Any) -> Dict[str, Any]:
     # ── 4. typing.Dict[K, V]  → JSON object whose values follow V ────────────
     origin = get_origin(ann)
     if origin is dict or origin is Dict:
-        # ignore key type; JSON object keys are always strings
-        _, value_type = get_args(ann)
+        args = get_args(ann)
+        # Dict  (i.e., no [K, V] supplied)  →  free-form object
+        if len(args) < 2:
+            return {"type": "object"}
+        _, value_type = args
         return {
             "type": "object",
             "additionalProperties": annotation_to_schema(value_type),
