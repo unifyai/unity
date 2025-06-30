@@ -486,7 +486,9 @@ class BrowserUsePlanner(BasePlanner):
     ):
         from browser_use.controller.service import Controller as BrowserUseController
         from browser_use import Browser, BrowserConfig
-        from browser_use.browser.context import BrowserContext as BrowserUseBrowserContext
+        from browser_use.browser.context import (
+            BrowserContext as BrowserUseBrowserContext,
+        )
 
         super().__init__()
         self._browser = Browser(
