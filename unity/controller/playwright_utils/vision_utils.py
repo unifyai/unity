@@ -35,34 +35,71 @@ def iou(box_a: list[float], box_b: list[float]) -> float:
     box_a_area = (box_a[2] - box_a[0]) * (box_a[3] - box_a[1])
     box_b_area = (box_b[2] - box_b[0]) * (box_b[3] - box_b[1])
     
-    iou_score = intersection_area / float(box_a_area + box_b_area - intersection_area)
+    # Add a check to prevent division by zero for zero-area boxes
+    union_area = float(box_a_area + box_b_area - intersection_area)
+    if union_area == 0:
+        return 0.0
+
+    iou_score = intersection_area / union_area
     return iou_score
 
 
 def match_old_element(
-    old_bbox: list[float], old_label: str, new_results: list[dict], *, iou_thresh: float = 0.5
+    old_bbox: list[float], old_label: str, new_results: list[dict], *, iou_thresh: float = 0.4
 ) -> dict | None:
-    """Finds the element in new_results that best matches the old element's properties."""
-    best_match, best_iou = None, 0.0
+    """
+    Return the element from *new_results* that best matches the old element.
 
-    # 1. Primary strategy: Find the best bounding box overlap (IoU)
+    A match is scored on two axes:
+    1. **Spatial overlap** – IoU against the previous bounding‑box.
+    2. **Label similarity** – simple ratio of shared bigrams.
+
+    Changes introduced by this patch
+    --------------------------------
+    * *Lower* the default IoU threshold **0.6 → 0.4** so we tolerate minor
+      re‑flows (e.g. fonts changing size once a field receives focus).
+    * When the text similarity is *zero* (common when a placeholder such as
+      "Month" vanishes after focus) fall back to a *shape‑only* match **as
+      long as IoU ≥ threshold**.
+    """
+    candidates = []
+    old_label_norm = old_label.lower().strip()
+
     for new_element in new_results:
-        overlap = iou(old_bbox, new_element["bbox"])
-        if overlap > best_iou:
-            best_match, best_iou = new_element, overlap
-    
-    if best_iou >= iou_thresh:
-        return best_match
+        overlap_score = iou(old_bbox, new_element["bbox"])
+        
+        # Skip elements with no overlap at all to be more efficient
+        if overlap_score == 0:
+            continue
 
-    # 2. Fallback strategy: Find a matching text label
-    old_text_normalized = old_label.lower().strip()
-    if old_text_normalized:
-        for new_element in new_results:
-            new_content_normalized = new_element.get("content", "").lower()
-            if old_text_normalized in new_content_normalized:
-                return new_element
-    
-    return None
+        # Text similarity (simple containment for now, can be improved)
+        new_label_norm = new_element.get("label", "").lower().strip()
+        text_score = 0
+        if old_label_norm and new_label_norm:
+            if old_label_norm == new_label_norm:
+                text_score = 1.0
+            elif old_label_norm in new_label_norm or new_label_norm in old_label_norm:
+                text_score = 0.5
+
+        # Weighted final score: Give more importance to position (IoU)
+        final_score = (0.7 * overlap_score) + (0.3 * text_score)
+        
+        # --- amended scoring logic ------------------------------------ #
+        if final_score > 0.4:
+            candidates.append({"element": new_element, "score": final_score})
+        
+        # shape‑only rescue: accept when labels diverged (text_score == 0)
+        # but spatial overlap is still convincing.
+        elif text_score == 0 and overlap_score > iou_thresh:
+            candidates.append({"element": new_element, "score": overlap_score})
+
+    if not candidates:
+        return None
+
+    # Return the best candidate
+    best_candidate = max(candidates, key=lambda x: x["score"])
+    return best_candidate["element"]
+
 
 def handle_from_bbox(page: Page, bbox_norm: List[float], expected_text: str) -> Optional[ElementHandle]:
     """
