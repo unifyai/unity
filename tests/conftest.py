@@ -254,6 +254,12 @@ def pytest_configure(config):
         "eval: mark a test as a fuzzy evaluation test for English language APIs",
     )
 
+    # Required to disable explicit log level if set from pytest.ini or command line options
+    if os.environ.get("UNITY_TESTS_CLI_LOGGING", "true").lower() == "false":
+        config.option.log_cli_level = None
+        config.option.showcapture = "no"
+        config.option.capture = "no"
+
 
 # Skip tests marked with requires_real_unify when using the unify stub
 def pytest_runtest_setup(item):
