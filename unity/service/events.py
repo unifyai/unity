@@ -141,6 +141,11 @@ class SMSMessageSentEvent(_Message):
     direction = "Sent"
 
 
+class EmailSentEvent(_Message):
+    platform = "Email"
+    direction = "Sent"
+
+
 class WhatsappMessageRecievedEvent(_Message):
     platform = "Whatsapp"
     direction = "Recieved"
@@ -148,6 +153,11 @@ class WhatsappMessageRecievedEvent(_Message):
 
 class SMSMessageRecievedEvent(_Message):
     platform = "SMS"
+    direction = "Recieved"
+
+
+class EmailRecievedEvent(_Message):
+    platform = "Email"
     direction = "Recieved"
 
 
