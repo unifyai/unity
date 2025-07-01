@@ -17,6 +17,7 @@ subscription_id = (
 events_map: dict[str, Event] = {
     "whatsapp": WhatsappMessageRecievedEvent,
     "msg": SMSMessageRecievedEvent,
+    "email": EmailRecievedEvent,
 }
 
 
@@ -39,13 +40,22 @@ class CommsManager:
             event = data["event"]
             print(f"Received message from {thread}: {message.data.decode('utf-8')}")
             if thread in events_map:
+                content = event["body"]
+                topic = ""
+                if thread == "email":
+                    content = (
+                        "Subject: " + event["subject"] + "\n\n" + event["body"]
+                    )
+                    topic = event["from"].split("<")[1][:-1]
+                else:
+                    topic = event["from_number"].replace("whatsapp:", "").strip()
                 # Put the message in the queue instead of creating a task
                 self.loop.call_soon_threadsafe(
                     self.message_queue.put_nowait,
                     {
-                        "topic": event["from_number"].replace("whatsapp:", "").strip(),
+                        "topic": topic,
                         "event": events_map[thread](
-                            content=event["body"],
+                            content=content,
                             timestamp=datetime.now(),
                             role="User",
                         ).to_dict(),
