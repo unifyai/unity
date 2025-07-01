@@ -1,18 +1,16 @@
-- [x] Add required fields
-- [x] go_next should only be available when all required fields are done to avoid advancing without filling all fields
-- [x] adjust action descriptions and add "current value" for each field in the action description
-- [ ] Make field names much shorter
-- [x] add action name to the event stream
-- [ ] Decouple response and action (?) # something to explore actually (AgentScriptAction | UserResponse)
-- [ ] Instructions should provide example questions to ask
-- [ ] Test userflows
+Problem: 
+Frequent responses that are robotic and unnatural, example:
+- Thanking the user when automatically filling fields
+- Repetitive responses
+- Unnatural or robotic tone
 
-System prompts requierments
-- [x] Explain event stream and what's in it
-- [x] Explain the agent script
-- [x] Explain how to use the event stream effectively
-  - [x] using the conversation history to fill information
-- [ ] Provide guidance on how to use the instructions in the agent script effectively
-- [x] explain the different available actions
-- [ ] explain how to respond to the user
-- [x] Show how the different fields are visually represented
+Ideas to try:
+- re-name `response` field to `phone_utterance`: see if changing the field name helps in anyway
+- Add two new actions `PromptUser`, `UpdateUser` (Prompt User will ask them for data or Respond to them while UpdateUser will be mainly used to give them update cueues on what you are doing at the moment)
+
+putting everything in one field might be complicated
+
+okay each turn the agent so decide:
+- prompt the user for information
+- take an agent_script_action
+- end the session/call

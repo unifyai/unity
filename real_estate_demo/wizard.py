@@ -5,18 +5,30 @@ from textwrap import dedent
 from pydantic import BaseModel, Field, create_model
 
 class GoNext(BaseModel):
-    "go to previous node"
+    "advance to the next node"
     next: Literal[True] = True
 
 class GoBack(BaseModel):
-    "advance to the next node"
+    "go back to the previous node"
     back: Literal[True] = True
 
 class EndSession(BaseModel):
-    "conclude the session, can only be used in a terminal node, never conclude the session until you make sure you have met all of the user's needs"
+    "conclude the session and end the call, can only be used in a terminal node, never conclude the session until you make sure you have met all of the user's needs"
     end_session: Literal[True] = True
+    closing_message: str
+
+class PromptUser(BaseModel):
+    "prompt user (ask a question, provide clarification)"
+    prompt: str
+
+# class UpdateUser(BaseModel):
+#     "update user one what you are doing at the moment, check the <conversation_history> and give a quick update if you have not responded for while"
+#     update: str = Field(..., description="short update")
 
 class BaseGoToNode(BaseModel):
+    pass
+
+class BaseDataFieldAction(BaseModel):
     pass
 
 class InputField:
@@ -214,30 +226,34 @@ class Flow:
 
         self.flow_done = False
 
-    def play_actions(self, action):
+    def play_actions(self, actions):
         if self.flow_done: return
-        if isinstance(action, GoBack):
-            self.path.pop()
-            self.current_node = self.path[-1]
-            return
-        elif isinstance(action, GoNext):
-            if self.current_node.can_advance:
-                next_screen_id = self.current_node.next(self.ctx)
-                # print(next_screen_id)
-                self.current_node = list(filter(lambda s: s.id==next_screen_id, self.screens))[0]
-                self.ctx |= self.current_node.data
-                self.path.append(self.current_node)
+        for action in actions:
+            if isinstance(action, (PromptUser)):
+                continue
+            if isinstance(action, GoBack):
+                self.path.pop()
+                self.current_node = self.path[-1]
                 return
-        elif isinstance(action, BaseGoToNode):
-            self.current_node = list(filter(lambda s: s.id==action.node_id, self.screens))[0] 
-        elif isinstance(action, EndSession):
-            self.flow_done = True
-            return
-        else:
-            self.current_node.play_actions(action)
-            # update ctx
-            self.ctx |= self.current_node.data
-            return
+            elif isinstance(action, GoNext):
+                if self.current_node.can_advance:
+                    next_screen_id = self.current_node.next(self.ctx)
+                    # print(next_screen_id)
+                    self.current_node = list(filter(lambda s: s.id==next_screen_id, self.screens))[0]
+                    self.ctx |= self.current_node.data
+                    self.path.append(self.current_node)
+                    return
+            elif isinstance(action, BaseGoToNode):
+                self.current_node = list(filter(lambda s: s.id==action.node_id, self.screens))[0]
+                return
+            elif isinstance(action, EndSession):
+                self.flow_done = True
+                return
+            else:
+                self.current_node.play_actions(action)
+                # update ctx
+                self.ctx |= self.current_node.data
+                # return
         
     def current_action_model(self) -> BaseModel:
         # we should check if node is terminal (or has no begning) or not actually
@@ -250,20 +266,26 @@ class Flow:
             __doc__="Goes to the chosen node that you have already visited in your path. Useful when you need to go back to a specific node to modify data or start-over.",
             __base__=BaseGoToNode
         )
-        if self.current_node != self.root_node:
-            extra_actions.append(GoBack)
+        # if self.current_node != self.root_node:
+        #     extra_actions.append(GoBack)
         if not self.current_node.is_terminal and self.current_node.can_advance:
             extra_actions.append(GoNext)
-        if len(self.path) > 3:
+        if len(self.path) > 2:
             extra_actions.append(GoToNode)
-        if self.current_node.is_terminal:
-            extra_actions.append(EndSession)
+        # if self.current_node.is_terminal:
+        #     extra_actions.append(EndSession)
         # return create_model(
         #     "ActionModel",
         #     __base__=self.current_node.action_model,
         #     **{k:(Optional[v], Field(default=None, description=d)) for k, d, v in extra_actions}
         # )
-        return Union[self.current_node.action_model, *extra_actions] 
+        DataFieldAction = create_model(
+            "DataFieldAction",
+            update= (str, Field(default=None, description="short ~3-5 word update for the user")),
+            fields_actions = (list[Union[self.current_node.action_model]], Field(default=..., description="Data field action to take")),
+            __base__=BaseDataFieldAction
+        )
+        return Union[DataFieldAction, *extra_actions]
     
     def render(self):
         return f"""
