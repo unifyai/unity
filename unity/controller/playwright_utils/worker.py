@@ -39,6 +39,18 @@ from .heuristics import export_for_js
 AUTO_CAPTCHA = False  # NEW – detect only when user issues `solve_captcha`
 OMNIPARSER_URL = "https://omniparser.saas.unify.ai/parse/"
 
+def grab_screenshot(page: Page) -> bytes:
+    """
+    Capture the exact visual state of a Playwright `Page`.
+
+    Uses the Chrome DevTools Protocol (`Page.captureScreenshot`) to grab a
+    PNG of the page’s painted surface—no scrolling or flicker—and returns
+    the raw PNG bytes.
+    """
+    cdp = page.context.new_cdp_session(page)
+    res = cdp.send("Page.captureScreenshot", {"fromSurface": True})
+    return b64decode(res["data"])
+
 def _update_in_textbox_state(runner, handle, label):
     """Update BrowserState.in_textbox after a click."""
     try:
@@ -360,7 +372,7 @@ class BrowserWorker(threading.Thread):
                                 # Step 2: Get a fresh snapshot from OmniParser.
                                 # It's good practice to wait for the page to be idle before screenshotting.
                                 self.runner.active.wait_for_load_state("networkidle", timeout=5000)
-                                png_bytes = mirror.screenshot()
+                                png_bytes = grab_screenshot(self.runner.active)
                                 new_results = self._call_omniparser(png_bytes)
 
                                 # Defensive tweak: Sort results for more stable IDs on static pages.
@@ -527,7 +539,7 @@ class BrowserWorker(threading.Thread):
 
                             # Now, trigger the next vision call
                             self._last_vision_ts = now
-                            png_bytes = mirror.screenshot()
+                            png_bytes = grab_screenshot(self.runner.active)
                             self._vision_future = self._executor.submit(self._call_omniparser, png_bytes)
 
                     # -- 3) refresh overlay ------------------------------
@@ -665,7 +677,7 @@ class BrowserWorker(threading.Thread):
                         pg.title() or "<untitled>" for pg in self.runner.ctx.pages
                     ]
 
-                    screenshot_bytes = mirror.screenshot()
+                    screenshot_bytes = grab_screenshot(self.runner.active)
                     screenshot = screenshot = base64.b64encode(screenshot_bytes).decode(
                         "utf-8",
                     )
