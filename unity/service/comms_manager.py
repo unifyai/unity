@@ -43,9 +43,7 @@ class CommsManager:
                 content = event["body"]
                 topic = ""
                 if thread == "email":
-                    content = (
-                        "Subject: " + event["subject"] + "\n\n" + event["body"]
-                    )
+                    content = "Subject: " + event["subject"] + "\n\n" + event["body"]
                     topic = event["from"].split("<")[1][:-1]
                 else:
                     topic = event["from_number"].replace("whatsapp:", "").strip()
