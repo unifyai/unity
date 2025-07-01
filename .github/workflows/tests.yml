@@ -107,7 +107,6 @@ jobs:
         uv pip install -r temp_requirements.txt
 
         # 3) Install playwright browsers WITH system dependencies
-        uv pip install pytest-playwright
         .unity/bin/python -m playwright install --with-deps
 
         # 4) Install the local 'unity' project in editable mode
