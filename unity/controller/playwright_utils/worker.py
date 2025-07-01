@@ -407,10 +407,64 @@ class BrowserWorker(threading.Thread):
                         else:
                             time.sleep(0.1)
                             continue
+                    
+                    now = time.time()
+                     # A) If vision is enabled, check if it's time for a new call
+                    if self.use_vision and (now - self._last_vision_ts >= self._vision_period):
+                        if not self._vision_future or self._vision_future.done():
+                            # If a previous vision call finished, process its results first
+                            if self._vision_future and self._vision_future.done():
+                                try:
+                                    vision_results = self._vision_future.result()
+                                    # Process and cache the results immediately
+                                    vp = self.runner.active.evaluate("() => ({w:innerWidth, h:innerHeight, sx:scrollX, sy:scrollY})")
+                                    vw, vh = vp.get('w', 1280), vp.get('h', 720)
+                                    sx, sy = vp.get('sx', 0), vp.get('sy', 0)
+                                    
+                                    # Clear the cache before populating it
+                                    self._vision_elements_cache = [] 
+                                    for i, e in enumerate(vision_results):
+                                        bbox_norm = e.get("bbox")
+                                        if not bbox_norm: continue
+                                        
+                                        left = bbox_norm[1] * vw
+                                        top = bbox_norm[0] * vh
+                                        width = (bbox_norm[3] - bbox_norm[1]) * vw
+                                        height = (bbox_norm[2] - bbox_norm[0]) * vh
+                                        vleft = left - sx
+                                        vtop = top - sy
+
+                                        self._vision_elements_cache.append({
+                                            "id": i + 1,
+                                            "label": e.get("content", "").strip(),
+                                            "bbox": bbox_norm,
+                                            "handle": None,
+                                            "fixed": False,
+                                            "left": left,
+                                            "top": top,
+                                            "width": width,
+                                            "height": height,
+                                            "vleft": vleft,
+                                            "vtop": vtop,
+                                        })
+                                except Exception as e:
+                                    self.log(f"Vision call failed: {e}")
+                                    self._vision_elements_cache = [] # Clear cache on failure
+                                self._vision_future = None
+
+                            # Now, trigger the next vision call
+                            self._last_vision_ts = now
+                            png_bytes = mirror.screenshot()
+                            self._vision_future = self._executor.submit(self._call_omniparser, png_bytes)
 
                     # -- 3) refresh overlay ------------------------------
                     try:
-                        last_elements = collect_elements(self.runner.active)
+                        # C) Decide which element list to use
+                        if self.use_vision:
+                            last_elements = self._vision_elements_cache
+                        else:
+                            last_elements = self._get_elements_from_heuristics()
+                            
                     except Exception as exc:  # navigation in-flight
                         self.log(f"collect_elements skipped: {exc}")
                         time.sleep(0.05)  # brief pause, then continue loop
