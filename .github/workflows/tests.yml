@@ -107,6 +107,7 @@ jobs:
         uv pip install -r temp_requirements.txt
 
         # 3) Install playwright browsers WITH system dependencies
+        uv pip install pytest-playwright
         .unity/bin/python -m playwright install --with-deps
 
         # 4) Install the local 'unity' project in editable mode
@@ -115,13 +116,10 @@ jobs:
         # 5) Install unify package from GitHub
         uv pip install git+https://github.com/unifyai/unify
 
-        # 6) Install playwright pytest plugin
-        .unity/bin/python -m pip install pytest-playwright
-
-        # 7) Install pygments
+        # 6) Install pygments
         uv pip install pygments
 
-        # 8) cleanup
+        # 7) cleanup
         rm temp_requirements.txt
 
     - name: Run unit tests
