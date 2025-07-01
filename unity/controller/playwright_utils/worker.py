@@ -229,7 +229,7 @@ class BrowserWorker(threading.Thread):
                 bbox_norm = e.get("bbox")
                 if not bbox_norm: continue
 
-                # Using the corrected denormalization logic
+                # Denormalize to absolute page coordinates
                 left = bbox_norm[0] * vw
                 top = bbox_norm[1] * vh
                 width = (bbox_norm[2] - bbox_norm[0]) * vw
@@ -496,42 +496,8 @@ class BrowserWorker(threading.Thread):
                             if self._vision_future and self._vision_future.done():
                                 try:
                                     vision_results = self._vision_future.result()
-                                    # Process and cache the results immediately
-                                    vp = self.runner.active.evaluate("() => ({w:innerWidth, h:innerHeight, sx:scrollX, sy:scrollY})")
-                                    vw, vh = vp.get('w', 1280), vp.get('h', 720)
-                                    sx, sy = vp.get('sx', 0), vp.get('sy', 0)
-                                    
-                                    # Clear the cache before populating it
-                                    self._vision_elements_cache = [] 
-                                    for i, e in enumerate(vision_results):
-                                        bbox_norm = e.get("bbox")
-                                        if not bbox_norm: continue
-                                        
-                                        vp = self.runner.active.evaluate("() => ({w:innerWidth, h:innerHeight, sx:scrollX, sy:scrollY})")
-                                        vw, vh = vp.get('w', 1280), vp.get('h', 720)
-                                        sx, sy = vp.get('sx', 0), vp.get('sy', 0)
-                                        
-                                        # Corrected denormalization logic
-                                        left = bbox_norm[0] * vw      # Should be x_min (index 0)
-                                        top = bbox_norm[1] * vh       # Should be y_min (index 1)
-                                        width = (bbox_norm[2] - bbox_norm[0]) * vw  # x_max - x_min
-                                        height = (bbox_norm[3] - bbox_norm[1]) * vh # y_max - y_min
-                                        vleft = left - sx
-                                        vtop = top - sy
-
-                                        self._vision_elements_cache.append({
-                                            "id": i + 1,
-                                            "label": e.get("content", "").strip(),
-                                            "bbox": bbox_norm,
-                                            "handle": None,
-                                            "fixed": False,
-                                            "left": left,
-                                            "top": top,
-                                            "width": width,
-                                            "height": height,
-                                            "vleft": vleft,
-                                            "vtop": vtop,
-                                        })
+                                    vision_results.sort(key=lambda r: (r["bbox"][1], r["bbox"][0]))
+                                    self._populate_cache(vision_results)
                                 except Exception as e:
                                     self.log(f"Vision call failed: {e}")
                                     self._vision_elements_cache = [] # Clear cache on failure
