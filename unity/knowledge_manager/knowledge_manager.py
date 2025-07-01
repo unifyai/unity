@@ -1075,6 +1075,7 @@ class KnowledgeManager(BaseKnowledgeManager):
             "new_context": dest_ctx,
         }
         if columns is not None:
+            columns = [c.replace(left_table, left_ctx).replace(right_table, right_ctx) for c in columns]
             payload["columns"] = columns
 
         url = f"{os.environ['UNIFY_BASE_URL']}/logs/join"
