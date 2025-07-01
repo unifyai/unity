@@ -96,6 +96,7 @@ class CommsAgent:
             filter=f"event_type in {json.dumps(EVENT_TYPES)}",
             limit=self.conv_context_length,
         )
+
         return [Event.from_bus_event(e).to_dict() for e in bus_events]
 
     def get_chat_history(self):
@@ -200,6 +201,7 @@ class CommsAgent:
         self.publish(
             {
                 "topic": "conductor",
+                "to": "past",
                 "event": ConductorStartedEvent(chat_history, action.query).to_dict(),
             },
         )
@@ -247,7 +249,7 @@ class CommsAgent:
             elif action.type == "resume":
                 handle.resume()
             event = ConductorHandleSuccessEvent(action.query, action.type)
-        self.publish({"topic": "conductor", "event": event.to_dict()})
+        self.publish({"topic": "conductor", "to": "past", "event": event.to_dict()})
 
     def on_run_end(self, t: asyncio.Task):
         try:
