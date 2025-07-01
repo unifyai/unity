@@ -18,6 +18,7 @@ two independent searches.
 import re
 import json
 import pytest
+import functools
 
 from unity.knowledge_manager.knowledge_manager import KnowledgeManager
 from tests.helpers import _handle_project
@@ -52,14 +53,15 @@ async def test_join_used_for_department_query(monkeypatch):
     called = {"flag": False}
     original_join = KnowledgeManager._search_joined
 
-    def _spy(self, *args, **kwargs):
+    @functools.wraps(original_join)
+    def _search_joined_spy(self, *args, **kwargs):
         called["flag"] = True
         return original_join(self, *args, **kwargs)
 
     monkeypatch.setattr(
         KnowledgeManager,
         "_search_joined",
-        _spy,
+        _search_joined_spy,
         raising=True,
     )
 
@@ -68,7 +70,6 @@ async def test_join_used_for_department_query(monkeypatch):
 
     km._create_table(
         name="Employees",
-        unique_column_name="employee_id",
         columns={
             "employee_id": "int",
             "full_name": "str",
@@ -77,7 +78,6 @@ async def test_join_used_for_department_query(monkeypatch):
     )
     km._create_table(
         name="Departments",
-        unique_column_name="department_id",
         columns={
             "department_id": "int",
             "department_name": "str",
@@ -103,7 +103,8 @@ async def test_join_used_for_department_query(monkeypatch):
 
     # 3️⃣  Ask the question ---------------------------------------------------
     handle = await km.ask(
-        "How many people are in John Smith's department?",
+        "How many people are in John Smith's department? "
+        "Please use the tool '_search_joined' to answer the question.",
         _return_reasoning_steps=True,
     )
     answer, reasoning = await handle.result()
