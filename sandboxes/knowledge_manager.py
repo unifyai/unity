@@ -188,7 +188,7 @@ async def _main_async() -> None:
         os.environ["UNIFY_TRACED"] = "false"
 
     # prepare Unify context
-    base_ctx = "Sandbox" if args.shared_context else "KnowledgeSandbox"
+    base_ctx = "KnowledgeSandbox" if args.unique_context else "Sandbox"
     unify.activate(base_ctx)
     unify.set_trace_context("Traces")
     if not args.reuse:
