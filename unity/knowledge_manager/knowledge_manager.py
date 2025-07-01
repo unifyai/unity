@@ -38,6 +38,7 @@ class KnowledgeManager(BaseKnowledgeManager):
             self._search,
             self._nearest,
             self._search_joined,
+            self._search_multi_join,
             # Tables
             self._tables_overview,
             self._create_table,
@@ -75,6 +76,7 @@ class KnowledgeManager(BaseKnowledgeManager):
                 self._search,
                 self._nearest,
                 self._search_joined,
+                self._search_multi_join,
             ),
         }
 
@@ -1134,3 +1136,141 @@ class KnowledgeManager(BaseKnowledgeManager):
                 pass
 
         return {new_table: rows}
+
+    def _search_multi_join(
+        self,
+        *,
+        joins: List[Dict[str, Any]],
+        new_table: Optional[str] = None,
+        post_join_filter: Optional[str] = None,
+        post_join_limit: int = 100,
+        post_join_offset: int = 0,
+    ) -> Dict[str, List[Dict[str, Any]]]:
+        """
+        **Chain together an arbitrary number of joins in one call**.
+
+        Parameters
+        ----------
+        joins : list[dict]
+            An *ordered* list where **each element mirrors the kwargs of
+            `_search_joined` except that:
+
+              • the **two** input tables are provided under the key
+                ``"tables"`` (string or 2-element list);
+              • ``new_table`` is *optional* for every step – when omitted a
+                private temporary name is auto-generated and cleaned up later.
+
+            Example::
+
+                joins = [
+                    {
+                        "tables": ["Authors", "Books"],
+                        "join_expr": "Authors.author_id == Books.author_id",
+                        "mode": "inner",
+                    },
+                    {
+                        "tables": ["$prev", "Reviews"],   # $prev → last result
+                        "join_expr": "$prev.book_id == Reviews.book_id",
+                    },
+                ]
+
+        new_table : str | None
+            Name for the **final** joined table.  When *None* a temporary table
+            is created and deleted automatically after the rows are returned.
+        post_join_filter, post_join_limit, post_join_offset
+            Standard projection / pagination applied *after* the final join.
+
+        Returns
+        -------
+        dict[str, list[dict]]
+            ``{final_table_name → [rows…]}``.  If *new_table* was *None* the
+            returned table will already have been deleted – it exists only as
+            a logical handle for the caller.
+        """
+
+        if not joins:
+            raise ValueError("`joins` must contain at least one join step.")
+
+        tmp_prefix = f"_tmp_mjoin_{uuid.uuid4().hex[:6]}"
+        tmp_tables: List[str] = []
+
+        previous_table: Optional[str] = None
+
+        for idx, step in enumerate(joins):
+            # -------- 1.  Resolve & validate the step --------------------
+            step = step.copy()  # do not mutate caller's dict
+            step_tables = step.get("tables")
+
+            if isinstance(step_tables, str):
+                step_tables = [step_tables]
+            if not isinstance(step_tables, list) or len(step_tables) != 2:
+                raise ValueError(
+                    f"Step {idx} must specify exactly TWO tables – got {step_tables!r}",
+                )
+
+            # `$prev` placeholder → last join's result
+            step_tables = [
+                (previous_table if t in {"$prev", "__prev__", "_"} else t)
+                for t in step_tables
+            ]
+            if any(t is None for t in step_tables):
+                raise ValueError(
+                    "Misplaced `$prev` in first join – there is no previous result.",
+                )
+
+            # -------- 2.  Destination table ------------------------------
+            is_last = idx == len(joins) - 1
+            dest_table = (
+                (new_table if new_table is not None else f"{tmp_prefix}_final")
+                if is_last
+                else f"{tmp_prefix}_{idx}"
+            )
+
+            # Record temporary artefacts (never delete the user-supplied final)
+            if not is_last or new_table is None:
+                tmp_tables.append(dest_table)
+
+            # -------- 3.  Delegate to the existing two-table join --------
+            _search_kwargs = {
+                "tables": step_tables,
+                "join_expr": step.get("join_expr"),
+                "columns": step.get("columns"),
+                "mode": step.get("mode", "inner"),
+                "new_table": dest_table,
+                "left_filter": step.get("left_filter"),
+                "right_filter": step.get("right_filter"),
+                # no post-join filtering/pagination at intermediate steps
+                "post_join_filter": None,
+                "post_join_limit": 0,
+                "post_join_offset": 0,
+            }
+            # `_search_joined` returns rows but we ignore them mid-pipeline
+            self._search_joined(**_search_kwargs)  # type: ignore[arg-type]
+
+            previous_table = dest_table
+
+        assert previous_table is not None  # mypy guard – impossible otherwise
+
+        # -------- 4.  Read from *final* join result ----------------------
+        rows = [
+            log.entries
+            for log in unify.get_logs(
+                context=self._ctx_for_table(previous_table),
+                filter=post_join_filter,
+                offset=post_join_offset,
+                limit=post_join_limit,
+            )
+        ]
+
+        # -------- 5.  Clean up temporary artefacts -----------------------
+        if tmp_tables:
+            try:
+                # do not delete the user-requested *persistent* table
+                self._delete_tables(
+                    tables=[t for t in tmp_tables if t != new_table],
+                )
+            except Exception:
+                # best-effort — leave garbage collection to Unify if this fails
+                pass
+
+        return {previous_table: rows}
