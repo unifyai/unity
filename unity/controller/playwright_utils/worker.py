@@ -207,25 +207,26 @@ class BrowserWorker(threading.Thread):
             return
 
         try:
-            # Get current viewport dimensions and scroll position
-            vp = self.runner.active.evaluate("() => ({w:innerWidth, h:innerHeight, sx:scrollX, sy:scrollY})")
+            # Get current viewport dimensions
+            vp = self.runner.active.evaluate("() => ({w:innerWidth, h:innerHeight})")
             vw, vh = vp.get('w', 1280), vp.get('h', 720)
-            sx, sy = vp.get('sx', 0), vp.get('sy', 0)
-            
+
             # Clear the cache before repopulating
-            self._vision_elements_cache = [] 
+            self._vision_elements_cache = []
             for i, e in enumerate(vision_results):
                 bbox_norm = e.get("bbox")
                 if not bbox_norm: continue
-                
+
                 # Using the corrected denormalization logic
                 left = bbox_norm[0] * vw
                 top = bbox_norm[1] * vh
                 width = (bbox_norm[2] - bbox_norm[0]) * vw
                 height = (bbox_norm[3] - bbox_norm[1]) * vh
-                vleft = left - sx
-                vtop = top - sy
-
+                
+                # The 'vleft' and 'vtop' for the overlay should be relative to the viewport.
+                # The paint_overlay function expects 'px' and 'py' to be the viewport-relative
+                # coordinates. We should pass the absolute 'left' and 'top' to it
+                # and let it handle the scroll offset. The 'build_boxes' function does this.
                 self._vision_elements_cache.append({
                     "id": i + 1,
                     "label": e.get("content", "").strip(),
@@ -236,8 +237,9 @@ class BrowserWorker(threading.Thread):
                     "top": top,
                     "width": width,
                     "height": height,
-                    "vleft": vleft,
-                    "vtop": vtop,
+                    # These are relative to the document, not the viewport
+                    "vleft": left,
+                    "vtop": top,
                 })
         except Exception as e:
             self.log(f"Failed to populate vision cache: {e}")
