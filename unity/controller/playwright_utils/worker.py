@@ -283,46 +283,46 @@ class BrowserWorker(threading.Thread):
                         # show the raw command arriving from the GUI
                         self.log(f"CMD ➜ {cmd!r}")
 
-                        if cmd.startswith("click button ") or cmd.startswith(
-                            "click_button ",
-                        ):
-                            tail = (
-                                cmd[len("click button ") :]
-                                if cmd.startswith("click button ")
-                                else cmd[len("click_button ") :]
-                            ).strip()
+                        if cmd.lower().startswith("click"):
+                            self.log(f"--- Performing Synchronous Vision Click for: {cmd} ---")
+                            try:
+                                parts = cmd.split()
+                                if len(parts) < 2 or not parts[1].isdigit():
+                                    self.log(f"Invalid click command format: {cmd}")
+                                    continue
+                                
+                                element_id_to_click = int(parts[1])
+                                self.log("Calling OmniParser for fresh element data...")
+                                vision_results = self._vision_elements_cache # use the cached elements instead of calling OmniParser again
+                                if not vision_results:
+                                    self.log("OmniParser returned no elements. Cannot perform click.")
+                                    continue
 
-                            # ---- A) try label substring match (old logic) ----
-                            needle = tail.lower()
-                            hit = next(
-                                (
-                                    el
-                                    for el in last_elements
-                                    if needle in el["label"].lower()
-                                ),
-                                None,
-                            )
-
-                            # ---- B) if not found, try numeric prefix ----------
-                            if not hit:
-                                prefix, *_ = tail.split("_", 1)
-                                if prefix.isdigit():
-                                    idx = int(prefix)
-                                    if 1 <= idx <= len(last_elements):
-                                        hit = last_elements[idx - 1]
-
-                            # ---- execute the click if we resolved an element --
-                            if hit:
-                                friendly = f"click {hit['label']}"
-                                self.runner.hist.add(friendly)
-                                hit["handle"].click()
-                                _update_in_textbox_state(
-                                    self.runner,
-                                    hit["handle"],
-                                    hit["label"],
+                            # The ID from the GUI corresponds to the index in the results list
+                                if not (1 <= element_id_to_click <= len(vision_results)):
+                                    self.log(f"Element ID {element_id_to_click} is out of bounds for the {len(vision_results)} elements found.")
+                                    continue
+                                
+                                target_element_data = vision_results[element_id_to_click - 1]
+                                
+                                print("target_element_data", target_element_data)
+                                # Step 3: Resolve handle using the fresh bounding box
+                                self.log(f"Attempting to resolve handle for fresh element: '{target_element_data.get('label')}'")
+                                handle = handle_from_bbox(
+                                    self.runner.active, target_element_data.get("bbox"), target_element_data.get("label", "")
                                 )
-                            else:
-                                self.log(f'No element matches "{tail}"')
+
+                                # Step 4: Execute the click
+                                if handle:
+                                    self.runner.click(element_id_to_click, handle)
+                                    _update_in_textbox_state(
+                                        self.runner, handle, target_element_data.get("content", "")
+                                    )
+                                else:
+                                    self.log(f"Click failed: Could not resolve handle for fresh element ID {element_id_to_click}.")
+
+                            except Exception as exc:
+                                self.log(f"A critical error occurred during synchronous vision click: {exc}")
                         elif cmd.startswith("open url "):
                             url = cmd[len("open url ") :]
                             self.runner.active.goto(
