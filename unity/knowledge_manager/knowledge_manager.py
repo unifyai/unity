@@ -971,42 +971,42 @@ class KnowledgeManager(BaseKnowledgeManager):
     def _search_joined(
         self,
         *,
-        filter: Optional[str] = None,
-        limit: int = 100,
-        offset: int = 0,
-        tables: Optional[Union[str, List[str]]] = None,
+        tables: Union[str, List[str]],
         join_expr: Optional[str] = None,
         columns: Optional[List[str]] = None,
         mode: str = "inner",
         new_table: Optional[str] = None,
         left_filter: Optional[str] = None,
         right_filter: Optional[str] = None,
+        post_join_filter: Optional[str] = None,
+        post_join_limit: int = 100,
+        post_join_offset: int = 0,
     ) -> Dict[str, List[Dict[str, Any]]]:
         """
-        **Join two tables** (contexts) server-side and immediately query the
-        derived context.
+        **Join two tables** server-side and immediately query the derived context.
+        Useful for querying data that transcends more than one table.
 
         Parameters
         ----------
-        filter : str | None
-            Predicate evaluated *after* the join.
-        limit, offset : int
-            Pagination of the post-join rows.
-        tables : str | list[str] | None
-            Exactly **two** table names to join.  When *None* the first two
-            available tables are used (convenience default).
+        tables : str | list[str]
+            Exactly **two** table names to join.
         join_expr : str | None
-            Expression linking aliases ``A`` and ``B`` – defaults to an
-            equality on the first common column.
+            Expression linking aliases the two tables.
+            For example "{table_A_name}.employee_id == {table_B_name}.employee_id",
+            where employee_id was just an *example* column which both tables would share.
         columns : list[str] | None
-            Column projection for the joined context. *None* → all columns.
+            Column names to include in the joined table. *None* → all columns.
         mode : str
-            Join kind understood by Unify (``"inner"``, ``"left"``, …).
+            Join kind understood by Unify (``"inner"``, ``"left"``, ``"right"``, ``"outer"``).
         new_table : str | None
-            Name for the derived context.  If omitted a temporary context is
-            created and **deleted automatically** after the rows are fetched.
+            Name for the newly created derived table. If omitted a temporary table is
+            created and **deleted automatically** after this function call.
         left_filter / right_filter : str | None
             Optional pre-join predicates on the left / right tables.
+        post_join_filter : str | None
+            Predicate evaluated on the new table *after* the join.
+        post_join_limit, post_join_offset : int
+            Pagination of the post-join rows.
 
         Returns
         -------
@@ -1015,9 +1015,7 @@ class KnowledgeManager(BaseKnowledgeManager):
         """
 
         # 1️⃣  Resolve the two source tables
-        if tables is None:
-            tables = list(self._tables_overview().keys())[:2]
-        elif isinstance(tables, str):
+        if isinstance(tables, str):
             tables = [tables]
 
         if len(tables) != 2:
@@ -1028,6 +1026,13 @@ class KnowledgeManager(BaseKnowledgeManager):
         left_table, right_table = tables
         left_ctx = self._ctx_for_table(left_table)
         right_ctx = self._ctx_for_table(right_table)
+        join_expr = join_expr.replace(
+            left_table,
+            left_ctx,
+        ).replace(
+            right_table,
+            right_ctx,
+        )
 
         # 2️⃣  Default `join_expr` – first shared column
         if join_expr is None:
@@ -1050,10 +1055,20 @@ class KnowledgeManager(BaseKnowledgeManager):
         dest_ctx = self._ctx_for_table(new_table)
 
         # 4️⃣  Fire the REST request
+        def _pair(ctx: str, f: Optional[str]) -> Dict[str, str]:
+            if f is None:
+                # omit ⇒ Unify interprets as “no filter”
+                return {"context": ctx}
+            if f.strip() == "":
+                # empty string is *invalid* – use the always-true constant
+                f = "True"
+            return {"context": ctx, "filter_expr": f}
+
         payload: Dict[str, Any] = {
+            "project": unify.active_project(),
             "pair_of_args": [
-                {"context": left_ctx, "filter_expr": left_filter or ""},
-                {"context": right_ctx, "filter_expr": right_filter or ""},
+                _pair(left_ctx, left_filter),
+                _pair(right_ctx, right_filter),
             ],
             "join_expr": join_expr,
             "mode": mode,
@@ -1067,17 +1082,25 @@ class KnowledgeManager(BaseKnowledgeManager):
             "Authorization": f"Bearer {API_KEY}",
             "Content-Type": "application/json",
         }
-        resp = requests.request("POST", url, json=payload, headers=headers)
-        _handle_exceptions(resp)
+        try:
+            resp = requests.request("POST", url, json=payload, headers=headers)
+            _handle_exceptions(resp)
+        except Exception as exc:
+            return {
+                "error": (
+                    f"Join failed: {exc}.  "
+                    "Check `tables`, `join_expr` and the column types."
+                ),
+            }
 
         # 5️⃣  Read from the derived context
         rows = [
             log.entries
             for log in unify.get_logs(
                 context=dest_ctx,
-                filter=filter,
-                offset=offset,
-                limit=limit,
+                filter=post_join_filter,
+                offset=post_join_offset,
+                limit=post_join_limit,
             )
         ]
 
