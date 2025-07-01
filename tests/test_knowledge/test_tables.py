@@ -79,6 +79,71 @@ def test_delete_tables():
 
 @pytest.mark.unit
 @_handle_project
+def test_delete_multiple_tables():
+    """Explicitly delete several tables in a single call."""
+    km = KnowledgeManager()
+
+    # ── setup ───────────────────────────────────────────────────────────
+    km._create_table(name="TableA")
+    km._create_table(name="TableB")
+    km._create_table(name="TableC")
+    assert set(km._tables_overview().keys()) == {"TableA", "TableB", "TableC"}
+
+    # ── action ──────────────────────────────────────────────────────────
+    res = km._delete_tables(tables=["TableA", "TableC"])
+
+    # ── assertions ──────────────────────────────────────────────────────
+    # Two explicit deletions acknowledged …
+    assert len(res) == 2
+    # … and only the untouched table remains.
+    assert set(km._tables_overview().keys()) == {"TableB"}
+
+
+@pytest.mark.unit
+@_handle_project
+def test_delete_tables_with_startswith():
+    """Bulk-delete tables sharing a prefix via the *startswith* parameter."""
+    km = KnowledgeManager()
+
+    # ── setup ───────────────────────────────────────────────────────────
+    km._create_table(name="_Private1")
+    km._create_table(name="_Private2")
+    km._create_table(name="Public")
+    assert set(km._tables_overview().keys()) == {"_Private1", "_Private2", "Public"}
+
+    # ── action ──────────────────────────────────────────────────────────
+    res = km._delete_tables(tables=[], startswith="_")  # delete all "_…" tables
+
+    # ── assertions ──────────────────────────────────────────────────────
+    assert len(res) == 2  # two prefixed tables deleted
+    assert set(km._tables_overview().keys()) == {"Public"}
+
+
+@pytest.mark.unit
+@_handle_project
+def test_delete_tables_mixed_explicit_and_startswith():
+    """
+    Combination: delete one explicit table *and* all prefixed tables
+    in the same invocation.
+    """
+    km = KnowledgeManager()
+
+    # ── setup ───────────────────────────────────────────────────────────
+    km._create_table(name="_Tmp1")
+    km._create_table(name="KeepMe")
+    km._create_table(name="DeleteMe")
+    assert set(km._tables_overview().keys()) == {"_Tmp1", "KeepMe", "DeleteMe"}
+
+    # ── action ──────────────────────────────────────────────────────────
+    res = km._delete_tables(tables="DeleteMe", startswith="_")
+
+    # ── assertions ──────────────────────────────────────────────────────
+    assert len(res) == 2  # _Tmp1 and DeleteMe removed
+    assert set(km._tables_overview().keys()) == {"KeepMe"}
+
+
+@pytest.mark.unit
+@_handle_project
 def test_rename_table():
     knowledge_manager = KnowledgeManager()
 
