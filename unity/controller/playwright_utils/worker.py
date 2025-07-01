@@ -159,20 +159,29 @@ class BrowserWorker(threading.Thread):
             if save_annotated_image:
                 try:
                     # Decode base64 to bytes
+                    original_img_bytes = base64.b64decode(payload["base64_image"])
                     annotated_img_bytes = base64.b64decode(result['som_image_base64'])
                     # Save to file with timestamp
                     timestamp = int(time.time())
                     output_dir = "annotated_images"
                     os.makedirs(output_dir, exist_ok=True)
-                    output_path = os.path.join(output_dir, f"annotated_omniparser_{timestamp}.png")
-                    with open(output_path, 'wb') as f:
+                    output_path_original = os.path.join(output_dir, f"original_omniparser_{timestamp}.png")
+                    output_path_annotated = os.path.join(output_dir, f"annotated_omniparser_{timestamp}.png")
+                    output_parsed_content = os.path.join(output_dir, f"parsed_content_omniparser_{timestamp}.json")
+                    # Save original image
+                    with open(output_path_original, 'wb') as f:
+                        f.write(original_img_bytes)
+                    # Save annotated image
+                    with open(output_path_annotated, 'wb') as f:
                         f.write(annotated_img_bytes)
-                    self.log(f"Saved annotated image to: {output_path}")
+                    # Save parsed content list
+                    with open(output_parsed_content, 'w') as f:
+                        json.dump(result.get("parsed_content_list", []), f, indent=2)
                 except Exception as e:
                     self.log(f"Failed to save annotated image: {e}")
             
             # Filter for interactive elements
-            return [e for e in result.get("parsed_content_list", []) if e.get("interactivity")]
+            return [e for e in result.get("parsed_content_list", [])]
         except requests.exceptions.RequestException as e:
             self.log(f"OmniParser API error: {e}")
             return []
