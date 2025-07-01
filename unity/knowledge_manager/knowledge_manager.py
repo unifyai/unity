@@ -445,21 +445,26 @@ class KnowledgeManager(BaseKnowledgeManager):
         _handle_exceptions(response)
         return response.json()
 
-    def _delete_table(self, *, table: str) -> Dict[str, str]:
+    def _delete_tables(self, *, tables: Union[str, List[str]]) -> Dict[str, str]:
         """
         **Drop** an entire table *and* all its rows.
 
         Parameters
         ----------
-        table : str
-            Target table name.
+        tables : str | list[str]
+            Target table name(s).
 
         Returns
         -------
-        dict[str, str]
-            Confirmation / error from the backend.
+        list[dict[str, str]]
+            Confirmations / errors from the backend.
         """
-        return unify.delete_context(self._ctx_for_table(table))
+        if isinstance(tables, str):
+            tables = [tables]
+        rets = list()
+        for table in tables:
+            rets.append(unify.delete_context(self._ctx_for_table(table)))
+        return rets
 
     # Columns
 
@@ -1075,7 +1080,10 @@ class KnowledgeManager(BaseKnowledgeManager):
             "new_context": dest_ctx,
         }
         if columns is not None:
-            columns = [c.replace(left_table, left_ctx).replace(right_table, right_ctx) for c in columns]
+            columns = [
+                c.replace(left_table, left_ctx).replace(right_table, right_ctx)
+                for c in columns
+            ]
             payload["columns"] = columns
 
         url = f"{os.environ['UNIFY_BASE_URL']}/logs/join"
