@@ -62,7 +62,7 @@ def test_list_tables():
 
 @pytest.mark.unit
 @_handle_project
-def test_delete_table():
+def test_delete_tables():
     knowledge_manager = KnowledgeManager()
 
     # create
@@ -72,7 +72,7 @@ def test_delete_table():
     assert "MyTable" in tables
 
     # delete
-    knowledge_manager._delete_table(table="MyTable")
+    knowledge_manager._delete_tables(tables="MyTable")
     tables = knowledge_manager._tables_overview()
     assert len(tables) == 0
 

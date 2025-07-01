@@ -42,7 +42,7 @@ class KnowledgeManager(BaseKnowledgeManager):
             self._tables_overview,
             self._create_table,
             self._rename_table,
-            self._delete_table,
+            self._delete_tables,
             # Columns
             self._rename_column,
             self._copy_column,
