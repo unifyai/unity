@@ -503,6 +503,12 @@ class BrowserWorker(threading.Thread):
                                     self._vision_elements_cache = [] # Clear cache on failure
                                 self._vision_future = None
 
+                            try:
+                                # Clear the overlay before taking the screenshot
+                                paint_overlay(self.runner.active, [], use_vision=True)
+                            except Exception as e:
+                                self.log(f"Could not clear overlay before screenshot: {e}")
+
                             # Now, trigger the next vision call
                             self._last_vision_ts = now
                             png_bytes = grab_screenshot(self.runner.active)
@@ -527,10 +533,10 @@ class BrowserWorker(threading.Thread):
                         except Exception:
                             pass
                     boxes = build_boxes(last_elements)
-                    # draw overlay both in the UI page and the headless mirror
-                    for pg in (self.runner.active, mirror.page):
+                    # draw overlay on in the UI page only
+                    for pg in (self.runner.active,):
                         try:
-                            paint_overlay(pg, boxes)
+                            paint_overlay(pg, boxes, self.use_vision)
                         except PWError as e:
                             # page or context went away – bail early
                             self.log(f"overlay skipped: {e}")
