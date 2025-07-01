@@ -125,16 +125,16 @@ jobs:
     - name: Run unit tests
       run: |
         .unity/bin/python -m pytest \
-          --timeout=${{ inputs.test_timeout }} \
+          --timeout=${{ inputs.test_timeout || 120 }} \
           -p no:warnings \
           -vv \
-          --durations=${{ inputs.test_show_slowest }} \
-          --log-cli-level=${{ inputs.test_cli_log_level }} \
+          --durations=${{ inputs.test_show_slowest || 20 }} \
+          --log-cli-level=${{ inputs.test_cli_log_level || 'ERROR' }} \
           --log-file-level=INFO \
           --test-log-enable \
-          --test-log-file="tests.log" ${{ inputs.test_path }}
+          --test-log-file="tests.log" ${{ inputs.test_path || '.' }}
       env:
-        UNITY_TESTS_CLI_LOGGING: ${{ inputs.test_enable_cli_logging }}
+        UNITY_TESTS_CLI_LOGGING: ${{ inputs.test_enable_cli_logging || 'false' }}
         UNIFY_KEY: ${{ secrets.USER_API_KEY }}
         UNIFY_BASE_URL: https://api.unify.ai/v0
         UNIFY_CACHE: true
