@@ -14,21 +14,29 @@ class BaseMemoryManager(ABC):
     """
 
     @abstractmethod
-    async def update_contacts(self, transcript: str) -> str: ...
+    async def update_contacts(
+        self,
+        transcript: str,
+        guidance: Optional[str] = None,
+    ) -> str: ...
 
-    @abstractmethod
     async def update_contact_bio(
         self,
         transcript: str,
         latest_bio: Optional[str] = None,
+        guidance: Optional[str] = None,
     ) -> str: ...
 
-    @abstractmethod
     async def update_contact_rolling_summary(
         self,
         transcript: str,
         latest_rolling_summary: Optional[str] = None,
+        guidance: Optional[str] = None,
     ) -> str: ...
 
     @abstractmethod
-    async def update_knowledge(self, transcript: str) -> str: ...
+    async def update_knowledge(
+        self,
+        transcript: str,
+        guidance: Optional[str] = None,
+    ) -> str: ...

@@ -42,7 +42,11 @@ class MemoryManager(BaseMemoryManager):
     # ------------------------------------------------------------------ #
     # 1  update_contacts                                                 #
     # ------------------------------------------------------------------ #
-    async def update_contacts(self, transcript: str) -> str:
+    async def update_contacts(
+        self,
+        transcript: str,
+        guidance: Optional[str] = None,
+    ) -> str:
         """
         Scan the transcript, identify *new* contacts or modified details,
         and persist them.  Returns a short description of what changed.
@@ -62,7 +66,7 @@ class MemoryManager(BaseMemoryManager):
             cache=json.loads(os.getenv("UNIFY_CACHE", "true")),
             traced=json.loads(os.getenv("UNIFY_TRACED", "true")),
         )
-        llm.set_system_message(build_contact_update_prompt(tools))
+        llm.set_system_message(build_contact_update_prompt(tools, guidance))
 
         # ─ 3.  Kick off *single* tool-use loop
         handle = start_async_tool_use_loop(
@@ -82,6 +86,7 @@ class MemoryManager(BaseMemoryManager):
         self,
         transcript: str,
         latest_bio: Optional[str] = None,
+        guidance: Optional[str] = None,
     ) -> str:
         """
         Refresh the *bio* column for ONE contact.
@@ -110,7 +115,7 @@ class MemoryManager(BaseMemoryManager):
             cache=json.loads(os.getenv("UNIFY_CACHE", "true")),
             traced=json.loads(os.getenv("UNIFY_TRACED", "true")),
         )
-        llm.set_system_message(build_bio_prompt(tools))
+        llm.set_system_message(build_bio_prompt(tools, guidance))
 
         # Compose input blob
         user_blob = json.dumps(
@@ -138,6 +143,7 @@ class MemoryManager(BaseMemoryManager):
         self,
         transcript: str,
         latest_rolling_summary: Optional[str] = None,
+        guidance: Optional[str] = None,
     ) -> str:
         """
         Refresh the rolling_summary column for ONE contact.
@@ -162,7 +168,7 @@ class MemoryManager(BaseMemoryManager):
             cache=json.loads(os.getenv("UNIFY_CACHE", "true")),
             traced=json.loads(os.getenv("UNIFY_TRACED", "true")),
         )
-        llm.set_system_message(build_rolling_prompt(tools))
+        llm.set_system_message(build_rolling_prompt(tools, guidance))
 
         user_blob = json.dumps(
             {
@@ -185,7 +191,11 @@ class MemoryManager(BaseMemoryManager):
     # ------------------------------------------------------------------ #
     # 4  update_knowledge                                                #
     # ------------------------------------------------------------------ #
-    async def update_knowledge(self, transcript: str) -> str:
+    async def update_knowledge(
+        self,
+        transcript: str,
+        guidance: Optional[str] = None,
+    ) -> str:
         """
         Mine reusable information and persist to the long-term knowledge base.
         """
@@ -204,7 +214,7 @@ class MemoryManager(BaseMemoryManager):
             cache=json.loads(os.getenv("UNIFY_CACHE", "true")),
             traced=json.loads(os.getenv("UNIFY_TRACED", "true")),
         )
-        llm.set_system_message(build_knowledge_prompt(tools))
+        llm.set_system_message(build_knowledge_prompt(tools, guidance))
 
         handle = start_async_tool_use_loop(
             llm,
