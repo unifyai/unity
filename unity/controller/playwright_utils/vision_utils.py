@@ -25,6 +25,49 @@ def get_probe_points(bbox_norm: List[float], vw: float, vh: float) -> List[List[
         [abs_x_max, center_y],           # →
     ]
 
+def iou(box_a: list[float], box_b: list[float]) -> float:
+    """Calculates the Intersection over Union (IoU) of two bounding boxes."""
+    x_a = max(box_a[0], box_b[0])
+    y_a = max(box_a[1], box_b[1])
+    x_b = min(box_a[2], box_b[2])
+    y_b = min(box_a[3], box_b[3])
+
+    intersection_area = max(0, x_b - x_a) * max(0, y_b - y_a)
+    if intersection_area == 0:
+        return 0.0
+
+    box_a_area = (box_a[2] - box_a[0]) * (box_a[3] - box_a[1])
+    box_b_area = (box_b[2] - box_b[0]) * (box_b[3] - box_b[1])
+    
+    iou_score = intersection_area / float(box_a_area + box_b_area - intersection_area)
+    return iou_score
+
+
+def match_old_element(
+    old_bbox: list[float], old_label: str, new_results: list[dict], *, iou_thresh: float = 0.5
+) -> dict | None:
+    """Finds the element in new_results that best matches the old element's properties."""
+    best_match, best_iou = None, 0.0
+
+    # 1. Primary strategy: Find the best bounding box overlap (IoU)
+    for new_element in new_results:
+        overlap = iou(old_bbox, new_element["bbox"])
+        if overlap > best_iou:
+            best_match, best_iou = new_element, overlap
+    
+    if best_iou >= iou_thresh:
+        return best_match
+
+    # 2. Fallback strategy: Find a matching text label
+    old_text_normalized = old_label.lower().strip()
+    if old_text_normalized:
+        for new_element in new_results:
+            new_content_normalized = new_element.get("content", "").lower()
+            if old_text_normalized in new_content_normalized:
+                return new_element
+    
+    return None
+
 def handle_from_bbox(page: Page, bbox_norm: List[float], expected_text: str) -> Optional[ElementHandle]:
     """
     Finds the most relevant interactive ElementHandle by probing multiple points
