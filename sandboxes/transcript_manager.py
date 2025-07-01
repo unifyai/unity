@@ -199,7 +199,7 @@ async def _main_async() -> None:
     os.environ["UNIFY_TRACED"] = "true" if args.traced else "false"
 
     # prepare Unify context
-    base_ctx = "Sandbox" if args.shared_context else "TranscriptSandbox"
+    base_ctx = "TranscriptSandbox" if args.unique_context else "Sandbox"
     unify.activate(base_ctx)
     unify.set_trace_context("Traces")
     if not args.reuse:
@@ -208,7 +208,7 @@ async def _main_async() -> None:
             unify.delete_context("Messages")
         if "MessageExchangeSummaries" in ctxs:
             unify.delete_context("MessageExchangeSummaries")
-        if "Contacts" in ctxs and not args.shared_context:
+        if "Contacts" in ctxs and args.unique_context:
             unify.delete_context("Contacts")
         if "Traces" in ctxs:
             unify.delete_context("Traces")
