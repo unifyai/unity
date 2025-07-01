@@ -20,7 +20,7 @@ import requests
 import redis
 from playwright.sync_api import Error as PWError
 from playwright.sync_api import sync_playwright
-from .vision_utils import handle_from_bbox
+from .vision_utils import handle_from_bbox, iou, match_old_element
 from .browser_utils import (
     build_boxes,
     collect_elements,
@@ -192,6 +192,48 @@ class BrowserWorker(threading.Thread):
             return []
 
 
+    def _populate_cache(self, vision_results: list[dict]) -> None:
+        """Processes vision results and populates the elements cache."""
+        if not self.runner:
+            return
+
+        try:
+            # Get current viewport dimensions and scroll position
+            vp = self.runner.active.evaluate("() => ({w:innerWidth, h:innerHeight, sx:scrollX, sy:scrollY})")
+            vw, vh = vp.get('w', 1280), vp.get('h', 720)
+            sx, sy = vp.get('sx', 0), vp.get('sy', 0)
+            
+            # Clear the cache before repopulating
+            self._vision_elements_cache = [] 
+            for i, e in enumerate(vision_results):
+                bbox_norm = e.get("bbox")
+                if not bbox_norm: continue
+                
+                # Using the corrected denormalization logic
+                left = bbox_norm[0] * vw
+                top = bbox_norm[1] * vh
+                width = (bbox_norm[2] - bbox_norm[0]) * vw
+                height = (bbox_norm[3] - bbox_norm[1]) * vh
+                vleft = left - sx
+                vtop = top - sy
+
+                self._vision_elements_cache.append({
+                    "id": i + 1,
+                    "label": e.get("content", "").strip(),
+                    "bbox": bbox_norm,
+                    "handle": None, # handle is resolved just-in-time
+                    "fixed": False,
+                    "left": left,
+                    "top": top,
+                    "width": width,
+                    "height": height,
+                    "vleft": vleft,
+                    "vtop": vtop,
+                })
+        except Exception as e:
+            self.log(f"Failed to populate vision cache: {e}")
+            self._vision_elements_cache = [] # Ensure cache is empty on failure
+
     # ------------------------------------------------------------------ API
     def stop(self) -> None:
         self._stop_event.set()
@@ -289,45 +331,55 @@ class BrowserWorker(threading.Thread):
                         self.log(f"CMD ➜ {cmd!r}")
 
                         if cmd.lower().startswith("click"):
-                            self.log(f"--- Performing Synchronous Vision Click for: {cmd} ---")
+                            self.log(f"--- Performing Re-Identifying Vision Click for: {cmd} ---")
                             try:
                                 parts = cmd.split()
-                                if len(parts) < 2 or not parts[1].isdigit():
-                                    self.log(f"Invalid click command format: {cmd}")
+                                element_id_to_click = int(parts[1])
+
+                                # Step 1: Get the properties of the element the user clicked, from the OLD cache.
+                                if not (1 <= element_id_to_click <= len(self._vision_elements_cache)):
+                                    self.log(f"Cannot click: initial element ID {element_id_to_click} is out of bounds.")
                                     continue
                                 
-                                element_id_to_click = int(parts[1])
-                                self.log("Calling OmniParser for fresh element data...")
-                                vision_results = self._vision_elements_cache # use the cached elements instead of calling OmniParser again
-                                if not vision_results:
-                                    self.log("OmniParser returned no elements. Cannot perform click.")
+                                prev_element = self._vision_elements_cache[element_id_to_click - 1]
+                                prev_bbox = prev_element["bbox"]
+                                prev_label = prev_element["label"]
+                                self.log(f"Attempting to re-identify element: ID {element_id_to_click}, Label '{prev_label}'")
+
+                                # Step 2: Get a fresh snapshot from OmniParser.
+                                # It's good practice to wait for the page to be idle before screenshotting.
+                                self.runner.active.wait_for_load_state("networkidle", timeout=5000)
+                                png_bytes = mirror.screenshot()
+                                new_results = self._call_omniparser(png_bytes)
+
+                                # Defensive tweak: Sort results for more stable IDs on static pages.
+                                new_results.sort(key=lambda r: (r["bbox"][1], r["bbox"][0]))
+
+                                self._populate_cache(new_results)
+
+                                # Step 4: Find the corresponding element in the NEW results.
+                                target_element = match_old_element(prev_bbox, prev_label, self._vision_elements_cache)
+
+                                if not target_element:
+                                    self.log(f"!! Click Aborted: Could not re-identify '{prev_label}' on the page.")
                                     continue
 
-                            # The ID from the GUI corresponds to the index in the results list
-                                if not (1 <= element_id_to_click <= len(vision_results)):
-                                    self.log(f"Element ID {element_id_to_click} is out of bounds for the {len(vision_results)} elements found.")
-                                    continue
-                                
-                                target_element_data = vision_results[element_id_to_click - 1]
-                                
-                                print("target_element_data", target_element_data)
-                                # Step 3: Resolve handle using the fresh bounding box
-                                self.log(f"Attempting to resolve handle for fresh element: '{target_element_data.get('label')}'")
+                                # Step 5: Resolve the handle for the correctly identified target and click.
+                                self.log(f"Successfully re-identified as: '{target_element.get('label')}'")
                                 handle = handle_from_bbox(
-                                    self.runner.active, target_element_data.get("bbox"), target_element_data.get("label", "")
+                                    self.runner.active, target_element["bbox"], target_element["label"]
                                 )
 
-                                # Step 4: Execute the click
                                 if handle:
-                                    self.runner.click(element_id_to_click, handle)
+                                    self.runner.click(target_element["id"], handle)
                                     _update_in_textbox_state(
-                                        self.runner, handle, target_element_data.get("content", "")
+                                        self.runner, handle, target_element.get("content", "")
                                     )
                                 else:
-                                    self.log(f"Click failed: Could not resolve handle for fresh element ID {element_id_to_click}.")
+                                    self.log(f"Click failed: Could not resolve handle for re-identified element.")
 
                             except Exception as exc:
-                                self.log(f"A critical error occurred during synchronous vision click: {exc}")
+                                self.log(f"A critical error occurred during re-identifying vision click: {exc}")
                         elif cmd.startswith("open url "):
                             url = cmd[len("open url ") :]
                             self.runner.active.goto(
@@ -432,10 +484,15 @@ class BrowserWorker(threading.Thread):
                                         bbox_norm = e.get("bbox")
                                         if not bbox_norm: continue
                                         
-                                        left = bbox_norm[1] * vw
-                                        top = bbox_norm[0] * vh
-                                        width = (bbox_norm[3] - bbox_norm[1]) * vw
-                                        height = (bbox_norm[2] - bbox_norm[0]) * vh
+                                        vp = self.runner.active.evaluate("() => ({w:innerWidth, h:innerHeight, sx:scrollX, sy:scrollY})")
+                                        vw, vh = vp.get('w', 1280), vp.get('h', 720)
+                                        sx, sy = vp.get('sx', 0), vp.get('sy', 0)
+                                        
+                                        # Corrected denormalization logic
+                                        left = bbox_norm[0] * vw      # Should be x_min (index 0)
+                                        top = bbox_norm[1] * vh       # Should be y_min (index 1)
+                                        width = (bbox_norm[2] - bbox_norm[0]) * vw  # x_max - x_min
+                                        height = (bbox_norm[3] - bbox_norm[1]) * vh # y_max - y_min
                                         vleft = left - sx
                                         vtop = top - sy
 
