@@ -1,6 +1,35 @@
 name: Testing Unity with uv
 
-on: push
+on:
+  push:
+  workflow_dispatch:
+    inputs:
+      test_path:
+        description: "Path to test file or directory to run"
+        required: false
+        default: "."
+      test_enable_cli_logging:
+        description: "Enable CLI logging"
+        required: false
+        default: false
+      test_cli_log_level:
+        description: "CLI log level"
+        required: false
+        default: "ERROR"
+        options:
+        - CRITICAL
+        - ERROR
+        - WARNING
+        - INFO
+        - DEBUG
+      test_show_slowest:
+        description: "Number of slowest tests to show"
+        required: false
+        default: 20
+      test_timeout:
+        description: "Test timeout in seconds"
+        required: false
+        default: 120
 
 jobs:
   black:
@@ -95,14 +124,16 @@ jobs:
     - name: Run unit tests
       run: |
         .unity/bin/python -m pytest \
-          --timeout=120 \
+          --timeout=${{ inputs.test_timeout || 120 }} \
           -p no:warnings \
           -vv \
-          --log-cli-level=ERROR \
+          --durations=${{ inputs.test_show_slowest || 20 }} \
+          --log-cli-level=${{ inputs.test_cli_log_level || 'ERROR' }} \
           --log-file-level=INFO \
           --test-log-enable \
-          --test-log-file="tests.log" .
+          --test-log-file="tests.log" ${{ inputs.test_path || '.' }}
       env:
+        UNITY_TESTS_CLI_LOGGING: ${{ inputs.test_enable_cli_logging || 'false' }}
         UNIFY_KEY: ${{ secrets.USER_API_KEY }}
         UNIFY_BASE_URL: https://api.unify.ai/v0
         UNIFY_CACHE: true
