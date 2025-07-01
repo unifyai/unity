@@ -82,6 +82,26 @@ class CommandRunner:
         # 30‑sec timeout, wait for full load
         self.active.goto(url, timeout=15000, wait_until="load")
 
+    # ---------- click -----------------------------------------------------
+    def click(self, element_id: int, handle):
+        """
+        Clicks an element using its pre-resolved handle.
+        """
+        if not handle or not hasattr(handle, 'click'):
+            self.log(f"Error: Invalid handle provided for click command on element ID: {element_id}")
+            return
+        
+        try:
+            label = handle.text_content() or f"element {element_id}"
+            self.log(f"Executing click on: '{label.strip()}'")
+            handle.click()
+            # It's good practice to wait for the page to potentially settle after a click
+            self.active.wait_for_load_state("domcontentloaded", timeout=5000)
+            self.log(f"Successfully clicked element {element_id}")
+        except Exception as e:
+            # This can happen if the page navigates or the element becomes stale
+            self.log(f"An exception occurred while clicking element {element_id}: {e}")
+
     # ---------- command string dispatcher ---------------------------------
     def run(self, raw: str):
         cmd = raw.strip()
