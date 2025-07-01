@@ -197,7 +197,7 @@ async def main():
         [
             os.getenv("USER_NUMBER", ""),
             os.getenv("USER_PHONE_NUMBER", ""),
-            "user_agent",
+            "conductor",
         ],
     )
     comms_manager = CommsManager(events_queue=event_manager.events_queue)

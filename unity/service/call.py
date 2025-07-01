@@ -220,6 +220,7 @@ async def entrypoint(ctx: agents.JobContext):
     )
 
     # Initialize connection using utility function
+    reader = await get_reader()
     await publish_event(
         {
             "topic": from_number,
@@ -283,18 +284,11 @@ async def entrypoint(ctx: agents.JobContext):
             pass
 
     async def collect_events():
-        nonlocal last_activity_time
+        nonlocal last_activity_time, reader
         global chunk_queue
 
         while True:
             try:
-                # Use the reader from utils module
-                reader = get_reader()
-                if reader is None:
-                    print("No connection available, waiting...")
-                    await asyncio.sleep(1)
-                    continue
-
                 raw = await reader.readline()
                 if not raw:
                     break
