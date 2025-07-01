@@ -7,18 +7,19 @@ Supports plain-text *or* voice capture of the initial transcript
 description via the ``--voice/-v`` flag (same UX as the other sandboxes).
 
 ┌────────────── 8 accepted commands ──────────────┐
-│ uc  X-Y   –– update_contacts                    │
-│ ucb X-Y   –– update_contact_bio                 │
-│ ucrs X-Y  –– update_contact_rolling_summary     │
-│ uk  X-Y   –– update_knowledge                   │
-│ cc        –– clear Contacts store              │
+│ uc  [X-Y] –– update_contacts  (no range → full) │
+│ ucb [X-Y] –– update_contact_bio                 │
+│ ucrs[X-Y] –– update_contact_rolling_summary     │
+│ uk  [X-Y] –– update_knowledge                   │
+│ cc        –– clear Contacts store               │
 │ ccb       –– clear Contact bios      (alias cc) │
 │ ccrs      –– clear Rolling summaries (alias cc) │
-│ ck        –– clear Knowledge store             │
+│ ck        –– clear Knowledge store              │
 └─────────────────────────────────────────────────┘
 
 • *X* and *Y* are **inclusive**, 0-based indices into the transcript
-  (0 ≤ X ≤ Y < num_messages).
+  (0 ≤ X ≤ Y < num_messages).  Omitting the range processes **all**
+  messages.
 • Type **help** to show the table again, **quit/exit** to leave.
 """
 
@@ -115,7 +116,8 @@ def _clear_knowledge() -> None:
         unify.delete_context(name)
 
 
-_CMD_RE = re.compile(r"^(uc|ucb|ucrs|uk)\s+(\d+)-(\d+)$", re.I)
+# Bare command or "cmd  X-Y"
+_RANGE_RE = re.compile(r"^(\d+)-(\d+)$")
 
 
 def _explain_commands() -> None:
@@ -182,6 +184,9 @@ async def _main_async() -> None:
     print(
         f"[seed] Done.  Generated {num_messages} messages (indices 0-{num_messages-1}).\n",
     )
+    _speak(
+        "That's now been generated for you. From this point forward, just use the commands in the terminal to use tools on the transcript.",
+    )
 
     # ── MemoryManager instance ──────────────────────────────────────────────
     mm: MemoryManager = MemoryManager()
@@ -215,16 +220,24 @@ async def _main_async() -> None:
             continue
 
         # ─── functional commands ─────────────────────────────────────────
-        m = _CMD_RE.match(raw)
-        if not m:
+        parts = raw.split(maxsplit=1)
+        cmd = parts[0]
+        if cmd not in {"uc", "ucb", "ucrs", "uk"}:
             print("⚠️  Unrecognised command. Type 'help' for guidance.")
             continue
 
-        cmd, xs, ys = m.groups()
-        start, end = int(xs), int(ys)
-        if not (0 <= start <= end < num_messages):
-            print(f"⚠️  Indices must satisfy 0 ≤ x ≤ y < {num_messages}.")
-            continue
+        # Default slice – entire transcript
+        start, end = 0, num_messages - 1
+        if len(parts) == 2:
+            rng = parts[1].strip()
+            m = _RANGE_RE.match(rng)
+            if not m:
+                print("⚠️  Range must be of the form X-Y (e.g. 4-18).")
+                continue
+            start, end = map(int, m.groups())
+            if not (0 <= start <= end < num_messages):
+                print(f"⚠️  Indices must satisfy 0 ≤ x ≤ y < {num_messages}.")
+                continue
 
         chunk_txt = _chunk_to_text(transcript[start : end + 1])
 
@@ -240,9 +253,11 @@ async def _main_async() -> None:
                 result = await mm.update_knowledge(chunk_txt)
 
             print(f"→ {result}")
+            _speak(str(result))
         except Exception as exc:
             LG.error("Error during MemoryManager call: %s", exc, exc_info=True)
             print(f"❌  {exc}")
+            _speak("There was an error running that command.")
 
 
 def main() -> None:
