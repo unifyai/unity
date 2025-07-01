@@ -14,6 +14,17 @@
             "justMyCode": false
         },
         {
+          "name": "Memory Manager Sandbox",
+          "type": "debugpy",
+          "request": "launch",
+          "program": "${workspaceFolder}/sandboxes/memory_manager.py",
+          "args": ["--voice"],
+          "cwd": "${workspaceFolder}",
+          "env": { "PYTHONPATH": "${workspaceFolder}" },
+          "console": "integratedTerminal",
+          "justMyCode": false
+        },
+        {
             "name": "Contact Manager Sandbox",
             "type": "debugpy",
             "request": "launch",
