@@ -37,6 +37,7 @@ class KnowledgeManager(BaseKnowledgeManager):
             # Search
             self._search,
             self._nearest,
+            self._search_joined,
             # Tables
             self._tables_overview,
             self._create_table,
@@ -73,6 +74,7 @@ class KnowledgeManager(BaseKnowledgeManager):
                 self._tables_overview,
                 self._search,
                 self._nearest,
+                self._search_joined,
             ),
         }
 
@@ -104,6 +106,7 @@ class KnowledgeManager(BaseKnowledgeManager):
             return "required", methods_to_tool_dict(
                 self._search,
                 self._nearest,
+                self._search_joined,
                 include_class_name=False,
             )
         return "auto", tls
@@ -964,3 +967,126 @@ class KnowledgeManager(BaseKnowledgeManager):
                 )
             ]
         return results
+
+    def _search_joined(
+        self,
+        *,
+        filter: Optional[str] = None,
+        limit: int = 100,
+        offset: int = 0,
+        tables: Optional[Union[str, List[str]]] = None,
+        join_expr: Optional[str] = None,
+        columns: Optional[List[str]] = None,
+        mode: str = "inner",
+        new_table: Optional[str] = None,
+        left_filter: Optional[str] = None,
+        right_filter: Optional[str] = None,
+    ) -> Dict[str, List[Dict[str, Any]]]:
+        """
+        **Join two tables** (contexts) server-side and immediately query the
+        derived context.
+
+        Parameters
+        ----------
+        filter : str | None
+            Predicate evaluated *after* the join.
+        limit, offset : int
+            Pagination of the post-join rows.
+        tables : str | list[str] | None
+            Exactly **two** table names to join.  When *None* the first two
+            available tables are used (convenience default).
+        join_expr : str | None
+            Expression linking aliases ``A`` and ``B`` – defaults to an
+            equality on the first common column.
+        columns : list[str] | None
+            Column projection for the joined context. *None* → all columns.
+        mode : str
+            Join kind understood by Unify (``"inner"``, ``"left"``, …).
+        new_table : str | None
+            Name for the derived context.  If omitted a temporary context is
+            created and **deleted automatically** after the rows are fetched.
+        left_filter / right_filter : str | None
+            Optional pre-join predicates on the left / right tables.
+
+        Returns
+        -------
+        dict[str, list[dict[str, Any]]]
+            Mapping ``derived_table_name → [row, …]``.
+        """
+
+        # 1️⃣  Resolve the two source tables
+        if tables is None:
+            tables = list(self._tables_overview().keys())[:2]
+        elif isinstance(tables, str):
+            tables = [tables]
+
+        if len(tables) != 2:
+            raise ValueError(
+                "❌  _search_joined expects exactly TWO tables to join.",
+            )
+
+        left_table, right_table = tables
+        left_ctx = self._ctx_for_table(left_table)
+        right_ctx = self._ctx_for_table(right_table)
+
+        # 2️⃣  Default `join_expr` – first shared column
+        if join_expr is None:
+            shared = set(self._get_columns(table=left_table)) & set(
+                self._get_columns(table=right_table),
+            )
+            if not shared:
+                raise ValueError(
+                    "❌  No shared columns – supply `join_expr` explicitly.",
+                )
+            col = next(iter(shared))
+            join_expr = f"A.{col} == B.{col}"
+
+        # 3️⃣  Destination context (tmp or persistent)
+        if new_table is None:
+            new_table = f"_tmp_join_{uuid.uuid4().hex[:8]}"
+            auto_delete = True
+        else:
+            auto_delete = False
+        dest_ctx = self._ctx_for_table(new_table)
+
+        # 4️⃣  Fire the REST request
+        payload: Dict[str, Any] = {
+            "pair_of_args": [
+                {"context": left_ctx, "filter_expr": left_filter or ""},
+                {"context": right_ctx, "filter_expr": right_filter or ""},
+            ],
+            "join_expr": join_expr,
+            "mode": mode,
+            "new_context": dest_ctx,
+        }
+        if columns is not None:
+            payload["columns"] = columns
+
+        url = f"{os.environ['UNIFY_BASE_URL']}/logs/join"
+        headers = {
+            "Authorization": f"Bearer {API_KEY}",
+            "Content-Type": "application/json",
+        }
+        resp = requests.request("POST", url, json=payload, headers=headers)
+        _handle_exceptions(resp)
+
+        # 5️⃣  Read from the derived context
+        rows = [
+            log.entries
+            for log in unify.get_logs(
+                context=dest_ctx,
+                filter=filter,
+                offset=offset,
+                limit=limit,
+            )
+        ]
+
+        # 6️⃣  Clean-up temporary joins
+        if auto_delete:
+            try:
+                unify.delete_context(dest_ctx)
+            except Exception:
+                # Best-effort – if it fails the tmp context will age-out later.
+                pass
+
+        return {new_table: rows}
