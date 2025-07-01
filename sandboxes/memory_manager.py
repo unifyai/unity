@@ -2,7 +2,9 @@
 sandboxes/memory_manager.py
 ===========================
 
-Text-only sandbox for **MemoryManager** maintenance tasks.
+Sandbox for **MemoryManager** maintenance tasks.
+Supports plain-text *or* voice capture of the initial transcript
+description via the ``--voice/-v`` flag (same UX as the other sandboxes).
 
 ┌────────────── 8 accepted commands ──────────────┐
 │ uc  X-Y   –– update_contacts                    │
@@ -41,6 +43,11 @@ if str(ROOT) not in sys.path:
 
 from scenario_builder import ScenarioBuilder
 from unity.memory_manager.memory_manager import MemoryManager  # type: ignore[attr-defined]
+from sandboxes.utils import (
+    record_until_enter as _record_until_enter,
+    transcribe_deepgram as _transcribe_deepgram,
+    speak as _speak,
+)
 
 load_dotenv()
 logging.basicConfig(level=logging.INFO, format="%(message)s")
@@ -119,7 +126,13 @@ def _explain_commands() -> None:
 
 
 async def _main_async() -> None:
-    parser = argparse.ArgumentParser(description="MemoryManager sandbox (text only)")
+    parser = argparse.ArgumentParser(description="MemoryManager sandbox")
+    parser.add_argument(
+        "--voice",
+        "-v",
+        action="store_true",
+        help="enable voice capture + TTS for the initial scenario",
+    )
     parser.add_argument(
         "--debug",
         "-d",
@@ -141,12 +154,24 @@ async def _main_async() -> None:
         LG.info("[trace] Unify tracing enabled")
         os.environ["UNIFY_TRACED"] = "true"
 
-    # ── Step 1: obtain scenario, build transcript ───────────────────────────
-    scenario = input(
-        "\n🧮  Describe the conversation you'd like to simulate (one or two "
-        "sentences, e.g. *“A product-design chat between Alice, Bob and their "
-        "client Carol discussing a new smartwatch”*)\n> ",
-    ).strip()
+    # ── Step 1: obtain scenario (voice or text), build transcript ────────────
+    if not args.voice:
+        scenario = input(
+            "\n🧮  Describe the conversation you'd like to simulate (one or two "
+            "sentences, e.g. *“A product-design chat between Alice, Bob and their "
+            "client Carol discussing a new smartwatch”*)\n> ",
+        ).strip()
+    else:
+        _speak(
+            "Describe the conversation you'd like to simulate.  "
+            "Press enter to start recording and again to finish.",
+        )
+        audio = _record_until_enter()
+        scenario = _transcribe_deepgram(audio).strip()
+        if not scenario:
+            _speak("I didn't catch that, please type your description instead.")
+            scenario = input("> ").strip()
+
     if not scenario:
         print("Nothing entered – exiting.")
         return
