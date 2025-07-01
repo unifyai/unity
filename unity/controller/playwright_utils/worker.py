@@ -6,6 +6,8 @@ background thread, so every Playwright call stays on the same thread.
 from __future__ import annotations
 
 import base64
+import os
+from concurrent.futures import ThreadPoolExecutor
 import threading
 import time
 import shutil
@@ -14,10 +16,11 @@ from tempfile import mkdtemp
 from typing import Callable
 import json
 import queue
+import requests
 import redis
 from playwright.sync_api import Error as PWError
 from playwright.sync_api import sync_playwright
-
+from .vision_utils import handle_from_bbox
 from .browser_utils import (
     build_boxes,
     collect_elements,
@@ -34,7 +37,7 @@ from .heuristics import export_for_js
 
 # Manual-solve mode: set False to disable automatic CAPTCHA sniffing
 AUTO_CAPTCHA = False  # NEW – detect only when user issues `solve_captcha`
-
+OMNIPARSER_URL = "https://omniparser.saas.unify.ai/parse/"
 
 def _update_in_textbox_state(runner, handle, label):
     """Update BrowserState.in_textbox after a click."""
@@ -109,6 +112,7 @@ class BrowserWorker(threading.Thread):
         log: Callable[[str], None] | None = None,
         session_connect_url: str | None = None,
         headless: bool = False,
+        use_vision: bool = True
     ):
         super().__init__(daemon=True)
         self._redis_client = redis.Redis(host="localhost", port=6379, db=0)
@@ -120,6 +124,7 @@ class BrowserWorker(threading.Thread):
         self._stop_event = threading.Event()
         self.session_connect_url = session_connect_url
         self.headless = headless
+        self.use_vision = use_vision
         # will be initialised inside `run`
         self.runner: CommandRunner | None = None
         # keep reference to a single CAPTCHA-solving thread (optional)
