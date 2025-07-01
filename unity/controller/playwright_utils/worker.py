@@ -13,14 +13,15 @@ import time
 import shutil
 from pathlib import Path
 from tempfile import mkdtemp
-from typing import Callable
+from typing import Callable, List
 import json
 import queue
 import requests
 import redis
-from playwright.sync_api import Error as PWError
+from base64 import b64decode
+from playwright.sync_api import Error as PWError, Page
 from playwright.sync_api import sync_playwright
-from .vision_utils import handle_from_bbox, iou, match_old_element
+from .vision_utils import handle_from_bbox, match_old_element
 from .browser_utils import (
     build_boxes,
     collect_elements,
@@ -64,7 +65,7 @@ def _click_at_bbox_center(page: Page, bbox_norm: List[float]) -> None:
     cx_px = (bbox_norm[0] + bbox_norm[2]) / 2 * vp["w"]
     cy_px = (bbox_norm[1] + bbox_norm[3]) / 2 * vp["h"]
     page.mouse.click(cx_px, cy_px)
-    
+
 def _update_in_textbox_state(runner, handle, label):
     """Update BrowserState.in_textbox after a click."""
     try:
@@ -161,7 +162,7 @@ class BrowserWorker(threading.Thread):
         self._executor = ThreadPoolExecutor(max_workers=1)
         self._vision_future = None
         self._last_vision_ts = 0
-        self._vision_period = 2.0  # seconds
+        self._vision_interval = 1.0  # seconds
         self._vision_elements_cache: list[dict] = []
 
     # ------------------------------------------------------------------
@@ -174,12 +175,12 @@ class BrowserWorker(threading.Thread):
             return []
         payload = {"base64_image": base64.b64encode(png_bytes).decode("utf-8")}
         try:
-            self.log("Sending screenshot to OmniParser API...")
             response = requests.post(OMNIPARSER_URL, json=payload, timeout=20)  # Increased timeout
             response.raise_for_status()
             result = response.json()
             latency = result.get('latency', 'N/A')
-            self.log(f"OmniParser latency: {latency:.2f}s" if isinstance(latency,(int,float)) else f"latency={latency}")
+            if latency > 3:
+                self.log(f"OmniParser latency: {latency:.2f}s" if isinstance(latency,(int,float)) else f"latency={latency}")
             
             # Save annotated image if available
             if save_annotated_image:
@@ -516,7 +517,7 @@ class BrowserWorker(threading.Thread):
                     
                     now = time.time()
                      # A) If vision is enabled, check if it's time for a new call
-                    if self.use_vision and (now - self._last_vision_ts >= self._vision_period):
+                    if self.use_vision and (now - self._last_vision_ts >= self._vision_interval):
                         if not self._vision_future or self._vision_future.done():
                             # If a previous vision call finished, process its results first
                             if self._vision_future and self._vision_future.done():
