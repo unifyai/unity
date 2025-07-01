@@ -4,7 +4,7 @@ from __future__ import annotations
 import json
 import inspect
 from datetime import datetime, timezone
-from typing import Callable, Dict
+from typing import Callable, Dict, Optional
 
 
 # ── utils ───────────────────────────────────────────────────────────────
@@ -17,85 +17,108 @@ def _now() -> str:
 
 
 # ── three tiny builders (one per public method) ─────────────────────────
-def build_contact_update_prompt(tools: Dict[str, Callable]) -> str:
-    return "\n".join(
-        [
-            "You are the **offline MemoryManager** tasked with *creating or amending*",
-            "contact records — names, phone numbers, emails, etc. — after reading",
-            "a 50-message transcript chunk.",
-            "",
-            "Work **only** via the tools below.  First figure out what changed,",
-            "then call the appropriate update tool(s).  Finally return a short",
-            "human-readable summary of what you did.",
-            "",
-            "Tools (name → argspec):",
-            json.dumps(_sig_dict(tools), indent=4),
-            "",
-            "Current UTC time: " + _now(),
-        ],
-    )
+def _with_guidance(lines: list[str], guidance: Optional[str]) -> str:
+    """
+    Helper: append caller-supplied guidance, if any, to the block.
+    """
+    if guidance:
+        lines.extend(
+            [
+                "",
+                "🔖 **Caller guidance – prioritise:**",
+                guidance,
+            ],
+        )
+    return "\n".join(lines)
 
 
-def build_bio_prompt(tools: Dict[str, Callable]) -> str:
-    return "\n".join(
-        [
-            "You are the **MemoryManager** updating the *bio* column for ONE contact.",
-            "Input is the last 50 messages plus the *existing* bio (if any).",
-            "",
-            "1️⃣ Decide whether the bio should change.",
-            "2️⃣ If yes, call the specialised `set_bio` tool.",
-            "3️⃣ Return only the *new* bio text (or the unchanged one).",
-            "",
-            "Tools (name → argspec):",
-            json.dumps(_sig_dict(tools), indent=4),
-            "",
-            "Current UTC time: " + _now(),
-        ],
-    )
+def build_contact_update_prompt(
+    tools: Dict[str, Callable],
+    guidance: Optional[str] = None,
+) -> str:
+    lines = [
+        "You are the **offline MemoryManager** tasked with *creating or amending*",
+        "contact records — names, phone numbers, emails, etc. — after reading",
+        "a 50-message transcript chunk.",
+        "",
+        "Work **only** via the tools below.  First figure out what changed,",
+        "then call the appropriate update tool(s).  Finally return a short",
+        "human-readable summary of what you did.",
+        "",
+        "Tools (name → argspec):",
+        json.dumps(_sig_dict(tools), indent=4),
+        "",
+        "Current UTC time: " + _now(),
+    ]
+    return _with_guidance(lines, guidance)
 
 
-def build_rolling_prompt(tools: Dict[str, Callable]) -> str:
-    return "\n".join(
-        [
-            "You are the **MemoryManager** refreshing the 50-message *rolling summary*",
-            "for ONE contact.  Start from the previous rolling summary (if supplied).",
-            "",
-            "Produce a concise, up-to-date summary **<= 120 words** capturing:",
-            "• main conversation theme(s)",
-            "• immediate goals / outstanding tasks",
-            "• tone or sentiment shifts if relevant",
-            "",
-            "You may call the specialised `set_rolling_summary` tool exactly once.",
-            "Finally, return the summary text you stored.",
-            "",
-            "Tools (name → argspec):",
-            json.dumps(_sig_dict(tools), indent=4),
-            "",
-            "Current UTC time: " + _now(),
-        ],
-    )
+def build_bio_prompt(
+    tools: Dict[str, Callable],
+    guidance: Optional[str] = None,
+) -> str:
+    lines = [
+        "You are the **MemoryManager** updating the *bio* column for ONE contact.",
+        "Input is the last 50 messages plus the *existing* bio (if any).",
+        "",
+        "1️⃣ Decide whether the bio should change.",
+        "2️⃣ If yes, call the specialised `set_bio` tool.",
+        "3️⃣ Return only the *new* bio text (or the unchanged one).",
+        "",
+        "Tools (name → argspec):",
+        json.dumps(_sig_dict(tools), indent=4),
+        "",
+        "Current UTC time: " + _now(),
+    ]
+    return _with_guidance(lines, guidance)
 
 
-def build_knowledge_prompt(tools: Dict[str, Callable]) -> str:
-    return "\n".join(
-        [
-            "You are the **MemoryManager** tasked with mining *long-term*",
-            "knowledge from the latest 50-message transcript chunk.",
-            "",
-            "• Identify *reusable* facts about people, projects, company",
-            "  processes, requirements, or domain knowledge.",
-            "• Before writing, call `KnowledgeManager.refactor` to check if an",
-            "  existing card should be merged / extended instead of creating",
-            "  duplication.",
-            "• Finally, persist using `KnowledgeManager.update` (or skip if",
-            "  nothing valuable was found).",
-            "",
-            "Return a short, human-readable summary of what you stored; if",
-            "nothing was stored, just return 'no-op'.",
-            "",
-            "Tools (name → argspec):",
-            json.dumps(_sig_dict(tools), indent=4),
-            "",
-            "Current UTC time: " + _now(),
-        ],
-    )
+def build_rolling_prompt(
+    tools: Dict[str, Callable],
+    guidance: Optional[str] = None,
+) -> str:
+    lines = [
+        "You are the **MemoryManager** refreshing the 50-message *rolling summary*",
+        "for ONE contact.  Start from the previous rolling summary (if supplied).",
+        "",
+        "Produce a concise, up-to-date summary **<= 120 words** capturing:",
+        "• main conversation theme(s)",
+        "• immediate goals / outstanding tasks",
+        "• tone or sentiment shifts if relevant",
+        "",
+        "You may call the specialised `set_rolling_summary` tool exactly once.",
+        "Finally, return the summary text you stored.",
+        "",
+        "Tools (name → argspec):",
+        json.dumps(_sig_dict(tools), indent=4),
+        "",
+        "Current UTC time: " + _now(),
+    ]
+    return _with_guidance(lines, guidance)
+
+
+def build_knowledge_prompt(
+    tools: Dict[str, Callable],
+    guidance: Optional[str] = None,
+) -> str:
+    lines = [
+        "You are the **MemoryManager** tasked with mining *long-term*",
+        "knowledge from the latest 50-message transcript chunk.",
+        "",
+        "• Identify *reusable* facts about people, projects, company",
+        "  processes, requirements, or domain knowledge.",
+        "• Before writing, call `KnowledgeManager.refactor` to check if an",
+        "  existing card should be merged / extended instead of creating",
+        "  duplication.",
+        "• Finally, persist using `KnowledgeManager.update` (or skip if",
+        "  nothing valuable was found).",
+        "",
+        "Return a short, human-readable summary of what you stored; if",
+        "nothing was stored, just return 'no-op'.",
+        "",
+        "Tools (name → argspec):",
+        json.dumps(_sig_dict(tools), indent=4),
+        "",
+        "Current UTC time: " + _now(),
+    ]
+    return _with_guidance(lines, guidance)

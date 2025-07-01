@@ -60,7 +60,11 @@ class SimulatedMemoryManager(BaseMemoryManager):
     # ------------------------------------------------------------------ #
     # Public API                                                          #
     # ------------------------------------------------------------------ #
-    async def update_contacts(self, transcript: str) -> str:  # noqa: D401
+    async def update_contacts(
+        self,
+        transcript: str,
+        guidance: Optional[str] = None,
+    ) -> str:  # noqa: D401
         """
         Pretend to parse the transcript and add / update contacts.
         Simply returns a short, human-readable summary.
@@ -73,7 +77,7 @@ class SimulatedMemoryManager(BaseMemoryManager):
             include_class_name=True,
         )
 
-        self._llm.set_system_message(build_contact_update_prompt(tools))
+        self._llm.set_system_message(build_contact_update_prompt(tools, guidance))
 
         handle = start_async_tool_use_loop(
             self._llm,
@@ -89,6 +93,7 @@ class SimulatedMemoryManager(BaseMemoryManager):
         self,
         transcript: str,
         latest_bio: Optional[str] = None,
+        guidance: Optional[str] = None,
     ) -> str:
         """
         Fabricates a new bio (or keeps the old one) and stores it in RAM.
@@ -111,7 +116,7 @@ class SimulatedMemoryManager(BaseMemoryManager):
             "set_bio": set_bio,
         }
 
-        self._llm.set_system_message(build_bio_prompt(tools))
+        self._llm.set_system_message(build_bio_prompt(tools, guidance))
 
         payload = json.dumps(
             {
@@ -135,6 +140,7 @@ class SimulatedMemoryManager(BaseMemoryManager):
         self,
         transcript: str,
         latest_rolling_summary: Optional[str] = None,
+        guidance: Optional[str] = None,
     ) -> str:
         """
         Generates a fresh ≤120-word rolling summary and stores it in RAM.
@@ -156,7 +162,7 @@ class SimulatedMemoryManager(BaseMemoryManager):
             "set_rolling_summary": set_rolling_summary,
         }
 
-        self._llm.set_system_message(build_rolling_prompt(tools))
+        self._llm.set_system_message(build_rolling_prompt(tools, guidance))
 
         payload = json.dumps(
             {
@@ -176,7 +182,11 @@ class SimulatedMemoryManager(BaseMemoryManager):
 
         return await handle.result()
 
-    async def update_knowledge(self, transcript: str) -> str:
+    async def update_knowledge(
+        self,
+        transcript: str,
+        guidance: Optional[str] = None,
+    ) -> str:
         """
         Pass transcript through a tool-loop wired to the simulated
         KnowledgeManager; store any harvested facts in `_overlays['kb']`
@@ -201,7 +211,7 @@ class SimulatedMemoryManager(BaseMemoryManager):
             "kb_update": _kb_update,
         }
 
-        self._llm.set_system_message(build_knowledge_prompt(tools))
+        self._llm.set_system_message(build_knowledge_prompt(tools, guidance))
 
         handle = start_async_tool_use_loop(
             self._llm,
