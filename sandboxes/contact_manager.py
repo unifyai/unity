@@ -153,7 +153,8 @@ async def _main_async() -> None:
         os.environ["UNIFY_TRACED"] = "false"
 
     # prepare Unify context
-    unify.activate("ContactSandbox")
+    base_ctx = "Sandbox" if args.shared_context else "ContactSandbox"
+    unify.activate(base_ctx)
     unify.set_trace_context("Traces")
     if not args.reuse:
         ctxs = unify.get_contexts()
