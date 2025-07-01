@@ -51,6 +51,20 @@ def grab_screenshot(page: Page) -> bytes:
     res = cdp.send("Page.captureScreenshot", {"fromSurface": True})
     return b64decode(res["data"])
 
+def _click_at_bbox_center(page: Page, bbox_norm: List[float]) -> None:
+    """Sends a mouse click at the centre of *bbox_norm*.
+
+    * ``bbox_norm`` is **[x0, y0, x1, y1]** in the range *0 ≤ v ≤ 1* relative
+      to the current viewport.
+    * The function is deliberately lightweight and synchronous so it can be
+      called from any rescue path without awaiting coroutines.
+    """
+
+    vp = page.evaluate("() => ({w: innerWidth, h: innerHeight, x: scrollX, y: scrollY})")
+    cx_px = (bbox_norm[0] + bbox_norm[2]) / 2 * vp["w"]
+    cy_px = (bbox_norm[1] + bbox_norm[3]) / 2 * vp["h"]
+    page.mouse.click(cx_px, cy_px)
+    
 def _update_in_textbox_state(runner, handle, label):
     """Update BrowserState.in_textbox after a click."""
     try:
@@ -380,11 +394,22 @@ class BrowserWorker(threading.Thread):
 
                                 self._populate_cache(new_results)
 
+                                # 2. Scroll the viewport so the old bbox centre is roughly centred
+                                cx = (prev_bbox[0] + prev_bbox[2]) / 2
+                                cy = (prev_bbox[1] + prev_bbox[3]) / 2
+                                self.runner.active.evaluate(
+                                    "([cx, cy]) => { const vw = innerWidth, vh = innerHeight; "
+                                    "window.scrollTo(cx*vw - vw/2, cy*vh - vh/2); }",
+                                    [cx, cy],
+                                )
+
                                 # Step 4: Find the corresponding element in the NEW results.
                                 target_element = match_old_element(prev_bbox, prev_label, self._vision_elements_cache)
 
                                 if not target_element:
                                     self.log(f"!! Click Aborted: Could not re-identify '{prev_label}' on the page.")
+                                    self.log("Falling back to pixel click.")
+                                    _click_at_bbox_center(self.runner.active, prev_bbox)
                                     continue
 
                                 # Step 5: Resolve the handle for the correctly identified target and click.
@@ -399,6 +424,7 @@ class BrowserWorker(threading.Thread):
                                         self.runner, handle, target_element.get("content", "")
                                     )
                                 else:
+                                    _click_at_bbox_center(self.runner.active, prev_bbox)
                                     self.log(f"Click failed: Could not resolve handle for re-identified element.")
 
                             except Exception as exc:
