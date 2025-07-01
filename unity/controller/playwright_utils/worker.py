@@ -126,6 +126,67 @@ class BrowserWorker(threading.Thread):
         self._captcha_thread: threading.Thread | None = None
         self._captcha_q: "queue.Queue[tuple[dict,str]]" = queue.Queue()
 
+        # --- Non-blocking vision calls ---
+        self._executor = ThreadPoolExecutor(max_workers=1)
+        self._vision_future = None
+        self._last_vision_ts = 0
+        self._vision_period = 2.0  # seconds
+        self._vision_elements_cache: list[dict] = []
+
+    # ------------------------------------------------------------------
+    # NEW METHOD: To call the OmniParser service
+    # ------------------------------------------------------------------
+    def _call_omniparser(self, png_bytes: bytes, save_annotated_image: bool = True) -> list[dict]:
+        """Calls the OmniParser API and returns a list of interactive elements."""
+        if not png_bytes:
+            self.log("Cannot call OmniParser with empty screenshot.")
+            return []
+        payload = {"base64_image": base64.b64encode(png_bytes).decode("utf-8")}
+        try:
+            self.log("Sending screenshot to OmniParser API...")
+            response = requests.post(OMNIPARSER_URL, json=payload, timeout=20)  # Increased timeout
+            response.raise_for_status()
+            result = response.json()
+            latency = result.get('latency', 'N/A')
+            self.log(f"OmniParser latency: {latency:.2f}s" if isinstance(latency,(int,float)) else f"latency={latency}")
+            
+            # Save annotated image if available
+            if save_annotated_image:
+                try:
+                    # Decode base64 to bytes
+                    annotated_img_bytes = base64.b64decode(result['som_image_base64'])
+                    # Save to file with timestamp
+                    timestamp = int(time.time())
+                    output_dir = "annotated_images"
+                    os.makedirs(output_dir, exist_ok=True)
+                    output_path = os.path.join(output_dir, f"annotated_omniparser_{timestamp}.png")
+                    with open(output_path, 'wb') as f:
+                        f.write(annotated_img_bytes)
+                    self.log(f"Saved annotated image to: {output_path}")
+                except Exception as e:
+                    self.log(f"Failed to save annotated image: {e}")
+            
+            # Filter for interactive elements
+            return [e for e in result.get("parsed_content_list", []) if e.get("interactivity")]
+        except requests.exceptions.RequestException as e:
+            self.log(f"OmniParser API error: {e}")
+            return []
+
+    # ------------------------------------------------------------------
+    # NEW METHOD: To encapsulate the original heuristic-based logic
+    # ------------------------------------------------------------------
+    def _get_elements_from_heuristics(self):
+        """
+        Original method to discover elements using JS heuristics.
+        Returns a list of elements compatible with the `last_elements` format.
+        """
+        try:
+            return collect_elements(self.runner.active)
+        except Exception as exc:
+            self.log(f"Heuristic element collection failed: {exc}")
+            return []
+
+
     # ------------------------------------------------------------------ API
     def stop(self) -> None:
         self._stop_event.set()
