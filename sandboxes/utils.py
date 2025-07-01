@@ -498,6 +498,16 @@ def build_cli_parser(description: str) -> argparse.ArgumentParser:
         metavar="NAME",
         help="Save the transcript used to seed this run under NAME",
     )
+    parser.add_argument(
+        "--shared_context",
+        "-c",
+        action="store_true",
+        help=(
+            "Activate the global ‘Sandbox’ context instead of the manager-"
+            "specific one so that data can be reused across different "
+            "sandboxes."
+        ),
+    )
 
     return parser
 
