@@ -445,7 +445,12 @@ class KnowledgeManager(BaseKnowledgeManager):
         _handle_exceptions(response)
         return response.json()
 
-    def _delete_tables(self, *, tables: Union[str, List[str]]) -> Dict[str, str]:
+    def _delete_tables(
+        self,
+        *,
+        tables: Union[str, List[str]],
+        startswith: Optional[str] = None,
+    ) -> Dict[str, str]:
         """
         **Drop** an entire table *and* all its rows.
 
@@ -453,6 +458,8 @@ class KnowledgeManager(BaseKnowledgeManager):
         ----------
         tables : str | list[str]
             Target table name(s).
+        startswith : str | None, default None
+            If provided, also delete all tables whose names start with this prefix.
 
         Returns
         -------
@@ -464,6 +471,11 @@ class KnowledgeManager(BaseKnowledgeManager):
         rets = list()
         for table in tables:
             rets.append(unify.delete_context(self._ctx_for_table(table)))
+        if startswith is None:
+            return rets
+        contexts = unify.get_contexts(prefix=f"{self._ctx}/{startswith}")
+        for ctx in contexts:
+            rets.append(unify.delete_context(ctx))
         return rets
 
     # Columns
