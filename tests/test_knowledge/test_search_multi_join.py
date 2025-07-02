@@ -89,35 +89,36 @@ def test_search_multi_join(monkeypatch):
     # ---------- spies ------------------------------------------------------
     join_calls = []
 
-    original_join = KnowledgeManager._search_join
+    original_join = KnowledgeManager._create_join
 
     @functools.wraps(original_join)
     def _join_spy(self, *a, **k):
         join_calls.append(k.copy())
         return original_join(self, *a, **k)
 
-    monkeypatch.setattr(KnowledgeManager, "_search_join", _join_spy, raising=True)
+    monkeypatch.setattr(KnowledgeManager, "_create_join", _join_spy, raising=True)
 
     # ---------- exercise ---------------------------------------------------
     pipeline = [
         {
             "tables": ["Authors", "Books"],
             "join_expr": "Authors.author_id == Books.author_id",
+            "select": {"Books.book_id": "book_id"},
             "mode": "inner",
             "left_where": "author_name == 'J.K. Rowling'",
         },
         {
             "tables": ["$prev", "Reviews"],
             "join_expr": "$prev.book_id == Reviews.book_id",
+            "select": {"Reviews.review_id": "review_id"},
         },
     ]
 
     res = km._search_multi_join(joins=pipeline)
-    final_name, final_rows = next(iter(res.items()))
 
     # ---------- assertions -------------------------------------------------
     # ➊ correct row-count
-    assert len(final_rows) == 3, "Should return exactly three Rowling reviews."
+    assert len(res) == 3, "Should return exactly three Rowling reviews."
 
     # ➋ internal two-table join used twice
     assert len(join_calls) == 2, "_search_join should be called once per step."
@@ -125,8 +126,3 @@ def test_search_multi_join(monkeypatch):
     # ➌ temp contexts cleaned up
     survivors = _tmp_ctx_survivors(km)
     assert not survivors, f"Temporary join contexts not deleted: {survivors}"
-
-    # ➍ returned table no longer exists (because new_table=None)
-    assert final_name not in km._tables_overview(
-        include_column_info=False,
-    ), "Final temp table should also be cleaned up when new_table is None."
