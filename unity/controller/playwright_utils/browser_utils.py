@@ -101,8 +101,10 @@ def build_boxes(elements: list[dict]) -> list[dict]:
     for idx, e in enumerate(elements, 1):
         boxes.append(
             dict(
-                i=idx,
+                i=e.get("id", idx),
                 fixed=e["fixed"],
+                # who produced this element? (vision / heuristic / hybrid)
+                src=e.get("source", ""),
                 px=floor(e["vleft"]),
                 py=floor(e["vtop"]),
                 x=floor(e["left"]),
@@ -114,54 +116,75 @@ def build_boxes(elements: list[dict]) -> list[dict]:
     return boxes
 
 
-def paint_overlay(page: Page, boxes: list[dict], use_vision: bool = False) -> None:
+def paint_overlay(page: Page, boxes: list[dict], use_vision: bool = False, need_helper: bool = False) -> None:
     """Draw *our* bounding-box overlay for the supplied *boxes* list.
 
-    Historically this helper was a no-op because the JS injected by
-    ``js_helper_template.js`` scanned the DOM on its own and rendered an
-    overlay for any elements it deemed interactive.  With the introduction
-    of OmniParser-based vision results we now have many more potentially
-    interactive regions that are *not* discoverable via regular DOM
-    heuristics.  To surface those we render an additional lightweight
-    canvas overlay on top of the page.
+    ⬩ If `use_vision` is **False** → show the original JS overlay
+      (heuristic elements only) and hide our vision canvas.
 
-    The existing DOM scan overlay ( ``window.__bl.enableOverlay`` ) remains
-    useful, so we keep it – our vision overlay lives in its own canvas with
-    the fixed id ``vision-overlay`` to avoid clashes.
+    ⬩ If `use_vision` is **True**  → make sure the helper’s DOM-scan
+      loop is running, remove its own canvas, and draw a single
+      unified overlay for (vision + heuristic + hybrid) elements.
     """
 
-    # 1) Make sure the original helper overlay (heuristic DOM scan) is ON
+    # ────────────────────────────────────────────────────────────────
+    # 1️⃣  Heuristic-only mode – just (re)enable the helper overlay
+    # ────────────────────────────────────────────────────────────────
     if not use_vision:
         try:
-            page.evaluate(
-                "() => window.__bl && window.__bl.enableOverlay && window.__bl.enableOverlay()",
-            )
+            # hide our custom overlay (if any) …
+            page.evaluate("document.getElementById('vision-overlay')?.remove()")
+            # … and bring the helper’s one back
+            page.evaluate("window.__bl?.enableOverlay?.()")
         except Exception:
-            # The page might be mid-navigation or in a sandboxed iframe – ignore.
+            # page may be mid-navigation – ignore
             pass
         return
 
-    # 2) Draw/refresh the **vision** overlay with the Python-supplied boxes
+    # ────────────────────────────────────────────────────────────────
+    # 2️⃣  Vision / hybrid mode – start scan loop, hide helper canvas,
+    #     then render our own overlay
+    # ────────────────────────────────────────────────────────────────
     try:
+        # -- Bootstrap the helper’s scan loop ONCE per page ----------
+        
+        page.evaluate("""
+            (needHelper) => {
+                if (!window.__bl) return;
+
+                // Run the DOM-scan loop only when we really need heuristics
+                if (needHelper && !window.__bl.__hybridStarted) {
+                    window.__bl.enableOverlay();
+                    window.__bl.__hybridStarted = true;
+                }
+
+                // Always kill the helper canvas – we draw our own
+                window.__bl.hideOverlay?.();
+            }
+            """, need_helper)
+
+        # -- Draw / refresh our unified overlay ----------------------
         page.evaluate(
             """
             (boxes) => {
-                // Obtain (or create) a dedicated overlay canvas
+                // Obtain or create dedicated canvas
                 let canvas = document.getElementById('vision-overlay');
                 if (!canvas) {
                     canvas = document.createElement('canvas');
                     canvas.id = 'vision-overlay';
-                    canvas.style.position = 'fixed';
-                    canvas.style.inset = '0';
-                    canvas.style.width = '100%';
-                    canvas.style.height = '100%';
-                    canvas.style.pointerEvents = 'none';
-                    canvas.style.zIndex = '2147483647'; // stay on top
+                    Object.assign(canvas.style, {
+                        position: 'fixed',
+                        inset: '0',
+                        width: '100%',
+                        height: '100%',
+                        pointerEvents: 'none',
+                        zIndex: '2147483647',
+                    });
                     document.documentElement.appendChild(canvas);
                 }
 
-                // Resize the backing buffer to keep things crisp on HiDPI
-                const dpr = window.devicePixelRatio || 1;
+                // Hi-DPI crispness
+                const dpr  = window.devicePixelRatio || 1;
                 const rect = canvas.getBoundingClientRect();
                 if (canvas.width !== rect.width * dpr || canvas.height !== rect.height * dpr) {
                     canvas.width  = rect.width  * dpr;
@@ -169,16 +192,20 @@ def paint_overlay(page: Page, boxes: list[dict], use_vision: bool = False) -> No
                 }
 
                 const ctx = canvas.getContext('2d');
-                ctx.setTransform(dpr, 0, 0, dpr, 0, 0); // reset for css pixels
+                ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
                 ctx.clearRect(0, 0, canvas.width / dpr, canvas.height / dpr);
 
                 if (!Array.isArray(boxes)) return;
 
-                // Simple cycling colour palette (matches helper overlay)
-                const COLORS = ['#ff0000', '#00bfff', '#ffa500', '#7cfc00', '#ff1493'];
+                // colour-by-source palette
+                const palette = {
+                    vision   : '#ff3b30', // red
+                    heuristic: '#007aff', // blue
+                    hybrid   : '#34c759', // green
+                };
 
                 boxes.forEach((b, idx) => {
-                    const c = COLORS[idx % COLORS.length];
+                    const c = palette[b.src] || '#ff9f0a';
                     ctx.fillStyle   = c + '22';  // translucent fill
                     ctx.strokeStyle = c;
                     ctx.lineWidth   = 2;
@@ -186,19 +213,20 @@ def paint_overlay(page: Page, boxes: list[dict], use_vision: bool = False) -> No
                     ctx.fillRect(b.px, b.py, b.w, b.h);
                     ctx.strokeRect(b.px, b.py, b.w, b.h);
 
-                    // Draw the index label similar to the helper overlay
+                    // index label
                     ctx.font = 'bold 14px sans-serif';
                     ctx.lineWidth = 4; ctx.strokeStyle = '#000';
                     ctx.strokeText(String(b.i), b.px + 4, b.py + 14);
                     ctx.fillStyle = '#fff';
-                    ctx.fillText(String(b.i), b.px + 4, b.py + 14);
+                    ctx.fillText(String(b.i),  b.px + 4, b.py + 14);
                 });
             }
             """,
             boxes,
         )
+
     except Exception:
-        # Page might be in the middle of navigation – skip silently.
+        # navigation in flight – silently skip this refresh
         pass
 
 
