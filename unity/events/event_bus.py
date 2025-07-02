@@ -265,7 +265,9 @@ class EventBus:
         self._window_sizes: Dict[str, int] = {
             ctx.split("/")[-1]: self._default_window for ctx in ctxs
         }
-        self._specific_ctxs = {ctx.split("/")[-1]: ctx for ctx in ctxs}
+        self._specific_ctxs = {
+            ctx.split("/")[-1]: ctx for ctx in ctxs if ctx != self._callbacks_ctx
+        }
         self._logger = unify.AsyncLoggerManager()
 
         # runtime subscriptions (id → Subscription)
