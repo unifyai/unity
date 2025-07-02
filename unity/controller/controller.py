@@ -18,7 +18,7 @@ class Controller(threading.Thread):
         daemon: bool = True,
         session_connect_url: str | None = None,
         headless: bool = False,
-        use_vision: bool = True,
+        mode: str = "heuristic",
         debug: bool = False,
     ) -> None:
         super().__init__(daemon=daemon)
@@ -28,14 +28,13 @@ class Controller(threading.Thread):
         self._pubsub_browser_state = self._redis_client.pubsub()
         self._pubsub_browser_state.subscribe("browser_state")
         self.session_connect_url = session_connect_url
-        self.use_vision = use_vision
 
         self._browser_worker = BrowserWorker(
             start_url="https://www.google.com/",
             refresh_interval=0.4,
             session_connect_url=self.session_connect_url,
             headless=headless,
-            use_vision=self.use_vision,
+            mode=mode,
             debug=debug,
         )
         self._browser_open = False
