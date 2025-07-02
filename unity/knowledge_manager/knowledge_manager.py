@@ -22,6 +22,11 @@ from .prompt_builders import (
     build_ask_prompt,
     build_refactor_prompt,
 )
+from ..events.manager_event_logging import (
+    new_call_id,
+    publish_manager_method_event,
+    wrap_handle_with_logging,
+)
 
 API_KEY = os.environ["UNIFY_KEY"]
 
@@ -129,6 +134,16 @@ class KnowledgeManager(BaseKnowledgeManager):
         clarification_down_q: asyncio.Queue[str] | None = None,
     ) -> "SteerableToolHandle":
 
+        # ── 0.  Emit *incoming* ManagerMethod event ──────────────────────
+        call_id = new_call_id()
+        await publish_manager_method_event(
+            call_id,
+            "KnowledgeManager",
+            "refactor",
+            phase="incoming",
+            command=text,
+        )
+
         client = unify.AsyncUnify(
             "o4-mini@openai",
             cache=json.loads(os.environ.get("UNIFY_CACHE", "true")),
@@ -170,6 +185,14 @@ class KnowledgeManager(BaseKnowledgeManager):
             tool_policy=self._look_first_tool_policy,
         )
 
+        # ── 3.  Add logging wrapper so every handle-interaction is traced ─
+        handle = wrap_handle_with_logging(
+            handle,
+            call_id,
+            "KnowledgeManager",
+            "refactor",
+        )
+
         # 4️⃣  Optionally wrap .result() to expose hidden reasoning
         if _return_reasoning_steps:
             original_result = handle.result
@@ -192,6 +215,15 @@ class KnowledgeManager(BaseKnowledgeManager):
         clarification_up_q: asyncio.Queue[str] | None = None,
         clarification_down_q: asyncio.Queue[str] | None = None,
     ) -> "SteerableToolHandle":
+
+        call_id = new_call_id()
+        await publish_manager_method_event(
+            call_id,
+            "KnowledgeManager",
+            "update",
+            phase="incoming",
+            request=text,
+        )
 
         client = unify.AsyncUnify(
             "o4-mini@openai",
@@ -235,7 +267,15 @@ class KnowledgeManager(BaseKnowledgeManager):
             tool_policy=self._look_first_tool_policy,
         )
 
-        # ── 3.  Optionally wrap .result() to expose reasoning  ────────────
+        # ── 3a.  Add logging wrapper  ─────────────────────────────────────
+        handle = wrap_handle_with_logging(
+            handle,
+            call_id,
+            "KnowledgeManager",
+            "update",
+        )
+
+        # ── 3b.  Optionally wrap .result() to expose reasoning  ───────────
         if _return_reasoning_steps:
             original_result = handle.result
 
@@ -257,6 +297,15 @@ class KnowledgeManager(BaseKnowledgeManager):
         clarification_up_q: asyncio.Queue[str] | None = None,
         clarification_down_q: asyncio.Queue[str] | None = None,
     ) -> "SteerableToolHandle":
+        call_id = new_call_id()
+        await publish_manager_method_event(
+            call_id,
+            "KnowledgeManager",
+            "ask",
+            phase="incoming",
+            question=text,
+        )
+
         client = unify.AsyncUnify(
             "o4-mini@openai",
             cache=json.loads(os.environ.get("UNIFY_CACHE", "true")),
@@ -298,7 +347,15 @@ class KnowledgeManager(BaseKnowledgeManager):
             tool_policy=lambda i, _: ("required", _) if i < 1 else ("auto", _),
         )
 
-        # ── 3.  Optionally wrap .result() to expose reasoning  ────────────
+        # ── 3a.  Add logging wrapper  ─────────────────────────────────────
+        handle = wrap_handle_with_logging(
+            handle,
+            call_id,
+            "KnowledgeManager",
+            "ask",
+        )
+
+        # ── 3b.  Optionally wrap .result() to expose reasoning  ───────────
         if _return_reasoning_steps:
             original_result = handle.result
 
