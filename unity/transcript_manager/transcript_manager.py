@@ -16,6 +16,11 @@ from ..common.llm_helpers import (
     SteerableToolHandle,
     methods_to_tool_dict,
 )
+from ..events.manager_event_logging import (
+    new_call_id,
+    publish_manager_method_event,
+    wrap_handle_with_logging,
+)
 from .prompt_builders import build_ask_prompt, build_summarize_prompt
 from .base import BaseTranscriptManager
 
@@ -107,6 +112,16 @@ class TranscriptManager(BaseTranscriptManager):
         # ── 0.  Build the *live* tools-dict (may include clarification helper) ──
         tools = dict(self._tools)
 
+        # ── 0b.  Create a call-ID & log the incoming request ────────────────
+        call_id = new_call_id()
+        await publish_manager_method_event(
+            call_id,
+            "TranscriptManager",
+            "ask",
+            phase="incoming",
+            question=text,
+        )
+
         if clarification_up_q is not None or clarification_down_q is not None:
 
             async def request_clarification(question: str) -> str:
@@ -141,7 +156,15 @@ class TranscriptManager(BaseTranscriptManager):
             tool_policy=lambda i, _: ("required", _) if i < 1 else ("auto", _),
         )
 
-        # ── 3.  Optionally wrap .result() to expose reasoning  ────────────
+        # ── 3.  Wrap with logging (outgoing, pause, …)  ─────────────────────
+        handle = wrap_handle_with_logging(
+            handle,
+            call_id,
+            "TranscriptManager",
+            "ask",
+        )
+
+        # ── 4.  Optional reasoning exposure  ───────────────────────────────
         if _return_reasoning_steps:
             original_result = handle.result
 
@@ -149,7 +172,7 @@ class TranscriptManager(BaseTranscriptManager):
                 answer = await original_result()
                 return answer, client.messages
 
-            handle.result = wrapped_result
+            handle.result = wrapped_result  # type: ignore
 
         return handle
 
@@ -180,6 +203,19 @@ class TranscriptManager(BaseTranscriptManager):
         from_exchanges = list(from_exchanges or [])
         from_messages = list(from_messages or [])
         omit_messages = set(omit_messages or [])
+
+        # -- 0b.  Create call-ID & *incoming* ManagerMethod event ----------
+        call_id = new_call_id()
+        await publish_manager_method_event(
+            call_id,
+            "TranscriptManager",
+            "summarize",
+            phase="incoming",
+            from_exchanges=from_exchanges,
+            from_messages=from_messages,
+            omit_messages=list(omit_messages or []),
+            guidance=guidance,
+        )
 
         # ── 1.  Build LLM client ────────────────────────────────────────────
         client = unify.AsyncUnify(
@@ -253,10 +289,19 @@ class TranscriptManager(BaseTranscriptManager):
         )
 
         # Wrap the original result to log the summary when it completes
+        # -- 3.  Attach logging wrapper -------------------------------------
+        handle = wrap_handle_with_logging(
+            handle,
+            call_id,
+            "TranscriptManager",
+            "summarize",
+        )
+
+        # -- 4.  Persist the summary after the OUTGOING event has fired -----
         original_result = handle.result
 
         async def wrapped_result():
-            summary = await original_result()
+            summary = await original_result()  # emits outgoing ManagerMethod
             ex_ids_for_log = sorted(exchanges.keys())
             unify.log(
                 context=self._summaries_ctx,
@@ -268,7 +313,7 @@ class TranscriptManager(BaseTranscriptManager):
             )
             return summary
 
-        handle.result = wrapped_result
+        handle.result = wrapped_result  # type: ignore
 
         return handle
 
