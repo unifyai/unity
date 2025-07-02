@@ -46,12 +46,43 @@ def grab_screenshot(page: Page) -> bytes:
     Capture the exact visual state of a Playwright `Page`.
 
     Uses the Chrome DevTools Protocol (`Page.captureScreenshot`) to grab a
-    PNG of the page’s painted surface—no scrolling or flicker—and returns
+    PNG of the page's painted surface—no scrolling or flicker—and returns
     the raw PNG bytes.
     """
     cdp = page.context.new_cdp_session(page)
     res = cdp.send("Page.captureScreenshot", {"fromSurface": True})
     return b64decode(res["data"])
+
+
+def _safe_screenshot(page: Page, log: Callable[[str], None] | None = None) -> bytes:
+    """Grab a screenshot of *page* but never raise.
+
+    1. Tries the fast CDP-based ``grab_screenshot`` first.
+    2. Falls back to Playwright's built-in ``page.screenshot`` if the CDP call
+       fails (for example when the page has navigated and the previous CDP
+       session was detached).
+    3. If both methods fail or the page is already closed, returns an empty
+       ``bytes`` object so the caller can decide how to proceed without
+       crashing the worker thread.
+    """
+
+    if page is None:
+        return b""
+
+    try:
+        # Fast path – CDP capture (no flicker / scroll)
+        return grab_screenshot(page)
+    except Exception as e:
+        if log:
+            log(f"_safe_screenshot: CDP capture failed – {e}")
+
+    try:
+        # Slower but more robust fallback
+        return page.screenshot(type="png", full_page=False)
+    except Exception as e:
+        if log:
+            log(f"_safe_screenshot: fallback screenshot failed – {e}")
+        return b""
 
 
 def _click_at_bbox_center(
