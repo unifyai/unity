@@ -21,7 +21,6 @@ import redis
 from base64 import b64decode
 from playwright.sync_api import Error as PWError, Page
 from playwright.sync_api import sync_playwright
-from .vision_utils import handle_from_bbox, match_old_element
 from .browser_utils import (
     build_boxes,
     collect_elements,
@@ -40,6 +39,7 @@ from .heuristics import export_for_js
 AUTO_CAPTCHA = False  # NEW – detect only when user issues `solve_captcha`
 OMNIPARSER_URL = "https://omniparser.saas.unify.ai/parse/"
 
+
 def grab_screenshot(page: Page) -> bytes:
     """
     Capture the exact visual state of a Playwright `Page`.
@@ -52,7 +52,12 @@ def grab_screenshot(page: Page) -> bytes:
     res = cdp.send("Page.captureScreenshot", {"fromSurface": True})
     return b64decode(res["data"])
 
-def _click_at_bbox_center(page: Page, bbox_norm: List[float], debug: bool = False) -> None:
+
+def _click_at_bbox_center(
+    page: Page,
+    bbox_norm: List[float],
+    debug: bool = False,
+) -> None:
     """
     Sends a mouse click at the centre of *bbox_norm* and optionally draws a debug dot.
 
@@ -90,10 +95,11 @@ def _click_at_bbox_center(page: Page, bbox_norm: List[float], debug: bool = Fals
         """
         # 3. Execute the JS to draw the dot and pause briefly to see it
         page.evaluate(draw_dot_js, {"x": cx_px, "y": cy_px})
-        page.wait_for_timeout(3000) # 3-second pause to see the dot
+        page.wait_for_timeout(3000)  # 3-second pause to see the dot
 
     # 4. Perform the click at the exact same coordinates
     page.mouse.click(cx_px, cy_px)
+
 
 def _update_in_textbox_state(runner, handle, label):
     """Update BrowserState.in_textbox after a click."""
@@ -169,7 +175,7 @@ class BrowserWorker(threading.Thread):
         session_connect_url: str | None = None,
         headless: bool = False,
         use_vision: bool = True,
-        debug: bool = False
+        debug: bool = False,
     ):
         super().__init__(daemon=True)
         self._redis_client = redis.Redis(host="localhost", port=6379, db=0)
@@ -199,45 +205,68 @@ class BrowserWorker(threading.Thread):
     # ------------------------------------------------------------------
     # NEW METHOD: To call the OmniParser service
     # ------------------------------------------------------------------
-    def _call_omniparser(self, png_bytes: bytes, save_annotated_image: bool = False) -> list[dict]:
+    def _call_omniparser(
+        self,
+        png_bytes: bytes,
+        save_annotated_image: bool = False,
+    ) -> list[dict]:
         """Calls the OmniParser API and returns a list of interactive elements."""
         if not png_bytes:
             self.log("Cannot call OmniParser with empty screenshot.")
             return []
         payload = {"base64_image": base64.b64encode(png_bytes).decode("utf-8")}
         try:
-            response = requests.post(OMNIPARSER_URL, json=payload, timeout=20)  # Increased timeout
+            response = requests.post(
+                OMNIPARSER_URL,
+                json=payload,
+                timeout=20,
+            )  # Increased timeout
             response.raise_for_status()
             result = response.json()
-            latency = result.get('latency', 'N/A')
+            latency = result.get("latency", "N/A")
             if latency > 3:
-                self.log(f"OmniParser latency: {latency:.2f}s" if isinstance(latency,(int,float)) else f"latency={latency}")
-            
+                self.log(
+                    (
+                        f"OmniParser latency: {latency:.2f}s"
+                        if isinstance(latency, (int, float))
+                        else f"latency={latency}"
+                    ),
+                )
+
             # Save annotated image if available
             if save_annotated_image:
                 try:
                     # Decode base64 to bytes
                     original_img_bytes = base64.b64decode(payload["base64_image"])
-                    annotated_img_bytes = base64.b64decode(result['som_image_base64'])
+                    annotated_img_bytes = base64.b64decode(result["som_image_base64"])
                     # Save to file with timestamp
                     timestamp = int(time.time())
                     output_dir = "annotated_images"
                     os.makedirs(output_dir, exist_ok=True)
-                    output_path_original = os.path.join(output_dir, f"original_omniparser_{timestamp}.png")
-                    output_path_annotated = os.path.join(output_dir, f"annotated_omniparser_{timestamp}.png")
-                    output_parsed_content = os.path.join(output_dir, f"parsed_content_omniparser_{timestamp}.json")
+                    output_path_original = os.path.join(
+                        output_dir,
+                        f"original_omniparser_{timestamp}.png",
+                    )
+                    output_path_annotated = os.path.join(
+                        output_dir,
+                        f"annotated_omniparser_{timestamp}.png",
+                    )
+                    output_parsed_content = os.path.join(
+                        output_dir,
+                        f"parsed_content_omniparser_{timestamp}.json",
+                    )
                     # Save original image
-                    with open(output_path_original, 'wb') as f:
+                    with open(output_path_original, "wb") as f:
                         f.write(original_img_bytes)
                     # Save annotated image
-                    with open(output_path_annotated, 'wb') as f:
+                    with open(output_path_annotated, "wb") as f:
                         f.write(annotated_img_bytes)
                     # Save parsed content list
-                    with open(output_parsed_content, 'w') as f:
+                    with open(output_parsed_content, "w") as f:
                         json.dump(result.get("parsed_content_list", []), f, indent=2)
                 except Exception as e:
                     self.log(f"Failed to save annotated image: {e}")
-            
+
             # Filter for interactive elements
             return [e for e in result.get("parsed_content_list", [])]
         except requests.exceptions.RequestException as e:
@@ -258,7 +287,6 @@ class BrowserWorker(threading.Thread):
             self.log(f"Heuristic element collection failed: {exc}")
             return []
 
-
     def _populate_cache(self, vision_results: list[dict]) -> None:
         """Processes vision results and populates the elements cache."""
         if not self.runner:
@@ -267,41 +295,44 @@ class BrowserWorker(threading.Thread):
         try:
             # Get current viewport dimensions
             vp = self.runner.active.evaluate("() => ({w:innerWidth, h:innerHeight})")
-            vw, vh = vp.get('w', 1280), vp.get('h', 720)
+            vw, vh = vp.get("w", 1280), vp.get("h", 720)
 
             # Clear the cache before repopulating
             self._vision_elements_cache = []
             for i, e in enumerate(vision_results):
                 bbox_norm = e.get("bbox")
-                if not bbox_norm: continue
+                if not bbox_norm:
+                    continue
 
                 # Denormalize to absolute page coordinates
                 left = bbox_norm[0] * vw
                 top = bbox_norm[1] * vh
                 width = (bbox_norm[2] - bbox_norm[0]) * vw
                 height = (bbox_norm[3] - bbox_norm[1]) * vh
-                
+
                 # The 'vleft' and 'vtop' for the overlay should be relative to the viewport.
                 # The paint_overlay function expects 'px' and 'py' to be the viewport-relative
                 # coordinates. We should pass the absolute 'left' and 'top' to it
                 # and let it handle the scroll offset. The 'build_boxes' function does this.
-                self._vision_elements_cache.append({
-                    "id": i + 1,
-                    "label": e.get("content", "").strip(),
-                    "bbox": bbox_norm,
-                    "handle": None, # handle is resolved just-in-time
-                    "fixed": False,
-                    "left": left,
-                    "top": top,
-                    "width": width,
-                    "height": height,
-                    # These are relative to the document, not the viewport
-                    "vleft": left,
-                    "vtop": top,
-                })
+                self._vision_elements_cache.append(
+                    {
+                        "id": i + 1,
+                        "label": e.get("content", "").strip(),
+                        "bbox": bbox_norm,
+                        "handle": None,  # handle is resolved just-in-time
+                        "fixed": False,
+                        "left": left,
+                        "top": top,
+                        "width": width,
+                        "height": height,
+                        # These are relative to the document, not the viewport
+                        "vleft": left,
+                        "vtop": top,
+                    },
+                )
         except Exception as e:
             self.log(f"Failed to populate vision cache: {e}")
-            self._vision_elements_cache = [] # Ensure cache is empty on failure
+            self._vision_elements_cache = []  # Ensure cache is empty on failure
 
     # ------------------------------------------------------------------ API
     def stop(self) -> None:
@@ -518,32 +549,44 @@ class BrowserWorker(threading.Thread):
                         else:
                             time.sleep(0.1)
                             continue
-                    
+
                     now = time.time()
-                     # A) If vision is enabled, check if it's time for a new call
-                    if self.use_vision and (now - self._last_vision_ts >= self._vision_interval):
+                    # A) If vision is enabled, check if it's time for a new call
+                    if self.use_vision and (
+                        now - self._last_vision_ts >= self._vision_interval
+                    ):
                         if not self._vision_future or self._vision_future.done():
                             # If a previous vision call finished, process its results first
                             if self._vision_future and self._vision_future.done():
                                 try:
                                     vision_results = self._vision_future.result()
-                                    vision_results.sort(key=lambda r: (r["bbox"][1], r["bbox"][0]))
+                                    vision_results.sort(
+                                        key=lambda r: (r["bbox"][1], r["bbox"][0]),
+                                    )
                                     self._populate_cache(vision_results)
                                 except Exception as e:
                                     self.log(f"Vision call failed: {e}")
-                                    self._vision_elements_cache = [] # Clear cache on failure
+                                    self._vision_elements_cache = (
+                                        []
+                                    )  # Clear cache on failure
                                 self._vision_future = None
 
                             try:
                                 # Clear the overlay before taking the screenshot
                                 paint_overlay(self.runner.active, [], use_vision=True)
                             except Exception as e:
-                                self.log(f"Could not clear overlay before screenshot: {e}")
+                                self.log(
+                                    f"Could not clear overlay before screenshot: {e}",
+                                )
 
                             # Now, trigger the next vision call
                             self._last_vision_ts = now
                             png_bytes = grab_screenshot(self.runner.active)
-                            self._vision_future = self._executor.submit(self._call_omniparser, png_bytes, save_annotated_image=self.debug)
+                            self._vision_future = self._executor.submit(
+                                self._call_omniparser,
+                                png_bytes,
+                                save_annotated_image=self.debug,
+                            )
 
                     # -- 3) refresh overlay ------------------------------
                     try:
@@ -552,7 +595,7 @@ class BrowserWorker(threading.Thread):
                             last_elements = self._vision_elements_cache
                         else:
                             last_elements = self._get_elements_from_heuristics()
-                            
+
                     except Exception as exc:  # navigation in-flight
                         self.log(f"collect_elements skipped: {exc}")
                         time.sleep(0.05)  # brief pause, then continue loop
