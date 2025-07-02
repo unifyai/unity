@@ -37,7 +37,7 @@ class KnowledgeManager(BaseKnowledgeManager):
             # Search
             self._search,
             self._nearest,
-            self._search_joined,
+            self._search_join,
             self._search_multi_join,
             # Tables
             self._tables_overview,
@@ -75,7 +75,7 @@ class KnowledgeManager(BaseKnowledgeManager):
                 self._tables_overview,
                 self._search,
                 self._nearest,
-                self._search_joined,
+                self._search_join,
                 self._search_multi_join,
             ),
         }
@@ -108,7 +108,7 @@ class KnowledgeManager(BaseKnowledgeManager):
             return "required", methods_to_tool_dict(
                 self._search,
                 self._nearest,
-                self._search_joined,
+                self._search_join,
                 include_class_name=False,
             )
         return "auto", tls
@@ -987,7 +987,7 @@ class KnowledgeManager(BaseKnowledgeManager):
             ]
         return results
 
-    def _search_joined(
+    def _search_join(
         self,
         *,
         tables: Union[str, List[str]],
@@ -1039,7 +1039,7 @@ class KnowledgeManager(BaseKnowledgeManager):
 
         if len(tables) != 2:
             raise ValueError(
-                "❌  _search_joined expects exactly TWO tables to join.",
+                "❌  _search_join expects exactly TWO tables to join.",
             )
 
         left_table, right_table = tables
@@ -1163,7 +1163,7 @@ class KnowledgeManager(BaseKnowledgeManager):
         ----------
         joins : list[dict]
             An *ordered* list where **each element mirrors the kwargs of
-            `_search_joined` except that:
+            `_search_join` except that:
 
               • the **two** input tables are provided under the key
                 ``"tables"`` (string or 2-element list);
@@ -1254,8 +1254,8 @@ class KnowledgeManager(BaseKnowledgeManager):
                 "post_join_limit": 0,
                 "post_join_offset": 0,
             }
-            # `_search_joined` returns rows but we ignore them mid-pipeline
-            self._search_joined(**_search_kwargs)  # type: ignore[arg-type]
+            # `_search_join` returns rows but we ignore them mid-pipeline
+            self._search_join(**_search_kwargs)  # type: ignore[arg-type]
 
             previous_table = dest_table
 

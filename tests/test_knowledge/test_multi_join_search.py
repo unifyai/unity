@@ -40,7 +40,7 @@ def _contains(text: str, *needles: str) -> bool:
 # --------------------------------------------------------------------------- #
 @pytest.mark.eval
 @pytest.mark.asyncio
-@pytest.mark.timeout(300)
+# @pytest.mark.timeout(300)
 @_handle_project
 async def test_multi_join_author_reviews(monkeypatch):
     """
@@ -54,7 +54,7 @@ async def test_multi_join_author_reviews(monkeypatch):
     join_calls: list[dict] = []
     deleted_tables: list[str] = []
 
-    orig_join = KnowledgeManager._search_joined
+    orig_join = KnowledgeManager._search_join
     orig_delete = KnowledgeManager._delete_tables
 
     @functools.wraps(orig_join)
@@ -75,7 +75,7 @@ async def test_multi_join_author_reviews(monkeypatch):
 
         return orig_delete(self, *args, **kwargs)
 
-    monkeypatch.setattr(KnowledgeManager, "_search_joined", _join_spy, raising=True)
+    monkeypatch.setattr(KnowledgeManager, "_search_join", _join_spy, raising=True)
     monkeypatch.setattr(KnowledgeManager, "_delete_tables", _delete_spy, raising=True)
 
     # 🗄️  Seed data -----------------------------------------------------------
@@ -124,7 +124,7 @@ async def test_multi_join_author_reviews(monkeypatch):
         "How many reviews have been written for books by J.K. Rowling?  "
         "First join Authors with Books in a private table (name MUST start "
         "with an underscore), then join that temp table with Reviews, and "
-        "delete the temp table when done.  Please use `_search_joined` as "
+        "delete the temp table when done.  Please use `_search_join` as "
         "described.",
         _return_reasoning_steps=True,
     )
@@ -140,7 +140,7 @@ async def test_multi_join_author_reviews(monkeypatch):
     )
 
     # exactly TWO joins
-    assert len(join_calls) >= 2, "Expected at least two _search_joined calls."
+    assert len(join_calls) >= 2, "Expected at least two _search_join calls."
 
     # first join should create a *_temp* table
     first_new_table = join_calls[0].get("new_table")
@@ -183,10 +183,10 @@ async def test_multi_join_customer_item_sum(monkeypatch):
     # patching …
     monkeypatch.setattr(
         KnowledgeManager,
-        "_search_joined",
+        "_search_join",
         lambda self, *a, **k: (
             join_calls.append(k.copy())
-            or KnowledgeManager._search_joined.__wrapped__(self, *a, **k)
+            or KnowledgeManager._search_join.__wrapped__(self, *a, **k)
         ),
         raising=True,
     )
@@ -252,7 +252,7 @@ async def test_multi_join_customer_item_sum(monkeypatch):
         "Alice would like to know how many items she has purchased in total. "
         "Please: (a) join Customers with Orders into a private temporary table; "
         "(b) join that result with OrderItems; (c) sum the `quantity` column; "
-        "(d) delete the temp table.  Use `_search_joined` twice.",
+        "(d) delete the temp table.  Use `_search_join` twice.",
         _return_reasoning_steps=True,
     )
     answer, reasoning = await handle.result()

@@ -5,7 +5,7 @@ Unit-style test for `_search_multi_join`
 We avoid the full LLM retrieval loop – instead we *directly* invoke the new
 helper and spy on:
 
-  • internal calls to `_search_joined` (there must be one per join step);
+  • internal calls to `_search_join` (there must be one per join step);
   • automatic clean-up of every temporary context.
 """
 
@@ -89,14 +89,14 @@ def test_search_multi_join_works(monkeypatch):
     # ---------- spies ------------------------------------------------------
     join_calls = []
 
-    original_join = KnowledgeManager._search_joined
+    original_join = KnowledgeManager._search_join
 
     @functools.wraps(original_join)
     def _join_spy(self, *a, **k):
         join_calls.append(k.copy())
         return original_join(self, *a, **k)
 
-    monkeypatch.setattr(KnowledgeManager, "_search_joined", _join_spy, raising=True)
+    monkeypatch.setattr(KnowledgeManager, "_search_join", _join_spy, raising=True)
 
     # ---------- exercise ---------------------------------------------------
     pipeline = [
@@ -120,7 +120,7 @@ def test_search_multi_join_works(monkeypatch):
     assert len(final_rows) == 3, "Should return exactly three Rowling reviews."
 
     # ➋ internal two-table join used twice
-    assert len(join_calls) == 2, "_search_joined should be called once per step."
+    assert len(join_calls) == 2, "_search_join should be called once per step."
 
     # ➌ temp contexts cleaned up
     survivors = _tmp_ctx_survivors(km)
