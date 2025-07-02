@@ -21,6 +21,11 @@ description via the ``--voice/-v`` flag (same UX as the other sandboxes).
   (0 ≤ X ≤ Y < num_messages).  Omitting the range processes **all**
   messages.
 • Type **help** to show the table again, **quit/exit** to leave.
+
+After choosing any *u** command you can now add **extra guidance**
+that steers what the MemoryManager should prioritise (e.g. *“Focus on
+project-related facts only”*).  In `--voice` mode this prompt is captured
+with the microphone; otherwise just type it.
 """
 
 from __future__ import annotations
@@ -241,16 +246,46 @@ async def _main_async() -> None:
 
         chunk_txt = _chunk_to_text(transcript[start : end + 1])
 
+        # ─── optional GUIDANCE capture ──────────────────────────────────
+        guidance_txt: str | None = None
+        yn = input("Add guidance for this run? [y/N] ").strip().lower()
+        if yn in {"y", "yes"}:
+            if args.voice:
+                _speak(
+                    "Please dictate your guidance now. Press enter to start "
+                    "recording and again to finish.",
+                )
+                audio = _record_until_enter()
+                guidance_txt = _transcribe_deepgram(audio).strip()
+                if not guidance_txt:
+                    _speak("I didn't catch that, please type your guidance.")
+            if guidance_txt is None:  # fallback for voice or non-voice
+                guidance_txt = input("Guidance> ").strip()
+            if not guidance_txt:
+                guidance_txt = None  # treat empty as absent
+
         print(f"[{cmd}] Running on messages {start}-{end} …")
         try:
             if cmd == "uc":
-                result = await mm.update_contacts(chunk_txt)
+                result = await mm.update_contacts(
+                    chunk_txt,
+                    guidance=guidance_txt,
+                )
             elif cmd == "ucb":
-                result = await mm.update_contact_bio(chunk_txt)
+                result = await mm.update_contact_bio(
+                    chunk_txt,
+                    guidance=guidance_txt,
+                )
             elif cmd == "ucrs":
-                result = await mm.update_contact_rolling_summary(chunk_txt)
+                result = await mm.update_contact_rolling_summary(
+                    chunk_txt,
+                    guidance=guidance_txt,
+                )
             else:  # uk
-                result = await mm.update_knowledge(chunk_txt)
+                result = await mm.update_knowledge(
+                    chunk_txt,
+                    guidance=guidance_txt,
+                )
 
             print(f"→ {result}")
             _speak(str(result))
