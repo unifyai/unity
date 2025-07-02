@@ -128,7 +128,7 @@ jobs:
 
     - name: Run unit tests
       run: |
-        .unity/bin/python -m pytest \
+        xvfb-run .unity/bin/python -m pytest \
           --timeout=${{ inputs.test_timeout || 120 }} \
           -p no:warnings \
           -vv \
