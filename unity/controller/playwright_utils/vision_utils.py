@@ -219,3 +219,10 @@ def _assign_stable_ids(current: list[dict]) -> list[dict]:
 
     _last_frame = current
     return current
+
+def reset_stable_ids():
+    """Forget everything we knew about old elements."""
+    global _last_frame, _next_id, _retired_ids
+    _last_frame = None
+    _next_id = 1
+    _retired_ids.clear()
