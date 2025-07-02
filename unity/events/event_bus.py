@@ -8,7 +8,19 @@ import unify
 import asyncio
 import datetime as dt
 from collections import deque
-from typing import List, Deque, Dict, Iterable, Union, Mapping, Any, Optional
+from typing import (
+    List,
+    Deque,
+    Dict,
+    Iterable,
+    Union,
+    Mapping,
+    Any,
+    Optional,
+    Callable,
+    Awaitable,
+)
+
 from importlib import import_module
 from pydantic import (
     BaseModel,
@@ -30,6 +42,7 @@ __all__ = ["Event", "EventBus", "Subscription", "EVENT_BUS"]
 
 class Event(BaseModel):
     event_id: str = Field(default_factory=lambda: str(uuid4()))
+    row_id: Optional[int] = None
     calling_id: str = ""
     type: str
     timestamp: str = Field(default_factory=lambda: dt.datetime.now(dt.UTC).isoformat())
@@ -101,6 +114,88 @@ class Event(BaseModel):
         return v
 
 
+# ───────────────────────────   Subscription   ─────────────────────────────
+
+
+class Subscription(BaseModel):
+    """
+    Declarative description of a callback triggered either
+    • every *count_step* matching events, **or**
+    • every *time_step* seconds since the last trigger.
+
+    Pure-data attributes are persisted to a dedicated Unify context so that
+    progress survives interpreter restarts.  The in-memory ``callback`` is
+    (re-)attached by client code at runtime.
+    """
+
+    subscription_id: str = Field(default_factory=lambda: str(uuid4()))
+    event_type: str
+    filter: Optional[str] = None
+
+    # Trigger rules  ────────────────────────────────────────────────────
+    count_step: Optional[int] = None  # e.g. "every 50"
+    time_step: Optional[int] = None  # seconds
+
+    # Progress bookkeeping  ────────────────────────────────────────────
+    last_row_id: int = 0
+    last_timestamp: str = ""
+
+    # in-memory only
+    callback: Optional[Callable[[List["Event"]], Union[Awaitable[None], None]]] = Field(
+        default=None,
+        exclude=True,
+    )
+    local_count: int = Field(default=0, exclude=True)  # row_id-less fallback
+
+    model_config = ConfigDict(arbitrary_types_allowed=True, extra="forbid")
+
+    # ------------------------------------------------------------------
+    def matches(self, evt: "Event") -> bool:
+        if self.event_type != evt.type:
+            return False
+        if not self.filter:
+            return True
+        ns = {
+            "evt": evt,
+            "event_type": evt.type,
+            "type": evt.type,
+            **evt.model_dump(mode="python"),
+        }
+        return bool(eval(self.filter, {"__builtins__": {}}, ns))
+
+    # ------------------------------------------------------------------
+    def should_trigger(self, evt: "Event") -> bool:
+        """Return *True* if *evt* moves us past the next threshold."""
+
+        # count-based ---------------------------------------------------
+        if self.count_step is not None:
+            if evt.row_id is not None:
+                if evt.row_id - self.last_row_id >= self.count_step:
+                    return True
+            else:  # freshly published – no row_id yet
+                self.local_count += 1
+                if self.local_count >= self.count_step:
+                    return True
+
+        # time-based ----------------------------------------------------
+        if self.time_step is not None:
+            if not self.last_timestamp:
+                return True
+            prev = dt.datetime.fromisoformat(self.last_timestamp)
+            now = dt.datetime.fromisoformat(evt.timestamp)
+            if (now - prev).total_seconds() >= self.time_step:
+                return True
+
+        return False
+
+    # ------------------------------------------------------------------
+    def update_progress(self, evt: "Event") -> None:
+        if evt.row_id is not None:
+            self.last_row_id = evt.row_id
+        self.last_timestamp = evt.timestamp
+        self.local_count = 0
+
+
 # ───────────────────────────   EventBus singleton   ─────────────────────────
 
 
@@ -119,6 +214,14 @@ class EventBus:
         upstream_ctxs = unify.get_contexts()
         if self._global_ctx not in upstream_ctxs:
             unify.create_context(self._global_ctx)
+
+        # Persisted subscription metadata lives here
+        self._callbacks_ctx = f"{self._global_ctx}/_callbacks"
+        if self._callbacks_ctx not in upstream_ctxs:
+            unify.create_context(
+                self._callbacks_ctx,
+                unique_column_ids="subscription_id",
+            )
         ctxs = unify.get_contexts(prefix=f"{self._global_ctx}/")
         self._window_sizes: Dict[str, int] = {
             ctx.split("/")[-1]: self._default_window for ctx in ctxs
@@ -126,8 +229,12 @@ class EventBus:
         self._specific_ctxs = {ctx.split("/")[-1]: ctx for ctx in ctxs}
         self._logger = unify.AsyncLoggerManager()
 
-        # ── Hydrate in‑memory windows from persisted logs ─────────────
+        # runtime subscriptions (id → Subscription)
+        self._subscriptions: Dict[str, Subscription] = {}
+
+        # ── Hydrate both events *and* persisted subscriptions ───────────────
         self._prefill_from_unify()
+        self._load_subscriptions()
 
     # ------------------------------------------------------------------
     def _prefill_from_unify(self):
@@ -147,6 +254,7 @@ class EventBus:
                     continue
 
                 # Extract the event metadata fields
+                row_id = entries.pop("row_id", None)
                 event_id = entries.pop("event_id")
                 calling_id = entries.pop("calling_id")
                 timestamp = entries.pop("event_timestamp")
@@ -172,6 +280,7 @@ class EventBus:
 
                 evt = Event(
                     event_id=event_id,
+                    row_id=row_id,
                     calling_id=calling_id,
                     type=etype,
                     timestamp=timestamp,
@@ -181,6 +290,32 @@ class EventBus:
 
                 dq.append(evt)
             self._deques[etype] = dq
+
+    # ------------------------------------------------------------------
+    def _load_subscriptions(self) -> None:
+        """
+        Recreate the in-memory ``_subscriptions`` map from the metadata
+        persisted in *self._callbacks_ctx*.
+        """
+        rows = unify.get_logs(
+            context=self._callbacks_ctx,
+            sorting={"row_id": "ascending"},
+        )
+        latest: Dict[str, dict] = {}
+        for lg in rows:
+            data = lg.entries.copy()
+            latest[data["subscription_id"]] = data
+
+        for sdata in latest.values():
+            self._subscriptions[sdata["subscription_id"]] = Subscription(
+                subscription_id=sdata["subscription_id"],
+                event_type=sdata["event_type"],
+                filter=sdata.get("filter"),
+                count_step=sdata.get("count_step"),
+                time_step=sdata.get("time_step"),
+                last_row_id=sdata.get("last_row_id", 0),
+                last_timestamp=sdata.get("last_timestamp", ""),
+            )
 
     # ------------------------------------------------------------------
     # Public API
@@ -193,7 +328,7 @@ class EventBus:
                 full_ctx = f"{self._global_ctx}/{event_type}"
                 self._specific_ctxs[event_type] = full_ctx
                 if full_ctx not in unify.get_contexts():
-                    unify.create_context(full_ctx)
+                    unify.create_context(full_ctx, unique_column_ids="row_id")
             if event_type not in self._window_sizes:
                 self._window_sizes[event_type] = self._default_window
 
@@ -240,6 +375,9 @@ class EventBus:
                 **payload_dict,
             },
         )
+
+        # ── Evaluate subscriptions *after* persistence ──────────────────────
+        self._process_event(event)
 
     def join_published(self):
         """Ensures all published events have been uploaded"""
@@ -386,6 +524,7 @@ class EventBus:
                     e = lg.entries.copy()
                     evt = Event(
                         event_id=e.pop("event_id"),
+                        row_id=e.pop("row_id", None),
                         calling_id=e.pop("calling_id"),
                         type=e.pop("type"),
                         timestamp=e.pop("timestamp"),
@@ -421,6 +560,7 @@ class EventBus:
                 evts.append(
                     Event(
                         event_id=e.pop("event_id"),
+                        row_id=e.pop("row_id", None),
                         calling_id=e.pop("calling_id"),
                         type=e.pop("type"),
                         timestamp=e.pop("timestamp"),
@@ -489,6 +629,106 @@ class EventBus:
         # Re-hydrate deque with new maxlen (keeps newest → oldest order intact)
         new_dq: Deque[Event] = deque(old_dq, maxlen=new_size)
         self._deques[event_type] = new_dq
+
+    # ------------------------------------------------------------------
+    async def register_callback(
+        self,
+        *,
+        event_type: str,
+        callback: Callable[[List[Event]], Union[Awaitable[None], None]],
+        filter: Optional[str] = None,
+        every_n: Optional[int] = None,
+        every_seconds: Optional[int] = None,
+    ) -> str:
+        """
+        Register *callback* to be fired either every **N** matching events
+        or after **X** seconds have elapsed since the previous trigger.
+        """
+        if every_n is None and every_seconds is None:
+            raise ValueError("either `every_n` or `every_seconds` must be supplied")
+
+        # Ensure context exists
+        self.register_event_types(event_type)
+
+        # Existing identical subscription? Just attach runtime callback
+        for sub in self._subscriptions.values():
+            if (
+                sub.event_type == event_type
+                and sub.filter == filter
+                and sub.count_step == every_n
+                and sub.time_step == every_seconds
+            ):
+                sub.callback = callback
+                return sub.subscription_id
+
+        # Snapshot current baseline -----------------------------------------
+        latest = await asyncio.to_thread(
+            unify.get_logs,
+            context=self._specific_ctxs[event_type],
+            filter=filter,
+            sorting={"row_id": "descending"},
+            limit=1,
+        )
+        if latest:
+            row = latest[0].entries
+            last_row_id = row.get("row_id", 0)
+            last_ts = row.get("event_timestamp") or row.get("timestamp", "")
+        else:
+            last_row_id, last_ts = 0, ""
+
+        sub = Subscription(
+            event_type=event_type,
+            filter=filter,
+            count_step=every_n,
+            time_step=every_seconds,
+            last_row_id=last_row_id,
+            last_timestamp=last_ts,
+            callback=callback,
+        )
+        self._subscriptions[sub.subscription_id] = sub
+        self._persist_subscription_state(sub)
+        return sub.subscription_id
+
+    # ------------------------------------------------------------------
+    def _persist_subscription_state(self, sub: Subscription) -> None:
+        """Append current state to the callbacks context for durability."""
+        self._logger.log_create(
+            project=unify.active_project(),
+            context=self._callbacks_ctx,
+            params={},
+            entries={
+                "subscription_id": sub.subscription_id,
+                "event_type": sub.event_type,
+                "filter": sub.filter,
+                "count_step": sub.count_step,
+                "time_step": sub.time_step,
+                "last_row_id": sub.last_row_id,
+                "last_timestamp": sub.last_timestamp,
+            },
+        )
+
+    # ------------------------------------------------------------------
+    def _process_event(self, evt: Event) -> None:
+        """Evaluate all subscriptions against *evt* and fire callbacks."""
+        loop = asyncio.get_event_loop()
+        for sub in list(self._subscriptions.values()):
+            if not sub.callback or not sub.matches(evt):
+                continue
+            if not sub.should_trigger(evt):
+                continue
+
+            sub.update_progress(evt)
+            self._persist_subscription_state(sub)
+
+            cb = sub.callback
+            try:
+                if asyncio.iscoroutinefunction(cb):
+                    asyncio.create_task(cb([evt]))
+                else:
+                    loop.run_in_executor(None, cb, [evt])
+            except RuntimeError:
+                # No running loop (shutdown) – last-ditch synchronous call
+                cb([evt])
 
     def set_default_window(self, new_size: int) -> None:
         """
