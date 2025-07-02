@@ -26,6 +26,12 @@ from ..planner.simulated import SimulatedPlanner
 from .active_task import ActiveTask
 import json
 
+from ..events.manager_event_logging import (
+    new_call_id,
+    publish_manager_method_event,
+    wrap_handle_with_logging,
+)
+
 
 class TaskScheduler(BaseTaskScheduler):
 
@@ -140,6 +146,15 @@ class TaskScheduler(BaseTaskScheduler):
         clarification_up_q: asyncio.Queue[str] | None = None,
         clarification_down_q: asyncio.Queue[str] | None = None,
     ) -> SteerableToolHandle:
+        call_id = new_call_id()
+        await publish_manager_method_event(
+            call_id,
+            "TaskScheduler",
+            "ask",
+            phase="incoming",
+            question=text,
+        )
+
         client = unify.AsyncUnify(
             "o4-mini@openai",
             cache=json.loads(os.environ.get("UNIFY_CACHE", "true")),
@@ -173,6 +188,15 @@ class TaskScheduler(BaseTaskScheduler):
             log_steps=_log_tool_steps,
             tool_policy=lambda i, _: ("required", _) if i < 1 else ("auto", _),
         )
+        # ── 3a.  Add logging wrapper ──────────────────────────────────────
+        handle = wrap_handle_with_logging(
+            handle,
+            call_id,
+            "TaskScheduler",
+            "ask",
+        )
+
+        # ── 3b.  Optional reasoning exposure ─────────────────────────────
         if _return_reasoning_steps:
             # Wrap the handle.result() to return both answer and reasoning steps
             original_result = handle.result
@@ -198,6 +222,15 @@ class TaskScheduler(BaseTaskScheduler):
         clarification_up_q: asyncio.Queue[str] | None = None,
         clarification_down_q: asyncio.Queue[str] | None = None,
     ) -> SteerableToolHandle:
+        call_id = new_call_id()
+        await publish_manager_method_event(
+            call_id,
+            "TaskScheduler",
+            "update",
+            phase="incoming",
+            request=text,
+        )
+
         client = unify.AsyncUnify(
             "o4-mini@openai",
             cache=json.loads(os.environ.get("UNIFY_CACHE", "true")),
@@ -233,6 +266,15 @@ class TaskScheduler(BaseTaskScheduler):
                 ("required", self._ask_tools) if i < 1 else ("auto", _)
             ),
         )
+        # ── 3a.  Add logging wrapper ──────────────────────────────────────
+        handle = wrap_handle_with_logging(
+            handle,
+            call_id,
+            "TaskScheduler",
+            "update",
+        )
+
+        # ── 3b.  Optional reasoning exposure ─────────────────────────────
         if _return_reasoning_steps:
             # Wrap the handle.result() to return both answer and reasoning steps
             original_result = handle.result
@@ -256,6 +298,15 @@ class TaskScheduler(BaseTaskScheduler):
         clarification_up_q: asyncio.Queue[str] | None = None,
         clarification_down_q: asyncio.Queue[str] | None = None,
     ) -> SteerableToolHandle:
+        call_id = new_call_id()
+        await publish_manager_method_event(
+            call_id,
+            "TaskScheduler",
+            "execute_task",
+            phase="incoming",
+            task_id=task_id,
+        )
+
         # 0. sanity
         if self._active_task is not None:
             raise RuntimeError("Another task is already running – stop it first.")
@@ -309,6 +360,14 @@ class TaskScheduler(BaseTaskScheduler):
         )
         if self._primed_task and self._primed_task["task_id"] == task_id:
             self._primed_task = None
+
+        # ── add logged wrapper so pause/resume/... also traced ────────────
+        handle = wrap_handle_with_logging(
+            handle,
+            call_id,
+            "TaskScheduler",
+            "execute_task",
+        )
 
         return handle
 
