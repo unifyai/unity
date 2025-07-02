@@ -1,4 +1,5 @@
 import asyncio
+import json
 import openai
 import os
 import traceback
@@ -230,11 +231,13 @@ class CommsAgent:
         # check if the conductor is running
         if not self.conductor_handles.get(action.handle_id):
             # handle failed
-            event = ConductorHandleFailedEvent(
-                f"conductor is not running currently, "
-                "please create a new action instead",
-                action.type,
-            )
+            event_data = {
+                "event": ConductorHandleFailedEvent(
+                    f"conductor is not running currently, "
+                    "please create a new action instead",
+                    action.type,
+                ).to_dict(),
+            }
         else:
             # handle
             handle = self.conductor_handles[action.handle_id]["handle"]
@@ -248,8 +251,11 @@ class CommsAgent:
                 handle.pause()
             elif action.type == "resume":
                 handle.resume()
-            event = ConductorHandleSuccessEvent(action.query, action.type)
-        self.publish({"topic": "conductor", "to": "past", "event": event.to_dict()})
+            event_data = {
+                "event": ConductorHandleSuccessEvent(action.query, action.type).to_dict(),
+                "to": "past",
+            }
+        self.publish({"topic": "conductor", **event_data})
 
     def on_run_end(self, t: asyncio.Task):
         try:
