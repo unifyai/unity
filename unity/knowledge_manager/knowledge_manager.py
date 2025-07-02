@@ -994,7 +994,6 @@ class KnowledgeManager(BaseKnowledgeManager):
         join_expr: Optional[str] = None,
         columns: Optional[List[str]] = None,
         mode: str = "inner",
-        new_table: Optional[str] = None,
         left_filter: Optional[str] = None,
         right_filter: Optional[str] = None,
         post_join_filter: Optional[str] = None,
@@ -1017,9 +1016,6 @@ class KnowledgeManager(BaseKnowledgeManager):
             Column names to include in the joined table. *None* → all columns.
         mode : str
             Join kind understood by Unify (``"inner"``, ``"left"``, ``"right"``, ``"outer"``).
-        new_table : str | None
-            Name for the newly created derived table. If omitted a temporary table is
-            created and **deleted automatically** after this function call.
         left_filter / right_filter : str | None
             Optional pre-join predicates on the left / right tables.
         post_join_filter : str | None
@@ -1029,8 +1025,8 @@ class KnowledgeManager(BaseKnowledgeManager):
 
         Returns
         -------
-        dict[str, list[dict[str, Any]]]
-            Mapping ``derived_table_name → [row, …]``.
+        list[dict[str, Any]]
+            The resultant data following the search operation on the table join ``[row, …]``.
         """
 
         # 1️⃣  Resolve the two source tables
@@ -1045,13 +1041,6 @@ class KnowledgeManager(BaseKnowledgeManager):
         left_table, right_table = tables
         left_ctx = self._ctx_for_table(left_table)
         right_ctx = self._ctx_for_table(right_table)
-        join_expr = join_expr.replace(
-            left_table,
-            left_ctx,
-        ).replace(
-            right_table,
-            right_ctx,
-        )
         if left_filter is not None:
             left_filter = left_filter.replace(
                 left_table,
@@ -1073,15 +1062,19 @@ class KnowledgeManager(BaseKnowledgeManager):
                     "❌  No shared columns – supply `join_expr` explicitly.",
                 )
             col = next(iter(shared))
-            join_expr = f"A.{col} == B.{col}"
+            join_expr = f"{left_table}.{col} == {right_table}.{col}"
 
-        # 3️⃣  Destination context (tmp or persistent)
-        if new_table is None:
-            new_table = f"_tmp_join_{uuid.uuid4().hex[:8]}"
-            auto_delete = True
-        else:
-            auto_delete = False
-        dest_ctx = self._ctx_for_table(new_table)
+        # Add full context to join expression
+        join_expr = join_expr.replace(
+            left_table,
+            left_ctx,
+        ).replace(
+            right_table,
+            right_ctx,
+        )
+
+        # 3️⃣  Destination context
+        dest_ctx = self._ctx_for_table(f"_tmp_join_{uuid.uuid4().hex[:8]}")
 
         # 4️⃣  Fire the REST request
         def _pair(ctx: str, f: Optional[str]) -> Dict[str, str]:
@@ -1138,20 +1131,18 @@ class KnowledgeManager(BaseKnowledgeManager):
         ]
 
         # 6️⃣  Clean-up temporary joins
-        if auto_delete:
-            try:
-                unify.delete_context(dest_ctx)
-            except Exception:
-                # Best-effort – if it fails the tmp context will age-out later.
-                pass
+        try:
+            unify.delete_context(dest_ctx)
+        except Exception:
+            # Best-effort – if it fails the tmp context will age-out later.
+            pass
 
-        return {new_table: rows}
+        return rows
 
     def _search_multi_join(
         self,
         *,
         joins: List[Dict[str, Any]],
-        new_table: Optional[str] = None,
         post_join_filter: Optional[str] = None,
         post_join_limit: int = 100,
         post_join_offset: int = 0,
@@ -1164,11 +1155,8 @@ class KnowledgeManager(BaseKnowledgeManager):
         joins : list[dict]
             An *ordered* list where **each element mirrors the kwargs of
             `_search_join` except that:
-
               • the **two** input tables are provided under the key
                 ``"tables"`` (string or 2-element list);
-              • ``new_table`` is *optional* for every step – when omitted a
-                private temporary name is auto-generated and cleaned up later.
 
             Example::
 
@@ -1184,18 +1172,13 @@ class KnowledgeManager(BaseKnowledgeManager):
                     },
                 ]
 
-        new_table : str | None
-            Name for the **final** joined table.  When *None* a temporary table
-            is created and deleted automatically after the rows are returned.
         post_join_filter, post_join_limit, post_join_offset
             Standard projection / pagination applied *after* the final join.
 
         Returns
         -------
-        dict[str, list[dict]]
-            ``{final_table_name → [rows…]}``.  If *new_table* was *None* the
-            returned table will already have been deleted – it exists only as
-            a logical handle for the caller.
+        list[dict[str, Any]]
+            The resultant data following the search operation on the serial table joins ``[row, …]``.
         """
 
         if not joins:
@@ -1230,15 +1213,10 @@ class KnowledgeManager(BaseKnowledgeManager):
 
             # -------- 2.  Destination table ------------------------------
             is_last = idx == len(joins) - 1
-            dest_table = (
-                (new_table if new_table is not None else f"{tmp_prefix}_final")
-                if is_last
-                else f"{tmp_prefix}_{idx}"
-            )
+            dest_table = f"{tmp_prefix}_final" if is_last else f"{tmp_prefix}_{idx}"
 
             # Record temporary artefacts (never delete the user-supplied final)
-            if not is_last or new_table is None:
-                tmp_tables.append(dest_table)
+            tmp_tables.append(dest_table)
 
             # -------- 3.  Delegate to the existing two-table join --------
             _search_kwargs = {
@@ -1273,14 +1251,11 @@ class KnowledgeManager(BaseKnowledgeManager):
         ]
 
         # -------- 5.  Clean up temporary artefacts -----------------------
-        if tmp_tables:
-            try:
-                # do not delete the user-requested *persistent* table
-                self._delete_tables(
-                    tables=[t for t in tmp_tables if t != new_table],
-                )
-            except Exception:
-                # best-effort — leave garbage collection to Unify if this fails
-                pass
+        try:
+            # do not delete the user-requested *persistent* table
+            self._delete_tables(tables=tmp_tables)
+        except Exception:
+            # best-effort — leave garbage collection to Unify if this fails
+            pass
 
-        return {previous_table: rows}
+        return rows
