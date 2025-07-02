@@ -997,8 +997,8 @@ class KnowledgeManager(BaseKnowledgeManager):
         *,
         dest_table: str,
         tables: Union[str, List[str]],
-        join_expr: Optional[str] = None,
-        select: Optional[List[str]] = None,
+        join_expr: str,
+        select: Dict[str, str],
         mode: str = "inner",
         left_where: Optional[str] = None,
         right_where: Optional[str] = None,
@@ -1030,28 +1030,15 @@ class KnowledgeManager(BaseKnowledgeManager):
         left_where = _rewrite_filter(left_where, left_table, left_ctx)
         right_where = _rewrite_filter(right_where, right_table, right_ctx)
 
-        # 2️⃣  Default `join_expr` – first shared column
-        if join_expr is None:
-            shared = set(self._get_columns(table=left_table)) & set(
-                self._get_columns(table=right_table),
-            )
-            if not shared:
-                raise ValueError(
-                    "❌  No shared columns – supply `join_expr` explicitly.",
-                )
-            col = next(iter(shared))
-            join_expr = f"{left_table}.{col} == {right_table}.{col}"
-
         # Fully-qualify the join expression / selected columns
         join_expr = join_expr.replace(left_table, left_ctx).replace(
             right_table,
             right_ctx,
         )
-        if select is not None:
-            select = [
-                c.replace(left_table, left_ctx).replace(right_table, right_ctx)
-                for c in select
-            ]
+        select = {
+            c.replace(left_table, left_ctx).replace(right_table, right_ctx): v
+            for c, v in select.items()
+        }
 
         # 3️⃣  Destination context
         dest_ctx = self._ctx_for_table(dest_table)
@@ -1077,9 +1064,8 @@ class KnowledgeManager(BaseKnowledgeManager):
             "join_expr": join_expr,
             "mode": mode,
             "new_context": dest_ctx,
+            "columns": select,
         }
-        if select is not None:
-            payload["columns"] = select
 
         resp = requests.request("POST", url, json=payload, headers=headers)
         _handle_exceptions(resp)
@@ -1144,8 +1130,8 @@ class KnowledgeManager(BaseKnowledgeManager):
         self,
         *,
         tables: Union[str, List[str]],
-        join_expr: Optional[str] = None,
-        select: Optional[List[str]] = None,
+        join_expr: str,
+        select: Dict[str, str],
         mode: str = "inner",
         left_where: Optional[str] = None,
         right_where: Optional[str] = None,
@@ -1154,7 +1140,7 @@ class KnowledgeManager(BaseKnowledgeManager):
         result_offset: int = 0,
     ) -> Dict[str, List[Dict[str, Any]]]:
         """
-        **Join two tables** server-side and immediately query the derived context.
+        **Join two tables** server-side and query the derived context.
         Useful for querying data that transcends more than one table.
 
         Parameters
@@ -1162,25 +1148,28 @@ class KnowledgeManager(BaseKnowledgeManager):
         tables : str | list[str]
             Exactly **two** table names to join.
         join_expr : str | None
-            Expression linking aliases the two tables.
-            For example "{table_A_name}.employee_id == {table_B_name}.employee_id",
-            where employee_id was just an *example* column which both tables would share.
-        columns : list[str] | None
-            Column names to include in the joined table. *None* → all columns.
+            Expression linking aliases in the two tables.
+            For example "Departments.id == Employees.derpartment_id",
+        select : dict[str, str]
+            Column names to include in the resultant joined table, keys being the originals and values being the new names.
+            For example: {'Students.id': 'student_id', 'Departments.id': 'department_id'}
         mode : str
             Join kind understood by Unify (``"inner"``, ``"left"``, ``"right"``, ``"outer"``).
         left_filter / right_filter : str | None
             Optional pre-join predicates on the left / right tables.
-        post_join_filter : str | None
+        result_where : str | None
             Predicate evaluated on the new table *after* the join.
-        post_join_limit, post_join_offset : int
+            Can *only* include columns specified as the *values* in the 'select' argument,
+            which dictates the columns that are present in the final joined table.
+        result_limit, result_offset : int
             Pagination of the post-join rows.
 
         Returns
         -------
         list[dict[str, Any]]
-            Rows from the *temporary* joined table.  The table is deleted
-            immediately afterwards – this method is therefore **read-only**.
+            Rows from the *temporary* table following the join operation and
+            then the `result_where` filtering and `result_limit` and `result_offset` pagination.
+            The table is deleted immediately afterwards – this method is therefore **read-only**.
 
         Notes
         -----
@@ -1190,8 +1179,7 @@ class KnowledgeManager(BaseKnowledgeManager):
           survived projection** (``select``).
         • If you provide ``select=[]`` make sure every column mentioned in
           *result_where* is also listed there – otherwise you will receive a
-          helpful ``ValueError`` telling you which column(s) you forgot to
-          project.
+          ``ValueError`` telling you which column(s) you forgot to project.
         """
 
         # ── helper to catch mismatches early ────────────────────────────
@@ -1202,7 +1190,7 @@ class KnowledgeManager(BaseKnowledgeManager):
                 m.group(0) for m in re.finditer(r"\b[A-Za-z_]\w*\.[A-Za-z_]\w*\b", expr)
             )
 
-        if result_where and select is not None:
+        if result_where:
             missing = _qualified_refs(result_where) - set(select)
             if missing:
                 raise ValueError(
