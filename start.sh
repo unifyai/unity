@@ -57,11 +57,11 @@ if [ $RETRY_COUNT -eq $MAX_RETRIES ]; then
     exit 1
 fi
 
-echo "Starting main application..."
+echo "Starting wrapper app..."
 
 # Start the main application in the background
-uvicorn wrapper_app:app --host 0.0.0.0 --port 8000 --workers 1 &
-UVICORN_PID=$!
+python wrapper_app.py &
+WRAPPER_APP_PID=$!
 
-# Wait for the uvicorn process
-wait $UVICORN_PID 
+# Wait for the wrapper app process
+wait $WRAPPER_APP_PID
