@@ -87,10 +87,12 @@ class CommandRunner:
         """
         Clicks an element using its pre-resolved handle.
         """
-        if not handle or not hasattr(handle, 'click'):
-            self.log(f"Error: Invalid handle provided for click command on element ID: {element_id}")
+        if not handle or not hasattr(handle, "click"):
+            self.log(
+                f"Error: Invalid handle provided for click command on element ID: {element_id}",
+            )
             return
-        
+
         try:
             label = handle.text_content() or f"element {element_id}"
             self.log(f"Executing click on: '{label.strip()}'")
