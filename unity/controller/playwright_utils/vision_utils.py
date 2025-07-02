@@ -3,6 +3,25 @@ from playwright.sync_api import Page
 # ==================================================================
 # Intersection over Union (IoU) Calculation
 # ==================================================================
+def _dedup(elements, iou_threshold=0.8):
+    """
+    Performs Non-Maximal Suppression to remove overlapping bounding boxes.
+    """
+    out = []
+    # Sort elements by a confidence score if available, otherwise just process
+    # For now, we assume larger elements are more important
+    elements.sort(key=lambda x: x.get('width', 0) * x.get('height', 0), reverse=True)
+    
+    for el in elements:
+        # Check if the element significantly overlaps with any element already in the output
+        is_overlapping = False
+        for o in out:
+            if _overlap_ratio(el, o) >= iou_threshold:
+                is_overlapping = True
+                break
+        if not is_overlapping:
+            out.append(el)
+    return out
 
 def _overlap_ratio(box_a, box_b):
     """
