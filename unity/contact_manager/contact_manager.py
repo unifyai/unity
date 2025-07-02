@@ -20,7 +20,11 @@ from ..common.llm_helpers import (
     methods_to_tool_dict,
 )
 from ..events.event_bus import EVENT_BUS, Event
-from uuid import uuid4
+from ..events.manager_event_logging import (
+    new_call_id,
+    publish_manager_method_event,
+    wrap_handle_with_logging,
+)
 import asyncio
 
 
@@ -272,21 +276,14 @@ class ContactManager(BaseContactManager):
         clarification_up_q: Optional[asyncio.Queue[str]] = None,
         clarification_down_q: Optional[asyncio.Queue[str]] = None,
     ) -> SteerableToolHandle:
-        # ── generate 1 call-id for the whole invocation ────────────────
-        call_id = str(uuid4())
-
-        # log the *incoming* request
-        await EVENT_BUS.publish(
-            Event(
-                type="ManagerMethod",
-                calling_id=call_id,
-                payload={
-                    "manager": "ContactManager",
-                    "method": "ask",
-                    "phase": "incoming",
-                    "question": text,
-                },
-            ),
+        # ── generate 1 call-id & log *incoming* request ─────────────────
+        call_id = new_call_id()
+        await publish_manager_method_event(
+            call_id,
+            "ContactManager",
+            "ask",
+            phase="incoming",
+            question=text,
         )
 
         client = unify.AsyncUnify(
@@ -355,7 +352,12 @@ class ContactManager(BaseContactManager):
         )
 
         # wrap the raw handle so *every* public method logs an event
-        handle = self._wrap_handle_with_logging(handle, call_id, "ask")
+        handle = wrap_handle_with_logging(
+            handle,
+            call_id,
+            "ContactManager",
+            "ask",
+        )
 
         if _return_reasoning_steps:
             original_result = handle.result
@@ -379,18 +381,13 @@ class ContactManager(BaseContactManager):
         clarification_down_q: Optional[asyncio.Queue[str]] = None,
     ) -> SteerableToolHandle:
         # ── event: incoming update request ──────────────────────────────
-        call_id = str(uuid4())
-        await EVENT_BUS.publish(
-            Event(
-                type="ManagerMethod",
-                calling_id=call_id,
-                payload={
-                    "manager": "ContactManager",
-                    "method": "update",
-                    "phase": "incoming",
-                    "request": text,
-                },
-            ),
+        call_id = new_call_id()
+        await publish_manager_method_event(
+            call_id,
+            "ContactManager",
+            "update",
+            phase="incoming",
+            request=text,
         )
 
         client = unify.AsyncUnify(
@@ -447,7 +444,12 @@ class ContactManager(BaseContactManager):
             tool_policy=lambda i, _: ("required", _) if i < 1 else ("auto", _),
         )
 
-        handle = self._wrap_handle_with_logging(handle, call_id, "update")
+        handle = wrap_handle_with_logging(
+            handle,
+            call_id,
+            "ContactManager",
+            "update",
+        )
 
         if _return_reasoning_steps:
             original_result = handle.result
@@ -459,73 +461,6 @@ class ContactManager(BaseContactManager):
             handle.result = wrapped_result  # type: ignore
 
         return handle
-
-    # ─────────────────────────────────────────────────────────────────
-    #  Helper: wrap SteerableToolHandle so *every* user-visible action
-    #          emits a ManagerMethod event.
-    # ─────────────────────────────────────────────────────────────────
-    def _wrap_handle_with_logging(
-        self,
-        inner: SteerableToolHandle,
-        call_id: str,
-        method_name: str,
-    ) -> SteerableToolHandle:
-        event_type = "ManagerMethod"
-
-        class _LoggedHandle(SteerableToolHandle):
-            __slots__ = ("_inner",)
-
-            def __init__(self, _h):
-                self._inner = _h
-
-            # ---------- private helper ---------------------------------
-            async def _publish(self, **payload):
-                await EVENT_BUS.publish(
-                    Event(
-                        type=event_type,
-                        calling_id=call_id,
-                        payload={
-                            "manager": "ContactManager",
-                            "method": method_name,
-                            **payload,
-                        },
-                    ),
-                )
-
-            # ---------- public API mirror ------------------------------
-            async def interject(self, message: str):
-                await self._publish(action="interject", content=message)
-                return await self._inner.interject(message)
-
-            def pause(self):
-                asyncio.create_task(self._publish(action="pause"))
-                return self._inner.pause()
-
-            def resume(self):
-                asyncio.create_task(self._publish(action="resume"))
-                return self._inner.resume()
-
-            def stop(self):
-                asyncio.create_task(self._publish(action="stop"))
-                return self._inner.stop()
-
-            def done(self):
-                return self._inner.done()
-
-            async def result(self):
-                answer = await self._inner.result()
-                await self._publish(phase="outgoing", answer=answer)
-                return answer
-
-            async def ask(self, question: str, *a, **kw):
-                await self._publish(action="ask", question=question)
-                return await self._inner.ask(question, *a, **kw)
-
-            # delegate everything else
-            def __getattr__(self, item):
-                return getattr(self._inner, item)
-
-        return _LoggedHandle(inner)
 
     # Helpers #
     # --------#
