@@ -252,7 +252,9 @@ class CommsAgent:
             elif action.type == "resume":
                 handle.resume()
             event_data = {
-                "event": ConductorHandleSuccessEvent(action.query, action.type).to_dict(),
+                "event": ConductorHandleSuccessEvent(
+                    action.query, action.type
+                ).to_dict(),
                 "to": "past",
             }
         self.publish({"topic": "conductor", **event_data})
