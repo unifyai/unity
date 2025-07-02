@@ -224,6 +224,7 @@
   window.__bl = {
     enableOverlay:  enable,
     disableOverlay: disable,
+    hideOverlay:    clearOverlay,
     scan: () => ELEMENTS.map(e => ({
       id:        e.id,
       tag:       e.tag,
