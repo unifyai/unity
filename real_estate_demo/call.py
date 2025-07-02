@@ -2,6 +2,8 @@ import sys
 import json
 import os
 
+from datetime import datetime
+
 sys.path.append("..")
 import asyncio
 
@@ -28,6 +30,7 @@ from pydantic_core import from_json
 
 load_dotenv()
 
+RUNNING = False
 
 
 events_queue = asyncio.Queue()
@@ -47,29 +50,9 @@ async def publish_event(ev: dict):
 async def process_structured_output(
     text: AsyncIterable[str],
 ) -> AsyncIterable[str]:
-    last_response = ""
-    acc_text = ""
-    print("GOT TO TTS")
     async for chunk in text:
-        # print("CHUNK FOR TTS", chunk)
-        acc_text += chunk
-        try:
-            resp = from_json(
-                acc_text,
-                allow_partial="trailing-strings",
-            )
-        except ValueError:
-            continue
-        if resp.get("action"):
-            break
-        if not resp.get("response"):
-            continue
-
-        new_delta = resp["response"][len(last_response) :]
-        if new_delta:
-            # print("delta", new_delta)
-            yield new_delta
-        last_response = resp["response"]
+        print("chunk", chunk)
+        yield chunk
 
 
 class Assistant(Agent):
@@ -92,12 +75,11 @@ class Assistant(Agent):
             {
                 "topic": self.from_number,
                 "to": "pending",
-                # "event": PhoneUtteranceEvent(
-                #     role="User",
-                #     content=new_message.text_content,
-                # ).to_dict(),
                 "event": {
-                    "content": f"User: {new_message.text_content}"
+                    "type": "message",
+                    "role": "user",
+                    "content": f"User: {new_message.text_content}",
+                    "timestamp": str(datetime.now())
                 }
             },
         )
@@ -109,6 +91,10 @@ class Assistant(Agent):
         tools: list[FunctionTool],
         model_settings: ModelSettings,
     ) -> AsyncIterable[llm.ChatChunk]:
+        # global RUNNING
+        # if RUNNING:
+        #     return
+        # RUNNING = True
         print("running llm node...")
         while True:
             chunk = await chunk_queue.get()
@@ -116,6 +102,7 @@ class Assistant(Agent):
                 break
             elif chunk["chunk"] is not None:
                 yield chunk["chunk"]
+        # RUNNING = False
 
     async def tts_node(
         self,
@@ -232,7 +219,10 @@ async def entrypoint(ctx: agents.JobContext):
             "topic": from_number,
             "to": "pending",
             "event": {
-                "content": "Phone call started!"
+                "type": "message",
+                "role": "user",
+                "content": "<Call Started>",
+                "timestamp": str(datetime.now())
             },
         },
     )
@@ -243,7 +233,8 @@ async def entrypoint(ctx: agents.JobContext):
         last_activity_time = asyncio.get_event_loop().time()  # Update activity time
         try:
             return handle.chat_message.text_content, handle.interrupted
-        except:
+        except Exception as e:
+            print(e)
             pass
 
     def on_response_end(t: asyncio.Task):
@@ -258,7 +249,8 @@ async def entrypoint(ctx: agents.JobContext):
                         result[0],
                         allow_partial="trailing-strings",
                     )
-                except:
+                except Exception as e:
+                    print(e)
                     assistant_res = {}
                 if assistant_res.get("response"):
                     # send assistant response as an event to be added in past events
@@ -291,7 +283,10 @@ async def entrypoint(ctx: agents.JobContext):
                                     "to": "past",
                                     "topic": from_number,
                                     "event": {
-                                        "content": f"User has interrupted you"
+                                        "type": "message",
+                                        "role": "user",
+                                        "content": f"<User has interrupted you>",
+                                        "timestamp": str(datetime.now())
                                     },
                                 },
                             ),
@@ -317,7 +312,7 @@ async def entrypoint(ctx: agents.JobContext):
                     # await session.current_speech()
                     chunk_queue = asyncio.Queue()
                     t = asyncio.create_task(response_task())
-                    t.add_done_callback(on_response_end)
+                    # t.add_done_callback(on_response_end)
                 elif msg["type"] == "gen_chunk" or msg["type"] == "end_gen":
                     chunk_queue.put_nowait(msg)
             except Exception as e:

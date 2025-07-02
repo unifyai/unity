@@ -272,8 +272,8 @@ class Flow:
             extra_actions.append(GoNext)
         if len(self.path) > 2:
             extra_actions.append(GoToNode)
-        # if self.current_node.is_terminal:
-        #     extra_actions.append(EndSession)
+        if self.current_node.is_terminal:
+            extra_actions.append(EndSession)
         # return create_model(
         #     "ActionModel",
         #     __base__=self.current_node.action_model,

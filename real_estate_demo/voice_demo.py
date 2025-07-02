@@ -3,12 +3,15 @@ import asyncio
 from dataclasses import dataclass
 from typing import Literal, Optional
 
+from datetime import datetime
+
 import openai
 from pydantic import BaseModel, Field
+from pydantic_core import from_json
 
 from new_terminal_helper import run_script, terminate_process
 
-from demo_flow import flow, get_action_event, GoBack, GoNext, EndSession, SYS_SONNET_2
+from demo_flow import flow, get_action_event, GoBack, GoNext, EndSession, PromptUser, create_human_readable_delta
 
 
 client = openai.AsyncOpenAI(api_key=os.environ["OPENAI_API_KEY"])
@@ -33,6 +36,7 @@ class Agent:
         while True:
             try:
                 new_event = await asyncio.wait_for(self.events_queue.get(), 0.5)
+                print("GOT NEW EVENT", new_event)
                 self.pending_events.append(new_event)
                 # urgent events should re-trigger, cancel events should cancel current running only
                 if new_event:
@@ -69,30 +73,35 @@ class Agent:
         global NO_RESPONSE_COUNTER
         try:
             agent_output = t.result()
-            if agent_output.response:
-                NO_RESPONSE_COUNTER = 0
-                self.event_stream.append({"content": f"Agent: {agent_output.response}"})
-            else:
-                NO_RESPONSE_COUNTER += 1
-                if NO_RESPONSE_COUNTER >= 3:
-                    self.event_stream.append({"content": "SYSTEM: You have not responded to the user for three consecutive actions, give them a progress cue"})
+            next_action = agent_output.next_action
+            # print(next_action)
+            print("RUN DONE")
+            if hasattr(next_action, "prompt"):
+                # NO_RESPONSE_COUNTER = 0
+                self.event_stream.append({"type": "message", "role": "assistant", "content": agent_output.next_action.prompt, "timestamp": datetime.now()})
+            if hasattr(next_action, "update"):
+                self.event_stream.append({"type": "message", "role": "assistant", "content": agent_output.next_action.update, "timestamp": datetime.now()})
 
-            if agent_output.action:
-                self.flow.play_actions(agent_output.action)
-                print(self.flow.current_node.title)
-                for label, action in agent_output.action:
-                    if action is not None:
-                        if not isinstance(action, GoNext) and not isinstance(action, GoBack):
-                            action_event = get_action_event(flow, action)
-                        else:
-                            if isinstance(action, GoNext):
-                                action_event = f"and has advanced to the next node: '{flow.current_node.title}'"
-                            elif isinstance(action, GoBack):
-                                action_event = f"and went back to the previous node: '{flow.current_node.title}'"
-                            elif isinstance(action, EndSession):
-                                action_event = f"The session with the user has ended."
-                        self.events_queue.put_nowait({"content": f"Agent took action `{action.__class__.__name__}`: {action_event}"})
-                        break
+            # check actions
+            if hasattr(next_action, "next"):
+                self.flow.play_actions([agent_output.next_action])
+                action_event = f"advanced to the next node: '{flow.current_node.title}'"
+                self.events_queue.put_nowait({"type": "action", "action_name":next_action.__class__.__name__, "content": action_event, "timestamp": datetime.now()})
+
+            elif hasattr(next_action, "node_id"):
+                self.flow.play_actions([agent_output.next_action])
+                action_event = f"went to node `{action.node_id}`"
+                self.events_queue.put_nowait({"type": "action", "action_name":next_action.__class__.__name__, "content": action_event, "timestamp": datetime.now()})
+
+
+            elif hasattr(next_action, "fields_actions"):
+                self.flow.play_actions(agent_output.next_action.fields_actions)
+                for action in agent_output.next_action.fields_actions:
+                    print(action)
+                    action_event = get_action_event(flow, action)
+                    self.events_queue.put_nowait({"type": "action", "action_name":action.__class__.__name__, "content": action_event, "timestamp": datetime.now()})
+                    
+                    
 
         except asyncio.CancelledError:
             pass
@@ -104,22 +113,41 @@ class Agent:
     
     async def phone_call_llm_run(self):
         client = openai.AsyncOpenAI(api_key=os.environ["OPENAI_API_KEY"])
-        ev = {"topic": "call_process", "type": "start_gen"}
-        self.publish(ev)
+        first_ev = {"topic": "call_process", "type": "start_gen"}
+        self.publish(first_ev)
 
 
         class AgentOutput(BaseModel):
-            response: Optional[str] = Field(..., description="Your response to the user, show as [Agent: ...] in the event stream, note that this response is over the phone, so make sure to use appropriate language")
-            action: Optional[self.flow.current_action_model()] = Field(..., 
-                                                                        description="The one single action to take given the current state (state = events stream and agent script UI), all other actions beside the chosen action should null")
-        print(self.event_stream)
-        event_stream_str = "\n".join([e["content"] for e in self.event_stream + self.inflight_events])
-        user_msg = f"<event_stream>\n{event_stream_str}\n</event_stream>\n\n<agent_script>\n{flow.render()}\n</agent_script>"
+            thoughts: str = Field(..., description="Your inner thoughts before taking actions. Also determine if you need to give a small update to the user based on the conversation history")
+            # phone_utterance: Optional[str] = Field(..., 
+                                            # description="Your response to the user over the phone, shown as [Assistant] ... in the conversation history.")
+            next_action: flow.current_action_model() | PromptUser | EndSession = Field(..., 
+                                        description="next action to take given the current state.")
+        events = self.event_stream + self.inflight_events
+        conversation_history = [e for e in events if e["type"] == "message"]
+        action_log = [e for e in self.event_stream if e["type"] == "action"]
+        conversation_history_str = "\n".join([f'[{m["role"].title()}, {create_human_readable_delta(m["timestamp"])}]: {m["content"]}' for m in conversation_history])
+        conversation_history_prompt = f'<conversation_history>\n{conversation_history_str}\n</conversation_history>'
+
+        action_log_str = "\n".join([f'[{m["action_name"]}, {create_human_readable_delta(m["timestamp"])}]: {m["content"]}' for m in action_log])
+        agent_script_prompt = f"""
+<agent_script>
+<action_log>
+{action_log_str if action_log_str else 'No Actions Taken Yet'}
+</action_log>
+
+<current_node>
+{flow.render()}
+</current_node>
+</agent_script>""".strip()
+        user_msg = f"{conversation_history_prompt}\n\n{agent_script_prompt}"
         print("\033[32m" + user_msg + "\033[0m", flush=True)
         
-        with open("real_estate_demo\prompts\v1.md") as f:
+        with open(r"C:\Users\LEGION\Desktop\unity\unity\real_estate_demo\prompts\v5.md") as f:
             sys = f.read()
         
+        acc_text = ""
+        last_response = ""
         async with client.beta.chat.completions.stream(
                     model="gpt-4.1",
                     messages=[
@@ -135,19 +163,46 @@ class Agent:
                     response_format=AgentOutput,
                 ) as stream:
             async for event in stream:
+                ev = None
                 # print(event)
                 if event.type == "content.delta":
-                    ev = {
-                        "topic": "call_process",
-                        "type": "gen_chunk",
-                        "chunk": event.delta,
-                    }
-                    self.publish(ev)
+                    # ev = {
+                    #     "topic": "call_process",
+                    #     "type": "gen_chunk",
+                    #     "chunk": event.delta,
+                    # }
+                    if event.delta:
+                        acc_text += event.delta
+                        # print("ACC TEXT", acc_text)
+                        output = from_json(acc_text, allow_partial="trailing-strings")
+                        if output.get("next_action"):
+                            if output["next_action"].get("closing_message"):
+                                ev = {
+                                        "topic": "call_process",
+                                        "type": "gen_chunk",
+                                        "chunk": output["next_action"]["closing_message"][len(last_response):],
+                                    }
+                                last_response = output["next_action"]["closing_message"]
+                            elif output["next_action"].get("prompt"):
+                                ev = {
+                                        "topic": "call_process",
+                                        "type": "gen_chunk",
+                                        "chunk": output["next_action"]["prompt"][len(last_response):],
+                                    }
+                                last_response = output["next_action"]["prompt"]
+                            elif output["next_action"].get("update"):
+                                ev = {
+                                        "topic": "call_process",
+                                        "type": "gen_chunk",
+                                        "chunk": output["next_action"]["update"][len(last_response):],
+                                    }
+                                last_response = output["next_action"]["update"]
+                            if ev: self.publish(ev)
 
             ev = {"topic": "call_process", "type": "end_gen"}
             self.publish(ev)
         agent_output = event.parsed
-        print(agent_output, flush=True)
+        # print(agent_output, flush=True)
         self.event_stream.extend(self.inflight_events.copy())
         self.inflight_events.clear()
         return agent_output

@@ -18,6 +18,8 @@ import openai
 from datetime import datetime, timedelta
 
 def create_human_readable_delta(t):
+    if isinstance(t, str):
+        t = datetime.fromisoformat(t)  
     delta = datetime.now() - t
     seconds = delta.seconds
     minutes = delta.seconds // 60

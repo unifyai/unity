@@ -57,7 +57,7 @@ class EventManager:
             self.last_activity_time = asyncio.get_event_loop().time()
 
             if event["topic"] == "call_process":
-                print("recieved call event")
+                # print("recieved call event")
                 # handle messages going to the call process
                 # like gen
                 self.writers["call"].write((json.dumps(event) + "\n").encode("utf-8"))
