@@ -79,12 +79,12 @@ def build_initial_plan_prompt(
         ---
         ### Handle APIs
         Some tools return a "handle" object for ongoing interaction. The available methods for these handles are listed below. You MUST only use the methods listed.
-        
+
         {handle_apis}
 
         ---
         ### Usage Examples
-        
+
         **Making a Call:**
         ```python
         @verify
@@ -95,7 +95,7 @@ def build_initial_plan_prompt(
                 response = await call.ask("Are you still available for our 2pm meeting tomorrow?")
             return response
         ```
-        
+
         **Browser Interaction:**
         ```python
         @verify
@@ -111,12 +111,12 @@ def build_initial_plan_prompt(
         ### Existing Functions Library
         You may use these pre-existing functions if they are suitable.
         {json.dumps(existing_functions) if existing_functions else "None."}
-        
+
         ---
         {retry_msg}
 
         Begin your response now. Your response must start immediately with the code.
-    """
+    """,
     ).strip()
 
 
@@ -197,7 +197,7 @@ def build_dynamic_implement_prompt(
         ---
         ### Handle APIs
         Some tools return a "handle" object for ongoing interaction. The available methods for these handles are listed below. You MUST only use the methods listed.
-        
+
         {handle_apis}
 
         Begin your response now.
@@ -266,7 +266,10 @@ def build_verification_prompt(
 
 
 def build_plan_surgery_prompt(
-    current_code: str, request: str, *, tools: Dict[str, Callable]
+    current_code: str,
+    request: str,
+    *,
+    tools: Dict[str, Callable],
 ) -> str:
     """
     Builds the prompt for modifying an existing plan script.
@@ -302,7 +305,7 @@ def build_plan_surgery_prompt(
         4.  **Preserve Decorators:** All `async def` functions MUST retain their `@verify` decorator.
         5.  **No Imports:** You MUST NOT use any `import` statements.
         6.  **Use Context Managers:** For tools that return a handle (`make_call`, `start_browser_session`), you MUST use an `async with` block.
-        
+
 
         ---
         ### Tools Reference
@@ -314,7 +317,7 @@ def build_plan_surgery_prompt(
         ---
         ### Handle APIs
         Some tools return a "handle" object for ongoing interaction. The available methods for these handles are listed below. You MUST only use the methods listed.
-        
+
         {handle_apis}
 
         Begin your response now. Your response must start immediately with the code.
@@ -379,7 +382,7 @@ def build_course_correction_prompt(
         ---
         ### Handle APIs
         Some tools return a "handle" object for ongoing interaction. The available methods for these handles are listed below. You MUST only use the methods listed.
-        
+
         {handle_apis}
 
         Begin your response now.
@@ -412,7 +415,7 @@ def build_exploration_prompt(goal: str, *, tools: Dict[str, Callable]) -> str:
         2. Use the `observe` tool to gather this information.
         3. If necessary, use `request_clarification` to ask for guidance.
         4. When you have gathered all necessary information, provide a final, concise summary of your findings. This summary will be used to generate the main plan. DO NOT say that you are ready; your final output MUST BE the summary itself.
-        
+
          ---
         ### Tools Reference
         You have access to a global `coms_manager` object with the following methods. You must call them with the correct arguments as specified here.
@@ -423,11 +426,11 @@ def build_exploration_prompt(goal: str, *, tools: Dict[str, Callable]) -> str:
         ---
         ### Handle APIs
         Some tools return a "handle" object for ongoing interaction. The available methods for these handles are listed below. You MUST only use the methods listed.
-        
+
         {handle_apis}
 
         Begin your response now. Your response must start immediately with the code.
-        
+
         """,
     )
 
