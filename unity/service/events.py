@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
-import json
 from typing import Any, Dict, Type
 from unity.events.event_bus import Event as BusEvent
 
@@ -293,7 +292,9 @@ class ConductorHandleSuccessEvent(Event):
 
     def to_dict(self) -> dict[str, Any]:
         base_dict = super().to_dict()
-        base_dict["payload"].update({"query": self.query, "handle_type": self.handle_type})
+        base_dict["payload"].update(
+            {"query": self.query, "handle_type": self.handle_type},
+        )
         return base_dict
 
     def __str__(self):
@@ -312,7 +313,9 @@ class ConductorHandleFailedEvent(Event):
 
     def to_dict(self) -> dict[str, Any]:
         base_dict = super().to_dict()
-        base_dict["payload"].update({"query": self.query, "handle_type": self.handle_type})
+        base_dict["payload"].update(
+            {"query": self.query, "handle_type": self.handle_type},
+        )
         return base_dict
 
     def __str__(self):

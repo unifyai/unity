@@ -1,7 +1,6 @@
 import asyncio
 import json
 import time
-from typing import Optional
 import unify
 
 # Configuration
@@ -107,6 +106,7 @@ async def close_connection():
         writer = None
         _connection_established = False
         print("Disconnected from event server")
+
 
 async def get_reader():
     """Get the current reader for event collection"""
