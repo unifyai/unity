@@ -28,7 +28,7 @@ from .browser_utils import (
     paint_overlay,
     detect_captcha,
 )
-from .vision_utils import _fuse_elements, _assign_stable_ids, reset_stable_ids
+from .vision_utils import _fuse_elements, _assign_stable_ids, reset_stable_ids, _dedup
 from .command_runner import CommandRunner
 from .mirror import MirrorPage
 from ..commands import *
@@ -641,16 +641,28 @@ class BrowserWorker(threading.Thread):
                         heuristic_elements = self._get_elements_from_heuristics() if self.use_heuristic else []
                         match self.mode:
                             case "hybrid":
-                                last_elements = _assign_stable_ids(
-                                    _fuse_elements(vision_results, heuristic_elements, self.runner.active)
+                                # 1. Reset stable IDs since we want fresh sequential IDs.
+                                reset_stable_ids()
+                                
+                                # 2. Fuse the elements from both sources.
+                                fused_elements = _fuse_elements(
+                                    vision_results, 
+                                    heuristic_elements, 
+                                    self.runner.active,
+                                    overlap_threshold=0.5
                                 )
+                                
+                                # 3. De-duplicate the fused list to remove overlapping boxes.
+                                last_elements = _dedup(fused_elements, iou_threshold=0.8)
+
                             case "vision":
-                                last_elements = _assign_stable_ids(
-                                    _vision_only_elements(vision_results, self.runner.active)
-                                )
+                                reset_stable_ids()
+                                fused_elements = _fuse_elements(vision_results, [], self.runner.active)
+                                last_elements = _dedup(fused_elements, iou_threshold=0.95)
+
                             case "heuristic":
                                 last_elements = _assign_stable_ids(
-                                    _heuristic_only_elements(heuristic_elements)
+                                    [{**h, "source": "heuristic"} for h in heuristic_elements]
                                 )
                             case _:
                                 raise ValueError(f"Invalid mode: {self.mode}")
