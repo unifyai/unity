@@ -514,7 +514,9 @@ async def main_plan():
 
 @pytest.mark.asyncio
 async def test_fatal_error_in_verification(
-    planner: HierarchicalPlanner, mock_browser_session_handle: MagicMock, monkeypatch
+    planner: HierarchicalPlanner,
+    mock_browser_session_handle: MagicMock,
+    monkeypatch,
 ):
     """
     Objective: Verify that a 'fatal_error' from the verifier stops the plan
@@ -712,7 +714,7 @@ async def main_plan():
     assert "Exploration: Asking for clarification" in action_log_str
     assert f"Exploration Summary: {expected_summary}" in action_log_str
     mock_browser_session_handle.act.assert_called_once_with(
-        "Navigate to example.com based on user input."
+        "Navigate to example.com based on user input.",
     )
 
 
@@ -816,7 +818,9 @@ async def main_plan():
 
 @pytest.mark.asyncio
 async def test_nested_dynamic_implementation(
-    planner: HierarchicalPlanner, mock_browser_session_handle: MagicMock, monkeypatch
+    planner: HierarchicalPlanner,
+    mock_browser_session_handle: MagicMock,
+    monkeypatch,
 ):
     """
     Objective: Verify the planner can handle a chain of dynamic implementations,
@@ -888,7 +892,7 @@ async def child_task():
 
     # 3. The final child action should have been called on the handle.
     mock_browser_session_handle.act.assert_called_once_with(
-        "Perform the final child action."
+        "Perform the final child action.",
     )
 
 
@@ -1173,7 +1177,7 @@ async def step_B_stub():
 
     # 3. Ensure the newly implemented step was also called.
     mock_browser_session_handle.act.assert_any_call(
-        "Performing NEWLY IMPLEMENTED Step B"
+        "Performing NEWLY IMPLEMENTED Step B",
     )
     assert mock_browser_session_handle.act.call_count == 2
 
