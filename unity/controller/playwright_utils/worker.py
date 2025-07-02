@@ -400,67 +400,40 @@ class BrowserWorker(threading.Thread):
                         self.log(f"CMD ➜ {cmd!r}")
 
                         if cmd.lower().startswith("click"):
-                            self.log(f"--- Performing Re-Identifying Vision Click for: {cmd} ---")
+                            self.log(
+                                f"--- Performing Re-Identifying Vision Click for: {cmd} ---",
+                            )
                             try:
                                 parts = cmd.split()
                                 element_id_to_click = int(parts[1])
 
                                 # Step 1: Get the properties of the element the user clicked, from the OLD cache.
-                                if not (1 <= element_id_to_click <= len(self._vision_elements_cache)):
-                                    self.log(f"Cannot click: initial element ID {element_id_to_click} is out of bounds.")
+                                if not (
+                                    1
+                                    <= element_id_to_click
+                                    <= len(self._vision_elements_cache)
+                                ):
+                                    self.log(
+                                        f"Cannot click: initial element ID {element_id_to_click} is out of bounds.",
+                                    )
                                     continue
-                                
-                                prev_element = self._vision_elements_cache[element_id_to_click - 1]
+
+                                prev_element = self._vision_elements_cache[
+                                    element_id_to_click - 1
+                                ]
                                 prev_bbox = prev_element["bbox"]
                                 prev_label = prev_element["label"]
-                                self.log(f"Attempting to re-identify element: ID {element_id_to_click}, Label '{prev_label}'")
-
-                                # Step 2: Get a fresh snapshot from OmniParser.
-                                # It's good practice to wait for the page to be idle before screenshotting.
-                                self.runner.active.wait_for_load_state("networkidle", timeout=5000)
-                                png_bytes = grab_screenshot(self.runner.active)
-                                new_results = self._call_omniparser(png_bytes)
-
-                                # Defensive tweak: Sort results for more stable IDs on static pages.
-                                new_results.sort(key=lambda r: (r["bbox"][1], r["bbox"][0]))
-
-                                self._populate_cache(new_results)
-
-                                # 2. Scroll the viewport so the old bbox centre is roughly centred
-                                cx = (prev_bbox[0] + prev_bbox[2]) / 2
-                                cy = (prev_bbox[1] + prev_bbox[3]) / 2
-                                self.runner.active.evaluate(
-                                    "([cx, cy]) => { const vw = innerWidth, vh = innerHeight; "
-                                    "window.scrollTo(cx*vw - vw/2, cy*vh - vh/2); }",
-                                    [cx, cy],
+                                self.log(f"Clicking at: {prev_label}")
+                                _click_at_bbox_center(
+                                    self.runner.active,
+                                    prev_bbox,
+                                    debug=self.debug,
                                 )
-
-                                # Step 4: Find the corresponding element in the NEW results.
-                                target_element = match_old_element(prev_bbox, prev_label, self._vision_elements_cache)
-
-                                if not target_element:
-                                    self.log(f"!! Click Aborted: Could not re-identify '{prev_label}' on the page.")
-                                    self.log("Falling back to pixel click.")
-                                    _click_at_bbox_center(self.runner.active, prev_bbox)
-                                    continue
-
-                                # Step 5: Resolve the handle for the correctly identified target and click.
-                                self.log(f"Successfully re-identified as: '{target_element.get('label')}'")
-                                handle = handle_from_bbox(
-                                    self.runner.active, target_element["bbox"], target_element["label"]
-                                )
-
-                                if handle:
-                                    self.runner.click(target_element["id"], handle)
-                                    _update_in_textbox_state(
-                                        self.runner, handle, target_element.get("content", "")
-                                    )
-                                else:
-                                    _click_at_bbox_center(self.runner.active, prev_bbox)
-                                    self.log(f"Click failed: Could not resolve handle for re-identified element.")
 
                             except Exception as exc:
-                                self.log(f"A critical error occurred during re-identifying vision click: {exc}")
+                                self.log(
+                                    f"A critical error occurred during re-identifying vision click: {exc}",
+                                )
                         elif cmd.startswith("open url "):
                             url = cmd[len("open url ") :]
                             self.runner.active.goto(
