@@ -18,7 +18,8 @@ class Controller(threading.Thread):
         daemon: bool = True,
         session_connect_url: str | None = None,
         headless: bool = False,
-        use_vision: bool = True
+        use_vision: bool = True,
+        debug: bool = False,
     ) -> None:
         super().__init__(daemon=daemon)
         self._redis_client = redis.Redis(host="localhost", port=6379, db=0)
@@ -34,7 +35,8 @@ class Controller(threading.Thread):
             refresh_interval=0.4,
             session_connect_url=self.session_connect_url,
             headless=headless,
-            use_vision=self.use_vision
+            use_vision=self.use_vision,
+            debug=debug,
         )
         self._browser_open = False
         self._stop_event = threading.Event()
