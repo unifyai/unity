@@ -933,6 +933,102 @@ class KnowledgeManager(BaseKnowledgeManager):
 
     # Search
 
+    ## private helper
+
+    def _create_join(
+        self,
+        *,
+        dest_table: str,
+        tables: Union[str, List[str]],
+        join_expr: Optional[str] = None,
+        columns: Optional[List[str]] = None,
+        mode: str = "inner",
+        left_filter: Optional[str] = None,
+        right_filter: Optional[str] = None,
+    ) -> str:
+        """
+        Create **one** temporary joined table on the Unify backend and return
+        its fully-qualified context.
+
+        This helper is intentionally *side-effect-only*: it **does not** read
+        from or delete the created context.  Those concerns are left to the
+        public APIs so they can enforce their own life-cycle semantics
+        (single-use for `_search_join`, multi-step for `_search_multi_join`).
+        """
+        # 1️⃣  Resolve & validate the inputs
+        if isinstance(tables, str):
+            tables = [tables]
+        if len(tables) != 2:
+            raise ValueError("❌  Exactly TWO tables are required.")
+
+        left_table, right_table = tables
+        left_ctx, right_ctx = self._ctx_for_table(left_table), self._ctx_for_table(
+            right_table,
+        )
+
+        # Optionally rewrite the pre-filters to the fully-qualified contexts
+        def _rewrite_filter(expr: Optional[str], table: str, ctx: str) -> Optional[str]:
+            return None if expr is None else expr.replace(table, ctx)
+
+        left_filter = _rewrite_filter(left_filter, left_table, left_ctx)
+        right_filter = _rewrite_filter(right_filter, right_table, right_ctx)
+
+        # 2️⃣  Default `join_expr` – first shared column
+        if join_expr is None:
+            shared = set(self._get_columns(table=left_table)) & set(
+                self._get_columns(table=right_table),
+            )
+            if not shared:
+                raise ValueError(
+                    "❌  No shared columns – supply `join_expr` explicitly.",
+                )
+            col = next(iter(shared))
+            join_expr = f"{left_table}.{col} == {right_table}.{col}"
+
+        # Fully-qualify the join expression / selected columns
+        join_expr = join_expr.replace(left_table, left_ctx).replace(
+            right_table,
+            right_ctx,
+        )
+        if columns is not None:
+            columns = [
+                c.replace(left_table, left_ctx).replace(right_table, right_ctx)
+                for c in columns
+            ]
+
+        # 3️⃣  Destination context
+        dest_ctx = self._ctx_for_table(dest_table)
+
+        # 4️⃣  Fire the REST request
+        url = f"{os.environ['UNIFY_BASE_URL']}/logs/join"
+        headers = {
+            "Authorization": f"Bearer {API_KEY}",
+            "Content-Type": "application/json",
+        }
+        payload: Dict[str, Any] = {
+            "project": unify.active_project(),
+            "pair_of_args": (
+                {
+                    "context": left_ctx,
+                    **({} if left_filter is None else {"filter_expr": left_filter}),
+                },
+                {
+                    "context": right_ctx,
+                    **({} if right_filter is None else {"filter_expr": right_filter}),
+                },
+            ),
+            "join_expr": join_expr,
+            "mode": mode,
+            "new_context": dest_ctx,
+        }
+        if columns is not None:
+            payload["columns"] = columns
+
+        resp = requests.request("POST", url, json=payload, headers=headers)
+        _handle_exceptions(resp)
+
+        return dest_ctx
+
     def _search(
         self,
         *,
@@ -1026,101 +1122,24 @@ class KnowledgeManager(BaseKnowledgeManager):
         Returns
         -------
         list[dict[str, Any]]
-            The resultant data following the search operation on the table join ``[row, …]``.
+            Rows from the *temporary* joined table.  The table is deleted
+            immediately afterwards – this method is therefore **read-only**.
         """
 
-        # 1️⃣  Resolve the two source tables
-        if isinstance(tables, str):
-            tables = [tables]
-
-        if len(tables) != 2:
-            raise ValueError(
-                "❌  _search_join expects exactly TWO tables to join.",
-            )
-
-        left_table, right_table = tables
-        left_ctx = self._ctx_for_table(left_table)
-        right_ctx = self._ctx_for_table(right_table)
-        if left_filter is not None:
-            left_filter = left_filter.replace(
-                left_table,
-                left_ctx,
-            )
-        if right_filter is not None:
-            right_filter = right_filter.replace(
-                right_table,
-                right_ctx,
-            )
-
-        # 2️⃣  Default `join_expr` – first shared column
-        if join_expr is None:
-            shared = set(self._get_columns(table=left_table)) & set(
-                self._get_columns(table=right_table),
-            )
-            if not shared:
-                raise ValueError(
-                    "❌  No shared columns – supply `join_expr` explicitly.",
-                )
-            col = next(iter(shared))
-            join_expr = f"{left_table}.{col} == {right_table}.{col}"
-
-        # Add full context to join expression
-        join_expr = join_expr.replace(
-            left_table,
-            left_ctx,
-        ).replace(
-            right_table,
-            right_ctx,
+        # 1️⃣  Materialise the join (helper handles validation & REST)
+        dest_table = f"_tmp_join_{uuid.uuid4().hex[:8]}"
+        dest_ctx = self._create_join(
+            dest_table=dest_table,
+            tables=tables,
+            join_expr=join_expr,
+            columns=columns,
+            mode=mode,
+            left_filter=left_filter,
+            right_filter=right_filter,
         )
 
-        # 3️⃣  Destination context
-        dest_ctx = self._ctx_for_table(f"_tmp_join_{uuid.uuid4().hex[:8]}")
-
-        # 4️⃣  Fire the REST request
-        def _pair(ctx: str, f: Optional[str]) -> Dict[str, str]:
-            if f is None:
-                # omit ⇒ Unify interprets as “no filter”
-                return {"context": ctx}
-            if f.strip() == "":
-                # empty string is *invalid* – use the always-true constant
-                f = "True"
-            return {"context": ctx, "filter_expr": f}
-
-        payload: Dict[str, Any] = {
-            "project": unify.active_project(),
-            "pair_of_args": [
-                _pair(left_ctx, left_filter),
-                _pair(right_ctx, right_filter),
-            ],
-            "join_expr": join_expr,
-            "mode": mode,
-            "new_context": dest_ctx,
-        }
-        if columns is not None:
-            columns = [
-                c.replace(left_table, left_ctx).replace(right_table, right_ctx)
-                for c in columns
-            ]
-            payload["columns"] = columns
-
-        url = f"{os.environ['UNIFY_BASE_URL']}/logs/join"
-        headers = {
-            "Authorization": f"Bearer {API_KEY}",
-            "Content-Type": "application/json",
-        }
-        try:
-            resp = requests.request("POST", url, json=payload, headers=headers)
-            _handle_exceptions(resp)
-        except Exception as exc:
-            return {
-                "error": (
-                    f"Join failed: {exc}.  "
-                    "Check `tables`, `join_expr` and the column types."
-                ),
-            }
-
-        # 5️⃣  Read from the derived context
-        rows = [
+        # 2️⃣  Read from the derived context
+        rows: List[Dict[str, Any]] = [
             log.entries
             for log in unify.get_logs(
                 context=dest_ctx,
@@ -1130,7 +1149,7 @@ class KnowledgeManager(BaseKnowledgeManager):
             )
         ]
 
-        # 6️⃣  Clean-up temporary joins
+        # 3️⃣  Clean-up
         try:
             unify.delete_context(dest_ctx)
         except Exception:
@@ -1186,61 +1205,67 @@ class KnowledgeManager(BaseKnowledgeManager):
 
         tmp_prefix = f"_tmp_mjoin_{uuid.uuid4().hex[:6]}"
         tmp_tables: List[str] = []
-
         previous_table: Optional[str] = None
 
         for idx, step in enumerate(joins):
-            # -------- 1.  Resolve & validate the step --------------------
             step = step.copy()  # do not mutate caller's dict
-            step_tables = step.get("tables")
-
-            if isinstance(step_tables, str):
-                step_tables = [step_tables]
-            if not isinstance(step_tables, list) or len(step_tables) != 2:
+            raw_tables = step.get("tables")
+            raw_tables = [raw_tables] if isinstance(raw_tables, str) else raw_tables
+            if not isinstance(raw_tables, list) or len(raw_tables) != 2:
                 raise ValueError(
-                    f"Step {idx} must specify exactly TWO tables – got {step_tables!r}",
+                    f"Step {idx} must specify exactly TWO tables – got {raw_tables!r}",
                 )
 
-            # `$prev` placeholder → last join's result
+            # Substitute `$prev` placeholder
             step_tables = [
                 (previous_table if t in {"$prev", "__prev__", "_"} else t)
-                for t in step_tables
+                for t in raw_tables
             ]
             if any(t is None for t in step_tables):
                 raise ValueError(
                     "Misplaced `$prev` in first join – there is no previous result.",
                 )
 
-            # -------- 2.  Destination table ------------------------------
+            # Fix-up join_expr & columns that reference `$prev`
+            def _replace_prev(
+                s: Optional[Union[str, List[str]]],
+            ) -> Optional[Union[str, List[str]]]:
+                if s is None or previous_table is None:
+                    return s
+                repl = (
+                    lambda txt: txt.replace("$prev", previous_table)
+                    .replace("__prev__", previous_table)
+                    .replace("_.", f"{previous_table}.")
+                )
+                if isinstance(s, str):
+                    return repl(s)
+                return [repl(c) for c in s]
+
+            join_expr = _replace_prev(step.get("join_expr"))  # type: ignore[arg-type]
+            columns = _replace_prev(step.get("columns"))  # type: ignore[arg-type]
+
+            # Destination table for this hop
             is_last = idx == len(joins) - 1
             dest_table = f"{tmp_prefix}_final" if is_last else f"{tmp_prefix}_{idx}"
-
-            # Record temporary artefacts (never delete the user-supplied final)
             tmp_tables.append(dest_table)
 
-            # -------- 3.  Delegate to the existing two-table join --------
-            _search_kwargs = {
-                "tables": step_tables,
-                "join_expr": step.get("join_expr"),
-                "columns": step.get("columns"),
-                "mode": step.get("mode", "inner"),
-                "new_table": dest_table,
-                "left_filter": step.get("left_filter"),
-                "right_filter": step.get("right_filter"),
-                # no post-join filtering/pagination at intermediate steps
-                "post_join_filter": None,
-                "post_join_limit": 0,
-                "post_join_offset": 0,
-            }
-            # `_search_join` returns rows but we ignore them mid-pipeline
-            self._search_join(**_search_kwargs)  # type: ignore[arg-type]
+            # Materialise the join (no reads yet)
+            self._create_join(
+                dest_table=dest_table,
+                tables=step_tables,
+                join_expr=join_expr,  # type: ignore[arg-type]
+                columns=columns,  # type: ignore[arg-type]
+                mode=step.get("mode", "inner"),
+                left_filter=step.get("left_filter"),
+                right_filter=step.get("right_filter"),
+            )
 
             previous_table = dest_table
 
-        assert previous_table is not None  # mypy guard – impossible otherwise
+        assert previous_table is not None  # mypy guard
 
-        # -------- 4.  Read from *final* join result ----------------------
-        rows = [
+        # -------- 4.  Read final result ---------------------------------
+        rows: List[Dict[str, Any]] = [
             log.entries
             for log in unify.get_logs(
                 context=self._ctx_for_table(previous_table),
@@ -1250,7 +1275,7 @@ class KnowledgeManager(BaseKnowledgeManager):
             )
         ]
 
-        # -------- 5.  Clean up temporary artefacts -----------------------
+        # -------- 5.  Clean-up ------------------------------------------
         try:
             # do not delete the user-requested *persistent* table
             self._delete_tables(tables=tmp_tables)
