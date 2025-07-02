@@ -1052,6 +1052,16 @@ class KnowledgeManager(BaseKnowledgeManager):
             right_table,
             right_ctx,
         )
+        if left_filter is not None:
+            left_filter = left_filter.replace(
+                left_table,
+                left_ctx,
+            )
+        if right_filter is not None:
+            right_filter = right_filter.replace(
+                right_table,
+                right_ctx,
+            )
 
         # 2️⃣  Default `join_expr` – first shared column
         if join_expr is None:
