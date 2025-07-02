@@ -32,6 +32,7 @@ from pydantic import (
     field_serializer,
     ConfigDict,
 )
+from pydantic.alias_generators import to_snake
 from uuid import uuid4
 
 __all__ = ["Event", "EventBus", "Subscription", "EVENT_BUS"]
@@ -39,25 +40,60 @@ __all__ = ["Event", "EventBus", "Subscription", "EVENT_BUS"]
 
 # ───────────────────────────   Event envelope   ─────────────────────────────
 
+UNASSIGNED = -1  # shared sentinel – keep it in one place if you already have it
+
 
 class Event(BaseModel):
-    event_id: str = Field(default_factory=lambda: str(uuid4()))
-    row_id: Optional[int] = None
-    calling_id: str = ""
-    type: str
-    timestamp: str = Field(default_factory=lambda: dt.datetime.now(dt.UTC).isoformat())
+    # ────────────────────────────────────────────────
+    # primary / synthetic keys
+    # ────────────────────────────────────────────────
+    row_id: int = Field(
+        default=UNASSIGNED,
+        ge=UNASSIGNED,
+        description="Auto-incrementing database row id (-1 until the DB assigns it)",
+    )
+    event_id: str = Field(
+        default_factory=lambda: str(uuid4()),
+        description="Stable UUID for this event (unique across DBs)",
+    )
 
-    # Accept *anything* here; we'll convert it on the way out.
+    # ────────────────────────────────────────────────
+    # metadata
+    # ────────────────────────────────────────────────
+    calling_id: str = Field(
+        default="",
+        description="Identifier of the process/machine that produced the event",
+    )
+    type: str = Field(
+        description="Domain-level event type or ‘topic’",
+    )
+    timestamp: str = Field(
+        default_factory=lambda: dt.datetime.now(dt.UTC).isoformat(),
+        description="ISO-8601 timestamp (UTC)",
+    )
+
+    # ────────────────────────────────────────────────
+    # polymorphic payload
+    # ────────────────────────────────────────────────
     payload: SerializeAsAny[Any]
+    payload_cls: str = ""  # dotted Python path (filled automatically)
 
-    # dotted Python path to the payload model – filled in automatically
-    payload_cls: str = ""
+    # ────────────────────────────────────────────────
+    # validators
+    # ────────────────────────────────────────────────
+    @model_validator(mode="before")
+    @classmethod
+    def _inject_sentinel(cls, data: dict) -> dict:
+        """
+        Ensure `row_id` is always present so downstream code never needs to
+        handle `None` vs. int.
+        """
+        data.setdefault("row_id", UNASSIGNED)
+        return data
 
-    # -------------------------------------------------
-    #  validators
-    # -------------------------------------------------
     @field_validator("timestamp", mode="before")
-    def _ensure_iso(cls, v):
+    @classmethod
+    def _ensure_iso(cls, v: str | dt.datetime) -> str:
         if isinstance(v, dt.datetime):
             return v.isoformat()
         return v
@@ -72,43 +108,47 @@ class Event(BaseModel):
             )
         return self
 
-    # -------------------------------------------------
-    #  serializer
-    # -------------------------------------------------
+    # ────────────────────────────────────────────────
+    # serialiser helpers
+    # ────────────────────────────────────────────────
     @field_serializer("payload", when_used="json")
     def _serialise_payload(self, value: Any, _info):
-        """
-        Convert every nested BaseModel inside `payload` to plain Python objects
-        so that `event.model_dump()` never hits Pydantic’s functional serializer
-        pathway again.
-        """
+        """Recursively convert nested BaseModels → plain Python objects."""
         return self._to_python(value)
 
-    # -------------------------------------------------
-    #  model config
-    # -------------------------------------------------
+    def to_post_join(self) -> dict:
+        """
+        Dump a JSON-serialisable dict suitable for an *insert-and-join* REST
+        endpoint.
+        If `row_id` is still the sentinel (-1) we *omit* it so the server can
+        allocate the next sequence value just like it does for `Contact` and
+        `Message`.
+        """
+        exclude = {"row_id"} if self.row_id == UNASSIGNED else {}
+        return self.model_dump(mode="json", exclude=exclude)
+
+    # ────────────────────────────────────────────────
+    # config
+    # ────────────────────────────────────────────────
     model_config = ConfigDict(
-        arbitrary_types_allowed=True,  # let `payload` contain anything
-        extra="forbid",
+        extra="forbid",  # keep the existing strictness
+        arbitrary_types_allowed=True,  # payload can be literally anything
+        alias_generator=to_snake,  # optional: stay in sync with your other models
     )
 
-    # -------------------------------------------------
-    #  helpers
-    # -------------------------------------------------
+    # ────────────────────────────────────────────────
+    # helpers
+    # ────────────────────────────────────────────────
     @classmethod
-    def _to_python(cls, v: Any) -> Any:
-        """
-        Recursively turn BaseModels → dicts, leaving primitive types unchanged.
-        """
+    def _to_python(cls, v: Any) -> Any:  # noqa: PLR0911 – simple, explicit recursion
         if isinstance(v, BaseModel):
             return v.model_dump(mode="python")
 
         if isinstance(v, Mapping):
-            # Reuse the classmethod to walk nested structures
             return {k: cls._to_python(sub) for k, sub in v.items()}
 
         if isinstance(v, (list, tuple, set)):
-            it: Iterable[Any] = [_ for _ in v]  # satisfy mypy/pyright
+            it: Iterable[Any] = [_ for _ in v]  # help mypy/pyright
             return [cls._to_python(sub) for sub in it]
 
         return v
@@ -169,7 +209,7 @@ class Subscription(BaseModel):
 
         # count-based ---------------------------------------------------
         if self.count_step is not None:
-            if evt.row_id is not None:
+            if evt.row_id != UNASSIGNED:
                 if evt.row_id - self.last_row_id >= self.count_step:
                     return True
             else:  # freshly published – no row_id yet
@@ -190,7 +230,7 @@ class Subscription(BaseModel):
 
     # ------------------------------------------------------------------
     def update_progress(self, evt: "Event") -> None:
-        if evt.row_id is not None:
+        if evt.row_id != UNASSIGNED:
             self.last_row_id = evt.row_id
         self.last_timestamp = evt.timestamp
         self.local_count = 0
@@ -220,7 +260,6 @@ class EventBus:
         if self._callbacks_ctx not in upstream_ctxs:
             unify.create_context(
                 self._callbacks_ctx,
-                unique_column_ids="subscription_id",
             )
         ctxs = unify.get_contexts(prefix=f"{self._global_ctx}/")
         self._window_sizes: Dict[str, int] = {
