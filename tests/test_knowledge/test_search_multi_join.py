@@ -40,7 +40,7 @@ def _tmp_ctx_survivors(km: KnowledgeManager) -> list[str]:
 
 @pytest.mark.eval
 @_handle_project
-def test_search_multi_join_works(monkeypatch):
+def test_search_multi_join(monkeypatch):
     """
     Scenario: *Authors → Books → Reviews*  (expect three reviews).
     """
@@ -104,7 +104,7 @@ def test_search_multi_join_works(monkeypatch):
             "tables": ["Authors", "Books"],
             "join_expr": "Authors.author_id == Books.author_id",
             "mode": "inner",
-            "left_filter": "author_name == 'J.K. Rowling'",
+            "left_where": "author_name == 'J.K. Rowling'",
         },
         {
             "tables": ["$prev", "Reviews"],
