@@ -174,7 +174,7 @@ class BrowserWorker(threading.Thread):
         log: Callable[[str], None] | None = None,
         session_connect_url: str | None = None,
         headless: bool = False,
-        use_vision: bool = True,
+        mode: str = "heuristic",      # "heuristic" | "vision" | "hybrid"
         debug: bool = False,
     ):
         super().__init__(daemon=True)
@@ -187,7 +187,9 @@ class BrowserWorker(threading.Thread):
         self._stop_event = threading.Event()
         self.session_connect_url = session_connect_url
         self.headless = headless
-        self.use_vision = use_vision
+        self.mode = mode.lower()
+        self.use_vision = self.mode in ("vision", "hybrid")
+        self.use_heuristic = self.mode in ("heuristic", "hybrid")
         self.debug = debug
         # will be initialised inside `run`
         self.runner: CommandRunner | None = None
@@ -589,12 +591,32 @@ class BrowserWorker(threading.Thread):
                             )
 
                     # -- 3) refresh overlay ------------------------------
+                    def _vision_only_elements(vlist, page):
+                        return _fuse_elements(vlist, [], page, overlap_threshold=0.0)  # no heuristics
+
+                    def _heuristic_only_elements(hlist):
+                        return [
+                            {**h, "source": "heuristic", "id": i + 1}
+                            for i, h in enumerate(sorted(hlist, key=lambda e: (e["top"], e["left"])))
+                        ]
                     try:
                         # C) Decide which element list to use
-                        if self.use_vision:
-                            last_elements = self._vision_elements_cache
-                        else:
-                            last_elements = self._get_elements_from_heuristics()
+                        heuristic_elements = self._get_elements_from_heuristics() if self.use_heuristic else []
+                        match self.mode:
+                            case "hybrid":
+                                last_elements = _assign_stable_ids(
+                                    _fuse_elements(vision_results, heuristic_elements, self.runner.active)
+                                )
+                            case "vision":
+                                last_elements = _assign_stable_ids(
+                                    _vision_only_elements(vision_results, self.runner.active)
+                                )
+                            case "heuristic":
+                                last_elements = _assign_stable_ids(
+                                    _heuristic_only_elements(heuristic_elements)
+                                )
+                            case _:
+                                raise ValueError(f"Invalid mode: {self.mode}")
 
                     except Exception as exc:  # navigation in-flight
                         self.log(f"collect_elements skipped: {exc}")
