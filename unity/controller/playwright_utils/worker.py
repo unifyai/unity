@@ -206,7 +206,7 @@ class BrowserWorker(threading.Thread):
         log: Callable[[str], None] | None = None,
         session_connect_url: str | None = None,
         headless: bool = False,
-        mode: str = "heuristic",      # "heuristic" | "vision" | "hybrid"
+        mode: str = "heuristic",  # "heuristic" | "vision" | "hybrid"
         debug: bool = False,
     ):
         super().__init__(daemon=True)
@@ -471,40 +471,62 @@ class BrowserWorker(threading.Thread):
 
                                 # ① treat the token as an element *ID* (new hybrid logic) …
                                 element_to_click = next(
-                                    (el for el in last_elements if el["id"] == element_id_to_click),
+                                    (
+                                        el
+                                        for el in last_elements
+                                        if el["id"] == element_id_to_click
+                                    ),
                                     None,
                                 )
                                 # ② … and fall back to "old-style" 1-based index only if that failed
-                                if element_to_click is None and 1 <= element_id_to_click <= len(last_elements):
-                                    element_to_click = last_elements[element_id_to_click - 1]
+                                if (
+                                    element_to_click is None
+                                    and 1 <= element_id_to_click <= len(last_elements)
+                                ):
+                                    element_to_click = last_elements[
+                                        element_id_to_click - 1
+                                    ]
 
                                 if element_to_click is None:
                                     self.log(
                                         f"[click] No element #{element_id_to_click} in this frame "
-                                        f"(max id: {max(e['id'] for e in last_elements) if last_elements else '—'})"
+                                        f"(max id: {max(e['id'] for e in last_elements) if last_elements else '—'})",
                                     )
                                     continue
-                                handle = element_to_click.get('handle')
-                                label = element_to_click.get('label', f'element {element_id_to_click}')
-                                
+                                handle = element_to_click.get("handle")
+                                label = element_to_click.get(
+                                    "label",
+                                    f"element {element_id_to_click}",
+                                )
+
                                 self.runner.hist.add(f"click {label}")
-                                self.log(f"Attempting to click: '{label}' (ID: {element_id_to_click}, Source: {element_to_click.get('source')})")
+                                self.log(
+                                    f"Attempting to click: '{label}' (ID: {element_id_to_click}, Source: {element_to_click.get('source')})",
+                                )
 
                                 if handle:
                                     # METHOD 1: Preferred, robust click via Playwright handle
                                     self.log("Clicking via ElementHandle.")
                                     handle.click(timeout=5000)
                                     _update_in_textbox_state(self.runner, handle, label)
-                                elif element_to_click.get('bbox'):
+                                elif element_to_click.get("bbox"):
                                     # METHOD 2: Fallback for vision-only or hybrid elements without a live handle
                                     self.log("Clicking via bounding box coordinates.")
-                                    bbox = element_to_click['bbox']
-                                    _click_at_bbox_center(self.runner.active, bbox, debug=self.debug)
+                                    bbox = element_to_click["bbox"]
+                                    _click_at_bbox_center(
+                                        self.runner.active,
+                                        bbox,
+                                        debug=self.debug,
+                                    )
                                 else:
-                                    self.log(f"Click failed: Element {element_id_to_click} has no handle or bbox.")
+                                    self.log(
+                                        f"Click failed: Element {element_id_to_click} has no handle or bbox.",
+                                    )
 
                             except (ValueError, PWError, IndexError) as exc:
-                                self.log(f"A critical error occurred during click: {exc}")
+                                self.log(
+                                    f"A critical error occurred during click: {exc}",
+                                )
 
                         elif cmd.startswith("open url "):
                             url = cmd[len("open url ") :]
@@ -615,7 +637,12 @@ class BrowserWorker(threading.Thread):
 
                             try:
                                 # Clear the overlay before taking the screenshot
-                                paint_overlay(self.runner.active, [], use_vision=self.mode in ("vision", "hybrid"), need_helper=self.mode in ("heuristic", "hybrid"))
+                                paint_overlay(
+                                    self.runner.active,
+                                    [],
+                                    use_vision=self.mode in ("vision", "hybrid"),
+                                    need_helper=self.mode in ("heuristic", "hybrid"),
+                                )
                             except Exception as e:
                                 self.log(
                                     f"Could not clear overlay before screenshot: {e}",
@@ -632,40 +659,61 @@ class BrowserWorker(threading.Thread):
 
                     # -- 3) refresh overlay ------------------------------
                     def _vision_only_elements(vlist, page):
-                        return _fuse_elements(vlist, [], page, overlap_threshold=0.0)  # no heuristics
+                        return _fuse_elements(
+                            vlist,
+                            [],
+                            page,
+                            overlap_threshold=0.0,
+                        )  # no heuristics
 
                     def _heuristic_only_elements(hlist):
                         return [{**h, "source": "heuristic"} for h in hlist]
+
                     try:
                         # C) Decide which element list to use
-                        heuristic_elements = self._get_elements_from_heuristics() if self.use_heuristic else []
+                        heuristic_elements = (
+                            self._get_elements_from_heuristics()
+                            if self.use_heuristic
+                            else []
+                        )
                         match self.mode:
                             case "hybrid":
                                 # 1. Reset stable IDs since we want fresh sequential IDs.
                                 reset_stable_ids()
-                                
+
                                 # 2. Fuse the elements from both sources.
                                 fused_elements = _fuse_elements(
-                                    vision_results, 
-                                    heuristic_elements, 
+                                    vision_results,
+                                    heuristic_elements,
                                     self.runner.active,
-                                    overlap_threshold=0.5
+                                    overlap_threshold=0.5,
                                 )
-                                
+
                                 # 3. De-duplicate the fused list to remove overlapping boxes.
-                                last_elements = _dedup(fused_elements, iou_threshold=0.8)
+                                last_elements = _dedup(
+                                    fused_elements,
+                                    iou_threshold=0.8,
+                                )
 
                             case "vision":
                                 reset_stable_ids()
-                                fused_elements = _fuse_elements(vision_results, [], self.runner.active)
-                                last_elements = _dedup(fused_elements, iou_threshold=0.95)
+                                fused_elements = _fuse_elements(
+                                    vision_results,
+                                    [],
+                                    self.runner.active,
+                                )
+                                last_elements = _dedup(
+                                    fused_elements,
+                                    iou_threshold=0.95,
+                                )
 
                             case "heuristic":
                                 last_elements = _assign_stable_ids(
-                                    [{**h, "source": "heuristic"} for h in heuristic_elements]
+                                    [
+                                        {**h, "source": "heuristic"}
+                                        for h in heuristic_elements
+                                    ],
                                 )
-                            case _:
-                                raise ValueError(f"Invalid mode: {self.mode}")
 
                     except Exception as exc:  # navigation in-flight
                         self.log(f"collect_elements skipped: {exc}")
@@ -681,7 +729,12 @@ class BrowserWorker(threading.Thread):
                     # draw overlay on in the UI page only
                     for pg in (self.runner.active,):
                         try:
-                            paint_overlay(pg, boxes, use_vision = self.mode in ("vision", "hybrid"), need_helper=self.mode in ("heuristic", "hybrid"))
+                            paint_overlay(
+                                pg,
+                                boxes,
+                                use_vision=self.mode in ("vision", "hybrid"),
+                                need_helper=self.mode in ("heuristic", "hybrid"),
+                            )
                         except PWError as e:
                             # page or context went away – bail early
                             self.log(f"overlay skipped: {e}")

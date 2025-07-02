@@ -78,7 +78,7 @@ async def main():
     planner = HierarchicalPlanner(
         headless=True,
     )
-        
+
     DEMO_TASK_BROWSER = "Go to google.com, search for 'latest news on AI agents', and return the title of the first result."
     DEMO_TASK_EMAIL = "Send an email to contact ID 42 letting them know that their invoice is ready and a payment is due."
     DEMO_TASK_PHONE = "Call contact ID 77 and ask them what they would like for dinner. The options are pizza, pasta, or sushi. After they choose, ask if they want it delivered right away."

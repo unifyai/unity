@@ -116,7 +116,12 @@ def build_boxes(elements: list[dict]) -> list[dict]:
     return boxes
 
 
-def paint_overlay(page: Page, boxes: list[dict], use_vision: bool = False, need_helper: bool = False) -> None:
+def paint_overlay(
+    page: Page,
+    boxes: list[dict],
+    use_vision: bool = False,
+    need_helper: bool = False,
+) -> None:
     """Draw *our* bounding-box overlay for the supplied *boxes* list.
 
     ⬩ If `use_vision` is **False** → show the original JS overlay
@@ -147,8 +152,9 @@ def paint_overlay(page: Page, boxes: list[dict], use_vision: bool = False, need_
     # ────────────────────────────────────────────────────────────────
     try:
         # -- Bootstrap the helper’s scan loop ONCE per page ----------
-        
-        page.evaluate("""
+
+        page.evaluate(
+            """
             (needHelper) => {
                 if (!window.__bl) return;
 
@@ -161,7 +167,9 @@ def paint_overlay(page: Page, boxes: list[dict], use_vision: bool = False, need_
                 // Always kill the helper canvas – we draw our own
                 window.__bl.hideOverlay?.();
             }
-            """, need_helper)
+            """,
+            need_helper,
+        )
 
         # -- Draw / refresh our unified overlay ----------------------
         page.evaluate(

@@ -321,7 +321,8 @@ class HierarchicalPlan(BaseActiveTask):
         self.action_log.append("Starting interactive exploratory phase...")
         try:
             research_prompt = build_exploration_prompt(
-                goal=self.goal, tools=self.planner.tools
+                goal=self.goal,
+                tools=self.planner.tools,
             )
 
             client = self.planner.exploration_client
@@ -1257,7 +1258,7 @@ class HierarchicalPlanner(BasePlanner):
             logger.warning(
                 f"Function '{fn.__name__}' returned a coroutine. "
                 f"This suggests a missing 'await' in the generated code. "
-                f"Awaiting it now to recover."
+                f"Awaiting it now to recover.",
             )
             result = await result
         all_interactions = [

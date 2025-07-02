@@ -253,7 +253,8 @@ class CommsAgent:
                 handle.resume()
             event_data = {
                 "event": ConductorHandleSuccessEvent(
-                    action.query, action.type
+                    action.query,
+                    action.type,
                 ).to_dict(),
                 "to": "past",
             }
@@ -449,7 +450,7 @@ class CommsAgent:
                         receiver_id=receiver_id,
                         timestamp=timestamp,
                         content=content,
-                    )
+                    ),
                 )
         except Exception as e:
             print(f"Error handling logging: {e}")
