@@ -28,6 +28,7 @@ from .browser_utils import (
     paint_overlay,
     detect_captcha,
 )
+from .vision_utils import _fuse_elements, _assign_stable_ids
 from .command_runner import CommandRunner
 from .mirror import MirrorPage
 from ..commands import *
@@ -319,7 +320,7 @@ class BrowserWorker(threading.Thread):
                 self._vision_elements_cache.append(
                     {
                         "id": i + 1,
-                        "label": e.get("content", "").strip(),
+                        "label": (e.get("label") or e.get("content", "")).strip(),
                         "bbox": bbox_norm,
                         "handle": None,  # handle is resolved just-in-time
                         "fixed": False,
@@ -432,41 +433,48 @@ class BrowserWorker(threading.Thread):
                         # show the raw command arriving from the GUI
                         self.log(f"CMD ➜ {cmd!r}")
 
-                        if cmd.lower().startswith("click"):
-                            self.log(
-                                f"--- Performing Re-Identifying Vision Click for: {cmd} ---",
-                            )
+                        if cmd.lower().startswith("click "):
                             try:
                                 parts = cmd.split()
                                 element_id_to_click = int(parts[1])
 
-                                # Step 1: Get the properties of the element the user clicked, from the OLD cache.
-                                if not (
-                                    1
-                                    <= element_id_to_click
-                                    <= len(self._vision_elements_cache)
-                                ):
+                                # ① treat the token as an element *ID* (new hybrid logic) …
+                                element_to_click = next(
+                                    (el for el in last_elements if el["id"] == element_id_to_click),
+                                    None,
+                                )
+                                # ② … and fall back to "old-style" 1-based index only if that failed
+                                if element_to_click is None and 1 <= element_id_to_click <= len(last_elements):
+                                    element_to_click = last_elements[element_id_to_click - 1]
+
+                                if element_to_click is None:
                                     self.log(
-                                        f"Cannot click: initial element ID {element_id_to_click} is out of bounds.",
+                                        f"[click] No element #{element_id_to_click} in this frame "
+                                        f"(max id: {max(e['id'] for e in last_elements) if last_elements else '—'})"
                                     )
                                     continue
+                                handle = element_to_click.get('handle')
+                                label = element_to_click.get('label', f'element {element_id_to_click}')
+                                
+                                self.runner.hist.add(f"click {label}")
+                                self.log(f"Attempting to click: '{label}' (ID: {element_id_to_click}, Source: {element_to_click.get('source')})")
 
-                                prev_element = self._vision_elements_cache[
-                                    element_id_to_click - 1
-                                ]
-                                prev_bbox = prev_element["bbox"]
-                                prev_label = prev_element["label"]
-                                self.log(f"Clicking at: {prev_label}")
-                                _click_at_bbox_center(
-                                    self.runner.active,
-                                    prev_bbox,
-                                    debug=self.debug,
-                                )
+                                if handle:
+                                    # METHOD 1: Preferred, robust click via Playwright handle
+                                    self.log("Clicking via ElementHandle.")
+                                    handle.click(timeout=5000)
+                                    _update_in_textbox_state(self.runner, handle, label)
+                                elif element_to_click.get('bbox'):
+                                    # METHOD 2: Fallback for vision-only or hybrid elements without a live handle
+                                    self.log("Clicking via bounding box coordinates.")
+                                    bbox = element_to_click['bbox']
+                                    _click_at_bbox_center(self.runner.active, bbox, debug=self.debug)
+                                else:
+                                    self.log(f"Click failed: Element {element_id_to_click} has no handle or bbox.")
 
-                            except Exception as exc:
-                                self.log(
-                                    f"A critical error occurred during re-identifying vision click: {exc}",
-                                )
+                            except (ValueError, PWError, IndexError) as exc:
+                                self.log(f"A critical error occurred during click: {exc}")
+
                         elif cmd.startswith("open url "):
                             url = cmd[len("open url ") :]
                             self.runner.active.goto(
@@ -553,6 +561,7 @@ class BrowserWorker(threading.Thread):
                             continue
 
                     now = time.time()
+                    vision_results = self._vision_elements_cache
                     # A) If vision is enabled, check if it's time for a new call
                     if self.use_vision and (
                         now - self._last_vision_ts >= self._vision_interval
@@ -575,7 +584,7 @@ class BrowserWorker(threading.Thread):
 
                             try:
                                 # Clear the overlay before taking the screenshot
-                                paint_overlay(self.runner.active, [], use_vision=True)
+                                paint_overlay(self.runner.active, [], use_vision=self.mode in ("vision", "hybrid"), need_helper=self.mode in ("heuristic", "hybrid"))
                             except Exception as e:
                                 self.log(
                                     f"Could not clear overlay before screenshot: {e}",
@@ -632,7 +641,7 @@ class BrowserWorker(threading.Thread):
                     # draw overlay on in the UI page only
                     for pg in (self.runner.active,):
                         try:
-                            paint_overlay(pg, boxes, self.use_vision)
+                            paint_overlay(pg, boxes, use_vision = self.mode in ("vision", "hybrid"), need_helper=self.mode in ("heuristic", "hybrid"))
                         except PWError as e:
                             # page or context went away – bail early
                             self.log(f"overlay skipped: {e}")
