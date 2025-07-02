@@ -121,6 +121,22 @@ def _fuse_elements(
 
     used_v = [False] * len(denorm_v)
 
+   
+    # ── Pre-Pass: Disqualify coarse "container" vision boxes ───────────
+    # Identify and ignore any single vision element that contains multiple
+    # distinct heuristic elements, as it's likely a less useful container.
+    for j, v in enumerate(denorm_v):
+        # Count how many heuristic elements this vision box overlaps with
+        overlapping_heuristic_count = 0
+        for h in heuristic_elements:
+            if _overlap_ratio(h, v) >= overlap_threshold:
+                overlapping_heuristic_count += 1
+        
+        # If a vision box corresponds to more than one heuristic box,
+        # it's too coarse. Mark it as "used" so it's ignored in the next step.
+        if overlapping_heuristic_count > 1:
+            used_v[j] = True
+
     # ── Pass A: for every heuristic element, try to find a vision partner ──
     for h in heuristic_elements:
         best_j = -1; best_ov = -1.0
