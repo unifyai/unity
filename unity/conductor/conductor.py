@@ -32,6 +32,11 @@ from .prompt_builders import (
     build_ask_prompt,
     build_request_prompt,
 )
+from ..events.manager_event_logging import (
+    new_call_id,
+    publish_manager_method_event,
+    wrap_handle_with_logging,
+)
 
 
 class Conductor(BaseConductor):
@@ -143,6 +148,15 @@ class Conductor(BaseConductor):
     ):
 
         # ---- build live tool-dict BEFORE crafting the prompt ------------
+        call_id = new_call_id()
+        await publish_manager_method_event(
+            call_id,
+            "Conductor",
+            "ask",
+            phase="incoming",
+            question=text,
+        )
+
         tools: Dict[str, Callable] = dict(self._passive_tools)
 
         if clarification_up_q is not None or clarification_down_q is not None:
@@ -172,6 +186,14 @@ class Conductor(BaseConductor):
             tool_policy=lambda i, _: ("required", _) if i < 1 else ("auto", _),
         )
 
+        # ── Add logging wrapper so every handle interaction is traced ─────
+        handle = wrap_handle_with_logging(
+            handle,
+            call_id,
+            "Conductor",
+            "ask",
+        )
+
         if _return_reasoning_steps:
             original_result = handle.result
 
@@ -198,6 +220,15 @@ class Conductor(BaseConductor):
         clarification_up_q: asyncio.Queue[str] | None = None,
         clarification_down_q: asyncio.Queue[str] | None = None,
     ):
+
+        call_id = new_call_id()
+        await publish_manager_method_event(
+            call_id,
+            "Conductor",
+            "request",
+            phase="incoming",
+            request=text,
+        )
 
         tools: Dict[str, Callable] = dict(self._active_tools)
 
@@ -226,6 +257,13 @@ class Conductor(BaseConductor):
             parent_chat_context=parent_chat_context,
             log_steps=_log_tool_steps,
             tool_policy=lambda i, _: ("required", _) if i < 1 else ("auto", _),
+        )
+
+        handle = wrap_handle_with_logging(
+            handle,
+            call_id,
+            "Conductor",
+            "request",
         )
 
         if _return_reasoning_steps:
