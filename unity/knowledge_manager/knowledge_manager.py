@@ -1247,21 +1247,22 @@ class KnowledgeManager(BaseKnowledgeManager):
         ----------
         joins : list[dict]
             An *ordered* list where **each element mirrors the kwargs of
-            `_search_join` except that:
-              • the **two** input tables are provided under the key
-                ``"tables"`` (string or 2-element list);
+            `_search_join` except that chained tables use the '$prev' placeholder.
+            Every dict *requires* the three arguments: "tables", "join_expr" and "select" as a minimum.
 
             Example::
 
                 joins = [
                     {
                         "tables": ["Authors", "Books"],
-                        "join_expr": "Authors.author_id == Books.author_id",
+                        "join_expr": "Authors.id == Books.author_id",
+                        "select": {"Authors.id": "author_id", "Books.title": "book_title", "Books.id": "book_id"},
                         "mode": "inner",
                     },
                     {
                         "tables": ["$prev", "Reviews"],   # $prev → last result
                         "join_expr": "$prev.book_id == Reviews.book_id",
+                        "select": {"$prev.book_title": "book_title", "Reviews.content": "review"}
                     },
                 ]
 
@@ -1302,8 +1303,8 @@ class KnowledgeManager(BaseKnowledgeManager):
 
             # Fix-up join_expr & columns that reference `$prev`
             def _replace_prev(
-                s: Optional[Union[str, List[str]]],
-            ) -> Optional[Union[str, List[str]]]:
+                s: Optional[Union[str, List[str], Dict[str, str]]],
+            ) -> Optional[Union[str, List[str], Dict[str, str]]]:
                 if s is None or previous_table is None:
                     return s
                 repl = (
@@ -1313,6 +1314,8 @@ class KnowledgeManager(BaseKnowledgeManager):
                 )
                 if isinstance(s, str):
                     return repl(s)
+                elif isinstance(s, dict):
+                    return {repl(k): v for k, v in s.items()}
                 return [repl(c) for c in s]
 
             join_expr = _replace_prev(step.get("join_expr"))
