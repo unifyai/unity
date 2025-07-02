@@ -278,7 +278,7 @@ class ContactManager(BaseContactManager):
         # log the *incoming* request
         await EVENT_BUS.publish(
             Event(
-                type="ContactManager",
+                type="ManagerMethod",
                 calling_id=call_id,
                 payload={
                     "manager": "ContactManager",
