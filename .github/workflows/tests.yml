@@ -7,15 +7,18 @@ on:
       test_path:
         description: "Path to test file or directory to run"
         required: false
+        type: string
         default: "."
       test_enable_cli_logging:
         description: "Enable CLI logging"
         required: false
+        type: boolean
         default: false
       test_cli_log_level:
         description: "CLI log level"
         required: false
         default: "ERROR"
+        type: choice
         options:
         - CRITICAL
         - ERROR
@@ -25,10 +28,12 @@ on:
       test_show_slowest:
         description: "Number of slowest tests to show"
         required: false
+        type: number
         default: 20
       test_timeout:
         description: "Test timeout in seconds"
         required: false
+        type: number
         default: 120
 
 jobs:
