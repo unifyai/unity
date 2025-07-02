@@ -28,7 +28,7 @@ from .browser_utils import (
     paint_overlay,
     detect_captcha,
 )
-from .vision_utils import _fuse_elements, _assign_stable_ids
+from .vision_utils import _fuse_elements, _assign_stable_ids, reset_stable_ids
 from .command_runner import CommandRunner
 from .mirror import MirrorPage
 from ..commands import *
@@ -623,7 +623,7 @@ class BrowserWorker(threading.Thread):
 
                             # Now, trigger the next vision call
                             self._last_vision_ts = now
-                            png_bytes = grab_screenshot(self.runner.active)
+                            png_bytes = _safe_screenshot(self.runner.active, self.log)
                             self._vision_future = self._executor.submit(
                                 self._call_omniparser,
                                 png_bytes,
@@ -635,10 +635,7 @@ class BrowserWorker(threading.Thread):
                         return _fuse_elements(vlist, [], page, overlap_threshold=0.0)  # no heuristics
 
                     def _heuristic_only_elements(hlist):
-                        return [
-                            {**h, "source": "heuristic", "id": i + 1}
-                            for i, h in enumerate(sorted(hlist, key=lambda e: (e["top"], e["left"])))
-                        ]
+                        return [{**h, "source": "heuristic"} for h in hlist]
                     try:
                         # C) Decide which element list to use
                         heuristic_elements = self._get_elements_from_heuristics() if self.use_heuristic else []
@@ -722,6 +719,10 @@ class BrowserWorker(threading.Thread):
                             }
                         """
                         res = self.runner.active.evaluate(js)
+                        new_url = res["url"]
+                        if new_url != getattr(self, "_prev_url", None):
+                            reset_stable_ids()
+                        self._prev_url = new_url
                         self.runner.state.url = res["url"]
                         self.runner.state.title = res["title"]
                         self.runner.state.in_textbox = res["inBox"]
@@ -785,7 +786,7 @@ class BrowserWorker(threading.Thread):
                         pg.title() or "<untitled>" for pg in self.runner.ctx.pages
                     ]
 
-                    screenshot_bytes = grab_screenshot(self.runner.active)
+                    screenshot_bytes = _safe_screenshot(self.runner.active, self.log)
                     screenshot = screenshot = base64.b64encode(screenshot_bytes).decode(
                         "utf-8",
                     )
