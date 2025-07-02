@@ -941,10 +941,10 @@ class KnowledgeManager(BaseKnowledgeManager):
         dest_table: str,
         tables: Union[str, List[str]],
         join_expr: Optional[str] = None,
-        columns: Optional[List[str]] = None,
+        select: Optional[List[str]] = None,
         mode: str = "inner",
-        left_filter: Optional[str] = None,
-        right_filter: Optional[str] = None,
+        left_where: Optional[str] = None,
+        right_where: Optional[str] = None,
     ) -> str:
         """
         Create **one** temporary joined table on the Unify backend and return
@@ -970,8 +970,8 @@ class KnowledgeManager(BaseKnowledgeManager):
         def _rewrite_filter(expr: Optional[str], table: str, ctx: str) -> Optional[str]:
             return None if expr is None else expr.replace(table, ctx)
 
-        left_filter = _rewrite_filter(left_filter, left_table, left_ctx)
-        right_filter = _rewrite_filter(right_filter, right_table, right_ctx)
+        left_where = _rewrite_filter(left_where, left_table, left_ctx)
+        right_where = _rewrite_filter(right_where, right_table, right_ctx)
 
         # 2️⃣  Default `join_expr` – first shared column
         if join_expr is None:
@@ -990,10 +990,10 @@ class KnowledgeManager(BaseKnowledgeManager):
             right_table,
             right_ctx,
         )
-        if columns is not None:
-            columns = [
+        if select is not None:
+            select = [
                 c.replace(left_table, left_ctx).replace(right_table, right_ctx)
-                for c in columns
+                for c in select
             ]
 
         # 3️⃣  Destination context
@@ -1010,19 +1010,19 @@ class KnowledgeManager(BaseKnowledgeManager):
             "pair_of_args": (
                 {
                     "context": left_ctx,
-                    **({} if left_filter is None else {"filter_expr": left_filter}),
+                    **({} if left_where is None else {"filter_expr": left_where}),
                 },
                 {
                     "context": right_ctx,
-                    **({} if right_filter is None else {"filter_expr": right_filter}),
+                    **({} if right_where is None else {"filter_expr": right_where}),
                 },
             ),
             "join_expr": join_expr,
             "mode": mode,
             "new_context": dest_ctx,
         }
-        if columns is not None:
-            payload["columns"] = columns
+        if select is not None:
+            payload["columns"] = select
 
         resp = requests.request("POST", url, json=payload, headers=headers)
         _handle_exceptions(resp)
@@ -1088,13 +1088,13 @@ class KnowledgeManager(BaseKnowledgeManager):
         *,
         tables: Union[str, List[str]],
         join_expr: Optional[str] = None,
-        columns: Optional[List[str]] = None,
+        select: Optional[List[str]] = None,
         mode: str = "inner",
-        left_filter: Optional[str] = None,
-        right_filter: Optional[str] = None,
-        post_join_filter: Optional[str] = None,
-        post_join_limit: int = 100,
-        post_join_offset: int = 0,
+        left_where: Optional[str] = None,
+        right_where: Optional[str] = None,
+        result_where: Optional[str] = None,
+        result_limit: int = 100,
+        result_offset: int = 0,
     ) -> Dict[str, List[Dict[str, Any]]]:
         """
         **Join two tables** server-side and immediately query the derived context.
@@ -1124,7 +1124,36 @@ class KnowledgeManager(BaseKnowledgeManager):
         list[dict[str, Any]]
             Rows from the *temporary* joined table.  The table is deleted
             immediately afterwards – this method is therefore **read-only**.
+
+        Notes
+        -----
+        • *left_where* / *right_where* are applied **before** the join, one
+          predicate per input table.
+        • *result_where* is evaluated **after** the join on the **columns that
+          survived projection** (``select``).
+        • If you provide ``select=[]`` make sure every column mentioned in
+          *result_where* is also listed there – otherwise you will receive a
+          helpful ``ValueError`` telling you which column(s) you forgot to
+          project.
         """
+
+        # ── helper to catch mismatches early ────────────────────────────
+        def _qualified_refs(expr: str) -> set[str]:
+            import re
+
+            return set(
+                m.group(0) for m in re.finditer(r"\b[A-Za-z_]\w*\.[A-Za-z_]\w*\b", expr)
+            )
+
+        if result_where and select is not None:
+            missing = _qualified_refs(result_where) - set(select)
+            if missing:
+                raise ValueError(
+                    "❌  `result_where` references column(s) that are not present in "
+                    "`select`.  Either add them to `select` *or* move the predicate to "
+                    "`left_where` / `right_where` as appropriate.  "
+                    f"Missing: {', '.join(sorted(missing))}",
+                )
 
         # 1️⃣  Materialise the join (helper handles validation & REST)
         dest_table = f"_tmp_join_{uuid.uuid4().hex[:8]}"
@@ -1132,10 +1161,10 @@ class KnowledgeManager(BaseKnowledgeManager):
             dest_table=dest_table,
             tables=tables,
             join_expr=join_expr,
-            columns=columns,
+            select=select,
             mode=mode,
-            left_filter=left_filter,
-            right_filter=right_filter,
+            left_where=left_where,
+            right_where=right_where,
         )
 
         # 2️⃣  Read from the derived context
@@ -1143,9 +1172,9 @@ class KnowledgeManager(BaseKnowledgeManager):
             log.entries
             for log in unify.get_logs(
                 context=dest_ctx,
-                filter=post_join_filter,
-                offset=post_join_offset,
-                limit=post_join_limit,
+                filter=result_where,
+                offset=result_offset,
+                limit=result_limit,
             )
         ]
 
@@ -1162,9 +1191,9 @@ class KnowledgeManager(BaseKnowledgeManager):
         self,
         *,
         joins: List[Dict[str, Any]],
-        post_join_filter: Optional[str] = None,
-        post_join_limit: int = 100,
-        post_join_offset: int = 0,
+        result_where: Optional[str] = None,
+        result_limit: int = 100,
+        result_offset: int = 0,
     ) -> Dict[str, List[Dict[str, Any]]]:
         """
         **Chain together an arbitrary number of joins in one call**.
@@ -1191,7 +1220,7 @@ class KnowledgeManager(BaseKnowledgeManager):
                     },
                 ]
 
-        post_join_filter, post_join_limit, post_join_offset
+        result_where, result_limit, result_offset
             Standard projection / pagination applied *after* the final join.
 
         Returns
@@ -1241,8 +1270,8 @@ class KnowledgeManager(BaseKnowledgeManager):
                     return repl(s)
                 return [repl(c) for c in s]
 
-            join_expr = _replace_prev(step.get("join_expr"))  # type: ignore[arg-type]
-            columns = _replace_prev(step.get("columns"))  # type: ignore[arg-type]
+            join_expr = _replace_prev(step.get("join_expr"))
+            select = _replace_prev(step.get("select"))
 
             # Destination table for this hop
             is_last = idx == len(joins) - 1
@@ -1254,10 +1283,10 @@ class KnowledgeManager(BaseKnowledgeManager):
                 dest_table=dest_table,
                 tables=step_tables,
                 join_expr=join_expr,  # type: ignore[arg-type]
-                columns=columns,  # type: ignore[arg-type]
+                select=select,  # type: ignore[arg-type]
                 mode=step.get("mode", "inner"),
-                left_filter=step.get("left_filter"),
-                right_filter=step.get("right_filter"),
+                left_where=step.get("left_where"),
+                right_where=step.get("right_where"),
             )
 
             previous_table = dest_table
@@ -1269,9 +1298,9 @@ class KnowledgeManager(BaseKnowledgeManager):
             log.entries
             for log in unify.get_logs(
                 context=self._ctx_for_table(previous_table),
-                filter=post_join_filter,
-                offset=post_join_offset,
-                limit=post_join_limit,
+                filter=result_where,
+                offset=result_offset,
+                limit=result_limit,
             )
         ]
 
