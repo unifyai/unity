@@ -120,12 +120,6 @@ def signal_handler(signum, frame):
 signal.signal(signal.SIGTERM, signal_handler)
 signal.signal(signal.SIGINT, signal_handler)
 
-# Auto-start Unity service if configured
-auto_start = os.environ.get("AUTO_START_UNITY", "false").lower() == "true"
-if auto_start:
-    print("Auto-starting Unity service...")
-    unity.service.start()
-
 if __name__ == "__main__":
     # Only run in development mode if called directly
     print("Running in development mode...")
