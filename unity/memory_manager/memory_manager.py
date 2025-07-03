@@ -468,3 +468,103 @@ class MemoryManager(BaseMemoryManager):
             mutable=True,
             **base_payload,
         )
+
+    # ------------------------------------------------------------------ #
+    # 5  get_rolling_activity                                            #
+    # ------------------------------------------------------------------ #
+    def get_rolling_activity(self, mode: str = "time") -> str:
+        """
+        Return the **latest** Rolling-Activity snapshot as a human-readable
+        Markdown string.
+
+        Parameters
+        ----------
+        mode : {"time", "interaction"}
+            • ``"time"``        → past_day / past_week / … + all_time
+            • ``"interaction"`` → past_interaction / past_10_interactions / …
+        """
+        mode = mode.lower()
+        if mode not in {"time", "interaction"}:
+            raise ValueError("mode must be either 'time' or 'interaction'")
+
+        # 1️⃣  fetch the newest complete snapshot
+        rows = unify.get_logs(
+            context=self._rolling_ctx,
+            sorting={"row_id": "descending"},
+            limit=1,
+        )
+        if not rows:
+            return "No rolling activity available yet."
+
+        latest = rows[0].entries
+
+        # 2️⃣  which windows are relevant?
+        windows: list[str] = (
+            list(self._TIME_ORDER) if mode == "time" else list(self._COUNT_ORDER)
+        )
+        windows.append("all_time")  # always include if present
+
+        # helper to turn "past_4_weeks" → "Past 4 Weeks"
+        def _pretty(w: str) -> str:
+            if w == "all_time":
+                return "All Time"
+            parts = w.split("_")
+            return "Past " + " ".join(
+                p.capitalize() if not p.isdigit() else p for p in parts[1:]
+            )
+
+        # 3️⃣  pretty titles & optional blurbs per manager
+        _TITLE_DESC = {
+            "task_scheduler": (
+                "Tasks",
+                "Overview of the tasks scheduled, updated, and performed.",
+            ),
+            "knowledge_manager": (
+                "Knowledge",
+                "Overview of the long-term memory (knowledge) added, updated, restructured, removed etc.",
+            ),
+            "contact_manager": (
+                "Contacts",
+                "Overview of contacts created or updated and related actions.",
+            ),
+            "transcript_manager": (
+                "Transcripts",
+                "Overview of messages and transcript summaries.",
+            ),
+            "conductor": (
+                "Orchestration",
+                "High-level orchestration and planning actions.",
+            ),
+        }
+
+        lines: list[str] = []
+        for mgr_cls, nick in self._MANAGERS.items():
+            title, desc = _TITLE_DESC.get(
+                nick,
+                (mgr_cls.replace("Manager", ""), ""),
+            )
+
+            # collect summaries that actually exist
+            available: list[tuple[str, str]] = []
+            for w in windows:
+                col = f"{nick}/{w}"
+                summary = latest.get(col)
+                if summary:
+                    available.append((w, summary))
+
+            if not available:
+                continue  # nothing to show for this manager yet
+
+            # section header
+            lines.append(f"# {title}")
+            if desc:
+                lines.append(desc)
+            lines.append("")  # blank line
+
+            # nested windows
+            for w, summary in available:
+                lines.append(f"## {_pretty(w)}")
+                lines.append(summary)
+                lines.append("")  # blank line
+
+        return "\n".join(lines).strip()
