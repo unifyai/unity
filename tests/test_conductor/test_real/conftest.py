@@ -175,12 +175,19 @@ def conductor_scenario(
     if not SCENARIO_COMMIT_HASHES:
         print("\nSeeding REAL CONDUCTOR scenario...")
         builder = ConductorScenarioBuilder()
+
+        _existing_ctxts = unify.get_contexts(prefix=context_prefix)
         # Ensure all contexts are created before committing
-        unify.create_context(f"{context_prefix}/Contacts")
-        unify.create_context(f"{context_prefix}/Messages")
-        unify.create_context(f"{context_prefix}/MessageExchangeSummaries")
-        unify.create_context(f"{context_prefix}/Tasks")
-        unify.create_context(f"{context_prefix}/Knowledge")
+        ctxts_to_create = [
+            f"{context_prefix}/Contacts",
+            f"{context_prefix}/Messages",
+            f"{context_prefix}/MessageExchangeSummaries",
+            f"{context_prefix}/Tasks",
+            f"{context_prefix}/Knowledge",
+        ]
+        for ctxt in ctxts_to_create:
+            if ctxt not in _existing_ctxts:
+                unify.create_context(ctxt)
 
         conductor, id_maps = event_loop.run_until_complete(builder.create())
 
@@ -200,6 +207,7 @@ def conductor_scenario(
         # ... similar logic for tasks if needed ...
 
     # Yield the fully configured Conductor and ID maps
+    unify.unset_context()
     yield conductor, id_maps
 
 
