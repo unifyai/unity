@@ -82,6 +82,7 @@ class CommsAgent:
     async def get_bus_events(self):
         from unity.events.event_bus import EVENT_BUS
 
+        await EVENT_BUS._prefill_done.wait()
         bus_events = await EVENT_BUS.search(
             filter=f"event_type in {json.dumps(EVENT_TYPES)}",
             limit=self.conv_context_length,
@@ -409,7 +410,7 @@ class CommsAgent:
             except Exception as e:
                 print(f"Error terminating call process: {e}")
 
-    def handle_logging(self, event: dict):
+    async def handle_logging(self, event: dict):
         from unity.transcript_manager.transcript_manager import TranscriptManager
         from unity.transcript_manager.types.message import Message
         from unity.events.event_bus import EVENT_BUS
