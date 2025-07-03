@@ -141,7 +141,7 @@ async def entrypoint(ctx: agents.JobContext):
             )
         ),
         vad=silero.VAD.load(),
-        # turn_detection=MultilingualModel(),
+        turn_detection=MultilingualModel(),
     )
 
     async def end_call():
