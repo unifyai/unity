@@ -283,7 +283,7 @@ class CommsAgent:
 
     async def run(self):
         if self.past_events is None:
-            self.past_events = await self.get_bus_events()
+            self.past_events = []  # await self.get_bus_events()
         if self.call_mode:
             return await self.phone_call_llm_run()
         else:
@@ -410,7 +410,7 @@ class CommsAgent:
             except Exception as e:
                 print(f"Error terminating call process: {e}")
 
-    async def handle_logging(self, event: dict):
+    def handle_logging(self, event: dict):
         from unity.transcript_manager.transcript_manager import TranscriptManager
         from unity.transcript_manager.types.message import Message
         from unity.events.event_bus import EVENT_BUS
