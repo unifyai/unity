@@ -29,14 +29,10 @@ class Controller(threading.Thread):
         self._pubsub_browser_state.subscribe("browser_state")
         self.session_connect_url = session_connect_url
 
-        self._browser_worker = BrowserWorker(
-            start_url="https://www.google.com/",
-            refresh_interval=0.4,
-            session_connect_url=self.session_connect_url,
-            headless=headless,
-            mode=mode,
-            debug=debug,
-        )
+        self._headless = headless
+        self._mode = mode
+        self._debug = debug
+        self._browser_worker = None
         self._browser_open = False
         self._stop_event = threading.Event()
 
@@ -54,6 +50,8 @@ class Controller(threading.Thread):
                 refresh_interval=0.4,
                 session_connect_url=self.session_connect_url,
                 headless=self._headless,
+                mode=self._mode,
+                debug=self._debug,
             )
         if not self._browser_open:
             self._browser_worker.start()
