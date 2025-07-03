@@ -13,7 +13,7 @@ import time
 import shutil
 from pathlib import Path
 from tempfile import mkdtemp
-from typing import Callable, List
+from typing import Callable
 import json
 import queue
 import requests
@@ -28,7 +28,13 @@ from .browser_utils import (
     paint_overlay,
     detect_captcha,
 )
-from .vision_utils import _fuse_elements, _assign_stable_ids, reset_stable_ids, _dedup
+from .vision_utils import (
+    _fuse_elements,
+    _assign_stable_ids,
+    reset_stable_ids,
+    _dedup,
+    _click_at_bbox_center,
+)
 from .command_runner import CommandRunner
 from .mirror import MirrorPage
 from ..commands import *
@@ -83,54 +89,6 @@ def _safe_screenshot(page: Page, log: Callable[[str], None] | None = None) -> by
         if log:
             log(f"_safe_screenshot: fallback screenshot failed – {e}")
         return b""
-
-
-def _click_at_bbox_center(
-    page: Page,
-    bbox_norm: List[float],
-    debug: bool = False,
-) -> None:
-    """
-    Sends a mouse click at the centre of *bbox_norm* and optionally draws a debug dot.
-
-    * ``bbox_norm`` is **[x0, y0, x1, y1]** in the range *0 <= v <= 1* relative
-      to the current viewport.
-    * The function is deliberately lightweight and synchronous so it can be
-      called from any rescue path without awaiting coroutines.
-    """
-    # 1. Calculate the center coordinates in viewport pixels
-    vp = page.evaluate("() => ({w: innerWidth, h: innerHeight})")
-    cx_px = (bbox_norm[0] + bbox_norm[2]) / 2 * vp["w"]
-    cy_px = (bbox_norm[1] + bbox_norm[3]) / 2 * vp["h"]
-    if debug:
-        # 2. JavaScript to draw a red dot at the click coordinates ( for debugging )
-        draw_dot_js = """
-        (args) => {
-            // Remove any old dot first
-            document.getElementById('gemini-debug-dot')?.remove();
-
-            const dot = document.createElement('div');
-            dot.id = 'gemini-debug-dot';
-            dot.style.position = 'fixed'; // Use 'fixed' to match viewport coordinates
-            dot.style.left = `${args.x - 4}px`; // Offset to center the dot
-            dot.style.top = `${args.y - 4}px`;  // Offset to center the dot
-            dot.style.width = '8px';
-            dot.style.height = '8px';
-            dot.style.backgroundColor = 'red';
-            dot.style.border = '1px solid white';
-            dot.style.borderRadius = '50%';
-            dot.style.zIndex = '9999999';    // Ensure it's on top of everything
-            dot.style.pointerEvents = 'none'; // Make it non-interactive
-
-            document.body.appendChild(dot);
-        }
-        """
-        # 3. Execute the JS to draw the dot and pause briefly to see it
-        page.evaluate(draw_dot_js, {"x": cx_px, "y": cy_px})
-        page.wait_for_timeout(3000)  # 3-second pause to see the dot
-
-    # 4. Perform the click at the exact same coordinates
-    page.mouse.click(cx_px, cy_px)
 
 
 def _update_in_textbox_state(runner, handle, label):
@@ -237,7 +195,7 @@ class BrowserWorker(threading.Thread):
         self._vision_elements_cache: list[dict] = []
 
     # ------------------------------------------------------------------
-    # NEW METHOD: To call the OmniParser service
+    # OmniParser service (for vison + hybrid mode)
     # ------------------------------------------------------------------
     def _call_omniparser(
         self,
@@ -307,9 +265,6 @@ class BrowserWorker(threading.Thread):
             self.log(f"OmniParser API error: {e}")
             return []
 
-    # ------------------------------------------------------------------
-    # NEW METHOD: To encapsulate the original heuristic-based logic
-    # ------------------------------------------------------------------
     def _get_elements_from_heuristics(self):
         """
         Original method to discover elements using JS heuristics.
@@ -469,7 +424,7 @@ class BrowserWorker(threading.Thread):
                                 parts = cmd.split()
                                 element_id_to_click = int(parts[1])
 
-                                # ① treat the token as an element *ID* (new hybrid logic) …
+                                # treat the token as an element *ID* (hybrid logic)
                                 element_to_click = next(
                                     (
                                         el
@@ -478,7 +433,7 @@ class BrowserWorker(threading.Thread):
                                     ),
                                     None,
                                 )
-                                # ② … and fall back to "old-style" 1-based index only if that failed
+                                # fall back to "old-style" 1-based index only if that failed
                                 if (
                                     element_to_click is None
                                     and 1 <= element_id_to_click <= len(last_elements)
@@ -658,17 +613,6 @@ class BrowserWorker(threading.Thread):
                             )
 
                     # -- 3) refresh overlay ------------------------------
-                    def _vision_only_elements(vlist, page):
-                        return _fuse_elements(
-                            vlist,
-                            [],
-                            page,
-                            overlap_threshold=0.0,
-                        )  # no heuristics
-
-                    def _heuristic_only_elements(hlist):
-                        return [{**h, "source": "heuristic"} for h in hlist]
-
                     try:
                         # C) Decide which element list to use
                         heuristic_elements = (

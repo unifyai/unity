@@ -1,4 +1,56 @@
 from playwright.sync_api import Page
+from typing import List
+
+
+# ==================================================================
+# Pixel-based click
+# ==================================================================
+def _click_at_bbox_center(
+    page: Page,
+    bbox_norm: List[float],
+    debug: bool = False,
+) -> None:
+    """
+    Sends a mouse click at the centre of *bbox_norm* and optionally draws a debug dot.
+
+    * ``bbox_norm`` is **[x0, y0, x1, y1]** in the range *0 <= v <= 1* relative
+      to the current viewport.
+    * The function is deliberately lightweight and synchronous so it can be
+      called from any rescue path without awaiting coroutines.
+    """
+    # 1. Calculate the center coordinates in viewport pixels
+    vp = page.evaluate("() => ({w: innerWidth, h: innerHeight})")
+    cx_px = (bbox_norm[0] + bbox_norm[2]) / 2 * vp["w"]
+    cy_px = (bbox_norm[1] + bbox_norm[3]) / 2 * vp["h"]
+    if debug:
+        # 2. JavaScript to draw a red dot at the click coordinates ( for debugging )
+        draw_dot_js = """
+        (args) => {
+            // Remove any old dot first
+            document.getElementById('gemini-debug-dot')?.remove();
+
+            const dot = document.createElement('div');
+            dot.id = 'gemini-debug-dot';
+            dot.style.position = 'fixed'; // Use 'fixed' to match viewport coordinates
+            dot.style.left = `${args.x - 4}px`; // Offset to center the dot
+            dot.style.top = `${args.y - 4}px`;  // Offset to center the dot
+            dot.style.width = '8px';
+            dot.style.height = '8px';
+            dot.style.backgroundColor = 'red';
+            dot.style.border = '1px solid white';
+            dot.style.borderRadius = '50%';
+            dot.style.zIndex = '9999999';    // Ensure it's on top of everything
+            dot.style.pointerEvents = 'none'; // Make it non-interactive
+
+            document.body.appendChild(dot);
+        }
+        """
+        # 3. Execute the JS to draw the dot and pause briefly to see it
+        page.evaluate(draw_dot_js, {"x": cx_px, "y": cy_px})
+        page.wait_for_timeout(3000)  # 3-second pause to see the dot
+
+    # 4. Perform the click at the exact same coordinates
+    page.mouse.click(cx_px, cy_px)
 
 
 # ==================================================================
