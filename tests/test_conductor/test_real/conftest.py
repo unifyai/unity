@@ -207,6 +207,7 @@ def conductor_scenario(
         # ... similar logic for tasks if needed ...
 
     # Yield the fully configured Conductor and ID maps
+    unify.unset_context()
     yield conductor, id_maps
 
 

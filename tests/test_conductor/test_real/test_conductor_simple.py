@@ -6,8 +6,10 @@ from typing import Dict, Any
 
 from unity.conductor.conductor import Conductor
 from tests.assertion_helpers import assertion_failed
+from tests.helpers import _handle_project
 
 
+@_handle_project
 @pytest.mark.eval
 @pytest.mark.asyncio
 async def test_ask_across_managers(
@@ -33,6 +35,7 @@ async def test_ask_across_managers(
     )
 
 
+@_handle_project
 @pytest.mark.eval
 @pytest.mark.asyncio
 async def test_request_multi_step_workflow(
@@ -68,6 +71,7 @@ async def test_request_multi_step_workflow(
     assert "GlobalCorp" in tasks[0]["name"], "Task name did not include updated info."
 
 
+@_handle_project
 @pytest.mark.eval
 @pytest.mark.asyncio
 async def test_request_complex_single_shot(
@@ -114,6 +118,7 @@ async def test_request_complex_single_shot(
     assert "dan turner" in description  # From ContactManager
 
 
+@_handle_project
 @pytest.mark.eval
 @pytest.mark.asyncio
 async def test_request_executes_task(
