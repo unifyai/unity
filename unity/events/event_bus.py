@@ -296,7 +296,7 @@ class EventBus:
                     continue
 
                 # Extract the event metadata fields
-                row_id = entries.pop("row_id", None)
+                row_id = entries.pop("row_id", UNASSIGNED)
                 event_id = entries.pop("event_id")
                 calling_id = entries.pop("calling_id")
                 timestamp = entries.pop("event_timestamp")
