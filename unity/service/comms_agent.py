@@ -479,4 +479,4 @@ class CommsAgent:
         else:
             self.events_queue.put_nowait(event["event"])
         # log event and message
-        # self.handle_logging(event)
+        self.handle_logging(event)
