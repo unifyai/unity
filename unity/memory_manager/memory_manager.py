@@ -52,12 +52,13 @@ class MemoryManager(BaseMemoryManager):
     }
     _ALL_TIME = {"all_time": None}
 
-    # helper – build *every* required column once
-    _ROLLING_COLUMNS = tuple(
-        f"{nick}/{window}"
-        for nick in _MANAGERS.values()
-        for window in (list(_TIME_WINDOWS) + list(_COUNT_WINDOWS) + list(_ALL_TIME))
-    )
+    _tmp_cols = []
+    for nick in _MANAGERS.values():
+        for window in list(_TIME_WINDOWS) + list(_COUNT_WINDOWS) + list(_ALL_TIME):
+            _tmp_cols.append(f"{nick}/{window}")
+
+    _ROLLING_COLUMNS = tuple(_tmp_cols)
+    del _tmp_cols
 
     # ---------------------------------------------------------------------- #
     def __init__(
