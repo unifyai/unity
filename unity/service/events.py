@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 from typing import Any, Dict, Type
-from unity.events.event_bus import Event as BusEvent
 
 
 class _EventRegistry(type):
@@ -63,7 +62,9 @@ class Event(metaclass=_EventRegistry):
         }
         return {"event_name": self.__class__.__name__, "payload": payload}
 
-    def to_bus_event(self) -> BusEvent:
+    def to_bus_event(self):
+        from unity.events.event_bus import Event as BusEvent
+
         payload = self.to_dict()["payload"]
         return BusEvent(
             calling_id="",
@@ -88,7 +89,7 @@ class Event(metaclass=_EventRegistry):
         return cls(**payload)  # type: ignore[arg-type]
 
     @classmethod
-    def from_bus_event(cls, event: BusEvent) -> "Event":
+    def from_bus_event(cls, event) -> "Event":
         event_dump = event.model_dump()
         data = {"event_name": event_dump["type"], "payload": event_dump["payload"]}
         return cls.from_dict(data)

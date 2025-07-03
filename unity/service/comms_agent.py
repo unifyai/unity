@@ -4,15 +4,10 @@ import openai
 import os
 import traceback
 
-from unity.common.llm_helpers import AsyncToolUseLoopHandle
-from unity.conductor.conductor import Conductor
-from unity.events.event_bus import EVENT_BUS
 from unity.helpers import run_script, terminate_process
 from unity.service import comms_actions
 from unity.service.actions import *
 from unity.service.events import *
-from unity.transcript_manager.transcript_manager import TranscriptManager
-from unity.transcript_manager.types.message import Message
 
 client = openai.AsyncOpenAI(api_key=os.environ["OPENAI_API_KEY"])
 
@@ -67,12 +62,7 @@ class CommsAgent:
         self.conv_context_length = conv_context_length
         self.events_listener_task = None
         self.events_queue = asyncio.Queue()
-        if past_events is None:
-            self.past_events = []
-            task = asyncio.create_task(self.get_bus_events())
-            task.add_done_callback(self.set_past_events)
-        else:
-            self.past_events = past_events
+        self.past_events = past_events
         self.pending_events = []
         self.inflight_events = []
 
@@ -83,16 +73,15 @@ class CommsAgent:
 
         # conductor
         self.conductor = None
-        self.conductor_handles: dict[int, dict[str, AsyncToolUseLoopHandle | str]] = {}
+        self.conductor_handles = None
         self.handle_count = 0
 
         # logging
-        self.transcript_manager = TranscriptManager()
-
-    def set_past_events(self, task: asyncio.Task):
-        self.past_events = task.result()
+        self.transcript_manager = None
 
     async def get_bus_events(self):
+        from unity.events.event_bus import EVENT_BUS
+
         bus_events = await EVENT_BUS.search(
             filter=f"event_type in {json.dumps(EVENT_TYPES)}",
             limit=self.conv_context_length,
@@ -178,8 +167,12 @@ class CommsAgent:
 
     async def conductor_action(self, action: ConductorAction):
         """Handle conductor actions asynchronously"""
+        from unity.conductor.conductor import Conductor
+        from unity.common.llm_helpers import AsyncToolUseLoopHandle
+
         if self.conductor is None:
             self.conductor = Conductor()
+            self.conductor_handles: dict[int, dict[AsyncToolUseLoopHandle, str]] = {}
 
         # get chat history
         chat_history = self.get_chat_history()
@@ -229,7 +222,9 @@ class CommsAgent:
     async def conductor_handle_action(self, action: ConductorHandleAction):
         """Handle conductor handle actions asynchronously"""
         # check if the conductor is running
-        if not self.conductor_handles.get(action.handle_id):
+        if self.conductor_handles is None or not self.conductor_handles.get(
+            action.handle_id
+        ):
             # handle failed
             event_data = {
                 "event": ConductorHandleFailedEvent(
@@ -286,6 +281,8 @@ class CommsAgent:
             ...
 
     async def run(self):
+        if self.past_events is None:
+            self.past_events = await self.get_bus_events()
         if self.call_mode:
             return await self.phone_call_llm_run()
         else:
@@ -377,9 +374,13 @@ class CommsAgent:
         new_events_str = "\n".join(
             str(Event.from_dict(e)) for e in self.inflight_events
         )
-        conductor_handles_str = "\n".join(
-            f"Handle ID {h}: {self.conductor_handles[h]['query']}"
-            for h in self.conductor_handles
+        conductor_handles_str = (
+            "\n".join(
+                f"Handle ID {h}: {self.conductor_handles[h]['query']}"
+                for h in self.conductor_handles
+            )
+            if self.conductor_handles is not None
+            else ""
         )
         user_msg = f"""Events Stream:
 ** PAST EVENTS **
@@ -409,6 +410,13 @@ class CommsAgent:
                 print(f"Error terminating call process: {e}")
 
     def handle_logging(self, event: dict):
+        from unity.transcript_manager.transcript_manager import TranscriptManager
+        from unity.transcript_manager.types.message import Message
+        from unity.events.event_bus import EVENT_BUS
+
+        if self.transcript_manager is None:
+            self.transcript_manager = TranscriptManager()
+
         try:
             bus_event = Event.from_dict(event["event"]).to_bus_event()
             asyncio.create_task(EVENT_BUS.publish(bus_event))
@@ -459,7 +467,6 @@ class CommsAgent:
     def handle_event(self, event: dict):
         global ONGOING_CALL
         to = event.get("to")
-        self.handle_logging(event)
         if event["event"]["event_name"] == "PhoneCallEndedEvent":
             if self.call_proc:
                 self.call_proc.kill()
@@ -471,3 +478,4 @@ class CommsAgent:
             self.past_events.append(event["event"])
         else:
             self.events_queue.put_nowait(event["event"])
+        self.handle_logging(event)
