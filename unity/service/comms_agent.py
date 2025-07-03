@@ -282,7 +282,7 @@ class CommsAgent:
 
     async def run(self):
         if self.past_events is None:
-            self.past_events = await self.get_bus_events()
+            self.past_events = []#await self.get_bus_events()
         if self.call_mode:
             return await self.phone_call_llm_run()
         else:
@@ -479,4 +479,4 @@ class CommsAgent:
         else:
             self.events_queue.put_nowait(event["event"])
         # log event and message
-        self.handle_logging(event)
+        # self.handle_logging(event)
