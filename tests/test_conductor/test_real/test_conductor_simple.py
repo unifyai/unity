@@ -101,11 +101,11 @@ async def test_request_complex_single_shot(
     ]
 
     assert (
-        "KnowledgeManager.ask" in tool_calls_json
+        "KnowledgeManager_ask" in tool_calls_json
     ), "KnowledgeManager.ask was not called."
-    assert "ContactManager.ask" in tool_calls_json, "ContactManager.ask was not called."
+    assert "ContactManager_ask" in tool_calls_json, "ContactManager.ask was not called."
     assert (
-        "TaskScheduler.update" in tool_calls_json
+        "TaskScheduler_update" in tool_calls_json
     ), "TaskScheduler.update was not called."
 
     # Final state check
