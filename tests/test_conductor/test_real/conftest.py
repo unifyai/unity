@@ -161,7 +161,7 @@ def conductor_scenario(
     Session-scoped fixture to create a versioned, seeded environment for Conductor tests.
     """
     os.environ["TQDM_DISABLE"] = "1"
-    context_prefix = "test_real_conductor"
+    context_prefix = "test_real_conductor/Scenario"
     unify.set_context(context_prefix)
     existing_contexts = unify.get_contexts(prefix=context_prefix)
 
@@ -175,19 +175,6 @@ def conductor_scenario(
     if not SCENARIO_COMMIT_HASHES:
         print("\nSeeding REAL CONDUCTOR scenario...")
         builder = ConductorScenarioBuilder()
-
-        _existing_ctxts = unify.get_contexts(prefix=context_prefix)
-        # Ensure all contexts are created before committing
-        ctxts_to_create = [
-            f"{context_prefix}/Contacts",
-            f"{context_prefix}/Messages",
-            f"{context_prefix}/MessageExchangeSummaries",
-            f"{context_prefix}/Tasks",
-            f"{context_prefix}/Knowledge",
-        ]
-        for ctxt in ctxts_to_create:
-            if ctxt not in _existing_ctxts:
-                unify.create_context(ctxt)
 
         conductor, id_maps = event_loop.run_until_complete(builder.create())
 
