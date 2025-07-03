@@ -445,7 +445,7 @@ class MemoryManager(BaseMemoryManager):
                 "You are a concise assistant. Summarise the JSON array supplied "
                 "by the user in max. 50 words.",
             )
-            return (await llm.chat(json.dumps(items, indent=2))).strip()
+            return (await llm.generate(json.dumps(items, indent=2))).strip()
 
         # ------------------------------------------------------------------
         mgr_nick, window = column.split("/", 1)
