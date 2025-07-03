@@ -52,6 +52,42 @@ class MemoryManager(BaseMemoryManager):
     }
     _ALL_TIME = {"all_time": None}
 
+    # ────────────────────────────────────────────────────────────────────
+    #  NEW: hierarchy helpers so higher-level windows summarise the lower
+    #       level rather than the raw ManagerMethod events
+    # ────────────────────────────────────────────────────────────────────
+    _TIME_ORDER = [
+        "past_day",
+        "past_week",
+        "past_4_weeks",
+        "past_12_weeks",
+        "past_52_weeks",
+    ]
+    _COUNT_ORDER = [
+        "past_interaction",
+        "past_10_interactions",
+        "past_40_interactions",
+        "past_120_interactions",
+        "past_520_interactions",
+    ]
+
+    # child_window → (immediate_lower_window, how_many_lower_summaries)
+    _TIME_PARENT: dict[str, tuple[str, int]] = {}
+    for i in range(1, len(_TIME_ORDER)):
+        child, parent = _TIME_ORDER[i], _TIME_ORDER[i - 1]
+        _TIME_PARENT[child] = (
+            parent,
+            _TIME_WINDOWS[child] // _TIME_WINDOWS[parent],
+        )
+
+    _COUNT_PARENT: dict[str, tuple[str, int]] = {}
+    for i in range(1, len(_COUNT_ORDER)):
+        child, parent = _COUNT_ORDER[i], _COUNT_ORDER[i - 1]
+        _COUNT_PARENT[child] = (
+            parent,
+            _COUNT_WINDOWS[child] // _COUNT_WINDOWS[parent],
+        )
+
     _tmp_cols = []
     for nick in _MANAGERS.values():
         for window in list(_TIME_WINDOWS) + list(_COUNT_WINDOWS) + list(_ALL_TIME):
@@ -332,9 +368,17 @@ class MemoryManager(BaseMemoryManager):
     ) -> None:
         """
         Append a **new** row to RollingActivity, copying the previous one and
-        updating *column* with the fresh LLM-generated summary.
+        updating *column* with a fresh summary.
+
+        • Base-level windows (``past_day`` / ``past_interaction``) are generated
+          from the **raw** ManagerMethod events (unchanged behaviour).
+        • Higher-level windows are created **only** from the summaries of the
+          immediate lower-level window – thus forming a cascade:
+              raw events → day → week → 4 weeks → 12 weeks → 52 weeks
+              raw events → 1 interaction → 10 → 40 → 120 → 520
         """
-        # 0.  snapshot previous row (if any)
+
+        # ---- 0. previous snapshot ----------------------------------------
         prev = unify.get_logs(
             context=self._rolling_ctx,
             sorting={"row_id": "descending"},
@@ -342,34 +386,81 @@ class MemoryManager(BaseMemoryManager):
         )
         base_payload = prev[0].entries.copy() if prev else {}
 
-        # 1.  strip event-bus boilerplate → compact text blob
-        relevant = [
-            {
-                "manager": ev.payload.get("manager"),
-                "method": ev.payload.get("method"),
-                "details": {
-                    k: v
-                    for k, v in ev.payload.items()
-                    if k not in {"manager", "method"}
-                },
-            }
-            for ev in events
-        ]
-        events_blob = json.dumps(relevant, indent=2)
+        # ---- helper: concise LLM summary ---------------------------------
+        async def _summarise(items: list[str | dict]) -> str:
+            if not items:
+                return ""
+            llm = unify.AsyncUnify(
+                "o4-mini@openai",
+                cache=json.loads(os.getenv("UNIFY_CACHE", "true")),
+                traced=json.loads(os.getenv("UNIFY_TRACED", "true")),
+            )
+            llm.set_system_message(
+                "You are a concise assistant. Summarise the JSON array supplied "
+                "by the user in max. 50 words.",
+            )
+            return (await llm.chat(json.dumps(items, indent=2))).strip()
 
-        # 2.  quick LLM summary
-        llm = unify.AsyncUnify(
-            "o4-mini@openai",
-            cache=json.loads(os.getenv("UNIFY_CACHE", "true")),
-            traced=json.loads(os.getenv("UNIFY_TRACED", "true")),
-        )
-        llm.set_system_message(
-            "You are a concise assistant. Summarise the JSON array of manager "
-            "events supplied by the user in max. 50 words.",
-        )
-        summary = (await llm.chat(events_blob)).strip()
+        # ------------------------------------------------------------------
+        mgr_nick, window = column.split("/", 1)
 
-        # 3.  assemble & persist new log
+        # ── 1.  Decide data-source (raw events vs. lower-level summaries) ──
+        if window in {"past_day", "past_interaction"}:
+            # base-level – summarise RAW events
+            relevant = [
+                {
+                    "manager": ev.payload.get("manager"),
+                    "method": ev.payload.get("method"),
+                    "details": {
+                        k: v
+                        for k, v in ev.payload.items()
+                        if k not in {"manager", "method"}
+                    },
+                }
+                for ev in events
+            ]
+            summary = await _summarise(relevant)
+
+        else:
+            # higher-level – derive from lower-level summaries
+            if window in self._TIME_PARENT:
+                lower_window, need = self._TIME_PARENT[window]
+            elif window in self._COUNT_PARENT:
+                lower_window, need = self._COUNT_PARENT[window]
+            else:  # unexpected – fall back to raw events
+                lower_window, need = None, 0
+
+            if lower_window is None:
+                relevant = [
+                    {
+                        "manager": ev.payload.get("manager"),
+                        "method": ev.payload.get("method"),
+                        "details": {
+                            k: v
+                            for k, v in ev.payload.items()
+                            if k not in {"manager", "method"}
+                        },
+                    }
+                    for ev in events
+                ]
+                summary = await _summarise(relevant)
+            else:
+                lower_col = f"{mgr_nick}/{lower_window}"
+                rows = unify.get_logs(
+                    context=self._rolling_ctx,
+                    sorting={"row_id": "descending"},
+                    limit=need * 5,  # generous buffer; we'll filter below
+                )
+                collected: list[str] = []
+                for lg in rows:
+                    txt = lg.entries.get(lower_col)
+                    if txt:
+                        collected.append(txt)
+                    if len(collected) >= need:
+                        break
+                summary = await _summarise(collected)
+
+        # ---- 2.  persist --------------------------------------------------
         base_payload[column] = summary
         unify.log(
             context=self._rolling_ctx,
