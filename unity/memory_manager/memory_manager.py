@@ -318,45 +318,91 @@ class MemoryManager(BaseMemoryManager):
     # 2. Callback registration ---------------------------------------------
     async def _setup_rolling_callbacks(self) -> None:
         """
-        Register one EventBus subscription **per manager × window**.
-        Each callback fires either
-          • every *N* events  **or**
-          • every *T* seconds since the previous trigger.
+        Register callbacks that build the Rolling-Activity hierarchy.
+
+        • Base-level snapshots
+            – past_interaction (count based)
+            – past_day         (time based)
+          are still triggered directly from *ManagerMethod* events.
+
+        • All higher-level windows are now triggered from the new
+          `RollingSummary` event that each completed snapshot emits.
+          The callback fires once *ratio* (= how many lower-level
+          summaries constitute this window) such events have arrived.
         """
         for mgr_cls, nick in self._MANAGERS.items():
-            # baseline filter – narrow to one manager
-            filt = f'evt.payload["manager"] == "{mgr_cls}" and evt.payload.get("phase") == "outgoing"'
 
-            # count-based windows
-            for window, n in self._COUNT_WINDOWS.items():
-                col = f"{nick}/{window}"
-
-                async def _cb(events, _col=col):  # bind column name now
+            # ── Helper: build one callback that writes the column it was
+            #           created for.
+            def _mk_cb(col_name: str):
+                async def _cb(events, _col=col_name):
                     await self._record_rolling_activity(_col, events)
 
+                return _cb
+
+            # ────────────────────────────────────────────────────────────
+            # 1️⃣  BASE-LEVEL windows (raw ManagerMethod events)
+            # ────────────────────────────────────────────────────────────
+            mm_filter = (
+                f'evt.payload["manager"] == "{mgr_cls}" '
+                f'and evt.payload.get("phase") == "outgoing"'
+            )
+
+            # 1a)  past_interaction  (every single outgoing manager call)
+            base_col = f"{nick}/past_interaction"
+            await EVENT_BUS.register_callback(
+                event_type="ManagerMethod",
+                callback=_mk_cb(base_col),
+                filter=mm_filter,
+                every_n=self._COUNT_WINDOWS["past_interaction"],
+            )
+
+            # 1b)  past_day  (time-based, every 24 h worth of events)
+            day_col = f"{nick}/past_day"
+            await EVENT_BUS.register_callback(
+                event_type="ManagerMethod",
+                callback=_mk_cb(day_col),
+                filter=mm_filter,
+                every_seconds=self._TIME_WINDOWS["past_day"],
+            )
+
+            # ────────────────────────────────────────────────────────────
+            # 2️⃣  HIGHER-LEVEL  COUNT-based windows (triggered by
+            #     RollingSummary events from the immediate lower window)
+            # ────────────────────────────────────────────────────────────
+            for child, (parent, ratio) in self._COUNT_PARENT.items():
+                child_col = f"{nick}/{child}"
+                rs_filter = (
+                    f'evt.payload["manager"] == "{nick}" '
+                    f'and evt.payload["window"] == "{parent}"'
+                )
                 await EVENT_BUS.register_callback(
-                    event_type="ManagerMethod",
-                    callback=_cb,
-                    filter=filt,
-                    every_n=n,
+                    event_type="RollingSummary",
+                    callback=_mk_cb(child_col),
+                    filter=rs_filter,
+                    every_n=ratio,
                 )
 
-            # time-based windows
-            for window, secs in self._TIME_WINDOWS.items():
-                col = f"{nick}/{window}"
-
-                async def _cb(events, _col=col):
-                    await self._record_rolling_activity(_col, events)
-
+            # ────────────────────────────────────────────────────────────
+            # 3️⃣  HIGHER-LEVEL  TIME-based windows (same idea as above)
+            # ────────────────────────────────────────────────────────────
+            for child, (parent, ratio) in self._TIME_PARENT.items():
+                # skip the base 'past_day' which is handled already
+                if child == "past_day":
+                    continue
+                child_col = f"{nick}/{child}"
+                rs_filter = (
+                    f'evt.payload["manager"] == "{nick}" '
+                    f'and evt.payload["window"] == "{parent}"'
+                )
                 await EVENT_BUS.register_callback(
-                    event_type="ManagerMethod",
-                    callback=_cb,
-                    filter=filt,
-                    every_seconds=secs,
+                    event_type="RollingSummary",
+                    callback=_mk_cb(child_col),
+                    filter=rs_filter,
+                    every_n=ratio,
                 )
 
-            # all-time window is handled once at startup if empty
-        # ensure at least one empty row exists
+        # ensure we have at least one mutable row to start with
         if not unify.get_logs(context=self._rolling_ctx, limit=1):
             unify.log(context=self._rolling_ctx, new=True, mutable=True)
 
@@ -467,6 +513,19 @@ class MemoryManager(BaseMemoryManager):
             new=True,
             mutable=True,
             **base_payload,
+        )
+
+        # ---- 3.  notify dependants ----------------------------------------
+        # Emit a *RollingSummary* event so higher-level windows trigger only
+        # after the lower-level snapshot is fully written.
+        await EVENT_BUS.publish(
+            Event(
+                type="RollingSummary",
+                payload={
+                    "manager": mgr_nick,  # e.g. "contact_manager"
+                    "window": window,  # e.g. "past_10_interactions"
+                },
+            ),
         )
 
     # ------------------------------------------------------------------ #
