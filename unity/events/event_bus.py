@@ -274,35 +274,63 @@ class EventBus:
         # runtime subscriptions (id → Subscription)
         self._subscriptions: Dict[str, Subscription] = {}
 
-        # ── Hydrate both events *and* persisted subscriptions ───────────────
-        self._prefill_from_unify()
-        self._load_subscriptions()
+        # ── Hydrate in the *background* rather than blocking import time ───
+        # The original synchronous pre-fill was executed right here,
+        # effectively stalling every process that imported the module.
+        #
+        # We now:
+        #   1.  spin up a task (if an event-loop already exists) **or**
+        #   2.  postpone scheduling until the first coroutine touches
+        #       the bus (common during CLI / test startup).
+        #
+        self._prefill_done: asyncio.Event = asyncio.Event()
+        self._prefill_task: Optional["asyncio.Task[None]"] = None
+
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            # No loop yet (import time in sync context) – we’ll launch lazily.
+            pass
+        else:
+            self._prefill_task = loop.create_task(self._async_initial_hydration())
 
     # ------------------------------------------------------------------
-    def _prefill_from_unify(self):
-        """Populate each per‑type deque with newest logs from Unify."""
-        for etype, context in self._specific_ctxs.items():
-            window_size = self._window_sizes.setdefault(etype, self._default_window)
-            raw_logs = unify.get_logs(
+    # New *non-blocking* hydration helpers
+    # ------------------------------------------------------------------
+    async def _async_initial_hydration(self) -> None:
+        """
+        Concurrently hydrate deques *and* persisted subscriptions.
+        Sets `self._prefill_done` when complete so other coroutines can
+        await bus readiness.
+        """
+        await asyncio.gather(
+            self._async_prefill_from_unify(),
+            self._async_load_subscriptions(),
+        )
+        self._prefill_done.set()
+
+    async def _async_prefill_from_unify(self) -> None:
+        """Populate per-type deques without blocking the event-loop."""
+
+        async def _prefill_one(etype: str, context: str, window_size: int):
+            raw_logs = await asyncio.to_thread(
+                unify.get_logs,
                 context=context,
                 limit=window_size,
                 sorting={"timestamp": "descending"},
             )
-            # unify returns most‑recent‑first – reverse for chronological order
             dq: Deque[Event] = deque(maxlen=window_size)
             for log in reversed(raw_logs):
                 entries = log.entries
-                if entries is None:
+                if not entries:
                     continue
 
-                # Extract the event metadata fields
                 row_id = entries.pop("row_id", UNASSIGNED)
                 event_id = entries.pop("event_id")
                 calling_id = entries.pop("calling_id")
                 timestamp = entries.pop("event_timestamp")
                 cls_path = entries.pop("payload_cls")
 
-                # ── 1. recover the payload class (if recorded) ──────────
                 Model: type[BaseModel] | None = None
                 if cls_path:
                     try:
@@ -311,27 +339,75 @@ class EventBus:
                     except (ModuleNotFoundError, AttributeError, ValueError):
                         Model = None
 
-                # ── 2. rebuild the payload instance (fallback: dict) ────
                 if Model is not None:
                     try:
                         payload_obj = Model.model_validate(entries)
-                    except ValidationError:  # corrupted row → keep dict
+                    except ValidationError:
                         payload_obj = entries
                 else:
                     payload_obj = entries
 
-                evt = Event(
-                    event_id=event_id,
-                    row_id=row_id,
-                    calling_id=calling_id,
-                    type=etype,
-                    timestamp=timestamp,
-                    payload=payload_obj,
-                    payload_cls=cls_path or "",
+                dq.append(
+                    Event(
+                        event_id=event_id,
+                        row_id=row_id,
+                        calling_id=calling_id,
+                        type=etype,
+                        timestamp=timestamp,
+                        payload=payload_obj,
+                        payload_cls=cls_path or "",
+                    ),
                 )
-
-                dq.append(evt)
             self._deques[etype] = dq
+
+        tasks = [
+            _prefill_one(
+                et,
+                ctx,
+                self._window_sizes.setdefault(et, self._default_window),
+            )
+            for et, ctx in self._specific_ctxs.items()
+        ]
+        if tasks:
+            await asyncio.gather(*tasks)
+
+    async def _async_load_subscriptions(self) -> None:
+        """Async wrapper around the former blocking `_load_subscriptions`."""
+        rows = await asyncio.to_thread(
+            unify.get_logs,
+            context=self._callbacks_ctx,
+            sorting={"row_id": "ascending"},
+        )
+        latest: Dict[str, dict] = {}
+        for lg in rows:
+            data = lg.entries.copy()
+            latest[data["subscription_id"]] = data
+
+        for sdata in latest.values():
+            self._subscriptions[sdata["subscription_id"]] = Subscription(
+                subscription_id=sdata["subscription_id"],
+                event_type=sdata["event_type"],
+                filter=sdata.get("filter"),
+                count_step=sdata.get("count_step"),
+                time_step=sdata.get("time_step"),
+                last_row_id=sdata.get("last_row_id", 0),
+                last_timestamp=sdata.get("last_timestamp", ""),
+            )
+
+    # ------------------------------------------------------------------
+    async def _ensure_ready(self) -> None:
+        """
+        Await background hydration (lazy-started if not running yet).
+        Call this at the top of any *public* coroutine that needs the
+        internal state to be fully initialised.
+        """
+        if self._prefill_done.is_set():
+            return
+
+        if self._prefill_task is None:
+            self._prefill_task = asyncio.create_task(self._async_initial_hydration())
+
+        await self._prefill_done.wait()
 
     # ------------------------------------------------------------------
     def _load_subscriptions(self) -> None:
@@ -375,6 +451,7 @@ class EventBus:
                 self._window_sizes[event_type] = self._default_window
 
     async def publish(self, event: Event) -> None:
+        await self._ensure_ready()
         if event.type not in self._specific_ctxs:
             self.register_event_types(event.type)
         window = self._window_sizes[event.type]
@@ -433,6 +510,7 @@ class EventBus:
         limit: Union[int, Dict[str, int]] = 100,
         grouped_by_type: bool = False,
     ) -> Union[List[Event], Dict[str, List[Event]]]:
+        await self._ensure_ready()
         """
         Return events that satisfy *filter*, applying *offset*/**limit** rules as
         follows
@@ -682,6 +760,7 @@ class EventBus:
         every_n: Optional[int] = None,
         every_seconds: Optional[int] = None,
     ) -> str:
+        await self._ensure_ready()
         """
         Register *callback* to be fired either every **N** matching events
         or after **X** seconds have elapsed since the previous trigger.
