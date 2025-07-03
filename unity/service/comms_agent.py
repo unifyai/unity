@@ -478,4 +478,5 @@ class CommsAgent:
             self.past_events.append(event["event"])
         else:
             self.events_queue.put_nowait(event["event"])
+        # log event and message
         self.handle_logging(event)
