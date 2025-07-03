@@ -167,29 +167,29 @@ class CommsAgent:
 
     async def conductor_action(self, action: ConductorAction):
         """Handle conductor actions asynchronously"""
-        from unity.conductor.conductor import Conductor
-        from unity.common.llm_helpers import AsyncToolUseLoopHandle
+        # from unity.conductor.conductor import Conductor
+        # from unity.common.llm_helpers import AsyncToolUseLoopHandle
 
-        if self.conductor is None:
-            self.conductor = Conductor()
-            self.conductor_handles: dict[int, dict[AsyncToolUseLoopHandle, str]] = {}
+        # if self.conductor is None:
+        #     self.conductor = Conductor()
+        #     self.conductor_handles: dict[int, dict[AsyncToolUseLoopHandle, str]] = {}
 
         # get chat history
         chat_history = self.get_chat_history()
 
-        # query the conductor
-        fn = self.conductor.ask if action.type == "ask" else self.conductor.request
-        conductor_handle = await fn(
-            action.query,
-            parent_chat_context=chat_history,
-            _return_reasoning_steps=action.show_steps,
-        )
-        handle_id = self.handle_count
-        self.conductor_handles[handle_id] = {
-            "handle": conductor_handle,
-            "query": action.query,
-        }
-        self.handle_count += 1
+        # # query the conductor
+        # fn = self.conductor.ask if action.type == "ask" else self.conductor.request
+        # conductor_handle = await fn(
+        #     action.query,
+        #     parent_chat_context=chat_history,
+        #     _return_reasoning_steps=action.show_steps,
+        # )
+        # handle_id = self.handle_count
+        # self.conductor_handles[handle_id] = {
+        #     "handle": conductor_handle,
+        #     "query": action.query,
+        # }
+        # self.handle_count += 1
 
         # publish start event
         self.publish(
@@ -200,24 +200,24 @@ class CommsAgent:
             },
         )
 
-        # wait for the handle to be done
-        while not conductor_handle.done():
-            print("waiting for handle to be done")
-            await asyncio.sleep(1)
+        # # wait for the handle to be done
+        # while not conductor_handle.done():
+        #     print("waiting for handle to be done")
+        #     await asyncio.sleep(1)
 
-        # get handle result
-        answer = await conductor_handle.result()
-        self.conductor_handles.pop(handle_id)
-        if isinstance(answer, tuple):
-            answer, _ = answer
+        # # get handle result
+        # answer = await conductor_handle.result()
+        # self.conductor_handles.pop(handle_id)
+        # if isinstance(answer, tuple):
+        #     answer, _ = answer
 
-        # publish end event
-        self.publish(
-            {
-                "topic": "conductor",
-                "event": ConductorEndedEvent(answer).to_dict(),
-            },
-        )
+        # # publish end event
+        # self.publish(
+        #     {
+        #         "topic": "conductor",
+        #         "event": ConductorEndedEvent(answer).to_dict(),
+        #     },
+        # )
 
     async def conductor_handle_action(self, action: ConductorHandleAction):
         """Handle conductor handle actions asynchronously"""
@@ -282,7 +282,8 @@ class CommsAgent:
 
     async def run(self):
         if self.past_events is None:
-            self.past_events = await self.get_bus_events()
+            # self.past_events = await self.get_bus_events()
+            self.past_events = []
         if self.call_mode:
             return await self.phone_call_llm_run()
         else:
@@ -478,4 +479,4 @@ class CommsAgent:
             self.past_events.append(event["event"])
         else:
             self.events_queue.put_nowait(event["event"])
-        self.handle_logging(event)
+        # self.handle_logging(event)
