@@ -470,6 +470,8 @@ class EventBus:
         else:
             entries = event.model_dump(mode="json")
 
+        entries.pop("row_id")
+
         # Log to global event table
         self._logger.log_create(
             project=unify.active_project(),
@@ -489,12 +491,10 @@ class EventBus:
             context=self._specific_ctxs[event.type],
             params={},
             entries={
-                **{
-                    "event_id": event.event_id,
-                    "calling_id": event.calling_id,
-                    "event_timestamp": event.timestamp,
-                    "payload_cls": event.payload_cls,
-                },
+                "event_id": entries["event_id"],
+                "calling_id": entries["calling_id"],
+                "event_timestamp": entries["timestamp"],
+                "payload_cls": entries["payload_cls"],
                 **payload_dict,
             },
         )
