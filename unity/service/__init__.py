@@ -4,7 +4,7 @@ import sys
 import time
 import threading
 import signal
-import asyncio
+import socket
 from typing import Optional, Dict, Any
 
 
@@ -101,119 +101,78 @@ def _monitor_process() -> None:
             break
 
 
-def _run_async_start(manager_name: str = "contact") -> bool:
-    """Internal async function to start the service"""
-
-    async def _async_start():
-        global _process, _start_time, _shutdown_reason
-
-        if _process and _process.poll() is None:
-            print("Unity service is already running")
-            return True  # Already running
-
+def wait_for_service_ready(timeout: int = 30) -> bool:
+    """Wait for the service to be ready by checking the event manager server"""
+    start_time = time.time()
+    while time.time() - start_time < timeout:
         try:
-            # Get environment variables for this assistant (set by Cloud Run)
-            assistant_id = os.environ.get("ASSISTANT_ID", "default")
-
-            # Start main.py using subprocess
-            print(f"Starting Unity service (main.py) for assistant {assistant_id}")
-
-            _process = subprocess.Popen(
-                [sys.executable, "unity/service/main.py", manager_name],
-                start_new_session=True,
-            )
-
-            _start_time = time.time()
-
-            # Give it a moment to start (non-blocking)
-            await asyncio.sleep(2)
-
-            # Check if process is still running (didn't crash immediately)
-            if _process.poll() is None:
-                print("Unity service started successfully")
-                _shutdown_reason = None  # Clear any previous shutdown reason
-                _start_monitoring()
+            # Try to connect to the event manager server
+            sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            sock.settimeout(2)
+            result = sock.connect_ex(("127.0.0.1", 8090))
+            sock.close()
+            if result == 0:
+                print("Unity service is ready and accepting connections")
                 return True
-            else:
-                print("Unity service failed to start (process exited)")
-                _shutdown_reason = "startup_failure"
-                return False
-
         except Exception as e:
-            print(f"Failed to start Unity service: {e}")
-            return False
+            print(f"Waiting for service to be ready... ({e})")
+        time.sleep(1)
 
-    # Check if we're already in an event loop
-    try:
-        loop = asyncio.get_running_loop()
-        # We're in an async context, create a task
-        import concurrent.futures
-
-        with concurrent.futures.ThreadPoolExecutor() as executor:
-            future = executor.submit(asyncio.run, _async_start())
-            return future.result()
-    except RuntimeError:
-        # No event loop running, create a new one
-        try:
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
-            return loop.run_until_complete(_async_start())
-        finally:
-            loop.close()
+    print(f"Unity service failed to become ready within {timeout} seconds")
+    return False
 
 
 def start(manager_name: str = "contact") -> bool:
     """
-    Start the Unity service as a subprocess.
+    Start the Unity service as a subprocess and wait for it to be ready.
 
     Returns:
-        bool: True if service started successfully, False otherwise
+        bool: True if service started and is ready, False otherwise
     """
-    return _run_async_start(manager_name)
+    global _process, _start_time, _shutdown_reason
 
+    if _process and _process.poll() is None:
+        print("Unity service is already running")
+        return True  # Already running
 
-def _run_async_stop(reason: str) -> bool:
-    """Internal async function to stop the service"""
-
-    async def _async_stop():
-        from unity.helpers import terminate_process
-
-        global _process, _shutdown_reason
-
-        _stop_monitoring()  # Stop monitoring first
-
-        if _process:
-            try:
-                print("Stopping Unity service and all child processes...")
-                # Use the terminate_process function which handles process groups properly
-                terminate_process(_process)
-                print("Unity service and child processes stopped")
-                _shutdown_reason = reason
-            except Exception as e:
-                print(f"Error stopping Unity service: {e}")
-                _shutdown_reason = f"stop_error: {e}"
-
-            _process = None
-            return True
-        return True
-
-    # Check if we're already in an event loop
     try:
-        loop = asyncio.get_running_loop()
-        # We're in an async context, create a task
-        import concurrent.futures
+        # Get environment variables for this assistant (set by Cloud Run)
+        assistant_id = os.environ.get("ASSISTANT_ID", "default")
 
-        with concurrent.futures.ThreadPoolExecutor() as executor:
-            future = executor.submit(asyncio.run, _async_stop())
-            return future.result()
-    except RuntimeError:
-        # No event loop running, create a new one
-        try:
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
-            return loop.run_until_complete(_async_stop())
-        finally:
-            loop.close()
+        # Start main.py using subprocess
+        print(f"Starting Unity service (main.py) for assistant {assistant_id}")
+
+        _process = subprocess.Popen(
+            [sys.executable, "unity/service/main.py", manager_name],
+            start_new_session=True,
+        )
+
+        _start_time = time.time()
+
+        # Give it a moment to start
+        time.sleep(2)
+
+        # Check if process is still running (didn't crash immediately)
+        if _process.poll() is None:
+            print("Unity service started successfully")
+            _shutdown_reason = None  # Clear any previous shutdown reason
+            _start_monitoring()
+
+            # Wait for service to be ready
+            if wait_for_service_ready():
+                return True
+            else:
+                print("Unity service failed to become ready, stopping...")
+                stop("startup_timeout")
+                return False
+        else:
+            print("Unity service failed to start (process exited)")
+            _shutdown_reason = "startup_failure"
+            return False
+
+    except Exception as e:
+        print(f"Failed to start Unity service: {e}")
+        return False
 
 
 def stop(reason: str = "manual_stop") -> bool:
@@ -226,7 +185,24 @@ def stop(reason: str = "manual_stop") -> bool:
     Returns:
         bool: True if service was stopped successfully
     """
-    return _run_async_stop(reason)
+    global _process, _shutdown_reason
+
+    _stop_monitoring()  # Stop monitoring first
+
+    if _process:
+        try:
+            print("Stopping Unity service and all child processes...")
+            # Use the terminate_process function which handles process groups properly
+            terminate_process(_process)
+            print("Unity service and child processes stopped")
+            _shutdown_reason = reason
+        except Exception as e:
+            print(f"Error stopping Unity service: {e}")
+            _shutdown_reason = f"stop_error: {e}"
+
+        _process = None
+        return True
+    return True
 
 
 def is_running() -> bool:
