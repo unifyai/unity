@@ -8,6 +8,7 @@ import unify
 import asyncio
 import datetime as dt
 from collections import deque
+from datetime import datetime
 from typing import (
     List,
     Deque,
@@ -67,8 +68,8 @@ class Event(BaseModel):
     type: str = Field(
         description="Domain-level event type or ‘topic’",
     )
-    timestamp: str = Field(
-        default_factory=lambda: dt.datetime.now(dt.UTC).isoformat(),
+    timestamp: datetime = Field(
+        default_factory=lambda: dt.datetime.now(dt.UTC),
         description="ISO-8601 timestamp (UTC)",
     )
 
@@ -178,7 +179,7 @@ class Subscription(BaseModel):
 
     # Progress bookkeeping  ────────────────────────────────────────────
     last_row_id: int = 0
-    last_timestamp: str = ""
+    last_timestamp: Optional[datetime] = None
 
     # in-memory only
     callback: Optional[Callable[[List["Event"]], Union[Awaitable[None], None]]] = Field(
@@ -221,8 +222,8 @@ class Subscription(BaseModel):
         if self.time_step is not None:
             if not self.last_timestamp:
                 return True
-            prev = dt.datetime.fromisoformat(self.last_timestamp)
-            now = dt.datetime.fromisoformat(evt.timestamp)
+            prev = self.last_timestamp
+            now = evt.timestamp
             if (now - prev).total_seconds() >= self.time_step:
                 return True
 
@@ -234,6 +235,9 @@ class Subscription(BaseModel):
             self.last_row_id = evt.row_id
         self.last_timestamp = evt.timestamp
         self.local_count = 0
+
+    def to_post_join(self) -> dict:
+        return self.model_dump(mode="json")
 
 
 # ───────────────────────────   EventBus singleton   ─────────────────────────
