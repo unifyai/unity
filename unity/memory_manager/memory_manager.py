@@ -19,6 +19,7 @@ from .prompt_builders import (
     build_knowledge_prompt,
 )
 from .base import BaseMemoryManager
+from ..events.event_bus import EVENT_BUS, Event
 
 
 class MemoryManager(BaseMemoryManager):
@@ -26,6 +27,39 @@ class MemoryManager(BaseMemoryManager):
     Offline helper invoked by a scheduler every ~50 messages.
     """
 
+    # ─────────────────────────────  NEW CONSTANTS  ──────────────────────────
+    _MANAGERS = {
+        "ContactManager": "contact_manager",
+        "TranscriptManager": "transcript_manager",
+        "KnowledgeManager": "knowledge_manager",
+        "TaskScheduler": "task_scheduler",
+        "Conductor": "conductor",
+    }
+
+    _TIME_WINDOWS = {  # seconds
+        "past_day": 60 * 60 * 24,
+        "past_week": 60 * 60 * 24 * 7,
+        "past_4_weeks": 60 * 60 * 24 * 7 * 4,
+        "past_12_weeks": 60 * 60 * 24 * 7 * 12,
+        "past_52_weeks": 60 * 60 * 24 * 7 * 52,
+    }
+    _COUNT_WINDOWS = {
+        "past_interaction": 1,
+        "past_10_interactions": 10,
+        "past_40_interactions": 40,
+        "past_120_interactions": 120,
+        "past_520_interactions": 520,
+    }
+    _ALL_TIME = {"all_time": None}
+
+    # helper – build *every* required column once
+    _ROLLING_COLUMNS = tuple(
+        f"{nick}/{window}"
+        for nick in _MANAGERS.values()
+        for window in (list(_TIME_WINDOWS) + list(_COUNT_WINDOWS) + list(_ALL_TIME))
+    )
+
+    # ---------------------------------------------------------------------- #
     def __init__(
         self,
         *,
@@ -38,6 +72,10 @@ class MemoryManager(BaseMemoryManager):
             contact_manager=self._contact_manager,
         )
         self._knowledge_manager = knowledge_manager or KnowledgeManager()
+
+        # ── NEW: Rolling-Activity context & subscriptions ─────────────────
+        self._rolling_ctx = self._ensure_rolling_context()
+        asyncio.create_task(self._setup_rolling_callbacks())  # fire-and-forget
 
     # ------------------------------------------------------------------ #
     # 1  update_contacts                                                 #
@@ -225,3 +263,116 @@ class MemoryManager(BaseMemoryManager):
         )
 
         return await handle.result()
+
+    # ───────────────────────────  NEW HELPERS  ────────────────────────────
+    # 1. Context & schema ---------------------------------------------------
+    def _ensure_rolling_context(self) -> str:
+        """Create the `RollingActivity` context (idempotent) and return its name."""
+        active_ctx = unify.get_active_context()["write"] or ""
+        ctx = f"{active_ctx}/RollingActivity" if active_ctx else "RollingActivity"
+        if ctx not in unify.get_contexts():
+            unify.create_context(ctx, unique_column_ids="row_id")
+            fields = {
+                col: {"type": "str", "mutable": True} for col in self._ROLLING_COLUMNS
+            }
+            unify.create_fields(fields, context=ctx)
+        return ctx
+
+    # 2. Callback registration ---------------------------------------------
+    async def _setup_rolling_callbacks(self) -> None:
+        """
+        Register one EventBus subscription **per manager × window**.
+        Each callback fires either
+          • every *N* events  **or**
+          • every *T* seconds since the previous trigger.
+        """
+        for mgr_cls, nick in self._MANAGERS.items():
+            # baseline filter – narrow to one manager
+            filt = f'evt.payload["manager"] == "{mgr_cls}" and evt.payload.get("phase") == "outgoing"'
+
+            # count-based windows
+            for window, n in self._COUNT_WINDOWS.items():
+                col = f"{nick}/{window}"
+
+                async def _cb(events, _col=col):  # bind column name now
+                    await self._record_rolling_activity(_col, events)
+
+                await EVENT_BUS.register_callback(
+                    event_type="ManagerMethod",
+                    callback=_cb,
+                    filter=filt,
+                    every_n=n,
+                )
+
+            # time-based windows
+            for window, secs in self._TIME_WINDOWS.items():
+                col = f"{nick}/{window}"
+
+                async def _cb(events, _col=col):
+                    await self._record_rolling_activity(_col, events)
+
+                await EVENT_BUS.register_callback(
+                    event_type="ManagerMethod",
+                    callback=_cb,
+                    filter=filt,
+                    every_seconds=secs,
+                )
+
+            # all-time window is handled once at startup if empty
+        # ensure at least one empty row exists
+        if not unify.get_logs(context=self._rolling_ctx, limit=1):
+            unify.log(context=self._rolling_ctx, new=True, mutable=True)
+
+    # 3. Persisting the new snapshot ---------------------------------------
+    async def _record_rolling_activity(
+        self,
+        column: str,
+        events: list[Event],
+    ) -> None:
+        """
+        Append a **new** row to RollingActivity, copying the previous one and
+        updating *column* with the fresh LLM-generated summary.
+        """
+        # 0.  snapshot previous row (if any)
+        prev = unify.get_logs(
+            context=self._rolling_ctx,
+            sorting={"row_id": "descending"},
+            limit=1,
+        )
+        base_payload = prev[0].entries.copy() if prev else {}
+
+        # 1.  strip event-bus boilerplate → compact text blob
+        relevant = [
+            {
+                "manager": ev.payload.get("manager"),
+                "method": ev.payload.get("method"),
+                "details": {
+                    k: v
+                    for k, v in ev.payload.items()
+                    if k not in {"manager", "method"}
+                },
+            }
+            for ev in events
+        ]
+        events_blob = json.dumps(relevant, indent=2)
+
+        # 2.  quick LLM summary
+        llm = unify.AsyncUnify(
+            "o4-mini@openai",
+            cache=json.loads(os.getenv("UNIFY_CACHE", "true")),
+            traced=json.loads(os.getenv("UNIFY_TRACED", "true")),
+        )
+        llm.set_system_message(
+            "You are a concise assistant. Summarise the JSON array of manager "
+            "events supplied by the user in max. 50 words.",
+        )
+        summary = (await llm.chat(events_blob)).strip()
+
+        # 3.  assemble & persist new log
+        base_payload[column] = summary
+        unify.log(
+            context=self._rolling_ctx,
+            new=True,
+            mutable=True,
+            **base_payload,
+        )
