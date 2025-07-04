@@ -79,7 +79,9 @@ class CommsAgent:
 
         # logging
         self.transcript_manager = None
-        self.logging_executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="logging_worker")
+        self.logging_executor = ThreadPoolExecutor(
+            max_workers=1, thread_name_prefix="logging_worker"
+        )
 
     async def get_bus_events(self):
         from unity.events.event_bus import EVENT_BUS
@@ -285,7 +287,7 @@ class CommsAgent:
 
     async def run(self):
         if self.past_events is None:
-            self.past_events = []   # await self.get_bus_events()
+            self.past_events = []  # await self.get_bus_events()
         if self.call_mode:
             return await self.phone_call_llm_run()
         else:
