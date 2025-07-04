@@ -2,6 +2,7 @@ import os
 import asyncio
 from dataclasses import dataclass
 from typing import Literal, Optional
+import random
 
 from datetime import datetime
 
@@ -35,13 +36,14 @@ class Agent:
         self.call_proc = run_script("call.py", "console")
         while True:
             try:
-                new_event = await asyncio.wait_for(self.events_queue.get(), 1.0)
+                new_event = await self.events_queue.get()
                 print("GOT NEW EVENT", new_event)
                 self.pending_events.append(new_event)
                 # urgent events should re-trigger, cancel events should cancel current running only
                 if new_event:
                     # must flush all events now
                     if self.current_llm_run and not self.current_llm_run.done():
+                        print("CANCELLING CURRENT RUN")
                         self.current_llm_run.cancel()
                         try:
                             # cancel gracefully
@@ -54,7 +56,10 @@ class Agent:
                     else:
                         self.inflight_events = self.pending_events.copy()
 
-                    self.current_llm_run = asyncio.create_task(self.run())
+                    add_filler = False
+                    if new_event.get("role") == "user" and new_event.get("content") != "<Call Started>":
+                        add_filler = True
+                    self.current_llm_run = asyncio.create_task(self.run(add_filler))
                     self.current_llm_run.add_done_callback(self.on_run_end)
                     self.pending_events.clear()
             except asyncio.TimeoutError:
@@ -108,14 +113,48 @@ class Agent:
         finally:
             ...
 
-    async def run(self):
-        return await self.phone_call_llm_run()
+    async def run(self, add_filler=False):
+        return await self.phone_call_llm_run(add_filler=add_filler)
     
-    async def phone_call_llm_run(self):
+    async def phone_call_llm_run(self, add_filler=False):
         client = openai.AsyncOpenAI(api_key=os.environ["OPENAI_API_KEY"])
+        # first_ev = {"topic": "call_process", "type": "start_gen"}
+        # self.publish(first_ev)
+
+        print("ADD FILLER", add_filler)
+        if add_filler:
+            first_ev = {"topic": "call_process", "type": "start_gen"}
+            self.publish(first_ev)
+            fillers = [
+                    "One second.",
+                    "Just a second.",
+                    "Give me a second.",
+                    "Just a moment.",
+                    "One moment.",
+                    "Give me a moment.",
+                    "Alright, just a second."
+                ]
+            filler = random.choice(fillers)
+            # for w in filler.split(" "):
+            #     ev = {
+            #             "topic": "call_process",
+            #             "type": "gen_chunk",
+            #             "chunk": w,
+            #         }
+            #     self.publish(ev)
+            ev = {
+                        "topic": "call_process",
+                        "type": "gen_chunk",
+                        "chunk": f'{filler}<break time="1s"/>',
+                    }
+            self.publish(ev)
+            ev = {"topic": "call_process", "type": "end_gen"}
+            self.publish(ev)
+
+
+
         first_ev = {"topic": "call_process", "type": "start_gen"}
         self.publish(first_ev)
-
 
         class AgentOutput(BaseModel):
             thoughts: str = Field(..., description="Your inner thoughts before taking actions. Also determine if you need to give a small update to the user based on the conversation history")

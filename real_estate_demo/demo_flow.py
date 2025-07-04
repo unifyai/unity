@@ -216,7 +216,7 @@ Area: {location}
 Type: {area}
 Issue: {area_tier_2} > {area_tier_2_issue}
 Appointment Date: {chosen_slot}""".strip(),
-fields=[RadioField("user_informed", "User has been informed and has consented?", options=["yes"])],
+fields=[RadioField("user_informed", "User has been informeded on final time?", options=["yes"])],
 next=None
 )
 

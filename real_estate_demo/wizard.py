@@ -13,7 +13,7 @@ class GoBack(BaseModel):
     back: Literal[True] = True
 
 class EndSession(BaseModel):
-    "conclude the session and end the call, can only be used in a terminal node, never conclude the session until you make sure you have met all of the user's needs"
+    "conclude the session and end the call, can only be used in a terminal node, using EndSession will end the call and you won't be able to listen to the user anymore."
     end_session: Literal[True] = True
     closing_message: str
 
@@ -281,8 +281,8 @@ class Flow:
         # )
         DataFieldAction = create_model(
             "DataFieldAction",
-            update= (str, Field(default=None, description="short ~3-5 word update for the user")),
-            fields_actions = (list[Union[self.current_node.action_model]], Field(default=..., description="Data field action to take")),
+            update= (str, Field(default=None, description="short ~3-5 word update for the user, avoid redundant updates.")),
+            fields_actions = (list[Union[self.current_node.action_model]], Field(default=..., description="data field action to take")),
             __base__=BaseDataFieldAction
         )
         return Union[DataFieldAction, *extra_actions]

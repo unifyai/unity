@@ -234,7 +234,7 @@ async def entrypoint(ctx: agents.JobContext):
         global IN_GEN
         nonlocal session, last_activity_time
         handle = await session.generate_reply()
-        IN_GEN = False
+        # IN_GEN = False
         last_activity_time = asyncio.get_event_loop().time()  # Update activity time
         try:
             return handle.chat_message.text_content, handle.interrupted
@@ -338,7 +338,7 @@ async def entrypoint(ctx: agents.JobContext):
                         elif msg["type"] == "end_gen":
                             chunk_queue.put_nowait(msg)
                             break
-                        await asyncio.sleep(0.1)
+                        await asyncio.sleep(0)
                     IN_GEN = False
             except Exception as e:
                 print(f"Error in collect_events: {e}")
