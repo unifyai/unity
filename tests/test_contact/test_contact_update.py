@@ -158,7 +158,7 @@ async def test_update_with_clarification_needed(
     clar_up_q = asyncio.Queue()
     clar_down_q = asyncio.Queue()
 
-    command = "Add surname 'Wonderland' for Alice. Request clarification if there is more than one Alice."
+    command = "Add surname 'Wonderland' for Alice. Call the tool `request_clarification` if there is more than one Alice."
 
     handle = await cm.update(
         command,
