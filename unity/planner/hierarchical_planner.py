@@ -17,14 +17,12 @@ import unify
 from pydantic import BaseModel, Field
 
 from unity.common.llm_helpers import AsyncToolUseLoopHandle, start_async_tool_use_loop
-from unity.controller.controller import Controller
 from unity.function_manager.function_manager import FunctionManager
 from unity.planner.base import (
     BaseActiveTask,
     BasePlanner,
-    BrowserSessionHandle,
-    ComsManager,
 )
+from unity.planner.action_provider import ActionProvider
 from unity.planner.prompt_builders import (
     build_ask_prompt,
     build_course_correction_prompt,
@@ -145,83 +143,79 @@ class FunctionReplacer(ast.NodeTransformer):
         return self.generic_visit(node)
 
 
-class _ComsManagerProxy:
+class _ActionProviderProxy:
     """
-    A proxy to the real ComsManager that injects plan-specific context.
-
-    This class is an internal implementation detail of the HierarchicalPlanner.
-    It allows the planner to intercept calls to `start_browser_session` and
-    inject the current interaction log into the created handle, enabling
-    automatic logging for verification without changing the API surface
-    that the generated Python code uses.
+    A generic proxy that wraps the real ActionProvider to intercept all tool
+    calls and log them for the @verify decorator. This version correctly
+    handles both synchronous and asynchronous tools.
     """
 
-    LOGGED_METHODS = {
-        "send_email",
-        "send_sms_message",
-        "send_whatsapp_message",
-        "make_call",
-    }
-
-    def __init__(self, real_coms_manager: ComsManager, plan: "HierarchicalPlan"):
-        self._real_coms_manager = real_coms_manager
+    def __init__(self, real_action_provider: ActionProvider, plan: "HierarchicalPlan"):
+        self._real_action_provider = real_action_provider
         self._plan = plan
-
-    def start_browser_session(self) -> BrowserSessionHandle:
-        """
-        Starts a browser session, injecting the current interaction log.
-        """
-        if not self._plan.interaction_stack:
-            logger.warning(
-                "start_browser_session called outside a valid interaction context. Cannot log interactions.",
-            )
-            interactions_log = None
-        else:
-            interactions_log = self._plan.interaction_stack[-1]
-
-        return self._real_coms_manager.start_browser_session(
-            interactions_log=interactions_log,
-        )
+        logger.debug(">>>>>> [PROXY] _ActionProviderProxy initialized.")
 
     def __getattr__(self, name: str) -> Any:
         """
-        Forwards attribute access to the real ComsManager, wrapping specific
-        methods to inject interaction logging.
+        This magic method is called whenever an attribute (like a tool method)
+        is accessed on the proxy instance.
         """
-        real_attr = getattr(self._real_coms_manager, name)
+        logger.debug(f">>>>>> [PROXY] __getattr__ called for attribute: '{name}'")
+        real_attr = getattr(self._real_action_provider, name)
 
-        if name not in self.LOGGED_METHODS or not callable(real_attr):
+        if not callable(real_attr):
+            logger.debug(
+                f">>>>>> [PROXY] Attribute '{name}' is not callable, returning directly.",
+            )
             return real_attr
 
         @functools.wraps(real_attr)
-        def wrapper(*args, **kwargs):
-            async def do_log_and_call():
-                result = await real_attr(*args, **kwargs)
+        async def async_wrapper(*args, **kwargs):
+            """Asynchronous wrapper for logging and calling async tools."""
+            interactions_log = self._plan.interaction_stack[-1]
 
-                if self._plan.interaction_stack:
-                    log_list = self._plan.interaction_stack[-1]
-                    arg_str = ", ".join(map(repr, args))
-                    kwarg_str = ", ".join(f"{k}={v!r}" for k, v in kwargs.items())
-                    call_repr = f"coms_manager.{name}({arg_str}, {kwarg_str})"
+            arg_str = ", ".join(map(repr, args))
+            kwarg_str = ", ".join(f"{k}={v!r}" for k, v in kwargs.items())
+            call_repr = f"action_provider.{name}({arg_str}, {kwarg_str})"
 
-                    log_list.append(("tool_call", call_repr, str(result)))
-                return result
+            logger.info(f"PROXY: Intercepted ASYNC call to {call_repr}")
 
-            if inspect.iscoroutinefunction(real_attr):
-                return do_log_and_call()
-            else:
-                if name in self.LOGGED_METHODS and self._plan.interaction_stack:
-                    kwargs["interactions_log"] = self._plan.interaction_stack[-1]
-                result = real_attr(*args, **kwargs)
-                if self._plan.interaction_stack and name in self.LOGGED_METHODS:
-                    log_list = self._plan.interaction_stack[-1]
-                    arg_str = ", ".join(map(repr, args))
-                    kwarg_str = ", ".join(f"{k}={v!r}" for k, v in kwargs.items())
-                    call_repr = f"coms_manager.{name}({arg_str}, {kwarg_str})"
-                    log_list.append(("tool_call", call_repr, str(result)))
-                return result
+            result = await real_attr(*args, **kwargs)
 
-        return wrapper
+            logger.debug(
+                f">>>>>> [PROXY] Real attribute '{name}' returned with result: {result}",
+            )
+
+            interactions_log.append(("tool_call", call_repr, str(result)))
+            logger.info(f"PROXY: Logged interaction for {name}")
+
+            return result
+
+        @functools.wraps(real_attr)
+        def sync_wrapper(*args, **kwargs):
+            """Synchronous wrapper for logging and calling sync tools."""
+            interactions_log = self._plan.interaction_stack[-1]
+
+            arg_str = ", ".join(map(repr, args))
+            kwarg_str = ", ".join(f"{k}={v!r}" for k, v in kwargs.items())
+            call_repr = f"action_provider.{name}({arg_str}, {kwarg_str})"
+
+            logger.info(f"PROXY: Intercepted SYNC call to {call_repr}")
+
+            result = real_attr(*args, **kwargs)
+
+            logger.debug(
+                f">>>>>> [PROXY] Real attribute '{name}' returned with result: {result}",
+            )
+
+            interactions_log.append(("tool_call", call_repr, str(result)))
+            logger.info(f"PROXY: Logged interaction for {name}")
+            return result
+
+        if inspect.iscoroutinefunction(real_attr):
+            return async_wrapper
+        else:
+            return sync_wrapper
 
 
 class HierarchicalPlan(BaseActiveTask):
@@ -689,10 +683,7 @@ class HierarchicalPlan(BaseActiveTask):
         interactions = []
         try:
             correction_namespace = self.planner._create_sandbox_globals()
-            correction_namespace["coms_manager"] = _ComsManagerProxy(
-                self.planner.coms_manager,
-                self,
-            )
+            correction_namespace["action_provider"] = self.planner.action_provider
 
             correction_namespace["verify"] = self.planner._create_verify_decorator(self)
             correction_namespace["ReplanFromParentException"] = (
@@ -948,8 +939,6 @@ class HierarchicalPlanner(BasePlanner):
     def __init__(
         self,
         function_manager: Optional["FunctionManager"] = None,
-        controller: Optional["Controller"] = None,
-        coms_manager: Optional["ComsManager"] = None,
         session_connect_url: Optional[str] = None,
         headless: bool = False,
         max_escalations: Optional[int] = None,
@@ -969,16 +958,13 @@ class HierarchicalPlanner(BasePlanner):
         """
         super().__init__()
         self.function_manager = function_manager or FunctionManager()
-        self.controller = controller or Controller(
+        self.action_provider = ActionProvider(
             session_connect_url=session_connect_url,
             headless=headless,
         )
-        if not self.controller.is_alive():
-            self.controller.start()
-        self.coms_manager = coms_manager or ComsManager(controller=self.controller)
         self.tools = {
             name: attr
-            for name, attr in inspect.getmembers(self.coms_manager)
+            for name, attr in inspect.getmembers(self.action_provider)
             if not name.startswith("_") and callable(attr)
         }
         self.max_escalations = max_escalations or 3
@@ -1123,7 +1109,7 @@ class HierarchicalPlanner(BasePlanner):
         plan.execution_namespace.update(sandbox_globals)
         plan.execution_namespace.update(
             {
-                "coms_manager": _ComsManagerProxy(self.coms_manager, plan),
+                "action_provider": _ActionProviderProxy(self.action_provider, plan),
                 "request_clarification": request_clarification_primitive,
                 "verify": self._create_verify_decorator(plan),
                 "ReplanFromParentException": ReplanFromParentException,
@@ -1450,14 +1436,13 @@ class HierarchicalPlanner(BasePlanner):
             The sanitized source code for the new function implementation.
         """
         func_source = plan.function_source_map.get(function_name, "")
-        is_browser_task = "coms_manager.start_browser_session" in func_source
+        is_browser_task = "action_provider.browser" in func_source
 
         browser_state = None
         if is_browser_task:
-            async with self.coms_manager.start_browser_session() as browser_handle:
-                browser_state = await browser_handle.observe(
-                    "Describe current page for context.",
-                )
+            browser_state = await self.action_provider.browser.observe(
+                "Describe current page for context.",
+            )
 
         replan_context = (
             f"**REPLANNING NOTE:** The previous attempt failed because: '{kwargs.get('replan_reason', 'No reason provided.')}'. Please devise a new and improved strategy."
@@ -1568,8 +1553,9 @@ class HierarchicalPlanner(BasePlanner):
         Returns:
             A sanitized Python script for course correction, or None if not needed.
         """
-        async with self.coms_manager.start_browser_session() as browser_handle:
-            current_state = await browser_handle.observe("Describe current page.")
+        current_state = await self.action_provider.browser.observe(
+            "Describe current page.",
+        )
 
         prompt = build_course_correction_prompt(
             old_code,
@@ -1587,12 +1573,6 @@ class HierarchicalPlanner(BasePlanner):
 
     async def close(self):
         """Shuts down the planner and its associated resources gracefully."""
-        if self._active_task:
+        if self._active_task and not self._active_task.done():
             await self._active_task.stop()
-        if self.controller:
-            self.controller.stop()
-        if self.coms_manager and hasattr(self.coms_manager, "stop"):
-            if inspect.iscoroutinefunction(self.coms_manager.stop):
-                await self.coms_manager.stop()
-            else:
-                self.coms_manager.stop()
+        self.action_provider.browser.stop()
