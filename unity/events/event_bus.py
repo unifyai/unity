@@ -513,6 +513,7 @@ class EventBus:
                 "calling_id": event.calling_id,
                 "event_timestamp": event.timestamp.isoformat(),
                 "payload_cls": event.payload_cls,
+                "type": event.type,
                 **payload_dict,
             },
         )
@@ -678,14 +679,25 @@ class EventBus:
 
                 for lg in logs:
                     e = lg.entries.copy()
+                    meta_keys = {
+                        "row_id",
+                        "event_id",
+                        "calling_id",
+                        "event_timestamp",
+                        "timestamp",
+                        "payload_cls",
+                        "type",
+                    }
+                    payload = {k: v for k, v in e.items() if k not in meta_keys}
+
                     evt = Event(
-                        event_id=e.pop("event_id"),
-                        row_id=e.pop("row_id", None),
-                        calling_id=e.pop("calling_id"),
-                        type=e.pop("type"),
-                        timestamp=e.pop("timestamp"),
-                        payload_cls=e.pop("payload_cls", ""),
-                        payload=e.pop("payload"),
+                        event_id=e.get("event_id"),
+                        row_id=e.get("row_id", UNASSIGNED),
+                        calling_id=e.get("calling_id", ""),
+                        type=e.get("type"),
+                        timestamp=e.get("event_timestamp") or e.get("timestamp"),
+                        payload_cls=e.get("payload_cls", ""),
+                        payload=payload,
                     )
                     in_memory.setdefault(evt.type, []).append(evt)
 
@@ -713,15 +725,28 @@ class EventBus:
             evts: list[Event] = []
             for lg in logs:
                 e = lg.entries.copy()
+
+                # Split metadata vs. payload (payload is fully *flattened* in Unify)
+                meta_keys = {
+                    "row_id",
+                    "event_id",
+                    "calling_id",
+                    "event_timestamp",
+                    "timestamp",
+                    "payload_cls",
+                    "type",
+                }
+                payload = {k: v for k, v in e.items() if k not in meta_keys}
+
                 evts.append(
                     Event(
-                        event_id=e.pop("event_id"),
-                        row_id=e.pop("row_id", None),
-                        calling_id=e.pop("calling_id"),
-                        type=e.pop("type"),
-                        timestamp=e.pop("timestamp"),
-                        payload_cls=e.pop("payload_cls", ""),
-                        payload=e.pop("payload"),
+                        event_id=e.get("event_id"),
+                        row_id=e.get("row_id", UNASSIGNED),
+                        calling_id=e.get("calling_id", ""),
+                        type=e.get("type", etype),
+                        timestamp=e.get("event_timestamp") or e.get("timestamp"),
+                        payload_cls=e.get("payload_cls", ""),
+                        payload=payload,
                     ),
                 )
             return etype, evts
