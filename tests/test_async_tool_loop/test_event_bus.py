@@ -102,7 +102,7 @@ async def test_interjection_publishes_user_event() -> None:
         traced=json.loads(os.environ.get("UNIFY_TRACED", "true")),
     )
     client.set_system_message(
-        "Please always respond with 'You said: {my_latest_message}', with the placeholder containing whatever I said, and do not include the quoation marks in your response.",
+        "Please always respond with 'You said: {my_latest_message}', with the placeholder containing whatever I said most recently, and do not include the quoation marks in your response.",
     )
 
     handle = start_async_tool_use_loop(
