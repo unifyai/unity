@@ -475,6 +475,13 @@ class CommsAgent:
                 self.call_proc = None
                 self.call_mode = False
                 ONGOING_CALL = False
+        elif event["event"]["event_name"] == "PhoneCallStopEvent":
+            self.publish(
+                {
+                    "topic": "call_process",
+                    "type": "stop",
+                },
+            )
         if to == "past":
             self.past_events.append(event["event"])
         else:
