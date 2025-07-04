@@ -117,7 +117,7 @@ class Event(BaseModel):
         """Recursively convert nested BaseModels → plain Python objects."""
         return self._to_python(value)
 
-    def to_post_join(self) -> dict:
+    def to_post_json(self) -> dict:
         """
         Dump a JSON-serialisable dict suitable for an *insert-and-join* REST
         endpoint.
@@ -236,7 +236,7 @@ class Subscription(BaseModel):
         self.last_timestamp = evt.timestamp
         self.local_count = 0
 
-    def to_post_join(self) -> dict:
+    def to_post_json(self) -> dict:
         return self.model_dump(mode="json")
 
 
