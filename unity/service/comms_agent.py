@@ -3,6 +3,7 @@ import json
 import openai
 import os
 import traceback
+from concurrent.futures import ThreadPoolExecutor
 
 from unity.helpers import run_script, terminate_process
 from unity.service import comms_actions
@@ -78,6 +79,7 @@ class CommsAgent:
 
         # logging
         self.transcript_manager = None
+        self.logging_executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="logging_worker")
 
     async def get_bus_events(self):
         from unity.events.event_bus import EVENT_BUS
@@ -283,7 +285,7 @@ class CommsAgent:
 
     async def run(self):
         if self.past_events is None:
-            self.past_events = await self.get_bus_events()
+            self.past_events = []   # await self.get_bus_events()
         if self.call_mode:
             return await self.phone_call_llm_run()
         else:
@@ -409,6 +411,9 @@ class CommsAgent:
                 print(f"Call process terminated")
             except Exception as e:
                 print(f"Error terminating call process: {e}")
+        # Clean up logging executor
+        if hasattr(self, "logging_executor"):
+            self.logging_executor.shutdown(wait=True)
 
     def handle_logging(self, event: dict):
         from unity.transcript_manager.transcript_manager import TranscriptManager
@@ -486,5 +491,5 @@ class CommsAgent:
             self.past_events.append(event["event"])
         else:
             self.events_queue.put_nowait(event["event"])
-        # log event and message
-        self.handle_logging(event)
+        # log event and message in separate worker thread
+        self.logging_executor.submit(self.handle_logging, event)
