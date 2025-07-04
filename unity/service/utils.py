@@ -16,6 +16,9 @@ reader: asyncio.StreamReader | None = None
 writer: asyncio.StreamWriter | None = None
 _connection_established = False
 _last_connection_attempt = 0.0
+admin_headers = {"Authorization": f"Bearer {os.getenv('ORCHESTRA_ADMIN_KEY')}"}
+headers = {"Authorization": f"Bearer {os.getenv('UNIFY_KEY')}"}
+unity_comms_url = os.getenv("UNITY_COMMS_URL")
 
 
 async def _ensure_connection():
@@ -162,10 +165,11 @@ def get_contact_details(contact_id: int) -> str:
 
 
 async def find_assistant_whatsapp_number() -> str | None:
+    assistant_number = os.getenv("ASSISTANT_NUMBER")
     async with aiohttp.ClientSession() as session:
         async with session.get(
-            f"https://api.unify.ai/v0/admin/assistant?phone={os.getenv("ASSISTANT_NUMBER")}",
-            headers={"Authorization": f"Bearer {os.getenv('ORCHESTRA_ADMIN_KEY')}"},
+            f"https://api.unify.ai/v0/admin/assistant?phone={assistant_number}",
+            headers=admin_headers,
         ) as response:
             if response.status != 200:
                 print(f"Failed to get assistant number. Status: {response.status}")
@@ -182,7 +186,7 @@ async def find_assistant_phone_number(target_phone_number: str) -> str | None:
     async with aiohttp.ClientSession() as session:
         async with session.get(
             f"https://api.unify.ai/v0/admin/assistant?user_phone={target_phone_number}",
-            headers={"Authorization": f"Bearer {os.getenv('ORCHESTRA_ADMIN_KEY')}"},
+            headers=admin_headers,
         ) as response:
             if response.status != 200:
                 print(f"Failed to get assistant number. Status: {response.status}")
@@ -203,7 +207,7 @@ async def check_conflict(
     async with aiohttp.ClientSession() as session:
         async with session.get(
             f"https://api.unify.ai/v0/credits",
-            headers={"Authorization": f"Bearer {os.getenv('UNIFY_KEY')}"},
+            headers=headers,
         ) as response:
             if response.status != 200:
                 print(
@@ -216,8 +220,8 @@ async def check_conflict(
     # check conflict
     async with aiohttp.ClientSession() as session:
         async with session.get(
-            f"{os.getenv('UNITY_COMMS_URL')}/whatsapp/conflict",
-            headers={"Authorization": f"Bearer {os.getenv('ORCHESTRA_ADMIN_KEY')}"},
+            f"{unity_comms_url}/whatsapp/conflict",
+            headers=admin_headers,
             json={
                 "user_id": user_id,
                 "assistant_whatsapp_number": assistant_whatsapp_number,
@@ -245,7 +249,7 @@ async def assign_new_assistant_whatsapp_number(
     async with aiohttp.ClientSession() as session:
         async with session.post(
             f"https://api.unify.ai/v0/admin/assistant?phone={assistant_phone_number}&assistant_whatsapp_number={assistant_whatsapp_number}",
-            headers={"Authorization": f"Bearer {os.getenv('ORCHESTRA_ADMIN_KEY')}"},
+            headers=admin_headers,
         ) as response:
             if response.status != 200:
                 print(
@@ -262,8 +266,8 @@ async def assign_new_assistant_whatsapp_number(
     # assign new whatsapp number
     async with aiohttp.ClientSession() as session:
         async with session.post(
-            f"{os.getenv('UNITY_COMMS_URL')}/whatsapp/assign",
-            headers={"Authorization": f"Bearer {os.getenv('ORCHESTRA_ADMIN_KEY')}"},
+            f"{unity_comms_url}/whatsapp/assign",
+            headers=admin_headers,
             json={
                 "user_whatsapp_number": user_whatsapp_number,
                 "conflict_whatsapp_number": conflict_number,
@@ -292,8 +296,8 @@ async def send_sms_notification(
         print(f"Sending SMS notification from {from_number} to {to_number}")
         async with aiohttp.ClientSession() as session:
             async with session.post(
-                f"{os.getenv('UNITY_COMMS_URL')}/phone/send-text",
-                headers={"Authorization": f"Bearer {os.getenv('ORCHESTRA_ADMIN_KEY')}"},
+                f"{unity_comms_url}/phone/send-text",
+                headers=admin_headers,
                 json={
                     "From": from_number,
                     "To": to_number,
@@ -323,7 +327,7 @@ async def admin_update_assistant(
     async with aiohttp.ClientSession() as session:
         async with session.patch(
             f"https://api.unify.ai/v0/admin/assistant?phone={assistant_phone_number}&assistant_whatsapp_number={assistant_old_whatsapp_number}&new_assistant_whatsapp_number={assistant_new_whatsapp_number}",
-            headers={"Authorization": f"Bearer {os.getenv('ORCHESTRA_ADMIN_KEY')}"},
+            headers=admin_headers,
         ) as response:
             if response.status != 200:
                 print(f"Failed to update assistant. Status: {response.status}")
