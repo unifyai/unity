@@ -3,7 +3,6 @@ import json
 import openai
 import os
 import traceback
-from concurrent.futures import ThreadPoolExecutor
 
 from unity.helpers import run_script, terminate_process
 from unity.service import comms_actions
