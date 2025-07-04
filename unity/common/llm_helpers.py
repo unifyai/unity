@@ -1050,8 +1050,14 @@ async def _async_tool_use_loop_inner(
                 # loop is resumed / cancelled.  Every coroutine is wrapped in an
                 # asyncio.Task so `asyncio.wait()` is happy.
                 if pending:
-                    pause_waiter = asyncio.create_task(pause_event.wait())
-                    cancel_waiter = asyncio.create_task(cancel_event.wait())
+                    pause_waiter = asyncio.create_task(
+                        pause_event.wait(),
+                        name="PauseEventWait",
+                    )
+                    cancel_waiter = asyncio.create_task(
+                        cancel_event.wait(),
+                        name="CancelEventWait",
+                    )
                     waiters = pending | {pause_waiter, cancel_waiter}
 
                     done, _ = await asyncio.wait(
@@ -1075,8 +1081,14 @@ async def _async_tool_use_loop_inner(
                     # nothing running – just idle until resumed or cancelled
                     done, _ = await asyncio.wait(
                         {
-                            asyncio.create_task(pause_event.wait()),
-                            asyncio.create_task(cancel_event.wait()),
+                            asyncio.create_task(
+                                pause_event.wait(),
+                                name="PauseEventWait",
+                            ),
+                            asyncio.create_task(
+                                cancel_event.wait(),
+                                name="CancelEventWait",
+                            ),
                         },
                         return_when=asyncio.FIRST_COMPLETED,
                     )
@@ -1136,8 +1148,14 @@ async def _async_tool_use_loop_inner(
             #       • ``cancel_event`` flips
             #       • a *new* interjection appears
             if pending and not llm_turn_required:
-                interject_w = asyncio.create_task(interject_queue.get())
-                cancel_waiter = asyncio.create_task(cancel_event.wait())
+                interject_w = asyncio.create_task(
+                    interject_queue.get(),
+                    name="InterjectQueueGet",
+                )
+                cancel_waiter = asyncio.create_task(
+                    cancel_event.wait(),
+                    name="CancelEventWait",
+                )
                 clar_waiters: Dict[asyncio.Task, asyncio.Task] = {}
                 for _t in pending:
                     # Only listen for *new* clarification questions.
@@ -1148,7 +1166,7 @@ async def _async_tool_use_loop_inner(
 
                     cuq = task_info[_t].get("clar_up_q")
                     if cuq is not None:
-                        w = asyncio.create_task(cuq.get())
+                        w = asyncio.create_task(cuq.get(), name="ClarificationQueueGet")
                         clar_waiters[w] = _t
                 waiters = pending | set(clar_waiters) | {cancel_waiter, interject_w}
 
@@ -1600,9 +1618,16 @@ async def _async_tool_use_loop_inner(
                             stateful=True,
                         ),
                     ),
+                    name="LLMGenerate",
                 )
-                interject_w = asyncio.create_task(interject_queue.get())
-                cancel_waiter = asyncio.create_task(cancel_event.wait())
+                interject_w = asyncio.create_task(
+                    interject_queue.get(),
+                    name="InterjectQueueGet",
+                )
+                cancel_waiter = asyncio.create_task(
+                    cancel_event.wait(),
+                    name="CancelEventWait",
+                )
 
                 # ➋ …but ALSO watch the tool tasks that were still pending
                 pending_snapshot = set(pending)
@@ -2164,7 +2189,7 @@ async def _async_tool_use_loop_inner(
                     }
                     original_tool_calls.append(call_dict)
 
-                    t = asyncio.create_task(coro)
+                    t = asyncio.create_task(coro, name=f"ToolCall_{name}")
                     pending.add(t)
                     task_info[t] = {
                         "name": name,
@@ -2514,6 +2539,7 @@ def start_async_tool_use_loop(
             include_class_in_dynamic_tool_names=include_class_in_dynamic_tool_names,
             tool_policy=tool_policy,
         ),
+        name="ToolUseLoop",
     )
 
     return AsyncToolUseLoopHandle(
