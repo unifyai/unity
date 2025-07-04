@@ -427,7 +427,7 @@ class CommsAgent:
 
         try:
             bus_event = Event.from_dict(event["event"]).to_bus_event()
-            asyncio.create_task(EVENT_BUS.publish(bus_event))
+            asyncio.run(EVENT_BUS.publish(bus_event))
             if event["event"]["event_name"] in [
                 "PhoneUtteranceEvent",
                 "WhatsappMessageSentEvent",
