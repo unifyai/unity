@@ -957,32 +957,52 @@ class EventBus:
         return self._specific_ctxs
 
     # ------------------------------------------------------------------
-    def clear(self) -> None:
+    def reset(self) -> None:
         """
-        Reset the in-memory state of this EventBus instance so that it is
-        indistinguishable from a brand-new object that has just been created.
+        Bring the *singleton* back to its "just-instantiated" state
+        **and** remove all Unify contexts that were created by the previous
+        incarnation.  This guarantees that no stale data or orphaned contexts
+        linger when the active Unify context changes (common during tests).
 
-        • All per-type deques are discarded.
-        • Runtime subscription objects are forgotten.
-        • Background pre-fill bookkeeping is reset.
-
-        Only server-side artefacts already persisted to Unify
-        (contexts, logs, subscription metadata) remain intact.
-
-        This utility is primarily intended for unit-test setups where a
-        clean slate is required without replacing the global `EVENT_BUS`
-        singleton.
+        What happens:
+        1. Any running background hydration task is cancelled.
+        2. The current `self._global_ctx` **and all of its child contexts**
+           (including the callbacks context) are deleted from Unify.
+        3. The object's constructor is invoked in-place, so every attribute is
+           rebuilt exactly as during a fresh instantiation while picking up the
+           *current* `unify.get_active_context()`.
         """
-        # Best-effort: stop any running background hydration to avoid leaks.
+
+        # 1. Stop the background pre-fill if it's still pending
         try:
             if getattr(self, "_prefill_task", None) and not self._prefill_task.done():
                 self._prefill_task.cancel()
         except Exception:  # pragma: no cover – defensive
             pass
 
-        # Re-initialise the object in-place.
-        # Calling the unbound __init__ avoids creating a new instance while
-        # ensuring *all* attributes are reset exactly as the constructor does.
+        # 2. Delete all Unify contexts owned by this EventBus instance
+        try:
+            # First remove children (…/Events/<TYPE>, …/Events/_callbacks, …)
+            prefix = f"{self._global_ctx}/"
+            for ctx in list(unify.get_contexts(prefix=prefix)):
+                try:
+                    unify.delete_context(ctx)
+                except Exception:
+                    # Context might already have been removed; ignore
+                    pass
+
+            # Finally remove the global Events context itself
+            if self._global_ctx in unify.get_contexts():
+                try:
+                    unify.delete_context(self._global_ctx)
+                except Exception:
+                    pass
+        except Exception:  # pragma: no cover – defensive
+            # Failing to clean up contexts must not break the reset; we still
+            # proceed with re-initialisation.
+            pass
+
+        # 3. Re-initialise this *same* instance
         type(self).__init__(self)
 
 
