@@ -16,7 +16,11 @@ from typing import Any, Callable, Dict, List, Optional, Tuple
 import unify
 from pydantic import BaseModel, Field
 
-from unity.common.llm_helpers import AsyncToolUseLoopHandle, start_async_tool_use_loop
+from unity.common.llm_helpers import (
+    AsyncToolUseLoopHandle,
+    start_async_tool_use_loop,
+    SteerableToolHandle,
+)
 from unity.function_manager.function_manager import FunctionManager
 from unity.planner.base import (
     BaseActiveTask,
@@ -173,9 +177,15 @@ class _ActionProviderProxy:
             kwarg_str = ", ".join(f"{k}={v!r}" for k, v in kwargs.items())
             call_repr = f"action_provider.{name}({arg_str}, {kwarg_str})"
 
-            result = await real_attr(*args, **kwargs)
-            interactions_log.append(("tool_call", call_repr, str(result)))
-            return result
+            tool_output = await real_attr(*args, **kwargs)
+
+            if isinstance(tool_output, SteerableToolHandle):
+                final_result = await tool_output.result()
+                interactions_log.append(("tool_call", call_repr, str(final_result)))
+            else:
+                interactions_log.append(("tool_call", call_repr, str(tool_output)))
+
+            return tool_output
 
         @functools.wraps(real_attr)
         def sync_wrapper(*args, **kwargs):
@@ -943,7 +953,6 @@ class HierarchicalPlanner(BasePlanner):
         Args:
             function_manager: Manages a library of reusable functions.
             controller: The browser controller for executing `act` and `observe`.
-            coms_manager: Manages communication with the user.
             session_connect_url: URL for connecting to an existing browser session.
             headless: Whether to run the browser in headless mode.
             max_escalations: Default max number of strategic replans for plans.
