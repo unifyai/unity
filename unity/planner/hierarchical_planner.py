@@ -540,21 +540,35 @@ class HierarchicalPlan(BaseActiveTask):
                 (ast.FunctionDef, ast.AsyncFunctionDef),
             ):
                 raise ValueError("New code does not define a function.")
-            new_func_node = new_code_module.body[0]
+
+            new_functions = {
+                node.name: node
+                for node in new_code_module.body
+                if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+            }
 
             old_tree = ast.parse(self.plan_source_code or "pass")
-            transformer = FunctionReplacer(function_name, new_func_node)
-            new_tree = transformer.visit(old_tree)
 
-            if not transformer.replaced:
-                old_tree.body.append(new_func_node)
-                new_tree = old_tree
+            old_functions = {
+                node.name: node
+                for node in old_tree.body
+                if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+            }
 
-            self.plan_source_code = ast.unparse(new_tree)
-            self.function_source_map[function_name] = ast.get_source_segment(
-                self.plan_source_code,
-                new_func_node,
-            )
+            for name, new_func_node in new_functions.items():
+                if name in old_functions:
+                    transformer = FunctionReplacer(name, new_func_node)
+                    old_tree = transformer.visit(old_tree)
+                else:
+                    old_tree.body.append(new_func_node)
+
+            self.plan_source_code = ast.unparse(old_tree)
+
+            for name, new_func_node in new_functions.items():
+                self.function_source_map[name] = ast.get_source_segment(
+                    self.plan_source_code,
+                    new_func_node,
+                )
 
             exec(
                 compile(self.plan_source_code, "<string>", "exec"),
