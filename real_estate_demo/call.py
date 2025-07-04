@@ -302,6 +302,7 @@ async def entrypoint(ctx: agents.JobContext):
     async def collect_events():
         nonlocal last_activity_time
         global chunk_queue
+        t = None
         while True:
             try:
                 raw = await READER.readline()
@@ -314,8 +315,12 @@ async def entrypoint(ctx: agents.JobContext):
                 # handle msg
                 if msg["type"] == "start_gen":
                     global IN_GEN
+                    print("ENTERED START GEN WITH GEN", IN_GEN)
                     if IN_GEN:
-                        continue
+                        # await session.current_speech()
+                        print("awaiting current speech first")
+                        if t: await t
+                        # continue
                     else:
                         IN_GEN = True
                     # nonlocal session
@@ -323,8 +328,18 @@ async def entrypoint(ctx: agents.JobContext):
                     chunk_queue = asyncio.Queue()
                     t = asyncio.create_task(response_task())
                     # t.add_done_callback(on_response_end)
-                elif msg["type"] == "gen_chunk" or msg["type"] == "end_gen":
-                    chunk_queue.put_nowait(msg)
+                    
+                    while True:
+                        raw = await READER.readline()
+                        msg = json.loads(raw.decode())
+                        # print("MSG", msg)
+                        if msg["type"] == "gen_chunk":
+                            chunk_queue.put_nowait(msg)
+                        elif msg["type"] == "end_gen":
+                            chunk_queue.put_nowait(msg)
+                            break
+                        await asyncio.sleep(0.1)
+                    IN_GEN = False
             except Exception as e:
                 print(f"Error in collect_events: {e}")
                 if WRITER and not WRITER.is_closing():

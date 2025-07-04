@@ -74,8 +74,8 @@ class Agent:
         try:
             agent_output = t.result()
             next_action = agent_output.next_action
-            # print(next_action)
-            print("RUN DONE")
+            print(next_action)
+            # print("RUN DONE")
             if hasattr(next_action, "prompt"):
                 # NO_RESPONSE_COUNTER = 0
                 self.event_stream.append({"type": "message", "role": "assistant", "content": agent_output.next_action.prompt, "timestamp": datetime.now()})
@@ -177,6 +177,7 @@ class Agent:
                         output = from_json(acc_text, allow_partial="trailing-strings")
                         if output.get("next_action"):
                             if output["next_action"].get("closing_message"):
+                                print("ENTERED CLOSING BRANCH!")
                                 ev = {
                                         "topic": "call_process",
                                         "type": "gen_chunk",
