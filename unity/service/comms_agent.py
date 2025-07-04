@@ -79,9 +79,6 @@ class CommsAgent:
 
         # logging
         self.transcript_manager = None
-        self.logging_executor = ThreadPoolExecutor(
-            max_workers=1, thread_name_prefix="logging_worker"
-        )
 
     async def get_bus_events(self):
         from unity.events.event_bus import EVENT_BUS
@@ -413,11 +410,8 @@ class CommsAgent:
                 print(f"Call process terminated")
             except Exception as e:
                 print(f"Error terminating call process: {e}")
-        # Clean up logging executor
-        if hasattr(self, "logging_executor"):
-            self.logging_executor.shutdown(wait=True)
 
-    def handle_logging(self, event: dict):
+    async def handle_logging(self, event: dict):
         from unity.transcript_manager.transcript_manager import TranscriptManager
         from unity.transcript_manager.types.message import Message
         from unity.events.event_bus import EVENT_BUS
@@ -427,7 +421,7 @@ class CommsAgent:
 
         try:
             bus_event = Event.from_dict(event["event"]).to_bus_event()
-            asyncio.run(EVENT_BUS.publish(bus_event))
+            await EVENT_BUS.publish(bus_event)
             if event["event"]["event_name"] in [
                 "PhoneUtteranceEvent",
                 "WhatsappMessageSentEvent",
@@ -494,4 +488,4 @@ class CommsAgent:
         else:
             self.events_queue.put_nowait(event["event"])
         # log event and message in separate worker thread
-        # self.logging_executor.submit(self.handle_logging, event)
+        asyncio.create_task(asyncio.to_thread(self.handle_logging(event)))
