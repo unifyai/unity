@@ -413,6 +413,21 @@ class EventBus:
 
         await self._prefill_done.wait()
 
+    def _lazy_start_hydration_if_needed(self) -> None:
+        """
+        If the background hydration task wasn't started during import (because
+        no event loop was running), this method starts it. It does not wait
+        for the task to complete.
+        """
+        if self._prefill_task is not None or self._prefill_done.is_set():
+            return
+        try:
+            loop = asyncio.get_running_loop()
+            if self._prefill_task is None:
+                self._prefill_task = loop.create_task(self._async_initial_hydration())
+        except RuntimeError:
+            pass
+
     # ------------------------------------------------------------------
     def _load_subscriptions(self) -> None:
         """
@@ -455,7 +470,7 @@ class EventBus:
                 self._window_sizes[event_type] = self._default_window
 
     async def publish(self, event: Event) -> None:
-        await self._ensure_ready()
+        self._lazy_start_hydration_if_needed()
         if event.type not in self._specific_ctxs:
             self.register_event_types(event.type)
         window = self._window_sizes[event.type]
