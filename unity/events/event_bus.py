@@ -812,9 +812,9 @@ class EventBus:
         if latest:
             row = latest[0].entries
             last_row_id = row.get("row_id", 0)
-            last_ts = row.get("event_timestamp") or row.get("timestamp", "")
+            last_ts = row.get("event_timestamp") or row.get("timestamp")
         else:
-            last_row_id, last_ts = 0, ""
+            last_row_id, last_ts = 0, None
 
         sub = Subscription(
             event_type=event_type,
