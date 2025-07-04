@@ -40,6 +40,24 @@ def _build_handle_apis(tool_dict: Dict[str, Callable]) -> str:
     return "\n\n".join(handle_docs)
 
 
+def _format_existing_functions(existing_functions: Dict[str, Any]) -> str:
+    """Formats the library of existing functions into clean code blocks."""
+    if not existing_functions:
+        return "None."
+
+    # Use a set to avoid duplicating implementations if multiple aliases point to the same code
+    unique_implementations = {
+        textwrap.dedent(func_data.get("implementation", "")).strip()
+        for func_data in existing_functions.values()
+        if func_data.get("implementation")
+    }
+
+    if not unique_implementations:
+        return "None."
+
+    return "\n\n---\n\n".join(unique_implementations)
+
+
 def build_initial_plan_prompt(
     goal: str,
     existing_functions: Dict[str, Any],
@@ -53,7 +71,7 @@ def build_initial_plan_prompt(
     """
     tool_reference = _build_tool_signatures(tools)
     handle_apis = _build_handle_apis(tools)
-
+    formatted_functions = _format_existing_functions(existing_functions)
     return textwrap.dedent(
         f"""
         You are an expert Python programmer tasked with generating a complete, single-file script to achieve a user's goal.
@@ -71,7 +89,7 @@ def build_initial_plan_prompt(
 
         ---
         ### Tools Reference
-        You have access to a global `coms_manager` object with the following methods. You must call them with the correct arguments as specified here.
+        You have access to a global `action_provider` object with the following methods. You must call them with the correct arguments as specified here.
         ```json
         {tool_reference}
         ```
@@ -89,8 +107,8 @@ def build_initial_plan_prompt(
         ```python
         @verify
         async def confirm_appointment():
-            # The make_call tool returns a PhoneCallHandle.
-            async with coms_manager.make_call(contact_id=123, purpose="Confirm appointment") as call:
+            # The start_call tool returns a handle that should be managed with async with.
+            async with action_provider.start_call(phone_number="555-0101", purpose="Confirm appointment") as call:
                 # The handle's 'ask' method is used for interaction.
                 response = await call.ask("Are you still available for our 2pm meeting tomorrow?")
             return response
@@ -100,17 +118,17 @@ def build_initial_plan_prompt(
         ```python
         @verify
         async def check_unify_blog():
-            async with coms_manager.start_browser_session() as browser:
-                await browser.act("Navigate to unify.ai")
-                await browser.act("Click the 'Blog' link in the main navigation")
-                blog_title = await browser.observe("What is the title of the first blog post?")
+            # The browser object can be used directly from the action_provider
+            await action_provider.browser_act("Navigate to unify.ai")
+            await action_provider.browser_act("Click the 'Blog' link in the main navigation")
+            blog_title = await action_provider.browser_observe("What is the title of the first blog post?")
             return blog_title
         ```
 
         ---
         ### Existing Functions Library
         You may use these pre-existing functions if they are suitable.
-        {json.dumps(existing_functions) if existing_functions else "None."}
+        {formatted_functions}
 
         ---
         {retry_msg}
@@ -154,7 +172,7 @@ def build_dynamic_implement_prompt(
 
     browser_context_section = ""
     strategy_instruction = """2.  **Strategy:** You are likely being asked to implement this because a previous attempt failed. Your first step should be to **re-assess the situation** and devise a new, robust plan to achieve the goal."""
-    tool_usage_instruction = """6.  **Tool Usage:** Use the `coms_manager` global object to interact with the environment. Available tools and their handle APIs have been described in the initial system prompt."""
+    tool_usage_instruction = """6.  **Tool Usage:** Use the `action_provider` global object to interact with the environment. Available tools and their handle APIs have been described in the initial system prompt."""
 
     if browser_state:
         browser_context_section = f"""
@@ -162,7 +180,7 @@ def build_dynamic_implement_prompt(
 {browser_state}
 """
         strategy_instruction = """2.  **Strategy:** You are likely being asked to implement this because a previous attempt failed. Your first step should be to **re-assess the environment**. Use `browser.observe()` to confirm the current page is correct before attempting any actions. If the state is wrong, generate code to correct it first."""
-        tool_usage_instruction = """6.  **Tool Usage:** Use the `coms_manager` global object to interact with the environment. The `browser` handle from `start_browser_session` has ONLY two methods: `act(instruction: str)` and `observe(query: str)`. You MUST NOT call hallucinated methods like `.click()` or `.navigate()`."""
+        tool_usage_instruction = """6.  **Tool Usage:** Use the `action_provider` global object to interact with the environment. The `browser` handle from `start_browser_session` has ONLY two methods: `act(instruction: str)` and `observe(query: str)`. You MUST NOT call hallucinated methods like `.click()` or `.navigate()`."""
 
     return textwrap.dedent(
         f"""
@@ -189,7 +207,7 @@ def build_dynamic_implement_prompt(
 
          ---
         ### Tools Reference
-        You have access to a global `coms_manager` object with the following methods. You must call them with the correct arguments as specified here.
+        You have access to a global `action_provider` object with the following methods. You must call them with the correct arguments as specified here.
         ```json
         {tool_reference}
         ```
@@ -309,7 +327,7 @@ def build_plan_surgery_prompt(
 
         ---
         ### Tools Reference
-        You have access to a global `coms_manager` object with the following methods. You must call them with the correct arguments as specified here.
+        You have access to a global `action_provider` object with the following methods. You must call them with the correct arguments as specified here.
         ```json
         {tool_reference}
         ```
@@ -368,13 +386,13 @@ def build_course_correction_prompt(
         ---
         ### Task
         1.  Analyze if the **Current Browser State** is a suitable starting point for executing the **New Plan Code**.
-        2.  If it is NOT suitable, write a script containing an `async def course_correction_main()` function. This script must use the `coms_manager` (via an `async with` block) to navigate to the correct starting state for the new plan. The script must be a single code block.
+        2.  If it is NOT suitable, write a script containing an `async def course_correction_main()` function. This script must use the `action_provider` (via an `async with` block) to navigate to the correct starting state for the new plan. The script must be a single code block.
         3.  If the current state is already suitable, respond ONLY with the single word: `None`.
         4.  **CRITICAL**: The script MUST NOT use any `import` statements.
 
         ---
         ### Tools Reference
-        You have access to a global `coms_manager` object with the following methods. You must call them with the correct arguments as specified here.
+        You have access to a global `action_provider` object with the following methods. You must call them with the correct arguments as specified here.
         ```json
         {tool_reference}
         ```
@@ -418,7 +436,7 @@ def build_exploration_prompt(goal: str, *, tools: Dict[str, Callable]) -> str:
 
          ---
         ### Tools Reference
-        You have access to a global `coms_manager` object with the following methods. You must call them with the correct arguments as specified here.
+        You have access to a global `action_provider` object with the following methods. You must call them with the correct arguments as specified here.
         ```json
         {tool_reference}
         ```
