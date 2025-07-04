@@ -63,36 +63,37 @@ class ActionProvider:
             tool_policy=lambda i, _: ("required", _) if i < 1 else ("auto", _),
         )
 
-    async def send_email(
-        self,
-        description: str,
-        parent_chat_context: list[dict] | None = None,
-    ) -> SteerableToolHandle:
-        """
-        Understands a natural language request to send an email.
-        (Implementation would be similar to send_sms_message)
-        """
-        # TODO: Implement this using the same pattern as send_sms_message
-        print(f"Placeholder for sending email: {description}")
+    # TODO: uncomment these once implemented
+    # async def send_email(
+    #     self,
+    #     description: str,
+    #     parent_chat_context: list[dict] | None = None,
+    # ) -> SteerableToolHandle:
+    #     """
+    #     Understands a natural language request to send an email.
+    #     (Implementation would be similar to send_sms_message)
+    #     """
+    #     # TODO: Implement this using the same pattern as send_sms_message
+    #     print(f"Placeholder for sending email: {description}")
 
-    async def send_whatsapp_message(
-        self,
-        description: str,
-        parent_chat_context: list[dict] | None = None,
-    ) -> SteerableToolHandle:
-        """
-        Understands a natural language request to send a WhatsApp message.
-        (Implementation would be similar to send_sms_message)
-        """
-        # TODO: Implement this using the same pattern as send_sms_message
-        print(f"Placeholder for sending WhatsApp message: {description}")
+    # async def send_whatsapp_message(
+    #     self,
+    #     description: str,
+    #     parent_chat_context: list[dict] | None = None,
+    # ) -> SteerableToolHandle:
+    #     """
+    #     Understands a natural language request to send a WhatsApp message.
+    #     (Implementation would be similar to send_sms_message)
+    #     """
+    #     # TODO: Implement this using the same pattern as send_sms_message
+    #     print(f"Placeholder for sending WhatsApp message: {description}")
 
-    def start_call(self, phone_number: str, purpose: str) -> SteerableToolHandle:
-        """
-        Initiates a call and returns a steerable handle for interaction.
-        """
-        # TODO: Implement this by returning an instance of new Call handle.
-        print(f"Placeholder for starting call to {phone_number} for purpose: {purpose}")
+    # def start_call(self, phone_number: str, purpose: str) -> SteerableToolHandle:
+    #     """
+    #     Initiates a call and returns a steerable handle for interaction.
+    #     """
+    #     # TODO: Implement this by returning an instance of new Call handle.
+    #     print(f"Placeholder for starting call to {phone_number} for purpose: {purpose}")
 
     # --- Browser Actions ---
     async def browser_act(self, instruction: str) -> str:
@@ -103,19 +104,15 @@ class ActionProvider:
         """Alias for browser.observe to be exposed to the planner."""
         return await self.browser.observe(query)
 
-    async def browser_reason(self, query: str) -> str:
-        """Alias for browser.reason to be exposed to the planner."""
-        return await self.browser.reason(query)
+    # TODO: uncomment these once implemented
+    # async def browser_reason(self, query: str) -> str:
+    #     """Alias for browser.reason to be exposed to the planner."""
+    #     return await self.browser.reason(query)
 
-    async def browser_multi_step(self, description: str) -> SteerableToolHandle:
-        """Alias for browser.multi_step to be exposed to the planner."""
-        return await self.browser.multi_step(description)
+    # def browser_multi_step(self, description: str) -> SteerableToolHandle:
+    #     """Alias for browser.multi_step to be exposed to the planner."""
+    #     return self.browser.multi_step(description)
 
-    async def browser_start_recording(self):
-        """Alias for browser.start_recording."""
-        return self.browser.start_recording()
-
-    async def close(self):
-        """Shuts down the action provider and its associated resources gracefully."""
-        if self.browser:
-            await self.browser.close()
+    # async def browser_start_recording(self):
+    #     """Alias for browser.start_recording."""
+    #     return self.browser.start_recording()
