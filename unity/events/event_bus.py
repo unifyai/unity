@@ -485,8 +485,6 @@ class EventBus:
         else:
             entries = event.model_dump(mode="json")
 
-        entries.pop("row_id")
-
         # Log to global event table
         self._logger.log_create(
             project=unify.active_project(),
