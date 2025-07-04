@@ -57,40 +57,43 @@ class Controller(threading.Thread):
             self._browser_worker.start()
             self._browser_open = True
 
-        for msg in self._pubsub_browser_state.listen():
-            if self._stop_event.is_set():
-                break
-            if msg.get("type") != "message":
-                continue
-            data = msg.get("data")
-            try:
-                payload = (
-                    data.decode() if isinstance(data, (bytes, bytearray)) else data
-                )
-                import json, ast
-
+        try:
+            for msg in self._pubsub_browser_state.listen():
+                if self._stop_event.is_set():
+                    break
+                if msg.get("type") != "message":
+                    continue
+                data = msg.get("data")
                 try:
-                    browser_state = json.loads(payload)
+                    payload = (
+                        data.decode() if isinstance(data, (bytes, bytearray)) else data
+                    )
+                    import json, ast
+
+                    try:
+                        browser_state = json.loads(payload)
+                    except Exception:
+                        browser_state = ast.literal_eval(payload)
                 except Exception:
-                    browser_state = ast.literal_eval(payload)
-            except Exception:
-                browser_state = {}
-            if isinstance(browser_state, dict):
-                self._observe_ctx["ts"] = browser_state.get("ts", 0.0)
-                raw_elements = browser_state.get("elements", [])
-                elements: list[tuple[Any, Any]] = []
-                for item in raw_elements:
-                    if isinstance(item, (list, tuple)) and len(item) >= 2:
-                        elements.append((item[0], item[1]))
-                self._observe_ctx.update(
-                    {
-                        "state": browser_state.get("state", {}),
-                        "elements": elements,
-                        "tabs": browser_state.get("tabs", []),
-                        "history": browser_state.get("history", []),
-                    },
-                )
-                self._last_shot = browser_state.get("screenshot", b"")
+                    browser_state = {}
+                if isinstance(browser_state, dict):
+                    self._observe_ctx["ts"] = browser_state.get("ts", 0.0)
+                    raw_elements = browser_state.get("elements", [])
+                    elements: list[tuple[Any, Any]] = []
+                    for item in raw_elements:
+                        if isinstance(item, (list, tuple)) and len(item) >= 2:
+                            elements.append((item[0], item[1]))
+                    self._observe_ctx.update(
+                        {
+                            "state": browser_state.get("state", {}),
+                            "elements": elements,
+                            "tabs": browser_state.get("tabs", []),
+                            "history": browser_state.get("history", []),
+                        },
+                    )
+                    self._last_shot = browser_state.get("screenshot", b"")
+        except redis.ConnectionError:
+            pass
 
     def stop(self) -> None:
         """Signal the controller thread to stop."""
@@ -238,12 +241,5 @@ class Controller(threading.Thread):
         finally:
             # Crucially, stop the listener thread to clean up resources
             listener_thread.stop()
-            try:
-                await asyncio.to_thread(ps.close)
-            except AttributeError:
-                # Connection already closed by listener thread
-                pass
-            except Exception as e:
-                LOGGER.warning(f"Error closing pubsub connection: {e}")
 
         return actions
