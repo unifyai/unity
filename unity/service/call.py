@@ -305,6 +305,9 @@ async def entrypoint(ctx: agents.JobContext):
                     t.add_done_callback(on_response_end)
                 elif msg["type"] == "gen_chunk" or msg["type"] == "end_gen":
                     chunk_queue.put_nowait(msg)
+                elif msg["type"] == "stop":
+                    print("STOPPING CALL")
+                    await end_call()
             except Exception as e:
                 print(f"Error in collect_events: {e}")
                 # Connection will be handled by utils module

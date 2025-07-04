@@ -1,6 +1,8 @@
 import asyncio
 import json
 import time
+import os
+import aiohttp
 import unify
 
 # Configuration
@@ -137,6 +139,7 @@ async def test_connection():
         return False
 
 
+# comms related utils
 def get_contact_details(contact_id: int) -> str:
     ctxs = unify.get_active_context()
     read_ctx, write_ctx = ctxs["read"], ctxs["write"]
@@ -156,3 +159,173 @@ def get_contact_details(contact_id: int) -> str:
         ],
     )
     return logs[0].entries
+
+
+async def find_assistant_whatsapp_number() -> str | None:
+    async with aiohttp.ClientSession() as session:
+        async with session.get(
+            f"https://api.unify.ai/v0/admin/assistant?phone={os.getenv("ASSISTANT_NUMBER")}",
+            headers={"Authorization": f"Bearer {os.getenv('ORCHESTRA_ADMIN_KEY')}"},
+        ) as response:
+            if response.status != 200:
+                print(f"Failed to get assistant number. Status: {response.status}")
+                return None
+            response_json = await response.json()
+            found_number = response_json["info"][0]["assistant_whatsapp_number"]
+            if not found_number:
+                print("No WhatsApp number found for assistant")
+                return None
+    return found_number
+
+
+async def find_assistant_phone_number(target_phone_number: str) -> str | None:
+    async with aiohttp.ClientSession() as session:
+        async with session.get(
+            f"https://api.unify.ai/v0/admin/assistant?user_phone={target_phone_number}",
+            headers={"Authorization": f"Bearer {os.getenv('ORCHESTRA_ADMIN_KEY')}"},
+        ) as response:
+            if response.status != 200:
+                print(f"Failed to get assistant number. Status: {response.status}")
+                return None
+            response_json = await response.json()
+            found_number = response_json["info"][0]["phone"]
+            if not found_number:
+                print("No phone number found for assistant")
+                return None
+    return found_number
+
+
+async def check_conflict(
+    assistant_whatsapp_number: str,
+    target_whatsapp_number: str,
+) -> str | None:
+    # get user id
+    async with aiohttp.ClientSession() as session:
+        async with session.get(
+            f"https://api.unify.ai/v0/credits",
+            headers={"Authorization": f"Bearer {os.getenv('UNIFY_KEY')}"},
+        ) as response:
+            if response.status != 200:
+                print(
+                    f"Failed to assign new WhatsApp number. Status: {response.status}",
+                )
+                return None
+            response_json = await response.json()
+            user_id = response_json["id"]
+
+    # check conflict
+    async with aiohttp.ClientSession() as session:
+        async with session.get(
+            f"{os.getenv('UNITY_COMMS_URL')}/whatsapp/conflict",
+            headers={"Authorization": f"Bearer {os.getenv('ORCHESTRA_ADMIN_KEY')}"},
+            json={
+                "user_id": user_id,
+                "assistant_whatsapp_number": assistant_whatsapp_number,
+                "target_whatsapp_number": target_whatsapp_number,
+            },
+        ) as response:
+            if response.status != 200:
+                print(
+                    f"Failed to check WhatsApp conflict. Message not sent. Status: {response.status}",
+                )
+                return False
+            response_json = await response.json()
+            conflict = response_json["conflict"]
+
+    return conflict
+
+
+async def assign_new_assistant_whatsapp_number(
+    assistant_phone_number: str,
+    assistant_whatsapp_number: str,
+    *,
+    conflict_number: str = None,
+) -> str | None:
+    # find user whatsapp number
+    async with aiohttp.ClientSession() as session:
+        async with session.post(
+            f"https://api.unify.ai/v0/admin/assistant?phone={assistant_phone_number}&assistant_whatsapp_number={assistant_whatsapp_number}",
+            headers={"Authorization": f"Bearer {os.getenv('ORCHESTRA_ADMIN_KEY')}"},
+        ) as response:
+            if response.status != 200:
+                print(
+                    f"Failed to assign new WhatsApp number. Status: {response.status}",
+                )
+                return None
+            response_json = await response.json()
+            user_whatsapp_number = response_json["info"][0]["user_whatsapp_number"]
+            user_phone_number = response_json["info"][0]["phone"]
+            if not user_whatsapp_number:
+                print("No WhatsApp number found for user")
+                return None
+
+    # assign new whatsapp number
+    async with aiohttp.ClientSession() as session:
+        async with session.post(
+            f"{os.getenv('UNITY_COMMS_URL')}/whatsapp/assign",
+            headers={"Authorization": f"Bearer {os.getenv('ORCHESTRA_ADMIN_KEY')}"},
+            json={
+                "user_whatsapp_number": user_whatsapp_number,
+                "conflict_whatsapp_number": conflict_number,
+            },
+        ) as response:
+            if response.status != 200:
+                print(
+                    f"Failed to assign new WhatsApp number. Status: {response.status}",
+                )
+                return None
+            response_json = await response.json()
+            new_whatsapp_number = response_json["whatsapp_number"]
+            if not new_whatsapp_number:
+                print("No WhatsApp number found for user")
+                return None
+
+    return new_whatsapp_number, user_phone_number
+
+
+async def send_sms_notification(
+    from_number: str,
+    to_number: str,
+    new_whatsapp_number: str,
+) -> bool:
+    try:
+        print(f"Sending SMS notification from {from_number} to {to_number}")
+        async with aiohttp.ClientSession() as session:
+            async with session.post(
+                f"{os.getenv('UNITY_COMMS_URL')}/phone/send-text",
+                headers={"Authorization": f"Bearer {os.getenv('ORCHESTRA_ADMIN_KEY')}"},
+                json={
+                    "From": from_number,
+                    "To": to_number,
+                    "Body": f"Your WhatsApp number has been reassigned. Your new WhatsApp number is {new_whatsapp_number}",
+                },
+            ) as response:
+                if response.status != 200:
+                    print(f"Failed to send SMS. Status: {response.status}")
+                    return False
+
+                response_text = await response.text()
+                print(f"Response: {response_text}")
+                return True
+    except aiohttp.ClientError as e:
+        print(f"Network error while sending SMS: {e}")
+        return False
+    except Exception as e:
+        print(f"Error sending SMS: {e}")
+        return False
+
+
+async def admin_update_assistant(
+    assistant_phone_number: str,
+    assistant_old_whatsapp_number: str,
+    assistant_new_whatsapp_number: str,
+) -> bool:
+    async with aiohttp.ClientSession() as session:
+        async with session.patch(
+            f"https://api.unify.ai/v0/admin/assistant?phone={assistant_phone_number}&assistant_whatsapp_number={assistant_old_whatsapp_number}&new_assistant_whatsapp_number={assistant_new_whatsapp_number}",
+            headers={"Authorization": f"Bearer {os.getenv('ORCHESTRA_ADMIN_KEY')}"},
+        ) as response:
+            if response.status != 200:
+                print(f"Failed to update assistant. Status: {response.status}")
+                return False
+            return True
