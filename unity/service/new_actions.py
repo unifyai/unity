@@ -35,11 +35,16 @@ headers = {"Authorization": f"Bearer {os.getenv('ORCHESTRA_ADMIN_KEY')}"}
 
 
 # Low-level functions
-async def _send_whatsapp_message_via_number(to_number: str, message: str) -> bool:
+async def _send_whatsapp_message_via_number(
+    from_number: str,
+    to_number: str,
+    message: str,
+) -> bool:
     """
     Send a WhatsApp message using the WhatsApp Business API.
 
     Args:
+        from_number: The sender's phone number
         to_number: The recipient's phone number
         message: The message content to send
 
@@ -154,11 +159,16 @@ async def _send_whatsapp_message_via_number(to_number: str, message: str) -> boo
         return False
 
 
-async def _send_sms_message_via_number(to_number: str, message: str) -> bool:
+async def _send_sms_message_via_number(
+    from_number: str,
+    to_number: str,
+    message: str,
+) -> bool:
     """
     Send an SMS message using the SMS provider API.
 
     Args:
+        from_number: The sender's phone number
         to_number: The recipient's phone number
         message: The message content to send
 
@@ -166,7 +176,7 @@ async def _send_sms_message_via_number(to_number: str, message: str) -> bool:
         bool: True if message was sent successfully, False otherwise
     """
     try:
-        from_number = os.getenv("ASSISTANT_NUMBER")
+        # from_number = os.getenv("ASSISTANT_NUMBER") # for debugging, to remove
         print(f"Sending SMS from {from_number} to {to_number}: {message}")
         async with aiohttp.ClientSession() as session:
             async with session.post(
@@ -193,18 +203,19 @@ async def _send_sms_message_via_number(to_number: str, message: str) -> bool:
         return False
 
 
-async def _send_email_via_address(to_email: str, content: str) -> str:
+async def _send_email_via_address(from_email: str, to_email: str, content: str) -> str:
     """
     Send an SMS message using the SMS provider API.
 
     Args:
+        from_email: The email address to send the email from
         to_email: The email address to send the email to
         content: The message content to send
 
     Returns:
         str: A string indicating the result of the action
     """
-    from_email = os.getenv("ASSISTANT_EMAIL")
+    # from_email = os.getenv("ASSISTANT_EMAIL") # for debugging, to remove
     if not from_email:
         from_email = "unity.agent@unify.ai"  # todo: temp placeholder
         # print("No email address found for assistant")
@@ -237,17 +248,19 @@ async def _send_email_via_address(to_email: str, content: str) -> str:
         return "Message not sent: Error"
 
 
-async def _start_call(to_number: str, purpose: str) -> bool:
+async def _start_call(from_number: str, to_number: str, purpose: str) -> bool:
     """
     Send a call using the call provider API.
 
     Args:
+        from_number: The sender's phone number
         to_number: The recipient's phone number
+        purpose: The purpose of the call
 
     Returns:
         bool: True if call was sent successfully, False otherwise
     """
-    from_number = os.getenv("ASSISTANT_NUMBER")
+    from_number = os.getenv("ASSISTANT_NUMBER")  # for debugging, to remove
 
     await publish_event(
         {
@@ -406,7 +419,9 @@ class Call(SteerableToolHandle):
         )
 
         start()
-        asyncio.create_task(_start_call(phone_number, purpose))
+        asyncio.create_task(
+            _start_call(os.getenv("ASSISTANT_NUMBER"), phone_number, purpose),
+        )
         self.status = "started"
 
     async def ask(self, question: str) -> SteerableToolHandle:
