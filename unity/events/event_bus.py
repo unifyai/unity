@@ -273,7 +273,7 @@ class EventBus:
         self._specific_ctxs = {
             ctx.split("/")[-1]: ctx for ctx in ctxs if ctx != self._callbacks_ctx
         }
-        self._logger = unify.AsyncLoggerManager()
+        self._logger = unify.AsyncLoggerManager(name="EventBus")
 
         # runtime subscriptions (id → Subscription)
         self._subscriptions: Dict[str, Subscription] = {}
