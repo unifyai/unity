@@ -12,8 +12,14 @@ from unity.common.llm_helpers import (
 
 
 def _build_tool_signatures(tool_dict: Dict[str, Callable]) -> str:
-    sigs = {name: str(inspect.signature(fn)) for name, fn in tool_dict.items()}
-    return json.dumps(sigs, indent=4)
+    tool_info = {
+        name: {
+            "signature": str(inspect.signature(fn)),
+            "docstring": inspect.getdoc(fn) or "No docstring available.",
+        }
+        for name, fn in tool_dict.items()
+    }
+    return json.dumps(tool_info, indent=4)
 
 
 def _build_handle_apis(tool_dict: Dict[str, Callable]) -> str:
