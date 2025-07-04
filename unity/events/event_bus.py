@@ -956,6 +956,35 @@ class EventBus:
     def ctxs(self):
         return self._specific_ctxs
 
+    # ------------------------------------------------------------------
+    def clear(self) -> None:
+        """
+        Reset the in-memory state of this EventBus instance so that it is
+        indistinguishable from a brand-new object that has just been created.
+
+        • All per-type deques are discarded.
+        • Runtime subscription objects are forgotten.
+        • Background pre-fill bookkeeping is reset.
+
+        Only server-side artefacts already persisted to Unify
+        (contexts, logs, subscription metadata) remain intact.
+
+        This utility is primarily intended for unit-test setups where a
+        clean slate is required without replacing the global `EVENT_BUS`
+        singleton.
+        """
+        # Best-effort: stop any running background hydration to avoid leaks.
+        try:
+            if getattr(self, "_prefill_task", None) and not self._prefill_task.done():
+                self._prefill_task.cancel()
+        except Exception:  # pragma: no cover – defensive
+            pass
+
+        # Re-initialise the object in-place.
+        # Calling the unbound __init__ avoids creating a new instance while
+        # ensuring *all* attributes are reset exactly as the constructor does.
+        type(self).__init__(self)
+
 
 # ─────────────────────────   Global singleton   ──────────────────────────
 EVENT_BUS: "EventBus" = EventBus()

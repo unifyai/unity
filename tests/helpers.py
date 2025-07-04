@@ -7,6 +7,7 @@ import sys
 import traceback
 from os import sep
 from typing import Any, Callable
+from unity.events.event_bus import EVENT_BUS
 
 
 def _handle_project(
@@ -84,6 +85,8 @@ def _handle_project(
 
             if not try_reuse_prev_ctx and unify.get_contexts(prefix=ctx):
                 unify.delete_context(ctx)
+
+            EVENT_BUS.clear()
 
             try:
                 with unify.Context(ctx):
