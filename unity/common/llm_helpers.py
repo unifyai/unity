@@ -2255,6 +2255,12 @@ class SteerableToolHandle(ABC):
         pass
 
     @abstractmethod
+    async def ask(self, question: str) -> "SteerableToolHandle":
+        """
+        Ask a question to the running tool.
+        """
+
+    @abstractmethod
     def interject(self, message: str) -> Awaitable[Optional[str]] | Optional[str]:
         """Inject an additional *user* turn into the running conversation."""
 
