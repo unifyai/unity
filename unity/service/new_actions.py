@@ -36,10 +36,10 @@ headers = {"Authorization": f"Bearer {os.getenv('ORCHESTRA_ADMIN_KEY')}"}
 
 # Low-level functions
 async def _send_whatsapp_message_via_number(
-    from_number: str,
+    # from_number: str, # for debugging, to remove
     to_number: str,
     message: str,
-) -> bool:
+) -> str:
     """
     Send a WhatsApp message using the WhatsApp Business API.
 
@@ -49,121 +49,111 @@ async def _send_whatsapp_message_via_number(
         message: The message content to send
 
     Returns:
-        bool: True if message was sent successfully, False otherwise
+        str: The response from the WhatsApp API
     """
-    try:
-        from_number = os.getenv("ASSISTANT_WHATSAPP_NUMBER")  # for debugging, to remove
-        if not from_number:
-            # always use the assistant phone number (unique) to find whatsapp number
-            from_number = await find_assistant_whatsapp_number()
+    from_number = os.getenv("ASSISTANT_WHATSAPP_NUMBER")  # for debugging, to remove
+    if not from_number:
+        # always use the assistant phone number (unique) to find whatsapp number
+        from_number = await find_assistant_whatsapp_number()
 
-        # check conflict
-        conflict = await check_conflict(from_number, to_number)
-        # if not conflict:
-        #     print(f"Conflict check error. Message not sent.")
-        #     return False
+    # check conflict
+    conflict = await check_conflict(from_number, to_number)
+    # if not conflict:
+    #     print(f"Conflict check error. Message not sent.")
+    #     return False
 
-        if conflict in ("both", "single"):
-            new_whatsapp_number, from_user_phone_number = (
-                await assign_new_assistant_whatsapp_number(
-                    os.getenv("ASSISTANT_NUMBER"),
-                    from_number,
-                )
-            )
-            if not new_whatsapp_number:
-                print(f"Failed to assign new WhatsApp number. Message not sent.")
-                return False
-
-            if conflict == "both":
-                target_assistant_phone_number = await find_assistant_phone_number(
-                    to_number,
-                )
-                second_new_whatsapp_number, target_user_phone_number = (
-                    await assign_new_assistant_whatsapp_number(
-                        target_assistant_phone_number,
-                        from_number,
-                        conflict_number=new_whatsapp_number,
-                    )
-                )
-                if not second_new_whatsapp_number:
-                    print(
-                        f"Both conflicting. Failed to assign new WhatsApp number. Message not sent.",
-                    )
-                    return False
-
-                update_res = await admin_update_assistant(
-                    target_assistant_phone_number,
-                    from_number,
-                    second_new_whatsapp_number,
-                )
-                if not update_res:
-                    print(
-                        f"Both conflicting. Failed to update assistant. Message not sent.",
-                    )
-                    return False
-
-                send_res = await send_sms_notification(
-                    target_assistant_phone_number,
-                    target_user_phone_number,
-                    second_new_whatsapp_number,
-                )
-                if not send_res:
-                    print(
-                        f"Both conflicting. Failed to send SMS notification. Message not sent.",
-                    )
-                    return False
-
-            update_res = await admin_update_assistant(
+    if conflict in ("both", "single"):
+        new_whatsapp_number, from_user_phone_number = (
+            await assign_new_assistant_whatsapp_number(
                 os.getenv("ASSISTANT_NUMBER"),
                 from_number,
-                new_whatsapp_number,
+            )
+        )
+        if not new_whatsapp_number:
+            print(f"Failed to assign new WhatsApp number. Message not sent.")
+            return False
+
+        if conflict == "both":
+            target_assistant_phone_number = await find_assistant_phone_number(
+                to_number,
+            )
+            second_new_whatsapp_number, target_user_phone_number = (
+                await assign_new_assistant_whatsapp_number(
+                    target_assistant_phone_number,
+                    from_number,
+                    conflict_number=new_whatsapp_number,
+                )
+            )
+            if not second_new_whatsapp_number:
+                print(
+                    f"Both conflicting. Failed to assign new WhatsApp number. Message not sent.",
+                )
+                return False
+
+            update_res = await admin_update_assistant(
+                target_assistant_phone_number,
+                from_number,
+                second_new_whatsapp_number,
             )
             if not update_res:
-                print(f"Failed to update assistant. Message not sent.")
+                print(
+                    f"Both conflicting. Failed to update assistant. Message not sent.",
+                )
                 return False
+
             send_res = await send_sms_notification(
-                os.getenv("ASSISTANT_NUMBER"),
-                from_user_phone_number,
-                new_whatsapp_number,
+                target_assistant_phone_number,
+                target_user_phone_number,
+                second_new_whatsapp_number,
             )
             if not send_res:
-                print(f"Failed to send SMS notification. Message not sent.")
+                print(
+                    f"Both conflicting. Failed to send SMS notification. Message not sent.",
+                )
                 return False
 
-            from_number = new_whatsapp_number
+        update_res = await admin_update_assistant(
+            os.getenv("ASSISTANT_NUMBER"),
+            from_number,
+            new_whatsapp_number,
+        )
+        if not update_res:
+            print(f"Failed to update assistant. Message not sent.")
+            return False
+        send_res = await send_sms_notification(
+            os.getenv("ASSISTANT_NUMBER"),
+            from_user_phone_number,
+            new_whatsapp_number,
+        )
+        if not send_res:
+            print(f"Failed to send SMS notification. Message not sent.")
+            return False
 
-        # no conflict, or numbers reassigned. proceed to send message
-        print(f"Sending WhatsApp message from {from_number} to {to_number}: {message}")
-        async with aiohttp.ClientSession() as session:
-            async with session.post(
-                f"{os.getenv('UNITY_COMMS_URL')}/whatsapp/send-text",
-                headers=headers,
-                json={
-                    "from": from_number,
-                    "to": to_number,
-                    "body": message,
-                },
-            ) as response:
-                if response.status != 200:
-                    print(f"Failed to send WhatsApp message. Status: {response.status}")
-                    return False
+        from_number = new_whatsapp_number
 
-                response_text = await response.text()
-                print(f"Response: {response_text}")
-                return True
-    except aiohttp.ClientError as e:
-        print(f"Network error while sending WhatsApp message: {e}")
-        return False
-    except Exception as e:
-        print(f"Error sending WhatsApp message: {e}")
-        return False
+    # no conflict, or numbers reassigned. proceed to send message
+    print(f"Sending WhatsApp message from {from_number} to {to_number}: {message}")
+    async with aiohttp.ClientSession() as session:
+        async with session.post(
+            f"{os.getenv('UNITY_COMMS_URL')}/whatsapp/send-text",
+            headers=headers,
+            json={
+                "from": from_number,
+                "to": to_number,
+                "body": message,
+            },
+        ) as response:
+            response.raise_for_status()
+            response_text = await response.text()
+            print(f"Response: {response_text}")
+            return response_text
 
 
 async def _send_sms_message_via_number(
-    from_number: str,
+    # from_number: str, # for debugging, to remove
     to_number: str,
     message: str,
-) -> bool:
+) -> str:
     """
     Send an SMS message using the SMS provider API.
 
@@ -173,34 +163,27 @@ async def _send_sms_message_via_number(
         message: The message content to send
 
     Returns:
-        bool: True if message was sent successfully, False otherwise
+        str: The response from the SMS API
     """
-    try:
-        # from_number = os.getenv("ASSISTANT_NUMBER") # for debugging, to remove
-        print(f"Sending SMS from {from_number} to {to_number}: {message}")
-        async with aiohttp.ClientSession() as session:
-            async with session.post(
-                f"{os.getenv('UNITY_COMMS_URL')}/phone/send-text",
-                headers=headers,
-                json={
-                    "From": from_number,
-                    "To": to_number,
-                    "Body": message,
-                },
-            ) as response:
-                if response.status != 200:
-                    print(f"Failed to send SMS. Status: {response.status}")
-                    return False
+    from_number = os.getenv("ASSISTANT_NUMBER")
+    if not from_number:
+        raise ValueError("ASSISTANT_NUMBER environment variable not set.")
 
-                response_text = await response.text()
-                print(f"Response: {response_text}")
-                return True
-    except aiohttp.ClientError as e:
-        print(f"Network error while sending SMS: {e}")
-        return False
-    except Exception as e:
-        print(f"Error sending SMS: {e}")
-        return False
+    print(f"Sending SMS from {from_number} to {to_number}: {message}")
+    async with aiohttp.ClientSession() as session:
+        async with session.post(
+            f"{os.getenv('UNITY_COMMS_URL')}/phone/send-text",
+            headers=headers,
+            json={
+                "From": from_number,
+                "To": to_number,
+                "Body": message,
+            },
+        ) as response:
+            response.raise_for_status()
+            response_text = await response.text()
+            print(f"Response: {response_text}")
+            return response_text
 
 
 async def _send_email_via_address(from_email: str, to_email: str, content: str) -> str:
@@ -213,39 +196,28 @@ async def _send_email_via_address(from_email: str, to_email: str, content: str) 
         content: The message content to send
 
     Returns:
-        str: A string indicating the result of the action
+        str: The response from the email API
     """
     # from_email = os.getenv("ASSISTANT_EMAIL") # for debugging, to remove
     if not from_email:
         from_email = "unity.agent@unify.ai"  # todo: temp placeholder
         # print("No email address found for assistant")
         # return "Message not sent: No email address found for assistant"
-
-    try:
-        print(f"Sending email from {from_email} to {to_email}: {content}")
-        async with aiohttp.ClientSession() as session:
-            async with session.post(
-                f"{os.getenv('UNITY_COMMS_URL')}/email/send",
-                headers=headers,
-                json={
-                    "from": from_email,
-                    "to": to_email,
-                    "body": content,
-                },
-            ) as response:
-                if response.status != 200:
-                    print(f"Failed to send email. Status: {response.status}")
-                    return "Message not sent: Failed to send email"
-
-                response_text = await response.text()
-                print(f"Response: {response_text}")
-                return "Message sent successfully"
-    except aiohttp.ClientError as e:
-        print(f"Network error while sending email: {e}")
-        return "Message not sent: Network error"
-    except Exception as e:
-        print(f"Error sending email: {e}")
-        return "Message not sent: Error"
+    print(f"Sending email from {from_email} to {to_email}: {content}")
+    async with aiohttp.ClientSession() as session:
+        async with session.post(
+            f"{os.getenv('UNITY_COMMS_URL')}/email/send",
+            headers=headers,
+            json={
+                "from": from_email,
+                "to": to_email,
+                "body": content,
+            },
+        ) as response:
+            response.raise_for_status()
+            response_text = await response.text()
+            print(f"Response: {response_text}")
+            return response_text
 
 
 async def _start_call(from_number: str, to_number: str, purpose: str) -> bool:
