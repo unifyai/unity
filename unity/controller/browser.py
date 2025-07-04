@@ -37,7 +37,7 @@ class Browser:
         """
         return await self.controller.observe(query, response_format)
 
-    async def multi_step(
+    def multi_step(
         self,
         description: str,
         parent_chat_context: list[dict] | None = None,
@@ -91,6 +91,7 @@ class Browser:
         # TODO: Implement logic to reset the browser to a specific state
         print("Seeding browser state...")
 
-    def close(self):
+    def stop(self):
         """Shuts down the underlying controller."""
         self.controller.stop()
+        self.controller.join(timeout=2.0)
