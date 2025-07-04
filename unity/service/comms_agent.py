@@ -224,7 +224,7 @@ class CommsAgent:
         """Handle conductor handle actions asynchronously"""
         # check if the conductor is running
         if self.conductor_handles is None or not self.conductor_handles.get(
-            action.handle_id
+            action.handle_id,
         ):
             # handle failed
             event_data = {
