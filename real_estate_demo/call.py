@@ -33,6 +33,9 @@ load_dotenv()
 RUNNING = False
 
 
+
+IN_GEN = False
+
 events_queue = asyncio.Queue()
 chunk_queue = asyncio.Queue()
 current_running_response: asyncio.Task = None
@@ -127,7 +130,7 @@ async def entrypoint(ctx: agents.JobContext):
     session = AgentSession(
         stt=deepgram.STT(model="nova-3", language="multi"),
         llm=openai.LLM(model="gpt-4o"),
-        tts=cartesia.TTS(voice="4f7f1324-1853-48a6-b294-4e78e8036a83"),
+        tts=cartesia.TTS(voice="a01c369f-6d2d-4185-bc20-b32c225eab70"),
         vad=silero.VAD.load(),
         turn_detection=MultilingualModel(),
     )
@@ -228,8 +231,10 @@ async def entrypoint(ctx: agents.JobContext):
     )
 
     async def response_task():
+        global IN_GEN
         nonlocal session, last_activity_time
         handle = await session.generate_reply()
+        IN_GEN = False
         last_activity_time = asyncio.get_event_loop().time()  # Update activity time
         try:
             return handle.chat_message.text_content, handle.interrupted
@@ -308,6 +313,11 @@ async def entrypoint(ctx: agents.JobContext):
                 last_activity_time = asyncio.get_event_loop().time()
                 # handle msg
                 if msg["type"] == "start_gen":
+                    global IN_GEN
+                    if IN_GEN:
+                        continue
+                    else:
+                        IN_GEN = True
                     # nonlocal session
                     # await session.current_speech()
                     chunk_queue = asyncio.Queue()

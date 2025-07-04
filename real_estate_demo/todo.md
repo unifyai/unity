@@ -14,3 +14,5 @@ okay each turn the agent so decide:
 - prompt the user for information
 - take an agent_script_action
 - end the session/call
+
+Do not start gen while a generation in going on

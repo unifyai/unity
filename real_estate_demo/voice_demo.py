@@ -32,10 +32,10 @@ class Agent:
 
     async def listen_for_events(self):
         print("COLLECTING...")
-        self.call_proc = run_script("call.py", "dev")
+        self.call_proc = run_script("call.py", "console")
         while True:
             try:
-                new_event = await asyncio.wait_for(self.events_queue.get(), 0.5)
+                new_event = await asyncio.wait_for(self.events_queue.get(), 1.0)
                 print("GOT NEW EVENT", new_event)
                 self.pending_events.append(new_event)
                 # urgent events should re-trigger, cancel events should cancel current running only
@@ -197,7 +197,15 @@ class Agent:
                                         "chunk": output["next_action"]["update"][len(last_response):],
                                     }
                                 last_response = output["next_action"]["update"]
-                            if ev: self.publish(ev)
+                            if ev and ev["chunk"]: self.publish(ev)
+            if output["next_action"].get("update"):
+                ev = {
+                                        "topic": "call_process",
+                                        "type": "gen_chunk",
+                                        "chunk": ".",
+                                    }
+                # this helps cartesia pronounce things correctly (it has to end with a full stop or question mark)
+                self.publish(ev)
 
             ev = {"topic": "call_process", "type": "end_gen"}
             self.publish(ev)
