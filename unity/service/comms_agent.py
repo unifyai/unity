@@ -411,7 +411,7 @@ class CommsAgent:
             except Exception as e:
                 print(f"Error terminating call process: {e}")
 
-    async def handle_logging(self, event: dict):
+    def handle_logging(self, event: dict):
         from unity.transcript_manager.transcript_manager import TranscriptManager
         from unity.transcript_manager.types.message import Message
         from unity.events.event_bus import EVENT_BUS
@@ -421,7 +421,7 @@ class CommsAgent:
 
         try:
             bus_event = Event.from_dict(event["event"]).to_bus_event()
-            await EVENT_BUS.publish(bus_event)
+            asyncio.run(EVENT_BUS.publish(bus_event))
             if event["event"]["event_name"] in [
                 "PhoneUtteranceEvent",
                 "WhatsappMessageSentEvent",
@@ -487,5 +487,4 @@ class CommsAgent:
             self.past_events.append(event["event"])
         else:
             self.events_queue.put_nowait(event["event"])
-        # log event and message in separate worker thread
-        asyncio.create_task(asyncio.to_thread(self.handle_logging(event)))
+        asyncio.create_task(asyncio.to_thread(self.handle_logging, event))
