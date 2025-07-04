@@ -61,7 +61,7 @@ async def test_search_hybrid_reads():
 
     for seq in range(4):  # publish 4 events
         await bus.publish(Event(type="Alerts", payload={"seq": seq}))
-    bus.join_published()
+        bus.join_published()
 
     out = await bus.search(
         limit=3,
@@ -88,7 +88,7 @@ async def test_search_with_offset_across_backend():
                 payload={"seq": seq},
             ),
         )
-    bus.join_published()
+        bus.join_published()
 
     out = await bus.search(
         limit=2,
