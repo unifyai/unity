@@ -66,7 +66,7 @@ class Event(BaseModel):
         description="Identifier of the process/machine that produced the event",
     )
     type: str = Field(
-        description="Domain-level event type or ‘topic’",
+        description="Domain-level event type or 'topic'",
     )
     timestamp: datetime = Field(
         default_factory=lambda: dt.datetime.now(dt.UTC),
@@ -142,16 +142,23 @@ class Event(BaseModel):
     # ────────────────────────────────────────────────
     @classmethod
     def _to_python(cls, v: Any) -> Any:  # noqa: PLR0911 – simple, explicit recursion
-        if isinstance(v, BaseModel):
-            return v.model_dump(mode="python")
+        # ── 1. datetime family → ISO-8601 string ───────────────────────
+        if isinstance(v, (dt.datetime, dt.date, dt.time)):
+            return v.isoformat()
 
+        # ── 2. pydantic model → dict (JSON-mode guarantees strings) ────
+        if isinstance(v, BaseModel):
+            return cls._to_python(v.model_dump(mode="json"))
+
+        # ── 3. containers – depth-first recursion ──────────────────────
         if isinstance(v, Mapping):
             return {k: cls._to_python(sub) for k, sub in v.items()}
 
         if isinstance(v, (list, tuple, set)):
-            it: Iterable[Any] = [_ for _ in v]  # help mypy/pyright
+            it: Iterable[Any] = list(v)  # help type checkers
             return [cls._to_python(sub) for sub in it]
 
+        # ── 4. primitives stay unchanged ───────────────────────────────
         return v
 
 
@@ -293,7 +300,7 @@ class EventBus:
         try:
             loop = asyncio.get_running_loop()
         except RuntimeError:
-            # No loop yet (import time in sync context) – we’ll launch lazily.
+            # No loop yet (import time in sync context) – we'll launch lazily.
             pass
         else:
             self._prefill_task = loop.create_task(self._async_initial_hydration())
@@ -480,34 +487,46 @@ class EventBus:
             while len(dq) > window:
                 dq.popleft()
 
-        if hasattr(event, "to_post_json") and callable(getattr(event, "to_post_json")):
-            entries = event.to_post_json()
+        if isinstance(event.payload, BaseModel):
+            # JSON-mode: datetimes already serialised
+            payload_dict = event.payload.model_dump(mode="json")
         else:
-            entries = event.model_dump(mode="json")
+            # Recursively coerce datetimes inside plain dict payloads
+            def _serialise(obj: Any):
+                if isinstance(obj, (dt.datetime, dt.date, dt.time)):
+                    return obj.isoformat()
+                if isinstance(obj, Mapping):
+                    return {k: _serialise(v) for k, v in obj.items()}
+                if isinstance(obj, (list, tuple, set)):
+                    return [_serialise(o) for o in obj]
+                return obj
+
+            payload_dict = _serialise(event.payload)
 
         # Log to global event table
         self._logger.log_create(
             project=unify.active_project(),
             context=self._global_ctx,
             params={},
-            entries=entries,
+            entries={
+                "event_id": event.event_id,
+                "calling_id": event.calling_id,
+                "event_timestamp": event.timestamp.isoformat(),
+                "payload_cls": event.payload_cls,
+                **payload_dict,
+            },
         )
 
         # Log to specific event table
-        if isinstance(event.payload, BaseModel):
-            payload_dict = event.payload.model_dump(mode="python")
-        else:
-            payload_dict = dict(event.payload)
-
         self._logger.log_create(
             project=unify.active_project(),
             context=self._specific_ctxs[event.type],
             params={},
             entries={
-                "event_id": entries["event_id"],
-                "calling_id": entries["calling_id"],
-                "event_timestamp": entries["timestamp"],
-                "payload_cls": entries["payload_cls"],
+                "event_id": event.event_id,
+                "calling_id": event.calling_id,
+                "event_timestamp": event.timestamp.isoformat(),
+                "payload_cls": event.payload_cls,
                 **payload_dict,
             },
         )
@@ -841,7 +860,11 @@ class EventBus:
                 "count_step": sub.count_step,
                 "time_step": sub.time_step,
                 "last_row_id": sub.last_row_id,
-                "last_timestamp": sub.last_timestamp,
+                "last_timestamp": (
+                    sub.last_timestamp.isoformat()
+                    if isinstance(sub.last_timestamp, dt.datetime)
+                    else sub.last_timestamp
+                ),
             },
         )
 
