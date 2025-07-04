@@ -494,4 +494,4 @@ class CommsAgent:
         else:
             self.events_queue.put_nowait(event["event"])
         # log event and message in separate worker thread
-        self.logging_executor.submit(self.handle_logging, event)
+        # self.logging_executor.submit(self.handle_logging, event)
