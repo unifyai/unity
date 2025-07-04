@@ -56,10 +56,9 @@ def _handle_project(
             if not try_reuse_prev_ctx and unify.get_contexts(prefix=ctx):
                 unify.delete_context(ctx)
 
-            EVENT_BUS.reset()
-
             try:
                 with unify.Context(ctx):
+                    EVENT_BUS.reset()
                     if json.loads(os.environ.get("UNIFY_TRACED", "true")):
                         unify.set_trace_context("Traces")
                     await _call(test_fn, *args, **kwargs)
@@ -88,10 +87,9 @@ def _handle_project(
             if not try_reuse_prev_ctx and unify.get_contexts(prefix=ctx):
                 unify.delete_context(ctx)
 
-            EVENT_BUS.reset()
-
             try:
                 with unify.Context(ctx):
+                    EVENT_BUS.reset()
                     if json.loads(os.environ.get("UNIFY_TRACED", "true")):
                         unify.set_trace_context("Traces")
                         unify.traced(test_fn)(*args, **kwargs)
