@@ -65,8 +65,7 @@ def _build_rules_and_examples_prompt(
         4.  **Decorators & Docstrings:** Every function you define MUST be decorated with `@verify` and include a concise one-line docstring.
         5.  **No Imports:** You MUST NOT use any `import` statements.
         6.  **Stubbing:** If you cannot implement a function immediately, stub it out with `raise NotImplementedError`.
-        7.  **Context Managers (`async with`):** Tools that return a "handle" (e.g., `start_call`) MUST be used within an `async with` block to ensure they are safely closed.
-        8.  **Await Keyword**: All `action_provider` methods that are asynchronous MUST be called with the `await` keyword.
+        7.  **Await Keyword**: All `action_provider` methods that are asynchronous MUST be called with the `await` keyword.
 
         ---
         ### Strategy & Tool Usage
@@ -89,15 +88,16 @@ def _build_rules_and_examples_prompt(
         ---
         ### Usage Examples
 
-        **Making a Call:**
+        **Using a Handle-Based Tool (like sending a message):**
         ```python
         @verify
-        async def confirm_appointment():
-            # The start_call tool returns a handle that should be managed with async with.
-            async with action_provider.start_call(phone_number="555-0101", purpose="Confirm appointment") as call:
-                # The handle's 'ask' method is used for interaction.
-                response = await call.ask("Are you still available for our 2pm meeting tomorrow?")
-            return response
+        async def send_confirmation_sms():
+            # First, await the tool to get the interactive handle.
+            sms_handle = await action_provider.send_sms_message("Text Jane Doe to confirm her 3pm appointment")
+
+            # You can now interact with the handle if needed, or just get the final result.
+            confirmation = await sms_handle.result()
+            return confirmation
         ```
 
         **Browser Interaction:**
@@ -119,7 +119,6 @@ def _format_existing_functions(existing_functions: Dict[str, Any]) -> str:
     if not existing_functions:
         return "None."
 
-    # Use a set to avoid duplicating implementations if multiple aliases point to the same code
     unique_implementations = {
         textwrap.dedent(func_data.get("implementation", "")).strip()
         for func_data in existing_functions.values()
@@ -145,7 +144,6 @@ def build_initial_plan_prompt(
     """
     formatted_functions = _format_existing_functions(existing_functions)
 
-    # Define standard instructions for initial planning
     strategy_instruction = (
         "Decompose the problem logically into a series of `async def` functions."
     )
