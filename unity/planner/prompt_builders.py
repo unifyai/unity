@@ -40,52 +40,32 @@ def _build_handle_apis(tool_dict: Dict[str, Callable]) -> str:
     return "\n\n".join(handle_docs)
 
 
-def _format_existing_functions(existing_functions: Dict[str, Any]) -> str:
-    """Formats the library of existing functions into clean code blocks."""
-    if not existing_functions:
-        return "None."
-
-    # Use a set to avoid duplicating implementations if multiple aliases point to the same code
-    unique_implementations = {
-        textwrap.dedent(func_data.get("implementation", "")).strip()
-        for func_data in existing_functions.values()
-        if func_data.get("implementation")
-    }
-
-    if not unique_implementations:
-        return "None."
-
-    return "\n\n---\n\n".join(unique_implementations)
-
-
-def build_initial_plan_prompt(
-    goal: str,
-    existing_functions: Dict[str, Any],
-    retry_msg: str,
-    exploration_summary: Optional[str] = None,
-    *,
+def _build_rules_and_examples_prompt(
     tools: Dict[str, Callable],
+    strategy_instruction: str,
+    tool_usage_instruction: str,
 ) -> str:
-    """
-    Dynamically builds the system prompt for the Hierarchical Planner.
-    """
+    """Builds the reusable block of core rules and examples for code generation."""
     tool_reference = _build_tool_signatures(tools)
     handle_apis = _build_handle_apis(tools)
-    formatted_functions = _format_existing_functions(existing_functions)
+
     return textwrap.dedent(
         f"""
-        You are an expert Python programmer tasked with generating a complete, single-file script to achieve a user's goal.
-
-        **Primary Goal:** "{goal}"
-
         ---
         ### Core Instructions & Rules
-        1.  **Single Code Block:** Your entire response MUST be a single, valid Python code block.
-        2.  **Entry Point:** The script's main entry point MUST be `async def main_plan()`.
+        1.  **Single Code Block:** Your entire response MUST be a single, valid Python code block, starting with `@verify`.
+        2.  **Entry Point:** For a full plan, the main entry point MUST be `async def main_plan()`.
         3.  **Decomposition:** Break down complex problems into smaller, logical, self-contained `async def` helper functions.
         4.  **Decorators & Docstrings:** Every function you define MUST be decorated with `@verify` and include a concise one-line docstring.
         5.  **No Imports:** You MUST NOT use any `import` statements.
-        6.  **Context Managers (`async with`):** Tools that return a "handle" (documented in the Handle APIs section) MUST be used within an `async with` block to ensure they are safely closed.
+        6.  **Stubbing:** If you cannot implement a function immediately, stub it out with `raise NotImplementedError`.
+        7.  **Context Managers (`async with`):** Tools that return a "handle" (e.g., `start_call`) MUST be used within an `async with` block to ensure they are safely closed.
+        8.  **Await Keyword**: All `action_provider` methods that are asynchronous MUST be called with the `await` keyword.
+
+        ---
+        ### Strategy & Tool Usage
+        {strategy_instruction}
+        {tool_usage_instruction}
 
         ---
         ### Tools Reference
@@ -124,7 +104,59 @@ def build_initial_plan_prompt(
             blog_title = await action_provider.browser_observe("What is the title of the first blog post?")
             return blog_title
         ```
+    """,
+    )
 
+
+def _format_existing_functions(existing_functions: Dict[str, Any]) -> str:
+    """Formats the library of existing functions into clean code blocks."""
+    if not existing_functions:
+        return "None."
+
+    # Use a set to avoid duplicating implementations if multiple aliases point to the same code
+    unique_implementations = {
+        textwrap.dedent(func_data.get("implementation", "")).strip()
+        for func_data in existing_functions.values()
+        if func_data.get("implementation")
+    }
+
+    if not unique_implementations:
+        return "None."
+
+    return "\n\n---\n\n".join(unique_implementations)
+
+
+def build_initial_plan_prompt(
+    goal: str,
+    existing_functions: Dict[str, Any],
+    retry_msg: str,
+    exploration_summary: Optional[str] = None,
+    *,
+    tools: Dict[str, Callable],
+) -> str:
+    """
+    Dynamically builds the system prompt for the Hierarchical Planner.
+    """
+    formatted_functions = _format_existing_functions(existing_functions)
+
+    # Define standard instructions for initial planning
+    strategy_instruction = (
+        "Decompose the problem logically into a series of `async def` functions."
+    )
+    tool_usage_instruction = "Use the `action_provider` global object to interact with the environment. Available tools and their handle APIs have been described in the rules below."
+
+    rules_and_examples = _build_rules_and_examples_prompt(
+        tools,
+        strategy_instruction,
+        tool_usage_instruction,
+    )
+
+    return textwrap.dedent(
+        f"""
+        You are an expert Python programmer tasked with generating a complete, single-file script to achieve a user's goal.
+
+        **Primary Goal:** "{goal}"
+        {rules_and_examples}
         ---
         ### Existing Functions Library
         You may use these pre-existing functions if they are suitable.
@@ -167,20 +199,20 @@ def build_dynamic_implement_prompt(
         The complete prompt string.
     """
 
-    tool_reference = _build_tool_signatures(tools)
-    handle_apis = _build_handle_apis(tools)
-
     browser_context_section = ""
-    strategy_instruction = """2.  **Strategy:** You are likely being asked to implement this because a previous attempt failed. Your first step should be to **re-assess the situation** and devise a new, robust plan to achieve the goal."""
-    tool_usage_instruction = """6.  **Tool Usage:** Use the `action_provider` global object to interact with the environment. Available tools and their handle APIs have been described in the initial system prompt."""
+    strategy_instruction = """You are likely being asked to implement this because a previous attempt failed. Your first step should be to **re-assess the situation** and devise a new, robust plan to achieve the goal."""
+    tool_usage_instruction = """Use the `action_provider` global object to interact with the environment. Available tools and their handle APIs have been described in the rules below."""
 
     if browser_state:
         browser_context_section = f"""
 **Current Browser State:**
 {browser_state}
 """
-        strategy_instruction = """2.  **Strategy:** You are likely being asked to implement this because a previous attempt failed. Your first step should be to **re-assess the environment**. Use `browser.observe()` to confirm the current page is correct before attempting any actions. If the state is wrong, generate code to correct it first."""
-        tool_usage_instruction = """6.  **Tool Usage:** Use the `action_provider` global object to interact with the environment. The `browser` handle from `start_browser_session` has ONLY two methods: `act(instruction: str)` and `observe(query: str)`. You MUST NOT call hallucinated methods like `.click()` or `.navigate()`."""
+    rules_and_examples = _build_rules_and_examples_prompt(
+        tools,
+        strategy_instruction,
+        tool_usage_instruction,
+    )
 
     return textwrap.dedent(
         f"""
@@ -194,29 +226,7 @@ def build_dynamic_implement_prompt(
         ```
         {browser_context_section}
         {replan_context}
-
-        ---
-        ### Instructions & Rules
-        1.  **Code Only:** Your output MUST be ONLY the Python code for the function, starting with the `@verify` decorator and the function definition. Do not include explanations or markdown.
-        {strategy_instruction}
-        3.  **Granularity:** Break down complex interactions into a series of simple, single-purpose steps.
-        4.  **Add a Docstring:** The function implementation MUST include a concise one-line docstring explaining its purpose.
-        5.  **Use Context Managers:** For tools that return a handle (`make_call`, `start_browser_session`), you MUST use an `async with` block.
-        {tool_usage_instruction}
-        7.  **No Imports:** `import` statements are forbidden.
-
-         ---
-        ### Tools Reference
-        You have access to a global `action_provider` object with the following methods. You must call them with the correct arguments as specified here.
-        ```json
-        {tool_reference}
-        ```
-
-        ---
-        ### Handle APIs
-        Some tools return a "handle" object for ongoing interaction. The available methods for these handles are listed below. You MUST only use the methods listed.
-
-        {handle_apis}
+        {rules_and_examples}
 
         Begin your response now.
         """,
@@ -299,12 +309,17 @@ def build_plan_surgery_prompt(
     Returns:
         The complete prompt string.
     """
-    tool_reference = _build_tool_signatures(tools)
-    handle_apis = _build_handle_apis(tools)
+    strategy_instruction = "Your task is to rewrite the script below to incorporate the user's change request."
+    tool_usage_instruction = "Use the `action_provider` global object to interact with the environment. Available tools and their handle APIs have been described in the rules below."
+    rules_and_examples = _build_rules_and_examples_prompt(
+        tools,
+        strategy_instruction,
+        tool_usage_instruction,
+    )
 
     return textwrap.dedent(
         f"""
-        You are an expert Python programmer specializing in code modification. Your task is to rewrite an entire script to incorporate a user's change request.
+        You are an expert Python programmer specializing in code modification.
 
         **Modification Request:**
         "{request}"
@@ -314,29 +329,7 @@ def build_plan_surgery_prompt(
         ```python
         {current_code}
         ```
-
-        ---
-        ### Instructions & Rules
-        1.  **Rewrite the Whole Script:** You must return a new, complete, and valid Python script that incorporates the requested change.
-        2.  **Code Only:** Your response MUST be a single Python code block. Do NOT include any preamble, explanations, or markdown fences.
-        3.  **Preserve Docstrings:** All functions should have a concise one-line docstring explaining their purpose.
-        4.  **Preserve Decorators:** All `async def` functions MUST retain their `@verify` decorator.
-        5.  **No Imports:** You MUST NOT use any `import` statements.
-        6.  **Use Context Managers:** For tools that return a handle (`make_call`, `start_browser_session`), you MUST use an `async with` block.
-
-
-        ---
-        ### Tools Reference
-        You have access to a global `action_provider` object with the following methods. You must call them with the correct arguments as specified here.
-        ```json
-        {tool_reference}
-        ```
-
-        ---
-        ### Handle APIs
-        Some tools return a "handle" object for ongoing interaction. The available methods for these handles are listed below. You MUST only use the methods listed.
-
-        {handle_apis}
+        {rules_and_examples}
 
         Begin your response now. Your response must start immediately with the code.
         """,
@@ -361,8 +354,15 @@ def build_course_correction_prompt(
     Returns:
         The complete prompt string.
     """
-    tool_reference = _build_tool_signatures(tools)
-    handle_apis = _build_handle_apis(tools)
+    strategy_instruction = """1.  Analyze if the **Current Browser State** is a suitable starting point for executing the **New Plan Code**.
+2.  If it is NOT suitable, write a script containing an `async def course_correction_main()` function. This script must use the `action_provider` to navigate to the correct starting state for the new plan.
+3.  If the current state is already suitable, respond ONLY with the single word: `None`."""
+    tool_usage_instruction = "Use the `action_provider` global object as defined in the examples and reference to perform any needed actions."
+    rules_and_examples = _build_rules_and_examples_prompt(
+        tools,
+        strategy_instruction,
+        tool_usage_instruction,
+    )
 
     return textwrap.dedent(
         f"""
@@ -382,26 +382,7 @@ def build_course_correction_prompt(
         ```python
         {new_code}
         ```
-
-        ---
-        ### Task
-        1.  Analyze if the **Current Browser State** is a suitable starting point for executing the **New Plan Code**.
-        2.  If it is NOT suitable, write a script containing an `async def course_correction_main()` function. This script must use the `action_provider` (via an `async with` block) to navigate to the correct starting state for the new plan. The script must be a single code block.
-        3.  If the current state is already suitable, respond ONLY with the single word: `None`.
-        4.  **CRITICAL**: The script MUST NOT use any `import` statements.
-
-        ---
-        ### Tools Reference
-        You have access to a global `action_provider` object with the following methods. You must call them with the correct arguments as specified here.
-        ```json
-        {tool_reference}
-        ```
-
-        ---
-        ### Handle APIs
-        Some tools return a "handle" object for ongoing interaction. The available methods for these handles are listed below. You MUST only use the methods listed.
-
-        {handle_apis}
+        {rules_and_examples}
 
         Begin your response now.
         """,
