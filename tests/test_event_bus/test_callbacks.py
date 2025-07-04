@@ -34,9 +34,7 @@ from unity.events.event_bus import EventBus, Event
 
 def ts(offset: int) -> str:
     """T0 is 2025-03-01 00:00:00Z; *offset* is seconds."""
-    return (
-        dt.datetime(2025, 3, 1, tzinfo=dt.UTC) + dt.timedelta(seconds=offset)
-    ).isoformat()
+    return dt.datetime(2025, 3, 1, tzinfo=dt.UTC) + dt.timedelta(seconds=offset)
 
 
 # --------------------------------------------------------------------------- #
