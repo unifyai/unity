@@ -7,6 +7,7 @@ import unify
 from ..common.embed_utils import EMBED_MODEL, ensure_vector_column
 from .types.function import Function
 from ..common.model_to_fields import model_to_fields
+from ..planner.action_provider import ActionProvider
 
 
 class FunctionManager(threading.Thread):
@@ -54,47 +55,58 @@ class FunctionManager(threading.Thread):
         if traced:
             self = unify.traced(self)
 
-    # ------------------------------------------------------------------ #
-    #  Static validation helpers                                          #
-    # ------------------------------------------------------------------ #
+    @property
+    def _allowed_calls(self) -> Set[str]:
+        """
+        Dynamically generates the set of all allowed function and method calls.
+        """
+        standard_builtins = {
+            "range",
+            "enumerate",
+            "len",
+            "str",
+            "min",
+            "max",
+            "zip",
+            "sum",
+            "sorted",
+            "abs",
+            "round",
+            "pow",
+            "divmod",
+            "int",
+            "float",
+            "complex",
+            "bool",
+            "list",
+            "tuple",
+            "set",
+            "dict",
+            "reversed",
+            "slice",
+            "all",
+            "any",
+            "chr",
+            "ord",
+            "isinstance",
+            "issubclass",
+            "id",
+        }
 
-    _ALLOWED_BUILTINS: Set[str] = {
-        # --- Planner Primitives ---
-        "act",
-        "observe",
-        # --- Standard Built-ins ---
-        "range",
-        "enumerate",
-        "len",
-        "str",
-        "min",
-        "max",
-        "zip",
-        "sum",
-        "sorted",
-        "abs",
-        "round",
-        "pow",
-        "divmod",
-        "int",
-        "float",
-        "complex",
-        "bool",
-        "list",
-        "tuple",
-        "set",
-        "dict",
-        "reversed",
-        "slice",
-        "all",
-        "any",
-        "chr",
-        "ord",
-        "isinstance",
-        "issubclass",
-        "id",
-    }
-    _DISALLOWED_BUILTINS: Set[str] = set(dir(builtins)) - _ALLOWED_BUILTINS
+        action_provider_methods = {
+            name
+            for name, _ in inspect.getmembers(ActionProvider, inspect.isfunction)
+            if not name.startswith("_")
+        }
+
+        allowed_globals = {"action_provider"}
+
+        return standard_builtins | action_provider_methods | allowed_globals
+
+    @property
+    def _disallowed_builtins(self) -> Set[str]:
+        """Built-ins that are not in our explicit allow-list."""
+        return set(dir(builtins)) - self._allowed_calls
 
     def _parse_implementation(
         self,
@@ -144,14 +156,19 @@ class FunctionManager(threading.Thread):
         calls: Set[str] = set()
         for node in ast.walk(fn_node):
             if isinstance(node, ast.Call):
-                match node.func:
-                    case ast.Name(id=ident):
-                        calls.add(ident)
-                    case ast.Attribute():
-                        raise ValueError(
-                            f"Attribute call '{ast.unparse(node.func)}' "
-                            f"is not allowed in {fn_node.name}().",
-                        )
+                if (
+                    isinstance(node.func, ast.Attribute)
+                    and isinstance(node.func.value, ast.Name)
+                    and node.func.value.id == "action_provider"
+                ):
+                    calls.add(node.func.attr)
+                elif isinstance(node.func, ast.Name):
+                    calls.add(node.func.id)
+                else:
+                    raise ValueError(
+                        f"Complex attribute call '{ast.unparse(node.func)}' "
+                        f"is not allowed in {fn_node.name}().",
+                    )
         return calls
 
     def _validate_function_calls(
@@ -160,12 +177,14 @@ class FunctionManager(threading.Thread):
         calls: Set[str],
         provided_names: Set[str],
     ) -> None:
+        allowed = self._allowed_calls
+        disallowed_builtins = self._disallowed_builtins
         for called in calls:
-            if called in self._DISALLOWED_BUILTINS:
+            if called in disallowed_builtins:
                 raise ValueError(
                     f"Built-in '{called}' is not permitted in {fn_name}().",
                 )
-            if called not in provided_names and called not in self._ALLOWED_BUILTINS:
+            if called not in provided_names and called not in allowed:
                 raise ValueError(
                     f"{fn_name}() references unknown function '{called}'. "
                     "All referenced functions must be provided together.",

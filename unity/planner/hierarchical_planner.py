@@ -153,20 +153,15 @@ class _ActionProviderProxy:
     def __init__(self, real_action_provider: ActionProvider, plan: "HierarchicalPlan"):
         self._real_action_provider = real_action_provider
         self._plan = plan
-        logger.debug(">>>>>> [PROXY] _ActionProviderProxy initialized.")
 
     def __getattr__(self, name: str) -> Any:
         """
         This magic method is called whenever an attribute (like a tool method)
         is accessed on the proxy instance.
         """
-        logger.debug(f">>>>>> [PROXY] __getattr__ called for attribute: '{name}'")
         real_attr = getattr(self._real_action_provider, name)
 
         if not callable(real_attr):
-            logger.debug(
-                f">>>>>> [PROXY] Attribute '{name}' is not callable, returning directly.",
-            )
             return real_attr
 
         @functools.wraps(real_attr)
@@ -178,17 +173,8 @@ class _ActionProviderProxy:
             kwarg_str = ", ".join(f"{k}={v!r}" for k, v in kwargs.items())
             call_repr = f"action_provider.{name}({arg_str}, {kwarg_str})"
 
-            logger.info(f"PROXY: Intercepted ASYNC call to {call_repr}")
-
             result = await real_attr(*args, **kwargs)
-
-            logger.debug(
-                f">>>>>> [PROXY] Real attribute '{name}' returned with result: {result}",
-            )
-
             interactions_log.append(("tool_call", call_repr, str(result)))
-            logger.info(f"PROXY: Logged interaction for {name}")
-
             return result
 
         @functools.wraps(real_attr)
@@ -200,16 +186,9 @@ class _ActionProviderProxy:
             kwarg_str = ", ".join(f"{k}={v!r}" for k, v in kwargs.items())
             call_repr = f"action_provider.{name}({arg_str}, {kwarg_str})"
 
-            logger.info(f"PROXY: Intercepted SYNC call to {call_repr}")
-
             result = real_attr(*args, **kwargs)
 
-            logger.debug(
-                f">>>>>> [PROXY] Real attribute '{name}' returned with result: {result}",
-            )
-
             interactions_log.append(("tool_call", call_repr, str(result)))
-            logger.info(f"PROXY: Logged interaction for {name}")
             return result
 
         if inspect.iscoroutinefunction(real_attr):
@@ -1286,11 +1265,8 @@ class HierarchicalPlanner(BasePlanner):
                 child_interactions = plan.interaction_stack[-1]
                 parent_interactions = plan.interaction_stack[-2]
                 parent_interactions.extend(child_interactions)
-                logger.debug(
-                    f"Rolled up {len(child_interactions)} interactions from '{fn.__name__}' to its parent.",
-                )
 
-            if func_source and self.function_manager:
+            if func_source and self.function_manager and fn.__name__ != "main_plan":
                 try:
                     func_tree = ast.parse(func_source)
                     func_node = func_tree.body[0]
