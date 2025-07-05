@@ -23,6 +23,37 @@ def _now() -> str:  # UTC timestamp helper
 
 
 # ────────────────────────────────────────────────────────────────────────────
+# Shared historic activity snippet
+# ────────────────────────────────────────────────────────────────────────────
+
+
+def _rolling_activity_section() -> str:
+    """Return a markdown summary of the agent's historic activity."""
+
+    try:
+        from ..memory_manager.memory_manager import MemoryManager  # noqa: WPS433
+
+        overview = MemoryManager().get_rolling_activity()
+    except Exception:  # pragma: no cover
+        return ""
+
+    if not overview:
+        return ""
+
+    return "\n".join(
+        [
+            "Historic Activity Overview",
+            "---------------------------",
+            "Below is a summary of the agent's historic activity (tasks, contacts, knowledge, transcripts, etc.).",
+            "Some parts may be useful context for the current task while others might not – use your judgement.",
+            "",
+            overview,
+            "",
+        ],
+    )
+
+
+# ────────────────────────────────────────────────────────────────────────────
 # public builders
 # ────────────────────────────────────────────────────────────────────────────
 
@@ -68,7 +99,7 @@ def build_refactor_prompt(
         """,
     ).strip()
 
-    return textwrap.dedent(
+    base_prompt = textwrap.dedent(
         f"""
         You are the **Schema Refactor Assistant**.
         Your only goal is to *minimise duplication* and *maximise clarity* of
@@ -100,6 +131,8 @@ def build_refactor_prompt(
         {examples}
         """,
     ).strip()
+
+    return _rolling_activity_section() + "\n\n" + base_prompt
 
 
 def build_update_prompt(
@@ -149,6 +182,7 @@ def build_update_prompt(
 
     return "\n".join(
         [
+            _rolling_activity_section(),
             core_instructions,
             "",
             "Tools (name → argspec)",
@@ -201,6 +235,7 @@ def build_ask_prompt(
 
     return "\n".join(
         [
+            _rolling_activity_section(),
             core_instructions,
             "",
             "Tools (name → argspec)",

@@ -21,6 +21,37 @@ def _now() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
 
 
+# ─────────────────────────────────────────────────────────────────────────────
+# Shared historic activity snippet
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+def _rolling_activity_section() -> str:
+    """Return a markdown summary of the agent's historic activity."""
+
+    try:
+        from ..memory_manager.memory_manager import MemoryManager  # noqa: WPS433
+
+        overview = MemoryManager().get_rolling_activity()
+    except Exception:  # pragma: no cover
+        return ""
+
+    if not overview:
+        return ""
+
+    return "\n".join(
+        [
+            "Historic Activity Overview",
+            "---------------------------",
+            "Below is a summary of the agent's historic activity (tasks, contacts, knowledge, transcripts, etc.).",
+            "Some parts may be useful context for the current task while others might not – use your judgement.",
+            "",
+            overview,
+            "",
+        ],
+    )
+
+
 # ───────────────────────────────────── builders ─────────────────────────────────────
 
 
@@ -30,6 +61,7 @@ def build_ask_prompt(tools: Dict[str, Callable]) -> str:
 
     return "\n".join(
         [
+            _rolling_activity_section(),
             "You are an assistant specialising in **read-only questions** about tasks,",
             "contacts, transcripts and the knowledge-base.  Interact with the tools",
             "below *step-by-step* until you can answer concisely.",
@@ -54,6 +86,7 @@ def build_request_prompt(tools: Dict[str, Callable]) -> str:
 
     return "\n".join(
         [
+            _rolling_activity_section(),
             "You have **full read-write control** over tasks, contacts, transcripts",
             "and the knowledge-base. Use *only* the tools supplied – never invent",
             "your own. Call them iteratively until the user's request is completely",

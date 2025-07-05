@@ -48,6 +48,40 @@ def _tool_name(tools: Dict[str, Callable], needle: str) -> str | None:
     return next((n for n in tools if needle in n.lower()), None)
 
 
+def _rolling_activity_section() -> str:
+    """Return a human-readable summary of historic agent activity.
+
+    The summary is fetched via ``MemoryManager.get_rolling_activity``.  If the
+    call fails for *any* reason we silently return an empty string so that
+    prompt generation never breaks at runtime.
+    """
+
+    try:
+        # Local import to avoid heavy or circular imports at module load time
+        from ..memory_manager.memory_manager import (
+            MemoryManager,
+        )  # noqa: WPS433 – runtime import by design
+
+        overview = MemoryManager().get_rolling_activity()
+    except Exception:  # pragma: no cover – defensive guard
+        return ""
+
+    if not overview:
+        return ""
+
+    return "\n".join(
+        [
+            "Historic Activity Overview",
+            "---------------------------",
+            "Below is a summary of the agent's historic activity (tasks, contacts, knowledge, transcripts, etc.).",
+            "Some parts may be useful context for the current task while others might not – use your judgement.",
+            "",
+            overview,
+            "",
+        ],
+    )
+
+
 def build_ask_prompt(
     tools: Dict[str, Callable],
     num_contacts: int,
@@ -99,7 +133,7 @@ def build_ask_prompt(
         ─ Custom columns ─
         • Inspect schema
           `{list_columns}()`
-        • Add a “linkedin” field
+        • Add a "linkedin" field
           `{create_custom}(column_name='linkedin', column_type='str')`
         • Delete it again
           `{delete_custom}(column_name='linkedin')`
@@ -116,6 +150,7 @@ def build_ask_prompt(
 
     return "\n".join(
         [
+            _rolling_activity_section(),
             "You are an assistant specializing in **retrieving contact information**.",
             "Work strictly through the tools provided.",
             "You should attempt to answer *any* question as best you can, even if it seems out of scope.",
@@ -169,7 +204,7 @@ def build_update_prompt(tools: Dict[str, Callable]) -> str:
           `"Frank P. Castle"` → `{create_name}(first_name='Frank P.', surname='Castle')`
 
         ─ Custom columns ─
-        • New column *“department”*
+        • New column "department"
           `{create_custom}(column_name='department', column_type='str')`
         • Update a contact's department
           `{update_name}(contact_id=42, department='Engineering')`
@@ -184,6 +219,7 @@ def build_update_prompt(tools: Dict[str, Callable]) -> str:
 
     return "\n".join(
         [
+            _rolling_activity_section(),
             "You are an assistant in charge of **creating or editing contacts**.",
             "Use the tools provided to create new entries or update existing ones.",
             "You should attempt to perform *any* request as best you can, even if it seems out of scope.",
