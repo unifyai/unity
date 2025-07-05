@@ -222,7 +222,7 @@ def record_until_enter() -> bytes:
 
 
 def transcribe_deepgram(audio_bytes: bytes) -> str:
-    "Send *audio_bytes* to Deepgram SDK v4 and return the transcript."
+    "Send *audio_bytes* to Deepgram SDK v4 and return the transcript."
     key = os.getenv("DEEPGRAM_API_KEY")
     if not key:
         print("[Voice] Deepgram key missing – fallback to CLI input.")
@@ -447,19 +447,16 @@ def get_custom_scenario(args) -> Optional[str]:
 
 def build_cli_parser(description: str) -> argparse.ArgumentParser:
     """
-    Return an :pyclass:`argparse.ArgumentParser` pre-populated with the
-    six command-line switches that every interactive sandbox uses:
+    Return an :pyclass:`argparse.ArgumentParser` pre-populated with the core
+    command-line switches shared by every interactive sandbox:
 
     • ``--voice / -v``        – enable voice capture & TTS
-    • ``--reuse / -r``        – keep previous data / skip seeding
     • ``--debug / -d``        – verbose tool logs (reasoning steps)
     • ``--traced / -t``       – wrap manager calls in Unify tracing
-    • ``--load_custom / -L``  – restore a saved transcript by name/index
-    • ``--save_custom / -S``  – persist the current seed transcript
-
-    Individual sandboxes remain free to *add* extra flags afterwards.
+    • ``--project_name / -p`` – Unify *project / context* name (default: "Sandbox")
+    • ``--overwrite / -o``    – delete any existing data for *project_name*
+                                 before seeding
     """
-
     parser = argparse.ArgumentParser(description=description)
 
     parser.add_argument(
@@ -467,12 +464,6 @@ def build_cli_parser(description: str) -> argparse.ArgumentParser:
         "-v",
         action="store_true",
         help="enable voice capture + TTS",
-    )
-    parser.add_argument(
-        "--reuse",
-        "-r",
-        action="store_true",
-        help="re-use old data (skip fresh seeding)",
     )
     parser.add_argument(
         "--debug",
@@ -487,27 +478,18 @@ def build_cli_parser(description: str) -> argparse.ArgumentParser:
         help="include Unify tracing",
     )
     parser.add_argument(
-        "--load_custom",
-        "-L",
-        metavar="NAME|-N",
-        help="Load a stored transcript by name or negative history index",
-    )
-    parser.add_argument(
-        "--save_custom",
-        "-S",
+        "--project_name",
+        "-p",
+        default="Sandbox",
         metavar="NAME",
-        help="Save the transcript used to seed this run under NAME",
+        help="Unify project / context name (default: Sandbox)",
     )
     parser.add_argument(
-        "--unique_context",
-        "-u",
+        "--overwrite",
+        "-o",
         action="store_true",
-        help=(
-            "Activate a unique ‘{Specific}Sandbox’ context instead of the global"
-            "‘Sandbox’ one so that data is all isolated to only this sandbox."
-        ),
+        help="overwrite existing data for the chosen project name",
     )
-
     return parser
 
 
@@ -572,7 +554,7 @@ def _get_main_loop() -> asyncio.AbstractEventLoop:
     """
     global _MAIN_LOOP
     try:
-        # We are already inside the loop’s thread
+        # We are already inside the loop's thread
         return asyncio.get_running_loop()
     except RuntimeError:
         # Background thread – re-use cached loop

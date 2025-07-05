@@ -43,7 +43,6 @@ from sandboxes.utils import (  # shared helpers reused in other sandboxes
     await_with_interrupt as _await_with_interrupt,
     build_cli_parser,
 )
-from sandboxes.scenario_store import ScenarioStore
 
 LG = logging.getLogger("contact_sandbox")
 
@@ -147,16 +146,12 @@ async def _main_async() -> None:
     args = parser.parse_args()
 
     # tracing flag
-    if args.traced:
-        os.environ["UNIFY_TRACED"] = "true"
-    else:
-        os.environ["UNIFY_TRACED"] = "false"
+    os.environ["UNIFY_TRACED"] = "true" if args.traced else "false"
 
-    # prepare Unify context
-    base_ctx = "ContactSandbox" if args.unique_context else "Sandbox"
-    unify.activate(base_ctx)
+    # ─────────────────── Unify context ────────────────────
+    unify.activate(args.project_name)
     unify.set_trace_context("Traces")
-    if not args.reuse:
+    if args.overwrite:
         ctxs = unify.get_contexts()
         if "Contacts" in ctxs:
             unify.delete_context("Contacts")
@@ -168,48 +163,20 @@ async def _main_async() -> None:
     logging.basicConfig(level=logging.INFO, format="%(message)s")
     LG.setLevel(logging.INFO)
 
-    # manager & transcript vault
+    # manager
     cm = ContactManager()
     if args.traced:
         cm = unify.traced(cm)
-    store = ScenarioStore()
 
-    # Obtain the transcript that seeds the scenario
-    if not args.reuse:
-        scenario_text: Optional[str] = None
-
-        # ---- 1️⃣ --load_custom -----------------------------------------
-        if args.load_custom:
-            try:
-                key = int(args.load_custom)  # "-1", "-4", …
-            except ValueError:
-                key = args.load_custom  # name
-            scenario_text = store.get(key)
-            LG.info(f"[seed] loaded transcript {key} → {scenario_text}")
-            if args.voice:
-                _speak("Loading your saved scenario, give me a second.")
-
-        # ---- 2️⃣ fresh capture (voice / text) ---------------------------
-        if scenario_text is None:
-            scenario_text = get_custom_scenario(args)
-            if not scenario_text:
-                raise Exception("No text provided for building the custom scenario")
-            store.add_to_history(scenario_text)
-            LG.info(f"[voice] transcript: {scenario_text}")
-
-        # ---- 3️⃣ seed via ScenarioBuilder ------------------------------
-        LG.info("[seed] building synthetic contacts – this can take 20-40 s…")
-        if args.voice:
-            _speak("Sure thing, building your custom scenario now.")
-        await _build_scenario(scenario_text)
-        LG.info("[seed] done.")
-        if args.voice:
-            _speak("All done, your custom scenario is built and ready to go.")
-
-        # ---- 4️⃣ optional --save_custom --------------------------------
-        if args.save_custom:
-            store.save_named(args.save_custom, scenario_text)
-            LG.info(f"[seed] transcript saved as {args.save_custom}.")
+    # ─────────────────── seeding ──────────────────────────
+    scenario_text: Optional[str] = get_custom_scenario(args)
+    LG.info("[seed] building synthetic contacts – this can take 20-40 s…")
+    if args.voice:
+        _speak("Sure thing, building your custom scenario now.")
+    await _build_scenario(scenario_text)
+    LG.info("[seed] done.")
+    if args.voice:
+        _speak("All done, your custom scenario is built and ready to go.")
 
     print("ContactManager sandbox – type or speak. 'quit' to exit.\n")
 
