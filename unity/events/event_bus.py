@@ -296,6 +296,7 @@ class EventBus:
         #
         self._prefill_done: asyncio.Event = asyncio.Event()
         self._prefill_task: Optional["asyncio.Task[None]"] = None
+        self._prefill_exc: Optional[Exception] = None
 
         try:
             loop = asyncio.get_running_loop()
@@ -314,11 +315,21 @@ class EventBus:
         Sets `self._prefill_done` when complete so other coroutines can
         await bus readiness.
         """
-        await asyncio.gather(
-            self._async_prefill_from_unify(),
-            self._async_load_subscriptions(),
-        )
-        self._prefill_done.set()
+        try:
+            await asyncio.gather(
+                self._async_prefill_from_unify(),
+                self._async_load_subscriptions(),
+            )
+        except Exception as exc:  # pragma: no cover – defensive
+            # Never leave waiters hanging – remember the error and continue.
+            self._prefill_exc = exc
+            try:
+                self._logger.error("EventBus – initial hydration failed: %r", exc)
+            except Exception:
+                # Logger might not be fully ready; ignore.
+                pass
+        finally:
+            self._prefill_done.set()
 
     async def _async_prefill_from_unify(self) -> None:
         """Populate per-type deques without blocking the event-loop."""
@@ -413,12 +424,18 @@ class EventBus:
         internal state to be fully initialised.
         """
         if self._prefill_done.is_set():
+            if self._prefill_exc:
+                raise self._prefill_exc
             return
 
         if self._prefill_task is None:
             self._prefill_task = asyncio.create_task(self._async_initial_hydration())
 
         await self._prefill_done.wait()
+
+        # Hydration finished; bubble-up any error so callers fail fast
+        if self._prefill_exc:
+            raise self._prefill_exc
 
     def _lazy_start_hydration_if_needed(self) -> None:
         """
