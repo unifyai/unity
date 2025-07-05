@@ -23,6 +23,37 @@ def _now() -> str:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# Shared historic activity snippet
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+def _rolling_activity_section() -> str:
+    """Return a markdown summary of the agent's historic activity."""
+
+    try:
+        from ..memory_manager.memory_manager import MemoryManager  # noqa: WPS433
+
+        overview = MemoryManager().get_rolling_activity()
+    except Exception:  # pragma: no cover
+        return ""
+
+    if not overview:
+        return ""
+
+    return "\n".join(
+        [
+            "Historic Activity Overview",
+            "---------------------------",
+            "Below is a summary of the agent's historic activity (tasks, contacts, knowledge, transcripts, etc.).",
+            "Some parts may be useful context for the current task while others might not – use your judgement.",
+            "",
+            overview,
+            "",
+        ],
+    )
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # Public builders
 # ─────────────────────────────────────────────────────────────────────────────
 
@@ -38,6 +69,7 @@ def build_ask_prompt(tools: Dict[str, Callable]) -> str:
 
     return "\n".join(
         [
+            _rolling_activity_section(),
             "You are an assistant specialising in **answering questions about the task list**.",
             "Interact with the read-only tools provided (see below) to gather whatever",
             "information you need, *step-by-step*.  When you have everything, respond",
@@ -64,6 +96,7 @@ def build_update_prompt(tools: Dict[str, Callable]) -> str:
 
     return "\n".join(
         [
+            _rolling_activity_section(),
             "You are an assistant responsible for **creating and updating tasks**.",
             "Use the tools supplied *only* – never invent your own – until the task",
             "list fully reflects the user's intent.",

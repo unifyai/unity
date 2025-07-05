@@ -37,6 +37,7 @@ def build_contact_update_prompt(
     guidance: Optional[str] = None,
 ) -> str:
     lines = [
+        _rolling_activity_section(),
         "You are the **offline MemoryManager** tasked with *creating or amending*",
         "contact records — names, phone numbers, emails, etc. — after reading",
         "a 50-message transcript chunk.",
@@ -58,6 +59,7 @@ def build_bio_prompt(
     guidance: Optional[str] = None,
 ) -> str:
     lines = [
+        _rolling_activity_section(),
         "You are the **MemoryManager** updating the *bio* column for ONE contact.",
         "Input is the last 50 messages plus the *existing* bio (if any).",
         "",
@@ -78,6 +80,7 @@ def build_rolling_prompt(
     guidance: Optional[str] = None,
 ) -> str:
     lines = [
+        _rolling_activity_section(),
         "You are the **MemoryManager** refreshing the 50-message *rolling summary*",
         "for ONE contact.  Start from the previous rolling summary (if supplied).",
         "",
@@ -102,6 +105,7 @@ def build_knowledge_prompt(
     guidance: Optional[str] = None,
 ) -> str:
     lines = [
+        _rolling_activity_section(),
         "You are the **MemoryManager** tasked with mining *long-term*",
         "knowledge from the latest 50-message transcript chunk.",
         "",
@@ -122,3 +126,35 @@ def build_knowledge_prompt(
         "Current UTC time: " + _now(),
     ]
     return _with_guidance(lines, guidance)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Shared historic activity snippet (uses *lazy* import to avoid cycles)
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+def _rolling_activity_section() -> str:
+    """Return a markdown summary of the agent's historic activity."""
+
+    try:
+        # Lazy import to avoid circular dependency issues
+        from .memory_manager import MemoryManager  # noqa: WPS433
+
+        overview = MemoryManager().get_rolling_activity()
+    except Exception:  # pragma: no cover
+        return ""
+
+    if not overview:
+        return ""
+
+    return "\n".join(
+        [
+            "Historic Activity Overview",
+            "---------------------------",
+            "Below is a summary of the agent's historic activity (tasks, contacts, knowledge, transcripts, etc.).",
+            "Some parts may be useful context for the current task while others might not – use your judgement.",
+            "",
+            overview,
+            "",
+        ],
+    )

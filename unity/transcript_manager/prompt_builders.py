@@ -39,6 +39,38 @@ def _now() -> str:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# Shared historic activity snippet
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+def _rolling_activity_section() -> str:
+    """Return a human-readable summary of historic agent activity."""
+
+    try:
+        # Local import to avoid circular deps at import time
+        from ..memory_manager.memory_manager import MemoryManager  # noqa: WPS433
+
+        overview = MemoryManager().get_rolling_activity()
+    except Exception:  # pragma: no cover – keep prompts robust
+        return ""
+
+    if not overview:
+        return ""
+
+    return "\n".join(
+        [
+            "Historic Activity Overview",
+            "---------------------------",
+            "Below is a summary of the agent's historic activity (tasks, contacts, knowledge, transcripts, etc.).",
+            "Some parts may be useful context for the current task while others might not – use your judgement.",
+            "",
+            overview,
+            "",
+        ],
+    )
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # Public builders
 # ─────────────────────────────────────────────────────────────────────────────
 
@@ -105,6 +137,7 @@ def build_ask_prompt(tools: Dict[str, Callable]) -> str:  # noqa: C901 – long,
 
     return "\n".join(
         [
+            _rolling_activity_section(),
             "You are an assistant specialised in **querying and analysing communication transcripts**.",
             "Work **exclusively** through the tools listed below to gather data",
             "before composing your final answer.",
@@ -145,6 +178,7 @@ def build_summarize_prompt(guidance: Optional[str] = None) -> str:
 
     return "\n".join(
         [
+            _rolling_activity_section(),
             "You will receive one or more message exchanges.",
             "Craft a concise summary that captures the most important points",
             "**across** all exchanges. If anything is unclear in the guidance provided,",
