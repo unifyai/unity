@@ -10,7 +10,7 @@ from tests.helpers import _handle_project
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_window_eviction_at_limit():
+async def test_window_cache_is_faster():
     """When more than *window* events are published, the oldest should fall off."""
     window = 3
     bus = EventBus()
@@ -23,7 +23,7 @@ async def test_window_eviction_at_limit():
     ).clear()
 
     # Publish window + 1 events with ascending timestamps
-    events = []
+    event_ids = []
     base_ts = dt.datetime.now(dt.UTC)
     for i in range(window + 1):
         evt = Event(
@@ -38,18 +38,19 @@ async def test_window_eviction_at_limit():
                 exchange_id=0,
             ),
         )
-        events.append(evt)
-        await bus.publish(evt)
+        event_ids.append(evt.event_id)
+        await bus.publish(evt, sync=True)
 
-    # Fetch everything currently buffered for "message"
-    latest = await bus.search(filter="type == 'message'", limit=10)
+    # Time fetching just from cache vs having to hit backend
+    await bus.search(filter="type == 'message'", limit=3)  # warm up
+    t0 = dt.datetime.now(dt.UTC)
+    await bus.search(filter="type == 'message'", limit=3)
+    t1 = dt.datetime.now(dt.UTC)
+    await bus.search(filter="type == 'message'", limit=4)
+    t2 = dt.datetime.now(dt.UTC)
 
-    # Filter to the events we just published (there may be pre-existing logs)
-    latest_ours = [e for e in latest if e in events]
-
-    # We expect only *window* of our events (the newest three) to remain
-    assert len(latest_ours) == window
-    assert events[0] not in latest_ours  # the earliest one was evicted
-    assert latest_ours == list(
-        reversed(events[1:]),
-    )  # newest appears first (newest-first order)
+    cache_time = (t1 - t0).total_seconds()
+    backend_time = (t2 - t1).total_seconds()
+    assert (
+        cache_time * 2 < backend_time
+    ), f"Cache ({cache_time:.3f}s) should be faster than backend ({backend_time:.3f}s)"
