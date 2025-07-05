@@ -38,6 +38,7 @@ import re
 import sys
 from pathlib import Path
 from typing import List, Dict, Any
+from datetime import datetime
 
 import unify
 from dotenv import load_dotenv
@@ -164,6 +165,13 @@ async def _main_async() -> None:
         action="store_true",
         help="overwrite existing data for the chosen project",
     )
+    parser.add_argument(
+        "--project_version",
+        type=int,
+        default=-1,
+        metavar="IDX",
+        help="Project version index to load (default -1 for latest; supports positive and negative indexing)",
+    )
     args = parser.parse_args()
 
     # Unify context
@@ -172,6 +180,20 @@ async def _main_async() -> None:
     if args.traced:
         LG.info("[trace] Unify tracing enabled")
         os.environ["UNIFY_TRACED"] = "true"
+
+    # ─────────────────── project version handling ────────────────────
+    if args.project_version != -1:
+        commits = unify.get_project_commits(args.project_name)
+        if commits:
+            try:
+                target = commits[args.project_version]
+                unify.rollback_project(args.project_name, target["commit_hash"])
+                LG.info("[version] Rolled back to commit %s", target["commit_hash"])
+            except IndexError:
+                LG.warning(
+                    "[version] project_version index %s out of range, ignoring",
+                    args.project_version,
+                )
 
     # Optionally wipe existing data first
     if args.overwrite:
@@ -310,6 +332,16 @@ async def _main_async() -> None:
             LG.error("Error during MemoryManager call: %s", exc, exc_info=True)
             print(f"❌  {exc}")
             _speak("There was an error running that command.")
+
+        # ─────────────── save project snapshot ────────────────
+        if raw in {"save_project", "sp"}:
+            commit_hash = unify.commit_project(
+                args.project_name,
+                commit_message=f"Sandbox save {datetime.utcnow().isoformat()}",
+            ).get("commit_hash")
+            print(f"💾 Project saved at commit {commit_hash}")
+            _speak("Project saved")
+            continue
 
 
 def main() -> None:
