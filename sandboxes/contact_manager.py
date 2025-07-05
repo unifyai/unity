@@ -18,6 +18,7 @@ import logging
 import sys
 from pathlib import Path
 from typing import List, Optional, Tuple, Dict
+from datetime import datetime
 
 import unify
 
@@ -159,6 +160,20 @@ async def _main_async() -> None:
             unify.delete_context("Traces")
         unify.create_context("Traces")
 
+    # ─────────────────── project version handling ────────────────────
+    if args.project_version != -1:
+        commits = unify.get_project_commits(args.project_name)
+        if commits:
+            try:
+                target = commits[args.project_version]
+                unify.rollback_project(args.project_name, target["commit_hash"])
+                LG.info("[version] Rolled back to commit %s", target["commit_hash"])
+            except IndexError:
+                LG.warning(
+                    "[version] project_version index %s out of range, ignoring",
+                    args.project_version,
+                )
+
     # logging
     logging.basicConfig(level=logging.INFO, format="%(message)s")
     LG.setLevel(logging.INFO)
@@ -202,6 +217,17 @@ async def _main_async() -> None:
             if raw.lower() in {"quit", "exit"}:
                 break
             if not raw:
+                continue
+
+            # ─────────────── save project snapshot ────────────────
+            if raw.lower() in {"save_project", "sp"}:
+                commit_hash = unify.commit_project(
+                    args.project_name,
+                    commit_message=f"Sandbox save {datetime.utcnow().isoformat()}",
+                ).get("commit_hash")
+                print(f"💾 Project saved at commit {commit_hash}")
+                if args.voice:
+                    _speak("Project saved")
                 continue
 
             # ──────────────── remember the user's utterance ────────────────

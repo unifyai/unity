@@ -456,6 +456,7 @@ def build_cli_parser(description: str) -> argparse.ArgumentParser:
     • ``--project_name / -p`` – Unify *project / context* name (default: "Sandbox")
     • ``--overwrite / -o``    – delete any existing data for *project_name*
                                  before seeding
+    • ``--project_version``  – version index to load (default -1 for latest)
     """
     parser = argparse.ArgumentParser(description=description)
 
@@ -489,6 +490,13 @@ def build_cli_parser(description: str) -> argparse.ArgumentParser:
         "-o",
         action="store_true",
         help="overwrite existing data for the chosen project name",
+    )
+    parser.add_argument(
+        "--project_version",
+        type=int,
+        default=-1,
+        metavar="IDX",
+        help="Project version index to load (default -1 for latest; supports positive and negative indexing)",
     )
     return parser
 
