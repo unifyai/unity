@@ -2,7 +2,7 @@
 """
 A lightweight, *offline-only* stand-in for the real `MemoryManager`.
 
-It keeps an **internal, in-memory dictionary** of “contacts” so that calls to
+It keeps an **internal, in-memory dictionary** of "contacts" so that calls to
 `update_contact_bio` and `update_contact_rolling_summary` appear to mutate
 state across invocations – but nothing ever touches an external store.
 """
@@ -23,12 +23,7 @@ from ..common.llm_helpers import (
     methods_to_tool_dict,
     start_async_tool_use_loop,
 )
-from .prompt_builders import (
-    build_contact_update_prompt,
-    build_bio_prompt,
-    build_rolling_prompt,
-    build_knowledge_prompt,
-)
+from . import prompt_builders as pb
 from .base import BaseMemoryManager
 
 
@@ -77,7 +72,9 @@ class SimulatedMemoryManager(BaseMemoryManager):
             include_class_name=True,
         )
 
-        self._llm.set_system_message(build_contact_update_prompt(tools, guidance))
+        self._llm.set_system_message(
+            pb.build_contact_update_prompt(tools, guidance=guidance),
+        )
 
         handle = start_async_tool_use_loop(
             self._llm,
@@ -116,7 +113,7 @@ class SimulatedMemoryManager(BaseMemoryManager):
             "set_bio": set_bio,
         }
 
-        self._llm.set_system_message(build_bio_prompt(tools, guidance))
+        self._llm.set_system_message(pb.build_bio_prompt(tools, guidance=guidance))
 
         payload = json.dumps(
             {
@@ -162,7 +159,7 @@ class SimulatedMemoryManager(BaseMemoryManager):
             "set_rolling_summary": set_rolling_summary,
         }
 
-        self._llm.set_system_message(build_rolling_prompt(tools, guidance))
+        self._llm.set_system_message(pb.build_rolling_prompt(tools, guidance=guidance))
 
         payload = json.dumps(
             {
@@ -211,7 +208,9 @@ class SimulatedMemoryManager(BaseMemoryManager):
             "kb_update": _kb_update,
         }
 
-        self._llm.set_system_message(build_knowledge_prompt(tools, guidance))
+        self._llm.set_system_message(
+            pb.build_knowledge_prompt(tools, guidance=guidance),
+        )
 
         handle = start_async_tool_use_loop(
             self._llm,
