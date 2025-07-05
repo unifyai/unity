@@ -58,14 +58,14 @@ async def test_offset_int_limit_int_global_window() -> None:
 
     bus = EventBus()
 
-    await bus.publish(Event(type="A", timestamp=ts(0), payload={"id": "a0"}))
-    await bus.publish(Event(type="B", timestamp=ts(1), payload={"id": "b0"}))
-    await bus.publish(Event(type="A", timestamp=ts(2), payload={"id": "a1"}))
-    await bus.publish(Event(type="B", timestamp=ts(3), payload={"id": "b1"}))
+    await bus.publish(Event(type="A", timestamp=ts(0), payload={"idx": "a0"}))
+    await bus.publish(Event(type="B", timestamp=ts(1), payload={"idx": "b0"}))
+    await bus.publish(Event(type="A", timestamp=ts(2), payload={"idx": "a1"}))
+    await bus.publish(Event(type="B", timestamp=ts(3), payload={"idx": "b1"}))
     bus.join_published()
 
     out = await bus.search(offset=1, limit=2)
-    ids = [e.payload["id"] for e in out]
+    ids = [e.payload["idx"] for e in out]
 
     # Newest-first across the combined stream after applying the global offset
     assert ids == ["a1", "b0"]
