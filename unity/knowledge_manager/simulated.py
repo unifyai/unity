@@ -132,6 +132,28 @@ class _SimulatedKnowledgeHandle(SteerableToolHandle):
             tools[self.pause.__name__] = self.pause
         return tools
 
+    async def ask(self, question: str) -> "SteerableToolHandle":
+        q_msg = (
+            f"Your only task is to simulate an answer to the following question: {question}\n\n"
+            "However, there is a also ongoing simulated process which had the instructions given below. "
+            "Please make your answer realastic and conceivable given the provided context of the simulated taks."
+        )
+        follow_up_prompt = "\n\n---\n\n".join(
+            [q_msg]
+            + [self._initial]
+            + self._extra_msgs
+            + [f"Question to answer (as a reminder!): {question}"],
+        )
+
+        return _SimulatedKnowledgeHandle(
+            self._llm,
+            follow_up_prompt,
+            _return_reasoning_steps=self._want_steps,
+            _requests_clarification=False,
+            clarification_up_q=self._clar_up_q,
+            clarification_down_q=self._clar_down_q,
+        )
+
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Public simulated KnowledgeManager
