@@ -237,29 +237,36 @@ async def entrypoint(ctx: agents.JobContext):
     parser = argparse.ArgumentParser(description="ContactManager voice assistant")
     parser.add_argument("--debug", "-d", action="store_true", help="verbose tool logs")
     parser.add_argument("--traced", "-t", action="store_true", help="include tracing")
-    parser.add_argument("--reuse", "-r", action="store_true", help="re-use old data")
+    parser.add_argument(
+        "--project_name",
+        "-p",
+        default="Sandbox",
+        help="Unify project / context name (default: Sandbox)",
+    )
+    parser.add_argument(
+        "--overwrite",
+        "-o",
+        action="store_true",
+        help="overwrite existing data for the chosen project",
+    )
     args, unknown = parser.parse_known_args()
 
-    # Setup Unify context and ContactManager
-    import unify
-
-    unify.activate("ContactSandbox")
+    # Setup Unify context
+    unify.activate(args.project_name)
     unify.set_trace_context("Traces")
-    if not args.reuse:
+    if args.overwrite:
         ctxs = unify.get_contexts()
         if "Contacts" in ctxs:
             unify.delete_context("Contacts")
-        unify.create_context("Contacts")
         if "Traces" in ctxs:
             unify.delete_context("Traces")
         unify.create_context("Traces")
 
     # Build scenario and seed data
     scenario_text = "Generate 10 realistic business contacts across EMEA, APAC and AMER. Each contact needs first_name, surname, email_address and phone_number. Also create custom columns with varying industries and locations."
-    if not args.reuse:
-        print("[seed] building synthetic contacts – this can take 20-40 s…")
-        theme = await _build_scenario(scenario_text)
-        print("[seed] done.")
+    LG.info("[seed] building synthetic contacts – this can take 20-40 s…")
+    await _build_scenario(scenario_text)
+    LG.info("[seed] done.")
 
     voice_id = os.environ.get("VOICE_ID", "")
 

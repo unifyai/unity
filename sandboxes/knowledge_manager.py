@@ -43,7 +43,6 @@ from sandboxes.utils import (  # shared helpers reused in other sandboxes
     await_with_interrupt as _await_with_interrupt,
     build_cli_parser,
 )
-from sandboxes.scenario_store import ScenarioStore
 
 LG = logging.getLogger("knowledge_sandbox")
 
@@ -181,17 +180,11 @@ async def _main_async() -> None:
     parser = build_cli_parser("KnowledgeManager sandbox")
     args = parser.parse_args()
 
-    # tracing flag
-    if args.traced:
-        os.environ["UNIFY_TRACED"] = "true"
-    else:
-        os.environ["UNIFY_TRACED"] = "false"
+    os.environ["UNIFY_TRACED"] = "true" if args.traced else "false"
 
-    # prepare Unify context
-    base_ctx = "KnowledgeSandbox" if args.unique_context else "Sandbox"
-    unify.activate(base_ctx)
+    unify.activate(args.project_name)
     unify.set_trace_context("Traces")
-    if not args.reuse:
+    if args.overwrite:
         [
             unify.delete_context(table)
             for table in unify.get_contexts(prefix="Knowledge").keys()
@@ -200,48 +193,21 @@ async def _main_async() -> None:
             unify.delete_context("Traces")
         unify.create_context("Traces")
 
-    # logging
     logging.basicConfig(level=logging.INFO, format="%(message)s")
     LG.setLevel(logging.INFO)
 
-    # manager & transcript vault
     km = KnowledgeManager()
     if args.traced:
         km = unify.traced(km)
-    store = ScenarioStore()
 
-    # Seeding with vault support
-    if not args.reuse:
-        scenario_text: Optional[str] = None
-
-        if args.load_custom:
-            try:
-                key = int(args.load_custom)
-            except ValueError:
-                key = args.load_custom
-            scenario_text = store.get(key)
-            LG.info(f"[seed] loaded transcript {key} → {scenario_text}")
-            if args.voice:
-                _speak("Loading your saved scenario, give me a second.")
-
-        if scenario_text is None:
-            scenario_text = get_custom_scenario(args)
-            if not scenario_text:
-                raise Exception("No text provided for building the custom scenario")
-            store.add_to_history(scenario_text)
-            LG.info(f"[voice] transcript: {scenario_text}")
-
-        LG.info("[seed] building synthetic knowledge base – this can take 20-40 s…")
-        if args.voice:
-            _speak("Sure thing, building your custom scenario now.")
-        await _build_scenario(scenario_text)
-        LG.info("[seed] done.")
-        if args.voice:
-            _speak("All done, your custom scenario is built and ready to go.")
-
-        if args.save_custom:
-            store.save_named(args.save_custom, scenario_text)
-            LG.info(f"[seed] transcript saved as {args.save_custom}.")
+    scenario_text: Optional[str] = get_custom_scenario(args)
+    LG.info("[seed] building synthetic knowledge base – this can take 20-40 s…")
+    if args.voice:
+        _speak("Sure thing, building your custom scenario now.")
+    await _build_scenario(scenario_text)
+    LG.info("[seed] done.")
+    if args.voice:
+        _speak("All done, your custom scenario is built and ready to go.")
 
     print("KnowledgeManager sandbox – type or speak. 'quit' to exit.\n")
 

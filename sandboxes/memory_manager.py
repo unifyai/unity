@@ -23,8 +23,8 @@ description via the ``--voice/-v`` flag (same UX as the other sandboxes).
 • Type **help** to show the table again, **quit/exit** to leave.
 
 After choosing any *u** command you can now add **extra guidance**
-that steers what the MemoryManager should prioritise (e.g. *“Focus on
-project-related facts only”*).  In `--voice` mode this prompt is captured
+that steers what the MemoryManager should prioritise (e.g. *"Focus on
+project-related facts only"*).  In `--voice` mode this prompt is captured
 with the microphone; otherwise just type it.
 """
 
@@ -152,21 +152,38 @@ async def _main_async() -> None:
         action="store_true",
         help="wrap MemoryManager calls in Unify tracing",
     )
+    parser.add_argument(
+        "--project_name",
+        "-p",
+        default="Sandbox",
+        help="Unify project / context name (default: Sandbox)",
+    )
+    parser.add_argument(
+        "--overwrite",
+        "-o",
+        action="store_true",
+        help="overwrite existing data for the chosen project",
+    )
     args = parser.parse_args()
 
     # Unify context
-    unify.activate("MemorySandbox")
+    unify.activate(args.project_name)
     unify.set_trace_context("Traces")
     if args.traced:
         LG.info("[trace] Unify tracing enabled")
         os.environ["UNIFY_TRACED"] = "true"
 
+    # Optionally wipe existing data first
+    if args.overwrite:
+        _clear_contacts()
+        _clear_knowledge()
+
     # ── Step 1: obtain scenario (voice or text), build transcript ────────────
     if not args.voice:
         scenario = input(
             "\n🧮  Describe the conversation you'd like to simulate (one or two "
-            "sentences, e.g. *“A product-design chat between Alice, Bob and their "
-            "client Carol discussing a new smartwatch”*)\n> ",
+            "sentences, e.g. *'A product-design chat between Alice, Bob and their "
+            "client Carol discussing a new smartwatch'*)\n> ",
         ).strip()
     else:
         _speak(
