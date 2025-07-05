@@ -75,6 +75,9 @@ async def test_concurrent_publishes_lock_integrity():
     # Run all publishes concurrently; will raise if any individual publish fails
     await asyncio.gather(*publish_tasks)
 
+    # Join published
+    bus.join_published()
+
     # Fetch back everything; limit well above what we sent
     latest = await bus.search(limit=window, grouped_by_type=True)
     latest = latest["message"] + latest["message_exchange_summary"]
