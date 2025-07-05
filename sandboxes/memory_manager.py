@@ -48,9 +48,9 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from scenario_builder import ScenarioBuilder
 from unity.memory_manager.memory_manager import MemoryManager  # type: ignore[attr-defined]
 from sandboxes.utils import (
+    TranscriptGenerator,
     record_until_enter as _record_until_enter,
     transcribe_deepgram as _transcribe_deepgram,
     speak as _speak,
@@ -65,38 +65,9 @@ LG = logging.getLogger("memory_manager_sandbox")
 
 
 async def _build_transcript(description: str) -> List[Dict[str, Any]]:
-    """
-    Use :class:`ScenarioBuilder` to create a *realistic* multi-party transcript
-    (≈ 40-60 messages) according to *description* and return it as a list of
-    message dicts.
-    """
-    transcript: List[Dict[str, Any]] = []
-
-    # tool exposed to the LLM
-    def log_messages(messages: list[dict]) -> str:
-        """
-        Append a batch of messages to the in-memory transcript.
-        Expected keys per message: timestamp, sender, content.
-        """
-        nonlocal transcript
-        transcript.extend(messages)
-        return f"{len(messages)} messages logged"
-
-    # Encourage the model to send messages in *batches*.
-    prompt = (
-        description.strip()
-        + "\n\nGenerate 40-60 chronological chat messages that fit the "
-        "scenario above.  Each dict **must** include 'timestamp' (ISO 8601), "
-        "'sender' and 'content'.  Use the `log_messages` tool in batches of "
-        "3-8 messages until the full transcript is logged, then stop."
-    )
-
-    builder = ScenarioBuilder(description=prompt, tools={"log_messages": log_messages})
-    await builder.create()
-    if not transcript:
-        raise RuntimeError("ScenarioBuilder produced an empty transcript.")
-
-    return transcript
+    """Generate a synthetic transcript via the shared TranscriptGenerator."""
+    generator = TranscriptGenerator()
+    return await generator.generate(description)
 
 
 # ═════════════════════════════════ helper utilities ═════════════════════════

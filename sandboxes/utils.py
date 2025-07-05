@@ -26,6 +26,7 @@ from deepgram import DeepgramClient, FileSource, PrerecordedOptions
 from livekit.plugins import cartesia
 import argparse
 from unity.common.llm_helpers import SteerableToolHandle
+from scenario_builder import ScenarioBuilder
 
 from dotenv import load_dotenv
 
@@ -590,3 +591,88 @@ def run_in_loop(coro: Coroutine[Any, Any, Any]):
 
     # another thread
     return asyncio.run_coroutine_threadsafe(coro, loop)
+
+
+# ===========================================================================
+# Synthetic transcript generation helper
+# ===========================================================================
+
+
+class TranscriptGenerator:
+    """Generate synthetic multi-party chat transcripts via ScenarioBuilder.
+
+    The generator orchestrates a self-contained tool-loop exposing a single
+    ``log_messages`` tool that the LLM must use to incrementally append
+    messages to an in-memory list.  Callers supply a free-form *description*
+    of the desired conversation and the model produces a realistic transcript
+    that satisfies that brief.
+
+    Parameters
+    ----------
+    endpoint
+        Chat-completion model identifier (same format used across sandboxes).
+    traced
+        Forwarded to :class:`unify.AsyncUnify` so unit-tests can inspect
+        detailed traces when needed.
+    stateful
+        Re-use the underlying client across multiple ``generate`` calls –
+        handy when chaining several transcripts together inside higher-level
+        demos.
+    """
+
+    def __init__(
+        self,
+        *,
+        endpoint: str = "o4-mini@openai",
+        traced: bool = True,
+        stateful: bool = True,
+    ) -> None:
+        self._endpoint = endpoint
+        self._traced = traced
+        self._stateful = stateful
+
+    async def generate(
+        self,
+        description: str,
+        *,
+        min_messages: int = 40,
+        max_messages: int = 60,
+        batch_min: int = 3,
+        batch_max: int = 8,
+    ) -> List[dict]:
+        """Return a synthetic transcript matching *description*.
+
+        Each message dict contains:
+        • ``timestamp`` – ISO-8601 string
+        • ``sender``    – speaker name / alias
+        • ``content``   – raw text
+        """
+
+        transcript: List[dict] = []
+
+        def log_messages(messages: list[dict]) -> str:  # noqa: D401 – tool sig
+            nonlocal transcript
+            transcript.extend(messages)
+            return f"{len(messages)} messages logged"
+
+        prompt = (
+            description.strip()
+            + f"\n\nGenerate {min_messages}-{max_messages} chronological chat messages that fit the scenario above. "
+            "Each dict **must** include 'timestamp' (ISO 8601), 'sender' and 'content'. "
+            f"Use the `log_messages` tool in batches of {batch_min}-{batch_max} messages until the full transcript is logged, then stop."
+        )
+
+        builder = ScenarioBuilder(
+            description=prompt,
+            tools={"log_messages": log_messages},
+            endpoint=self._endpoint,
+            traced=self._traced,
+            stateful=self._stateful,
+        )
+
+        await builder.create()
+
+        if not transcript:
+            raise RuntimeError("TranscriptGenerator produced an empty transcript.")
+
+        return transcript
