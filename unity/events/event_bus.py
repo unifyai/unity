@@ -493,7 +493,7 @@ class EventBus:
             if event_type not in self._window_sizes:
                 self._window_sizes[event_type] = self._default_window
 
-    async def publish(self, event: Event) -> None:
+    async def publish(self, event: Event, *, sync: bool = False) -> None:
         self._lazy_start_hydration_if_needed()
         if event.type not in self._specific_ctxs:
             self.register_event_types(event.type)
@@ -551,6 +551,10 @@ class EventBus:
 
         # ── Evaluate subscriptions *after* persistence ──────────────────────
         self._process_event(event)
+
+        # maybe block until published, if sync mode
+        if sync:
+            self._logger.join()
 
     def join_published(self):
         """Ensures all published events have been uploaded"""
