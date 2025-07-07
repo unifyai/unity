@@ -2,7 +2,6 @@ import asyncio
 import aiohttp
 import os
 from dotenv import load_dotenv
-from unity.service import start, stop
 from unity.service.events import (
     PhoneUtteranceEvent,
     PhoneCallInitiatedEvent,
@@ -390,7 +389,6 @@ class Call(SteerableToolHandle):
             _send_sms_message_via_number,
         )
 
-        start()
         asyncio.create_task(
             _start_call(os.getenv("ASSISTANT_NUMBER"), phone_number, purpose),
         )
@@ -444,8 +442,6 @@ class Call(SteerableToolHandle):
                 "event": PhoneCallStopEvent().to_dict(),
             },
         )
-        await asyncio.sleep(5)
-        stop()
         self.status = "ended"
 
     def result(self) -> str:
