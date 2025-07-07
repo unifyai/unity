@@ -217,13 +217,9 @@ class Subscription(BaseModel):
 
         # count-based ---------------------------------------------------
         if self.count_step is not None:
-            if evt.row_id is not None and self.last_row_id >= 0:
-                if evt.row_id - self.last_row_id >= self.count_step:
-                    return True
-            else:  # freshly published – no row_id yet
-                self.local_count += 1
-                if self.local_count >= self.count_step:
-                    return True
+            self.local_count += 1
+            if self.local_count >= self.count_step:
+                return True
 
         # time-based ----------------------------------------------------
         if self.time_step is not None:
