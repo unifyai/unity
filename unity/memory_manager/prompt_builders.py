@@ -38,13 +38,15 @@ def build_contact_update_prompt(
 ) -> str:
     lines = [
         _rolling_activity_section(),
-        "You are the **offline MemoryManager** tasked with *creating or amending*",
-        "contact records — names, phone numbers, emails, etc. — after reading",
-        "a 50-message transcript chunk.",
+        "Your task is to *create or amend contact records — names, phone "
+        "numbers, emails, etc. — after reading a 50-message transcript chunk.",
         "",
         "Work **only** via the tools below.  First figure out what changed,",
-        "then call the appropriate update tool(s).  Finally return a short",
+        "then call the appropriate update tool(s). Finally return a short",
         "human-readable summary of what you did.",
+        "Please do *not* perform the same action more than once. "
+        "If you have updated/added a contact already via the `ContactManager` update method, "
+        "then you do not need to do this again!"
         "",
         "Tools (name → argspec):",
         json.dumps(_sig_dict(tools), indent=4),
