@@ -41,17 +41,19 @@ __all__ = ["Event", "EventBus", "Subscription", "EVENT_BUS"]
 
 # ───────────────────────────   Event envelope   ─────────────────────────────
 
-UNASSIGNED = -1  # shared sentinel – keep it in one place if you already have it
+# The backend no longer auto-assigns `row_id`.
+# A value of `None` indicates that the client-side `EventBus` has not yet
+# attached a sequence number.
 
 
 class Event(BaseModel):
     # ────────────────────────────────────────────────
     # primary / synthetic keys
     # ────────────────────────────────────────────────
-    row_id: int = Field(
-        default=UNASSIGNED,
-        ge=UNASSIGNED,
-        description="Auto-incrementing database row id (-1 until the DB assigns it)",
+    row_id: Optional[int] = Field(
+        default=None,
+        ge=0,
+        description="Monotonically increasing client-managed sequence number (set by EventBus)",
     )
     event_id: str = Field(
         default_factory=lambda: str(uuid4()),
@@ -84,12 +86,9 @@ class Event(BaseModel):
     # ────────────────────────────────────────────────
     @model_validator(mode="before")
     @classmethod
-    def _inject_sentinel(cls, data: dict) -> dict:
-        """
-        Ensure `row_id` is always present so downstream code never needs to
-        handle `None` vs. int.
-        """
-        data.setdefault("row_id", UNASSIGNED)
+    def _ensure_row_id_key(cls, data: dict) -> dict:
+        # Ensure the key exists so downstream code can safely assume presence.
+        data.setdefault("row_id", None)
         return data
 
     @field_validator("timestamp", mode="before")
@@ -121,11 +120,12 @@ class Event(BaseModel):
         """
         Dump a JSON-serialisable dict suitable for an *insert-and-join* REST
         endpoint.
-        If `row_id` is still the sentinel (-1) we *omit* it so the server can
-        allocate the next sequence value just like it does for `Contact` and
-        `Message`.
+        If `row_id` has not yet been set (``None``) we omit it so the
+        caller can still rely on the server to allocate a value if needed –
+        though the normal path is that the :class:`EventBus` sets it before
+        persistence.
         """
-        exclude = {"row_id"} if self.row_id == UNASSIGNED else {}
+        exclude = {"row_id"} if self.row_id is None else {}
         return self.model_dump(mode="json", exclude=exclude)
 
     # ────────────────────────────────────────────────
@@ -185,7 +185,7 @@ class Subscription(BaseModel):
     time_step: Optional[int] = None  # seconds
 
     # Progress bookkeeping  ────────────────────────────────────────────
-    last_row_id: int = 0
+    last_row_id: int = -1
     last_timestamp: Optional[datetime] = None
 
     # in-memory only
@@ -217,7 +217,7 @@ class Subscription(BaseModel):
 
         # count-based ---------------------------------------------------
         if self.count_step is not None:
-            if evt.row_id != UNASSIGNED:
+            if evt.row_id is not None and self.last_row_id >= 0:
                 if evt.row_id - self.last_row_id >= self.count_step:
                     return True
             else:  # freshly published – no row_id yet
@@ -238,7 +238,7 @@ class Subscription(BaseModel):
 
     # ------------------------------------------------------------------
     def update_progress(self, evt: "Event") -> None:
-        if evt.row_id != UNASSIGNED:
+        if evt.row_id is not None:
             self.last_row_id = evt.row_id
         self.last_timestamp = evt.timestamp
         self.local_count = 0
@@ -281,6 +281,8 @@ class EventBus:
             ctx.split("/")[-1]: ctx for ctx in ctxs if ctx != self._callbacks_ctx
         }
         self._logger = unify.AsyncLoggerManager(name="EventBus")
+        # Manual per-event-type row_id counters (initialised during hydration)
+        self._next_row_ids: Dict[str, int] = {}
 
         # runtime subscriptions (id → Subscription)
         self._subscriptions: Dict[str, Subscription] = {}
@@ -347,7 +349,7 @@ class EventBus:
                 if not entries:
                     continue
 
-                row_id = entries.pop("row_id", UNASSIGNED)
+                row_id = entries.pop("row_id", None)
                 event_id = entries.pop("event_id")
                 calling_id = entries.pop("calling_id")
                 timestamp = entries.pop("event_timestamp")
@@ -393,6 +395,14 @@ class EventBus:
         if tasks:
             await asyncio.gather(*tasks)
 
+        # ──  Initialise local row_id counters based on persisted data ─────────
+        for etype, dq in self._deques.items():
+            max_id = max(
+                (evt.row_id for evt in dq if evt.row_id is not None),
+                default=-1,
+            )
+            self._next_row_ids[etype] = max_id + 1
+
     async def _async_load_subscriptions(self) -> None:
         """Async wrapper around the former blocking `_load_subscriptions`."""
         rows = await asyncio.to_thread(
@@ -412,7 +422,7 @@ class EventBus:
                 filter=sdata.get("filter"),
                 count_step=sdata.get("count_step"),
                 time_step=sdata.get("time_step"),
-                last_row_id=sdata.get("last_row_id", 0),
+                last_row_id=sdata.get("last_row_id", -1),
                 last_timestamp=sdata.get("last_timestamp", ""),
             )
 
@@ -474,7 +484,7 @@ class EventBus:
                 filter=sdata.get("filter"),
                 count_step=sdata.get("count_step"),
                 time_step=sdata.get("time_step"),
-                last_row_id=sdata.get("last_row_id", 0),
+                last_row_id=sdata.get("last_row_id", -1),
                 last_timestamp=sdata.get("last_timestamp", ""),
             )
 
@@ -488,17 +498,31 @@ class EventBus:
             if event_type not in self._specific_ctxs:
                 full_ctx = f"{self._global_ctx}/{event_type}"
                 self._specific_ctxs[event_type] = full_ctx
+                # Create the context without any server-side auto-increment so
+                # we can fully control the sequence from the client.
                 if full_ctx not in unify.get_contexts():
-                    unify.create_context(full_ctx, unique_column_ids="row_id")
+                    unify.create_context(full_ctx)
             if event_type not in self._window_sizes:
                 self._window_sizes[event_type] = self._default_window
 
+            # Ensure a local counter exists for this event-type
+            self._next_row_ids.setdefault(event_type, 0)
+
     async def publish(self, event: Event, *, sync: bool = False) -> None:
         self._lazy_start_hydration_if_needed()
+        # Guarantee that local row_id counters are initialised before use
+        await self._ensure_ready()
         if event.type not in self._specific_ctxs:
             self.register_event_types(event.type)
         window = self._window_sizes[event.type]
         async with self._lock:
+            # ── Assign and increment the manual row_id counter ───────────────
+            current = self._next_row_ids.get(event.type, 0)
+            if event.row_id is None:
+                event.row_id = current
+            # Advance the counter for the next event
+            self._next_row_ids[event.type] = event.row_id + 1
+
             dq = self._deques.setdefault(event.type, deque())
             dq.append(event)
             while len(dq) > window:
@@ -526,6 +550,7 @@ class EventBus:
             context=self._global_ctx,
             params={},
             entries={
+                "row_id": event.row_id,
                 "event_id": event.event_id,
                 "calling_id": event.calling_id,
                 "event_timestamp": event.timestamp.isoformat(),
@@ -541,6 +566,7 @@ class EventBus:
             context=self._specific_ctxs[event.type],
             params={},
             entries={
+                "row_id": event.row_id,
                 "event_id": event.event_id,
                 "calling_id": event.calling_id,
                 "event_timestamp": event.timestamp.isoformat(),
@@ -713,7 +739,7 @@ class EventBus:
 
                     evt = Event(
                         event_id=e.get("event_id"),
-                        row_id=e.get("row_id", UNASSIGNED),
+                        row_id=e.get("row_id"),
                         calling_id=e.get("calling_id", ""),
                         type=e.get("type"),
                         timestamp=e.get("event_timestamp") or e.get("timestamp"),
@@ -762,7 +788,7 @@ class EventBus:
                 evts.append(
                     Event(
                         event_id=e.get("event_id"),
-                        row_id=e.get("row_id", UNASSIGNED),
+                        row_id=e.get("row_id"),
                         calling_id=e.get("calling_id", ""),
                         type=e.get("type", etype),
                         timestamp=e.get("event_timestamp") or e.get("timestamp"),
@@ -876,7 +902,7 @@ class EventBus:
         #   3. Re-evaluate the filter expression locally.
         # The first match gives us the proper baseline.
         # ------------------------------------------------------------------
-        last_row_id = 0
+        last_row_id = -1
         last_ts: Optional[dt.datetime] = None
 
         recent_logs = await asyncio.to_thread(
@@ -898,7 +924,7 @@ class EventBus:
             }
             payload = {k: v for k, v in row.items() if k not in meta}
             return Event(
-                row_id=row.get("row_id", UNASSIGNED),
+                row_id=row.get("row_id"),
                 event_id=row.get("event_id"),
                 calling_id=row.get("calling_id", ""),
                 type=event_type,
