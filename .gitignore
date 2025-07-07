@@ -10,5 +10,6 @@ logs.txt
 test.py
 .env.old
 .env.temp
+.env.clean
 dump.rdb
 *venv/
