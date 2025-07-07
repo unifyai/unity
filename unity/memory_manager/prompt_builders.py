@@ -144,9 +144,12 @@ def _rolling_activity_section() -> str:
     except Exception:  # pragma: no cover
         return ""
 
+    # Skip the entire section when there's nothing meaningful to report.
     if not overview:
         return ""
 
+    # Compose the section with a *closing* dashed line to clearly separate it
+    # from any subsequent system-message content.
     return "\n".join(
         [
             "Historic Activity Overview",
@@ -155,6 +158,7 @@ def _rolling_activity_section() -> str:
             "Some parts may be useful context for the current task while others might not – use your judgement.",
             "",
             overview,
+            "---------------------------",
             "",
         ],
     )

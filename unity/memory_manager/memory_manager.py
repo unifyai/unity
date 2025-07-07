@@ -653,8 +653,12 @@ class MemoryManager(BaseMemoryManager):
             sorting={"row_id": "descending"},
             limit=1,
         )
+        # If there is no stored rolling activity yet, return an *empty* string so
+        # callers can completely omit the Historic Activity block.  This avoids
+        # polluting system prompts with a verbose placeholder that carries no
+        # useful information.
         if not rows:
-            return "No rolling activity available yet."
+            return ""
 
         latest = rows[0].entries
         key = self._SUMMARY_TIME_COL if mode == "time" else self._SUMMARY_COUNT_COL
