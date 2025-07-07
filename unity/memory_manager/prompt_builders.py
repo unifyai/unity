@@ -69,6 +69,10 @@ def build_bio_prompt(
         "2️⃣ If yes, call the specialised `set_bio` tool.",
         "3️⃣ Return only the *new* bio text (or the unchanged one).",
         "",
+        "Please do *not* perform the same action more than once. "
+        "If you have already updated the bio via the `set_bio` tool, "
+        "then you do not need to do this again!"
+        "",
         "Tools (name → argspec):",
         json.dumps(_sig_dict(tools), indent=4),
         "",
@@ -94,6 +98,10 @@ def build_rolling_prompt(
         "You may call the specialised `set_rolling_summary` tool exactly once.",
         "Finally, return the summary text you stored.",
         "",
+        "Please do *not* perform the same action more than once. "
+        "If you have already updated the rolling summary via the `set_rolling_summary` tool, "
+        "then you do not need to do this again!"
+        "",
         "Tools (name → argspec):",
         json.dumps(_sig_dict(tools), indent=4),
         "",
@@ -118,6 +126,10 @@ def build_knowledge_prompt(
         "  duplication.",
         "• Finally, persist using `KnowledgeManager.update` (or skip if",
         "  nothing valuable was found).",
+        "",
+        "Please do *not* perform the same action more than once. "
+        "If you have already persisted this knowledge via the `KnowledgeManager.update` method "
+        "(or refactored via `KnowledgeManager.refactor`), then you do not need to do this again!"
         "",
         "Return a short, human-readable summary of what you stored; if",
         "nothing was stored, just return 'no-op'.",
