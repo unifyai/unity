@@ -42,7 +42,7 @@ async def test_window_cache_is_faster():
         await bus.publish(evt, sync=True)
 
     # Time fetching just from cache vs having to hit backend
-    await bus.search(filter="type == 'message'", limit=3)  # warm up
+    await bus.search(filter="type == 'message'", limit=4)  # warm up
     t0 = dt.datetime.now(dt.UTC)
     await bus.search(filter="type == 'message'", limit=3)
     t1 = dt.datetime.now(dt.UTC)
