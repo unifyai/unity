@@ -60,8 +60,4 @@ fi
 echo "Starting wrapper app..."
 
 # Start the main application in the background
-python wrapper_app.py &
-WRAPPER_APP_PID=$!
-
-# Wait for the wrapper app process
-wait $WRAPPER_APP_PID
+python start.py

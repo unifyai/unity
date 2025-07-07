@@ -59,4 +59,4 @@ EXPOSE 8000 6379
 ENTRYPOINT ["/usr/bin/tini", "--"]
 
 # Use bash to run the startup script
-CMD ["/bin/bash", "/app/start.sh"]
+CMD ["/bin/bash", "/app/entrypoint.sh"]
