@@ -1,5 +1,6 @@
 # Starts the Unity service
 import signal
+import time
 import unity.service
 
 
@@ -15,4 +16,22 @@ signal.signal(signal.SIGINT, signal_handler)
 
 if __name__ == "__main__":
     print("Starting Unity service...")
-    unity.service.start()
+
+    # Start the Unity service
+    if unity.service.start():
+        print("Unity service started successfully...")
+
+        # Keep running until the Unity service process is dead
+        while unity.service.is_running():
+            time.sleep(1)  # Check every second
+
+        # Get the final status to see why it stopped
+        status = unity.service.get_status()
+        print(
+            f"Unity service has stopped. Reason: {status.get('shutdown_reason', 'unknown')}"
+        )
+        if "message" in status:
+            print(f"Details: {status['message']}")
+    else:
+        print("Failed to start Unity service")
+        exit(1)

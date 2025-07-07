@@ -208,5 +208,4 @@ async def main():
 
 
 if __name__ == "__main__":
-    manager_name = sys.argv[1]
     asyncio.run(main())
