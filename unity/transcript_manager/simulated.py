@@ -12,7 +12,11 @@ import unify
 
 from ..common.llm_helpers import SteerableToolHandle
 from .base import BaseTranscriptManager
-from .prompt_builders import build_ask_prompt, build_summarize_prompt
+from .prompt_builders import (
+    build_ask_prompt,
+    build_summarize_prompt,
+    build_simulated_method_prompt,
+)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -203,17 +207,11 @@ class SimulatedTranscriptManager(BaseTranscriptManager):
         clarification_up_q: asyncio.Queue[str] | None = None,
         clarification_down_q: asyncio.Queue[str] | None = None,
     ) -> SteerableToolHandle:
-        instruction = (
-            "On this turn you are simulating the 'ask' method.\n"
-            "Please always *answer* the question (making up the response), "
-            "do not ask for clarifications, or only state *how* you will answer the question.\n"
-            "Just answer the question with an imaginery response.\n"
-            f"The user question is:\n{text}"
+        instruction = build_simulated_method_prompt(
+            "ask",
+            text,
+            parent_chat_context=parent_chat_context,
         )
-        if parent_chat_context:
-            instruction += (
-                f"\nCalling chat context:\n{json.dumps(parent_chat_context, indent=4)}"
-            )
         return _SimulatedTranscriptHandle(
             self._llm,
             instruction,
@@ -240,16 +238,12 @@ class SimulatedTranscriptManager(BaseTranscriptManager):
         clarification_up_q: asyncio.Queue[str] | None = None,
         clarification_down_q: asyncio.Queue[str] | None = None,
     ) -> SteerableToolHandle:
-        instruction = (
-            "On this turn you are simulating the 'summarize' method.\n"
-            "Please always provide an imaginery summary (making up the response), "
-            "do not ask for clarifications, or only state *how* you will summarize the exchange(s).\n"
-            "Just provide an imaginery summary.\n"
+        # Base prompt with dynamic disclaimers
+        instruction = build_simulated_method_prompt(
+            "summarize",
+            "",  # summarise does not need the original user text here
+            parent_chat_context=parent_chat_context,
         )
-        if parent_chat_context:
-            instruction += (
-                f"Calling chat context:\n{json.dumps(parent_chat_context, indent=4)}"
-            )
         if from_exchanges is None and from_messages is None:
             raise ValueError(
                 "Either 'from_exchanges' or 'from_messages' must be provided.",
@@ -258,8 +252,6 @@ class SimulatedTranscriptManager(BaseTranscriptManager):
             from_exchanges = [from_exchanges]
         if isinstance(from_messages, int):
             from_messages = [from_messages]
-
-        # Construct a lightweight "instruction" narrative for the fake LLM
 
         if _requests_clarification and (
             not clarification_up_q or not clarification_down_q
