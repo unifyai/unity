@@ -122,7 +122,7 @@ def wait_for_service_ready(timeout: int = 30) -> bool:
     return False
 
 
-def start(manager_name: str = "contact") -> bool:
+def start() -> bool:
     """
     Start the Unity service as a subprocess and wait for it to be ready.
 
@@ -143,7 +143,7 @@ def start(manager_name: str = "contact") -> bool:
         print(f"Starting Unity service (main.py) for assistant {assistant_id}")
 
         _process = subprocess.Popen(
-            [sys.executable, "unity/service/main.py", manager_name],
+            [sys.executable, "unity/service/main.py"],
             start_new_session=True,
         )
 
