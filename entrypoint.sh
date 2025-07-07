@@ -57,7 +57,7 @@ if [ $RETRY_COUNT -eq $MAX_RETRIES ]; then
     exit 1
 fi
 
-echo "Starting wrapper app..."
+echo "Starting unity service..."
 
 # Start the main application in the background
 python start.py
