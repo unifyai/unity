@@ -254,6 +254,10 @@ class SimulatedContactManager(BaseContactManager):
     ) -> SteerableToolHandle:
         instruction = (
             "On this turn you are simulating the 'update' method.\n"
+            "Please always act as though the request has been **completed**.\n"
+            "Do not reply as though you *will* do it (don't say something like 'started {task}, I will do this now') "
+            "Instead you should say something like 'completed requested {task}, here are the details: {details}'."
+            "In other words, you are simulating the response for a method which only returns once the update request has been satisfied.\n"
             f"The user update request is:\n{text}"
         )
         if parent_chat_context:
