@@ -14,7 +14,7 @@ async def test_window_cache_is_faster():
     """When more than *window* events are published, the oldest should fall off."""
     window = 3
     bus = EventBus()
-    bus.set_window("messages", window)
+    bus.set_window("message", window)
 
     # Start from a known clean state for this type (harmless use of a private attr)
     bus._deques.setdefault(
