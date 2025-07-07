@@ -192,3 +192,46 @@ def build_summarize_prompt(guidance: Optional[str] = None) -> str:
             guidance_block,
         ],
     )
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Simulated helper
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+def build_simulated_method_prompt(
+    method: str,
+    user_request: str,
+    parent_chat_context: list[dict] | None = None,
+) -> str:
+    """Return an instruction prompt for the *simulated* TranscriptManager.
+
+    Ensures the LLM replies **as if** the requested operation has already
+    finished, avoiding responses like "I'll process that now".
+    """
+    import json  # local import
+
+    preamble = f"On this turn you are simulating the '{method}' method."
+    if method.lower() == "ask":
+        behaviour = (
+            "Please always *answer* the question (inventing a plausible response) – "
+            "do **not** ask for clarification or explain your steps."
+        )
+    elif method.lower() == "summarize":
+        behaviour = (
+            "Please always provide an **imaginary summary** that looks realistic. "
+            "Do not answer in future tense and do not describe how you will summarise."
+        )
+    else:
+        behaviour = (
+            "Please act as though the request has been fully satisfied. "
+            "Respond in past tense with the final outcome, not the process."
+        )
+
+    parts: list[str] = [preamble, behaviour, "", f"The user input is:\n{user_request}"]
+    if parent_chat_context:
+        parts.append(
+            f"\nCalling chat context:\n{json.dumps(parent_chat_context, indent=4)}",
+        )
+
+    return "\n".join(parts)

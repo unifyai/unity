@@ -10,7 +10,11 @@ import unify
 
 from ..common.llm_helpers import SteerableToolHandle
 from .base import BaseTaskScheduler
-from .prompt_builders import build_ask_prompt, build_update_prompt
+from .prompt_builders import (
+    build_ask_prompt,
+    build_update_prompt,
+    build_simulated_method_prompt,
+)
 from ..common.llm_helpers import methods_to_tool_dict
 from .task_scheduler import TaskScheduler
 from ..planner.simulated import SimulatedPlanner
@@ -234,21 +238,15 @@ class SimulatedTaskScheduler(BaseTaskScheduler):
         clarification_up_q: asyncio.Queue[str] | None = None,
         clarification_down_q: asyncio.Queue[str] | None = None,
     ) -> SteerableToolHandle:
-        instruction = (
-            "On this turn you are simulating the 'ask' method.\n"
-            "Please always *answer* the question (making up the response), "
-            "do not ask for clarifications, or only state *how* you will answer the question.\n"
-            "Just answer the question with an imaginery response.\n"
-            "Please *always* mention the relevant task id(s) in your response.\n"
-            "The user will almost certainly require the task ids in order to do anything meaningful with your answer.\n"
-            "If they ask if a task already exists in the task list, always respond 'No', "
-            "stating that the task does *not* already exist."
-            f"The user question is:\n{text}"
+        instruction = build_simulated_method_prompt(
+            "ask",
+            text,
+            parent_chat_context=parent_chat_context,
         )
-        if parent_chat_context:
-            instruction += (
-                f"\nCalling chat context:\n{json.dumps(parent_chat_context, indent=4)}"
-            )
+        instruction += (
+            "\n\nPlease *always* mention the relevant task id(s) in your response. "
+            "If the user asks whether a task already exists in the list, reply 'No' and state it does *not* exist."
+        )
         return _SimulatedTaskScheduleHandle(
             self._llm,
             instruction,
@@ -274,20 +272,12 @@ class SimulatedTaskScheduler(BaseTaskScheduler):
         clarification_up_q: asyncio.Queue[str] | None = None,
         clarification_down_q: asyncio.Queue[str] | None = None,
     ) -> SteerableToolHandle:
-        instruction = (
-            "On this turn you are simulating the 'update' method.\n"
-            "Please always act as though the task has been completed "
-            "(making up an imaginery response to adress any specific details if necessary), "
-            "do not ask for clarifications, explain how you *would* proceed.\n"
-            "Just respond as though the user request has been handled without error.\n"
-            "If a any tasks were created or updated in the imagined process,"
-            "then please *always* include these task id(s) in your final response."
-            f"The user update request is:\n{text}"
+        instruction = build_simulated_method_prompt(
+            "update",
+            text,
+            parent_chat_context=parent_chat_context,
         )
-        if parent_chat_context:
-            instruction += (
-                f"\nCalling chat context:\n{json.dumps(parent_chat_context, indent=4)}"
-            )
+        instruction += "\n\nIf any tasks were created or updated during the imagined process, include their id(s) in your reply."
         return _SimulatedTaskScheduleHandle(
             self._llm,
             instruction,

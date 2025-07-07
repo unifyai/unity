@@ -245,3 +245,48 @@ def build_update_prompt(tools: Dict[str, Callable]) -> str:
             f"Current UTC time is {_now()}.",
         ],
     )
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Simulated helper
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+def build_simulated_method_prompt(
+    method: str,
+    user_request: str,
+    parent_chat_context: list[dict] | None = None,
+) -> str:
+    """Return an *instruction* prompt for the simulated ContactManager.
+
+    This helper is used *only* by the **simulated** implementation to give the
+    LLM very explicit guidance so that it *pretends* the method call has
+    *already* finished.  It avoids responses such as "I'll process that now …"
+    and instead instructs the model to respond in **past tense** – as if the
+    requested action has been *completed*.
+
+    The wording mirrors the style already used in :class:`SimulatedContactManager`.
+    """
+    import json  # local import to avoid polluting module namespace
+
+    preamble = f"On this turn you are simulating the '{method}' method."
+    if method.lower() == "ask":
+        behaviour = (
+            "Please always *answer* the question (invent a plausible response). "
+            "Do *not* ask the user for clarification and do *not* describe how "
+            "you will find the answer – simply provide the final, imaginary answer."
+        )
+    else:  # update / store / etc.
+        behaviour = (
+            "Please always act as though the request has been **completed**. "
+            "Respond in past tense, e.g. 'Completed the requested update – here are the details: …'. "
+            "Do *not* say things like 'I'll process this now'."
+        )
+
+    parts: list[str] = [preamble, behaviour, "", f"The user input is:\n{user_request}"]
+    if parent_chat_context:
+        parts.append(
+            f"\nCalling chat context:\n{json.dumps(parent_chat_context, indent=4)}",
+        )
+
+    return "\n".join(parts)

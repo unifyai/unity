@@ -253,3 +253,43 @@ def build_ask_prompt(
             f"Current UTC time: {_now()}.",
         ],
     )
+
+
+# ────────────────────────────────────────────────────────────────────────────
+# Simulated helper
+# ────────────────────────────────────────────────────────────────────────────
+
+
+def build_simulated_method_prompt(
+    method: str,
+    user_request: str,
+    parent_chat_context: list[dict] | None = None,
+) -> str:
+    """Return instruction prompt for *simulated* KnowledgeManager methods."""
+    import json
+
+    preamble = f"On this turn you are simulating the '{method}' method."
+    if method.lower() in {"ask", "retrieve"}:
+        behaviour = (
+            "Please always return imaginary information answering the question. "
+            "Do not ask for clarifications or describe how you will obtain the information."
+        )
+    elif method.lower() in {"update", "store"}:
+        behaviour = (
+            "Please always act as though the knowledge has been **stored or updated** successfully. "
+            "Respond in past tense summarising what was stored."
+        )
+    elif method.lower() == "refactor":
+        behaviour = (
+            "Provide a short migration plan that would bring the schema to 3NF. "
+            "Do not execute any tool calls – simply describe the completed refactor."
+        )
+    else:
+        behaviour = "Respond as though the requested operation has already been fully completed."
+
+    parts: list[str] = [preamble, behaviour, "", f"The user input is:\n{user_request}"]
+    if parent_chat_context:
+        parts.append(
+            f"\nCalling chat context:\n{json.dumps(parent_chat_context, indent=4)}",
+        )
+    return "\n".join(parts)

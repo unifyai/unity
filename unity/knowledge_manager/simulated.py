@@ -14,6 +14,7 @@ from .prompt_builders import (
     build_refactor_prompt,
     build_update_prompt,
     build_ask_prompt,
+    build_simulated_method_prompt,
 )
 
 
@@ -212,19 +213,11 @@ class SimulatedKnowledgeManager(BaseKnowledgeManager):
         Simulated version of KnowledgeManager.refactor – no real DDL is run.
         The LLM simply invents a plausible migration plan and returns it.
         """
-        instruction = (
-            "On this turn you are simulating the 'refactor' method.\n"
-            "Pretend you have analysed the entire schema and the contacts "
-            "table; respond with a short migration plan that removes any "
-            "duplication, introduces surrogate keys where useful, and generally "
-            "moves the schema toward third-normal-form.  **Do not** execute any "
-            "actual tool calls – just describe what you *would* do.\n"
-            f"The user's refactor request is:\n{text}"
+        instruction = build_simulated_method_prompt(
+            "refactor",
+            text,
+            parent_chat_context=parent_chat_context,
         )
-        if parent_chat_context:
-            instruction += (
-                f"\nCalling chat context:\n{json.dumps(parent_chat_context, indent=4)}"
-            )
         return _SimulatedKnowledgeHandle(
             self._llm,
             instruction,
@@ -248,17 +241,16 @@ class SimulatedKnowledgeManager(BaseKnowledgeManager):
         clarification_up_q: asyncio.Queue[str] | None = None,
         clarification_down_q: asyncio.Queue[str] | None = None,
     ) -> SteerableToolHandle:
-        instruction = (
-            "On this turn you are simulating the 'store' method.\n"
-            f"The user stoage request is:\n{text}\n"
-            "If the user refers to creating *tasks*, then you should **not** store any tasks.\n"
-            "Tasks should exclusively be sotred by a separate task manager, this is **not your responsibility**.\n"
-            "Please explain this to the user in your response, if this is part of the their request."
+        instruction = build_simulated_method_prompt(
+            "update",
+            text,
+            parent_chat_context=parent_chat_context,
         )
-        if parent_chat_context:
-            instruction += (
-                f"\nCalling chat context:\n{json.dumps(parent_chat_context, indent=4)}"
-            )
+        # Append additional guidance about tasks, which is domain-specific
+        instruction += (
+            "\n\nIf the user refers to creating *tasks*, then you should **not** store any tasks. "
+            "Tasks should be stored by a separate task manager – explain this in your response if relevant."
+        )
         return _SimulatedKnowledgeHandle(
             self._llm,
             instruction,
@@ -282,17 +274,11 @@ class SimulatedKnowledgeManager(BaseKnowledgeManager):
         clarification_up_q: asyncio.Queue[str] | None = None,
         clarification_down_q: asyncio.Queue[str] | None = None,
     ) -> SteerableToolHandle:
-        instruction = (
-            "On this turn you are simulating the 'retrieve' method.\n"
-            "Please always return imaginery information (making up the response), "
-            "do not ask for clarifications, or only state *how* you will get the information.\n"
-            "Just respond immediately with imaginery information.\n"
-            f"The user retrieve request is:\n{text}"
+        instruction = build_simulated_method_prompt(
+            "retrieve",
+            text,
+            parent_chat_context=parent_chat_context,
         )
-        if parent_chat_context:
-            instruction += (
-                f"\nCalling chat context:\n{json.dumps(parent_chat_context, indent=4)}"
-            )
         return _SimulatedKnowledgeHandle(
             self._llm,
             instruction,

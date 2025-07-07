@@ -122,3 +122,39 @@ def build_update_prompt(tools: Dict[str, Callable]) -> str:
             f"Current UTC time is {_now()}.",
         ],
     )
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Simulated helper
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+def build_simulated_method_prompt(
+    method: str,
+    user_request: str,
+    parent_chat_context: list[dict] | None = None,
+) -> str:
+    """Return instruction prompt for the *simulated* TaskScheduler."""
+    import json
+
+    preamble = f"On this turn you are simulating the '{method}' method."
+    if method.lower() == "ask":
+        behaviour = (
+            "Please always *answer* the question with an imaginary but plausible response, "
+            "mentioning the relevant task id(s). Do NOT ask for clarification or describe your process."
+        )
+    elif method.lower() == "update":
+        behaviour = (
+            "Please always act as though the task list has been updated **successfully**. "
+            "Respond in past tense and include any created/updated task id(s) in your reply."
+        )
+    else:
+        behaviour = "Provide a final response as though the requested operation has already completed (past tense)."
+
+    parts: list[str] = [preamble, behaviour, "", f"The user input is:\n{user_request}"]
+    if parent_chat_context:
+        parts.append(
+            f"\nCalling chat context:\n{json.dumps(parent_chat_context, indent=4)}",
+        )
+
+    return "\n".join(parts)

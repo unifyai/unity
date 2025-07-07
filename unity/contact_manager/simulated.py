@@ -12,7 +12,11 @@ import unify
 from .base import BaseContactManager
 from .types.contact import Contact
 from .contact_manager import ContactManager
-from .prompt_builders import build_ask_prompt, build_update_prompt
+from .prompt_builders import (
+    build_ask_prompt,
+    build_update_prompt,
+    build_simulated_method_prompt,
+)
 from ..common.llm_helpers import SteerableToolHandle, methods_to_tool_dict
 
 
@@ -218,17 +222,11 @@ class SimulatedContactManager(BaseContactManager):
         clarification_up_q: asyncio.Queue[str] | None = None,
         clarification_down_q: asyncio.Queue[str] | None = None,
     ) -> SteerableToolHandle:
-        instruction = (
-            "On this turn you are simulating the 'ask' method.\n"
-            "Please always *answer* the question (making up the response), "
-            "do not ask for clarifications, or only state *how* you will answer the question.\n"
-            "Just answer the question with an imaginery response.\n"
-            f"The user question is:\n{text}"
+        instruction = build_simulated_method_prompt(
+            "ask",
+            text,
+            parent_chat_context=parent_chat_context,
         )
-        if parent_chat_context:
-            instruction += (
-                f"\nCalling chat context:\n{json.dumps(parent_chat_context, indent=4)}"
-            )
         return _SimulatedContactHandle(
             self._llm,
             instruction,
@@ -252,18 +250,11 @@ class SimulatedContactManager(BaseContactManager):
         clarification_up_q: asyncio.Queue[str] | None = None,
         clarification_down_q: asyncio.Queue[str] | None = None,
     ) -> SteerableToolHandle:
-        instruction = (
-            "On this turn you are simulating the 'update' method.\n"
-            "Please always act as though the request has been **completed**.\n"
-            "Do not reply as though you *will* do it (don't say something like 'started {task}, I will do this now') "
-            "Instead you should say something like 'completed requested {task}, here are the details: {details}'."
-            "In other words, you are simulating the response for a method which only returns once the update request has been satisfied.\n"
-            f"The user update request is:\n{text}"
+        instruction = build_simulated_method_prompt(
+            "update",
+            text,
+            parent_chat_context=parent_chat_context,
         )
-        if parent_chat_context:
-            instruction += (
-                f"\nCalling chat context:\n{json.dumps(parent_chat_context, indent=4)}"
-            )
         return _SimulatedContactHandle(
             self._llm,
             instruction,
