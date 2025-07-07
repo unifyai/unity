@@ -7,7 +7,7 @@ from unity.common.llm_helpers import (
     start_async_tool_use_loop,
 )
 
-from unity.service import new_actions, start, stop
+from unity.service import new_actions
 from unity.service.utils import publish_event
 from unity.service.events import PhoneUtteranceEvent, PhoneCallStopEvent
 from unity.controller.browser import Browser
@@ -167,7 +167,6 @@ class ActionProvider:
                     new_actions._send_whatsapp_message_via_number,
                 )
 
-                start()
                 asyncio.create_task(new_actions._start_call(phone_number, purpose))
                 cls.status = "started"
 
@@ -219,8 +218,6 @@ class ActionProvider:
                         "event": PhoneCallStopEvent().to_dict(),
                     },
                 )
-                await asyncio.sleep(5)
-                stop()
                 cls.status = "ended"
 
             def result(cls) -> str:
