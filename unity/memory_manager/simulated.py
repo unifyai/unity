@@ -83,6 +83,7 @@ class SimulatedMemoryManager(BaseMemoryManager):
             loop_id="SimulatedMemoryManager.update_contacts",
             tool_policy=lambda i, _: ("required", _) if i < 2 else ("auto", _),
         )
+
         # returns a **string** – the tool-loop terminates internally
         return await handle.result()
 
@@ -130,7 +131,6 @@ class SimulatedMemoryManager(BaseMemoryManager):
             loop_id="SimulatedMemoryManager.update_contact_bio",
             tool_policy=lambda i, _: ("required", _) if i < 1 else ("auto", _),
         )
-
         return await handle.result()
 
     async def update_contact_rolling_summary(
@@ -176,7 +176,6 @@ class SimulatedMemoryManager(BaseMemoryManager):
             loop_id="SimulatedMemoryManager.update_contact_rolling_summary",
             tool_policy=lambda i, _: ("required", _) if i < 1 else ("auto", _),
         )
-
         return await handle.result()
 
     async def update_knowledge(
@@ -219,5 +218,4 @@ class SimulatedMemoryManager(BaseMemoryManager):
             loop_id="SimulatedMemoryManager.update_knowledge",
             tool_policy=lambda i, _: ("required", _) if i < 2 else ("auto", _),
         )
-
         return await handle.result()
