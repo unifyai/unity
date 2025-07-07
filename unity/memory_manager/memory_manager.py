@@ -93,6 +93,11 @@ class MemoryManager(BaseMemoryManager):
         for window in list(_TIME_WINDOWS) + list(_COUNT_WINDOWS) + list(_ALL_TIME):
             _tmp_cols.append(f"{nick}/{window}")
 
+    # ───────────────────────────  NEW SUMMARY COLS  ───────────────────────────
+    _SUMMARY_TIME_COL = "time_based_activity"
+    _SUMMARY_COUNT_COL = "count_based_activity"
+    _tmp_cols.extend([_SUMMARY_TIME_COL, _SUMMARY_COUNT_COL])
+
     _ROLLING_COLUMNS = tuple(_tmp_cols)
     del _tmp_cols
 
@@ -313,6 +318,19 @@ class MemoryManager(BaseMemoryManager):
                 col: {"type": "str", "mutable": True} for col in self._ROLLING_COLUMNS
             }
             unify.create_fields(fields, context=ctx)
+        else:
+            # Context already exists – ensure the two new summary columns are present.
+            try:
+                unify.create_fields(
+                    {
+                        self._SUMMARY_TIME_COL: {"type": "str", "mutable": True},
+                        self._SUMMARY_COUNT_COL: {"type": "str", "mutable": True},
+                    },
+                    context=ctx,
+                )
+            except Exception:
+                # Field might already exist – safe to ignore any error here.
+                pass
         return ctx
 
     # 2. Callback registration ---------------------------------------------
@@ -508,6 +526,18 @@ class MemoryManager(BaseMemoryManager):
 
         # ---- 2.  persist --------------------------------------------------
         base_payload[column] = summary
+
+        # ──────────────────────────  NEW: Pre-compute summaries  ────────────────
+        base_payload[self._SUMMARY_TIME_COL] = self._build_activity_summary(
+            base_payload,
+            "time",
+        )
+        base_payload[self._SUMMARY_COUNT_COL] = self._build_activity_summary(
+            base_payload,
+            "interaction",
+        )
+
+        # ------------------------------------------------------------------
         unify.log(
             context=self._rolling_ctx,
             new=True,
@@ -529,41 +559,23 @@ class MemoryManager(BaseMemoryManager):
         )
 
     # ------------------------------------------------------------------ #
-    # 5  get_rolling_activity                                            #
+    #  helper: build human-readable activity summary                     #
     # ------------------------------------------------------------------ #
-    def get_rolling_activity(self, mode: str = "time") -> str:
-        """
-        Return the **latest** Rolling-Activity snapshot as a human-readable
-        Markdown string.
-
-        Parameters
-        ----------
-        mode : {"time", "interaction"}
-            • ``"time"``        → past_day / past_week / … + all_time
-            • ``"interaction"`` → past_interaction / past_10_interactions / …
-        """
+    def _build_activity_summary(
+        self,
+        entries: dict[str, str],
+        mode: str = "time",
+    ) -> str:
+        """Return the rolling activity summary Markdown for *entries*."""
         mode = mode.lower()
         if mode not in {"time", "interaction"}:
             raise ValueError("mode must be either 'time' or 'interaction'")
 
-        # 1️⃣  fetch the newest complete snapshot
-        rows = unify.get_logs(
-            context=self._rolling_ctx,
-            sorting={"row_id": "descending"},
-            limit=1,
-        )
-        if not rows:
-            return "No rolling activity available yet."
-
-        latest = rows[0].entries
-
-        # 2️⃣  which windows are relevant?
         windows: list[str] = (
             list(self._TIME_ORDER) if mode == "time" else list(self._COUNT_ORDER)
         )
-        windows.append("all_time")  # always include if present
+        windows.append("all_time")
 
-        # helper to turn "past_4_weeks" → "Past 4 Weeks"
         def _pretty(w: str) -> str:
             if w == "all_time":
                 return "All Time"
@@ -572,7 +584,6 @@ class MemoryManager(BaseMemoryManager):
                 p.capitalize() if not p.isdigit() else p for p in parts[1:]
             )
 
-        # 3️⃣  pretty titles & optional blurbs per manager
         _TITLE_DESC = {
             "task_scheduler": (
                 "Tasks",
@@ -603,27 +614,53 @@ class MemoryManager(BaseMemoryManager):
                 (mgr_cls.replace("Manager", ""), ""),
             )
 
-            # collect summaries that actually exist
             available: list[tuple[str, str]] = []
             for w in windows:
                 col = f"{nick}/{w}"
-                summary = latest.get(col)
+                summary = entries.get(col)
                 if summary:
                     available.append((w, summary))
 
             if not available:
-                continue  # nothing to show for this manager yet
+                continue
 
-            # section header
             lines.append(f"# {title}")
             if desc:
                 lines.append(desc)
-            lines.append("")  # blank line
+            lines.append("")
 
-            # nested windows
             for w, summary in available:
                 lines.append(f"## {_pretty(w)}")
                 lines.append(summary)
-                lines.append("")  # blank line
+                lines.append("")
 
         return "\n".join(lines).strip()
+
+    # ------------------------------------------------------------------ #
+    # 5  get_rolling_activity                                            #
+    # ------------------------------------------------------------------ #
+    def get_rolling_activity(self, mode: str = "time") -> str:
+        """
+        Return the **latest** Rolling-Activity snapshot as a human-readable
+        Markdown string.
+        """
+        mode = mode.lower()
+        if mode not in {"time", "interaction"}:
+            raise ValueError("mode must be either 'time' or 'interaction'")
+
+        rows = unify.get_logs(
+            context=self._rolling_ctx,
+            sorting={"row_id": "descending"},
+            limit=1,
+        )
+        if not rows:
+            return "No rolling activity available yet."
+
+        latest = rows[0].entries
+        key = self._SUMMARY_TIME_COL if mode == "time" else self._SUMMARY_COUNT_COL
+        stored = latest.get(key)
+        if stored:
+            return stored
+
+        # Fallback – build on the fly if snapshot predates summary columns
+        return self._build_activity_summary(latest, mode)
