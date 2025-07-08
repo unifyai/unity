@@ -2,10 +2,8 @@ from typing import Any, Type
 from .controller import Controller
 from unity.common.llm_helpers import (
     SteerableToolHandle,
-    methods_to_tool_dict,
-    start_async_tool_use_loop,
 )
-import unify
+from unity.planner.tool_loop_planner import ToolLoopPlanner
 
 
 class Browser:
@@ -43,33 +41,18 @@ class Browser:
         """
         return await self.controller.observe(query, response_format)
 
-    def multi_step(
-        self,
-        description: str,
-        parent_chat_context: list[dict] | None = None,
-    ) -> SteerableToolHandle:
+    async def multi_step(self, description: str) -> SteerableToolHandle:
         """
-        Performs a complex, multi-step browser task by breaking it down into
-        a sequence of `act` and `observe` calls.
+        Performs a complex, sequential browser task using a dedicated sub-agent.
+        Use this for high-level goals like "Log into my account" or "Find the latest blog post and summarize it."
+        Returns a handle to the sub-agent that will execute the task.
         """
-        client = unify.AsyncUnify("o4-mini@openai")
-        client.set_system_message(
-            "You are a browser assistant. Your goal is to achieve the user's objective by using the `act` and `observe` tools to interact with the web page.",
+        sub_planner = ToolLoopPlanner(
+            session_connect_url=self.controller.session_connect_url,
+            headless=self._headless,
         )
-
-        tools = methods_to_tool_dict(
-            self.act,
-            self.observe,
-            include_class_name=False,
-        )
-
-        return start_async_tool_use_loop(
-            client,
-            description,
-            tools,
-            loop_id="browser_multi_step",
-            parent_chat_context=parent_chat_context,
-        )
+        active_task_handle = await sub_planner.execute(description)
+        return active_task_handle
 
     # --- Placeholders for other planned methods ---
 

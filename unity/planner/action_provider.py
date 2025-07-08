@@ -2,6 +2,8 @@ import asyncio
 import os
 import unify
 from typing import Any
+from pydantic import BaseModel
+import inspect
 from unity.common.llm_helpers import (
     SteerableToolHandle,
     methods_to_tool_dict,
@@ -307,9 +309,14 @@ class ActionProvider:
         """
         return await self.browser.observe(query, response_format=response_format)
 
-    # def browser_multi_step(self, description: str) -> SteerableToolHandle:
-    #     """Alias for browser.multi_step to be exposed to the planner."""
-    #     return self.browser.multi_step(description)
+    async def browser_multi_step(self, description: str) -> SteerableToolHandle:
+        """
+        Performs a complex, sequential browser task that may require multiple steps.
+        Use this for high-level goals like "Log into my account" or "Find the latest blog post and summarize it."
+        This tool is more powerful than `act` for tasks that are not single-step.
+        It returns a handle to a sub-agent that will execute the task.
+        """
+        return await self.browser.multi_step(description)
 
     # async def browser_start_recording(self):
     #     """Alias for browser.start_recording."""
@@ -334,9 +341,6 @@ class ActionProvider:
         Returns:
             The processed text or a Pydantic object, depending on `response_format`.
         """
-        from pydantic import BaseModel
-        import inspect
-
         client = unify.AsyncUnify(os.environ.get("UNIFY_MODEL", "gpt-4o-mini@openai"))
         client.set_system_message(request)
 
@@ -345,5 +349,4 @@ class ActionProvider:
             raw_response = await client.generate(context)
             return response_format.model_validate_json(raw_response)
         else:
-            # For simple string responses
             return await client.generate(context)

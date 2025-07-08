@@ -58,6 +58,12 @@ def _build_rules_and_examples_prompt(
     tool_reference = _build_tool_signatures(tools)
     handle_apis = _build_handle_apis(tools)
 
+    strategy_instruction += textwrap.dedent(
+        """\n
+        - For **simple, single-step** browser actions (e.g., "click the login button", "type in the search field"), use the `action_provider.browser_act()` tool.
+        - For **complex, multi-step** browser tasks that require reasoning, state, and potentially retries (e.g., "log into my account", "find and summarize the return policy"), use the more powerful `action_provider.browser_multi_step()` tool. This will delegate the sub-task to a specialized agent.
+    """,
+    )
     return textwrap.dedent(
         f"""
         ---
@@ -130,6 +136,24 @@ def _build_rules_and_examples_prompt(
             if consent_status.is_present:
                 await action_provider.browser_act("Click the 'Accept All' button")
             return "Cookie consent handled."
+        ```
+
+        **Multi-Step Browser Task:**
+        ```python
+        @verify
+        async def login_and_get_dashboard_title():
+            # Use multi_step for a complex sequence like logging in.
+            login_handle = await action_provider.browser_multi_step(
+                "Log into the website using the username 'testuser' and password 'password123'"
+            )
+
+            # Wait for the multi-step task to complete.
+            login_result = await login_handle.result()
+            print(f"Login task finished with result: {{login_result}}")
+
+            # Now that we are logged in, we can perform a simple observation.
+            title = await action_provider.browser_observe("What is the title of the main dashboard heading?")
+            return title
         ```
 
         **Generic Reasoning:**
