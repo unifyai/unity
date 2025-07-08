@@ -33,7 +33,7 @@ One or several actions are *known* to complete the task correctly, you need to s
 
 List them in the exact order they should be executed.
 
-Respond ONLY with valid JSON matching: {"rationale": "...", "action": "<prototype>", "value": <value|null>}
+Respond ONLY with valid JSON matching: {"rationale": "...", "actions": ["<prototype1>", "<prototype2>", ...]}
 
 Available prototypes:
 """
