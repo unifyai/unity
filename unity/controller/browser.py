@@ -14,10 +14,16 @@ class Browser:
     to complex, multi-step operations and session recording.
     """
 
-    def __init__(self, session_connect_url: str | None = None, headless: bool = False):
+    def __init__(
+        self,
+        session_connect_url: str | None = None,
+        headless: bool = False,
+        mode: str = "heuristic",
+    ):
         self.controller = Controller(
             session_connect_url=session_connect_url,
             headless=headless,
+            mode=mode,
         )
         if not self.controller.is_alive():
             self.controller.start()

@@ -132,22 +132,14 @@ def paint_overlay(
       unified overlay for (vision + heuristic + hybrid) elements.
     """
 
-    # ────────────────────────────────────────────────────────────────
-    # 1️⃣  Heuristic-only mode – just (re)enable the helper overlay
-    # ────────────────────────────────────────────────────────────────
-    if not use_vision:
-        try:
-            # hide our custom overlay (if any) …
-            page.evaluate("document.getElementById('vision-overlay')?.remove()")
-            # … and bring the helper’s one back
-            page.evaluate("window.__bl?.enableOverlay?.()")
-        except Exception:
-            # page may be mid-navigation – ignore
-            pass
-        return
+    # Always disable the helper's overlay to prevent double overlays
+    try:
+        page.evaluate("window.__bl?.hideOverlay?.()")
+    except Exception:
+        pass  # page may be mid-navigation – ignore
 
     # ────────────────────────────────────────────────────────────────
-    # 2️⃣  Vision / hybrid mode – start scan loop, hide helper canvas,
+    # Vision / hybrid mode – start scan loop, hide helper canvas,
     #     then render our own overlay
     # ────────────────────────────────────────────────────────────────
     try:

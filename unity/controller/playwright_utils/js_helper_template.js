@@ -6,6 +6,7 @@
   const REFRESH_MS = 120;
   const VP_PAD     = 500;
   const HEUR       = __HEURISTICS__;           // ← filled-in by Python
+  let isDrawingAllowed = true;                 //  Flag to control drawing
 
   /* compile inline filter/label strings */
   HEUR.forEach(h => {
@@ -149,6 +150,7 @@
   const clearOverlay = () => { canvas.remove(); };
 
   function redraw() {
+    if (!isDrawingAllowed) { clearOverlay(); return; }
     if (!ELEMENTS.length) return;
     attachCanvas();
 
@@ -222,9 +224,9 @@
 
   /* public API for Python */
   window.__bl = {
-    enableOverlay:  enable,
-    disableOverlay: disable,
-    hideOverlay:    clearOverlay,
+    enableOverlay:  () => { isDrawingAllowed = true; enable(); },
+    disableOverlay: () => { isDrawingAllowed = false; disable(); },
+    hideOverlay:    () => { isDrawingAllowed = false; clearOverlay(); },
     scan: () => ELEMENTS.map(e => ({
       id:        e.id,
       tag:       e.tag,
