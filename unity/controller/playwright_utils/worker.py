@@ -30,7 +30,6 @@ from .browser_utils import (
 )
 from .vision_utils import (
     _fuse_elements,
-    _assign_stable_ids,
     reset_stable_ids,
     _dedup,
     _click_at_bbox_center,
@@ -172,7 +171,6 @@ class BrowserWorker(threading.Thread):
         self._pubsub = self._redis_client.pubsub()
         self._pubsub.subscribe("browser_command")
         self.start_url = start_url
-        self.refresh_interval = refresh_interval
         self.log = log or (lambda *_: None)
         self._stop_event = threading.Event()
         self.session_connect_url = session_connect_url
@@ -181,6 +179,10 @@ class BrowserWorker(threading.Thread):
         self.use_vision = self.mode in ("vision", "hybrid")
         self.use_heuristic = self.mode in ("heuristic", "hybrid")
         self.debug = debug
+        self._vision_interval = 1.0  # seconds
+        self.refresh_interval = (
+            self._vision_interval if self.use_vision else refresh_interval
+        )
         # will be initialised inside `run`
         self.runner: CommandRunner | None = None
         # keep reference to a single CAPTCHA-solving thread (optional)
@@ -191,7 +193,6 @@ class BrowserWorker(threading.Thread):
         self._executor = ThreadPoolExecutor(max_workers=1)
         self._vision_future = None
         self._last_vision_ts = 0
-        self._vision_interval = 1.0  # seconds
         self._vision_elements_cache: list[dict] = []
 
     # ------------------------------------------------------------------
@@ -560,7 +561,7 @@ class BrowserWorker(threading.Thread):
                                 # No pages left – break out of loop to avoid spin
                                 time.sleep(0.1)
                                 continue
-                        
+
                         # Check for URL change and reset IDs *before* element collection.
                         current_url = self.runner.active.url
                         if current_url != getattr(self, "_prev_url", None):
@@ -569,7 +570,7 @@ class BrowserWorker(threading.Thread):
 
                     except Exception as e:
                         self.log(f"Page state check failed, resetting IDs: {e}")
-                        reset_stable_ids() # Reset state on error as a safeguard
+                        reset_stable_ids()  # Reset state on error as a safeguard
                         if self.runner.ctx.pages:
                             self.runner.active = self.runner.ctx.pages[0]
                         else:
@@ -660,13 +661,12 @@ class BrowserWorker(threading.Thread):
                                 )
 
                             case "heuristic":
-                                last_elements = _assign_stable_ids(
-                                    [
-                                        {**h, "source": "heuristic"}
-                                        for h in heuristic_elements
-                                    ],
-                                )
+                                last_elements = [
+                                    {**h, "source": "heuristic"}
+                                    for h in heuristic_elements
+                                ]
 
+                        last_elements.sort(key=lambda e: e["id"])
                     except Exception as exc:  # navigation in-flight
                         self.log(f"collect_elements skipped: {exc}")
                         time.sleep(0.05)  # brief pause, then continue loop
