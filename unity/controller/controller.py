@@ -92,16 +92,38 @@ class Controller(threading.Thread):
                         },
                     )
                     self._last_shot = browser_state.get("screenshot", b"")
-        except redis.ConnectionError:
-            pass
+        except (redis.ConnectionError, ValueError) as e:
+            # Redis connection closed or file operation on closed file
+            if not self._stop_event.is_set():
+                LOGGER.warning(f"Redis connection error in Controller: {e}")
+        except Exception as e:
+            # Catch any other unexpected errors
+            if not self._stop_event.is_set():
+                LOGGER.error(f"Unexpected error in Controller: {e}")
 
     def stop(self) -> None:
         """Signal the controller thread to stop."""
         self._stop_event.set()
+
+        # Stop the browser worker first if it's running
+        if self._browser_worker and self._browser_open:
+            try:
+                self._browser_worker.stop()
+                self._browser_worker.join(timeout=2)
+                self._browser_open = False
+            except Exception as e:
+                LOGGER.warning(f"Error stopping browser worker: {e}")
+
         # Close pubsub connections to break out of the listen loop
         try:
             self._pubsub_browser_state.close()
             self._pubsub_text_action.close()
+        except Exception:
+            pass
+
+        # Close the Redis client
+        try:
+            self._redis_client.close()
         except Exception:
             pass
 

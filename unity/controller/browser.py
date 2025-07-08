@@ -99,5 +99,6 @@ class Browser:
 
     def stop(self):
         """Shuts down the underlying controller."""
-        self.controller.stop()
-        self.controller.join(timeout=2.0)
+        if self.controller.is_alive():
+            self.controller.stop()
+            self.controller.join(timeout=5.0)
