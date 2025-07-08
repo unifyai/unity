@@ -5,7 +5,7 @@ import os
 import traceback
 
 from unity.helpers import run_script, terminate_process
-from unity.conversation_manager import comms_actions
+from unity.conversation_manager.comms_actions import _start_call
 from unity.conversation_manager.actions import *
 from unity.conversation_manager.events import *
 from unity.conversation_manager.prompt_builders import (
@@ -351,10 +351,7 @@ class CommsAgent:
 
     async def send_call(self):
         print(self.assistant_number, self.user_phone_call_number)
-        event = PhoneCallInitiatedEvent().to_dict()
-        event["outbound"] = True
-        self.events_queue.put_nowait(event)
-        await comms_actions.send_call(
+        await _start_call(
             self.assistant_number,
             self.user_phone_call_number,
         )

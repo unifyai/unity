@@ -8,7 +8,7 @@ from unity.common.llm_helpers import (
     start_async_tool_use_loop,
 )
 
-from unity.conversation_manager import new_actions
+from unity.conversation_manager import comms_actions
 from unity.conversation_manager.utils import publish_event
 from unity.conversation_manager.events import PhoneUtteranceEvent, PhoneCallStopEvent
 from unity.controller.browser import Browser
@@ -61,7 +61,7 @@ class ActionProvider:
             self.contact_manager.ask,
             self.transcript_manager.ask,
             self.knowledge_manager.ask,
-            new_actions._send_sms_message_via_number,
+            comms_actions._send_sms_message_via_number,
             include_class_name=True,
         )
         return start_async_tool_use_loop(
@@ -93,7 +93,7 @@ class ActionProvider:
             self.contact_manager.ask,
             self.transcript_manager.ask,
             self.knowledge_manager.ask,
-            new_actions._send_email_via_address,
+            comms_actions._send_email_via_address,
             include_class_name=True,
         )
         return start_async_tool_use_loop(
@@ -125,7 +125,7 @@ class ActionProvider:
             self.contact_manager.ask,
             self.transcript_manager.ask,
             self.knowledge_manager.ask,
-            new_actions._send_whatsapp_message_via_number,
+            comms_actions._send_whatsapp_message_via_number,
             include_class_name=True,
         )
         return start_async_tool_use_loop(
@@ -164,8 +164,8 @@ class ActionProvider:
                     self.transcript_manager.summarize,
                     self.knowledge_manager.ask,
                     self.task_scheduler.ask,
-                    new_actions._send_email_via_address,
-                    new_actions._send_sms_message_via_number,
+                    comms_actions._send_email_via_address,
+                    comms_actions._send_sms_message_via_number,
                     # new_actions._send_whatsapp_message_via_number,
                 )
 
@@ -174,7 +174,7 @@ class ActionProvider:
                 cls.call_ask_status.set()
 
                 async def do_call():
-                    await new_actions._start_call(
+                    await comms_actions._start_call(
                         os.getenv("ASSISTANT_NUMBER"),
                         phone_number,
                         purpose,
