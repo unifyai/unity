@@ -8,6 +8,7 @@ import json
 import unity.common.llm_helpers as llmh
 from tests.helpers import _handle_project
 from unity.controller.controller import Controller
+from unity.controller.playwright_utils.worker import BrowserWorker
 
 # Use the same model as other tests (override via UNIFY_MODEL env)
 MODEL_NAME = os.getenv("UNIFY_MODEL", "gpt-4o@openai")
@@ -29,6 +30,16 @@ async def test_controller_act_tool_loop():
 
     controller = Controller()
     controller._observe_ctx = {"state": {"in_textbox": True}}
+
+    # Initialize the browser worker since we're not running the controller thread
+    controller._browser_worker = BrowserWorker(
+        start_url="https://www.google.com/",
+        refresh_interval=0.4,
+        session_connect_url=controller.session_connect_url,
+        headless=True,
+        mode=controller._mode,
+        debug=controller._debug,
+    )
 
     # Run the loop with only the 'act' tool
     result = await llmh.start_async_tool_use_loop(
@@ -90,6 +101,16 @@ async def test_controller_complex_tool_loop():
     # Instantiate Controller and prime minimal context
     controller = Controller()
     controller._observe_ctx = {"state": {"in_textbox": True}}
+
+    # Initialize the browser worker since we're not running the controller thread
+    controller._browser_worker = BrowserWorker(
+        start_url="https://www.google.com/",
+        refresh_interval=0.4,
+        session_connect_url=controller.session_connect_url,
+        headless=True,
+        mode=controller._mode,
+        debug=controller._debug,
+    )
 
     raw_jpeg = Path("tests/test_controller/test_images/google.jpeg").read_bytes()
     b64 = base64.b64encode(raw_jpeg).decode("utf-8")
