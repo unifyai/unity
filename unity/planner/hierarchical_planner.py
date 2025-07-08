@@ -1092,7 +1092,12 @@ class HierarchicalPlanner(BasePlanner):
             ]
             if __builtins__.get(k) is not None
         }
-        return {"__builtins__": safe_builtins, "asyncio": asyncio}
+        return {
+            "__builtins__": safe_builtins,
+            "asyncio": asyncio,
+            "BaseModel": BaseModel,
+            "Field": Field,
+        }
 
     async def _prepare_execution_environment(self, plan: HierarchicalPlan):
         """
