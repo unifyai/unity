@@ -18,8 +18,7 @@ import json
 import queue
 import requests
 import redis
-from base64 import b64decode
-from playwright.sync_api import Error as PWError, Page
+from playwright.sync_api import Error as PWError
 from playwright.sync_api import sync_playwright
 from .browser_utils import (
     build_boxes,
@@ -32,9 +31,8 @@ from .vision_utils import (
     _fuse_elements,
     reset_stable_ids,
     _dedup,
-    _click_at_bbox_center,
 )
-from .command_runner import CommandRunner
+from .command_runner import CommandRunner, _safe_screenshot
 from .mirror import MirrorPage
 from ..commands import *
 from .. import captcha_solver
@@ -44,114 +42,6 @@ from .heuristics import export_for_js
 # Manual-solve mode: set False to disable automatic CAPTCHA sniffing
 AUTO_CAPTCHA = False  # NEW – detect only when user issues `solve_captcha`
 OMNIPARSER_URL = "https://omniparser.saas.unify.ai/parse/"
-
-
-def grab_screenshot(page: Page) -> bytes:
-    """
-    Capture the exact visual state of a Playwright `Page`.
-
-    Uses the Chrome DevTools Protocol (`Page.captureScreenshot`) to grab a
-    PNG of the page's painted surface—no scrolling or flicker—and returns
-    the raw PNG bytes.
-    """
-    cdp = page.context.new_cdp_session(page)
-    res = cdp.send("Page.captureScreenshot", {"fromSurface": True})
-    return b64decode(res["data"])
-
-
-def _safe_screenshot(page: Page, log: Callable[[str], None] | None = None) -> bytes:
-    """Grab a screenshot of *page* but never raise.
-
-    1. Tries the fast CDP-based ``grab_screenshot`` first.
-    2. Falls back to Playwright's built-in ``page.screenshot`` if the CDP call
-       fails (for example when the page has navigated and the previous CDP
-       session was detached).
-    3. If both methods fail or the page is already closed, returns an empty
-       ``bytes`` object so the caller can decide how to proceed without
-       crashing the worker thread.
-    """
-
-    if page is None:
-        return b""
-
-    try:
-        # Fast path – CDP capture (no flicker / scroll)
-        return grab_screenshot(page)
-    except Exception as e:
-        if log:
-            log(f"_safe_screenshot: CDP capture failed – {e}")
-
-    try:
-        # Slower but more robust fallback
-        return page.screenshot(type="png", full_page=False)
-    except Exception as e:
-        if log:
-            log(f"_safe_screenshot: fallback screenshot failed – {e}")
-        return b""
-
-
-def _update_in_textbox_state(runner, handle, label):
-    """Update BrowserState.in_textbox after a click."""
-    try:
-        # If not Google Docs input label, fall back to standard detection
-        if "Google Docs Input" not in label:
-            tag = handle.evaluate("el => el.tagName?.toLowerCase?.() || ''")
-            role = handle.evaluate("el => el.getAttribute?.('role') || ''")
-            runner.state.in_textbox = tag in {"input", "textarea"} or role in {
-                "textbox",
-                "combobox",
-                "searchbox",
-            }
-            return
-
-        # Google Docs aware logic
-        runner.state.in_textbox = handle.evaluate(
-            """
-            () => {
-                try {
-                    const textTarget = document.querySelector('.docs-texteventtarget');
-                    const editor = document.querySelector('.kix-appview-editor');
-                    const sel = window.getSelection();
-
-                    const selValid = sel && sel.rangeCount > 0 && editor?.contains(sel.focusNode);
-                    const hiddenFocused = document.activeElement === textTarget;
-                    const caretVisible = !!document.querySelector('.kix-cursor');
-
-                    return selValid || hiddenFocused || caretVisible;
-                } catch (e) {
-                    return false;
-                }
-            }
-        """,
-        )
-
-        handle.evaluate(
-            """
-            () => {
-                const editor = document.querySelector('.kix-appview-editor');
-                if (!editor) return;
-
-                const sel = window.getSelection();
-                const range = document.createRange();
-
-                let node = editor;
-                while (node && node.firstChild) {
-                    node = node.firstChild;
-                }
-
-                if (node) {
-                    range.setStart(node, node.textContent?.length || 0);
-                    range.collapse(true);
-                    sel.removeAllRanges();
-                    sel.addRange(range);
-                }
-            }
-        """,
-        )
-        runner.log(f"in_textbox (Google Docs logic): {runner.state.in_textbox}")
-    except Exception as e:
-        runner.state.in_textbox = False
-        runner.log(f"Failed to update in_textbox: {e}")
 
 
 class BrowserWorker(threading.Thread):
@@ -396,133 +286,26 @@ class BrowserWorker(threading.Thread):
 
             try:
                 while not self._stop_event.is_set():
-                    # -- 1) drain commands --------------------------------
+                    # -- 1) drain commands & delegate to runner --
+                    cmd_processed = False
                     while True:
-                        cmd = self._pubsub.get_message()
-                        if cmd is None:
+                        msg = self._pubsub.get_message()
+                        if msg is None:
                             break
-                        if cmd["type"] != "message":
+                        if msg["type"] != "message":
                             continue
-                        cmd = cmd["data"]
 
-                        # Redis delivers raw bytes – convert to str for command parsing
-                        if isinstance(cmd, (bytes, bytearray)):
+                        cmd_str = msg["data"]
+                        if isinstance(cmd_str, (bytes, bytearray)):
                             try:
-                                cmd = cmd.decode()
+                                cmd_str = cmd_str.decode()
                             except Exception:
-                                # fall back to latin-1 to prevent crash, then log & skip
-                                try:
-                                    cmd = cmd.decode("latin-1")
-                                except Exception:
-                                    self.log(f"cannot decode command payload {cmd!r}")
-                                    continue
+                                continue
 
-                        # show the raw command arriving from the GUI
-                        self.log(f"CMD ➜ {cmd!r}")
+                        self.log(f"CMD ➜ {cmd_str!r}")
 
-                        if cmd.lower().startswith("click "):
-                            try:
-                                parts = cmd.split()
-                                element_id_to_click = int(parts[1])
-
-                                # treat the token as an element *ID* (hybrid logic)
-                                element_to_click = next(
-                                    (
-                                        el
-                                        for el in last_elements
-                                        if el["id"] == element_id_to_click
-                                    ),
-                                    None,
-                                )
-                                # fall back to "old-style" 1-based index only if that failed
-                                if (
-                                    element_to_click is None
-                                    and 1 <= element_id_to_click <= len(last_elements)
-                                ):
-                                    element_to_click = last_elements[
-                                        element_id_to_click - 1
-                                    ]
-
-                                if element_to_click is None:
-                                    self.log(
-                                        f"[click] No element #{element_id_to_click} in this frame "
-                                        f"(max id: {max(e['id'] for e in last_elements) if last_elements else '—'})",
-                                    )
-                                    continue
-                                handle = element_to_click.get("handle")
-                                label = element_to_click.get(
-                                    "label",
-                                    f"element {element_id_to_click}",
-                                )
-
-                                self.runner.hist.add(f"click {label}")
-                                self.log(
-                                    f"Attempting to click: '{label}' (ID: {element_id_to_click}, Source: {element_to_click.get('source')})",
-                                )
-
-                                if handle:
-                                    # METHOD 1: Preferred, robust click via Playwright handle
-                                    self.log("Clicking via ElementHandle.")
-                                    handle.click(timeout=5000)
-                                    _update_in_textbox_state(self.runner, handle, label)
-                                elif element_to_click.get("bbox"):
-                                    # METHOD 2: Fallback for vision-only or hybrid elements without a live handle
-                                    self.log("Clicking via bounding box coordinates.")
-                                    bbox = element_to_click["bbox"]
-                                    _click_at_bbox_center(
-                                        self.runner.active,
-                                        bbox,
-                                        debug=self.debug,
-                                    )
-                                else:
-                                    self.log(
-                                        f"Click failed: Element {element_id_to_click} has no handle or bbox.",
-                                    )
-
-                            except (ValueError, PWError, IndexError) as exc:
-                                self.log(
-                                    f"A critical error occurred during click: {exc}",
-                                )
-
-                        elif cmd.startswith("open url "):
-                            url = cmd[len("open url ") :]
-                            self.runner.active.goto(
-                                url,
-                                timeout=30000,
-                                wait_until="load",
-                            )
-                        elif cmd == "click out":
-                            self.runner.run(cmd)
-                        elif cmd.startswith("click "):
-                            try:
-                                idx = int(cmd.split()[1])
-                                # First try to match by helper-assigned id
-                                hit_el = next(
-                                    (e for e in last_elements if e.get("id") == idx),
-                                    None,
-                                )
-                                if hit_el:
-                                    h = hit_el["handle"]
-                                    label = hit_el["label"]
-                                elif 1 <= idx <= len(last_elements):
-                                    # fallback: legacy positional index
-                                    h = last_elements[idx - 1]["handle"]
-                                    label = last_elements[idx - 1]["label"]
-                                else:
-                                    h = label = None
-                                if h:
-                                    self.runner.hist.add(f"click {label}")
-                                    h.click()
-                                    _update_in_textbox_state(self.runner, h, label)
-                                else:
-                                    self.log("Click index out of range")
-                            except (ValueError, PWError) as exc:
-                                self.log(f"Click failed: {exc}")
-                        elif cmd == CMD_CLOSE_THIS_TAB:
-                            self.runner.close_tab()
-                        elif cmd.startswith("close tab "):
-                            self.runner.close_tab(cmd[len("close tab ") :])
-                        elif cmd == CMD_SOLVE_CAPTCHA:
+                        # Handle CAPTCHA command specially since it needs thread management
+                        if cmd_str == CMD_SOLVE_CAPTCHA:
                             # Manual trigger for CAPTCHA detection/solve
                             if self.runner.state.captcha_pending:
                                 self.log("CAPTCHA solving already in progress")
@@ -543,12 +326,13 @@ class BrowserWorker(threading.Thread):
                                     self._captcha_thread = t
                                 else:
                                     self.log("No CAPTCHA widgets detected on this page")
-                            continue  # skip further processing
-                        else:
-                            self.log(
-                                f"DEBUG: Command {cmd!r} not handled by worker, delegating to CommandRunner.",
-                            )
-                            self.runner.run(cmd)
+                            cmd_processed = True
+                            continue
+
+                        # Delegate execution AND recording to the CommandRunner
+                        # We pass `last_elements` for context-aware actions like click
+                        self.runner.run(cmd_str, last_elements, self.debug)
+                        cmd_processed = True
 
                     # -- 2) ensure active page is valid & reset IDs on nav ---
                     try:
@@ -823,7 +607,9 @@ class BrowserWorker(threading.Thread):
                         self._redis_client.publish("browser_state", json.dumps(payload))
                     except Exception:
                         pass
-                    time.sleep(self.refresh_interval)
+
+                    if not cmd_processed:
+                        time.sleep(self.refresh_interval)
 
             finally:
                 # Clean up Redis connections before closing browser
