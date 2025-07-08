@@ -549,7 +549,7 @@ class BrowserWorker(threading.Thread):
                             )
                             self.runner.run(cmd)
 
-                    # -- 2) ensure active page is valid ------------------- NEW
+                    # -- 2) ensure active page is valid & reset IDs on nav ---
                     try:
                         if self.runner.active.is_closed():
                             # update popups list and fall back to first page
@@ -560,8 +560,16 @@ class BrowserWorker(threading.Thread):
                                 # No pages left – break out of loop to avoid spin
                                 time.sleep(0.1)
                                 continue
-                    except Exception:
-                        # handle detached/None active
+                        
+                        # Check for URL change and reset IDs *before* element collection.
+                        current_url = self.runner.active.url
+                        if current_url != getattr(self, "_prev_url", None):
+                            reset_stable_ids()
+                        self._prev_url = current_url
+
+                    except Exception as e:
+                        self.log(f"Page state check failed, resetting IDs: {e}")
+                        reset_stable_ids() # Reset state on error as a safeguard
                         if self.runner.ctx.pages:
                             self.runner.active = self.runner.ctx.pages[0]
                         else:
@@ -728,10 +736,6 @@ class BrowserWorker(threading.Thread):
                             }
                         """
                         res = self.runner.active.evaluate(js)
-                        new_url = res["url"]
-                        if new_url != getattr(self, "_prev_url", None):
-                            reset_stable_ids()
-                        self._prev_url = new_url
                         self.runner.state.url = res["url"]
                         self.runner.state.title = res["title"]
                         self.runner.state.in_textbox = res["inBox"]
