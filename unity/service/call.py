@@ -344,6 +344,6 @@ if __name__ == "__main__":
     agents.cli.run_app(
         agents.WorkerOptions(
             entrypoint_fnc=entrypoint,
-            agent_name=agent_name if not outbound else "",
+            agent_name=agent_name,
         ),
     )
