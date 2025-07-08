@@ -385,19 +385,31 @@ class Call(SteerableToolHandle):
             self.transcript_manager.summarize,
             self.knowledge_manager.ask,
             self.task_scheduler.ask,
-            _send_email_via_address,
-            _send_sms_message_via_number,
+            # _send_email_via_address,
+            # _send_sms_message_via_number,
         )
 
-        asyncio.create_task(
-            _start_call(os.getenv("ASSISTANT_NUMBER"), phone_number, purpose),
-        )
-        self.status = "started"
+        self.call_ready = asyncio.Event()
+        self.call_ask_status = asyncio.Event()
+        self.call_ask_status.set()
+
+        async def do_call():
+            await _start_call(os.getenv("ASSISTANT_NUMBER"), phone_number, purpose)
+            await asyncio.sleep(10)  # give time to start call
+            self.call_ready.set()
+
+        asyncio.create_task(do_call())
+        self.status = "initiated"
 
     async def ask(self, question: str) -> SteerableToolHandle:
         """
         Ask a question to the assistant.
         """
+        await self.call_ready.wait()
+        await self.call_ask_status.wait()
+
+        self.call_ask_status.clear()
+
         await publish_event(
             {
                 "topic": self.phone_number,
@@ -408,17 +420,29 @@ class Call(SteerableToolHandle):
                 ).to_dict(),
             },
         )
-        return start_async_tool_use_loop(
+        handle = start_async_tool_use_loop(
             self.client,
             question,
             self.tools,
             loop_id="call",
         )
 
+        async def _reset_call_ask_status():
+            try:
+                await handle.result()
+            finally:
+                self.call_ask_status.set()
+
+        asyncio.create_task(_reset_call_ask_status())
+        return handle
+
     async def interject(self, text: str) -> str:
         """
         Interject a message to the assistant for them to speak it to the user.
         """
+        await self.call_ready.wait()
+        await self.call_ask_status.wait()
+        self.call_ask_status.clear()
         await publish_event(
             {
                 "topic": self.phone_number,
@@ -429,12 +453,15 @@ class Call(SteerableToolHandle):
                 ).to_dict(),
             },
         )
+        self.call_ask_status.set()
         return "Acknowledged."
 
     async def stop(self):
         """
         End the call.
         """
+        await self.call_ready.wait()
+        await self.call_ask_status.wait()
         await publish_event(
             {
                 "topic": self.phone_number,
