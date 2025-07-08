@@ -219,7 +219,7 @@ async def _send_email_via_address(from_email: str, to_email: str, content: str) 
             return response_text
 
 
-async def _start_call(from_number: str, to_number: str, purpose: str) -> bool:
+async def _start_call(from_number: str, to_number: str, purpose: str) -> str:
     """
     Send a call using the call provider API.
 
@@ -229,7 +229,7 @@ async def _start_call(from_number: str, to_number: str, purpose: str) -> bool:
         purpose: The purpose of the call
 
     Returns:
-        bool: True if call was sent successfully, False otherwise
+        str: The response from the email API
     """
     from_number = os.getenv("ASSISTANT_NUMBER")  # for debugging, to remove
 
@@ -245,27 +245,17 @@ async def _start_call(from_number: str, to_number: str, purpose: str) -> bool:
         },
     )
 
-    try:
-        print(f"Sending call from {from_number} to {to_number}")
-        async with aiohttp.ClientSession() as session:
-            async with session.post(
-                f"{os.getenv('UNITY_COMMS_URL')}/phone/send-call",
-                headers=headers,
-                json={"From": from_number, "To": to_number, "NewCall": "true"},
-            ) as response:
-                if response.status != 200:
-                    print(f"Failed to send call. Status: {response.status}")
-                    return "Call not sent: Failed to send call"
-
-                response_text = await response.text()
-                print(f"Response: {response_text}")
-                return "Call sent successfully"
-    except aiohttp.ClientError as e:
-        print(f"Network error while sending call: {e}")
-        return "Call not sent: Network error"
-    except Exception as e:
-        print(f"Error sending call: {e}")
-        return "Call not sent: Error"
+    print(f"Sending call from {from_number} to {to_number}")
+    async with aiohttp.ClientSession() as session:
+        async with session.post(
+            f"{os.getenv('UNITY_COMMS_URL')}/phone/send-call",
+            headers=headers,
+            json={"From": from_number, "To": to_number, "NewCall": "true"},
+        ) as response:
+            response.raise_for_status()
+            response_text = await response.text()
+            print(f"Response: {response_text}")
+            return response_text
 
 
 # High-level Actions
