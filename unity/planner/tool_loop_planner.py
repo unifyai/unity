@@ -7,6 +7,7 @@ import os
 import json
 import copy
 import uuid
+import inspect
 
 from unity.common.llm_helpers import (
     start_async_tool_use_loop,
@@ -521,17 +522,46 @@ class ToolLoopPlanner(BasePlanner):
             )
             return str(result)
 
+        async def get_action_history() -> list[dict]:
+            """
+            Retrieves a lightweight summary of the executed browser actions,
+            including the command and timestamp for each.
+            """
+            logger.info("Planner: Retrieving lightweight browser action history.")
+            full_history = self._controller._observe_ctx.get("history", [])
+            # Return only the command and timestamp to save tokens
+            return [
+                {"command": record.get("command"), "timestamp": record.get("timestamp")}
+                for record in full_history
+            ]
+
+        async def get_screenshots_for_action(timestamp: float) -> dict:
+            """
+            Retrieves the before and after screenshots for a specific action,
+            identified by its unique timestamp.
+            """
+            logger.info(
+                f"Planner: Retrieving screenshots for action at timestamp {timestamp}.",
+            )
+            full_history = self._controller._observe_ctx.get("history", [])
+            for record in full_history:
+                if record.get("timestamp") == timestamp:
+                    return {
+                        "command": record.get("command"),
+                        "before_screenshot_b64": record.get("before_screenshot_b64"),
+                        "after_screenshot_b64": record.get("after_screenshot_b64"),
+                    }
+            return {"error": "Action with the specified timestamp not found."}
+
         async def communicate(description: str) -> str:
             logger.info(
                 f"Planner: Calling ComsManager.communicate with '{description}'",
             )
             return await self._coms_manager.communicate(description)
 
-        act.__doc__ = "Performs a specified action using the system controller. Input is the action description."
-        observe.__doc__ = "Observes the system or environment based on a query. Specify 'response_format_str' as 'str', 'bool', 'int', or 'float'."
-        communicate.__doc__ = "Communicates a message or instruction externally."
-
-        import inspect
+        act.__doc__ = self._controller.act.__doc__
+        observe.__doc__ = self._controller.observe.__doc__
+        communicate.__doc__ = self._coms_manager.communicate.__doc__
 
         act.__signature__ = inspect.Signature(
             [
@@ -570,10 +600,28 @@ class ToolLoopPlanner(BasePlanner):
             return_annotation=str,
         )
 
+        get_action_history.__signature__ = inspect.Signature(
+            [],
+            return_annotation=list[dict],
+        )
+
+        get_screenshots_for_action.__signature__ = inspect.Signature(
+            [
+                inspect.Parameter(
+                    "timestamp",
+                    inspect.Parameter.POSITIONAL_OR_KEYWORD,
+                    annotation=float,
+                ),
+            ],
+            return_annotation=dict,
+        )
+
         return {
             "act": act,
             "observe": observe,
             "communicate": communicate,
+            "get_action_history": get_action_history,
+            "get_screenshots_for_action": get_screenshots_for_action,
         }
 
     async def _execute_task_and_return_handle(
