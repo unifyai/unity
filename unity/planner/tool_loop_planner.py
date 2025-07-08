@@ -35,6 +35,61 @@ class _PlanState(enum.Enum):
     ERROR = enum.auto()
 
 
+def create_model_from_schema(
+    schema: dict,
+    model_name: str = "DynamicModel",
+) -> Type[BaseModel]:
+    """
+    Recursively creates a Pydantic model from a JSON schema dictionary.
+    """
+    fields = {}
+
+    type_mapping = {
+        "string": str,
+        "number": float,
+        "integer": int,
+        "boolean": bool,
+    }
+
+    required_fields = schema.get("required", [])
+
+    for prop_name, prop_details in schema.get("properties", {}).items():
+        prop_type_str = prop_details.get("type")
+        description = prop_details.get("description")
+        is_required = prop_name in required_fields
+        field_type = Any
+
+        if prop_type_str == "object":
+            field_type = create_model_from_schema(
+                prop_details,
+                model_name=f"{model_name}_{prop_name}",
+            )
+        elif prop_type_str == "array":
+            items_schema = prop_details.get("items", {})
+            item_type_str = items_schema.get("type")
+            if item_type_str == "object":
+                item_model = create_model_from_schema(
+                    items_schema,
+                    model_name=f"{model_name}_{prop_name}Item",
+                )
+                field_type = List[item_model]
+            else:
+                primitive_item_type = type_mapping.get(item_type_str, str)
+                field_type = List[primitive_item_type]
+        else:
+            field_type = type_mapping.get(prop_type_str, str)
+
+        default_value = ... if is_required else None
+        fields[prop_name] = (
+            field_type,
+            Field(default=default_value, description=description),
+        )
+
+    return create_model(model_name, **fields)
+
+
+
+
 class ToolLoopPlan(BaseActiveTask):
     """
     Represents an active plan being executed by the ToolLoopPlanner.
@@ -493,22 +548,35 @@ class ToolLoopPlanner(BasePlanner):
                 else "No action taken by controller."
             )
 
-        async def observe(query: str, response_format_str: str = "str") -> str:
-            logger.info(
-                f"Planner: Calling Controller.observe with query '{query}', format '{response_format_str}'",
-            )
-            format_map: Dict[str, Type] = {
-                "str": str,
-                "bool": bool,
-                "int": int,
-                "float": float,
-            }
-            actual_response_format = format_map.get(response_format_str.lower(), str)
+        async def observe(query: str, response_schema: dict = None) -> Any:
+            """
+            Asks a question about the current state of the browser page.
+            To get a structured response, provide a valid JSON Schema in the 'response_schema' argument.
+            """
+            logger.info(f"Planner: Calling Controller.observe with query '{query}'.")
+
+            response_format = str
+            if response_schema:
+                try:
+                    response_format = create_model_from_schema(
+                        response_schema,
+                        "DynamicResponseModel",
+                    )
+                    logger.info(
+                        "Dynamically created a Pydantic model for structured observation.",
+                    )
+                except Exception as e:
+                    raise e
+
             result = await self._controller.observe(
                 query,
-                response_format=actual_response_format,
+                response_format=response_format,
             )
-            return str(result)
+
+            if isinstance(result, BaseModel):
+                return result.model_dump()
+
+            return result
 
         async def get_action_history() -> list[dict]:
             """
@@ -542,7 +610,6 @@ class ToolLoopPlanner(BasePlanner):
             return {"error": "Action with the specified timestamp not found."}
 
         act.__doc__ = self._controller.act.__doc__
-        observe.__doc__ = self._controller.observe.__doc__
 
         act.__signature__ = inspect.Signature(
             [
@@ -562,13 +629,13 @@ class ToolLoopPlanner(BasePlanner):
                     annotation=str,
                 ),
                 inspect.Parameter(
-                    "response_format_str",
+                    "response_schema",
                     inspect.Parameter.POSITIONAL_OR_KEYWORD,
-                    annotation=str,
-                    default="str",
+                    annotation=dict,
+                    default=None,
                 ),
             ],
-            return_annotation=str,
+            return_annotation=Any,
         )
 
         get_action_history.__signature__ = inspect.Signature(
