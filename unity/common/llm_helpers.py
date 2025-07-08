@@ -163,12 +163,18 @@ def methods_to_tool_dict(
 def class_api_overview(cls: type) -> str:
     """Return a Markdown list of all public callables in *cls*."""
     blocks = []
-    for name, member in inspect.getmembers(cls, inspect.isfunction):
+    for name, member in inspect.getmembers(cls, inspect.isroutine):
         if name.startswith("_"):
             continue  # skip dunder/private helpers
-        sig = inspect.signature(member)
-        first_line = (member.__doc__ or "").strip().split("\n", 1)[0]
-        blocks.append(f"- **`{name}{sig}`** – {first_line}")
+        prefix = "async def " if inspect.iscoroutinefunction(member) else "def "
+        try:
+            sig = inspect.signature(member)
+            first_line = (
+                (inspect.getdoc(member) or "No description.").strip().split("\n", 1)[0]
+            )
+            blocks.append(f"- **`{prefix}{name}{sig}`** – {first_line}")
+        except ValueError:
+            blocks.append(f"- **`{prefix}{name}(...)`** – No description available.")
     return "\n".join(blocks)
 
 

@@ -28,7 +28,7 @@ if __name__ == "__main__":
         # Get the final status to see why it stopped
         status = unity.service.get_status()
         print(
-            f"Unity service has stopped. Reason: {status.get('shutdown_reason', 'unknown')}"
+            f"Unity service has stopped. Reason: {status.get('shutdown_reason', 'unknown')}",
         )
         if "message" in status:
             print(f"Details: {status['message']}")
