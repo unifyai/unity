@@ -795,9 +795,16 @@ class BrowserWorker(threading.Thread):
                         (e.get("id", i + 1), e["label"], e.get("hover", False))
                         for i, e in enumerate(last_elements)
                     ]
-                    tab_titles = [
-                        pg.title() or "<untitled>" for pg in self.runner.ctx.pages
-                    ]
+
+                    # Safely get tab titles, handling navigation states
+                    tab_titles = []
+                    for pg in self.runner.ctx.pages:
+                        try:
+                            title = pg.title() or "<untitled>"
+                        except Exception:
+                            # Page might be navigating or context destroyed
+                            title = "<loading>"
+                        tab_titles.append(title)
 
                     screenshot_bytes = _safe_screenshot(self.runner.active, self.log)
                     screenshot = screenshot = base64.b64encode(screenshot_bytes).decode(
@@ -819,6 +826,13 @@ class BrowserWorker(threading.Thread):
                     time.sleep(self.refresh_interval)
 
             finally:
+                # Clean up Redis connections before closing browser
+                try:
+                    self._pubsub.close()
+                    self._redis_client.close()
+                except Exception:
+                    pass
+
                 mirror.close()
                 ctx.close()
                 shutil.rmtree(profile_dir, ignore_errors=True)
