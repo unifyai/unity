@@ -237,7 +237,7 @@ async def _start_call(from_number: str, to_number: str, purpose: str) -> bool:
         {
             "topic": to_number,
             "event": {
-                **PhoneCallInitiatedEvent().to_dict(),
+                **PhoneCallInitiatedEvent(purpose=purpose).to_dict(),
                 "voice_id": None,
                 "tts_provider": None,
                 "outbound": True,
@@ -395,7 +395,7 @@ class Call(SteerableToolHandle):
 
         async def do_call():
             await _start_call(os.getenv("ASSISTANT_NUMBER"), phone_number, purpose)
-            await asyncio.sleep(10)  # give time to start call
+            await asyncio.sleep(15)  # give time to start call and complete greeting
             self.call_ready.set()
 
         asyncio.create_task(do_call())
@@ -430,6 +430,7 @@ class Call(SteerableToolHandle):
         async def _reset_call_ask_status():
             try:
                 await handle.result()
+                await asyncio.sleep(5)  # give time to complete current sentence
             finally:
                 self.call_ask_status.set()
 
