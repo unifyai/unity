@@ -219,7 +219,11 @@ async def _send_email_via_address(from_email: str, to_email: str, content: str) 
             return response_text
 
 
-async def _start_call(from_number: str, to_number: str, purpose: str) -> str:
+async def _start_call(
+    from_number: str,
+    to_number: str,
+    purpose: str = "general",
+) -> str:
     """
     Send a call using the call provider API.
 
@@ -399,20 +403,20 @@ class Call(SteerableToolHandle):
         await self.call_ask_status.wait()
 
         self.call_ask_status.clear()
-
+        self.client.set_system_message(
+            f"The user is answering the question: {question}. Use available tools to get information of the user's answer.",
+        )
         await publish_event(
             {
                 "topic": self.phone_number,
                 "to": "pending",
                 "event": PhoneUtteranceEvent(
                     role="User",
-                    content=question,
+                    content=f"Ask me this question: {question}",
                 ).to_dict(),
             },
         )
-        self.client.set_system_message(
-            f"You are a helpful assistant. With the tools available, answer the question: {question}. If answer is not found through the manager-related tools, ask the user with the `ask_user` method.",
-        )
+
         handle = start_async_tool_use_loop(
             self.client,
             question,
