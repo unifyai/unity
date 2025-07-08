@@ -771,11 +771,11 @@ def text_to_browser_action(
         )
 
         state_msg = f"""\n\nThe current state of the browser is as follows:
-        url: {state.get('url')}
-        title: {state.get('title')}
-        scroll_y: {state.get('scroll_y')}
-        auto_scroll: {state.get('auto_scroll')}
-        in_textbox: {state.get('in_textbox')}
+        url: {state.url if state else ''}
+        title: {state.title if state else ''}
+        scroll_y: {state.scroll_y if state else 0}
+        auto_scroll: {state.auto_scroll if state else None}
+        in_textbox: {state.in_textbox if state else False}
         """
 
         client.set_system_message(
@@ -839,10 +839,8 @@ def text_to_browser_action(
         )
         return response_format.model_validate(ret).model_dump()
     else:
-        multi_step_mode = (
-            multi_step_mode
-            or (hasattr(state, "in_textbox") and state.in_textbox)
-            or state.get("in_textbox")
+        multi_step_mode = multi_step_mode or (
+            state and hasattr(state, "in_textbox") and state.in_textbox
         )  # if in textbox, use multi-step mode for enabling key combinations
         valid_actions = _list_valid_actions(tabs, buttons, state)
         print(valid_actions)
@@ -993,6 +991,17 @@ _OBSERVE_PROMPT = (
 
 def _wrap_type(tp: Type):  # type: ignore[override]
     """Return a Pydantic model appropriate for *tp* (primitive or model)."""
+    # Handle string type hints
+    if isinstance(tp, str):
+        tp_lower = tp.lower()
+        if tp_lower == "boolean":
+            tp = bool
+        elif tp_lower in ("yes or no", "yes/no"):
+            tp = bool
+        else:
+            # For other string hints, use str type
+            tp = str
+
     if tp in {str, bool, int, float}:
         # primitive → wrap in single-field model
         return create_model("AnswerModel", answer=(tp, ...))
