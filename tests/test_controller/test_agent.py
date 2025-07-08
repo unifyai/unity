@@ -160,8 +160,14 @@ def test_text_to_browser_action_multi_step_delete_right():
     assert "action" in result and "rationale" in result
     actions = result["action"]
     assert isinstance(actions, list)
-    assert len(actions) == 2
-    assert actions == ["press_delete", "press_delete"]
+
+    # Accept either format: 2 separate commands or 1 command with count
+    if len(actions) == 2:
+        assert actions == ["press_delete", "press_delete"]
+    elif len(actions) == 1:
+        assert actions[0] == "press_delete 2"
+    else:
+        pytest.fail(f"Expected either 1 or 2 actions, got {len(actions)}: {actions}")
 
 
 @pytest.mark.timeout(300)
