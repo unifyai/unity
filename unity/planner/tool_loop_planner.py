@@ -2,6 +2,7 @@ import asyncio
 import enum
 import logging
 from typing import Any, Awaitable, Callable, Dict, List, Optional, Type
+from pydantic import create_model, BaseModel, Field
 import functools
 import os
 import json
@@ -88,6 +89,18 @@ def create_model_from_schema(
     return create_model(model_name, **fields)
 
 
+TOOL_LOOP_SYSTEM_PROMPT = """### Your Role
+You are an expert web automation agent. Your primary function is to achieve a user's goal by executing a precise sequence of tool calls.
+
+### Core Mission
+Break down the user's request into a series of logical steps. At each step, choose the single best tool to advance the task. Your final response should be the specific information the user asked for (e.g., the translated text, a summary, a specific number), not just a confirmation like "Task Complete."
+
+### Critical Rules for Operation
+1.  **Observe, Think, Act**: Before taking an action, use the `observe` tool to understand the current state of the page. This prevents errors.
+2.  **Use Your Memory**: If you are unsure what to do next or if an action fails, use `get_action_history()` to review your past actions. If you need more detail on a specific past step, use `get_screenshots_for_action(timestamp=...)` to see the visual context of what happened. This is your primary method for self-correction.
+3.  **Be Precise**: Your instructions to the `act` and `observe` tools must be clear and unambiguous. Refer to elements by their visible labels or descriptive properties.
+4.  **Use Structured Output**: For any `observe` call where you need to extract specific pieces of information, you MUST use the `response_schema` argument to define the desired JSON structure. This ensures you get reliable, parsable data.
+"""
 
 
 class ToolLoopPlan(BaseActiveTask):
@@ -208,9 +221,7 @@ class ToolLoopPlan(BaseActiveTask):
 
                 self._plan_client.reset_messages()
                 self._plan_client.reset_system_message()
-                self._plan_client.set_system_message(
-                    "You are a helpful web browser assistant. Use the available tools to complete the user's request.",
-                )
+                self._plan_client.set_system_message(TOOL_LOOP_SYSTEM_PROMPT)
 
                 if current_parent_chat_context:
                     self._plan_client.append_messages(current_parent_chat_context)
