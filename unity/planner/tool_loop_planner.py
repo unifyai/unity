@@ -26,17 +26,6 @@ if not logger.hasHandlers():
     )
 
 
-# Dummy ComsManager (will be replaced with the real ComsManager)
-class ComsManager:
-    async def communicate(self, description: str) -> str:
-        logger.info(f"Dummy ComsManager.communicate called with: {description}")
-        await asyncio.sleep(0.1)
-        return f"Communication task initiated for: {description}"
-
-    async def stop(self):
-        logger.info("Dummy ComsManager: Stopping")
-
-
 class _PlanState(enum.Enum):
     IDLE = enum.auto()
     RUNNING = enum.auto()
@@ -473,7 +462,6 @@ class ToolLoopPlanner(BasePlanner):
         )
         if not self._controller.is_alive():
             self._controller.start()
-        self._coms_manager = ComsManager()
         self._tools_cache: Optional[Dict[str, Callable[..., Awaitable[Any]]]] = None
         self._main_event_loop: Optional[asyncio.AbstractEventLoop] = None
         try:
@@ -553,15 +541,8 @@ class ToolLoopPlanner(BasePlanner):
                     }
             return {"error": "Action with the specified timestamp not found."}
 
-        async def communicate(description: str) -> str:
-            logger.info(
-                f"Planner: Calling ComsManager.communicate with '{description}'",
-            )
-            return await self._coms_manager.communicate(description)
-
         act.__doc__ = self._controller.act.__doc__
         observe.__doc__ = self._controller.observe.__doc__
-        communicate.__doc__ = self._coms_manager.communicate.__doc__
 
         act.__signature__ = inspect.Signature(
             [
@@ -589,16 +570,6 @@ class ToolLoopPlanner(BasePlanner):
             ],
             return_annotation=str,
         )
-        communicate.__signature__ = inspect.Signature(
-            [
-                inspect.Parameter(
-                    "description",
-                    inspect.Parameter.POSITIONAL_OR_KEYWORD,
-                    annotation=str,
-                ),
-            ],
-            return_annotation=str,
-        )
 
         get_action_history.__signature__ = inspect.Signature(
             [],
@@ -619,7 +590,6 @@ class ToolLoopPlanner(BasePlanner):
         return {
             "act": act,
             "observe": observe,
-            "communicate": communicate,
             "get_action_history": get_action_history,
             "get_screenshots_for_action": get_screenshots_for_action,
         }
@@ -660,5 +630,3 @@ class ToolLoopPlanner(BasePlanner):
         logger.info("ToolLoopPlanner: Closing resources...")
         if self._controller:
             self._controller.stop()
-        if self._coms_manager:
-            await self._coms_manager.stop()
