@@ -2,12 +2,12 @@ import asyncio
 import aiohttp
 import os
 from dotenv import load_dotenv
-from unity.service.events import (
+from unity.conversation_manager.events import (
     PhoneUtteranceEvent,
     PhoneCallInitiatedEvent,
     PhoneCallStopEvent,
 )
-from unity.service.utils import (
+from unity.conversation_manager.utils import (
     publish_event,
     find_assistant_whatsapp_number,
     assign_new_assistant_whatsapp_number,
@@ -409,6 +409,9 @@ class Call(SteerableToolHandle):
                     content=question,
                 ).to_dict(),
             },
+        )
+        self.client.set_system_message(
+            f"You are a helpful assistant. With the tools available, answer the question: {question}. If answer is not found through the manager-related tools, ask the user with the `ask_user` method.",
         )
         handle = start_async_tool_use_loop(
             self.client,

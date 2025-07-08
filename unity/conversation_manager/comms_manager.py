@@ -3,7 +3,7 @@ from datetime import datetime
 from google.cloud import pubsub_v1
 import json
 import os
-from unity.service.events import *
+from unity.conversation_manager.events import *
 
 
 # Subscription IDs

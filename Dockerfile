@@ -44,7 +44,7 @@ ENV UNIFY_KEY=${UNIFY_KEY}
 # Set memory-efficient environment variables for model loading
 ENV OMP_NUM_THREADS=1
 ENV MKL_NUM_THREADS=1
-RUN python unity/service/call.py download-files
+RUN python unity/conversation_manager/call.py download-files
 
 # Set runtime environment variables for memory optimization
 ENV PYTHONUNBUFFERED=1

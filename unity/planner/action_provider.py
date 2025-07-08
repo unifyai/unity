@@ -8,9 +8,9 @@ from unity.common.llm_helpers import (
     start_async_tool_use_loop,
 )
 
-from unity.service import new_actions
-from unity.service.utils import publish_event
-from unity.service.events import PhoneUtteranceEvent, PhoneCallStopEvent
+from unity.conversation_manager import new_actions
+from unity.conversation_manager.utils import publish_event
+from unity.conversation_manager.events import PhoneUtteranceEvent, PhoneCallStopEvent
 from unity.controller.browser import Browser
 from unity.contact_manager.contact_manager import ContactManager
 from unity.transcript_manager.transcript_manager import TranscriptManager

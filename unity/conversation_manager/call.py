@@ -29,9 +29,9 @@ from pydantic_core import from_json
 
 load_dotenv()
 
-from unity.service.events import *
-from unity.service.actions import AssistantOutput
-from unity.service.utils import publish_event, close_connection, get_reader
+from unity.conversation_manager.events import *
+from unity.conversation_manager.actions import AssistantOutput
+from unity.conversation_manager.utils import publish_event, close_connection, get_reader
 
 events_queue = asyncio.Queue()
 chunk_queue = asyncio.Queue()
