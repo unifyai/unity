@@ -1,4 +1,5 @@
 import asyncio
+import os
 import unify
 from typing import Any
 from unity.common.llm_helpers import (
@@ -26,6 +27,7 @@ class ActionProvider:
         self.browser = Browser(
             session_connect_url=session_connect_url,
             headless=headless,
+            mode="hybrid",
         )
         self.contact_manager = ContactManager()
         self.transcript_manager = TranscriptManager(
