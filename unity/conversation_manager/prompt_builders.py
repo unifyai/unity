@@ -164,3 +164,46 @@ def build_non_call_sys_prompt(name: str, with_conductor: bool = True) -> str:
         sections.append(_build_conductor_tasks_rules_section())
     sections.append(_build_communication_rules_section(with_conductor))
     return "\n\n".join(sections)
+
+
+def build_user_agent_prompt(
+    call_purpose: str,
+    past_events: list[dict],
+    inflight_events: list[dict],
+    conductor_handles: dict[int, dict] | None = None,
+) -> str:
+    """Build the user-agent prompt including call purpose, events stream, and conductor handles."""
+    from unity.conversation_manager.events import Event
+
+    # Format past events
+    if past_events:
+        past_events_str = "\n".join(str(Event.from_dict(e)) for e in past_events)
+    else:
+        past_events_str = ""
+
+    # Format new/inflight events
+    if inflight_events:
+        new_events_str = "\n".join(str(Event.from_dict(e)) for e in inflight_events)
+    else:
+        new_events_str = ""
+
+    # Format conductor handles
+    if conductor_handles:
+        conductor_handles_str = "\n".join(
+            f"Handle ID {hid}: {conductor_handles[hid]['query']}"
+            for hid in conductor_handles
+        )
+    else:
+        conductor_handles_str = ""
+
+    content = f"""
+CALL PURPOSE: {call_purpose}
+Events Stream:
+** PAST EVENTS **
+{past_events_str.strip()}
+** NEW EVENTS **
+{new_events_str.strip()}
+** CONDUCTOR HANDLES (USE THESE FOR THE CONDUCTOR HANDLE ACTION) **
+{conductor_handles_str.strip()}
+"""
+    return textwrap.dedent(content).strip()

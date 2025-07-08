@@ -11,6 +11,7 @@ from unity.conversation_manager.events import *
 from unity.conversation_manager.prompt_builders import (
     build_call_sys_prompt,
     build_non_call_sys_prompt,
+    build_user_agent_prompt,
 )
 
 client = openai.AsyncOpenAI(api_key=os.environ["OPENAI_API_KEY"])
@@ -368,32 +369,12 @@ class CommsAgent:
         self.event_manager = event_manager
 
     def get_user_agent_prompt(self):
-        past_events_str = (
-            "\n".join([str(Event.from_dict(e)) for e in self.past_events])
-            if self.past_events
-            else ""
+        return build_user_agent_prompt(
+            call_purpose=self.call_purpose,
+            past_events=self.past_events or [],
+            inflight_events=self.inflight_events,
+            conductor_handles=self.conductor_handles,
         )
-        new_events_str = "\n".join(
-            str(Event.from_dict(e)) for e in self.inflight_events
-        )
-        conductor_handles_str = (
-            "\n".join(
-                f"Handle ID {h}: {self.conductor_handles[h]['query']}"
-                for h in self.conductor_handles
-            )
-            if self.conductor_handles is not None
-            else ""
-        )
-        user_msg = f"""CALL PURPOSE: {self.call_purpose}
-Events Stream:
-** PAST EVENTS **
-{past_events_str.strip()}
-** NEW EVENTS **
-{new_events_str.strip()}
-** CONDUCTOR HANDLES (USE THESE FOR THE CONDUCTOR HANDLE ACTION) **
-{conductor_handles_str.strip()}
-"""
-        return user_msg
 
     def publish(self, event: dict):
         self.event_manager.publish(event)
