@@ -23,21 +23,20 @@ steps:
   args: ['push', '${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPOSITORY}/unity:latest']
   waitFor: ['build-image']
 
-  # Trigger Deployment Pipeline via Pub/Sub
-- name: 'gcr.io/cloud-builders/gcloud'
-  id: 'trigger-deployment'
+  # Upload SHA to Cloud Storage
+- name: 'gcr.io/cloud-builders/gsutil'
+  id: 'upload-sha'
+  args: ['cp', '-', 'gs://${_BUCKET_NAME}/image_hash.txt']
   entrypoint: 'bash'
-  args:
-  - '-c'
-  - |
-    gcloud pubsub topics publish unity-image-built \
-      --message='{"_COMMIT_SHA":"${SHORT_SHA}","_REPO_PATTERN":"${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPOSITORY}/unity"}'
-  waitFor: ['push-sha-tag', 'push-latest-tag']
+  script: |
+    echo "${SHORT_SHA}" | gsutil cp - gs://${_BUCKET_NAME}/image_hash.txt
+  waitFor: ['build-image']
 
 # Substitution variables
 substitutions:
   _REGION: 'us-central1'  # Change to your preferred region
   _REPOSITORY: 'unity'  # Change to your Artifact Registry repository name
+  _BUCKET_NAME: 'unity-image-hash'  # Change to your GCS bucket name
 
 # Available secrets
 availableSecrets:
