@@ -5,10 +5,10 @@ import os
 import traceback
 
 from unity.helpers import run_script, terminate_process
-from unity.service import comms_actions
-from unity.service.actions import *
-from unity.service.events import *
-from unity.service.prompt_builders import (
+from unity.conversation_manager import comms_actions
+from unity.conversation_manager.actions import *
+from unity.conversation_manager.events import *
+from unity.conversation_manager.prompt_builders import (
     build_call_sys_prompt,
     build_non_call_sys_prompt,
 )
@@ -116,7 +116,7 @@ class CommsAgent:
                     if not ONGOING_CALL:
                         self.call_purpose = new_event["payload"]["purpose"]
                         self.call_proc = run_script(
-                            "unity/service/call.py",
+                            "unity/conversation_manager/call.py",
                             "dev",
                             self.user_phone_call_number,  # "console" if a local call is needed
                             self.assistant_number,

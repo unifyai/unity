@@ -143,7 +143,7 @@ def start() -> bool:
         print(f"Starting Unity service (main.py) for assistant {assistant_id}")
 
         _process = subprocess.Popen(
-            [sys.executable, "unity/service/main.py"],
+            [sys.executable, "unity/conversation_manager/main.py"],
             start_new_session=True,
         )
 

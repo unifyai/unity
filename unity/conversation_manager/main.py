@@ -9,8 +9,8 @@ import json
 import os
 import signal
 import traceback
-from unity.service.comms_agent import CommsAgent
-from unity.service.comms_manager import CommsManager
+from unity.conversation_manager.comms_agent import CommsAgent
+from unity.conversation_manager.comms_manager import CommsManager
 
 load_dotenv()
 
