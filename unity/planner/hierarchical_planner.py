@@ -44,6 +44,10 @@ logger = logging.getLogger(__name__)
 class ReplanFromParentException(Exception):
     """Raised by the @verify decorator when a function's goal is misguided."""
 
+    def __init__(self, message, reason: Optional[str] = None):
+        super().__init__(message)
+        self.reason = reason if reason else message
+
 
 class _ForcedRetryException(Exception):
     """Internal exception to force a retry loop after a successful reimplementation."""
@@ -431,7 +435,7 @@ class HierarchicalPlan(BaseActiveTask):
 
                 if self.escalation_count > self.MAX_ESCALATIONS:
                     self._state = _HierarchicalPlanState.PAUSED_FOR_ESCALATION
-                    err_msg = f"ESCALATION LIMIT: Max escalations ({self.MAX_ESCALATIONS}) reached. Pausing for intervention. Final reason: {e}"
+                    err_msg = f"ESCALATION LIMIT: Max escalations ({self.MAX_ESCALATIONS}) reached. Pausing for intervention. Final reason: {e.reason}"
                     self.action_log.append(err_msg)
                     await self.clarification_up_q.put(err_msg)
                     self._set_final_result(err_msg)
@@ -444,7 +448,7 @@ class HierarchicalPlan(BaseActiveTask):
                 await self._handle_dynamic_implementation(
                     parent_to_replan,
                     is_strategic_replan=True,
-                    replan_reason=str(e),
+                    replan_reason=e.reason,
                 )
                 plan_iterator = self._create_main_loop_iterator()
                 return {
@@ -1179,6 +1183,7 @@ class HierarchicalPlanner(BasePlanner):
                 plan.interaction_stack.append([])
                 logger.info(f"VERIFY: Entering '{fn.__name__}'")
                 try:
+                    last_error_traceback = ""
                     for _ in range(plan.MAX_LOCAL_RETRIES):
                         try:
                             func_source = plan.function_source_map.get(fn.__name__)
@@ -1206,10 +1211,12 @@ class HierarchicalPlanner(BasePlanner):
                                 f"Function '{fn.__name__}' failed: {e}",
                                 exc_info=True,
                             )
+                            last_error_traceback = traceback.format_exc()
                             await asyncio.sleep(1)
                             continue
                     raise ReplanFromParentException(
                         f"Function '{fn.__name__}' failed after multiple retries.",
+                        reason=last_error_traceback,
                     )
                 finally:
                     if plan.call_stack:
@@ -1443,11 +1450,20 @@ class HierarchicalPlanner(BasePlanner):
                 "Describe current page for context.",
             )
 
-        replan_context = (
-            f"**REPLANNING NOTE:** The previous attempt failed because: '{kwargs.get('replan_reason', 'No reason provided.')}'. Please devise a new and improved strategy."
-            if kwargs.get("is_strategic_replan")
-            else ""
-        )
+        replan_context_str = kwargs.get("replan_reason")
+        replan_context = ""
+        if kwargs.get("is_strategic_replan") and replan_context_str:
+            replan_context = textwrap.dedent(
+                f"""
+            **REPLANNING NOTE:** The previous attempt failed. Analyze the error traceback below and devise a new, more robust implementation.
+
+            **Failure Traceback:**
+            ```
+            {replan_context_str}
+            ```
+            """,
+            )
+
         func_sig = inspect.signature(plan.execution_namespace[function_name])
         parent_code = (
             plan.function_source_map.get(plan.call_stack[-2], "")
