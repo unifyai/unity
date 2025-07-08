@@ -57,7 +57,7 @@ if [ $RETRY_COUNT -eq $MAX_RETRIES ]; then
     exit 1
 fi
 
-echo "Starting unity service..."
+echo "Starting convo manager..."
 
 # Start the main application in the background
 python start.py
