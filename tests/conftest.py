@@ -25,7 +25,7 @@ import httpx
 import asyncio
 import pytest
 import re
-
+import threading
 import unify
 
 unify.activate(
@@ -51,8 +51,11 @@ def stub_controller_deps(monkeypatch):
     class _FakePubSub:
         def __init__(self):
             self._messages = []
+            self._thread = None
 
-        def subscribe(self, *_):
+        def subscribe(self, *args, **kwargs):
+            # Support both positional and keyword arguments
+            # Keyword args are channel_name=handler_function pairs
             pass
 
         def listen(self):
@@ -65,12 +68,25 @@ def stub_controller_deps(monkeypatch):
         def get_message(self):
             return None
 
+        def run_in_thread(self, daemon=True):
+            # Mock implementation that returns a fake thread with stop() method
+            class StoppableThread(threading.Thread):
+                def __init__(self, *args, **kwargs):
+                    super().__init__(*args, **kwargs)
+                    self._stop_flag = False
+
+                def stop(self):
+                    self._stop_flag = True
+
+            self._thread = StoppableThread(target=lambda: None, daemon=daemon)
+            return self._thread
+
     class _FakeRedis:
         def __init__(self, *a, **k):
             self._pubsub = _FakePubSub()
             self.published: list[tuple[str, str]] = []
 
-        def pubsub(self):
+        def pubsub(self, **kwargs):
             return self._pubsub
 
         def publish(self, chan, msg):
