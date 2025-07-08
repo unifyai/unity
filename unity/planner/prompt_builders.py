@@ -12,13 +12,16 @@ from unity.common.llm_helpers import (
 
 
 def _build_tool_signatures(tool_dict: Dict[str, Callable]) -> str:
-    tool_info = {
-        name: {
-            "signature": str(inspect.signature(fn)),
+    """
+    Builds a JSON string of tool signatures.
+    """
+    tool_info = {}
+    for name, fn in tool_dict.items():
+        prefix = "async def " if inspect.iscoroutinefunction(fn) else "def "
+        tool_info[name] = {
+            "signature": f"{prefix}{name}{inspect.signature(fn)}",
             "docstring": inspect.getdoc(fn) or "No docstring available.",
         }
-        for name, fn in tool_dict.items()
-    }
     return json.dumps(tool_info, indent=4)
 
 
