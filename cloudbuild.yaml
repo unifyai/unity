@@ -26,8 +26,11 @@ steps:
   # Upload SHA to Cloud Storage
 - name: 'gcr.io/cloud-builders/gsutil'
   id: 'upload-sha'
-  script: |
-    echo "${SHORT_SHA}" | gsutil cp - gs://unity-image-hash/image_hash.txt
+  entrypoint: 'bash'
+  args:
+  - '-c'
+  - |
+    echo ${SHORT_SHA} | gsutil cp - gs://unity-image-hash/image_hash.txt
   waitFor: ['push-latest-tag']
 
 # Substitution variables
