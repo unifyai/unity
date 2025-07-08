@@ -79,6 +79,7 @@ def _list_valid_actions(tabs, buttons, state) -> list[str]:
         a = a.replace(" *", "").replace("*", "").replace(" ", "")
         norm.append(a)
 
+    norm.append("no_op_element_not_found")
     norm.append("close_browser")
     return sorted(set(norm))
 
@@ -898,6 +899,11 @@ def text_to_browser_action(
 
         reply = response_format.model_validate_json(raw)
         actions = reply.actions if multi_step_mode else [reply.action]
+
+        if any("no_op_element_not_found" in action for action in actions):
+            raise InvalidActionError(
+                f"Agent could not perform action: '{text}'. Reason: {reply.rationale}",
+            )
 
         if not all(action.split(" ")[0] in valid_actions for action in actions):
             raise InvalidActionError(
