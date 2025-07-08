@@ -290,23 +290,22 @@ class ActionProvider:
         """
         return await self.browser.act(instruction)
 
-    async def browser_observe(self, query: str) -> Any:
+    async def browser_observe(self, query: str, response_format: Any = str) -> Any:
         """
         Asks a question about the current state of the browser page and returns the answer.
         This tool is for read-only operations to gather information without changing the page state.
         It uses an LLM to analyze a screenshot and the page's DOM to answer the query.
+
+        Args:
+            query: The natural-language question to ask about the page.
+            response_format: Optional. A Pydantic model to structure the output. If provided, the LLM will return a JSON object matching the model.
 
         Examples:
         - "What is the title of the page?"
         - "Is there a button with the text 'Submit' visible on the screen?"
         - "What are the headlines of the articles in the main content area?"
         """
-        return await self.browser.observe(query)
-
-    # TODO: uncomment these once implemented
-    # async def browser_reason(self, query: str) -> str:
-    #     """Alias for browser.reason to be exposed to the planner."""
-    #     return await self.browser.reason(query)
+        return await self.browser.observe(query, response_format=response_format)
 
     # def browser_multi_step(self, description: str) -> SteerableToolHandle:
     #     """Alias for browser.multi_step to be exposed to the planner."""
@@ -315,3 +314,36 @@ class ActionProvider:
     # async def browser_start_recording(self):
     #     """Alias for browser.start_recording."""
     #     return self.browser.start_recording()
+
+    # --- Generic Reasoning Action ---
+    async def reason(
+        self,
+        request: str,
+        context: str,
+        response_format: Any = str,
+    ) -> Any:
+        """
+        Performs general-purpose reasoning or analysis on provided text.
+        This tool is for stateless tasks like summarizing, translating, classifying, or extracting information from the given context.
+
+        Args:
+            request: The core instruction for the LLM (e.g., "Summarize this text.", "Classify the sentiment.").
+            context: The text content to be analyzed.
+            response_format: Optional. A Pydantic model to structure the output.
+
+        Returns:
+            The processed text or a Pydantic object, depending on `response_format`.
+        """
+        from pydantic import BaseModel
+        import inspect
+
+        client = unify.AsyncUnify(os.environ.get("UNIFY_MODEL", "gpt-4o-mini@openai"))
+        client.set_system_message(request)
+
+        if inspect.isclass(response_format) and issubclass(response_format, BaseModel):
+            client.set_response_format(response_format)
+            raw_response = await client.generate(context)
+            return response_format.model_validate_json(raw_response)
+        else:
+            # For simple string responses
+            return await client.generate(context)

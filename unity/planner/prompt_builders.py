@@ -69,6 +69,7 @@ def _build_rules_and_examples_prompt(
         5.  **No Imports:** You MUST NOT use any `import` statements.
         6.  **Stubbing:** If you cannot implement a function immediately, stub it out with `raise NotImplementedError`.
         7.  **Await Keyword**: All `action_provider` methods that are asynchronous MUST be called with the `await` keyword.
+        8.  **Structured Output**: For `observe` or `reason` calls that expect a structured answer (e.g., yes/no, a list of items), you MUST define a Pydantic `BaseModel` and pass it to the `response_format` argument to ensure reliable, parsable output.
 
         ---
         ### Strategy & Tool Usage
@@ -112,6 +113,41 @@ def _build_rules_and_examples_prompt(
             await action_provider.browser_act("Click the 'Blog' link in the main navigation")
             blog_title = await action_provider.browser_observe("What is the title of the first blog post?")
             return blog_title
+        ```
+
+        **Structured Observation:**
+        ```python
+        class ConsentCheck(BaseModel):
+            is_present: bool = Field(description="True if a cookie consent dialog is visible, False otherwise.")
+
+        @verify
+        async def handle_cookies():
+            # Use a Pydantic model to get a reliable boolean response.
+            consent_status = await action_provider.browser_observe(
+                "Is a cookie consent dialog visible on the page?",
+                response_format=ConsentCheck
+            )
+            if consent_status.is_present:
+                await action_provider.browser_act("Click the 'Accept All' button")
+            return "Cookie consent handled."
+        ```
+
+        **Generic Reasoning:**
+        ```python
+        class Summary(BaseModel):
+            one_sentence_summary: str = Field(description="A single sentence that captures the main point.")
+            key_topics: list[str] = Field(description="A list of the main topics discussed.")
+
+        @verify
+        async def summarize_article(article_text: str):
+            # Use the reason tool for analysis and structured extraction.
+            result = await action_provider.reason(
+                request="Summarize the provided article, extracting key topics.",
+                context=article_text,
+                response_format=Summary
+            )
+            print(f"Summary: result.one_sentence_summary")
+            return result.key_topics
         ```
     """,
     )
