@@ -70,6 +70,7 @@ class CommsAgent:
 
         # switches to "True" when in a call
         self.call_mode = False
+        self.call_purpose = "general"
 
         # conductor
         self.conductor = None
@@ -114,6 +115,7 @@ class CommsAgent:
                 if new_event["event_name"] == "PhoneCallInitiatedEvent":
                     global ONGOING_CALL
                     if not ONGOING_CALL:
+                        self.call_purpose = new_event["payload"]["purpose"]
                         self.call_proc = run_script(
                             "unity/service/call.py",
                             "dev",
@@ -383,7 +385,8 @@ class CommsAgent:
             if self.conductor_handles is not None
             else ""
         )
-        user_msg = f"""Events Stream:
+        user_msg = f"""CALL PURPOSE: {self.call_purpose}
+Events Stream:
 ** PAST EVENTS **
 {past_events_str.strip()}
 ** NEW EVENTS **
