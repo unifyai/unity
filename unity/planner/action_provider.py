@@ -1,4 +1,5 @@
 import asyncio
+import os
 import unify
 from typing import Any
 from unity.common.llm_helpers import (
@@ -26,6 +27,7 @@ class ActionProvider:
         self.browser = Browser(
             session_connect_url=session_connect_url,
             headless=headless,
+            mode="hybrid",
         )
         self.contact_manager = ContactManager()
         self.transcript_manager = TranscriptManager(
@@ -164,16 +166,35 @@ class ActionProvider:
                     self.task_scheduler.ask,
                     new_actions._send_email_via_address,
                     new_actions._send_sms_message_via_number,
-                    new_actions._send_whatsapp_message_via_number,
+                    # new_actions._send_whatsapp_message_via_number,
                 )
 
-                asyncio.create_task(new_actions._start_call(phone_number, purpose))
-                cls.status = "started"
+                cls.call_ready = asyncio.Event()
+                cls.call_ask_status = asyncio.Event()
+                cls.call_ask_status.set()
+
+                async def do_call():
+                    await new_actions._start_call(
+                        os.getenv("ASSISTANT_NUMBER"),
+                        phone_number,
+                        purpose,
+                    )
+                    await asyncio.sleep(
+                        15,
+                    )  # give time to start call and complete greeting
+                    cls.call_ready.set()
+
+                asyncio.create_task(do_call())
+                cls.status = "initiated"
 
             async def ask(cls, question: str) -> SteerableToolHandle:
                 """
                 Ask a question to the assistant.
                 """
+                await cls.call_ready.wait()
+                await cls.call_ask_status.wait()
+
+                cls.call_ask_status.clear()
                 await publish_event(
                     {
                         "topic": cls.phone_number,
@@ -184,17 +205,34 @@ class ActionProvider:
                         ).to_dict(),
                     },
                 )
-                return start_async_tool_use_loop(
+                cls.client.set_system_message(
+                    f"You are a helpful assistant. With the tools available, answer the question: {question}. If answer is not found through the manager-related tools, ask the user with the `ask_user` method.",
+                )
+                handle = start_async_tool_use_loop(
                     cls.client,
                     question,
                     cls.tools,
-                    loop_id="call",
+                    loop_id="call_ask",
                 )
+
+                async def _reset_call_ask_status():
+                    try:
+                        await handle.result()
+                        await asyncio.sleep(5)  # give time to complete current sentence
+                    finally:
+                        cls.call_ask_status.set()
+
+                asyncio.create_task(_reset_call_ask_status())
+                return handle
 
             async def interject(cls, text: str) -> str:
                 """
                 Interject a message to the assistant for them to speak it to the user.
                 """
+                await cls.call_ready.wait()
+                await cls.call_ask_status.wait()
+
+                cls.call_ask_status.clear()
                 await publish_event(
                     {
                         "topic": cls.phone_number,
@@ -205,12 +243,15 @@ class ActionProvider:
                         ).to_dict(),
                     },
                 )
+                cls.call_ask_status.set()
                 return "Acknowledged."
 
             async def stop(cls):
                 """
                 End the call.
                 """
+                await cls.call_ready.wait()
+                await cls.call_ask_status.wait()
                 await publish_event(
                     {
                         "topic": cls.phone_number,

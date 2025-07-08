@@ -8,17 +8,14 @@ from unity.helpers import run_script, terminate_process
 from unity.service import comms_actions
 from unity.service.actions import *
 from unity.service.events import *
+from unity.service.prompt_builders import (
+    build_call_sys_prompt,
+    build_non_call_sys_prompt,
+)
 
 client = openai.AsyncOpenAI(api_key=os.environ["OPENAI_API_KEY"])
 
 ONGOING_CALL = False
-
-
-with open("unity/service/prompts/call_sys.md") as f:
-    call_sys = f.read()
-
-with open("unity/service/prompts/non_call_sys.md") as f:
-    non_call_sys = f.read()
 
 
 # new events to add:
@@ -49,8 +46,10 @@ class CommsAgent:
         user_phone_call_number: str = None,
         past_events: list | None = None,
         conv_context_length: int = 50,
+        with_conductor: bool = True,
     ):
         # contact data
+        self.with_conductor = with_conductor
         self.assistant_number = assistant_number
         self.user_name = user_name
         self.user_number = user_number
@@ -292,11 +291,12 @@ class CommsAgent:
             return await self.non_phone_call_llm_run()
 
     async def non_phone_call_llm_run(self):
+        non_call_sys = build_non_call_sys_prompt(
+            self.user_name,
+            with_conductor=self.with_conductor,
+        )
         user_msg = self.get_user_agent_prompt()
         print(user_msg, flush=True)
-
-        with open("unity/service/prompts/non_call_sys.md") as f:
-            non_call_sys = f.read().format(name=self.user_name)
 
         res = await client.beta.chat.completions.parse(
             model="gpt-4.1",
@@ -316,8 +316,10 @@ class CommsAgent:
         ev = {"topic": "call_process", "type": "start_gen"}
         self.publish(ev)
 
-        with open("unity/service/prompts/call_sys.md") as f:
-            call_sys = f.read().format(name=self.user_name)
+        call_sys = build_call_sys_prompt(
+            self.user_name,
+            with_conductor=self.with_conductor,
+        )
 
         user_msg = self.get_user_agent_prompt()
         print(user_msg)

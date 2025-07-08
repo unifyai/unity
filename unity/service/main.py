@@ -4,7 +4,6 @@
 # urgent event is sent, and cancel any running llm calls
 import asyncio
 from collections import defaultdict
-import sys
 from dotenv import load_dotenv
 import json
 import os
