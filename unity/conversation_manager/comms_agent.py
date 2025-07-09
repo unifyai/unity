@@ -274,9 +274,21 @@ class CommsAgent:
                         if isinstance(action, SendCallAction):
                             asyncio.create_task(self.send_call())
                         elif isinstance(action, ConductorAction):
-                            asyncio.create_task(self.conductor_action(action))
+                            if not self.with_conductor:
+                                print(
+                                    f"Conductor disabled, action received is: {action}.",
+                                )
+                            else:
+                                asyncio.create_task(self.conductor_action(action))
                         elif isinstance(action, ConductorHandleAction):
-                            asyncio.create_task(self.conductor_handle_action(action))
+                            if not self.with_conductor:
+                                print(
+                                    f"Conductor disabled, action received is: {action}.",
+                                )
+                            else:
+                                asyncio.create_task(
+                                    self.conductor_handle_action(action),
+                                )
 
         except asyncio.CancelledError:
             pass
