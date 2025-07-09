@@ -1323,3 +1323,219 @@ async def main_plan():
 
     # 4. The plan should complete.
     assert plan._state == _HierarchicalPlanState.COMPLETED
+
+
+@pytest.mark.asyncio
+async def test_sandbox_supports_pydantic_classes(
+    planner: HierarchicalPlanner,
+    mock_action_provider: MagicMock,
+    monkeypatch,
+):
+    """
+    Objective: Verify that the sandbox environment properly supports creating
+    and using Pydantic classes, regular classes, inheritance, and other
+    class-related Python constructs.
+    """
+    # --- Arrange ---
+    plan_code = """
+# Test 1: Basic Pydantic model
+@verify
+async def test_basic_pydantic():
+    '''Test creating and using a basic Pydantic model.'''
+
+    class UserInfo(BaseModel):
+        name: str = Field(..., description="User's name")
+        age: int = Field(..., description="User's age")
+        email: str = Field(default="", description="User's email")
+
+    user = UserInfo(name="John Doe", age=30)
+    assert user.name == "John Doe"
+    assert user.age == 30
+    assert user.email == ""
+
+    # Test validation
+    try:
+        invalid_user = UserInfo(name="Jane", age="not a number")
+    except ValueError:
+        pass  # Expected
+
+    return user.model_dump()
+
+# Test 2: Nested Pydantic models
+@verify
+async def test_nested_pydantic():
+    '''Test nested Pydantic models and inheritance.'''
+
+    class Address(BaseModel):
+        street: str
+        city: str
+        country: str = "USA"
+
+    class Person(BaseModel):
+        name: str
+        address: Address
+        hobbies: list[str] = Field(default_factory=list)
+
+    addr = Address(street="123 Main St", city="New York")
+    person = Person(
+        name="Alice",
+        address=addr,
+        hobbies=["reading", "coding"]
+    )
+
+    assert person.address.city == "New York"
+    assert len(person.hobbies) == 2
+
+    return person.model_dump_json()
+
+# Test 3: Regular Python classes
+@verify
+async def test_regular_classes():
+    '''Test regular Python classes with inheritance.'''
+
+    class Animal:
+        def __init__(self, name):
+            self.name = name
+
+        def speak(self):
+            return f"{self.name} makes a sound"
+
+    class Dog(Animal):
+        def __init__(self, name, breed):
+            super().__init__(name)
+            self.breed = breed
+
+        def speak(self):
+            return f"{self.name} barks"
+
+        @property
+        def description(self):
+            return f"{self.name} is a {self.breed}"
+
+        @classmethod
+        def create_puppy(cls, breed):
+            return cls("Puppy", breed)
+
+        @staticmethod
+        def dog_fact():
+            return "Dogs are loyal"
+
+    dog = Dog("Rex", "Golden Retriever")
+    assert dog.speak() == "Rex barks"
+    assert dog.description == "Rex is a Golden Retriever"
+
+    puppy = Dog.create_puppy("Beagle")
+    assert puppy.name == "Puppy"
+    assert Dog.dog_fact() == "Dogs are loyal"
+
+    return "Classes work correctly"
+
+# Test 4: Using Pydantic for browser observation
+@verify
+async def test_pydantic_with_browser():
+    '''Test using Pydantic models with browser observations.'''
+
+    class PageElements(BaseModel):
+        has_login_button: bool = Field(description="Whether login button exists")
+        button_text: str = Field(default="", description="Text on the button")
+        page_title: str = Field(description="Title of the page")
+
+    # Simulate observing page structure
+    observation = await action_provider.browser_observe(
+        "Check for login elements on the page",
+        response_format=PageElements
+    )
+
+    # The mock will return a string, but in real usage it would be structured
+    return f"Observation completed: {observation}"
+
+# Test 5: Complex class operations
+@verify
+async def test_class_introspection():
+    '''Test class introspection and dynamic attribute access.'''
+
+    class DynamicClass:
+        class_var = "shared"
+
+        def __init__(self):
+            self.instance_var = "unique"
+
+    obj = DynamicClass()
+
+    # Test hasattr/getattr/setattr
+    assert hasattr(obj, "instance_var")
+    assert getattr(obj, "instance_var") == "unique"
+    setattr(obj, "new_attr", "dynamic")
+    assert obj.new_attr == "dynamic"
+
+    # Test type checking
+    assert type(obj).__name__ == "DynamicClass"
+    assert isinstance(obj, DynamicClass)
+    assert callable(obj.__init__)
+
+    # Test dir() and vars()
+    attrs = dir(obj)
+    assert "instance_var" in attrs
+    assert "new_attr" in vars(obj)
+
+    return "Introspection complete"
+
+@verify
+async def main_plan():
+    '''Main plan to test all class-related functionality.'''
+    basic_result = await test_basic_pydantic()
+    nested_result = await test_nested_pydantic()
+    regular_result = await test_regular_classes()
+    browser_result = await test_pydantic_with_browser()
+    introspection_result = await test_class_introspection()
+
+    return {
+        "basic_pydantic": basic_result,
+        "nested_pydantic": nested_result,
+        "regular_classes": regular_result,
+        "browser_observation": browser_result,
+        "introspection": introspection_result
+    }
+"""
+
+    # Mock the LLM to return our test plan
+    monkeypatch.setattr(
+        planner,
+        "_generate_initial_plan",
+        AsyncMock(return_value=plan_code),
+    )
+
+    # Mock verification to always succeed
+    monkeypatch.setattr(
+        planner,
+        "_check_state_against_goal",
+        AsyncMock(return_value=VerificationAssessment(status="ok", reason="OK")),
+    )
+
+    # Mock browser observation to return a simple string
+    mock_action_provider.browser_observe.return_value = "Mock observation result"
+
+    # --- Act ---
+    monkeypatch.setattr(planner, "_should_explore", AsyncMock(return_value=False))
+    plan = await planner.execute("Test that sandbox supports all class constructs")
+    result = await plan.result()
+
+    # --- Assert ---
+    # 1. The plan should complete successfully
+    assert plan._state == _HierarchicalPlanState.COMPLETED
+    assert "Plan completed" in result
+
+    # 2. All test functions should have been executed
+    action_log_str = " ".join(plan.action_log)
+    assert "Verification for test_basic_pydantic: ok" in action_log_str
+    assert "Verification for test_nested_pydantic: ok" in action_log_str
+    assert "Verification for test_regular_classes: ok" in action_log_str
+    assert "Verification for test_pydantic_with_browser: ok" in action_log_str
+    assert "Verification for test_class_introspection: ok" in action_log_str
+    assert "Verification for main_plan: ok" in action_log_str
+
+    # 3. Browser observation with Pydantic should have been called
+    mock_action_provider.browser_observe.assert_called_once()
+    call_args = mock_action_provider.browser_observe.call_args
+    assert "login elements" in call_args[0][0]
+    assert "response_format" in call_args[1]
