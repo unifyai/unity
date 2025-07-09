@@ -546,8 +546,22 @@ class ToolLoopPlanner(BasePlanner):
     def _build_tools(self) -> Dict[str, Callable[..., Awaitable[Any]]]:
         async def act(action: str, expectation: str) -> str:
             logger.info(f"Planner: Calling Controller.act with '{action}'")
-            result = await self._controller.act(action, expectation=expectation)
-            return result
+            try:
+                result = await self._controller.act(action, expectation=expectation)
+                return result
+            except ActionFailedError as e:
+                logger.warning(
+                    f"ActionFailedError caught and handled within ToolLoopPlanner: {e.reason}",
+                )
+
+                error_message = (
+                    "The previous action failed because the browser state did not match the expectation.\n\n"
+                    f"**Action Attempted**: `{e.action}`\n"
+                    f"**Expected Outcome**: `{e.expectation}`\n"
+                    f"**Reason for Failure**: `{e.reason}`\n\n"
+                    "Please analyze the 'Reason for Failure' and devise a new, better action to achieve the goal."
+                )
+                return error_message
 
         async def observe(query: str, response_schema: dict = None) -> Any:
             """
