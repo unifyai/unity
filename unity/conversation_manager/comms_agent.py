@@ -47,10 +47,8 @@ class CommsAgent:
         user_phone_call_number: str = None,
         past_events: list | None = None,
         conv_context_length: int = 50,
-        with_conductor: bool = True,
     ):
         # contact data
-        self.with_conductor = with_conductor
         self.assistant_number = assistant_number
         self.user_name = user_name
         self.user_number = user_number
@@ -274,21 +272,11 @@ class CommsAgent:
                         if isinstance(action, SendCallAction):
                             asyncio.create_task(self.send_call())
                         elif isinstance(action, ConductorAction):
-                            if not self.with_conductor:
-                                print(
-                                    f"Conductor disabled, action received is: {action}.",
-                                )
-                            else:
-                                asyncio.create_task(self.conductor_action(action))
+                            asyncio.create_task(self.conductor_action(action))
                         elif isinstance(action, ConductorHandleAction):
-                            if not self.with_conductor:
-                                print(
-                                    f"Conductor disabled, action received is: {action}.",
-                                )
-                            else:
-                                asyncio.create_task(
-                                    self.conductor_handle_action(action),
-                                )
+                            asyncio.create_task(
+                                self.conductor_handle_action(action),
+                            )
 
         except asyncio.CancelledError:
             pass
@@ -304,10 +292,7 @@ class CommsAgent:
             return await self.non_phone_call_llm_run()
 
     async def non_phone_call_llm_run(self):
-        non_call_sys = build_non_call_sys_prompt(
-            self.user_name,
-            with_conductor=self.with_conductor,
-        )
+        non_call_sys = build_non_call_sys_prompt(self.user_name)
         user_msg = self.get_user_agent_prompt()
         print(user_msg, flush=True)
 
@@ -329,10 +314,7 @@ class CommsAgent:
         ev = {"topic": "call_process", "type": "start_gen"}
         self.publish(ev)
 
-        call_sys = build_call_sys_prompt(
-            self.user_name,
-            with_conductor=self.with_conductor,
-        )
+        call_sys = build_call_sys_prompt(self.user_name)
 
         user_msg = self.get_user_agent_prompt()
         print(user_msg)

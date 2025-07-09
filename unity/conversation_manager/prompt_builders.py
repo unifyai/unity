@@ -116,10 +116,8 @@ def _build_your_capabilities_section(is_call: bool) -> str:
 
 
 # Refactored builders
-def build_call_sys_prompt(name: str, with_conductor: bool = True) -> str:
-    """Build the **system** prompt for phone-call LLM runs.
-
-    If `with_conductor` is True, include conductor task instructions."""
+def build_call_sys_prompt(name: str) -> str:
+    """Build the **system** prompt for phone-call LLM runs."""
     # assemble all sections
     sections = [
         "You are a general purpose AI assistant for your user.",
@@ -127,7 +125,7 @@ def build_call_sys_prompt(name: str, with_conductor: bool = True) -> str:
         _build_your_capabilities_section(is_call=True),
         _build_event_stream_section(),
         _build_agent_loop_section(),
-        _build_conductor_tasks_rules_section() if with_conductor else None,
+        _build_conductor_tasks_rules_section(),
         _build_communication_rules_section(),
     ]
     # filter out None
@@ -135,10 +133,8 @@ def build_call_sys_prompt(name: str, with_conductor: bool = True) -> str:
     return "\n\n".join(sections)
 
 
-def build_non_call_sys_prompt(name: str, with_conductor: bool = True) -> str:
-    """Build the **system** prompt for non-call LLM runs.
-
-    If `with_conductor` is True, include conductor task instructions."""
+def build_non_call_sys_prompt(name: str) -> str:
+    """Build the **system** prompt for non-call LLM runs."""
     # assemble all sections
     sections = [
         "You are a general purpose AI assistant for your user.",
@@ -146,7 +142,7 @@ def build_non_call_sys_prompt(name: str, with_conductor: bool = True) -> str:
         _build_your_capabilities_section(is_call=False),
         _build_event_stream_section(),
         _build_agent_loop_section(),
-        _build_conductor_tasks_rules_section() if with_conductor else None,
+        _build_conductor_tasks_rules_section(),
         _build_communication_rules_section(),
     ]
     sections = [s for s in sections if s]
