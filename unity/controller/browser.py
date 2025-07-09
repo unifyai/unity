@@ -1,4 +1,4 @@
-from typing import Any, Type
+from typing import Any, Type, Optional
 from .controller import Controller
 from unity.common.llm_helpers import (
     SteerableToolHandle,
@@ -26,13 +26,13 @@ class Browser:
         if not self.controller.is_alive():
             self.controller.start()
 
-    async def act(self, instruction: str) -> str:
+    async def act(self, instruction: str, expectation: Optional[str] = None) -> str:
         """
         Executes a single, high-level action in the browser.
         e.g., "Click the 'Login' button", "Type 'hello world' in the search bar"
 
         """
-        return await self.controller.act(instruction)
+        return await self.controller.act(instruction, expectation=expectation)
 
     async def observe(self, query: str, response_format: Type = str) -> Any:
         """

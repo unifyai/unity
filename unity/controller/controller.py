@@ -3,12 +3,26 @@ import asyncio
 from datetime import datetime, timezone
 from typing import Any, Type, Optional
 import json
-
+import uuid
+import random
+from pydantic import BaseModel, Field
 import redis
 
 from .playwright_utils.worker import BrowserWorker
 from .agent import InvalidActionError, ask_llm, text_to_browser_action
 from ..constants import LOGGER
+
+
+class ActionFailedError(Exception):
+    """Custom exception raised when a browser action fails to meet its expectation."""
+
+
+class VerificationResult(BaseModel):
+    is_satisfied: bool = Field(..., description="Whether the expectation is met.")
+    reason: str = Field(
+        ...,
+        description="A brief explanation for why the expectation was or was not met.",
+    )
 
 
 class Controller(threading.Thread):
@@ -206,72 +220,169 @@ class Controller(threading.Thread):
     # ------------------------------------------------------------------
     #  Public helper – synchronous one-shot action
     # ------------------------------------------------------------------
-    async def act(self, action: str, timeout: float = 7.0) -> Optional[str]:
+    async def act(
+        self,
+        action: str,
+        expectation: Optional[str] = None,
+        timeout: float = 10.0,
+    ) -> str:
         """
-        Convert natural-language text to a browser action and execute it,
-        waiting for the browser state to confirm the update.
+        Converts a natural-language instruction into a browser action, executes it,
+        waits for state confirmation, and optionally verifies that the result matches the expectation.
         """
-        try:
-            cmd = await asyncio.to_thread(
-                text_to_browser_action,
-                text=action,
-                screenshot=self._last_shot,
-                tabs=self._observe_ctx.get("tabs", []),
-                buttons=self._observe_ctx.get("elements", []),
-                history=self._observe_ctx.get("history", []),
-                state=self._observe_ctx.get("state", {}),
-            )
-        except InvalidActionError as e:
-            LOGGER.error(f"Error converting action to browser command: {e}")
-            raise e
+        # 1. GET THE LOW-LEVEL ACTION COMMAND (with retry logic)
+        MAX_PARSE_RETRIES = 3
+        BASE_DELAY_S = 0.1  # 100 ms
+        actions = None
+        last_error = None
 
-        assert cmd is not None, f"requested action {action} returned empty command"
-        actions = cmd.get("action")
+        for attempt in range(1, MAX_PARSE_RETRIES + 1):
+            # Construct the text with error feedback from previous attempt
+            if attempt > 1 and last_error:
+                action_with_feedback = (
+                    f"{action}\n\n"
+                    f"[Previous attempt failed with: {last_error}. "
+                    f"Please avoid this error and try a different approach.]"
+                )
+            else:
+                action_with_feedback = action
 
-        if not actions:
-            LOGGER.warning(f"LLM returned no action for instruction: '{action}'")
-            return None
+            try:
+                cmd_payload = await asyncio.to_thread(
+                    text_to_browser_action,
+                    text=action_with_feedback,
+                    screenshot=self._last_shot,
+                    tabs=self._observe_ctx.get("tabs", []),
+                    buttons=self._observe_ctx.get("elements", []),
+                    history=self._observe_ctx.get("history", []),
+                    state=self._observe_ctx.get("state", {}),
+                )
+                actions = cmd_payload.get("action")
+                if not actions:
+                    raise ActionFailedError(
+                        f"Attempt {attempt}: LLM returned no action for '{action}'",
+                    )
+                break  # ✅ parsed OK → stop retry loop
 
-        # --- MODIFICATION: Wait for browser state to update (Corrected Version) ---
-        before_ts = self._observe_ctx.get("ts", 0.0)
+            except InvalidActionError as e:
+                last_error = str(e)
+                LOGGER.warning(
+                    "Parse failure %d/%d for '%s': %s",
+                    attempt,
+                    MAX_PARSE_RETRIES,
+                    action,
+                    e,
+                )
+                if attempt == MAX_PARSE_RETRIES:
+                    raise  # bubble up after last try
+                # Exponential backoff with small random jitter
+                await asyncio.sleep(
+                    BASE_DELAY_S * (2 ** (attempt - 1)) + random.uniform(0, 0.05),
+                )
 
-        # This future will bridge the asyncio event loop with the redis thread
+        # 2. WAIT FOR SPECIFIC STATE ACKNOWLEDGEMENT
+        request_id = str(
+            uuid.uuid4(),
+        )  # Create a unique ID for this specific action request
         loop = asyncio.get_running_loop()
         fut = loop.create_future()
-
-        # Create a new pubsub instance for this temporary, precise listener
         ps = self._redis_client.pubsub(ignore_subscribe_messages=True)
 
         def _waiter(msg):
-            """The handler that runs in the listener thread."""
-            if msg["type"] != "message":
-                return
             try:
                 data = json.loads(msg["data"])
-                if data.get("ts", 0.0) > before_ts:
-                    # Safely set the future's result from the background thread
+                # The waiter now checks for its specific request_id in the state update!
+                if data.get("ack_request_id") == request_id:
                     loop.call_soon_threadsafe(fut.set_result, None)
             except (json.JSONDecodeError, KeyError):
                 pass
 
-        # Subscribe and start the listener in a background thread
         await asyncio.to_thread(ps.subscribe, **{"browser_state": _waiter})
         listener_thread = ps.run_in_thread(daemon=True)
 
-        # Now, perform the action. The listener is already running.
-        await asyncio.to_thread(self._perform_action, actions)
+        # Dispatch the action with its unique ID
+        await asyncio.to_thread(self._perform_action, actions, request_id)
 
         try:
-            # Wait for the future to be resolved by the _waiter
             await asyncio.wait_for(fut, timeout)
-            LOGGER.info(f"✅ State confirmation received for action: {actions}")
+            LOGGER.info(f"✅ ACK received for action: {actions} (ID: {request_id})")
         except asyncio.TimeoutError:
-            LOGGER.warning(f"Timed out waiting for DOM refresh after action: {actions}")
+            # This timeout is now much more meaningful. It means the worker
+            # never acknowledged completing our specific action.
+            LOGGER.warning(f"Timed out waiting for ACK for action ID: {request_id}")
+            raise ActionFailedError(
+                f"Browser worker did not acknowledge action '{action}' in time.",
+            )
         finally:
-            # Crucially, stop the listener thread to clean up resources
             listener_thread.stop()
 
-        return actions
+        # 2.1 WAIT FOR DOM TO SETTLE
+        if expectation:  # only do it when we are about to verify
+            loop2 = asyncio.get_running_loop()
+            post_ack_fut = loop2.create_future()
+
+            def _settle(msg):
+                try:
+                    data = json.loads(msg["data"])
+                    # ignore the ACK message itself, look for *any* later tick
+                    if data.get("ack_request_id") != request_id:
+                        loop2.call_soon_threadsafe(post_ack_fut.set_result, None)
+                except Exception:
+                    pass
+
+            ps2 = self._redis_client.pubsub(ignore_subscribe_messages=True)
+            await asyncio.to_thread(ps2.subscribe, **{"browser_state": _settle})
+            t2 = ps2.run_in_thread(daemon=True)
+            try:
+                await asyncio.wait_for(post_ack_fut, timeout)
+                LOGGER.info("✅ DOM settled - received post-ACK browser state")
+            except asyncio.TimeoutError:
+                LOGGER.warning("Timed out waiting for post-ACK browser state")
+            finally:
+                t2.stop()
+
+        # 3. VERIFY EXPECTATION (if provided)
+        if expectation:
+            MAX_VERIFY_TRIES = 3
+            delay = 0.4  # start at 400 ms
+            last_reason = ""
+
+            for attempt in range(1, MAX_VERIFY_TRIES + 1):
+                try:
+                    verification_prompt = f"Does the current page state satisfy this expectation: '{expectation}'? Explain your reasoning."
+                    verification = await self.observe(
+                        verification_prompt,
+                        response_format=VerificationResult,
+                    )
+
+                    if verification.is_satisfied:
+                        LOGGER.info(
+                            f"✅ Action '{action}' SUCCEEDED and met expectation '{expectation}'. Reason: {verification.reason}",
+                        )
+                        return actions
+
+                    last_reason = verification.reason
+                    LOGGER.warning(
+                        f"Action '{action}' did not meet expectation (attempt {attempt}/{MAX_VERIFY_TRIES}). Reason: {verification.reason}",
+                    )
+
+                    if attempt < MAX_VERIFY_TRIES:
+                        await asyncio.sleep(delay)
+                        delay *= 2  # exponential back-off
+
+                except Exception as e:
+                    LOGGER.error(
+                        f"Error during verification of action '{action}' (attempt {attempt}/{MAX_VERIFY_TRIES}): {e}",
+                    )
+                    if attempt == MAX_VERIFY_TRIES:
+                        raise e
+
+            # If all retries fail, raise the exception with the rich reason
+            raise ActionFailedError(
+                f"Action '{action}' failed to meet expectation '{expectation}'. Last reason: '{last_reason}'",
+            )
+        else:
+            return actions
 
     async def get_action_history(self) -> list[dict]:
         """
