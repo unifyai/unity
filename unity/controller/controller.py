@@ -272,3 +272,31 @@ class Controller(threading.Thread):
             listener_thread.stop()
 
         return actions
+
+    async def get_action_history(self) -> list[dict]:
+        """
+        Retrieves a lightweight summary of the executed browser actions,
+        including the command and timestamp for each.
+        """
+        full_history = self._observe_ctx.get("history", [])
+        # Return only the command and timestamp to save tokens
+        return [
+            {"command": record.get("command"), "timestamp": record.get("timestamp")}
+            for record in full_history
+        ]
+
+    async def get_screenshots_for_action(self, timestamp: float) -> dict:
+        """
+        Retrieves the before and after screenshots for a specific action,
+        identified by its unique timestamp.
+        """
+        full_history = self._observe_ctx.get("history", [])
+        for record in full_history:
+            # Use a small tolerance for float comparison
+            if abs(record.get("timestamp", 0) - timestamp) < 0.001:
+                return {
+                    "command": record.get("command"),
+                    "before_screenshot_b64": record.get("before_screenshot_b64"),
+                    "after_screenshot_b64": record.get("after_screenshot_b64"),
+                }
+        return {"error": "Action with the specified timestamp not found."}

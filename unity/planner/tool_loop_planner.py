@@ -543,21 +543,10 @@ class ToolLoopPlanner(BasePlanner):
         return self._tools_cache
 
     def _build_tools(self) -> Dict[str, Callable[..., Awaitable[Any]]]:
-        async def act(action: str) -> str:
+        async def act(action: str, expectation: str) -> str:
             logger.info(f"Planner: Calling Controller.act with '{action}'")
-            result = await self._controller.act(action)
-            if isinstance(result, list):
-                res_str = ", ".join(map(str, result))
-                return (
-                    f"Executed actions: {res_str}"
-                    if result
-                    else "No action taken by controller."
-                )
-            return (
-                f"Executed action: {result}"
-                if result
-                else "No action taken by controller."
-            )
+            result = await self._controller.act(action, expectation=expectation)
+            return result
 
         async def observe(query: str, response_schema: dict = None) -> Any:
             """
@@ -590,37 +579,16 @@ class ToolLoopPlanner(BasePlanner):
             return result
 
         async def get_action_history() -> list[dict]:
-            """
-            Retrieves a lightweight summary of the executed browser actions,
-            including the command and timestamp for each.
-            """
-            logger.info("Planner: Retrieving lightweight browser action history.")
-            full_history = self._controller._observe_ctx.get("history", [])
-            # Return only the command and timestamp to save tokens
-            return [
-                {"command": record.get("command"), "timestamp": record.get("timestamp")}
-                for record in full_history
-            ]
+            return await self._controller.get_action_history()
 
         async def get_screenshots_for_action(timestamp: float) -> dict:
-            """
-            Retrieves the before and after screenshots for a specific action,
-            identified by its unique timestamp.
-            """
-            logger.info(
-                f"Planner: Retrieving screenshots for action at timestamp {timestamp}.",
-            )
-            full_history = self._controller._observe_ctx.get("history", [])
-            for record in full_history:
-                if record.get("timestamp") == timestamp:
-                    return {
-                        "command": record.get("command"),
-                        "before_screenshot_b64": record.get("before_screenshot_b64"),
-                        "after_screenshot_b64": record.get("after_screenshot_b64"),
-                    }
-            return {"error": "Action with the specified timestamp not found."}
+            return await self._controller.get_screenshots_for_action(timestamp)
 
         act.__doc__ = self._controller.act.__doc__
+        get_action_history.__doc__ = self._controller.get_action_history.__doc__
+        get_screenshots_for_action.__doc__ = (
+            self._controller.get_screenshots_for_action.__doc__
+        )
 
         act.__signature__ = inspect.Signature(
             [
@@ -628,6 +596,12 @@ class ToolLoopPlanner(BasePlanner):
                     "action",
                     inspect.Parameter.POSITIONAL_OR_KEYWORD,
                     annotation=str,
+                ),
+                inspect.Parameter(
+                    "expectation",
+                    inspect.Parameter.POSITIONAL_OR_KEYWORD,
+                    annotation=str,
+                    default=None,
                 ),
             ],
             return_annotation=str,
