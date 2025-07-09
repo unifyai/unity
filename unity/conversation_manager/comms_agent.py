@@ -47,6 +47,7 @@ class CommsAgent:
         user_phone_call_number: str = None,
         past_events: list | None = None,
         conv_context_length: int = 50,
+        with_conductor: bool = True,
     ):
         # contact data
         self.assistant_number = assistant_number
@@ -74,6 +75,7 @@ class CommsAgent:
         self.conductor = None
         self.conductor_handles = None
         self.handle_count = 0
+        self.with_conductor = with_conductor
 
         # logging
         self.transcript_manager = None
@@ -258,7 +260,8 @@ class CommsAgent:
 
     def on_run_end(self, t: asyncio.Task):
         try:
-            t: AssistantOutput | CallAssistantOutput | None = t.result()
+            # t: AssistantOutput | CallAssistantOutput | None = t.result()
+            t = t.result()
             # everything is fine, just run the actions and add stuff to past events
             if t:
                 # if self.call_mode:
@@ -292,7 +295,7 @@ class CommsAgent:
             return await self.non_phone_call_llm_run()
 
     async def non_phone_call_llm_run(self):
-        non_call_sys = build_non_call_sys_prompt(self.user_name)
+        non_call_sys = build_non_call_sys_prompt(self.user_name, self.with_conductor)
         user_msg = self.get_user_agent_prompt()
         print(user_msg, flush=True)
 
@@ -302,7 +305,8 @@ class CommsAgent:
                 {"role": "system", "content": non_call_sys},
                 {"role": "user", "content": user_msg},
             ],
-            response_format=AssistantOutput,
+            # response_format=AssistantOutput,
+            response_format=get_assistant_output(self.with_conductor),
         )
         message = res.choices[0].message
         # print(message)
@@ -314,7 +318,7 @@ class CommsAgent:
         ev = {"topic": "call_process", "type": "start_gen"}
         self.publish(ev)
 
-        call_sys = build_call_sys_prompt(self.user_name)
+        call_sys = build_call_sys_prompt(self.user_name, self.with_conductor)
 
         user_msg = self.get_user_agent_prompt()
         print(user_msg)
@@ -325,7 +329,8 @@ class CommsAgent:
                 {"role": "system", "content": call_sys},
                 {"role": "user", "content": user_msg},
             ],
-            response_format=CallAssistantOutput,
+            # response_format=CallAssistantOutput,
+            response_format=get_call_assistant_output(self.with_conductor),
         ) as stream:
 
             async for event in stream:
@@ -368,6 +373,7 @@ class CommsAgent:
             past_events=self.past_events or [],
             inflight_events=self.inflight_events,
             conductor_handles=self.conductor_handles,
+            with_conductor=self.with_conductor,
         )
 
     def publish(self, event: dict):

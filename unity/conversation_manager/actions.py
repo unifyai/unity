@@ -56,3 +56,45 @@ class AssistantOutput(BaseModel):
         ...,
         description="Actions the assistant should perform",
     )
+
+
+def get_call_assistant_output(with_conductor: bool = True):
+    if with_conductor:
+
+        class CallAssistantOutput(BaseModel):
+            phone_utterance: str = Field(
+                ...,
+                description="Your response to the user over the phone",
+            )
+            actions: Optional[List[ActionModel]] = Field(
+                ...,
+                description="Actions the assistant should perform",
+            )
+
+        return CallAssistantOutput
+
+    class CallAssistantOutput(BaseModel):
+        phone_utterance: str = Field(
+            ...,
+            description="Your response to the user over the phone",
+        )
+        actions: Optional[None] = None
+
+    return CallAssistantOutput
+
+
+def get_assistant_output(with_conductor: bool = True):
+    if with_conductor:
+
+        class AssistantOutput(BaseModel):
+            actions: Optional[List[ActionModel]] = Field(
+                ...,
+                description="Actions the assistant should perform",
+            )
+
+        return AssistantOutput
+
+    class AssistantOutput(BaseModel):
+        actions: Optional[None] = None
+
+    return AssistantOutput
