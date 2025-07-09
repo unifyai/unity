@@ -187,12 +187,18 @@ class Controller(threading.Thread):
             Any: The answer returned by the LLM, coerced to the specified response_format.
         """
 
+        # strip the history from the context to save tokens
+        current_context = {
+            "state": self._observe_ctx.get("state", {}),
+            "elements": self._observe_ctx.get("elements", []),
+            "tabs": self._observe_ctx.get("tabs", []),
+        }
         # call LLM to answer based on refreshed context
         result = await asyncio.to_thread(
             ask_llm,
             request,
             response_format=response_format,
-            context=self._observe_ctx,
+            context=current_context,
             screenshot=self._last_shot,
         )
         return result
