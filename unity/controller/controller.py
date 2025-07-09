@@ -16,6 +16,18 @@ from ..constants import LOGGER
 class ActionFailedError(Exception):
     """Custom exception raised when a browser action fails to meet its expectation."""
 
+    def __init__(
+        self,
+        message: str,
+        action: str = None,
+        expectation: str = None,
+        reason: str = None,
+    ):
+        super().__init__(message)
+        self.action = action
+        self.expectation = expectation
+        self.reason = reason
+
 
 class VerificationResult(BaseModel):
     is_satisfied: bool = Field(..., description="Whether the expectation is met.")
@@ -154,7 +166,9 @@ class Controller(threading.Thread):
                     idx = action.split("_")[2]
                     if idx.isdigit():
                         action = f"click {idx}"
-                        payload = json.dumps({"action": action, "request_id": request_id})
+                        payload = json.dumps(
+                            {"action": action, "request_id": request_id},
+                        )
                 except IndexError:
                     pass
 
@@ -258,6 +272,7 @@ class Controller(threading.Thread):
                     buttons=self._observe_ctx.get("elements", []),
                     history=self._observe_ctx.get("history", []),
                     state=self._observe_ctx.get("state", {}),
+                    multi_step_mode=multi_step_mode,
                 )
                 actions = cmd_payload.get("action")
                 if not actions:
@@ -380,8 +395,12 @@ class Controller(threading.Thread):
                         raise e
 
             # If all retries fail, raise the exception with the rich reason
+            message = f"Action '{action}' failed. Reason: '{last_reason}'"
             raise ActionFailedError(
-                f"Action '{action}' failed to meet expectation '{expectation}'. Last reason: '{last_reason}'",
+                message=message,
+                action=action,
+                expectation=expectation,
+                reason=last_reason,
             )
         else:
             return actions
