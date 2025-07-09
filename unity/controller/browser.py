@@ -48,8 +48,7 @@ class Browser:
         Returns a handle to the sub-agent that will execute the task.
         """
         sub_planner = ToolLoopPlanner(
-            session_connect_url=self.controller.session_connect_url,
-            headless=self._headless,
+            controller=self.controller,
         )
         active_task_handle = await sub_planner.execute(description)
         return active_task_handle

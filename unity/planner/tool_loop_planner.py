@@ -520,9 +520,10 @@ class ToolLoopPlanner(BasePlanner):
         self,
         session_connect_url: Optional[str] = None,
         headless: bool = False,
+        controller: Controller = None,
     ):
         super().__init__()
-        self._controller = Controller(
+        self._controller = controller or Controller(
             session_connect_url=session_connect_url,
             headless=headless,
         )
