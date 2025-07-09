@@ -3,7 +3,7 @@ from __future__ import annotations
 import inspect
 import textwrap
 import json
-from typing import Callable, Dict, Any, Optional
+from typing import Callable, Dict, Any, Optional, Type, List
 from unity.common.llm_helpers import (
     class_api_overview,
     get_type_hints,
@@ -26,27 +26,39 @@ def _build_tool_signatures(tool_dict: Dict[str, Callable]) -> str:
 
 
 def _build_handle_apis(tool_dict: Dict[str, Callable]) -> str:
-    handle_docs = []
+    """
+    Builds a consolidated block of API documentation for each unique handle
+    type returned by the available tools.
+    """
+    handle_groups: Dict[Type[SteerableToolHandle], List[str]] = {}
     for name, func in tool_dict.items():
         try:
             hints = get_type_hints(func)
             return_type = hints.get("return")
+
             if (
                 return_type
                 and inspect.isclass(return_type)
                 and issubclass(return_type, SteerableToolHandle)
             ):
-                doc = f"**`{return_type.__name__}` (returned by `{name}`)**\n"
-                doc += "This handle represents an interactive session. Its available methods are:\n"
-                doc += class_api_overview(return_type)
-                handle_docs.append(doc)
+                if return_type not in handle_groups:
+                    handle_groups[return_type] = []
+                handle_groups[return_type].append(f"`{name}`")
         except Exception:
             continue
 
-    if not handle_docs:
+    if not handle_groups:
         return "There are no special handle APIs for the available tools."
 
-    return "\n\n".join(handle_docs)
+    final_docs = []
+    for handle_class, tool_names in handle_groups.items():
+        tools_list_str = ", ".join(sorted(tool_names))
+        doc = f"**`{handle_class.__name__}` (returned by {tools_list_str})**\n"
+        doc += "This handle represents an interactive session. Its available methods are:\n"
+        doc += class_api_overview(handle_class)
+        final_docs.append(doc)
+
+    return "\n\n".join(final_docs)
 
 
 def _build_rules_and_examples_prompt(
