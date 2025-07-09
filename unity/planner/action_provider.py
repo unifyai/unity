@@ -280,22 +280,29 @@ class ActionProvider:
     # --- Browser Actions ---
     async def browser_act(self, instruction: str, expectation: str) -> str:
         """
-        Performs a single, high-level action in the browser and verifies its outcome.
-        This tool should be used for actions that change the state of the page.
+        Performs a single, atomic high-level action in the browser and verifies its outcome.
+        This tool is for discrete, state-changing operations like a single click, a typing sequence, or a navigation event.
 
         Args:
             instruction (str): The natural-language instruction for the action.
-            expectation (str): A clear, verifiable description of the expected outcome.
+                            **IMPORTANT**: This must be a single command. Do not chain multiple actions
+                            together (e.g., "click login and type username").
+            expectation (str): A clear, verifiable description of the expected state of the page *after*
+                            the action is successfully completed.
 
         Examples:
-            - instruction: "Navigate to https://unify.ai"
-            expectation: "The page title should contain 'Unify'."
+            # Good Example (Single Action)
             - instruction: "Click the 'Login' button"
-            expectation: "The URL should now be 'https://app.unify.ai/login'."
-            - instruction: "Type 'hello world' into the search bar"
+            expectation: "The URL should now contain '/login'."
+
+            # Good Example (Single Action)
+            - instruction: "Type 'hello world' into the search bar with ID 'search-input'"
             expectation: "The search bar should contain the text 'hello world'."
+
+            # Bad Example (Chained Actions - Do Not Do This)
+            - instruction: "Click the login button and then enter 'my_user' into the username field."
         """
-        return await self.browser.act(instruction, expectation=expectation)
+        return await self.browser.act(instruction, expectation=expectation, multi_step_mode=True)
 
     async def browser_observe(self, query: str, response_format: Any = str) -> Any:
         """

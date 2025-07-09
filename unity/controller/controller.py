@@ -225,6 +225,7 @@ class Controller(threading.Thread):
         self,
         action: str,
         expectation: Optional[str] = None,
+        multi_step_mode: bool = False,
         timeout: float = 10.0,
     ) -> str:
         """
