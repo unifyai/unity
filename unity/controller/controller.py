@@ -130,9 +130,10 @@ class Controller(threading.Thread):
     # ------------------------------------------------------------------
     # Internal helper – perform one or more low-level primitives (in order)
     # ------------------------------------------------------------------
-    def _perform_action(self, actions: str | list[str]) -> None:
+    def _perform_action(self, actions: str | list[str], request_id: str) -> None:
         # if given a list of commands, execute each in sequence
         for action in actions if isinstance(actions, list) else [actions]:
+            payload = json.dumps({"action": action, "request_id": request_id})
             # action is a single string
             if action.startswith("click_button_"):
                 try:
@@ -157,12 +158,12 @@ class Controller(threading.Thread):
                 # lazily (auto) start the worker if it isn't running
                 self._browser_worker.start()
                 self._browser_open = True
-                self._redis_client.publish("browser_command", action)
+                self._redis_client.publish("browser_command", payload)
             else:
-                self._redis_client.publish("browser_command", action)
+                self._redis_client.publish("browser_command", payload)
 
             # notify listeners that the action finished (optimistic)
-            self._redis_client.publish("action_completion", action)
+            self._redis_client.publish("action_completion", payload)
 
             t = datetime.now(timezone.utc).time().isoformat(timespec="milliseconds")
             LOGGER.info(f"\n🕹️ Performed Action: {action} [⏱️ {t}]\n")

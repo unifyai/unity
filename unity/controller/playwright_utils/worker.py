@@ -13,7 +13,7 @@ import time
 import shutil
 from pathlib import Path
 from tempfile import mkdtemp
-from typing import Callable
+from typing import Callable, Optional
 import json
 import queue
 import requests
@@ -288,6 +288,7 @@ class BrowserWorker(threading.Thread):
                 while not self._stop_event.is_set():
                     # -- 1) drain commands & delegate to runner --
                     cmd_processed = False
+                    processed_request_id: Optional[str] = None
                     while True:
                         msg = self._pubsub.get_message()
                         if msg is None:
@@ -295,14 +296,17 @@ class BrowserWorker(threading.Thread):
                         if msg["type"] != "message":
                             continue
 
-                        cmd_str = msg["data"]
-                        if isinstance(cmd_str, (bytes, bytearray)):
-                            try:
-                                cmd_str = cmd_str.decode()
-                            except Exception:
-                                continue
+                        try:
+                            # Parse the JSON payload to get action and request_id
+                            payload = json.loads(msg["data"].decode())
+                            cmd_str = payload["action"]
+                            request_id = payload["request_id"]
+                        except (json.JSONDecodeError, KeyError, AttributeError):
+                            # Fallback for older/simple command strings
+                            cmd_str = msg["data"].decode()
+                            request_id = None
 
-                        self.log(f"CMD ➜ {cmd_str!r}")
+                        self.log(f"CMD ➜ {cmd_str!r} (ID: {request_id})")
 
                         # Handle CAPTCHA command specially since it needs thread management
                         if cmd_str == CMD_SOLVE_CAPTCHA:
@@ -332,6 +336,9 @@ class BrowserWorker(threading.Thread):
                         # Delegate execution AND recording to the CommandRunner
                         # We pass `last_elements` for context-aware actions like click
                         self.runner.run(cmd_str, last_elements, self.debug)
+                        # Store the ID of the command we just processed
+                        if request_id:
+                            processed_request_id = request_id
                         cmd_processed = True
 
                     # -- 2) ensure active page is valid & reset IDs on nav ---
@@ -603,6 +610,9 @@ class BrowserWorker(threading.Thread):
                         "state": vars(self.runner.state),
                         "ts": time.time(),
                     }
+                    # *** Add the acknowledgement ID to the payload ***
+                    if processed_request_id:
+                        payload["ack_request_id"] = processed_request_id
                     try:
                         self._redis_client.publish("browser_state", json.dumps(payload))
                     except Exception:
