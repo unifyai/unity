@@ -1,6 +1,23 @@
 """Build service prompts for communication flows.
 Replaces legacy .md files with programmatic builders."""
 
+import textwrap
+import inspect
+import json
+from typing import Dict, Callable
+
+
+# Helpers for tool introspection
+def _sig_dict(tools: Dict[str, Callable]) -> Dict[str, str]:
+    """Return a mapping from tool name to its signature."""
+    return {name: str(inspect.signature(fn)) for name, fn in tools.items()}
+
+
+def _tool_name(tools: Dict[str, Callable], needle: str) -> str | None:
+    """Find the first tool whose name contains `needle` (case-insensitive)."""
+    needle = needle.lower()
+    return next((name for name in tools if needle in name.lower()), None)
+
 
 # Shared prompt sections
 def _build_event_stream_section() -> str:
@@ -177,19 +194,44 @@ def build_user_agent_prompt(
     return "\n".join(lines)
 
 
-def build_ask_prompt(tool_names: list[str]) -> str:
-    """Build a prompt for awaiting the user’s reply, listing available tools to act on their input."""
-    title = "Ask Prompt:"
-    underline = "-" * len(title)
+def build_ask_prompt(tools: Dict[str, Callable], question: str) -> str:
+    """Build the system prompt when awaiting user input, listing available tools and usage examples."""
+    # Dump tool signatures
+    sig_json = json.dumps(_sig_dict(tools), indent=4)
+
+    # Extract canonical tool names
+    contact_tool = _tool_name(tools, "contact")
+    transcript_ask_tool = _tool_name(tools, "transcript")
+    transcript_summarize_tool = _tool_name(tools, "summarize")
+    knowledge_tool = _tool_name(tools, "knowledge")
+    scheduler_tool = _tool_name(tools, "task_scheduler") or _tool_name(tools, "task")
+
+    # Usage examples for each tool
+    usage_examples = textwrap.dedent(
+        f"""
+        Examples
+        --------
+        • Ask the contact manager
+          `{contact_tool}(query='<your question>')`
+        • Query the transcript manager for specific text
+          `{transcript_ask_tool}(text='<transcript snippet>')`
+        • Summarize transcript segment
+          `{transcript_summarize_tool}(text='<transcript snippet>')`
+        • Ask the knowledge manager
+          `{knowledge_tool}(query='<knowledge question>')`
+        • Schedule a new task
+          `{scheduler_tool}(task='<task description>')`
+        """,
+    ).strip()
+
+    # Assemble the ask prompt
     lines = [
-        title,
-        underline,
-        "You have asked the user a question and are now awaiting their reply.",
-        "Available tools:",
-    ]
-    # List each tool
-    lines += [f"- {name}" for name in tool_names]
-    lines += [
-        "Once the user responds, choose and invoke the appropriate tool to return a summary of their response relevant to the question.",
+        "Tools (name → argspec):",
+        sig_json,
+        "",
+        usage_examples,
+        "",
+        f"The question asked is '{question}'",
+        "User's reply to the question asked in user message will be logged into the relevant managers. Run the appropriate tool to understand and return the user's answer.",
     ]
     return "\n".join(lines)

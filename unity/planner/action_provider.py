@@ -13,6 +13,7 @@ from unity.common.llm_helpers import (
 from unity.conversation_manager import comms_actions
 from unity.conversation_manager.utils import publish_event
 from unity.conversation_manager.events import PhoneUtteranceEvent, PhoneCallStopEvent
+from unity.conversation_manager.prompt_builders import build_ask_prompt
 from unity.controller.browser import Browser
 from unity.contact_manager.contact_manager import ContactManager
 from unity.transcript_manager.transcript_manager import TranscriptManager
@@ -157,17 +158,14 @@ class ActionProvider:
                 cls.purpose = purpose
 
                 cls.client = unify.AsyncUnify("o4-mini@openai")
-                cls.client.set_system_message(
-                    f"You are a helpful assistant. You are calling {cls.phone_number} for {cls.purpose}.",
-                )
                 cls.tools = methods_to_tool_dict(
                     self.contact_manager.ask,
                     self.transcript_manager.ask,
                     self.transcript_manager.summarize,
                     self.knowledge_manager.ask,
                     self.task_scheduler.ask,
-                    comms_actions._send_email_via_address,
-                    comms_actions._send_sms_message_via_number,
+                    # comms_actions._send_email_via_address,
+                    # comms_actions._send_sms_message_via_number,
                     # new_actions._send_whatsapp_message_via_number,
                 )
 
@@ -181,9 +179,8 @@ class ActionProvider:
                         phone_number,
                         purpose,
                     )
-                    await asyncio.sleep(
-                        15,
-                    )  # give time to start call and complete greeting
+                    # give time to start call and complete greeting
+                    await asyncio.sleep(15)
                     cls.call_ready.set()
 
                 asyncio.create_task(do_call())
@@ -203,16 +200,17 @@ class ActionProvider:
                         "to": "pending",
                         "event": PhoneUtteranceEvent(
                             role="User",
-                            content=question,
+                            content=f"Ask the user this question directly: {question}",
                         ).to_dict(),
                     },
                 )
+
                 cls.client.set_system_message(
-                    f"You are a helpful assistant. With the tools available, answer the question: {question}. If answer is not found through the manager-related tools, ask the user with the `ask_user` method.",
+                    build_ask_prompt(cls.tools, question),
                 )
                 handle = start_async_tool_use_loop(
                     cls.client,
-                    question,
+                    f"The user is answering the question: {question}. Use available tools to get information of the user's answer.",
                     cls.tools,
                     loop_id="call_ask",
                 )
@@ -220,7 +218,6 @@ class ActionProvider:
                 async def _reset_call_ask_status():
                     try:
                         await handle.result()
-                        await asyncio.sleep(5)  # give time to complete current sentence
                     finally:
                         cls.call_ask_status.set()
 
@@ -241,12 +238,15 @@ class ActionProvider:
                         "to": "pending",
                         "event": PhoneUtteranceEvent(
                             role="User",
-                            content=text,
+                            content=f"Speak this content to the user directly: {text}",
                         ).to_dict(),
                     },
                 )
+
+                # give time for utterance after event publish
+                await asyncio.sleep(8)
                 cls.call_ask_status.set()
-                return "Acknowledged."
+                return f"Message interjected to user: {text}"
 
             async def stop(cls):
                 """

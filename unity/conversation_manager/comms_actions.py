@@ -7,6 +7,7 @@ from unity.conversation_manager.events import (
     PhoneCallInitiatedEvent,
     PhoneCallStopEvent,
 )
+from unity.conversation_manager.prompt_builders import build_ask_prompt
 from unity.conversation_manager.utils import (
     publish_event,
     find_assistant_whatsapp_number,
@@ -370,9 +371,6 @@ class Call(SteerableToolHandle):
         self.purpose = purpose
 
         self.client = unify.AsyncUnify("o4-mini@openai")
-        self.client.set_system_message(
-            f"You are a helpful assistant. You are calling {self.phone_number} for {self.purpose}.",
-        )
         self.tools = methods_to_tool_dict(
             self.contact_manager.ask,
             self.transcript_manager.ask,
@@ -389,7 +387,8 @@ class Call(SteerableToolHandle):
 
         async def do_call():
             await _start_call(os.getenv("ASSISTANT_NUMBER"), phone_number, purpose)
-            await asyncio.sleep(15)  # give time to start call and complete greeting
+            # give time to start call and complete greeting
+            await asyncio.sleep(15)
             self.call_ready.set()
 
         asyncio.create_task(do_call())
@@ -404,7 +403,7 @@ class Call(SteerableToolHandle):
 
         self.call_ask_status.clear()
         self.client.set_system_message(
-            f"The user is answering the question: {question}. Use available tools to get information of the user's answer.",
+            build_ask_prompt(self.tools, question),
         )
         await publish_event(
             {
@@ -412,22 +411,21 @@ class Call(SteerableToolHandle):
                 "to": "pending",
                 "event": PhoneUtteranceEvent(
                     role="User",
-                    content=f"Ask me this question: {question}",
+                    content=f"Ask the user this question directly: {question}",
                 ).to_dict(),
             },
         )
 
         handle = start_async_tool_use_loop(
             self.client,
-            question,
+            f"The user is answering the question: {question}. Use available tools to get information of the user's answer.",
             self.tools,
-            loop_id="call",
+            loop_id="call_ask",
         )
 
         async def _reset_call_ask_status():
             try:
                 await handle.result()
-                await asyncio.sleep(5)  # give time to complete current sentence
             finally:
                 self.call_ask_status.set()
 
@@ -447,12 +445,15 @@ class Call(SteerableToolHandle):
                 "to": "pending",
                 "event": PhoneUtteranceEvent(
                     role="User",
-                    content=text,
+                    content=f"Speak this content to the user directly: {text}",
                 ).to_dict(),
             },
         )
+
+        # give time for utterance after event publish
+        await asyncio.sleep(8)
         self.call_ask_status.set()
-        return "Acknowledged."
+        return f"Message interjected to user: {text}"
 
     async def stop(self):
         """
