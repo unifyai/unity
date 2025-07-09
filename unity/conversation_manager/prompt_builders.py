@@ -1,7 +1,6 @@
 """Build service prompts for communication flows.
 Replaces legacy .md files with programmatic builders."""
 
-import textwrap
 import inspect
 import json
 from typing import Dict, Callable
@@ -29,7 +28,7 @@ def _build_event_stream_section() -> str:
         "1. User Message: Messages input by the user through the different communication channels like whatsapp, sms and email",
         "2. Assistant Message: Messages sent by you to the user through the different communication channels",
         "3. User and Assistant Phone Utterance: these are events emitted during phone calls, which are transcribed speech, can come from either party",
-        "4. Tasks: Tasks created and status updates",
+        "4. Tasks: Tasks created through the Conductor and updates based on the handle actions.",
     ]
     return "\n".join([title, underline] + items)
 
@@ -53,7 +52,6 @@ def _build_conductor_tasks_rules_section() -> str:
     rules = [
         "- If the user asks about something that you can't answer based on the event history so far, you should use the conductor for performing it",
         "- Conductor actions launch a separate task in the background that you can keep track of in further steps",
-        "- Any communication action (other than interactions on the current call) will happen through the conductor, so you'd need to create conductor tasks or act on existing tasks for any communication through whatsapp, sms, email, or sending a call.",
         "- They also get logged into the event stream",
         '- In case the user wants some information, use the "ask" action type otherwise if the user wants some action taken (such as scheduling tasks, sending mails, sms, etc.) use the "request" action type',
         "- You will be provided with a list of handles for all ongoing conductor tasks along with the query made to the conductor for each of them.",
@@ -72,6 +70,7 @@ def _build_communication_rules_section() -> str:
     underline = "-" * len(title)
     lines = [
         "- You are on a call with the user and should be mainly replying through the phone, unless sending messages via other channels makes sense.",
+        "- Any communication action (other than interactions on the current call) will happen through the conductor, so you'd need to create conductor tasks or act on existing tasks for any communication through whatsapp, sms, email, or sending a call.",
         "- Provide natural-sounding responses; the user expects human-like interactions.",
         "- Break large WhatsApp messages into multiple chunks when appropriate.",
         "- Send the full SMS message in one go when possible.",
@@ -102,13 +101,16 @@ def _build_your_capabilities_section(is_call: bool) -> str:
     underline = "-" * len(title)
     if is_call:
         lines = [
-            "- You are on a call with the user and can respond through the phone and any enabled channels.",
-            "- Report back once your communication actions complete.",
+            "- You are on an call with the user and can respond to the user through the phone alongside one of the communication channels (whatsapp, sms) through the Conductor",
+            "- If you don't have the answer to the user's prompt, you should initiate a task using ConductorAction",
+            "- If the user wants information or act on an existing task (you'd be provided with the currently ongoing tasks), you should use the ConductorHandleAction",
+            "- You report back to the user the results of the Conductor task once it is done",
         ]
     else:
         lines = [
-            "- Respond to the user through one of the communication channels (whatsapp, sms, phone).",
-            "- Report back once your communication actions complete.",
+            "- You respond to the user through one of the communication channels (whatsapp, sms, phone) through the provided actions.",
+            "- You can initiate communication tasks on the user's behalf by launching a communication task.",
+            "- You report back to the user the results of communication task once they are done.",
         ]
     return "\n".join([title, underline] + lines)
 
@@ -194,42 +196,15 @@ def build_user_agent_prompt(
     return "\n".join(lines)
 
 
-def build_ask_prompt(tools: Dict[str, Callable], question: str) -> str:
-    """Build the system prompt when awaiting user input, listing available tools and usage examples."""
+def build_call_ask_prompt(tools: Dict[str, Callable], question: str) -> str:
+    """Build the system prompt to await the user's reply and choose a tool."""
     # Dump tool signatures
     sig_json = json.dumps(_sig_dict(tools), indent=4)
-
-    # Extract canonical tool names
-    contact_tool = _tool_name(tools, "contact")
-    transcript_ask_tool = _tool_name(tools, "transcript")
-    transcript_summarize_tool = _tool_name(tools, "summarize")
-    knowledge_tool = _tool_name(tools, "knowledge")
-    scheduler_tool = _tool_name(tools, "task_scheduler") or _tool_name(tools, "task")
-
-    # Usage examples for each tool
-    usage_examples = textwrap.dedent(
-        f"""
-        Examples
-        --------
-        • Ask the contact manager
-          `{contact_tool}(query='<your question>')`
-        • Query the transcript manager for specific text
-          `{transcript_ask_tool}(text='<transcript snippet>')`
-        • Summarize transcript segment
-          `{transcript_summarize_tool}(text='<transcript snippet>')`
-        • Ask the knowledge manager
-          `{knowledge_tool}(query='<knowledge question>')`
-        • Schedule a new task
-          `{scheduler_tool}(task='<task description>')`
-        """,
-    ).strip()
 
     # Assemble the ask prompt
     lines = [
         "Tools (name → argspec):",
         sig_json,
-        "",
-        usage_examples,
         "",
         f"The question asked is '{question}'",
         "User's reply to the question asked in user message will be logged into the relevant managers. Run the appropriate tool to understand and return the user's answer.",

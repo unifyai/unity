@@ -13,7 +13,7 @@ from unity.common.llm_helpers import (
 from unity.conversation_manager import comms_actions
 from unity.conversation_manager.utils import publish_event
 from unity.conversation_manager.events import PhoneUtteranceEvent, PhoneCallStopEvent
-from unity.conversation_manager.prompt_builders import build_ask_prompt
+from unity.conversation_manager.prompt_builders import build_call_ask_prompt
 from unity.controller.browser import Browser
 from unity.contact_manager.contact_manager import ContactManager
 from unity.transcript_manager.transcript_manager import TranscriptManager
@@ -206,7 +206,7 @@ class ActionProvider:
                 )
 
                 cls.client.set_system_message(
-                    build_ask_prompt(cls.tools, question),
+                    build_call_ask_prompt(cls.tools, question),
                 )
                 handle = start_async_tool_use_loop(
                     cls.client,
