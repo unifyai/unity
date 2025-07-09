@@ -7,7 +7,7 @@ from unity.conversation_manager.events import (
     PhoneCallInitiatedEvent,
     PhoneCallStopEvent,
 )
-from unity.conversation_manager.prompt_builders import build_ask_prompt
+from unity.conversation_manager.prompt_builders import build_call_ask_prompt
 from unity.conversation_manager.utils import (
     publish_event,
     find_assistant_whatsapp_number,
@@ -403,7 +403,7 @@ class Call(SteerableToolHandle):
 
         self.call_ask_status.clear()
         self.client.set_system_message(
-            build_ask_prompt(self.tools, question),
+            build_call_ask_prompt(self.tools, question),
         )
         await publish_event(
             {
