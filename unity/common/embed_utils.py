@@ -36,6 +36,12 @@ def ensure_vector_column(
         derived_expr = derived_expr.replace("{", "{lg:")
     # If the source column is already present, do nothing
     if source_column not in existing:
+        # Only create the derived source column if we have a valid expression
+        if derived_expr is None:
+            raise ValueError(
+                f"Source column '{source_column}' does not exist in context '{context}' "
+                f"and no derived_expr was provided to create it.",
+            )
         # Create the derived vector column
         url = f"{os.environ['UNIFY_BASE_URL']}/logs/derived"
         headers = {"Authorization": f"Bearer {API_KEY}"}
