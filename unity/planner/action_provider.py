@@ -278,19 +278,24 @@ class ActionProvider:
         return Call(phone_number, purpose)
 
     # --- Browser Actions ---
-    async def browser_act(self, instruction: str) -> str:
+    async def browser_act(self, instruction: str, expectation: str) -> str:
         """
-        Performs a **single**, high-level action in the browser based on a natural language instruction.
-        This tool should be used for actions that change the state of the page, such as clicking, typing, scrolling, or navigating.
-        It uses an LLM to translate your instruction into a precise, low-level browser command.
+        Performs a single, high-level action in the browser and verifies its outcome.
+        This tool should be used for actions that change the state of the page.
+
+        Args:
+            instruction (str): The natural-language instruction for the action.
+            expectation (str): A clear, verifiable description of the expected outcome.
 
         Examples:
-        - "Click the 'Login' button"
-        - "Type 'hello world' into the search bar with ID 'search-input'"
-        - "Scroll down to the footer"
-        - "Navigate to https://unify.ai"
+            - instruction: "Navigate to https://unify.ai"
+            expectation: "The page title should contain 'Unify'."
+            - instruction: "Click the 'Login' button"
+            expectation: "The URL should now be 'https://app.unify.ai/login'."
+            - instruction: "Type 'hello world' into the search bar"
+            expectation: "The search bar should contain the text 'hello world'."
         """
-        return await self.browser.act(instruction)
+        return await self.browser.act(instruction, expectation=expectation)
 
     async def browser_observe(self, query: str, response_format: Any = str) -> Any:
         """
