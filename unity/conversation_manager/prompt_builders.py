@@ -19,7 +19,7 @@ def _tool_name(tools: Dict[str, Callable], needle: str) -> str | None:
 
 
 # Shared prompt sections
-def _build_event_stream_section() -> str:
+def _build_event_stream_section(with_conductor: bool = True) -> str:
     """Build the Event Stream section with a heading and underline."""
     title = "Event Stream:"
     underline = "-" * len(title)
@@ -28,8 +28,11 @@ def _build_event_stream_section() -> str:
         "1. User Message: Messages input by the user through the different communication channels like whatsapp, sms and email",
         "2. Assistant Message: Messages sent by you to the user through the different communication channels",
         "3. User and Assistant Phone Utterance: these are events emitted during phone calls, which are transcribed speech, can come from either party",
-        "4. Tasks: Tasks created through the Conductor and updates based on the handle actions.",
     ]
+    if with_conductor:
+        items.append(
+            "4. Tasks: Tasks created through the Conductor and updates based on the handle actions.",
+        )
     return "\n".join([title, underline] + items)
 
 
@@ -64,20 +67,24 @@ def _build_conductor_tasks_rules_section() -> str:
     return "\n".join([title, underline] + rules)
 
 
-def _build_communication_rules_section() -> str:
+def _build_communication_rules_section(with_conductor: bool = True) -> str:
     """Build the Communication Rules section with a heading and underline."""
     title = "Communication Rules:"
     underline = "-" * len(title)
     lines = [
         "- You are on a call with the user and should be mainly replying through the phone, unless sending messages via other channels makes sense.",
-        "- Any communication action (other than interactions on the current call) will happen through the conductor, so you'd need to create conductor tasks or act on existing tasks for any communication through whatsapp, sms, email, or sending a call.",
         "- Provide natural-sounding responses; the user expects human-like interactions.",
-        "- Break large WhatsApp messages into multiple chunks when appropriate.",
-        "- Send the full SMS message in one go when possible.",
         "- Avoid verbose or unnecessary messages; only communicate when needed.",
         "- Maintain human-like language, avoid robotic and verbose responses",
         "- Do not overwhelm the user with useless messages or phone utterances, only send messages to the user when needed",
     ]
+    if with_conductor:
+        lines += [
+            "- Any communication action (other than interactions on the current call) will happen through the conductor, so you'd need to create conductor tasks or act on existing tasks for any communication through whatsapp, sms, email, or sending a call.",
+            "- Break large WhatsApp messages into multiple chunks when appropriate.",
+            "- Send the full SMS message in one go when possible.",
+        ]
+
     return "\n".join([title, underline] + lines)
 
 
@@ -116,34 +123,34 @@ def _build_your_capabilities_section(is_call: bool) -> str:
 
 
 # Refactored builders
-def build_call_sys_prompt(name: str) -> str:
+def build_call_sys_prompt(name: str, with_conductor: bool = True) -> str:
     """Build the **system** prompt for phone-call LLM runs."""
     # assemble all sections
     sections = [
         "You are a general purpose AI assistant for your user.",
         _build_user_details_section(name),
-        _build_your_capabilities_section(is_call=True),
-        _build_event_stream_section(),
-        _build_agent_loop_section(),
-        _build_conductor_tasks_rules_section(),
-        _build_communication_rules_section(),
+        # _build_your_capabilities_section(is_call=True),
+        _build_event_stream_section(with_conductor=with_conductor),
+        _build_agent_loop_section() if with_conductor else "",
+        _build_conductor_tasks_rules_section() if with_conductor else "",
+        _build_communication_rules_section(with_conductor=with_conductor),
     ]
     # filter out None
     sections = [s for s in sections if s]
     return "\n\n".join(sections)
 
 
-def build_non_call_sys_prompt(name: str) -> str:
+def build_non_call_sys_prompt(name: str, with_conductor: bool = True) -> str:
     """Build the **system** prompt for non-call LLM runs."""
     # assemble all sections
     sections = [
         "You are a general purpose AI assistant for your user.",
         _build_user_details_section(name),
-        _build_your_capabilities_section(is_call=False),
-        _build_event_stream_section(),
-        _build_agent_loop_section(),
-        _build_conductor_tasks_rules_section(),
-        _build_communication_rules_section(),
+        # _build_your_capabilities_section(is_call=False),
+        _build_event_stream_section(with_conductor=with_conductor),
+        _build_agent_loop_section() if with_conductor else "",
+        _build_conductor_tasks_rules_section() if with_conductor else "",
+        _build_communication_rules_section(with_conductor=with_conductor),
     ]
     sections = [s for s in sections if s]
     return "\n\n".join(sections)
@@ -154,6 +161,7 @@ def build_user_agent_prompt(
     past_events: list[dict],
     inflight_events: list[dict],
     conductor_handles: dict[int, dict] | None = None,
+    with_conductor: bool = True,
 ) -> str:
     """Build the user-agent prompt including call purpose, events stream, and conductor handles."""
     from unity.conversation_manager.events import Event
@@ -174,7 +182,7 @@ def build_user_agent_prompt(
             f"Handle ID {hid}: {conductor_handles[hid]['query']}"
             for hid in conductor_handles
         )
-        if conductor_handles
+        if conductor_handles and with_conductor
         else ""
     )
 
@@ -186,7 +194,11 @@ def build_user_agent_prompt(
         past_events_str.strip(),
         "** NEW EVENTS **",
         new_events_str.strip(),
-        "** CONDUCTOR HANDLES (USE THESE FOR THE CONDUCTOR HANDLE ACTION) **",
+        (
+            "** CONDUCTOR HANDLES (USE THESE FOR THE CONDUCTOR HANDLE ACTION) **"
+            if with_conductor
+            else ""
+        ),
         conductor_handles_str.strip(),
     ]
     return "\n".join(lines)
@@ -206,3 +218,37 @@ def build_call_ask_prompt(tools: Dict[str, Callable], question: str) -> str:
         "User's reply to the question asked in user message will be logged into the relevant managers. Run the appropriate tool to understand and return the user's answer.",
     ]
     return "\n".join(lines)
+
+
+def build_conversation_sys_prompt(name: str) -> str:
+    """Build the system prompt for pure conversation mode (no actions)."""
+    # Header and user details
+    header = "You are a general purpose AI assistant for your user."
+    user_details = _build_user_details_section(name)
+
+    # Capabilities: conversation only
+    title = "Your Capabilities:"
+    underline = "-" * len(title)
+    capabilities = "\n".join(
+        [
+            title,
+            underline,
+            "- Engage in natural, human-like conversation with the user.",
+            "- Do not initiate any external actions such as calls, messages, or tasks.",
+        ],
+    )
+
+    # Reuse shared sections
+    event_stream = _build_event_stream_section()
+    agent_loop = _build_agent_loop_section()
+    communication_rules = _build_communication_rules_section()
+
+    sections = [
+        header,
+        user_details,
+        capabilities,
+        event_stream,
+        agent_loop,
+        communication_rules,
+    ]
+    return "\n\n".join(sections)
