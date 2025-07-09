@@ -154,6 +154,7 @@ class Controller(threading.Thread):
                     idx = action.split("_")[2]
                     if idx.isdigit():
                         action = f"click {idx}"
+                        payload = json.dumps({"action": action, "request_id": request_id})
                 except IndexError:
                     pass
 
