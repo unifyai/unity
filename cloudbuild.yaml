@@ -33,6 +33,11 @@ steps:
     echo ${SHORT_SHA} | gsutil cp - gs://unity-image-hash/image_hash.txt
   waitFor: ['push-latest-tag']
 
+# Options
+options:
+  substitutionOption: ALLOW_LOOSE
+  defaultLogsBucketBehavior: REGIONAL_USER_OWNED_BUCKET
+
 # Substitution variables
 substitutions:
   _REGION: 'us-central1'  # Change to your preferred region
