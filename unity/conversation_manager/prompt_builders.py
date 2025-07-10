@@ -228,35 +228,15 @@ def build_call_ask_prompt(tools: Dict[str, Callable], question: str) -> str:
     return "\n".join(lines)
 
 
-def build_conversation_sys_prompt(name: str) -> str:
-    """Build the system prompt for pure conversation mode (no actions)."""
-    # Header and user details
-    header = "You are a general purpose AI assistant for your user."
-    user_details = _build_user_details_section(name)
-
-    # Capabilities: conversation only
-    title = "Your Capabilities:"
-    underline = "-" * len(title)
-    capabilities = "\n".join(
-        [
-            title,
-            underline,
-            "- Engage in natural, human-like conversation with the user.",
-            "- Do not initiate any external actions such as calls, messages, or tasks.",
-        ],
-    )
-
-    # Reuse shared sections
-    event_stream = _build_event_stream_section()
-    agent_loop = _build_agent_loop_section()
-    communication_rules = _build_communication_rules_section()
-
-    sections = [
-        header,
-        user_details,
-        capabilities,
-        event_stream,
-        agent_loop,
-        communication_rules,
+def build_local_chat_search_prompt(local_chat_history: str) -> str:
+    """Build the system prompt for searching the local chat history for an answer."""
+    lines = [
+        "The user is answering a question (given in user message).",
+        "Local Chat History",
+        "------------------",
+        local_chat_history,
+        "",
+        "Search the chat history and summarise the answer if a response relevant to the question is found.",
+        "Otherwise, return answer is not found.",
     ]
-    return "\n\n".join(sections)
+    return "\n".join(lines)

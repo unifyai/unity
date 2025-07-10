@@ -2,7 +2,6 @@ import asyncio
 import aiohttp
 import os
 import redis
-import textwrap
 from dotenv import load_dotenv
 from unity.conversation_manager.events import (
     PhoneUtteranceEvent,
@@ -10,7 +9,10 @@ from unity.conversation_manager.events import (
     PhoneCallStopEvent,
     InterruptEvent,
 )
-from unity.conversation_manager.prompt_builders import build_call_ask_prompt
+from unity.conversation_manager.prompt_builders import (
+    build_call_ask_prompt,
+    build_local_chat_search_prompt,
+)
 from unity.conversation_manager.utils import (
     publish_event,
     find_assistant_whatsapp_number,
@@ -438,18 +440,10 @@ class Call(SteerableToolHandle):
         """Search local chat window if a user response relevant to the question is found"""
 
         client = unify.AsyncUnify("o4-mini@openai")
-        client.set_system_message(
-            textwrap.dedent(
-                f"""
-            The user is answering a question (given in user message).
-            Local Chat History
-            ------------------
-            {self.build_local_chat_history()}
 
-            Search the chat history and summarise the answer if a response relevant to the question is found.
-            Otherwise, return answer is not found.
-            """,
-            ),
+        # Use shared prompt builder for local chat search
+        client.set_system_message(
+            build_local_chat_search_prompt(self.build_local_chat_history()),
         )
 
         handle = start_async_tool_use_loop(
