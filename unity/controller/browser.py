@@ -26,13 +26,20 @@ class Browser:
         if not self.controller.is_alive():
             self.controller.start()
 
-    async def act(self, instruction: str, expectation: Optional[str] = None, multi_step_mode: bool = True) -> str:
+    async def act(
+        self,
+        instruction: str,
+        expectation: Optional[str] = None,
+        multi_step_mode: bool = True,
+    ) -> str:
         """
         Executes a single, high-level action in the browser.
         e.g., "Click the 'Login' button", "Type 'hello world' in the search bar"
 
         """
-        return await self.controller.act(instruction, expectation=expectation, multi_step_mode=multi_step_mode)
+        return await self.controller.act(
+            instruction, expectation=expectation, multi_step_mode=multi_step_mode
+        )
 
     async def observe(self, query: str, response_format: Type = str) -> Any:
         """
