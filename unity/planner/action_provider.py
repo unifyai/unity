@@ -302,7 +302,9 @@ class ActionProvider:
             # Bad Example (Chained Actions - Do Not Do This)
             - instruction: "Click the login button and then enter 'my_user' into the username field."
         """
-        return await self.browser.act(instruction, expectation=expectation, multi_step_mode=True)
+        return await self.browser.act(
+            instruction, expectation=expectation, multi_step_mode=True
+        )
 
     async def browser_observe(self, query: str, response_format: Any = str) -> Any:
         """
