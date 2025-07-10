@@ -2,6 +2,7 @@ import asyncio
 import json
 import openai
 import os
+import redis
 import traceback
 
 from unity.helpers import run_script, terminate_process
@@ -48,6 +49,7 @@ class CommsAgent:
         past_events: list | None = None,
         conv_context_length: int = 50,
         with_conductor: bool = True,
+        start_local: bool = False,
     ):
         # contact data
         self.assistant_number = assistant_number
@@ -76,9 +78,11 @@ class CommsAgent:
         self.conductor_handles = None
         self.handle_count = 0
         self.with_conductor = with_conductor
+        self.start_local = start_local
 
         # logging
         self.transcript_manager = None
+        self.redis = redis.Redis(host="localhost", port=6379, db=0)
 
     async def get_bus_events(self):
         from unity.events.event_bus import EVENT_BUS
@@ -116,19 +120,34 @@ class CommsAgent:
                     global ONGOING_CALL
                     if not ONGOING_CALL:
                         self.call_purpose = new_event["payload"]["purpose"]
-                        self.call_proc = run_script(
-                            "unity/conversation_manager/call.py",
-                            "dev",
-                            self.user_phone_call_number,  # "console" if a local call is needed
-                            self.assistant_number,
-                            (
-                                new_event["tts_provider"]
-                                if new_event["tts_provider"]
-                                else "cartesia"
-                            ),
-                            new_event["voice_id"] if new_event["voice_id"] else "None",
-                            "--outbound" if new_event.get("outbound") else "None",
-                        )
+                        if not self.start_local:
+                            self.call_proc = run_script(
+                                "unity/conversation_manager/call.py",
+                                "dev",
+                                self.user_phone_call_number,
+                                self.assistant_number,
+                                (
+                                    new_event["tts_provider"]
+                                    if new_event["tts_provider"]
+                                    else "cartesia"
+                                ),
+                                (
+                                    new_event["voice_id"]
+                                    if new_event["voice_id"]
+                                    else "None"
+                                ),
+                                "--outbound" if new_event.get("outbound") else "None",
+                            )
+                        else:
+                            self.call_proc = run_script(
+                                "unity/conversation_manager/call.py",
+                                "console",
+                                self.user_phone_call_number,
+                                self.assistant_number,
+                                "cartesia",
+                                "None",
+                                "None",
+                            )
                         self.call_mode = True
                         ONGOING_CALL = True
                         continue
@@ -289,6 +308,7 @@ class CommsAgent:
     async def run(self):
         if self.past_events is None:
             self.past_events = []  # await self.get_bus_events()
+
         if self.call_mode:
             return await self.phone_call_llm_run()
         else:
@@ -346,6 +366,9 @@ class CommsAgent:
             ev = {"topic": "call_process", "type": "end_gen"}
             self.publish(ev)
         self.past_events.extend(self.inflight_events.copy())
+        for ev in self.inflight_events:
+            self.redis.publish("local_chat", json.dumps(ev))
+
         self.inflight_events.clear()
         return event.parsed
 
@@ -467,6 +490,7 @@ class CommsAgent:
             )
         if to == "past":
             self.past_events.append(event["event"])
+            self.redis.publish("local_chat", json.dumps(event["event"]))
         else:
             self.events_queue.put_nowait(event["event"])
         asyncio.create_task(asyncio.to_thread(self.handle_logging, event))

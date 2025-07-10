@@ -208,13 +208,21 @@ def build_call_ask_prompt(tools: Dict[str, Callable], question: str) -> str:
     """Build the system prompt to await the user's reply and choose a tool."""
     # Dump tool signatures
     sig_json = json.dumps(_sig_dict(tools), indent=4)
+    local_chat_tool = _tool_name(tools, "local")
+    ask_search_tool = _tool_name(tools, "user")
 
     # Assemble the ask prompt
     lines = [
         "Tools (name → argspec):",
         sig_json,
         "",
+        "Search loop steps:",
         f"The question asked is '{question}'",
+        f"First, find answer using `{local_chat_tool}`.",
+        f"If an answer is not found, ask the user then search with `{ask_search_tool}`",
+        f"If answer is not found, try `{local_chat_tool}` again.",
+        f"If answer is still not found, then only select appropriate tools from all tools given.",
+        "",
         "User's reply to the question asked in user message will be logged into the relevant managers. Run the appropriate tool to understand and return the user's answer.",
     ]
     return "\n".join(lines)

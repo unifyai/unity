@@ -119,9 +119,11 @@ def run_script(
             {shlex.join(py_cmd)}
         """
 
+        # Use AppleScript to activate Terminal and run the command in a new window/tab
         osa = f"""
             tell application "Terminal"
-                do script "{shell}" in selected tab of front window
+                activate
+                do script "{shell}"
             end tell
         """
         subprocess.run(["osascript", "-e", osa], check=True)

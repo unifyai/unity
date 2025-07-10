@@ -176,7 +176,7 @@ def loop_exception_handler(loop, context):
     print("Error:", context.get("message"), context.get("exception"))
 
 
-async def main():
+async def main(with_conductor: bool = True, start_local: bool = False):
     global user_agent
 
     # Set up signal handlers
@@ -190,6 +190,8 @@ async def main():
         os.getenv("USER_NUMBER", ""),
         os.getenv("USER_PHONE_NUMBER", ""),
         conv_context_length=conv_context_length,
+        with_conductor=with_conductor,
+        start_local=start_local,
     )
     user_agent.set_event_manager(event_manager)
     user_agent.subscribe(
@@ -207,4 +209,29 @@ async def main():
 
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    import argparse
+
+    parser = argparse.ArgumentParser()
+    parser.add_argument(
+        "--with-conductor",
+        dest="with_conductor",
+        action="store_true",
+        default=True,
+        help="Enable conductor tasks (default True)",
+    )
+    parser.add_argument(
+        "--no-conductor",
+        dest="with_conductor",
+        action="store_false",
+        help="Disable conductor tasks",
+    )
+    parser.add_argument(
+        "--start-local",
+        dest="start_local",
+        action="store_true",
+        default=False,
+        help="Start local GUI instead of server",
+    )
+    args = parser.parse_args()
+
+    asyncio.run(main(with_conductor=args.with_conductor, start_local=args.start_local))

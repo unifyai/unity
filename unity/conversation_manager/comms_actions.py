@@ -1,11 +1,14 @@
 import asyncio
 import aiohttp
 import os
+import redis
+import textwrap
 from dotenv import load_dotenv
 from unity.conversation_manager.events import (
     PhoneUtteranceEvent,
     PhoneCallInitiatedEvent,
     PhoneCallStopEvent,
+    InterruptEvent,
 )
 from unity.conversation_manager.prompt_builders import build_call_ask_prompt
 from unity.conversation_manager.utils import (
@@ -356,30 +359,26 @@ async def send_email(
 
 class Call(SteerableToolHandle):
 
-    def __init__(self, phone_number: str, purpose: str):
+    def __init__(self, phone_number: str, purpose: str, tools=None):
         """
         Starts a new phone call session and exposes the steerable methods
         """
-        self.contact_manager = ContactManager()
-        self.transcript_manager = TranscriptManager(
-            contact_manager=self.contact_manager,
-        )
-        self.knowledge_manager = KnowledgeManager()
-        self.task_scheduler = TaskScheduler()
 
         self.phone_number = phone_number
         self.purpose = purpose
 
         self.client = unify.AsyncUnify("o4-mini@openai")
         self.tools = methods_to_tool_dict(
-            self.contact_manager.ask,
-            self.transcript_manager.ask,
-            self.transcript_manager.summarize,
-            self.knowledge_manager.ask,
-            self.task_scheduler.ask,
+            self._search_local_chat,
+            self._ask_user_then_search,
             # _send_email_via_address,
             # _send_sms_message_via_number,
         )
+        if tools:
+            self.tools = {
+                **tools,
+                **self.tools,
+            }
 
         self.call_ready = asyncio.Event()
         self.call_ask_status = asyncio.Event()
@@ -388,11 +387,102 @@ class Call(SteerableToolHandle):
         async def do_call():
             await _start_call(os.getenv("ASSISTANT_NUMBER"), phone_number, purpose)
             # give time to start call and complete greeting
-            await asyncio.sleep(15)
+            await asyncio.sleep(20)
             self.call_ready.set()
 
         asyncio.create_task(do_call())
+
+        self.redis = redis.Redis(host="localhost", port=6379, db=0).pubsub()
+        self.redis.subscribe("local_chat")
+        self.chat = []
+
         self.status = "initiated"
+
+    def _get_update_from_redis(self):
+        import json, ast
+
+        msg = self.redis.get_message()
+        if msg and msg["type"] == "message":
+            data = msg["data"]
+            try:
+                return json.loads(data)
+            except Exception:
+                try:
+                    return ast.literal_eval(
+                        data.decode() if isinstance(data, bytes) else data,
+                    )
+                except Exception:
+                    return None
+        return None
+
+    def _poll_updates(self):
+        while True:
+            payload = self._get_update_from_redis()
+            if payload is None:
+                break
+
+            # ensure dict
+            if not isinstance(payload, dict):
+                continue
+            self.chat.append(payload)
+
+    def build_local_chat_history(self):
+        from unity.conversation_manager.events import Event
+
+        self._poll_updates()
+        return (
+            "\n".join(str(Event.from_dict(e)) for e in self.chat) if self.chat else ""
+        )
+
+    async def _search_local_chat(self, question: str):
+        """Search local chat window if a user response relevant to the question is found"""
+
+        client = unify.AsyncUnify("o4-mini@openai")
+        client.set_system_message(
+            textwrap.dedent(
+                f"""
+            The user is answering a question (given in user message).
+            Local Chat History
+            ------------------
+            {self.build_local_chat_history()}
+
+            Search the chat history and summarise the answer if a response relevant to the question is found.
+            Otherwise, return answer is not found.
+            """,
+            ),
+        )
+
+        handle = start_async_tool_use_loop(
+            client,
+            f"This is the user's question: {question}.",
+            {},
+            loop_id="call_search_local_chat",
+        )
+        return await handle.result()
+
+    async def _ask_user_then_search(self, question):
+        """Ask user the question, then search for their response in local chat history."""
+        await publish_event(
+            {
+                "topic": self.phone_number,
+                "to": "past",
+                "event": InterruptEvent().to_dict(),
+            },
+        ),
+        await publish_event(
+            {
+                "topic": self.phone_number,
+                "to": "pending",
+                "event": PhoneUtteranceEvent(
+                    role="System",
+                    content=f"Ask the user this question directly: {question}",
+                ).to_dict(),
+            },
+        )
+
+        # give time for utterance and response
+        await asyncio.sleep(20)
+        return await self.search_local_chat(question)
 
     async def ask(self, question: str) -> SteerableToolHandle:
         """
@@ -402,23 +492,14 @@ class Call(SteerableToolHandle):
         await self.call_ask_status.wait()
 
         self.call_ask_status.clear()
+
         self.client.set_system_message(
             build_call_ask_prompt(self.tools, question),
-        )
-        await publish_event(
-            {
-                "topic": self.phone_number,
-                "to": "pending",
-                "event": PhoneUtteranceEvent(
-                    role="User",
-                    content=f"Ask the user this question directly: {question}",
-                ).to_dict(),
-            },
         )
 
         handle = start_async_tool_use_loop(
             self.client,
-            f"The user is answering the question: {question}. Use available tools to get information of the user's answer.",
+            f"The user is answering this question: {question}. Use available tools to get information of the user's answer.",
             self.tools,
             loop_id="call_ask",
         )
@@ -439,19 +520,27 @@ class Call(SteerableToolHandle):
         await self.call_ready.wait()
         await self.call_ask_status.wait()
         self.call_ask_status.clear()
+
+        await publish_event(
+            {
+                "topic": self.phone_number,
+                "to": "past",
+                "event": InterruptEvent().to_dict(),
+            },
+        ),
         await publish_event(
             {
                 "topic": self.phone_number,
                 "to": "pending",
                 "event": PhoneUtteranceEvent(
-                    role="User",
+                    role="System",
                     content=f"Speak this content to the user directly: {text}",
                 ).to_dict(),
             },
         )
 
         # give time for utterance after event publish
-        await asyncio.sleep(8)
+        await asyncio.sleep(10)
         self.call_ask_status.set()
         return f"Message interjected to user: {text}"
 
@@ -461,6 +550,24 @@ class Call(SteerableToolHandle):
         """
         await self.call_ready.wait()
         await self.call_ask_status.wait()
+        await publish_event(
+            {
+                "topic": self.phone_number,
+                "to": "past",
+                "event": InterruptEvent().to_dict(),
+            },
+        ),
+        await publish_event(
+            {
+                "topic": self.phone_number,
+                "to": "pending",
+                "event": PhoneUtteranceEvent(
+                    role="System",
+                    content=f"Say goodbye to user.",
+                ).to_dict(),
+            },
+        )
+        await asyncio.sleep(8)
         await publish_event(
             {
                 "topic": self.phone_number,

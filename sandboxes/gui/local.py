@@ -1,0 +1,205 @@
+import os
+import asyncio
+from textual.app import App, ComposeResult
+from textual.screen import Screen
+from textual.widgets import Button, Header, Footer, Input, Label
+from textual.containers import Horizontal
+from datetime import datetime
+from unity.conversation_manager.utils import publish_event
+from unity.conversation_manager.events import (
+    SMSMessageRecievedEvent,
+    EmailRecievedEvent,
+    PhoneCallStopEvent,
+    PhoneCallInitiatedEvent,
+    WhatsappMessageRecievedEvent,
+)
+from dotenv import load_dotenv
+
+load_dotenv(override=True)
+
+# Stub functions for sending messages and making calls
+
+
+def send_sms(message: str) -> None:
+    # Publish an SMS received event for the user
+    ev = {
+        "to": "pending",
+        "topic": os.getenv("USER_PHONE_NUMBER"),
+        "event": SMSMessageRecievedEvent(
+            content=message,
+            timestamp=datetime.now(),
+            role="User",
+        ).to_dict(),
+    }
+    asyncio.create_task(publish_event(ev))
+
+
+def send_email(message: str) -> None:
+    # Publish an Email received event for the user
+    ev = {
+        "to": "pending",
+        "topic": os.getenv("USER_PHONE_NUMBER"),
+        "event": EmailRecievedEvent(
+            content=message,
+            timestamp=datetime.now(),
+            role="User",
+        ).to_dict(),
+    }
+    asyncio.create_task(publish_event(ev))
+
+
+def send_whatsapp(message: str) -> None:
+    # Publish a WhatsApp received event for the user
+    ev = {
+        "to": "pending",
+        "topic": os.getenv("USER_PHONE_NUMBER"),
+        "event": WhatsappMessageRecievedEvent(
+            content=message,
+            timestamp=datetime.now(),
+            role="User",
+        ).to_dict(),
+    }
+    asyncio.create_task(publish_event(ev))
+
+
+class MenuScreen(Screen):
+    def compose(self) -> ComposeResult:
+        yield Header()
+
+        # Actions menu: two small buttons per row
+        yield Horizontal(
+            Button("Send SMS", id="sms", classes="small"),
+            Button("Send WhatsApp", id="whatsapp", classes="small"),
+            Button("Send Email", id="email", classes="small"),
+            Button("Send Call", id="call", classes="small"),
+            Button("Quit", id="quit", classes="small"),
+            id="menu",
+        )
+
+        yield Footer()
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        if event.button.id == "sms":
+            self.app.push_screen(SMSScreen())
+        elif event.button.id == "whatsapp":
+            self.app.push_screen(WhatsAppScreen())
+        elif event.button.id == "email":
+            self.app.push_screen(EmailScreen())
+        elif event.button.id == "call":
+            self.app.push_screen(CallScreen())
+        elif event.button.id == "quit":
+            self.app.exit()
+
+
+class SMSScreen(Screen):
+    def compose(self) -> ComposeResult:
+        yield Header()
+        yield Label("Message:")
+        yield Input(placeholder="Enter message", id="message")
+        yield Horizontal(
+            Button("Send", id="send_sms"),
+            Button("Back", id="back"),
+        )
+        yield Footer()
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        if event.button.id == "send_sms":
+            message = self.query_one("#message", Input).value
+            send_sms(message)
+        elif event.button.id == "back":
+            self.app.pop_screen()
+
+
+class EmailScreen(Screen):
+    def compose(self) -> ComposeResult:
+        yield Header()
+        yield Label("Message:")
+        yield Input(placeholder="Enter message", id="message")
+        yield Horizontal(
+            Button("Send", id="send_email"),
+            Button("Back", id="back"),
+        )
+        yield Footer()
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        if event.button.id == "send_email":
+            message = self.query_one("#message", Input).value
+            send_email(message)
+        elif event.button.id == "back":
+            self.app.pop_screen()
+
+
+class CallScreen(Screen):
+    def compose(self) -> ComposeResult:
+        yield Header()
+        yield Label("Purpose:")
+        yield Input(placeholder="Enter purpose", id="purpose")
+        yield Horizontal(
+            Button("Call", id="send_call"),
+            Button("End Call", id="end_call"),
+            Button("Back", id="back"),
+        )
+        yield Footer()
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        if event.button.id == "send_call":
+            purpose = self.query_one("#purpose", Input).value
+            # Publish a PhoneCallInitiatedEvent for the user
+            ev = {
+                "topic": os.getenv("USER_PHONE_NUMBER"),
+                "event": PhoneCallInitiatedEvent(purpose=purpose).to_dict(),
+            }
+            asyncio.create_task(publish_event(ev))
+        elif event.button.id == "end_call":
+            ev = {
+                "topic": os.getenv("USER_PHONE_NUMBER"),
+                "event": PhoneCallStopEvent().to_dict(),
+            }
+            asyncio.create_task(publish_event(ev))
+        elif event.button.id == "back":
+            self.app.pop_screen()
+
+
+class WhatsAppScreen(Screen):
+    def compose(self) -> ComposeResult:
+        yield Header()
+        yield Label("Message:")
+        yield Input(placeholder="Enter message", id="message")
+        yield Horizontal(
+            Button("Send", id="send_whatsapp"),
+            Button("Back", id="back"),
+        )
+        yield Footer()
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        if event.button.id == "send_whatsapp":
+            message = self.query_one("#message", Input).value
+            send_whatsapp(message)
+        elif event.button.id == "back":
+            self.app.pop_screen()
+
+
+class MessagingApp(App):
+    CSS = """
+Screen {
+    background: black;
+    color: white;
+}
+
+Button {
+    background: black;
+    color: white;
+    border: round white;
+}
+
+Button.-active {
+    background: gray;
+}
+"""
+
+    def on_mount(self) -> None:
+        self.push_screen(MenuScreen())
+
+
+if __name__ == "__main__":
+    MessagingApp(ansi_color=True).run()
