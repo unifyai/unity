@@ -1,4 +1,3 @@
-import asyncio
 import os
 import unify
 from typing import Any
@@ -11,9 +10,6 @@ from unity.common.llm_helpers import (
 )
 
 from unity.conversation_manager import comms_actions
-from unity.conversation_manager.utils import publish_event
-from unity.conversation_manager.events import PhoneUtteranceEvent, PhoneCallStopEvent
-from unity.conversation_manager.prompt_builders import build_call_ask_prompt
 from unity.controller.browser import Browser
 from unity.contact_manager.contact_manager import ContactManager
 from unity.transcript_manager.transcript_manager import TranscriptManager
@@ -148,134 +144,16 @@ class ActionProvider:
             phone_number: The destination phone number to call.
             purpose: A clear and concise description of why the call is being made. This purpose will be used to guide the conversation.
         """
-
-        class Call(SteerableToolHandle):
-            def __init__(cls, phone_number: str, purpose: str):
-                """
-                Starts a new phone call session and exposes the steerable methods
-                """
-                cls.phone_number = phone_number
-                cls.purpose = purpose
-
-                cls.client = unify.AsyncUnify("o4-mini@openai")
-                cls.tools = methods_to_tool_dict(
-                    self.contact_manager.ask,
-                    self.transcript_manager.ask,
-                    self.transcript_manager.summarize,
-                    self.knowledge_manager.ask,
-                    self.task_scheduler.ask,
-                    # comms_actions._send_email_via_address,
-                    # comms_actions._send_sms_message_via_number,
-                    # new_actions._send_whatsapp_message_via_number,
-                )
-
-                cls.call_ready = asyncio.Event()
-                cls.call_ask_status = asyncio.Event()
-                cls.call_ask_status.set()
-
-                async def do_call():
-                    await comms_actions._start_call(
-                        os.getenv("ASSISTANT_NUMBER"),
-                        phone_number,
-                        purpose,
-                    )
-                    # give time to start call and complete greeting
-                    await asyncio.sleep(15)
-                    cls.call_ready.set()
-
-                asyncio.create_task(do_call())
-                cls.status = "initiated"
-
-            async def ask(cls, question: str) -> SteerableToolHandle:
-                """
-                Ask a question to the assistant.
-                """
-                await cls.call_ready.wait()
-                await cls.call_ask_status.wait()
-
-                cls.call_ask_status.clear()
-                await publish_event(
-                    {
-                        "topic": cls.phone_number,
-                        "to": "pending",
-                        "event": PhoneUtteranceEvent(
-                            role="User",
-                            content=f"Ask the user this question directly: {question}",
-                        ).to_dict(),
-                    },
-                )
-
-                cls.client.set_system_message(
-                    build_call_ask_prompt(cls.tools, question),
-                )
-                handle = start_async_tool_use_loop(
-                    cls.client,
-                    f"The user is answering the question: {question}. Use available tools to get information of the user's answer.",
-                    cls.tools,
-                    loop_id="call_ask",
-                )
-
-                async def _reset_call_ask_status():
-                    try:
-                        await handle.result()
-                    finally:
-                        cls.call_ask_status.set()
-
-                asyncio.create_task(_reset_call_ask_status())
-                return handle
-
-            async def interject(cls, text: str) -> str:
-                """
-                Interject a message to the assistant for them to speak it to the user.
-                """
-                await cls.call_ready.wait()
-                await cls.call_ask_status.wait()
-
-                cls.call_ask_status.clear()
-                await publish_event(
-                    {
-                        "topic": cls.phone_number,
-                        "to": "pending",
-                        "event": PhoneUtteranceEvent(
-                            role="User",
-                            content=f"Speak this content to the user directly: {text}",
-                        ).to_dict(),
-                    },
-                )
-
-                # give time for utterance after event publish
-                await asyncio.sleep(8)
-                cls.call_ask_status.set()
-                return f"Message interjected to user: {text}"
-
-            async def stop(cls):
-                """
-                End the call.
-                """
-                await cls.call_ready.wait()
-                await cls.call_ask_status.wait()
-                await publish_event(
-                    {
-                        "topic": cls.phone_number,
-                        "to": "past",
-                        "event": PhoneCallStopEvent().to_dict(),
-                    },
-                )
-                cls.status = "ended"
-
-            def result(cls) -> str:
-                return cls.status
-
-            def pause(cls) -> str:
-                return "Not applicable."
-
-            def resume(cls) -> str:
-                return "Not applicable."
-
-            def done(cls) -> bool:
-                return cls.status == "ended"
-
-        return Call(phone_number, purpose)
+        return comms_actions.Call(
+            phone_number,
+            purpose,
+            # tools=methods_to_tool_dict(
+            #     self.contact_manager.ask,
+            #     self.transcript_manager.ask,
+            #     self.knowledge_manager.ask,
+            #     self.task_scheduler.ask,
+            # ),
+        )
 
     # --- Browser Actions ---
     async def browser_act(self, instruction: str, expectation: str) -> str:
