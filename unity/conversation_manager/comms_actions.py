@@ -482,7 +482,7 @@ class Call(SteerableToolHandle):
 
         # give time for utterance and response
         await asyncio.sleep(20)
-        return await self.search_local_chat(question)
+        return await self._search_local_chat(question)
 
     async def ask(self, question: str) -> SteerableToolHandle:
         """
