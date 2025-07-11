@@ -190,8 +190,8 @@ async def main(with_conductor: bool = True, start_local: bool = False):
         os.getenv("USER_NUMBER", ""),
         os.getenv("USER_PHONE_NUMBER", ""),
         conv_context_length=conv_context_length,
-        with_conductor=with_conductor,
         start_local=start_local,
+        enabled_tools="conductor" if with_conductor else None,
     )
     user_agent.set_event_manager(event_manager)
     user_agent.subscribe(

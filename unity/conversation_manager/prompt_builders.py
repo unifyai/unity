@@ -56,7 +56,6 @@ def _build_conductor_tasks_rules_section() -> str:
         "- If the user asks about something that you can't answer based on the event history so far, you should use the conductor for performing it",
         "- Conductor actions launch a separate task in the background that you can keep track of in further steps",
         "- They also get logged into the event stream",
-        # '- In case the user wants some information, use the "ask" action type otherwise if the user wants some action taken (such as scheduling tasks, sending mails, sms, etc.) use the "request" action type',
         "- You will be provided with a list of handles for all ongoing conductor tasks along with the query made to the conductor for each of them.",
         "- You should first check if there's an ongoing conductor task that the user is asking about or wants action taken on, before creating new conductor tasks",
         "- Never start a new task with the conductor if the user is asking you about an existing task!",
