@@ -30,49 +30,52 @@ class Agent:
         self.inflight_events = []
 
         self.current_llm_run = None
+        self.async_lock = asyncio.Lock()
 
     async def listen_for_events(self):
         print("COLLECTING...")
-        self.call_proc = run_script("call.py", "console")
+        self.call_proc = run_script("call.py", "dev")
         while True:
-            try:
-                new_event = await self.events_queue.get()
-                print("GOT NEW EVENT", new_event)
-                self.pending_events.append(new_event)
-                # urgent events should re-trigger, cancel events should cancel current running only
-                if new_event:
-                    # must flush all events now
-                    if self.current_llm_run and not self.current_llm_run.done():
-                        print("CANCELLING CURRENT RUN")
-                        self.current_llm_run.cancel()
-                        try:
-                            # cancel gracefully
-                            await self.current_llm_run
-                        except asyncio.CancelledError:
-                            self.inflight_events = [
-                                *self.inflight_events,
-                                *self.pending_events,
-                            ]
-                    else:
-                        self.inflight_events = self.pending_events.copy()
+            # try:
+            new_event = await self.events_queue.get()
+            # print("GOT NEW EVENT", new_event)
+            self.pending_events.append(new_event)
+            # urgent events should re-trigger, cancel events should cancel current running only
+            if new_event:
+                # must flush all events now
+                if self.current_llm_run is not None and not self.current_llm_run.done():
+                    print("CANCELLING CURRENT RUN")
+                    self.current_llm_run.cancel()
+                    try:
+                        # cancel gracefully
+                        await self.current_llm_run
+                    except asyncio.CancelledError:
+                        ev = {"topic": "call_process", "type": "cancel_gen"}
+                        # self.publish(ev)
+                        self.inflight_events = [
+                            *self.inflight_events,
+                            *self.pending_events,
+                        ]
+                else:
+                    self.inflight_events = self.pending_events.copy()
 
-                    add_filler = False
-                    if new_event.get("role") == "user" and new_event.get("content") != "<Call Started>":
-                        add_filler = True
-                    self.current_llm_run = asyncio.create_task(self.run(add_filler))
-                    self.current_llm_run.add_done_callback(self.on_run_end)
-                    self.pending_events.clear()
-            except asyncio.TimeoutError:
-                if not self.pending_events:
-                    continue
-                if self.current_llm_run and not self.current_llm_run.done():
-                    continue
-
-                self.inflight_events = self.pending_events.copy()
-                self.current_llm_run = asyncio.create_task(self.run())
+                add_filler = False
+                if new_event.get("role") == "user" and new_event.get("content") != "<Call Started>":
+                    add_filler = True
+                self.current_llm_run = asyncio.create_task(self.run(add_filler))
                 self.current_llm_run.add_done_callback(self.on_run_end)
-
                 self.pending_events.clear()
+            # except asyncio.TimeoutError:
+            #     if not self.pending_events:
+            #         continue
+            #     if self.current_llm_run and not self.current_llm_run.done():
+            #         continue
+
+            #     self.inflight_events = self.pending_events.copy()
+            #     self.current_llm_run = asyncio.create_task(self.run())
+            #     self.current_llm_run.add_done_callback(self.on_run_end)
+
+            #     self.pending_events.clear()
 
     def on_run_end(self, t: asyncio.Task):
         global NO_RESPONSE_COUNTER
@@ -109,6 +112,7 @@ class Agent:
                     
 
         except asyncio.CancelledError:
+            print("LOOOOOOL")
             pass
         finally:
             ...
@@ -182,7 +186,7 @@ class Agent:
         user_msg = f"{conversation_history_prompt}\n\n{agent_script_prompt}"
         print("\033[32m" + user_msg + "\033[0m", flush=True)
         
-        with open(r"C:\Users\LEGION\Desktop\unity\unity\real_estate_demo\prompts\v5.md") as f:
+        with open(r"C:\Users\Yasser\Desktop\unity\unity\real_estate_demo\prompts\v5.md") as f:
             sys = f.read()
         
         acc_text = ""

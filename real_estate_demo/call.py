@@ -74,6 +74,8 @@ class Assistant(Agent):
     ) -> None:
         # events_queue.put_nowait(PhoneUtteranceEvent(role="User", content=new_message.text_content))
         # we will handle this through the events manager
+        print(turn_ctx)
+        print(new_message)
         await publish_event(
             {
                 "topic": self.from_number,
@@ -101,7 +103,7 @@ class Assistant(Agent):
         print("running llm node...")
         while True:
             chunk = await chunk_queue.get()
-            if chunk["type"] == "end_gen":
+            if chunk["type"] == "end_gen" or chunk["type"] == "cancel_gen":
                 break
             elif chunk["chunk"] is not None:
                 yield chunk["chunk"]
@@ -314,15 +316,11 @@ async def entrypoint(ctx: agents.JobContext):
                 last_activity_time = asyncio.get_event_loop().time()
                 # handle msg
                 if msg["type"] == "start_gen":
-                    global IN_GEN
-                    print("ENTERED START GEN WITH GEN", IN_GEN)
-                    if IN_GEN:
-                        # await session.current_speech()
-                        print("awaiting current speech first")
-                        if t: await t
-                        # continue
-                    else:
-                        IN_GEN = True
+                    # global IN_GEN
+                    # print("ENTERED START GEN WITH GEN", IN_GEN)
+                    if t is not None and not t.done(): 
+                        print("waiting for current speech to end first...")
+                        await t
                     # nonlocal session
                     # await session.current_speech()
                     chunk_queue = asyncio.Queue()
@@ -338,8 +336,11 @@ async def entrypoint(ctx: agents.JobContext):
                         elif msg["type"] == "end_gen":
                             chunk_queue.put_nowait(msg)
                             break
+                        elif msg["type"] == "cancel_gen":
+                            chunk_queue.put_nowait(msg)
+                            break
                         await asyncio.sleep(0)
-                    IN_GEN = False
+                    # IN_GEN = False
             except Exception as e:
                 print(f"Error in collect_events: {e}")
                 if WRITER and not WRITER.is_closing():
