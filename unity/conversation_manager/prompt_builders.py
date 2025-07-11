@@ -19,7 +19,7 @@ def _tool_name(tools: Dict[str, Callable], needle: str) -> str | None:
 
 
 # Shared prompt sections
-def _build_event_stream_section(with_conductor: bool = True) -> str:
+def _build_event_stream_section() -> str:
     """Build the Event Stream section with a heading and underline."""
     title = "Event Stream:"
     underline = "-" * len(title)
@@ -28,11 +28,8 @@ def _build_event_stream_section(with_conductor: bool = True) -> str:
         "1. User Message: Messages input by the user through the different communication channels like whatsapp, sms and email",
         "2. Assistant Message: Messages sent by you to the user through the different communication channels",
         "3. User and Assistant Phone Utterance: these are events emitted during phone calls, which are transcribed speech, can come from either party",
+        "4. Tasks: Tasks created through ToolUse and updates based on the handle actions.",
     ]
-    if with_conductor:
-        items.append(
-            "4. Tasks: Tasks created through ToolUse and updates based on the handle actions.",
-        )
     return "\n".join([title, underline] + items)
 
 
@@ -49,7 +46,7 @@ def _build_agent_loop_section() -> str:
     return "\n".join([title, underline] + steps)
 
 
-def _build_conductor_tasks_rules_section() -> str:
+def _build_tool_use_tasks_rules_section() -> str:
     title = "ToolUse Tasks Rules:"
     underline = "-" * len(title)
     rules = [
@@ -66,7 +63,7 @@ def _build_conductor_tasks_rules_section() -> str:
     return "\n".join([title, underline] + rules)
 
 
-def _build_communication_rules_section(with_conductor: bool = True) -> str:
+def _build_communication_rules_section() -> str:
     """Build the Communication Rules section with a heading and underline."""
     title = "Communication Rules:"
     underline = "-" * len(title)
@@ -76,13 +73,10 @@ def _build_communication_rules_section(with_conductor: bool = True) -> str:
         "- Avoid verbose or unnecessary messages; only communicate when needed.",
         "- Maintain human-like language, avoid robotic and verbose responses",
         "- Do not overwhelm the user with useless messages or phone utterances, only send messages to the user when needed",
+        "- Any communication action (other than interactions on the current call) will happen through the ToolUse, so you'd need to create ToolUse tasks or act on existing tasks for any communication through whatsapp, sms, email, or sending a call.",
+        "- Break large WhatsApp messages into multiple chunks when appropriate.",
+        "- Send the full SMS message in one go when possible.",
     ]
-    if with_conductor:
-        lines += [
-            "- Any communication action (other than interactions on the current call) will happen through the ToolUse, so you'd need to create ToolUse tasks or act on existing tasks for any communication through whatsapp, sms, email, or sending a call.",
-            "- Break large WhatsApp messages into multiple chunks when appropriate.",
-            "- Send the full SMS message in one go when possible.",
-        ]
 
     return "\n".join([title, underline] + lines)
 
@@ -122,34 +116,34 @@ def _build_your_capabilities_section(is_call: bool) -> str:
 
 
 # Refactored builders
-def build_call_sys_prompt(name: str, with_conductor: bool = True) -> str:
+def build_call_sys_prompt(name: str) -> str:
     """Build the **system** prompt for phone-call LLM runs."""
     # assemble all sections
     sections = [
         "You are a general purpose AI assistant for your user.",
         _build_user_details_section(name),
         # _build_your_capabilities_section(is_call=True),
-        _build_event_stream_section(with_conductor=with_conductor),
-        _build_agent_loop_section() if with_conductor else "",
-        _build_conductor_tasks_rules_section() if with_conductor else "",
-        _build_communication_rules_section(with_conductor=with_conductor),
+        _build_event_stream_section(),
+        _build_agent_loop_section(),
+        _build_tool_use_tasks_rules_section(),
+        _build_communication_rules_section(),
     ]
     # filter out None
     sections = [s for s in sections if s]
     return "\n\n".join(sections)
 
 
-def build_non_call_sys_prompt(name: str, with_conductor: bool = True) -> str:
+def build_non_call_sys_prompt(name: str) -> str:
     """Build the **system** prompt for non-call LLM runs."""
     # assemble all sections
     sections = [
         "You are a general purpose AI assistant for your user.",
         _build_user_details_section(name),
         # _build_your_capabilities_section(is_call=False),
-        _build_event_stream_section(with_conductor=with_conductor),
-        _build_agent_loop_section() if with_conductor else "",
-        _build_conductor_tasks_rules_section() if with_conductor else "",
-        _build_communication_rules_section(with_conductor=with_conductor),
+        _build_event_stream_section(),
+        _build_agent_loop_section(),
+        _build_tool_use_tasks_rules_section(),
+        _build_communication_rules_section(),
     ]
     sections = [s for s in sections if s]
     return "\n\n".join(sections)
@@ -160,7 +154,6 @@ def build_user_agent_prompt(
     past_events: list[dict],
     inflight_events: list[dict],
     tool_use_handles: dict[int, dict] | None = None,
-    with_conductor: bool = True,
 ) -> str:
     """Build the user-agent prompt including call purpose, events stream, and ToolUse handles."""
     from unity.conversation_manager.events import Event
@@ -181,7 +174,7 @@ def build_user_agent_prompt(
             f"Handle ID {hid}: {tool_use_handles[hid]['query']}"
             for hid in tool_use_handles
         )
-        if tool_use_handles and with_conductor
+        if tool_use_handles
         else ""
     )
 
@@ -193,11 +186,7 @@ def build_user_agent_prompt(
         past_events_str.strip(),
         "** NEW EVENTS **",
         new_events_str.strip(),
-        (
-            "** TOOL_USE HANDLES (USE THESE FOR THE TOOL_USE HANDLE ACTION) **"
-            if with_conductor
-            else ""
-        ),
+        "** TOOL_USE HANDLES (USE THESE FOR THE TOOL_USE HANDLE ACTION) **",
         tool_use_handles_str.strip(),
     ]
     return "\n".join(lines)

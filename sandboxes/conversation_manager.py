@@ -37,13 +37,24 @@ if __name__ == "__main__":
     #     action="store_false",
     #     help="Disable local GUI mode (no GUI)",
     # )
+    parser.add_argument(
+        "--enabled-tools",
+        dest="enabled_tools",
+        type=lambda s: [t.strip() for t in s.split(",")],
+        default=None,
+        help="Comma-separated list of enabled tools with choices of conductor, contact, transcript, knowledge, scheduler. Default: None",
+    )
     args = parser.parse_args()
 
     # Start the convo manager
     print("Starting convo manager...")
     if unity.conversation_manager.start(
-        with_conductor=False,
         start_local=args.start_local,
+        enabled_tools=(
+            ",".join(args.enabled_tools)
+            if isinstance(args.enabled_tools, list)
+            else args.enabled_tools
+        ),
     ):
         print("Convo manager started successfully...")
 

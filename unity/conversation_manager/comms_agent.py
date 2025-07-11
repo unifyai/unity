@@ -83,7 +83,6 @@ class CommsAgent:
         self.enabled_tools = (
             enabled_tools if isinstance(enabled_tools, list) else [enabled_tools]
         )
-        self.with_conductor = "conductor" in self.enabled_tools
         self.start_local = start_local
 
         # logging
@@ -95,7 +94,12 @@ class CommsAgent:
 
         self.tool_use_handles: dict[int, dict[AsyncToolUseLoopHandle, str]] = {}
 
-        if self.with_conductor and self.conductor is None:
+        if self.enabled_tools[0] is None:
+            self.enabled_tools = {}
+            return
+
+        if "conductor" in self.enabled_tools:
+            # if conductor is enabled, add its methods only as it has all other tools
             from unity.conductor.conductor import Conductor
 
             self.conductor = Conductor()
@@ -103,10 +107,6 @@ class CommsAgent:
                 self.conductor.ask,
                 self.conductor.request,
             )
-            return
-
-        if self.enabled_tools[0] is None:
-            self.enabled_tools = {}
             return
 
         tools_list = []
@@ -136,10 +136,13 @@ class CommsAgent:
                 manager = KnowledgeManager()
                 tools_list += [manager.ask, manager.update]
 
-            # elif tool == "memory":
-            #     from unity.memory_manager.memory_manager import MemoryManager
-            #     manager = MemoryManager()
-            #     tools_list += [manager.get_rolling_activity]
+            elif tool == "scheduler":
+                from unity.task_scheduler.task_scheduler import TaskScheduler
+
+                manager = TaskScheduler()
+                tools_list += [manager.ask, manager.update]
+
+        self.enabled_tools = methods_to_tool_dict(*tools_list)
 
     async def get_bus_events(self):
         from unity.events.event_bus import EVENT_BUS
@@ -247,7 +250,7 @@ class CommsAgent:
     async def tool_use_action(self, action: ToolUseAction):
         """Handle tool_use actions asynchronously"""
 
-        if not isinstance(self.enabled_tools, dict):
+        if isinstance(self.enabled_tools, list):
             self._build_enabled_tools_dict()
 
         # get chat history
@@ -356,9 +359,9 @@ class CommsAgent:
                 if t.actions is not None:
                     print("actions", t.actions)
                     for action in t.actions:
-                        if isinstance(action, SendCallAction):
-                            asyncio.create_task(self.send_call())
-                        elif isinstance(action, ToolUseAction):
+                        # if isinstance(action, SendCallAction):
+                        #     asyncio.create_task(self.send_call())
+                        if isinstance(action, ToolUseAction):
                             asyncio.create_task(self.tool_use_action(action))
                         elif isinstance(action, ToolUseHandleAction):
                             asyncio.create_task(
@@ -380,7 +383,7 @@ class CommsAgent:
             return await self.non_phone_call_llm_run()
 
     async def non_phone_call_llm_run(self):
-        non_call_sys = build_non_call_sys_prompt(self.user_name, self.with_conductor)
+        non_call_sys = build_non_call_sys_prompt(self.user_name)
         user_msg = self.get_user_agent_prompt()
         print(user_msg, flush=True)
 
@@ -402,7 +405,7 @@ class CommsAgent:
         ev = {"topic": "call_process", "type": "start_gen"}
         self.publish(ev)
 
-        call_sys = build_call_sys_prompt(self.user_name, self.with_conductor)
+        call_sys = build_call_sys_prompt(self.user_name)
 
         user_msg = self.get_user_agent_prompt()
         print(user_msg)
@@ -459,7 +462,6 @@ class CommsAgent:
             past_events=self.past_events or [],
             inflight_events=self.inflight_events,
             tool_use_handles=self.tool_use_handles,
-            with_conductor=self.with_conductor,
         )
 
     def publish(self, event: dict):
