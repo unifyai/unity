@@ -27,7 +27,6 @@ import unify
 from unity.contact_manager.contact_manager import ContactManager
 from unity.transcript_manager.transcript_manager import TranscriptManager
 from unity.knowledge_manager.knowledge_manager import KnowledgeManager
-from unity.task_scheduler.task_scheduler import TaskScheduler
 from unity.common.llm_helpers import (
     SteerableToolHandle,
     methods_to_tool_dict,
@@ -276,6 +275,9 @@ async def send_whatsapp_message(
     contact_manager = ContactManager()
     transcript_manager = TranscriptManager(contact_manager=contact_manager)
     knowledge_manager = KnowledgeManager()
+    # Lazy import to avoid circular dependency at module-load time.
+    from unity.task_scheduler.task_scheduler import TaskScheduler
+
     task_scheduler = TaskScheduler()
 
     client = unify.AsyncUnify("o4-mini@openai")
@@ -306,6 +308,9 @@ async def send_sms_message(
     contact_manager = ContactManager()
     transcript_manager = TranscriptManager(contact_manager=contact_manager)
     knowledge_manager = KnowledgeManager()
+    # Lazy import to avoid circular dependency at module-load time.
+    from unity.task_scheduler.task_scheduler import TaskScheduler
+
     task_scheduler = TaskScheduler()
 
     client = unify.AsyncUnify("o4-mini@openai")
@@ -336,6 +341,9 @@ async def send_email(
     contact_manager = ContactManager()
     transcript_manager = TranscriptManager(contact_manager=contact_manager)
     knowledge_manager = KnowledgeManager()
+    # Lazy import to avoid circular dependency at module-load time.
+    from unity.task_scheduler.task_scheduler import TaskScheduler
+
     task_scheduler = TaskScheduler()
 
     client = unify.AsyncUnify("o4-mini@openai")
