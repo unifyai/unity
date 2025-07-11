@@ -9,7 +9,6 @@ from typing import Optional, Callable, Dict, Any
 import unify
 
 from ..contact_manager.contact_manager import ContactManager
-from ..contact_manager.simulated import SimulatedContactManager
 from ..transcript_manager.transcript_manager import TranscriptManager
 from ..knowledge_manager.knowledge_manager import KnowledgeManager
 from ..common.llm_helpers import methods_to_tool_dict, start_async_tool_use_loop
@@ -237,15 +236,18 @@ class MemoryManager(BaseMemoryManager):
         """
 
         async def set_rolling_summary(contact_id: int, rolling_summary: str) -> str:
-            if not isinstance(self._contact_manager, SimulatedContactManager):
+            if hasattr(self._contact_manager, "_update_contact"):
                 await asyncio.to_thread(
                     self._contact_manager._update_contact,
                     contact_id=contact_id,
                     custom_fields={"rolling_summary": rolling_summary},
                 )
-            return (
-                f"Rolling summary for contact with id {contact_id} successfully updated"
-            )
+                return f"Rolling summary for contact with id {contact_id} successfully updated"
+            else:
+                handle = await self._contact_manager.update(
+                    f"Please set the rolling_summary for contact id {contact_id} as follows:\n{rolling_summary}",
+                )
+                return await handle.result()
 
         tools: Dict[str, Callable[..., Any]] = {
             "transcript_ask": self._transcript_manager.ask,

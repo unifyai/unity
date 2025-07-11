@@ -145,9 +145,10 @@ class SimulatedMemoryManager(BaseMemoryManager):
             self._overlays.setdefault(contact_id, {})[
                 "rolling_summary"
             ] = rolling_summary
-            return (
-                f"Rolling summary for contact with id {contact_id} successfully updated"
+            handle = await self._contact_manager.update(
+                f"Please set the bio for contact id {contact_id} as follows:\n{rolling_summary}",
             )
+            return await handle.result()
 
         tools: Dict[str, Callable[..., Any]] = {
             "transcript_ask": self._transcript_manager.ask,
