@@ -218,7 +218,7 @@ class InterruptEvent(Event):
         return f"[INTERRUPT @ {self.fmt_timestamp}] User interrupted"
 
 
-class ConductorStartedEvent(Event):
+class ToolUseStartedEvent(Event):
     def __init__(
         self,
         chat_history: list[dict[str, str]],
@@ -243,11 +243,11 @@ class ConductorStartedEvent(Event):
         return base_dict
 
     def __str__(self):
-        return f"""[CONDUCTOR STARTED @ {self.fmt_timestamp}]
+        return f"""[TOOL_USE STARTED @ {self.fmt_timestamp}]
         {self.query}"""
 
 
-class ConductorEndedEvent(Event):
+class ToolUseEndedEvent(Event):
     def __init__(self, query: str, *, is_urgent: bool = True, **kwargs):
         kwargs.pop("query", None)
         kwargs.pop("is_urgent", None)
@@ -261,11 +261,11 @@ class ConductorEndedEvent(Event):
         return base_dict
 
     def __str__(self):
-        return f"""[CONDUCTOR ENDED @ {self.fmt_timestamp}]
+        return f"""[TOOL_USE ENDED @ {self.fmt_timestamp}]
         {self.query}"""
 
 
-class ConductorHandleSuccessEvent(Event):
+class ToolUseHandleSuccessEvent(Event):
     def __init__(
         self,
         query: str,
@@ -290,11 +290,11 @@ class ConductorHandleSuccessEvent(Event):
         return base_dict
 
     def __str__(self):
-        return f"""[CONDUCTOR HANDLE ACTION @ {self.fmt_timestamp}]
+        return f"""[TOOL_USE HANDLE ACTION @ {self.fmt_timestamp}]
         {self.handle_type}: {self.query}"""
 
 
-class ConductorHandleFailedEvent(Event):
+class ToolUseHandleFailedEvent(Event):
     def __init__(self, query: str, handle_type: str, **kwargs):
         kwargs.pop("query", None)
         kwargs.pop("handle_type", None)
@@ -311,7 +311,7 @@ class ConductorHandleFailedEvent(Event):
         return base_dict
 
     def __str__(self):
-        return f"""[CONDUCTOR HANDLE FAILED @ {self.fmt_timestamp}]
+        return f"""[TOOL_USE HANDLE FAILED @ {self.fmt_timestamp}]
         {self.handle_type}: {self.query}"""
 
 

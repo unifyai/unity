@@ -198,7 +198,7 @@ async def main(with_conductor: bool = True, start_local: bool = False):
         [
             os.getenv("USER_NUMBER", ""),
             os.getenv("USER_PHONE_NUMBER", ""),
-            "conductor",
+            "tool_use",
         ],
     )
     comms_manager = CommsManager(events_queue=event_manager.events_queue)

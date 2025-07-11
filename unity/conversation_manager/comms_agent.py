@@ -78,7 +78,7 @@ class CommsAgent:
 
         # conductor
         self.conductor = None
-        self.conductor_handles = None
+        self.tool_use_handles = None
         self.handle_count = 0
         self.enabled_tools = (
             enabled_tools if isinstance(enabled_tools, list) else [enabled_tools]
@@ -93,7 +93,7 @@ class CommsAgent:
     def _build_enabled_tools_dict(self):
         from unity.common.llm_helpers import AsyncToolUseLoopHandle
 
-        self.conductor_handles: dict[int, dict[AsyncToolUseLoopHandle, str]] = {}
+        self.tool_use_handles: dict[int, dict[AsyncToolUseLoopHandle, str]] = {}
 
         if self.with_conductor and self.conductor is None:
             from unity.conductor.conductor import Conductor
@@ -244,10 +244,9 @@ class CommsAgent:
 
                 self.pending_events.clear()
 
-    async def conductor_action(self, action: ConductorAction):
-        """Handle conductor actions asynchronously"""
+    async def tool_use_action(self, action: ToolUseAction):
+        """Handle tool_use actions asynchronously"""
 
-        # if self.conductor is None:
         if not isinstance(self.enabled_tools, dict):
             self._build_enabled_tools_dict()
 
@@ -259,7 +258,7 @@ class CommsAgent:
         unify_client.set_system_message(
             build_action_prompt(self.enabled_tools, action.query),
         )
-        conductor_handle = start_async_tool_use_loop(
+        tool_use_handle = start_async_tool_use_loop(
             unify_client,
             action.query,
             self.enabled_tools,
@@ -268,14 +267,14 @@ class CommsAgent:
 
         # if action.show_steps:
         #     async def _wrap():
-        #         answer = await conductor_handle.result()
+        #         answer = await tool_use_handle.result()
         #         return answer, unify_client.messages
 
-        #     conductor_handle.result = _wrap  # type: ignore[attr-defined]
+        #     tool_use_handle.result = _wrap  # type: ignore[attr-defined]
 
         handle_id = self.handle_count
-        self.conductor_handles[handle_id] = {
-            "handle": conductor_handle,
+        self.tool_use_handles[handle_id] = {
+            "handle": tool_use_handle,
             "query": action.query,
         }
         self.handle_count += 1
@@ -283,48 +282,48 @@ class CommsAgent:
         # publish start event
         self.publish(
             {
-                "topic": "conductor",
+                "topic": "tool_use",
                 "to": "past",
-                "event": ConductorStartedEvent(chat_history, action.query).to_dict(),
+                "event": ToolUseStartedEvent(chat_history, action.query).to_dict(),
             },
         )
 
         # wait for the handle to be done
-        while not conductor_handle.done():
+        while not tool_use_handle.done():
             print("waiting for handle to be done")
             await asyncio.sleep(1)
 
         # get handle result
-        answer = await conductor_handle.result()
-        self.conductor_handles.pop(handle_id)
+        answer = await tool_use_handle.result()
+        self.tool_use_handles.pop(handle_id)
         if isinstance(answer, tuple):
             answer, _ = answer
 
         # publish end event
         self.publish(
             {
-                "topic": "conductor",
-                "event": ConductorEndedEvent(answer).to_dict(),
+                "topic": "tool_use",
+                "event": ToolUseEndedEvent(answer).to_dict(),
             },
         )
 
-    async def conductor_handle_action(self, action: ConductorHandleAction):
-        """Handle conductor handle actions asynchronously"""
-        # check if the conductor is running
-        if self.conductor_handles is None or not self.conductor_handles.get(
+    async def tool_use_handle_action(self, action: ToolUseHandleAction):
+        """Handle tool_use handle actions asynchronously"""
+        # check if the tool_use is running
+        if self.tool_use_handles is None or not self.tool_use_handles.get(
             action.handle_id,
         ):
             # handle failed
             event_data = {
-                "event": ConductorHandleFailedEvent(
-                    f"conductor is not running currently, "
+                "event": ToolUseHandleFailedEvent(
+                    f"tool_use is not running currently, "
                     "please create a new action instead",
                     action.type,
                 ).to_dict(),
             }
         else:
             # handle
-            handle = self.conductor_handles[action.handle_id]["handle"]
+            handle = self.tool_use_handles[action.handle_id]["handle"]
             if action.type == "ask":
                 await handle.ask(action.query)
             elif action.type == "interject":
@@ -336,13 +335,13 @@ class CommsAgent:
             elif action.type == "resume":
                 handle.resume()
             event_data = {
-                "event": ConductorHandleSuccessEvent(
+                "event": ToolUseHandleSuccessEvent(
                     action.query,
                     action.type,
                 ).to_dict(),
                 "to": "past",
             }
-        self.publish({"topic": "conductor", **event_data})
+        self.publish({"topic": "tool_use", **event_data})
 
     def on_run_end(self, t: asyncio.Task):
         try:
@@ -359,11 +358,11 @@ class CommsAgent:
                     for action in t.actions:
                         if isinstance(action, SendCallAction):
                             asyncio.create_task(self.send_call())
-                        elif isinstance(action, ConductorAction):
-                            asyncio.create_task(self.conductor_action(action))
-                        elif isinstance(action, ConductorHandleAction):
+                        elif isinstance(action, ToolUseAction):
+                            asyncio.create_task(self.tool_use_action(action))
+                        elif isinstance(action, ToolUseHandleAction):
                             asyncio.create_task(
-                                self.conductor_handle_action(action),
+                                self.tool_use_handle_action(action),
                             )
 
         except asyncio.CancelledError:
@@ -459,7 +458,7 @@ class CommsAgent:
             call_purpose=self.call_purpose,
             past_events=self.past_events or [],
             inflight_events=self.inflight_events,
-            conductor_handles=self.conductor_handles,
+            tool_use_handles=self.tool_use_handles,
             with_conductor=self.with_conductor,
         )
 
