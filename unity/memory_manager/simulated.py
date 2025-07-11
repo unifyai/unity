@@ -101,12 +101,7 @@ class SimulatedMemoryManager(BaseMemoryManager):
         async def set_bio(contact_id: int, bio: str) -> str:
             # overlay for the test's benefit
             self._overlays.setdefault(contact_id, {})["bio"] = bio
-            # forward to the simulated contact-manager (updates its LLM memory)
-            await self._contact_manager._update_contact(
-                contact_id=contact_id,
-                custom_fields={"bio": bio},
-            )
-            return "bio updated"
+            return f"Bio for contact with id {contact_id} successfully updated"
 
         tools: Dict[str, Callable[..., Any]] = {
             "transcript_ask": self._transcript_manager.ask,
