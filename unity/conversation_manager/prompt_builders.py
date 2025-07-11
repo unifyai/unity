@@ -31,7 +31,7 @@ def _build_event_stream_section(with_conductor: bool = True) -> str:
     ]
     if with_conductor:
         items.append(
-            "4. Tasks: Tasks created through the Conductor and updates based on the handle actions.",
+            "4. Tasks: Tasks created through ToolUse and updates based on the handle actions.",
         )
     return "\n".join([title, underline] + items)
 
@@ -50,16 +50,16 @@ def _build_agent_loop_section() -> str:
 
 
 def _build_conductor_tasks_rules_section() -> str:
-    title = "Conductor Tasks Rules:"
+    title = "ToolUse Tasks Rules:"
     underline = "-" * len(title)
     rules = [
-        "- If the user asks about something that you can't answer based on the event history so far, you should use the conductor for performing it",
-        "- Conductor actions launch a separate task in the background that you can keep track of in further steps",
+        "- If the user asks about something that you can't answer based on the event history so far, you should use the ToolUse for performing it",
+        "- ToolUse actions launch a separate task in the background that you can keep track of in further steps",
         "- They also get logged into the event stream",
-        "- You will be provided with a list of handles for all ongoing conductor tasks along with the query made to the conductor for each of them.",
-        "- You should first check if there's an ongoing conductor task that the user is asking about or wants action taken on, before creating new conductor tasks",
-        "- Never start a new task with the conductor if the user is asking you about an existing task!",
-        "- In case the user wants action on an existing handle, use the conductor handle action with the appropriate handle action type and the handle id for the handle to be manipulated, along with the corresponding query",
+        "- You will be provided with a list of handles for all ongoing ToolUse tasks along with the query made to the ToolUse for each of them.",
+        "- You should first check if there's an ongoing ToolUse task that the user is asking about or wants action taken on, before creating new ToolUse tasks",
+        "- Never start a new task with the ToolUse if the user is asking you about an existing task!",
+        "- In case the user wants action on an existing handle, use the ToolUse handle action with the appropriate handle action type and the handle id for the handle to be manipulated, along with the corresponding query",
         "- When a task is launched successfully, you should inform the user that you have started the task",
         "- Never, ever, make up names or numbers!",
     ]
@@ -79,7 +79,7 @@ def _build_communication_rules_section(with_conductor: bool = True) -> str:
     ]
     if with_conductor:
         lines += [
-            "- Any communication action (other than interactions on the current call) will happen through the conductor, so you'd need to create conductor tasks or act on existing tasks for any communication through whatsapp, sms, email, or sending a call.",
+            "- Any communication action (other than interactions on the current call) will happen through the ToolUse, so you'd need to create ToolUse tasks or act on existing tasks for any communication through whatsapp, sms, email, or sending a call.",
             "- Break large WhatsApp messages into multiple chunks when appropriate.",
             "- Send the full SMS message in one go when possible.",
         ]
@@ -107,10 +107,10 @@ def _build_your_capabilities_section(is_call: bool) -> str:
     underline = "-" * len(title)
     if is_call:
         lines = [
-            "- You are on an call with the user and can respond to the user through the phone alongside one of the communication channels (whatsapp, sms) through the Conductor",
-            "- If you don't have the answer to the user's prompt, you should initiate a task using ConductorAction",
-            "- If the user wants information or act on an existing task (you'd be provided with the currently ongoing tasks), you should use the ConductorHandleAction",
-            "- You report back to the user the results of the Conductor task once it is done",
+            "- You are on an call with the user and can respond to the user through the phone alongside one of the communication channels (whatsapp, sms) through the ToolUse",
+            "- If you don't have the answer to the user's prompt, you should initiate a task using ToolUseAction",
+            "- If the user wants information or act on an existing task (you'd be provided with the currently ongoing tasks), you should use the ToolUseHandleAction",
+            "- You report back to the user the results of the ToolUse task once it is done",
         ]
     else:
         lines = [
@@ -159,10 +159,10 @@ def build_user_agent_prompt(
     call_purpose: str,
     past_events: list[dict],
     inflight_events: list[dict],
-    conductor_handles: dict[int, dict] | None = None,
+    tool_use_handles: dict[int, dict] | None = None,
     with_conductor: bool = True,
 ) -> str:
-    """Build the user-agent prompt including call purpose, events stream, and conductor handles."""
+    """Build the user-agent prompt including call purpose, events stream, and ToolUse handles."""
     from unity.conversation_manager.events import Event
 
     # Format past events
@@ -175,13 +175,13 @@ def build_user_agent_prompt(
         if inflight_events
         else ""
     )
-    # Format conductor handles
-    conductor_handles_str = (
+    # Format ToolUse handles
+    tool_use_handles_str = (
         "\n".join(
-            f"Handle ID {hid}: {conductor_handles[hid]['query']}"
-            for hid in conductor_handles
+            f"Handle ID {hid}: {tool_use_handles[hid]['query']}"
+            for hid in tool_use_handles
         )
-        if conductor_handles and with_conductor
+        if tool_use_handles and with_conductor
         else ""
     )
 
@@ -194,11 +194,11 @@ def build_user_agent_prompt(
         "** NEW EVENTS **",
         new_events_str.strip(),
         (
-            "** CONDUCTOR HANDLES (USE THESE FOR THE CONDUCTOR HANDLE ACTION) **"
+            "** TOOL_USE HANDLES (USE THESE FOR THE TOOL_USE HANDLE ACTION) **"
             if with_conductor
             else ""
         ),
-        conductor_handles_str.strip(),
+        tool_use_handles_str.strip(),
     ]
     return "\n".join(lines)
 

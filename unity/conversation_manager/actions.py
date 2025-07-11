@@ -14,17 +14,17 @@ class SendCallAction(BaseModel):
     type: Literal["call"]
 
 
-class ConductorAction(BaseModel):
+class ToolUseAction(BaseModel):
     # type: Literal["ask", "request"]
     query: str = Field(..., description="The query to perform")
     show_steps: bool = Field(
         ...,
-        description="Whether to show the reasoning steps of the conductor",
+        description="Whether to show the reasoning steps of the tool_use",
     )
 
 
-class ConductorHandleAction(BaseModel):
-    handle_id: int = Field(..., description="The id of the conductor handle")
+class ToolUseHandleAction(BaseModel):
+    handle_id: int = Field(..., description="The id of the tool_use handle")
     type: Literal["ask", "interject", "stop", "pause", "resume"]
     query: str = Field(None, description="The query to perform")
 
@@ -34,8 +34,8 @@ class ConductorHandleAction(BaseModel):
 # but for now lets keep them the same
 ActionModel = Union[
     SendCallAction,
-    ConductorAction,
-    ConductorHandleAction,
+    ToolUseAction,
+    ToolUseHandleAction,
 ]
 
 
