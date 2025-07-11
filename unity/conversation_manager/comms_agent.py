@@ -51,9 +51,8 @@ class CommsAgent:
         user_phone_call_number: str = None,
         past_events: list | None = None,
         conv_context_length: int = 50,
-        with_conductor: bool = True,
         start_local: bool = False,
-        enabled_tools: list | str | None = None,
+        enabled_tools: list | str | None = "conductor",
     ):
         # contact data
         self.assistant_number = assistant_number
@@ -81,9 +80,11 @@ class CommsAgent:
         self.conductor = None
         self.conductor_handles = None
         self.handle_count = 0
-        self.with_conductor = with_conductor
+        self.enabled_tools = (
+            enabled_tools if isinstance(enabled_tools, list) else [enabled_tools]
+        )
+        self.with_conductor = "conductor" in self.enabled_tools
         self.start_local = start_local
-        self.enabled_tools = enabled_tools
 
         # logging
         self.transcript_manager = None
@@ -104,12 +105,10 @@ class CommsAgent:
             )
             return
 
-        if not self.enabled_tools:
+        if self.enabled_tools[0] is None:
             self.enabled_tools = {}
             return
 
-        if isinstance(self.enabled_tools, str):
-            self.enabled_tools = [self.enabled_tools]
         tools_list = []
         for tool in self.enabled_tools:
             tool = tool.lower()
@@ -255,15 +254,7 @@ class CommsAgent:
         # get chat history
         chat_history = self.get_chat_history()
 
-        # query the conductor
-        # fn = self.conductor.ask if action.type == "ask" else self.conductor.request
-        # conductor_handle = await fn(
-        #     action.query,
-        #     parent_chat_context=chat_history,
-        #     _return_reasoning_steps=action.show_steps,
-        # )
-
-        # todo: build tool use prompt based on new managers_enabled arg
+        # start handle
         unify_client = unify.AsyncUnify("o4-mini@openai")
         unify_client.set_system_message(
             build_action_prompt(self.enabled_tools, action.query),
@@ -356,7 +347,6 @@ class CommsAgent:
     def on_run_end(self, t: asyncio.Task):
         try:
             t: AssistantOutput | CallAssistantOutput | None = t.result()
-            # t = t.result()
             # everything is fine, just run the actions and add stuff to past events
             if t:
                 # if self.call_mode:
@@ -402,7 +392,6 @@ class CommsAgent:
                 {"role": "user", "content": user_msg},
             ],
             response_format=AssistantOutput,
-            # response_format=get_assistant_output(self.with_conductor),
         )
         message = res.choices[0].message
         # print(message)
@@ -426,7 +415,6 @@ class CommsAgent:
                 {"role": "user", "content": user_msg},
             ],
             response_format=CallAssistantOutput,
-            # response_format=get_call_assistant_output(self.with_conductor),
         ) as stream:
 
             async for event in stream:
