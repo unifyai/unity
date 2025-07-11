@@ -16,6 +16,11 @@ from .prompt_builders import (
     build_ask_prompt,
     build_simulated_method_prompt,
 )
+from ..events.manager_event_logging import (
+    new_call_id,
+    publish_manager_method_event,
+    wrap_handle_with_logging,
+)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -168,8 +173,11 @@ class SimulatedKnowledgeManager(BaseKnowledgeManager):
     def __init__(
         self,
         description: str = "nothing fixed, make up some imaginary scenario",
+        *,
+        log_events: bool = False,
     ) -> None:
         self._description = description
+        self._log_events = log_events
 
         # One shared, memory-retaining LLM
         self._llm = unify.AsyncUnify(
@@ -208,17 +216,31 @@ class SimulatedKnowledgeManager(BaseKnowledgeManager):
         parent_chat_context: list[dict] | None = None,
         clarification_up_q: asyncio.Queue[str] | None = None,
         clarification_down_q: asyncio.Queue[str] | None = None,
+        log_events: bool = False,
     ) -> SteerableToolHandle:
         """
         Simulated version of KnowledgeManager.refactor – no real DDL is run.
         The LLM simply invents a plausible migration plan and returns it.
         """
+        should_log = self._log_events or log_events
+        call_id = None
+
+        if should_log:
+            call_id = new_call_id()
+            await publish_manager_method_event(
+                call_id,
+                "KnowledgeManager",
+                "refactor",
+                phase="incoming",
+                command=text,
+            )
+
         instruction = build_simulated_method_prompt(
             "refactor",
             text,
             parent_chat_context=parent_chat_context,
         )
-        return _SimulatedKnowledgeHandle(
+        handle = _SimulatedKnowledgeHandle(
             self._llm,
             instruction,
             _return_reasoning_steps=_return_reasoning_steps,
@@ -226,6 +248,16 @@ class SimulatedKnowledgeManager(BaseKnowledgeManager):
             clarification_up_q=clarification_up_q,
             clarification_down_q=clarification_down_q,
         )
+
+        if should_log and call_id is not None:
+            handle = wrap_handle_with_logging(
+                handle,
+                call_id,
+                "KnowledgeManager",
+                "refactor",
+            )
+
+        return handle
 
     # ------------------------------------------------------------------ #
     #  store                                                             #
@@ -240,7 +272,21 @@ class SimulatedKnowledgeManager(BaseKnowledgeManager):
         _requests_clarification: bool = False,
         clarification_up_q: asyncio.Queue[str] | None = None,
         clarification_down_q: asyncio.Queue[str] | None = None,
+        log_events: bool = False,
     ) -> SteerableToolHandle:
+        should_log = self._log_events or log_events
+        call_id = None
+
+        if should_log:
+            call_id = new_call_id()
+            await publish_manager_method_event(
+                call_id,
+                "KnowledgeManager",
+                "update",
+                phase="incoming",
+                request=text,
+            )
+
         instruction = build_simulated_method_prompt(
             "update",
             text,
@@ -251,7 +297,7 @@ class SimulatedKnowledgeManager(BaseKnowledgeManager):
             "\n\nIf the user refers to creating *tasks*, then you should **not** store any tasks. "
             "Tasks should be stored by a separate task manager – explain this in your response if relevant."
         )
-        return _SimulatedKnowledgeHandle(
+        handle = _SimulatedKnowledgeHandle(
             self._llm,
             instruction,
             _return_reasoning_steps=_return_reasoning_steps,
@@ -259,6 +305,16 @@ class SimulatedKnowledgeManager(BaseKnowledgeManager):
             clarification_up_q=clarification_up_q,
             clarification_down_q=clarification_down_q,
         )
+
+        if should_log and call_id is not None:
+            handle = wrap_handle_with_logging(
+                handle,
+                call_id,
+                "KnowledgeManager",
+                "update",
+            )
+
+        return handle
 
     # ------------------------------------------------------------------ #
     #  retrieve                                                          #
@@ -273,13 +329,27 @@ class SimulatedKnowledgeManager(BaseKnowledgeManager):
         _requests_clarification: bool = False,
         clarification_up_q: asyncio.Queue[str] | None = None,
         clarification_down_q: asyncio.Queue[str] | None = None,
+        log_events: bool = False,
     ) -> SteerableToolHandle:
+        should_log = self._log_events or log_events
+        call_id = None
+
+        if should_log:
+            call_id = new_call_id()
+            await publish_manager_method_event(
+                call_id,
+                "KnowledgeManager",
+                "ask",
+                phase="incoming",
+                question=text,
+            )
+
         instruction = build_simulated_method_prompt(
             "retrieve",
             text,
             parent_chat_context=parent_chat_context,
         )
-        return _SimulatedKnowledgeHandle(
+        handle = _SimulatedKnowledgeHandle(
             self._llm,
             instruction,
             _return_reasoning_steps=_return_reasoning_steps,
@@ -287,3 +357,13 @@ class SimulatedKnowledgeManager(BaseKnowledgeManager):
             clarification_up_q=clarification_up_q,
             clarification_down_q=clarification_down_q,
         )
+
+        if should_log and call_id is not None:
+            handle = wrap_handle_with_logging(
+                handle,
+                call_id,
+                "KnowledgeManager",
+                "ask",
+            )
+
+        return handle

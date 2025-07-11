@@ -17,6 +17,11 @@ from .prompt_builders import (
     build_summarize_prompt,
     build_simulated_method_prompt,
 )
+from ..events.manager_event_logging import (
+    new_call_id,
+    publish_manager_method_event,
+    wrap_handle_with_logging,
+)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -169,8 +174,11 @@ class SimulatedTranscriptManager(BaseTranscriptManager):
     def __init__(
         self,
         description: str = "nothing fixed, make up some imaginary scenario",
+        *,
+        log_events: bool = False,
     ) -> None:
         self._description = description
+        self._log_events = log_events
 
         # Shared, *stateful* **asynchronous** LLM
         self._llm = unify.AsyncUnify(
@@ -206,13 +214,27 @@ class SimulatedTranscriptManager(BaseTranscriptManager):
         _requests_clarification: bool = False,
         clarification_up_q: asyncio.Queue[str] | None = None,
         clarification_down_q: asyncio.Queue[str] | None = None,
+        log_events: bool = False,
     ) -> SteerableToolHandle:
+        should_log = self._log_events or log_events
+        call_id = None
+
+        if should_log:
+            call_id = new_call_id()
+            await publish_manager_method_event(
+                call_id,
+                "TranscriptManager",
+                "ask",
+                phase="incoming",
+                question=text,
+            )
+
         instruction = build_simulated_method_prompt(
             "ask",
             text,
             parent_chat_context=parent_chat_context,
         )
-        return _SimulatedTranscriptHandle(
+        handle = _SimulatedTranscriptHandle(
             self._llm,
             instruction,
             _return_reasoning_steps=_return_reasoning_steps,
@@ -220,6 +242,16 @@ class SimulatedTranscriptManager(BaseTranscriptManager):
             clarification_up_q=clarification_up_q,
             clarification_down_q=clarification_down_q,
         )
+
+        if should_log and call_id is not None:
+            handle = wrap_handle_with_logging(
+                handle,
+                call_id,
+                "TranscriptManager",
+                "ask",
+            )
+
+        return handle
 
     # --------------------------------------------------------------------- #
     # summarize                                                             #
@@ -237,7 +269,24 @@ class SimulatedTranscriptManager(BaseTranscriptManager):
         _requests_clarification: bool = False,
         clarification_up_q: asyncio.Queue[str] | None = None,
         clarification_down_q: asyncio.Queue[str] | None = None,
+        log_events: bool = False,
     ) -> SteerableToolHandle:
+        should_log = self._log_events or log_events
+        call_id = None
+
+        if should_log:
+            call_id = new_call_id()
+            await publish_manager_method_event(
+                call_id,
+                "TranscriptManager",
+                "summarize",
+                phase="incoming",
+                from_exchanges=from_exchanges,
+                from_messages=from_messages,
+                omit_messages=list(omit_messages or []),
+                guidance=guidance,
+            )
+
         # Base prompt with dynamic disclaimers
         instruction = build_simulated_method_prompt(
             "summarize",
@@ -290,7 +339,7 @@ class SimulatedTranscriptManager(BaseTranscriptManager):
         if clar:
             prompt_parts.append(f"User clarification: {clar}")
 
-        return _SimulatedTranscriptHandle(
+        handle = _SimulatedTranscriptHandle(
             self._llm,
             "\n\n".join(prompt_parts),
             _return_reasoning_steps=_return_reasoning_steps,
@@ -298,3 +347,13 @@ class SimulatedTranscriptManager(BaseTranscriptManager):
             clarification_up_q=clarification_up_q,
             clarification_down_q=clarification_down_q,
         )
+
+        if should_log and call_id is not None:
+            handle = wrap_handle_with_logging(
+                handle,
+                call_id,
+                "TranscriptManager",
+                "summarize",
+            )
+
+        return handle
