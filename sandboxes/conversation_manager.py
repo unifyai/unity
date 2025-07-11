@@ -31,12 +31,12 @@ if __name__ == "__main__":
         default=True,
         help="Enable local GUI mode",
     )
-    # group.add_argument(
-    #     "--global",
-    #     dest="start_local",
-    #     action="store_false",
-    #     help="Disable local GUI mode (no GUI)",
-    # )
+    group.add_argument(
+        "--full",
+        dest="start_local",
+        action="store_false",
+        help="Disable local GUI mode (real comms and no GUI)",
+    )
     parser.add_argument(
         "--enabled-tools",
         dest="enabled_tools",
@@ -60,14 +60,10 @@ if __name__ == "__main__":
 
         from unity.helpers import run_script
 
-        # if args.start_local:
-        proc = run_script("sandboxes/gui/local.py", terminal=True)
-        proc.wait()
-        # else:
-        #     proc = run_script("sandboxes/gui/global.py", terminal=True)
-        #     proc.wait()
-
-        unity.conversation_manager.stop("signal_shutdown")
+        if args.start_local:
+            proc = run_script("sandboxes/gui/local.py", terminal=True)
+            proc.wait()
+            unity.conversation_manager.stop("signal_shutdown")
 
         # Keep running until the convo manager process is dead
         while unity.conversation_manager.is_running():
