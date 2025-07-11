@@ -5,6 +5,8 @@ import os
 import redis
 import traceback
 
+import unify
+from unity.common.llm_helpers import start_async_tool_use_loop, methods_to_tool_dict
 from unity.helpers import run_script, terminate_process
 from unity.conversation_manager.comms_actions import _start_call
 from unity.conversation_manager.actions import *
@@ -13,6 +15,7 @@ from unity.conversation_manager.prompt_builders import (
     build_call_sys_prompt,
     build_non_call_sys_prompt,
     build_user_agent_prompt,
+    build_action_prompt,
 )
 
 client = openai.AsyncOpenAI(api_key=os.environ["OPENAI_API_KEY"])
@@ -50,6 +53,7 @@ class CommsAgent:
         conv_context_length: int = 50,
         with_conductor: bool = True,
         start_local: bool = False,
+        enabled_tools: list | str | None = None,
     ):
         # contact data
         self.assistant_number = assistant_number
@@ -79,10 +83,64 @@ class CommsAgent:
         self.handle_count = 0
         self.with_conductor = with_conductor
         self.start_local = start_local
+        self.enabled_tools = enabled_tools
 
         # logging
         self.transcript_manager = None
         self.redis = redis.Redis(host="localhost", port=6379, db=0)
+
+    def _build_enabled_tools_dict(self):
+        from unity.common.llm_helpers import AsyncToolUseLoopHandle
+
+        self.conductor_handles: dict[int, dict[AsyncToolUseLoopHandle, str]] = {}
+
+        if self.with_conductor and self.conductor is None:
+            from unity.conductor.conductor import Conductor
+
+            self.conductor = Conductor()
+            self.enabled_tools = methods_to_tool_dict(
+                self.conductor.ask,
+                self.conductor.request,
+            )
+            return
+
+        if not self.enabled_tools:
+            self.enabled_tools = {}
+            return
+
+        if isinstance(self.enabled_tools, str):
+            self.enabled_tools = [self.enabled_tools]
+        tools_list = []
+        for tool in self.enabled_tools:
+            tool = tool.lower()
+            if tool == "contact":
+                from unity.contact_manager.contact_manager import ContactManager
+
+                manager = ContactManager()
+                tools_list += [manager.ask, manager.update]
+
+            elif tool == "transcript":
+                if not self.transcript_manager:
+                    from unity.transcript_manager.transcript_manager import (
+                        TranscriptManager,
+                    )
+
+                    self.transcript_manager = TranscriptManager()
+                tools_list += [
+                    self.transcript_manager.ask,
+                    self.transcript_manager.summarize,
+                ]
+
+            elif tool == "knowledge":
+                from unity.knowledge_manager.knowledge_manager import KnowledgeManager
+
+                manager = KnowledgeManager()
+                tools_list += [manager.ask, manager.update]
+
+            # elif tool == "memory":
+            #     from unity.memory_manager.memory_manager import MemoryManager
+            #     manager = MemoryManager()
+            #     tools_list += [manager.get_rolling_activity]
 
     async def get_bus_events(self):
         from unity.events.event_bus import EVENT_BUS
@@ -189,23 +247,41 @@ class CommsAgent:
 
     async def conductor_action(self, action: ConductorAction):
         """Handle conductor actions asynchronously"""
-        from unity.conductor.conductor import Conductor
-        from unity.common.llm_helpers import AsyncToolUseLoopHandle
 
-        if self.conductor is None:
-            self.conductor = Conductor()
-            self.conductor_handles: dict[int, dict[AsyncToolUseLoopHandle, str]] = {}
+        # if self.conductor is None:
+        if not isinstance(self.enabled_tools, dict):
+            self._build_enabled_tools_dict()
 
         # get chat history
         chat_history = self.get_chat_history()
 
         # query the conductor
-        fn = self.conductor.ask if action.type == "ask" else self.conductor.request
-        conductor_handle = await fn(
-            action.query,
-            parent_chat_context=chat_history,
-            _return_reasoning_steps=action.show_steps,
+        # fn = self.conductor.ask if action.type == "ask" else self.conductor.request
+        # conductor_handle = await fn(
+        #     action.query,
+        #     parent_chat_context=chat_history,
+        #     _return_reasoning_steps=action.show_steps,
+        # )
+
+        # todo: build tool use prompt based on new managers_enabled arg
+        unify_client = unify.AsyncUnify("o4-mini@openai")
+        unify_client.set_system_message(
+            build_action_prompt(self.enabled_tools, action.query),
         )
+        conductor_handle = start_async_tool_use_loop(
+            unify_client,
+            action.query,
+            self.enabled_tools,
+            parent_chat_context=chat_history,
+        )
+
+        # if action.show_steps:
+        #     async def _wrap():
+        #         answer = await conductor_handle.result()
+        #         return answer, unify_client.messages
+
+        #     conductor_handle.result = _wrap  # type: ignore[attr-defined]
+
         handle_id = self.handle_count
         self.conductor_handles[handle_id] = {
             "handle": conductor_handle,
@@ -279,8 +355,8 @@ class CommsAgent:
 
     def on_run_end(self, t: asyncio.Task):
         try:
-            # t: AssistantOutput | CallAssistantOutput | None = t.result()
-            t = t.result()
+            t: AssistantOutput | CallAssistantOutput | None = t.result()
+            # t = t.result()
             # everything is fine, just run the actions and add stuff to past events
             if t:
                 # if self.call_mode:
@@ -325,8 +401,8 @@ class CommsAgent:
                 {"role": "system", "content": non_call_sys},
                 {"role": "user", "content": user_msg},
             ],
-            # response_format=AssistantOutput,
-            response_format=get_assistant_output(self.with_conductor),
+            response_format=AssistantOutput,
+            # response_format=get_assistant_output(self.with_conductor),
         )
         message = res.choices[0].message
         # print(message)
@@ -349,8 +425,8 @@ class CommsAgent:
                 {"role": "system", "content": call_sys},
                 {"role": "user", "content": user_msg},
             ],
-            # response_format=CallAssistantOutput,
-            response_format=get_call_assistant_output(self.with_conductor),
+            response_format=CallAssistantOutput,
+            # response_format=get_call_assistant_output(self.with_conductor),
         ) as stream:
 
             async for event in stream:

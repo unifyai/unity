@@ -15,7 +15,7 @@ class SendCallAction(BaseModel):
 
 
 class ConductorAction(BaseModel):
-    type: Literal["ask", "request"]
+    # type: Literal["ask", "request"]
     query: str = Field(..., description="The query to perform")
     show_steps: bool = Field(
         ...,
@@ -58,43 +58,43 @@ class AssistantOutput(BaseModel):
     )
 
 
-def get_call_assistant_output(with_conductor: bool = True):
-    if with_conductor:
+# def get_call_assistant_output(with_conductor: bool = True):
+#     if with_conductor:
 
-        class CallAssistantOutput(BaseModel):
-            phone_utterance: str = Field(
-                ...,
-                description="Your response to the user over the phone",
-            )
-            actions: Optional[List[ActionModel]] = Field(
-                ...,
-                description="Actions the assistant should perform",
-            )
+#         class CallAssistantOutput(BaseModel):
+#             phone_utterance: str = Field(
+#                 ...,
+#                 description="Your response to the user over the phone",
+#             )
+#             actions: Optional[List[ActionModel]] = Field(
+#                 ...,
+#                 description="Actions the assistant should perform",
+#             )
 
-        return CallAssistantOutput
+#         return CallAssistantOutput
 
-    class CallAssistantOutput(BaseModel):
-        phone_utterance: str = Field(
-            ...,
-            description="Your response to the user over the phone",
-        )
-        actions: Optional[None] = None
+#     class CallAssistantOutput(BaseModel):
+#         phone_utterance: str = Field(
+#             ...,
+#             description="Your response to the user over the phone",
+#         )
+#         actions: Optional[None] = None
 
-    return CallAssistantOutput
+#     return CallAssistantOutput
 
 
-def get_assistant_output(with_conductor: bool = True):
-    if with_conductor:
+# def get_assistant_output(with_conductor: bool = True):
+#     if with_conductor:
 
-        class AssistantOutput(BaseModel):
-            actions: Optional[List[ActionModel]] = Field(
-                ...,
-                description="Actions the assistant should perform",
-            )
+#         class AssistantOutput(BaseModel):
+#             actions: Optional[List[ActionModel]] = Field(
+#                 ...,
+#                 description="Actions the assistant should perform",
+#             )
 
-        return AssistantOutput
+#         return AssistantOutput
 
-    class AssistantOutput(BaseModel):
-        actions: Optional[None] = None
+#     class AssistantOutput(BaseModel):
+#         actions: Optional[None] = None
 
-    return AssistantOutput
+#     return AssistantOutput
