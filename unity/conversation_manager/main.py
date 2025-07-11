@@ -176,7 +176,10 @@ def loop_exception_handler(loop, context):
     print("Error:", context.get("message"), context.get("exception"))
 
 
-async def main(with_conductor: bool = True, start_local: bool = False):
+async def main(
+    start_local: bool = False,
+    enabled_tools: list | str | None = "conductor",
+):
     global user_agent
 
     # Set up signal handlers
@@ -191,7 +194,7 @@ async def main(with_conductor: bool = True, start_local: bool = False):
         os.getenv("USER_PHONE_NUMBER", ""),
         conv_context_length=conv_context_length,
         start_local=start_local,
-        enabled_tools="conductor" if with_conductor else None,
+        enabled_tools=enabled_tools,
     )
     user_agent.set_event_manager(event_manager)
     user_agent.subscribe(
@@ -212,18 +215,21 @@ if __name__ == "__main__":
     import argparse
 
     parser = argparse.ArgumentParser()
-    parser.add_argument(
-        "--with-conductor",
-        dest="with_conductor",
-        action="store_true",
-        default=True,
-        help="Enable conductor tasks (default True)",
+    # Mutually exclusive group for enabling or disabling tools
+    group = parser.add_mutually_exclusive_group()
+    group.add_argument(
+        "--enabled-tools",
+        dest="enabled_tools",
+        type=lambda s: [t.strip() for t in s.split(",")],
+        default=["conductor"],
+        help="Comma-separated list of enabled tools with choices of conductor, contact, transcript, knowledge, scheduler. Default: conductor",
     )
-    parser.add_argument(
-        "--no-conductor",
-        dest="with_conductor",
-        action="store_false",
-        help="Disable conductor tasks",
+    group.add_argument(
+        "--no-tools",
+        dest="enabled_tools",
+        action="store_const",
+        const=None,
+        help="Disable all tool-based actions",
     )
     parser.add_argument(
         "--start-local",
@@ -233,5 +239,9 @@ if __name__ == "__main__":
         help="Start local GUI instead of server",
     )
     args = parser.parse_args()
-
-    asyncio.run(main(with_conductor=args.with_conductor, start_local=args.start_local))
+    asyncio.run(
+        main(
+            start_local=args.start_local,
+            enabled_tools=args.enabled_tools,
+        ),
+    )

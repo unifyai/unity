@@ -122,7 +122,10 @@ def wait_for_service_ready(timeout: int = 30) -> bool:
     return False
 
 
-def start(with_conductor: bool = True, start_local: bool = False) -> bool:
+def start(
+    start_local: bool = False,
+    enabled_tools: list | str | None = "conductor",
+) -> bool:
     """
     Start the Unity service as a subprocess and wait for it to be ready.
 
@@ -143,8 +146,17 @@ def start(with_conductor: bool = True, start_local: bool = False) -> bool:
         print(f"Starting Unity service (main.py) for assistant {assistant_id}")
 
         cmd = [sys.executable, "unity/conversation_manager/main.py"]
-        if not with_conductor:
-            cmd.append("--no-conductor")
+        if enabled_tools is None:
+            cmd.append("--no-tools")
+        else:
+            cmd.append("--enabled-tools")
+            cmd.append(
+                (
+                    ",".join(enabled_tools)
+                    if isinstance(enabled_tools, list)
+                    else enabled_tools
+                ),
+            )
         if start_local:
             cmd.append("--start-local")
 

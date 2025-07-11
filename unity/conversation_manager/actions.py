@@ -33,7 +33,7 @@ class ToolUseHandleAction(BaseModel):
 # actually, call and non-call modes will probably have some difference between their actions (as in more actions probably for the voice one),
 # but for now lets keep them the same
 ActionModel = Union[
-    SendCallAction,
+    # SendCallAction,
     ToolUseAction,
     ToolUseHandleAction,
 ]
