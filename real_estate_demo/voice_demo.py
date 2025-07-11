@@ -12,8 +12,8 @@ from pydantic_core import from_json
 
 from new_terminal_helper import run_script, terminate_process
 
-from demo_flow import flow, get_action_event, GoBack, GoNext, EndSession, PromptUser, create_human_readable_delta
-
+from demo_flow import get_action_event, GoBack, GoNext, EndSession, PromptUser, create_human_readable_delta
+from tree_2.tree import flow
 
 client = openai.AsyncOpenAI(api_key=os.environ["OPENAI_API_KEY"])
 
@@ -50,6 +50,7 @@ class Agent:
                         # cancel gracefully
                         await self.current_llm_run
                     except asyncio.CancelledError:
+                        print("THIS WAS RUN")
                         ev = {"topic": "call_process", "type": "cancel_gen"}
                         # self.publish(ev)
                         self.inflight_events = [
@@ -220,7 +221,7 @@ class Agent:
                         output = from_json(acc_text, allow_partial="trailing-strings")
                         if output.get("next_action"):
                             if output["next_action"].get("closing_message"):
-                                print("ENTERED CLOSING BRANCH!")
+                                # print("ENTERED CLOSING BRANCH!")
                                 ev = {
                                         "topic": "call_process",
                                         "type": "gen_chunk",
