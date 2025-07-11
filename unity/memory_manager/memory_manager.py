@@ -9,6 +9,7 @@ from typing import Optional, Callable, Dict, Any
 import unify
 
 from ..contact_manager.contact_manager import ContactManager
+from ..contact_manager.simulated import SimulatedContactManager
 from ..transcript_manager.transcript_manager import TranscriptManager
 from ..knowledge_manager.knowledge_manager import KnowledgeManager
 from ..common.llm_helpers import methods_to_tool_dict, start_async_tool_use_loop
@@ -177,12 +178,13 @@ class MemoryManager(BaseMemoryManager):
             """
             Restricted helper – only touches the `bio` column.
             """
-            await asyncio.to_thread(
-                self._contact_manager._update_contact,
-                contact_id=contact_id,
-                custom_fields={"bio": bio},
-            )
-            return "bio updated"
+            if not isinstance(self._contact_manager, SimulatedContactManager):
+                await asyncio.to_thread(
+                    self._contact_manager._update_contact,
+                    contact_id=contact_id,
+                    custom_fields={"bio": bio},
+                )
+            return f"Bio for contact with id {contact_id} successfully updated"
 
         tools: Dict[str, Callable[..., Any]] = {
             "transcript_ask": self._transcript_manager.ask,
