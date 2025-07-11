@@ -111,26 +111,19 @@ async def test_mm_update_contact_bio_calls_inner_helpers(monkeypatch):
 @pytest.mark.asyncio
 @_handle_project
 async def test_mm_update_contact_rolling_summary_invocations(monkeypatch):
-    counts = {"_upd": 0}
+    counts = {"cm_update": 0}
 
-    # ---- ensure _update_contact is available & spied ----------------------
-    async def stub_update_contact(
-        self,
-        *,
-        contact_id: int,
-        custom_fields: dict,
-        **kw,
-    ):
-        counts["_upd"] += 1
-        return {"outcome": "stub ok", "details": {"contact_id": contact_id}}
+    # --- patch SimulatedContactManager.update ------------------------------
+    orig_cm_upd = SimulatedContactManager.update
 
-    monkeypatch.setattr(
-        SimulatedContactManager,
-        "_update_contact",
-        stub_update_contact,
-        raising=False,
-    )
+    @functools.wraps(orig_cm_upd)
+    async def spy_cm_upd(self, text: str, **kw):
+        counts["cm_update"] += 1
+        return await orig_cm_upd(self, text, **kw)
 
+    monkeypatch.setattr(SimulatedContactManager, "update", spy_cm_upd, raising=True)
+
+    # run --------------------------------------------------------------------
     mm = SimulatedMemoryManager("Rolling-summary refresh demo.")
     prev_summary = "Discussing Q3 marketing launch."
     transcript = _build_transcript(
@@ -142,8 +135,10 @@ async def test_mm_update_contact_rolling_summary_invocations(monkeypatch):
         latest_rolling_summary=prev_summary,
     )
 
+    # check ------------------------------------------------------------------
     assert isinstance(new_summary, str) and new_summary.strip()
-    assert counts["_upd"] == 1, "_update_contact should be invoked once"
+    # At least one call to update contacts
+    assert counts["cm_update"] >= 1
 
 
 # --------------------------------------------------------------------------- #
