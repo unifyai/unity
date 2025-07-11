@@ -56,7 +56,7 @@ def _build_conductor_tasks_rules_section() -> str:
         "- If the user asks about something that you can't answer based on the event history so far, you should use the conductor for performing it",
         "- Conductor actions launch a separate task in the background that you can keep track of in further steps",
         "- They also get logged into the event stream",
-        '- In case the user wants some information, use the "ask" action type otherwise if the user wants some action taken (such as scheduling tasks, sending mails, sms, etc.) use the "request" action type',
+        # '- In case the user wants some information, use the "ask" action type otherwise if the user wants some action taken (such as scheduling tasks, sending mails, sms, etc.) use the "request" action type',
         "- You will be provided with a list of handles for all ongoing conductor tasks along with the query made to the conductor for each of them.",
         "- You should first check if there's an ongoing conductor task that the user is asking about or wants action taken on, before creating new conductor tasks",
         "- Never start a new task with the conductor if the user is asking you about an existing task!",
@@ -224,6 +224,21 @@ def build_call_ask_prompt(tools: Dict[str, Callable], question: str) -> str:
         f"If answer is still not found, then only select appropriate tools from all tools given.",
         "",
         "User's reply to the question asked in user message will be logged into the relevant managers. Run the appropriate tool to understand and return the user's answer.",
+    ]
+    return "\n".join(lines)
+
+
+def build_action_prompt(tools: Dict[str, Callable], query: str) -> str:
+    """Build the system prompt to await the user's reply and choose a tool."""
+    # Dump tool signatures
+    sig_json = json.dumps(_sig_dict(tools), indent=4)
+
+    # Assemble the ask prompt
+    lines = [
+        "Tools (name → argspec):",
+        sig_json,
+        "",
+        f"Perform the query: {query} with the available tools above.",
     ]
     return "\n".join(lines)
 
