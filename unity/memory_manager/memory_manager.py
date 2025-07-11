@@ -178,13 +178,18 @@ class MemoryManager(BaseMemoryManager):
             """
             Restricted helper – only touches the `bio` column.
             """
-            if not isinstance(self._contact_manager, SimulatedContactManager):
+            if hasattr(self._contact_manager, "_update_contact"):
                 await asyncio.to_thread(
                     self._contact_manager._update_contact,
                     contact_id=contact_id,
                     custom_fields={"bio": bio},
                 )
-            return f"Bio for contact with id {contact_id} successfully updated"
+                return f"Bio for contact with id {contact_id} successfully updated"
+            else:
+                handle = await self._contact_manager.update(
+                    f"Please set the bio for contact id {contact_id} as follows:\n{bio}",
+                )
+                return await handle.result()
 
         tools: Dict[str, Callable[..., Any]] = {
             "transcript_ask": self._transcript_manager.ask,
