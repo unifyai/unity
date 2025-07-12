@@ -339,9 +339,6 @@ class MemoryManager(BaseMemoryManager):
           The callback fires once *ratio* (= how many lower-level
           summaries constitute this window) such events have arrived.
         """
-        import time
-
-        _dbg_start = time.perf_counter()
 
         async def _register_for_manager(mgr_cls: str, nick: str):
             # Register callbacks for one manager
