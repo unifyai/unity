@@ -95,7 +95,9 @@ async def test_single_manager_call_populates_rolling_activity():
 
     # Ensure the ManagerMethod event has been fully processed
     EVENT_BUS.join_published()
-    await asyncio.sleep(0.1)
+
+    # Ensure the associated rolling summary callback has been processed
+    EVENT_BUS.join_callbacks()
 
     # 4. Verify that at least one additional RollingActivity row was created
     updated_rows = len(unify.get_logs(context=mm._rolling_ctx, limit=100))
