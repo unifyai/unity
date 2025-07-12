@@ -87,6 +87,7 @@ async def test_single_manager_call_populates_rolling_activity():
 
     # Baseline – rows *before* any interaction
     initial_rows = len(unify.get_logs(context=mm._rolling_ctx, limit=100))
+    assert initial_rows == 0
 
     # 3. Trigger ONE outgoing manager call
     handle = await cm.ask("Just say hello.")  # noqa: S106 – plain test prompt
@@ -98,7 +99,7 @@ async def test_single_manager_call_populates_rolling_activity():
 
     # 4. Verify that at least one additional RollingActivity row was created
     updated_rows = len(unify.get_logs(context=mm._rolling_ctx, limit=100))
-    assert updated_rows > initial_rows, "Expected a new rolling activity row"
+    assert updated_rows == 1
 
     # 5. Interaction-based summary should now be non-empty
     summary = mm.get_rolling_activity(mode="interaction")
