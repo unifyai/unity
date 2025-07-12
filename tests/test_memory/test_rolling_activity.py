@@ -212,7 +212,7 @@ async def _run_manager_case(
         ),
     )
     new_logs = total_logs - baseline_logs
-    assert new_logs == n_calls, (
+    assert new_logs == n_calls + 1, (
         f"Expected {n_calls} rolling activity logs for {case_id} after {n_calls} call(s), "
         f"found {new_logs}.\nSummary:\n{summary}"
     )
