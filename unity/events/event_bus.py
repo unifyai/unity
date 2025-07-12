@@ -883,72 +883,23 @@ class EventBus:
                 and sub.count_step == every_n
                 and sub.time_step == every_seconds
             ):
+                # (re-)attach the runtime callback
                 sub.callback = callback
+
+                # NEW: make sure we have a baseline that survived round-trip
+                if every_seconds is not None and sub.last_timestamp is None:
+                    # same helper used for brand new subscriptions
+                    sub.last_row_id, sub.last_timestamp = await self._compute_baseline(
+                        event_type,
+                        filter,
+                    )
+                    self._persist_subscription_state(sub)
+
                 return sub.subscription_id
 
         # ------------------------------------------------------------------
-        # Snapshot current *matching* event to establish baseline
-        #
-        # The incoming `filter` usually references the payload via
-        #    evt.payload["key"] == value
-        # but inside Unify the payload is *flattened* into top-level columns.
-        # Therefore we:
-        #   1. Pull a bounded slice of the newest events for this type.
-        #   2. Re-create lightweight `Event` objects.
-        #   3. Re-evaluate the filter expression locally.
-        # The first match gives us the proper baseline.
-        # ------------------------------------------------------------------
-        last_row_id = -1
-        last_ts: Optional[dt.datetime] = None
-
-        recent_logs = await asyncio.to_thread(
-            unify.get_logs,
-            context=self._specific_ctxs[event_type],
-            sorting={"row_id": "descending"},
-            limit=100,  # small window is enough for baseline detection
-        )
-
-        def _row_to_event(row: dict) -> Event:
-            meta = {
-                "row_id",
-                "event_id",
-                "calling_id",
-                "event_timestamp",
-                "timestamp",
-                "payload_cls",
-                "type",
-            }
-            payload = {k: v for k, v in row.items() if k not in meta}
-            return Event(
-                row_id=row.get("row_id"),
-                event_id=row.get("event_id"),
-                calling_id=row.get("calling_id", ""),
-                type=event_type,
-                timestamp=row.get("event_timestamp") or row.get("timestamp"),
-                payload=payload,
-                payload_cls=row.get("payload_cls", ""),
-            )
-
-        for lg in recent_logs:  # newest → oldest
-            evt = _row_to_event(lg.entries.copy())
-            if not filter:
-                match = True
-            else:
-                ns = {
-                    "evt": evt,
-                    "event_type": evt.type,
-                    "type": evt.type,
-                    **evt.model_dump(mode="python"),
-                }
-                try:
-                    match = bool(eval(filter, {"__builtins__": {}}, ns))
-                except Exception:
-                    match = False
-            if match:
-                last_row_id = evt.row_id
-                last_ts = evt.timestamp
-                break
-
+        # no existing subscription – create a fresh one
+        last_row_id, last_ts = await self._compute_baseline(event_type, filter)
         sub = Subscription(
             event_type=event_type,
             filter=filter,
@@ -1072,6 +1023,60 @@ class EventBus:
 
         # 3. Re-initialise this *same* instance
         type(self).__init__(self)
+
+    # helper extracted from the old inline code
+    async def _compute_baseline(
+        self,
+        event_type: str,
+        filter: Optional[str],
+    ) -> tuple[int, Optional[dt.datetime]]:
+        """
+        Return (last_row_id, last_timestamp) of the most-recent event of
+        *event_type* that matches *filter* (or ``(-1, None)`` if none exist).
+        """
+        recent_logs = await asyncio.to_thread(
+            unify.get_logs,
+            context=self._specific_ctxs[event_type],
+            sorting={"row_id": "descending"},
+            limit=100,
+        )
+
+        def _row_to_event(row: dict) -> Event:
+            meta = {
+                "row_id",
+                "event_id",
+                "calling_id",
+                "event_timestamp",
+                "timestamp",
+                "payload_cls",
+                "type",
+            }
+            payload = {k: v for k, v in row.items() if k not in meta}
+            return Event(
+                row_id=row.get("row_id"),
+                event_id=row.get("event_id"),
+                calling_id=row.get("calling_id", ""),
+                type=event_type,
+                timestamp=row.get("event_timestamp") or row.get("timestamp"),
+                payload=payload,
+                payload_cls=row.get("payload_cls", ""),
+            )
+
+        for lg in recent_logs:  # newest → oldest
+            evt = _row_to_event(lg.entries.copy())
+            if not filter:
+                match = True
+            else:
+                ns = {
+                    "evt": evt,
+                    "event_type": evt.type,
+                    "type": evt.type,
+                    **evt.model_dump(mode="python"),
+                }
+                match = bool(eval(filter, {"__builtins__": {}}, ns))
+            if match:
+                return evt.row_id, evt.timestamp
+        return -1, None
 
 
 # ─────────────────────────   Global singleton   ──────────────────────────
