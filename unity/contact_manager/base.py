@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 import asyncio
-from typing import Dict, List, Optional, Any
+from typing import Dict, List, Optional, Any, TYPE_CHECKING
 
 from ..common.llm_helpers import SteerableToolHandle
 
@@ -90,3 +90,41 @@ class BaseContactManager(ABC):
             Handle whose :pyfunc:`result` yields confirmation of the mutation
             and (optionally) reasoning steps.
         """
+
+    @abstractmethod
+    def _search_contacts(
+        self,
+        *,
+        filter: Optional[str] = None,
+        offset: int = 0,
+        limit: int = 100,
+    ) -> List["Contact"]:
+        """
+        Retrieve contact records that satisfy *filter*.
+
+        This private method is intentionally *part* of the public-facing contract
+        because other managers (e.g. :class:`~unity.transcript_manager.TranscriptManager`)
+        rely on its existence for tool-chaining.  Concrete subclasses **must**
+        implement it – even simulated ones – so that the LLM can access a
+        deterministic search primitive.
+
+        Parameters
+        ----------
+        filter : str | None, default ``None``
+            Python expression evaluated against every contact (``None`` selects all).
+        offset : int, default ``0``
+            Zero-based index of the first result to return.
+        limit : int, default ``100``
+            Maximum number of contacts to return.
+
+        Returns
+        -------
+        list[Contact]
+            Matching contacts in creation order.
+        """
+        raise NotImplementedError
+
+
+if TYPE_CHECKING:
+    # Avoid a runtime import to prevent circular dependencies
+    from .types.contact import Contact
