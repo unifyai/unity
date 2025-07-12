@@ -424,10 +424,6 @@ class MemoryManager(BaseMemoryManager):
                     every_n=ratio,
                 )
 
-        # ensure we have at least one mutable row to start with
-        if not unify.get_logs(context=self._rolling_ctx, limit=1):
-            unify.log(context=self._rolling_ctx, new=True, mutable=True)
-
     # 3. Persisting the new snapshot ---------------------------------------
     async def _record_rolling_activity_body(
         self,
