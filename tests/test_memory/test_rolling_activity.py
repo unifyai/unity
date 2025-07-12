@@ -15,6 +15,7 @@ import asyncio
 from tests.helpers import _handle_project
 
 import pytest
+import random
 
 
 # ---------------------------------------------------------------------------
@@ -162,11 +163,12 @@ TASKSCHEDULER_TEST_CASES = [
 async def _run_manager_case(
     injector: str,
     manager_factory: _ManagerFactory,
-    call_factory: Callable[[Any], Any],
+    call_factories: list[Callable[[Any], Any]],
     n_calls: int,
+    expected_summaries: int,
     case_id: str,
 ):
-    """Execute *n_calls* to a given manager and assert rolling-activity rows."""
+    """Execute *n_calls* randomly chosen method calls and assert summary headings."""
 
     from unity.memory_manager.memory_manager import MemoryManager
     from unity.events.event_bus import EVENT_BUS
@@ -183,33 +185,69 @@ async def _run_manager_case(
     elif injector == "knowledge":
         mm = MemoryManager(knowledge_manager=manager)
     else:
-        # TaskScheduler or unsupported injector – MemoryManager still registers callbacks
         mm = MemoryManager()
 
     # Allow async callback setup to complete
     await asyncio.sleep(0.05)
 
-    # Baseline – current number of RollingActivity rows
-    assert len(unify.get_logs(context=mm._rolling_ctx, limit=100)) == 0
+    # Baseline – should be empty
+    assert not unify.get_logs(
+        context=mm._rolling_ctx,
+        limit=1,
+    ), "RollingActivity context not empty before test"
 
-    # Trigger the outgoing manager call *n_calls* times
+    rng = random.Random(42)  # deterministic
+
+    # Perform the manager calls
     for _ in range(n_calls):
-        handle = await call_factory(manager)
+        factory = rng.choice(call_factories)
+        handle = await factory(manager)
         await handle.result()
 
-    # Ensure events & callbacks are fully processed
+    # Flush events & callbacks
     EVENT_BUS.join_published()
     EVENT_BUS.join_callbacks()
 
-    updated_rows = len(unify.get_logs(context=mm._rolling_ctx, limit=100))
-    assert updated_rows == n_calls
-
-    # A non-empty interaction summary must now be available
+    # Build summary (interaction mode)
     summary = mm.get_rolling_activity(mode="interaction")
     assert (
         summary.strip()
-    ), f"Expected non-empty summary for {case_id} with {n_calls} call(s)"
+    ), f"Expected non-empty summary for {case_id} after {n_calls} call(s)"
 
+    # Count headings for individual windows (lines starting with '## ')
+    heading_lines = [ln for ln in summary.splitlines() if ln.startswith("## ")]
+    assert len(heading_lines) == expected_summaries, (
+        f"Expected {expected_summaries} summary headings for {case_id} after {n_calls} call(s), "
+        f"found {len(heading_lines)}.\nSummary:\n{summary}"
+    )
+
+
+# ---------------------------------------------------------------------------
+#  Build (n_calls, expected) pairs based on MemoryManager._COUNT_WINDOWS      |
+# ---------------------------------------------------------------------------
+
+from unity.memory_manager.memory_manager import MemoryManager as _MM
+
+_COUNT_THRESHOLDS = sorted(set(_MM._COUNT_WINDOWS.values()))  # ascending
+_CALLS_EXPECTED_PAIRS = [
+    ((cnt + 1) // 2, idx + 1)  # half the events → method calls, round up
+    for idx, cnt in enumerate(_COUNT_THRESHOLDS)
+]
+
+# ---------------------------------------------------------------------------
+#  Build lists of call_factories per manager ---------------------------------
+
+CONTACT_CALL_FACTORIES = [c[3] for c in CONTACT_TEST_CASES]
+CONTACT_MANAGER_FACTORY = CONTACT_TEST_CASES[0][2]
+
+TRANSCRIPT_CALL_FACTORIES = [c[3] for c in TRANSCRIPT_TEST_CASES]
+TRANSCRIPT_MANAGER_FACTORY = TRANSCRIPT_TEST_CASES[0][2]
+
+KNOWLEDGE_CALL_FACTORIES = [c[3] for c in KNOWLEDGE_TEST_CASES]
+KNOWLEDGE_MANAGER_FACTORY = KNOWLEDGE_TEST_CASES[0][2]
+
+TASK_CALL_FACTORIES = [c[3] for c in TASKSCHEDULER_TEST_CASES]
+TASK_MANAGER_FACTORY = TASKSCHEDULER_TEST_CASES[0][2]
 
 # ---------------------------------------------------------------------------
 #  ContactManager specific tests                                             |
@@ -218,20 +256,19 @@ async def _run_manager_case(
 
 @pytest.mark.asyncio
 @_handle_project
-@pytest.mark.parametrize("n_calls", [1, 2])
-@pytest.mark.parametrize(
-    "case_id, injector, manager_factory, call_factory",
-    CONTACT_TEST_CASES,
-    ids=[c[0] for c in CONTACT_TEST_CASES],
-)
+@pytest.mark.parametrize("n_calls, expected_summaries", _CALLS_EXPECTED_PAIRS)
 async def test_contact_manager_methods_populate_rolling_activity(
-    case_id,
-    injector,
-    manager_factory,
-    call_factory,
     n_calls,
+    expected_summaries,
 ):
-    await _run_manager_case(injector, manager_factory, call_factory, n_calls, case_id)
+    await _run_manager_case(
+        "contact",
+        CONTACT_MANAGER_FACTORY,
+        CONTACT_CALL_FACTORIES,
+        n_calls,
+        expected_summaries,
+        "ContactManager",
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -241,20 +278,19 @@ async def test_contact_manager_methods_populate_rolling_activity(
 
 @pytest.mark.asyncio
 @_handle_project
-@pytest.mark.parametrize("n_calls", [1, 2])
-@pytest.mark.parametrize(
-    "case_id, injector, manager_factory, call_factory",
-    TRANSCRIPT_TEST_CASES,
-    ids=[c[0] for c in TRANSCRIPT_TEST_CASES],
-)
+@pytest.mark.parametrize("n_calls, expected_summaries", _CALLS_EXPECTED_PAIRS)
 async def test_transcript_manager_methods_populate_rolling_activity(
-    case_id,
-    injector,
-    manager_factory,
-    call_factory,
     n_calls,
+    expected_summaries,
 ):
-    await _run_manager_case(injector, manager_factory, call_factory, n_calls, case_id)
+    await _run_manager_case(
+        "transcript",
+        TRANSCRIPT_MANAGER_FACTORY,
+        TRANSCRIPT_CALL_FACTORIES,
+        n_calls,
+        expected_summaries,
+        "TranscriptManager",
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -264,20 +300,19 @@ async def test_transcript_manager_methods_populate_rolling_activity(
 
 @pytest.mark.asyncio
 @_handle_project
-@pytest.mark.parametrize("n_calls", [1, 2])
-@pytest.mark.parametrize(
-    "case_id, injector, manager_factory, call_factory",
-    KNOWLEDGE_TEST_CASES,
-    ids=[c[0] for c in KNOWLEDGE_TEST_CASES],
-)
+@pytest.mark.parametrize("n_calls, expected_summaries", _CALLS_EXPECTED_PAIRS)
 async def test_knowledge_manager_methods_populate_rolling_activity(
-    case_id,
-    injector,
-    manager_factory,
-    call_factory,
     n_calls,
+    expected_summaries,
 ):
-    await _run_manager_case(injector, manager_factory, call_factory, n_calls, case_id)
+    await _run_manager_case(
+        "knowledge",
+        KNOWLEDGE_MANAGER_FACTORY,
+        KNOWLEDGE_CALL_FACTORIES,
+        n_calls,
+        expected_summaries,
+        "KnowledgeManager",
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -287,17 +322,16 @@ async def test_knowledge_manager_methods_populate_rolling_activity(
 
 @pytest.mark.asyncio
 @_handle_project
-@pytest.mark.parametrize("n_calls", [1, 2])
-@pytest.mark.parametrize(
-    "case_id, injector, manager_factory, call_factory",
-    TASKSCHEDULER_TEST_CASES,
-    ids=[c[0] for c in TASKSCHEDULER_TEST_CASES],
-)
+@pytest.mark.parametrize("n_calls, expected_summaries", _CALLS_EXPECTED_PAIRS)
 async def test_taskscheduler_methods_populate_rolling_activity(
-    case_id,
-    injector,
-    manager_factory,
-    call_factory,
     n_calls,
+    expected_summaries,
 ):
-    await _run_manager_case(injector, manager_factory, call_factory, n_calls, case_id)
+    await _run_manager_case(
+        "none",
+        TASK_MANAGER_FACTORY,
+        TASK_CALL_FACTORIES,
+        n_calls,
+        expected_summaries,
+        "TaskScheduler",
+    )
