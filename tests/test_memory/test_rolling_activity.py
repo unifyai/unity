@@ -58,10 +58,14 @@ async def test_get_rolling_activity_empty(monkeypatch):
 #  Test – single manager call populates rolling activity                     |
 # ---------------------------------------------------------------------------
 
+# Manager test doubles
 from unity.contact_manager.simulated import SimulatedContactManager
 from unity.transcript_manager.simulated import SimulatedTranscriptManager
 from unity.knowledge_manager.simulated import SimulatedKnowledgeManager
 from unity.task_scheduler.simulated import SimulatedTaskScheduler
+
+# MemoryManager (subject under test)
+from unity.memory_manager.memory_manager import MemoryManager
 
 # Handy type alias for the param table
 from typing import Callable, Any, Tuple
@@ -161,30 +165,17 @@ TASKSCHEDULER_TEST_CASES = [
 
 
 async def _run_manager_case(
-    injector: str,
-    manager_factory: _ManagerFactory,
+    manager: Any,
+    mm: MemoryManager,
     call_factories: list[Callable[[Any], Any]],
     n_calls: int,
     case_id: str,
 ):
     """Execute *n_calls* randomly chosen method calls and assert log count."""
 
-    from unity.memory_manager.memory_manager import MemoryManager
     from unity.events.event_bus import EVENT_BUS
 
     EVENT_BUS.reset()
-
-    manager = manager_factory()
-
-    # Wire the chosen manager into MemoryManager where possible
-    if injector == "contact":
-        mm = MemoryManager(contact_manager=manager)
-    elif injector == "transcript":
-        mm = MemoryManager(transcript_manager=manager)
-    elif injector == "knowledge":
-        mm = MemoryManager(knowledge_manager=manager)
-    else:
-        mm = MemoryManager()
 
     # Allow async callback setup to complete
     await asyncio.sleep(0.05)
@@ -193,7 +184,6 @@ async def _run_manager_case(
     baseline_logs = len(
         unify.get_logs(
             context=mm._rolling_ctx,
-            limit=10000,
         ),
     )
 
@@ -219,7 +209,6 @@ async def _run_manager_case(
     total_logs = len(
         unify.get_logs(
             context=mm._rolling_ctx,
-            limit=10000,
         ),
     )
     new_logs = total_logs - baseline_logs
@@ -259,9 +248,12 @@ TASK_MANAGER_FACTORY = TASKSCHEDULER_TEST_CASES[0][2]
 @_handle_project
 @pytest.mark.parametrize("n_calls", _N_CALLS_TO_TEST)
 async def test_contact_manager_methods_populate_rolling_activity(n_calls):
+    manager = CONTACT_MANAGER_FACTORY()
+    mm = MemoryManager(contact_manager=manager)
+
     await _run_manager_case(
-        "contact",
-        CONTACT_MANAGER_FACTORY,
+        manager,
+        mm,
         CONTACT_CALL_FACTORIES,
         n_calls,
         "ContactManager",
@@ -277,9 +269,12 @@ async def test_contact_manager_methods_populate_rolling_activity(n_calls):
 @_handle_project
 @pytest.mark.parametrize("n_calls", _N_CALLS_TO_TEST)
 async def test_transcript_manager_methods_populate_rolling_activity(n_calls):
+    manager = TRANSCRIPT_MANAGER_FACTORY()
+    mm = MemoryManager(transcript_manager=manager)
+
     await _run_manager_case(
-        "transcript",
-        TRANSCRIPT_MANAGER_FACTORY,
+        manager,
+        mm,
         TRANSCRIPT_CALL_FACTORIES,
         n_calls,
         "TranscriptManager",
@@ -295,9 +290,12 @@ async def test_transcript_manager_methods_populate_rolling_activity(n_calls):
 @_handle_project
 @pytest.mark.parametrize("n_calls", _N_CALLS_TO_TEST)
 async def test_knowledge_manager_methods_populate_rolling_activity(n_calls):
+    manager = KNOWLEDGE_MANAGER_FACTORY()
+    mm = MemoryManager(knowledge_manager=manager)
+
     await _run_manager_case(
-        "knowledge",
-        KNOWLEDGE_MANAGER_FACTORY,
+        manager,
+        mm,
         KNOWLEDGE_CALL_FACTORIES,
         n_calls,
         "KnowledgeManager",
@@ -313,9 +311,12 @@ async def test_knowledge_manager_methods_populate_rolling_activity(n_calls):
 @_handle_project
 @pytest.mark.parametrize("n_calls", _N_CALLS_TO_TEST)
 async def test_taskscheduler_methods_populate_rolling_activity(n_calls):
+    manager = TASK_MANAGER_FACTORY()
+    mm = MemoryManager()
+
     await _run_manager_case(
-        "none",
-        TASK_MANAGER_FACTORY,
+        manager,
+        mm,
         TASK_CALL_FACTORIES,
         n_calls,
         "TaskScheduler",
