@@ -117,6 +117,8 @@ class MemoryManager(BaseMemoryManager):
 
         # ── NEW: Rolling-Activity context & subscriptions ─────────────────
         self._rolling_ctx = self._ensure_rolling_context()
+        # Serialise updates to the RollingActivity context to avoid race conditions
+        self._rolling_lock = asyncio.Lock()
         asyncio.create_task(self._setup_rolling_callbacks())  # fire-and-forget
 
     # ------------------------------------------------------------------ #
@@ -437,7 +439,7 @@ class MemoryManager(BaseMemoryManager):
             unify.log(context=self._rolling_ctx, new=True, mutable=True)
 
     # 3. Persisting the new snapshot ---------------------------------------
-    async def _record_rolling_activity(
+    async def _record_rolling_activity_body(
         self,
         column: str,
         events: list[Event],
@@ -569,6 +571,26 @@ class MemoryManager(BaseMemoryManager):
                 },
             ),
         )
+
+    # ------------------------------------------------------------------ #
+    #  Wrapper: guarantees single writer for RollingActivity             #
+    # ------------------------------------------------------------------ #
+    async def _record_rolling_activity(
+        self,
+        column: str,
+        events: list[Event],
+    ) -> None:
+        """
+        Thread-safe wrapper around :py:meth:`_record_rolling_activity_body` that
+        ensures only *one* coroutine at a time can append a new snapshot to the
+        ``RollingActivity`` context.  This prevents scenarios where two
+        concurrent callbacks would both read the same *latest* row, apply their
+        individual update, and then write out diverging successors derived from
+        an inconsistent base state.
+        """
+
+        async with self._rolling_lock:
+            await self._record_rolling_activity_body(column, events)
 
     # ------------------------------------------------------------------ #
     #  helper: build human-readable activity summary                     #
