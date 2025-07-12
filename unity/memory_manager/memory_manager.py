@@ -93,7 +93,7 @@ class MemoryManager(BaseMemoryManager):
         for window in list(_TIME_WINDOWS) + list(_COUNT_WINDOWS) + list(_ALL_TIME):
             _tmp_cols.append(f"{nick}/{window}")
 
-    # ───────────────────────────  NEW SUMMARY COLS  ───────────────────────────
+    # ───────────────────────────  SUMMARY COLS  ───────────────────────────
     _SUMMARY_TIME_COL = "time_based_activity"
     _SUMMARY_COUNT_COL = "count_based_activity"
     _tmp_cols.extend([_SUMMARY_TIME_COL, _SUMMARY_COUNT_COL])
@@ -322,19 +322,6 @@ class MemoryManager(BaseMemoryManager):
                 col: {"type": "str", "mutable": True} for col in self._ROLLING_COLUMNS
             }
             unify.create_fields(fields, context=ctx)
-        else:
-            # Context already exists – ensure the two new summary columns are present.
-            try:
-                unify.create_fields(
-                    {
-                        self._SUMMARY_TIME_COL: {"type": "str", "mutable": True},
-                        self._SUMMARY_COUNT_COL: {"type": "str", "mutable": True},
-                    },
-                    context=ctx,
-                )
-            except Exception:
-                # Field might already exist – safe to ignore any error here.
-                pass
         return ctx
 
     # 2. Callback registration ---------------------------------------------
@@ -352,77 +339,92 @@ class MemoryManager(BaseMemoryManager):
           The callback fires once *ratio* (= how many lower-level
           summaries constitute this window) such events have arrived.
         """
-        for mgr_cls, nick in self._MANAGERS.items():
+        import time
 
-            # ── Helper: build one callback that writes the column it was
-            #           created for.
+        _dbg_start = time.perf_counter()
+
+        async def _register_for_manager(mgr_cls: str, nick: str):
+            # Register callbacks for one manager
+
             def _mk_cb(col_name: str):
                 async def _cb(events, _col=col_name):
                     await self._record_rolling_activity(_col, events)
 
+                    # schedule recording (silent now)
+
                 return _cb
 
-            # ────────────────────────────────────────────────────────────
-            # 1️⃣  BASE-LEVEL windows (raw ManagerMethod events)
-            # ────────────────────────────────────────────────────────────
             mm_filter = (
                 f'evt.payload["manager"] == "{mgr_cls}" '
                 f'and evt.payload.get("phase") == "outgoing"'
             )
 
-            # 1a)  past_interaction  (every single outgoing manager call)
-            base_col = f"{nick}/past_interaction"
-            await EVENT_BUS.register_callback(
+            async def _reg(cb_col: str, *, event_type: str, **kw):
+                try:
+                    await EVENT_BUS.register_callback(
+                        event_type=event_type,
+                        callback=_mk_cb(cb_col),
+                        **kw,
+                    )
+                except Exception as e:
+                    # propagate any registration error
+                    raise
+
+            # base-level
+            await _reg(
+                f"{nick}/past_interaction",
                 event_type="ManagerMethod",
-                callback=_mk_cb(base_col),
                 filter=mm_filter,
                 every_n=self._COUNT_WINDOWS["past_interaction"],
             )
 
-            # 1b)  past_day  (time-based, every 24 h worth of events)
-            day_col = f"{nick}/past_day"
-            await EVENT_BUS.register_callback(
+            await _reg(
+                f"{nick}/past_day",
                 event_type="ManagerMethod",
-                callback=_mk_cb(day_col),
                 filter=mm_filter,
                 every_seconds=self._TIME_WINDOWS["past_day"],
             )
 
-            # ────────────────────────────────────────────────────────────
-            # 2️⃣  HIGHER-LEVEL  COUNT-based windows (triggered by
-            #     RollingSummary events from the immediate lower window)
-            # ────────────────────────────────────────────────────────────
+            # count hierarchy
             for child, (parent, ratio) in self._COUNT_PARENT.items():
-                child_col = f"{nick}/{child}"
-                rs_filter = (
-                    f'evt.payload["manager"] == "{nick}" '
-                    f'and evt.payload["window"] == "{parent}"'
-                )
-                await EVENT_BUS.register_callback(
+                await _reg(
+                    f"{nick}/{child}",
                     event_type="RollingSummary",
-                    callback=_mk_cb(child_col),
-                    filter=rs_filter,
+                    filter=(
+                        f'evt.payload["manager"] == "{nick}" '
+                        f'and evt.payload["window"] == "{parent}"'
+                    ),
                     every_n=ratio,
                 )
 
-            # ────────────────────────────────────────────────────────────
-            # 3️⃣  HIGHER-LEVEL  TIME-based windows (same idea as above)
-            # ────────────────────────────────────────────────────────────
+            # time hierarchy
             for child, (parent, ratio) in self._TIME_PARENT.items():
-                # skip the base 'past_day' which is handled already
                 if child == "past_day":
                     continue
-                child_col = f"{nick}/{child}"
-                rs_filter = (
-                    f'evt.payload["manager"] == "{nick}" '
-                    f'and evt.payload["window"] == "{parent}"'
-                )
-                await EVENT_BUS.register_callback(
+                await _reg(
+                    f"{nick}/{child}",
                     event_type="RollingSummary",
-                    callback=_mk_cb(child_col),
-                    filter=rs_filter,
+                    filter=(
+                        f'evt.payload["manager"] == "{nick}" '
+                        f'and evt.payload["window"] == "{parent}"'
+                    ),
                     every_n=ratio,
                 )
+
+        # launch all manager registrations concurrently
+        await asyncio.gather(
+            *[
+                _register_for_manager(mgr_cls, nick)
+                for mgr_cls, nick in self._MANAGERS.items()
+            ],
+        )
+
+        # indicate readiness (useful for tests)
+        try:
+            self._callbacks_ready.set()  # type: ignore[attr-defined]
+        except AttributeError:
+            self._callbacks_ready = asyncio.Event()
+            self._callbacks_ready.set()
 
     # 3. Persisting the new snapshot ---------------------------------------
     async def _record_rolling_activity_body(
