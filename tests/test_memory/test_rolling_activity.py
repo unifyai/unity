@@ -177,8 +177,22 @@ async def _run_manager_case(
 
     EVENT_BUS.reset()
 
-    # Allow async callback setup to complete
-    await asyncio.sleep(0.05)
+    # Ensure MemoryManager rolling-activity callbacks are fully registered
+    if hasattr(mm, "_callbacks_ready"):
+        try:
+            # `_callbacks_ready` is an asyncio.Event set at the end of
+            # `_setup_rolling_callbacks`.  Waiting for it eliminates races
+            # where the first ManagerMethod event fires *before* the
+            # time-based "past_day" subscription is registered (previously
+            # causing missing `## Past Day` headings in the 1-call tests).
+            await asyncio.wait_for(mm._callbacks_ready.wait(), timeout=5)
+        except (asyncio.TimeoutError, AttributeError):
+            # Fallback – shouldn't happen, but keep legacy short delay as a
+            # safety net rather than failing the test due to timing issues.
+            await asyncio.sleep(0.1)
+    else:
+        # Attribute not yet present – keep legacy delay.
+        await asyncio.sleep(0.1)
 
     # Record baseline number of rolling activity logs
     baseline_logs = len(
