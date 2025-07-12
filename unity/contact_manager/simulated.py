@@ -6,7 +6,7 @@ import json
 import os
 import functools
 import threading
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any, Optional, TYPE_CHECKING
 
 import unify
 from .base import BaseContactManager
@@ -343,11 +343,10 @@ class SimulatedContactManager(BaseContactManager):
         import json
 
         schema_json = json.dumps(Contact.model_json_schema(), indent=2)
-
         filter_clause = f"Filter: `{filter}`." if filter else "No filter."
 
         prompt = (
-            "The user has called _search_contacts with the following arguments. Please simulate the response."
+            "The user has called _search_contacts with the following arguments. Please simulate the response. "
             f"{filter_clause} Return ONLY a JSON array (no markdown) of up to {limit} contacts starting at index {offset}.\n\n"
             f"Here is the Contact JSON schema for reference:\n{schema_json}"
         )
@@ -383,3 +382,99 @@ class SimulatedContactManager(BaseContactManager):
         # Apply offset/limit and convert to Contact objects
         sliced = data[offset : offset + limit] if limit is not None else data[offset:]
         return [Contact(**c) for c in sliced]
+
+    # ------------------------------------------------------------------ #
+    #  Simulated _update_contact                                          #
+    # ------------------------------------------------------------------ #
+    def _update_contact(
+        self,
+        *,
+        contact_id: int,
+        first_name: Optional[str] = None,
+        surname: Optional[str] = None,
+        email_address: Optional[str] = None,
+        phone_number: Optional[str] = None,
+        whatsapp_number: Optional[str] = None,
+        description: Optional[str] = None,
+        bio: Optional[str] = None,
+        rolling_summary: Optional[str] = None,
+        custom_fields: Optional[Dict[str, Any]] = None,
+    ) -> "ToolOutcome":
+        """
+        Simulated variant of :pyfunc:`ContactManager._update_contact`.
+
+        The method formulates a short instruction to the **stateful** LLM
+        backing this simulated manager asking it to *pretend* that the given
+        contact has been updated.  The LLM must respond with a JSON object
+        matching the :class:`~unity.common.tool_outcome.ToolOutcome` schema so
+        downstream callers can parse the result.
+        """
+
+        import json
+
+        # Build a concise instruction that lists only the fields that are actually being modified
+        updates = {
+            k: v
+            for k, v in {
+                "first_name": first_name,
+                "surname": surname,
+                "email_address": email_address,
+                "phone_number": phone_number,
+                "whatsapp_number": whatsapp_number,
+                "description": description,
+                "bio": bio,
+                "rolling_summary": rolling_summary,
+                **(custom_fields or {}),
+            }.items()
+            if v is not None
+        }
+
+        if not updates:
+            updates = {"note": "no-op update requested – acknowledge anyway"}
+
+        prompt = (
+            "You are simulating the private helper `_update_contact` of a CRM. "
+            f"Pretend that the contact with id {contact_id} has just been updated with the fields below. "
+            "Reply with a JSON object **without** markdown that contains keys 'outcome' and 'details'. "
+            "The 'details' object must include the 'contact_id' and the changed fields."
+        )
+
+        user_payload = json.dumps(
+            {"contact_id": contact_id, "updates": updates},
+            indent=2,
+        )
+
+        async def _call_llm() -> str:
+            return await self._llm.generate(f"{prompt}\n\n{user_payload}")
+
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            loop = None
+
+        try:
+            if loop and loop.is_running():
+                raise RuntimeError(
+                    "SimulatedContactManager._update_contact cannot be invoked from within an active event loop.",
+                )
+            else:
+                raw = asyncio.run(_call_llm())
+
+            data = json.loads(raw)
+            if not isinstance(data, dict):
+                raise ValueError("Model did not return a JSON object.")
+            if "outcome" not in data or "details" not in data:
+                raise ValueError("Returned JSON missing required keys.")
+        except Exception:
+            data = {
+                "outcome": "contact updated (simulated)",
+                "details": {"contact_id": contact_id, **updates},
+            }
+
+        return data
+
+
+# --- TYPE CHECKING SUPPORT --------------------------------------------------
+
+if TYPE_CHECKING:
+    from ..common.tool_outcome import ToolOutcome
