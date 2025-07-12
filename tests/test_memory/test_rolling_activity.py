@@ -1,5 +1,4 @@
-"""tests/test_memory/test_rolling_activity.py
-
+"""
 Simple unit test for `MemoryManager.get_rolling_activity`.
 
 Ensures that when **no** activity has been recorded yet, the helper
@@ -30,9 +29,7 @@ async def test_get_rolling_activity_empty(monkeypatch):
 
     from unity.memory_manager.memory_manager import MemoryManager
 
-    # ------------------------------------------------------------------ #
-    # 1.  Stub heavy helpers so instantiation is lightweight             #
-    # ------------------------------------------------------------------ #
+    # 1.  Stub heavy helpers so instantiation is lightweight
     async def _noop(self, *_, **__):
         """Async no-op used to replace `_setup_rolling_callbacks`."""
 
@@ -48,9 +45,7 @@ async def test_get_rolling_activity_empty(monkeypatch):
     # Ensure *no* rows are returned so the method must fall back to "empty"
     monkeypatch.setattr(unify, "get_logs", lambda *a, **kw: [], raising=True)
 
-    # ------------------------------------------------------------------ #
-    # 2.  Exercise & verify                                              #
-    # ------------------------------------------------------------------ #
+    # 2.  Exercise & verify
     mm = MemoryManager()
 
     assert (
@@ -62,47 +57,148 @@ async def test_get_rolling_activity_empty(monkeypatch):
 #  Test – single manager call populates rolling activity                     |
 # ---------------------------------------------------------------------------
 
+from unity.contact_manager.simulated import SimulatedContactManager
+from unity.transcript_manager.simulated import SimulatedTranscriptManager
+from unity.knowledge_manager.simulated import SimulatedKnowledgeManager
+from unity.task_scheduler.simulated import SimulatedTaskScheduler
+
+# Handy type alias for the param table
+from typing import Callable, Any, Tuple
+
+_ManagerFactory = Callable[[], Any]
+
+# ---------------------------------------------------------------------------
+# Parameter table                                                           |
+# ---------------------------------------------------------------------------
+
+# Each tuple: (id, injector, factory, call-factory)
+#   • id         – readable test id used by pytest
+#   • injector   – which kwarg of MemoryManager should receive the manager
+#                  ("contact" | "transcript" | "knowledge" | "none")
+#   • factory    – zero-arg callable that returns a *fresh* manager instance
+#   • call_fn    – lambda that, given the manager, triggers ONE public method
+#                  and yields an awaitable SteerableToolHandle.
+
+MANAGER_TEST_CASES: Tuple[
+    Tuple[str, str, _ManagerFactory, Callable[[Any], Any]],
+    ...,
+] = (
+    (
+        "contact_ask",
+        "contact",
+        lambda: SimulatedContactManager(log_events=True),
+        lambda m: m.ask("Hello from contact ask."),
+    ),
+    (
+        "contact_update",
+        "contact",
+        lambda: SimulatedContactManager(log_events=True),
+        lambda m: m.update("Please create a new imaginary contact."),
+    ),
+    (
+        "transcript_ask",
+        "transcript",
+        lambda: SimulatedTranscriptManager(log_events=True),
+        lambda m: m.ask("What's the latest message?"),
+    ),
+    (
+        "transcript_summarize",
+        "transcript",
+        lambda: SimulatedTranscriptManager(log_events=True),
+        lambda m: m.summarize(from_messages=[1]),
+    ),
+    (
+        "knowledge_ask",
+        "knowledge",
+        lambda: SimulatedKnowledgeManager(log_events=True),
+        lambda m: m.ask("Tell me what we know about batteries."),
+    ),
+    (
+        "knowledge_update",
+        "knowledge",
+        lambda: SimulatedKnowledgeManager(log_events=True),
+        lambda m: m.update("Store that Tesla batteries last 8 years."),
+    ),
+    (
+        "knowledge_refactor",
+        "knowledge",
+        lambda: SimulatedKnowledgeManager(log_events=True),
+        lambda m: m.refactor("Normalise manufacturer tables."),
+    ),
+    (
+        "taskscheduler_ask",
+        "none",
+        lambda: SimulatedTaskScheduler(log_events=True),
+        lambda m: m.ask("Which tasks are due tomorrow?"),
+    ),
+    (
+        "taskscheduler_update",
+        "none",
+        lambda: SimulatedTaskScheduler(log_events=True),
+        lambda m: m.update("Add a task to send summary email tomorrow."),
+    ),
+    (
+        "taskscheduler_execute",
+        "none",
+        lambda: SimulatedTaskScheduler(log_events=True),
+        lambda m: m.execute_task(1),
+    ),
+)
+
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_single_manager_call_populates_rolling_activity():
-    """
-    After *one* outgoing manager call, the MemoryManager should persist a new
-    Rolling-Activity snapshot and expose it via `get_rolling_activity` (in
-    *interaction* mode).
-    """
+@pytest.mark.parametrize(
+    "case_id, injector, manager_factory, call_factory",
+    MANAGER_TEST_CASES,
+    ids=[c[0] for c in MANAGER_TEST_CASES],
+)
+async def test_manager_methods_populate_rolling_activity(
+    case_id,
+    injector,
+    manager_factory,
+    call_factory,
+):
+    """Ensure that *every* simulated manager method produces a Rolling-Activity snapshot."""
 
-    from unity.contact_manager.simulated import SimulatedContactManager
     from unity.memory_manager.memory_manager import MemoryManager
     from unity.events.event_bus import EVENT_BUS
 
-    # 1. Set up a SimulatedContactManager that emits ManagerMethod events
-    cm = SimulatedContactManager(log_events=True)
+    EVENT_BUS.reset()
 
-    # 2. Wire the ContactManager into a fresh MemoryManager (registers callbacks)
-    mm = MemoryManager(contact_manager=cm)
+    # Fresh manager instance (emits ManagerMethod events)
+    manager = manager_factory()
 
-    # Wait a moment so the asynchronous callback registration completes
+    # Wire the chosen manager into MemoryManager where possible
+    if injector == "contact":
+        mm = MemoryManager(contact_manager=manager)
+    elif injector == "transcript":
+        mm = MemoryManager(transcript_manager=manager)
+    elif injector == "knowledge":
+        mm = MemoryManager(knowledge_manager=manager)
+    else:
+        # TaskScheduler or unsupported injector – MemoryManager still registers callbacks
+        mm = MemoryManager()
+
+    # Allow async callback setup to complete
     await asyncio.sleep(0.05)
 
-    # Baseline – rows *before* any interaction
+    # Baseline – current number of RollingActivity rows
     initial_rows = len(unify.get_logs(context=mm._rolling_ctx, limit=100))
     assert initial_rows == 0
 
-    # 3. Trigger ONE outgoing manager call
-    handle = await cm.ask("Just say hello.")  # noqa: S106 – plain test prompt
+    # Trigger **one** outgoing manager call via the provided factory
+    handle = await call_factory(manager)
     await handle.result()
 
-    # Ensure the ManagerMethod event has been fully processed
+    # Ensure events & callbacks are fully processed
     EVENT_BUS.join_published()
-
-    # Ensure the associated rolling summary callback has been processed
     EVENT_BUS.join_callbacks()
 
-    # 4. Verify that at least one additional RollingActivity row was created
     updated_rows = len(unify.get_logs(context=mm._rolling_ctx, limit=100))
+
     assert updated_rows == 1
 
-    # 5. Interaction-based summary should now be non-empty
+    # A non-empty interaction summary must now be available
     summary = mm.get_rolling_activity(mode="interaction")
-    assert isinstance(summary, str) and summary.strip(), "Summary should not be empty"
+    assert summary.strip(), f"Expected non-empty summary for {case_id}"
