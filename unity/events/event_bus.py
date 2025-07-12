@@ -374,21 +374,7 @@ class EventBus:
             context=self._callbacks_ctx,
             sorting={"row_id": "ascending"},
         )
-        latest: Dict[str, dict] = {}
-        for lg in rows:
-            data = lg.entries.copy()
-            latest[data["subscription_id"]] = data
-
-        for sdata in latest.values():
-            self._subscriptions[sdata["subscription_id"]] = Subscription(
-                subscription_id=sdata["subscription_id"],
-                event_type=sdata["event_type"],
-                filter=sdata.get("filter"),
-                count_step=sdata.get("count_step"),
-                time_step=sdata.get("time_step"),
-                last_row_id=sdata.get("last_row_id", -1),
-                last_timestamp=sdata.get("last_timestamp", ""),
-            )
+        self._subscriptions = self._rows_to_subscriptions(rows)
 
     # ------------------------------------------------------------------
     async def _ensure_ready(self) -> None:
@@ -428,29 +414,12 @@ class EventBus:
 
     # ------------------------------------------------------------------
     def _load_subscriptions(self) -> None:
-        """
-        Recreate the in-memory ``_subscriptions`` map from the metadata
-        persisted in *self._callbacks_ctx*.
-        """
+        """Synchronously rebuild the in-memory subscription map."""
         rows = unify.get_logs(
             context=self._callbacks_ctx,
             sorting={"row_id": "ascending"},
         )
-        latest: Dict[str, dict] = {}
-        for lg in rows:
-            data = lg.entries.copy()
-            latest[data["subscription_id"]] = data
-
-        for sdata in latest.values():
-            self._subscriptions[sdata["subscription_id"]] = Subscription(
-                subscription_id=sdata["subscription_id"],
-                event_type=sdata["event_type"],
-                filter=sdata.get("filter"),
-                count_step=sdata.get("count_step"),
-                time_step=sdata.get("time_step"),
-                last_row_id=sdata.get("last_row_id", -1),
-                last_timestamp=sdata.get("last_timestamp", ""),
-            )
+        self._subscriptions = self._rows_to_subscriptions(rows)
 
     # ------------------------------------------------------------------
     # Public API
@@ -492,21 +461,13 @@ class EventBus:
             while len(dq) > window:
                 dq.popleft()
 
-        if isinstance(event.payload, BaseModel):
-            # JSON-mode: datetimes already serialised
-            payload_dict = event.payload.model_dump(mode="json")
-        else:
-            # Recursively coerce datetimes inside plain dict payloads
-            def _serialise(obj: Any):
-                if isinstance(obj, (dt.datetime, dt.date, dt.time)):
-                    return obj.isoformat()
-                if isinstance(obj, Mapping):
-                    return {k: _serialise(v) for k, v in obj.items()}
-                if isinstance(obj, (list, tuple, set)):
-                    return [_serialise(o) for o in obj]
-                return obj
-
-            payload_dict = _serialise(event.payload)
+        # Uniform serialisation – reuse the robust helper already implemented
+        # on the Event model to avoid maintaining a second custom walker.
+        payload_dict = (
+            event.payload.model_dump(mode="json")
+            if isinstance(event.payload, BaseModel)
+            else Event._to_python(event.payload)
+        )
 
         # Log to global event table
         self._logger.log_create(
@@ -1121,6 +1082,37 @@ class EventBus:
             payload=payload_obj,
             payload_cls=cls_path or "",
         )
+
+    # ------------------------------------------------------------------
+    #  Static subscription helpers
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _rows_to_subscriptions(rows: Iterable[Any]) -> Dict[str, Subscription]:
+        """Convert raw Unify log *rows* into a mapping of Subscription objects.
+
+        Multiple log entries may exist for the *same* ``subscription_id`` – we
+        keep only the newest per ID (matching previous behaviour) before
+        instantiating the Subscription models.
+        """
+
+        latest: Dict[str, dict] = {}
+        for lg in rows:
+            data = lg.entries.copy()
+            latest[data["subscription_id"]] = data
+
+        return {
+            sid: Subscription(
+                subscription_id=sid,
+                event_type=sdata["event_type"],
+                filter=sdata.get("filter"),
+                count_step=sdata.get("count_step"),
+                time_step=sdata.get("time_step"),
+                last_row_id=sdata.get("last_row_id", -1),
+                last_timestamp=sdata.get("last_timestamp", ""),
+            )
+            for sid, sdata in latest.items()
+        }
 
 
 # ─────────────────────────   Global singleton   ──────────────────────────
