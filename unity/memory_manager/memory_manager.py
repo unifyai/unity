@@ -524,6 +524,12 @@ class MemoryManager(BaseMemoryManager):
                 summary = await _summarise(collected)
 
         # ---- 2.  persist --------------------------------------------------
+        # Ensure **new** row creation: remove any inherited `row_id` so Unify
+        # allocates a fresh sequence number instead of silently updating the
+        # previous snapshot (which would make successive interactions appear
+        # as a single row and break tests expecting one row per call).
+        base_payload.pop("row_id", None)
+
         base_payload[column] = summary
 
         # ──────────────────────────  NEW: Pre-compute summaries  ────────────────
