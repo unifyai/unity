@@ -201,15 +201,8 @@ class Subscription(BaseModel):
     def matches(self, evt: "Event") -> bool:
         if self.event_type != evt.type:
             return False
-        if not self.filter:
-            return True
-        ns = {
-            "evt": evt,
-            "event_type": evt.type,
-            "type": evt.type,
-            **evt.model_dump(mode="python"),
-        }
-        return bool(eval(self.filter, {"__builtins__": {}}, ns))
+        # Reuse shared helper for evaluating optional filter expressions
+        return EventBus._match_filter(evt, self.filter)
 
     # ------------------------------------------------------------------
     def should_trigger(self, evt: "Event") -> bool:
@@ -341,43 +334,9 @@ class EventBus:
             )
             dq: Deque[Event] = deque(maxlen=window_size)
             for log in reversed(raw_logs):
-                entries = log.entries
-                if not entries:
+                if not log.entries:
                     continue
-
-                row_id = entries.pop("row_id", None)
-                event_id = entries.pop("event_id")
-                calling_id = entries.pop("calling_id")
-                timestamp = entries.pop("event_timestamp")
-                cls_path = entries.pop("payload_cls")
-
-                Model: type[BaseModel] | None = None
-                if cls_path:
-                    try:
-                        mod, name = cls_path.rsplit(".", 1)
-                        Model = getattr(import_module(mod), name)
-                    except (ModuleNotFoundError, AttributeError, ValueError):
-                        Model = None
-
-                if Model is not None:
-                    try:
-                        payload_obj = Model.model_validate(entries)
-                    except ValidationError:
-                        payload_obj = entries
-                else:
-                    payload_obj = entries
-
-                dq.append(
-                    Event(
-                        event_id=event_id,
-                        row_id=row_id,
-                        calling_id=calling_id,
-                        type=etype,
-                        timestamp=timestamp,
-                        payload=payload_obj,
-                        payload_cls=cls_path or "",
-                    ),
-                )
+                dq.append(self._row_to_event(log.entries, default_type=etype))
             self._deques[etype] = dq
 
         tasks = [
@@ -642,17 +601,7 @@ class EventBus:
 
         # ----------------------------------------------------------------------
         # 1. scan the deque -----------------------------------------------------
-        def _matches(evt: Event) -> bool:
-            if not filter:
-                return True
-            # VERY small, controlled eval-sandbox
-            ns = {
-                "evt": evt,
-                "event_type": evt.type,
-                "type": evt.type,
-                **evt.model_dump(mode="python"),
-            }
-            return bool(eval(filter, {"__builtins__": {}}, ns))
+        _matches = lambda evt: self._match_filter(evt, filter)
 
         in_memory: Dict[str, List[Event]] = {}
         deque_meta: Dict[str, tuple[int, int]] = {}  # etype -> (skipped, collected)
@@ -721,27 +670,7 @@ class EventBus:
                 )
 
                 for lg in logs:
-                    e = lg.entries.copy()
-                    meta_keys = {
-                        "row_id",
-                        "event_id",
-                        "calling_id",
-                        "event_timestamp",
-                        "timestamp",
-                        "payload_cls",
-                        "type",
-                    }
-                    payload = {k: v for k, v in e.items() if k not in meta_keys}
-
-                    evt = Event(
-                        event_id=e.get("event_id"),
-                        row_id=e.get("row_id"),
-                        calling_id=e.get("calling_id", ""),
-                        type=e.get("type"),
-                        timestamp=e.get("event_timestamp") or e.get("timestamp"),
-                        payload_cls=e.get("payload_cls", ""),
-                        payload=payload,
-                    )
+                    evt = self._row_to_event(lg.entries)
                     in_memory.setdefault(evt.type, []).append(evt)
 
                 # We've satisfied the need; skip the per-type fetch branch
@@ -765,33 +694,7 @@ class EventBus:
                 limit=want,
             )
 
-            evts: list[Event] = []
-            for lg in logs:
-                e = lg.entries.copy()
-
-                # Split metadata vs. payload (payload is fully *flattened* in Unify)
-                meta_keys = {
-                    "row_id",
-                    "event_id",
-                    "calling_id",
-                    "event_timestamp",
-                    "timestamp",
-                    "payload_cls",
-                    "type",
-                }
-                payload = {k: v for k, v in e.items() if k not in meta_keys}
-
-                evts.append(
-                    Event(
-                        event_id=e.get("event_id"),
-                        row_id=e.get("row_id"),
-                        calling_id=e.get("calling_id", ""),
-                        type=e.get("type", etype),
-                        timestamp=e.get("event_timestamp") or e.get("timestamp"),
-                        payload_cls=e.get("payload_cls", ""),
-                        payload=payload,
-                    ),
-                )
+            evts = [self._row_to_event(lg.entries, default_type=etype) for lg in logs]
             return etype, evts
 
         # Kick off all remaining I/O in parallel (if any)
@@ -1041,42 +944,73 @@ class EventBus:
             limit=100,
         )
 
-        def _row_to_event(row: dict) -> Event:
-            meta = {
-                "row_id",
-                "event_id",
-                "calling_id",
-                "event_timestamp",
-                "timestamp",
-                "payload_cls",
-                "type",
-            }
-            payload = {k: v for k, v in row.items() if k not in meta}
-            return Event(
-                row_id=row.get("row_id"),
-                event_id=row.get("event_id"),
-                calling_id=row.get("calling_id", ""),
-                type=event_type,
-                timestamp=row.get("event_timestamp") or row.get("timestamp"),
-                payload=payload,
-                payload_cls=row.get("payload_cls", ""),
-            )
-
         for lg in recent_logs:  # newest → oldest
-            evt = _row_to_event(lg.entries.copy())
-            if not filter:
-                match = True
-            else:
-                ns = {
-                    "evt": evt,
-                    "event_type": evt.type,
-                    "type": evt.type,
-                    **evt.model_dump(mode="python"),
-                }
-                match = bool(eval(filter, {"__builtins__": {}}, ns))
-            if match:
+            evt = self._row_to_event(lg.entries, default_type=event_type)
+            if self._match_filter(evt, filter):
                 return evt.row_id, evt.timestamp
         return -1, None
+
+    # ────────────────────────────  Static helpers  ────────────────────────────
+    @staticmethod
+    def _match_filter(evt: "Event", filter_expr: Optional[str]) -> bool:
+        """Return True if *evt* satisfies the provided *filter_expr* (or if the
+        expression is None/empty). The eval sandbox mirrors the original
+        implementation but is now centralised for reuse across the class."""
+        if not filter_expr:
+            return True
+        ns: dict[str, Any] = {
+            "evt": evt,
+            "event_type": evt.type,
+            "type": evt.type,  # legacy alias
+            **evt.model_dump(mode="python"),
+        }
+        return bool(eval(filter_expr, {"__builtins__": {}}, ns))
+
+    @staticmethod
+    def _row_to_event(row: dict, default_type: Optional[str] | None = None) -> "Event":
+        """Convert a *flattened* Unify log row back into an :class:`Event`.
+
+        The logic was previously duplicated in several places (prefill, search
+        fetch, baseline computation). Centralising it greatly reduces code
+        repetition and ensures consistent behaviour.
+        """
+        entries = row.copy()
+        row_id = entries.pop("row_id", None)
+        event_id = entries.pop("event_id", str(uuid4()))
+        calling_id = entries.pop("calling_id", "")
+        timestamp = entries.pop("event_timestamp", None) or entries.pop(
+            "timestamp",
+            None,
+        )
+        cls_path = entries.pop("payload_cls", "")
+        etype = entries.pop("type", default_type)
+
+        # Attempt to rehydrate structured payloads
+        Model: type[BaseModel] | None = None
+        if cls_path:
+            try:
+                mod, name = cls_path.rsplit(".", 1)
+                Model = getattr(import_module(mod), name)
+            except (ModuleNotFoundError, AttributeError, ValueError):
+                Model = None
+
+        if Model is not None:
+            try:
+                payload_obj = Model.model_validate(entries)
+            except ValidationError:
+                payload_obj = entries
+        else:
+            payload_obj = entries
+
+        return Event(
+            event_id=event_id,
+            row_id=row_id,
+            calling_id=calling_id,
+            type=etype,
+            timestamp=timestamp,
+            payload=payload_obj,
+            payload_cls=cls_path or "",
+        )
 
 
 # ─────────────────────────   Global singleton   ──────────────────────────
