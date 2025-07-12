@@ -264,6 +264,31 @@ async def _run_manager_case(
         f"found {new_logs}.\nSummary:\n{summary}"
     )
 
+    # ---------------- Negative assertions – no unexpected headings ---------
+    def _extract_headings(text: str) -> set[str]:
+        """Return all lines that start with one or more '#' characters."""
+        return {ln.strip() for ln in text.splitlines() if ln.lstrip().startswith("#")}
+
+    # Interaction summary should only contain the manager title and the
+    # base-level *Past Interaction* sub-heading – nothing else.
+    expected_interaction_headings = {expected_title, "## Past Interaction"}
+    interaction_headings = _extract_headings(summary)
+
+    unexpected_interaction = interaction_headings - expected_interaction_headings
+    assert not unexpected_interaction, (
+        "Found unexpected headings in interaction-based rolling activity summary "
+        f"for {case_id}: {unexpected_interaction}. Full summary:\n{summary}"
+    )
+
+    # Time-based summary should only include title + Past Day sub-heading.
+    expected_time_headings = {expected_title, "## Past Day"}
+    time_headings = _extract_headings(time_summary)
+    unexpected_time = time_headings - expected_time_headings
+    assert not unexpected_time, (
+        "Found unexpected headings in time-based rolling activity summary "
+        f"for {case_id}: {unexpected_time}. Full summary:\n{time_summary}"
+    )
+
 
 # ---------------------------------------------------------------------------
 #  Build (n_calls) list – we only test 1 and 2 calls for now                 |
