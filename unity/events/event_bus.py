@@ -20,6 +20,7 @@ from typing import (
     Optional,
     Callable,
     Awaitable,
+    Set,
 )
 
 from importlib import import_module
@@ -272,6 +273,9 @@ class EventBus:
         self._logger = unify.AsyncLoggerManager(name="EventBus")
         # Manual per-event-type row_id counters (initialised during hydration)
         self._next_row_ids: Dict[str, int] = {}
+
+        # Track pending callback futures so we can await their completion
+        self._callback_futures: Set[asyncio.Future] = set()
 
         # runtime subscriptions (id → Subscription)
         self._subscriptions: Dict[str, Subscription] = {}
@@ -801,19 +805,28 @@ class EventBus:
                 return sub.subscription_id
 
         # ------------------------------------------------------------------
-        # no existing subscription – create a fresh one
-        last_row_id, last_ts = await self._compute_baseline(event_type, filter)
+        # no existing subscription – create a fresh one **immediately** so
+        # events published concurrently are not missed.  We then compute the
+        # baseline *asynchronously* and update the persisted state.
+        # ------------------------------------------------------------------
         sub = Subscription(
             event_type=event_type,
             filter=filter,
             count_step=every_n,
             time_step=every_seconds,
-            last_row_id=last_row_id,
-            last_timestamp=last_ts,
             callback=callback,
         )
-        self._subscriptions[sub.subscription_id] = sub
+        self._subscriptions[sub.subscription_id] = sub  # <-- race-free registration
+
+        # Compute the baseline *after* registering so we don't miss events
+        # that may arrive during the potentially slow I/O below.
+        sub.last_row_id, sub.last_timestamp = await self._compute_baseline(
+            event_type,
+            filter,
+        )
+
         self._persist_subscription_state(sub)
+
         return sub.subscription_id
 
     # ------------------------------------------------------------------
@@ -854,9 +867,15 @@ class EventBus:
             cb = sub.callback
             try:
                 if asyncio.iscoroutinefunction(cb):
-                    asyncio.create_task(cb([evt]))
+                    task = asyncio.create_task(cb([evt]))
+                    # Track the new task and remove it when done
+                    self._callback_futures.add(task)
+                    task.add_done_callback(self._callback_futures.discard)
                 else:
-                    loop.run_in_executor(None, cb, [evt])
+                    fut = loop.run_in_executor(None, cb, [evt])
+                    # fut is an asyncio.Future compatible object
+                    self._callback_futures.add(fut)  # type: ignore[arg-type]
+                    fut.add_done_callback(self._callback_futures.discard)  # type: ignore[attr-defined]
             except RuntimeError:
                 # No running loop (shutdown) – last-ditch synchronous call
                 cb([evt])
@@ -926,6 +945,28 @@ class EventBus:
 
         # 3. Re-initialise this *same* instance
         type(self).__init__(self)
+
+    # ------------------------------------------------------------------
+    async def join_callbacks(self) -> None:
+        """Block until all callback tasks that were *already scheduled* at the
+        moment of invocation have completed.
+
+        This mirrors :pyfunc:`join_published` but for in-process callback
+        execution.  It intentionally takes a *snapshot* of currently pending
+        tasks so callbacks that are *scheduled afterwards* do **not** prolong
+        the wait – matching the typical behaviour of a «join» operation.
+        """
+
+        # Copy the current set to avoid race conditions with tasks completing
+        # while we're awaiting.  Only tasks that were pending *before* this
+        # call are considered.
+        to_await: list[asyncio.Future] = list(self._callback_futures)
+        if not to_await:
+            return
+
+        # Await all, swallowing individual exceptions so one failing callback
+        # does not block the others or leak unhandled-exception warnings.
+        await asyncio.gather(*to_await, return_exceptions=True)
 
     # helper extracted from the old inline code
     async def _compute_baseline(
