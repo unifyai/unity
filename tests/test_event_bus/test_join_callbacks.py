@@ -31,7 +31,9 @@ async def test_join_callbacks_waits_for_pending() -> None:
     await bus.publish(Event(type="Pending", payload={}))
     bus.join_published()
 
-    join_task = asyncio.create_task(bus.join_callbacks())
+    # `join_callbacks` is now a synchronous, blocking method – run it in a
+    # background thread so we can await it without blocking the event-loop.
+    join_task = asyncio.create_task(asyncio.to_thread(bus.join_callbacks))
 
     # Shortly after starting, the callback should still be running
     await asyncio.sleep(0.01)
@@ -73,7 +75,8 @@ async def test_join_callbacks_ignores_future_callbacks() -> None:
 
     # Invoke join_callbacks while first callback is still running
     t0 = time.perf_counter()
-    join_task = asyncio.create_task(bus.join_callbacks())
+    # `join_callbacks` blocks synchronously; execute in a background thread
+    join_task = asyncio.create_task(asyncio.to_thread(bus.join_callbacks))
 
     # Give join_callbacks a chance to capture current tasks
     await asyncio.sleep(0.01)
