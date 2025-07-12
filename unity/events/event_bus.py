@@ -957,36 +957,63 @@ class EventBus:
         type(self).__init__(self)
 
     # ------------------------------------------------------------------
-    async def join_callbacks(self) -> None:
-        """Block until all callback tasks that were *already scheduled* at the
-        moment of invocation have completed.
+    def join_callbacks(self) -> None:  # noqa: D401 – imperative name
+        """Block until callback tasks that are already pending have finished.
 
-        This mirrors :pyfunc:`join_published` but for in-process callback
-        execution.  It intentionally takes a *snapshot* of currently pending
-        tasks so callbacks that are *scheduled afterwards* do **not** prolong
-        the wait – matching the typical behaviour of a «join» operation.
-        """
+        Works both inside and outside an active event-loop."""
 
-        # Snapshot the highest sequence number currently assigned so that
-        # we only wait for tasks that were *already scheduled* at this
-        # point in time – independent of when exactly this coroutine gets
-        # CPU time in the event-loop.
-        cutoff = self._callback_seq
+        async def _helper():  # inner coroutine – former implementation
+            # Snapshot the highest sequence number currently assigned so that
+            # we only wait for tasks that were *already scheduled* at this
+            # point in time – independent of when exactly this coroutine gets
+            # CPU time in the event-loop.
+            cutoff = self._callback_seq
 
-        # Create a static list of tasks whose seq ≤ cutoff.  New tasks that
-        # might be added while we are waiting will have a higher seq and are
-        # therefore ignored.
-        to_await: list[asyncio.Future] = [
-            t
-            for t in list(self._callback_futures)
-            if getattr(t, "_eb_seq", 0) <= cutoff
-        ]
-        if not to_await:
-            return
+            # Static list of tasks whose seq ≤ cutoff.  Newer tasks are
+            # ignored so the join behaves like a classic «join» operation.
+            to_await: list[asyncio.Future] = [
+                t
+                for t in list(self._callback_futures)
+                if getattr(t, "_eb_seq", 0) <= cutoff
+            ]
+            if not to_await:
+                return
 
-        # Await all, swallowing individual exceptions so one failing callback
-        # does not block the others or leak unhandled-exception warnings.
-        await asyncio.gather(*to_await, return_exceptions=True)
+            await asyncio.gather(*to_await, return_exceptions=True)
+
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            # No active loop → safe to spin up a temporary one
+            asyncio.run(_helper())
+        else:
+            # If we're already inside an event-loop, attempt a re-entrant run
+            # using `nest_asyncio`; otherwise delegate to a background thread.
+
+            try:
+                import nest_asyncio  # type: ignore
+
+                nest_asyncio.apply(loop)  # type: ignore[arg-type]
+                loop.run_until_complete(_helper())
+            except ModuleNotFoundError:
+                # Fallback: run the coroutine in a background thread
+                import threading
+
+                exc: list[BaseException] | None = []
+
+                def _runner():
+                    try:
+                        new_loop = asyncio.new_event_loop()
+                        asyncio.set_event_loop(new_loop)
+                        new_loop.run_until_complete(_helper())
+                    except BaseException as e:  # noqa: BLE001
+                        exc.append(e)
+
+                t = threading.Thread(target=_runner, daemon=True)
+                t.start()
+                t.join()
+                if exc:
+                    raise exc[0]
 
     # helper extracted from the old inline code
     async def _compute_baseline(
