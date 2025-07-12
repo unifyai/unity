@@ -6,7 +6,7 @@ import json
 import os
 import functools
 import threading
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Optional
 
 import unify
 from .base import BaseContactManager
@@ -319,3 +319,67 @@ class SimulatedContactManager(BaseContactManager):
             )
 
         return handle
+
+    def _search_contacts(
+        self,
+        *,
+        filter: Optional[str] = None,
+        offset: int = 0,
+        limit: int = 100,
+    ) -> List[Contact]:
+        """
+        Simulated variant of :pyfunc:`ContactManager._search_contacts`.
+
+        Delegates the heavy lifting to the *stateful* LLM backing this
+        simulated manager.  We instruct the model to respond **only** with a
+        JSON array of contact records that match the requested *filter* so the
+        result can be parsed straight into :class:`Contact` objects.
+
+        The method guarantees a *non-empty* return value to satisfy downstream
+        components (e.g. TranscriptManager) that expect at least one contact.
+        """
+        # Craft an instruction that re-uses the manager's description so the
+        # LLM keeps its narrative consistent across turns.
+        import json
+
+        schema_json = json.dumps(Contact.model_json_schema(), indent=2)
+
+        filter_clause = f"Filter: `{filter}`." if filter else "No filter."
+
+        prompt = (
+            "The user has called _search_contacts with the following arguments. Please simulate the response."
+            f"{filter_clause} Return ONLY a JSON array (no markdown) of up to {limit} contacts starting at index {offset}.\n\n"
+            f"Here is the Contact JSON schema for reference:\n{schema_json}"
+        )
+
+        # Because this helper is synchronous while the underlying LLM is async,
+        # we spin up a temporary event-loop when needed.
+        async def _call_llm() -> str:
+            return await self._llm.generate(prompt)
+
+        try:
+            # Attempt to use an existing running loop if present (rare for sync callers)
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            loop = None
+
+        try:
+            if loop and loop.is_running():
+                # Synchronous function called from an active event loop: this is a misuse
+                # of the simulated contact manager – surface a clear error.
+                raise RuntimeError(
+                    "SimulatedContactManager._search_contacts cannot be invoked from within an active event loop.",
+                )
+            else:
+                raw = asyncio.run(_call_llm())
+
+            data = json.loads(raw)
+            if not isinstance(data, list):
+                raise ValueError("Model did not return a JSON array.")
+        except Exception as exc:
+            # Propagate parsing / generation errors to the caller – no silent fallbacks.
+            raise exc
+
+        # Apply offset/limit and convert to Contact objects
+        sliced = data[offset : offset + limit] if limit is not None else data[offset:]
+        return [Contact(**c) for c in sliced]
