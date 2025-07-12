@@ -276,6 +276,11 @@ class EventBus:
 
         # Track pending callback futures so we can await their completion
         self._callback_futures: Set[asyncio.Future] = set()
+        # Monotonically increasing sequence number for callback tasks –
+        # allows join_callbacks to distinguish tasks scheduled *before* its
+        # invocation from those scheduled afterwards (see implementation
+        # below).
+        self._callback_seq: int = 0
 
         # runtime subscriptions (id → Subscription)
         self._subscriptions: Dict[str, Subscription] = {}
@@ -867,13 +872,18 @@ class EventBus:
             cb = sub.callback
             try:
                 if asyncio.iscoroutinefunction(cb):
+                    # Assign a sequence number before scheduling
+                    self._callback_seq += 1
                     task = asyncio.create_task(cb([evt]))
+                    setattr(task, "_eb_seq", self._callback_seq)
                     # Track the new task and remove it when done
                     self._callback_futures.add(task)
                     task.add_done_callback(self._callback_futures.discard)
                 else:
+                    # For executor jobs we still assign a seq for filtering
+                    self._callback_seq += 1
                     fut = loop.run_in_executor(None, cb, [evt])
-                    # fut is an asyncio.Future compatible object
+                    setattr(fut, "_eb_seq", self._callback_seq)  # type: ignore[attr-defined]
                     self._callback_futures.add(fut)  # type: ignore[arg-type]
                     fut.add_done_callback(self._callback_futures.discard)  # type: ignore[attr-defined]
             except RuntimeError:
@@ -957,10 +967,20 @@ class EventBus:
         the wait – matching the typical behaviour of a «join» operation.
         """
 
-        # Copy the current set to avoid race conditions with tasks completing
-        # while we're awaiting.  Only tasks that were pending *before* this
-        # call are considered.
-        to_await: list[asyncio.Future] = list(self._callback_futures)
+        # Snapshot the highest sequence number currently assigned so that
+        # we only wait for tasks that were *already scheduled* at this
+        # point in time – independent of when exactly this coroutine gets
+        # CPU time in the event-loop.
+        cutoff = self._callback_seq
+
+        # Create a static list of tasks whose seq ≤ cutoff.  New tasks that
+        # might be added while we are waiting will have a higher seq and are
+        # therefore ignored.
+        to_await: list[asyncio.Future] = [
+            t
+            for t in list(self._callback_futures)
+            if getattr(t, "_eb_seq", 0) <= cutoff
+        ]
         if not to_await:
             return
 
