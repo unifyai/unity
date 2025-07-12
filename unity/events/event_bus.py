@@ -984,8 +984,25 @@ class EventBus:
         try:
             loop = asyncio.get_running_loop()
         except RuntimeError:
-            # No active loop → safe to spin up a temporary one
-            asyncio.run(_helper())
+            # No active event-loop in *this* thread.  However, the callback
+            # tasks we want to await are bound to *some* loop (typically the
+            # main thread's loop).  Use that loop to run the helper
+            # coroutine via `run_coroutine_threadsafe` instead of creating a
+            # fresh, incompatible loop.
+
+            # Determine the target loop from one of the pending tasks (if any)
+            pending = [t for t in list(self._callback_futures)]
+            if pending:
+                tgt_loop = pending[0].get_loop()
+
+                # Schedule the helper coroutine onto the target loop and
+                # block until it completes.
+                fut = asyncio.run_coroutine_threadsafe(_helper(), tgt_loop)
+                fut.result()
+                return
+
+            # Fallback – nothing to wait for: no pending tasks
+            return
         else:
             # If we're already inside an event-loop, attempt a re-entrant run
             # using `nest_asyncio`; otherwise delegate to a background thread.
@@ -1001,11 +1018,16 @@ class EventBus:
 
                 exc: list[BaseException] | None = []
 
-                def _runner():
+                # Instead of creating a **new** event-loop (which cannot await
+                # tasks bound to the **original** loop), schedule the helper
+                # coroutine *onto the existing running loop* in a
+                # thread-safe manner and wait for its completion.
+
+                def _runner():  # noqa: D401 – imperative helper
                     try:
-                        new_loop = asyncio.new_event_loop()
-                        asyncio.set_event_loop(new_loop)
-                        new_loop.run_until_complete(_helper())
+                        fut = asyncio.run_coroutine_threadsafe(_helper(), loop)
+                        # Wait for the coroutine to finish (propagates errors)
+                        fut.result()
                     except BaseException as e:  # noqa: BLE001
                         exc.append(e)
 
