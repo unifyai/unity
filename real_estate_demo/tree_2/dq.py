@@ -137,20 +137,33 @@ def handle_dq_next(ctx):
             return "diy"
 
         case "No lights working in my property":
-            return [RadioField("checked_trip_switch", "Have you checked the trip switch?", ["yes", "no"])]
-
+            if ctx["checked_trip_switch"] == "yes":
+                return "more_info"
+            return "diy"
+        
         case "Some lights not working":
-            return [RadioField("any_lights_working", "Are there any lights working in the location?", ["yes", "no"])]
+            if ctx["any_lights_working"] == "yes":
+                return "location"
+            return "more_info"
 
         # Cases for 'Gas Heating & Hot Water' sub-issues
         case "Gas boiler low pressure - no water leak":
-            return [RadioField("re_pressurise_boiler", "Have you tried to re-pressurise the boiler?", ["yes", "no"])]
+            if ctx["re_pressurise_boiler"] == "yes":
+                return "more_info"
+            return "diy"
         case "Gas central heating not working":
-            return [RadioField("checked_gas_meter", "Have you checked your gas meter is topped up?", ["yes", "no"])]
+            if ctx["checked_gas_meter"] == "yes":
+                return "more_info"
+            return "diy"
+        # raises another diagnostic question
         case "Gas fire or heater not working":
-            return [RadioField("only_heating_form", "Is this your only form of heating?", ["yes", "no"])]
+            if ctx["only_heating_form"] == "yes":
+                return "more_info"
+            return "diagnostic_question_2"
         case "Hot water not working":
-            return [RadioField("checked_gas_meter", "Have you checked your gas meter is topped up?", ["yes", "no"])]
+            if ctx["checked_gas_meter"] == "yes":
+                return "diagnostic_question_2"
+            return "diy"
 
         case "Pipes have started making loud and unusual noises (I've not heard before)":
             # TODO: Add specific fields for Pipes have started making loud and unusual noises
@@ -174,7 +187,9 @@ def handle_dq_next(ctx):
             pass
         case "Fence panels missing or damaged":
             # TODO: Add specific fields for Fence panels missing or damaged
-            return [RadioField("fence_location", "Where is the fence?", ["Next to a public footpath or road", "Between your property and neighbour"])]
+            if ctx["fence_location"] == "Next to a public footpath or road":
+                return "location"
+            return "diy"
 
         case "Gate or gate post broken":
             # TODO: Add specific fields for Gate or gate post broken

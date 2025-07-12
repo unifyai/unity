@@ -19,14 +19,14 @@ class GoBack(BaseModel):
     back: Literal[True] = True
 
 
-class EndSession(BaseModel):
+class EndCall(BaseModel):
     """
     conclude the session and end the call.
 
-    Can only be used in a terminal node; using EndSession will end the call and
+    Can only be used in a terminal node; using EndCall will end the call and
     you won't be able to listen to the user anymore.
     """
-    end_session: Literal[True] = True
+    end_call: Literal[True] = True
     closing_message: str
 
 
@@ -430,7 +430,7 @@ class Flow:
                 return
 
             # ---------------- terminate --------------------------- #
-            if isinstance(action, EndSession):
+            if isinstance(action, EndCall):
                 self.flow_done = True
                 return
 
@@ -469,13 +469,13 @@ class Flow:
             extra_actions.append(GoToNode)
 
         if self.current_node.is_terminal:
-            extra_actions.append(EndSession)
+            extra_actions.append(EndCall)
 
         # wrap field actions so we can attach a short "update" string
         DataFieldAction = create_model(
             "DataFieldAction",
             update=(str, Field(default=None,
-                               description="short (~3-5 words) update for the user")),
+                               description="optional short (~3-5 words) friendly update for the user")),
             fields_actions=(list[Union[self.current_node.action_model]],
                             Field(..., description="data-field action(s) to take")),
             __base__=BaseDataFieldAction

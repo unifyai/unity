@@ -4,90 +4,108 @@ def get_issue_2_fields(ctx):
     match ctx["issue_element"]:
         case "Floors":
             options = ["Vinyl flooring is damaged", "Floorboard Broken and hole in the floor", "Floorboard loose but not broken", "Skirting board loose, rotten, or missing"]
-            return [RadioField("issue_type", "Issue Location", options)]
+            return [RadioField("issue_type", "Issue Type", options)]
         case "Walls":
             # TODO: Add specific fields for Walls issues
             options = ["Cracks in the wall", "Grouting between tiles missing or damaged", "Tiles are damaged or missing", "Grab rail (on wall) loose", "Skirting board loose, rotten, or missing", "Wall plaster damaged - loose crumbling or bulging", "Vent to outside wall missing or loose"]
-            return [RadioField("issue_type", "Issue Location", options)]
+            return [RadioField("issue_type", "Issue Type", options)]
         case "Ceilings":
             # TODO: Add specific fields for Ceilings issues
             options = ["Ceiling is falling down", "Cracks in the ceiling", "Ceiling plaster damaged - loose crumbling or bulging", "Roof leaking"]
-            return [RadioField("issue_type", "Issue Location", options)]
+            return [RadioField("issue_type", "Issue Type", options)]
+        case "Stairs":
+            options = ["Stair banister or spindles broken", "Staircase steps or floorboard broken"]
+            return [RadioField("issue_type", "Issue Type", options)]
         case "Kitchen Units":
-            # TODO: Add specific fields for Kitchen Units issues
-            pass
-        case "Bath Stinks":
-            # TODO: Add specific fields for Bath Stinks issues
-            pass
+            options = ["Kitchen wall unit loose or falling off the wall", "Kitchen unit doors or drawers loose or damaged", "Kitchen worktop damaged"]
+            return [RadioField("issue_type", "Issue Type", options)]
+        case "Bath Sinks and Showers":
+            options = ["Water leak", "No water in the property", "Blocked pipe or drain in hand basin or sink", "Sealant damaged around bath/basin or sink", "Shower curtain rail broken", "Mixer shower not working", "Bath is chipped", "Bath or basin waste trap plate has rusted"]
+            return [RadioField("issue_type", "Issue Type", options)]
         case "Toilets":
-            # TODO: Add specific fields for Toilets issues
-            pass
+            options = ["Water leak", "My only toilet is blocked", "One of my toilets is blocked", "Toilet seat is broken", "Toilet is loose from the floor and I don't feel like I can use it", "Cistern behind toilet loose / unstable", "Broken pipe behind toilet", "Toilet is loose but I can still use it", "Toilet pan is cracked but not leaking"]
+            return [RadioField("issue_type", "Issue Type", options)]
+
         case "Water Pipes":
-            # TODO: Add specific fields for Water Pipes issues
-            pass
+            options = ["Water leak", "No water in the property", "Pipes are frozen", "Blocked pipe or drain"]
+            return [RadioField("issue_type", "Issue Type", options)]
+
         case "Taps":
-            # TODO: Add specific fields for Taps issues
-            pass
+            options = ["No water in the property", "Tap leaking , loose or broken"]
+            return [RadioField("issue_type", "Issue Type", options)]
+
         case "Doors":
-            # TODO: Add specific fields for Doors issues
-            pass
+            options = ["External door damaged and my property isn't secure / I can't lock it", "External Door is sticking / loose / draughty", "Door handle loose", "Fire door is sticking / loose / draughty", "Metal door closer broken", "Letterbox loose or broken", "Door frame split or damaged", "Internal door is sticking / loose / draughty"]
+            return [RadioField("issue_type", "Issue Type", options)]
+
         case "Locks":
-            # TODO: Add specific fields for Locks issues
-            pass
+            options = ["Door lock is sticking - my property is secure", "I want to change my locks", "I'm locked out"]
+            return [RadioField("issue_type", "Issue Type", options)]
+
         case "Windows":
-            # TODO: Add specific fields for Windows issues
-            pass
+            options = ["Smashed window", "Ground floor window doesn't close", "Upper floor window doesn't close", "Window is draughty", "Window frames or cills damaged", "Window hinges or handles broken", "Upstairs window restrictor loose/broken", "Window is misty between the panes of glass", "Window is cracked"]
+            return [RadioField("issue_type", "Issue Type", options)]
+
         case "Lighting":
-            # TODO: Add specific fields for Lighting issues
             options = ["No lights working in my property", "Some lights not working", "Light switch broken"]
-            return [RadioField("issue_type", "Issue Location", options)]
+            return [RadioField("issue_type", "Issue Type", options)]
         case "Other Electrics":
-            # TODO: Add specific fields for Other Electrics issues
-            pass
+            options = ["No power in my property", "Electric in property keeps tripping or going off", "Switch or socket broken (sparking, making noises and smells like burning)", "Electrics need checking after a water leak", "Electric socket, switch or light fitting broken and the wires are exposed", "Electric socket, switch or light fitting broken wires aren't exposed", "Electric sockets aren't working but is not dangerous"]
+            return [RadioField("issue_type", "Issue Type", options)]
+
         case "Stair & Through Floor Lifts":
-            # TODO: Add specific fields for Stair & Through Floor Lifts issues
-            pass
+            options = ["Stair Lift is not working / moving", "Damage to stair lift (still working)", "Through floor lift not working", "Damage to through floor lift (still working)"]
+            return [RadioField("issue_type", "Issue Type", options)]
+
         case "Alarms and Door Entry":
-            # TODO: Add specific fields for Alarms and Door Entry issues
-            pass
+            options = ["Door Entry system not working and door won't open", "Warden call system not working", "Burglar alarm system not working", "Fire alarm not working (panel broken, not sounding)", "Fire Door (linked to Alarm) not working"]
+            return [RadioField("issue_type", "Issue Type", options)]
+
         case "Gas Heating & Hot Water":
-            # TODO: Add specific fields for Gas Heating & Hot Water issues
             options = ["Gas boiler low pressure - no water leak", "Gas central heating not working", "Gas fire or heater not working", "Hot water not working", "Pipes have started making loud and unusual noises (I've not heard before)", "Error code on boiler display", "Gas fire or heater damaged", "Gas boiler leaking water on electrical fittings", "Gas boiler water leaking"]
-            return [RadioField("issue_type", "Issue Location", options)]
+            return [RadioField("issue_type", "Issue Type", options)]
         case "Electric / Storage Heating & Hot Water":
-            # TODO: Add specific fields for Electric / Storage Heating & Hot Water issues
-            pass
+            options = ["No hot water from electric (immersion) heater", "An electric heater or fire is not working", "Hot Water Cylinder is Leaking", "Electric heating not working", "Air Source Heating - not working"]
+            return [RadioField("issue_type", "Issue Type", options)]
+
         case "Electric / Storage - Radiators":
-            # TODO: Add specific fields for Electric / Storage - Radiators issues
-            pass
+            options = ["Radiator loose - coming away from the wall", "One of my radiators isn't getting warm", "Radiator needs putting back on the wall", "Radiator leaking - electrical fittings getting wet", "Radiator leaking - flooding the property", "Radiator leaking - collecting water in a bucket"]
+            return [RadioField("issue_type", "Issue Type", options)]
+
         case "Gas - Radiators":
-            # TODO: Add specific fields for Gas - Radiators issues
-            pass
+            options = ["Radiator loose - coming away from the wall", "One of my radiators isn't getting warm", "Radiator needs putting back on the wall", "Radiator leaking - electrical fittings getting wet", "Radiator leaking - flooding the property", "Radiator leaking - collecting water in a bucket"]
+            return [RadioField("issue_type", "Issue Type", options)]
         case "Electric Showers":
-            # TODO: Add specific fields for Electric Showers issues
-            pass
+            options = ["Electrical shower unit leaking", "Electric shower hose, handset or rail broken", "Electric shower not working / no hot water"]
+            return [RadioField("issue_type", "Issue Type", options)]
+        
+        # outside home
         case "Fences":
             # TODO: Add specific fields for Fences issues
             options = ["Fence loose or falling down", "Fence panels missing or damaged", "Gate or gate post broken"]
-            return [RadioField("issue_type", "Issue Location", options)]
+            return [RadioField("issue_type", "Issue Type", options)]
         case "Brickwork":
-            # TODO: Add specific fields for Brickwork issues
-            pass
+            options = ["Fallen or unsafe wall", "Brick wall cracked", "Vent in wall to outside is missing or loose", "Damaged brickwork", "Outside wall covering (render) loose or cracked", "Outside wall covering (render) has fallen off"]
+            return [RadioField("issue_type", "Issue Type", options)]
+
         case "Garage":
-            # TODO: Add specific fields for Garage issues
-            pass
+            options = ["Garage door broken"]
+            return [RadioField("issue_type", "Issue Type", options)]
+
         case "Groundworks":
-            # TODO: Add specific fields for Groundworks issues
-            pass
+            options = ["Driveway has multiple large cracks", "Garden path/step is loose/broken", "Personal rotary clothes line broken", "Retractable clothes line & post (in any area) broken", "Concrete post for personal clothes line broken"]
+            return [RadioField("issue_type", "Issue Type", options)]
         case "Plumbing":
-            # TODO: Add specific fields for Plumbing issues
-            pass
+            options = ["Pipes are frozen", "Blocked drain overflowing sewage", "Blocked drain", "Drain cover broken (no trip hazard)", "Drain cover missing (fall or trip hazard)", "Outside tap leaking or loose", "Outside tap dripping", "Gutter or drainpipe blocked or broken"]
+            return [RadioField("issue_type", "Issue Type", options)]
         case "Roofing and tiles":
-            # TODO: Add specific fields for Roofing and tiles issues
-            pass
+            options = ["Tiles, lead, or chimney brickwork loose and dangerous", "Tiles, lead or chimney brickwork loose or fallen off roof", "Cracked roof tiles"]
+            return [RadioField("issue_type", "Issue Type", options)]
         case "Guttering":
             # TODO: Add specific fields for Guttering issues
-            pass
+            options = ["Gutter or drainpipe blocked or broken"]
+            return [RadioField("issue_type", "Issue Type", options)]
+
         case "Aerials":
-            # TODO: Add specific fields for Aerials issues
-            pass
+            options = ["Aerial or Satellite Dish not working"]
+            return [RadioField("issue_type", "Issue Type", options)]

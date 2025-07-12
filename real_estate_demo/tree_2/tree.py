@@ -165,7 +165,7 @@ repair_ticket_raised_screen = Node(
     "repair_ticket_raised_screen",
     "Repair Ticket Successfully Raised",
     """Steps: 
-1. Inform the user one last time that a ticket with the following details has been raised. After that ask them, if they need anything else, if not thank them and end the session.
+1. Inform the user one last time that a ticket with the following details has been raised.
 Ticket Details:
 Location: {location}
 Area: {area}
@@ -182,11 +182,35 @@ fields=[RadioField("user_informed", "User has been informed one final time?", op
 next=None
 )
 
+diy_node = Node(
+    "diy",
+    "Do it yourself",
+    """Steps:
+1- Inform the tenant that this kind of repair request they'll need
+to do themselves. they may want to contact
+a local tradesperson or company if
+they're unable to do this.
+
+There is more information about who
+carries out what repairs on our website
+and in your tenancy agreement.
+www.midlandheart.org.uk/repairtool
+
+2. Prompt the user if they need anything else
+If they do not need anything:
+    2.1 Thank the user and end the session
+Else:
+    2.2 Listen to their request and fulfill it if possible""".strip(),
+    fields=[RadioField("informed_diy", "Informed Tenant and tenant understood and accepted", options=["yes"])],
+    next=None
+)
+
 flow = Flow([
     start_call_screen, profile_screen,
     area_node, type_node, issue_one_node, issue_two_node, diagnostic_question_node,
     location,
     confirmation_screen, 
     appointment_screen, 
-    repair_ticket_raised_screen
+    repair_ticket_raised_screen,
+    diy_node
 ])

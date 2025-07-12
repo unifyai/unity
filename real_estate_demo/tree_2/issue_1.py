@@ -5,10 +5,10 @@ def get_issue_1_fields(ctx):
         match(ctx["section"]):
             # inside home
             case "Floors, Walls, Ceilings and Stairs":
-                options = ["Floors", "Walls", "Ceilings", "Kitchen Units"]
+                options = ["Floors", "Walls", "Ceilings", "Stairs", "Kitchen Units"]
                 return [RadioField("issue_element", "Issue Location", options)]
             case "Plumbing":
-                options = ["Bath Stinks", "Toilets", "Water Pipes", "Taps"]
+                options = ["Bath Sinks and Showers", "Toilets", "Water Pipes", "Taps"]
                 return [RadioField("issue_element", "Issue Location", options)]
             case "Doors, Locks and Windows":
                 options = ["Doors", "Locks", "Windows"]
