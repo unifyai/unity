@@ -23,6 +23,9 @@ from typing import (
     Set,
 )
 
+# NEW: context propagation helper for callback cascades
+import contextvars
+
 from importlib import import_module
 from pydantic import (
     BaseModel,
@@ -38,6 +41,19 @@ from pydantic.alias_generators import to_snake
 from uuid import uuid4
 
 __all__ = ["Event", "EventBus", "Subscription", "EVENT_BUS"]
+
+# ---------------------------------------------------------------------------
+# Context-variable to track the *root* sequence number of a callback cascade.
+# Every time EventBus schedules a callback it checks whether we are currently
+# inside another callback; if yes, the descendant inherits the same root-seq
+# so that join_callbacks(cascade=True) can await the complete cascade while
+# still ignoring unrelated new activity.
+# ---------------------------------------------------------------------------
+
+_CURRENT_ROOT_SEQ: contextvars.ContextVar[int | None] = contextvars.ContextVar(
+    "_CURRENT_ROOT_SEQ",
+    default=None,
+)
 
 
 # ───────────────────────────   Event envelope   ─────────────────────────────
@@ -833,18 +849,35 @@ class EventBus:
             cb = sub.callback
             try:
                 if asyncio.iscoroutinefunction(cb):
-                    # Assign a sequence number before scheduling
+                    # Assign a sequence number and decide the *root* seq
                     self._callback_seq += 1
-                    task = asyncio.create_task(cb([evt]))
-                    setattr(task, "_eb_seq", self._callback_seq)
+                    seq = self._callback_seq
+                    root_seq = _CURRENT_ROOT_SEQ.get() or seq
+
+                    # Propagate root-seq to descendants via context-var
+                    token = _CURRENT_ROOT_SEQ.set(root_seq)
+                    try:
+                        task = asyncio.create_task(cb([evt]))
+                    finally:
+                        _CURRENT_ROOT_SEQ.reset(token)
+
+                    # Attach sequencing metadata
+                    setattr(task, "_eb_seq", seq)
+                    setattr(task, "_eb_root_seq", root_seq)
+
                     # Track the new task and remove it when done
                     self._callback_futures.add(task)
                     task.add_done_callback(self._callback_futures.discard)
                 else:
                     # For executor jobs we still assign a seq for filtering
                     self._callback_seq += 1
+                    seq = self._callback_seq
+                    root_seq = _CURRENT_ROOT_SEQ.get() or seq
+
                     fut = loop.run_in_executor(None, cb, [evt])
-                    setattr(fut, "_eb_seq", self._callback_seq)  # type: ignore[attr-defined]
+                    setattr(fut, "_eb_seq", seq)  # type: ignore[attr-defined]
+                    setattr(fut, "_eb_root_seq", root_seq)  # type: ignore[attr-defined]
+
                     self._callback_futures.add(fut)  # type: ignore[arg-type]
                     fut.add_done_callback(self._callback_futures.discard)  # type: ignore[attr-defined]
             except RuntimeError:
@@ -918,29 +951,56 @@ class EventBus:
         type(self).__init__(self)
 
     # ------------------------------------------------------------------
-    def join_callbacks(self) -> None:  # noqa: D401 – imperative name
-        """Block until callback tasks that are already pending have finished.
+    def join_callbacks(
+        self,
+        *,
+        cascade: bool = False,
+    ) -> None:  # noqa: D401 – imperative name
+        """Block until callback tasks have finished.
 
-        Works both inside and outside an active event-loop."""
+        Parameters
+        ----------
+        cascade : bool, default False
+            If *False* (default) the behaviour is identical to the historic
+            implementation: only tasks that were already pending at the time
+            of invocation are awaited – tasks spawned later are ignored.
+
+            If *True* the method also waits for **all** tasks that share the
+            *root sequence* of those initial callbacks, i.e. any descendants
+            spawned *indirectly* by them.  Unrelated new activity triggered
+            by fresh, external events (and thus carrying a higher root-seq)
+            is **not** awaited, preventing deadlocks under high throughput
+            while still guaranteeing that entire cascades (e.g. the rolling
+            summary hierarchy) have settled before returning."""
 
         async def _helper():  # inner coroutine – former implementation
             # Snapshot the highest sequence number currently assigned so that
-            # we only wait for tasks that were *already scheduled* at this
-            # point in time – independent of when exactly this coroutine gets
-            # CPU time in the event-loop.
+            # we can identify all callbacks that belong to the *same* cascade
+            # (root-seq ≤ cutoff).  New, unrelated work gets a fresh root-seq
+            # > cutoff and is therefore ignored even in cascade-mode.
+
             cutoff = self._callback_seq
 
-            # Static list of tasks whose seq ≤ cutoff.  Newer tasks are
-            # ignored so the join behaves like a classic «join» operation.
-            to_await: list[asyncio.Future] = [
-                t
-                for t in list(self._callback_futures)
-                if getattr(t, "_eb_seq", 0) <= cutoff
-            ]
-            if not to_await:
-                return
+            while True:
+                to_await: list[asyncio.Future] = [
+                    t
+                    for t in list(self._callback_futures)
+                    if getattr(
+                        t,
+                        "_eb_root_seq" if cascade else "_eb_seq",
+                        0,
+                    )
+                    <= cutoff
+                ]
 
-            await asyncio.gather(*to_await, return_exceptions=True)
+                if not to_await:
+                    return
+
+                await asyncio.gather(*to_await, return_exceptions=True)
+
+                # If not cascading, we only wait once (historic behaviour)
+                if not cascade:
+                    return
 
         try:
             loop = asyncio.get_running_loop()
