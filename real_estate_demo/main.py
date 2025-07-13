@@ -147,15 +147,10 @@ def signal_handler(signum, frame):
     print(f"Received signal {signum}, shutting down gracefully...")
 
     # Clean up any running call processes
-    # global user_agent
-    # if user_agent:
-    #     # Clean up main user agent call process
-    #     user_agent.cleanup()
-
-    #     # Clean up all comm agents' call processes
-    #     if hasattr(user_agent, "contact_num_to_comm_agent"):
-    #         for comm_agent in user_agent.contact_num_to_comm_agent.values():
-    #             comm_agent.cleanup()
+    global support_agent
+    if support_agent:
+        # Clean up main user agent call process
+        support_agent.cleanup()
 
 
 def loop_exception_handler(loop, context):
@@ -169,8 +164,8 @@ async def main():
     # loop.set_exception_handler(loop_exception_handler)
 
     # Set up signal handlers
-    # signal.signal(signal.SIGTERM, signal_handler)
-    # signal.signal(signal.SIGINT, signal_handler)
+    signal.signal(signal.SIGTERM, signal_handler)
+    signal.signal(signal.SIGINT, signal_handler)
 
     event_manager = EventManager()
     event_manager_task = asyncio.create_task(event_manager.serve())
