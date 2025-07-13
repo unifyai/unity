@@ -55,13 +55,19 @@ def _rolling_activity_section() -> str:
 # ───────────────────────────────────── builders ─────────────────────────────────────
 
 
-def build_ask_prompt(tools: Dict[str, Callable]) -> str:
+def build_ask_prompt(
+    tools: Dict[str, Callable],
+    *,
+    include_activity: bool = True,
+) -> str:
     """Dynamic **system** prompt for `Conductor.ask`."""
     sig_json = json.dumps(_sig_dict(tools), indent=4)
 
+    activity_block = _rolling_activity_section() if include_activity else ""
+
     return "\n".join(
         [
-            _rolling_activity_section(),
+            activity_block,
             "You are an assistant specialising in **read-only questions** about tasks,",
             "contacts, transcripts and the knowledge-base.  Interact with the tools",
             "below *step-by-step* until you can answer concisely.",
@@ -80,13 +86,19 @@ def build_ask_prompt(tools: Dict[str, Callable]) -> str:
     )
 
 
-def build_request_prompt(tools: Dict[str, Callable]) -> str:
+def build_request_prompt(
+    tools: Dict[str, Callable],
+    *,
+    include_activity: bool = True,
+) -> str:
     """Dynamic **system** prompt for `Conductor.request`."""
     sig_json = json.dumps(_sig_dict(tools), indent=4)
 
+    activity_block = _rolling_activity_section() if include_activity else ""
+
     return "\n".join(
         [
-            _rolling_activity_section(),
+            activity_block,
             "You have **full read-write control** over tasks, contacts, transcripts",
             "and the knowledge-base. Use *only* the tools supplied – never invent",
             "your own. Call them iteratively until the user's request is completely",

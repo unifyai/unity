@@ -29,7 +29,7 @@ import asyncio
 
 
 class ContactManager(BaseContactManager):
-    def __init__(self) -> None:
+    def __init__(self, *, rolling_summary_in_prompts: bool = True) -> None:
         """
         Responsible for managing the list of contact details stored upstream.
 
@@ -109,6 +109,9 @@ class ContactManager(BaseContactManager):
             ),
             **self._schema_tools,
         }
+
+        # rolling activity inclusion flag
+        self._rolling_summary_in_prompts = rolling_summary_in_prompts
 
     # ──────────────────────────────────────────────────────────────────────
     #  Column helpers (single-table version of KnowledgeManager's helpers)
@@ -275,6 +278,7 @@ class ContactManager(BaseContactManager):
         parent_chat_context: Optional[List[Dict[str, Any]]] = None,
         clarification_up_q: Optional[asyncio.Queue[str]] = None,
         clarification_down_q: Optional[asyncio.Queue[str]] = None,
+        rolling_summary_in_prompts: Optional[bool] = None,
     ) -> SteerableToolHandle:
         # ── generate 1 call-id & log *incoming* request ─────────────────
         call_id = new_call_id()
@@ -335,11 +339,18 @@ class ContactManager(BaseContactManager):
 
             tools["request_clarification"] = request_clarification
 
+        include_activity = (
+            self._rolling_summary_in_prompts
+            if rolling_summary_in_prompts is None
+            else rolling_summary_in_prompts
+        )
+
         client.set_system_message(
             build_ask_prompt(
                 tools=tools,
                 num_contacts=self._num_contacts(),
                 columns=self._list_columns(),
+                include_activity=include_activity,
             ),
         )
         handle = start_async_tool_use_loop(
@@ -379,6 +390,7 @@ class ContactManager(BaseContactManager):
         parent_chat_context: Optional[List[Dict[str, Any]]] = None,
         clarification_up_q: Optional[asyncio.Queue[str]] = None,
         clarification_down_q: Optional[asyncio.Queue[str]] = None,
+        rolling_summary_in_prompts: Optional[bool] = None,
     ) -> SteerableToolHandle:
         # ── event: incoming update request ──────────────────────────────
         call_id = new_call_id()
@@ -434,7 +446,15 @@ class ContactManager(BaseContactManager):
 
             tools["request_clarification"] = request_clarification
 
-        client.set_system_message(build_update_prompt(tools))
+        include_activity = (
+            self._rolling_summary_in_prompts
+            if rolling_summary_in_prompts is None
+            else rolling_summary_in_prompts
+        )
+
+        client.set_system_message(
+            build_update_prompt(tools, include_activity=include_activity),
+        )
         handle = start_async_tool_use_loop(
             client,
             text,

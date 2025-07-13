@@ -35,6 +35,7 @@ class TranscriptManager(BaseTranscriptManager):
         self,
         *,
         contact_manager: Optional[BaseContactManager] = None,
+        rolling_summary_in_prompts: bool = True,
     ) -> None:
         """
         Responsible for *searching through* the full transcripts across all communcation channels exposed to the assistant.
@@ -93,6 +94,7 @@ class TranscriptManager(BaseTranscriptManager):
         # Using a dedicated logger means log_create() returns immediately,
         # leaving the actual network I/O to an internal worker thread.
         self._logger = unify.AsyncLoggerManager()
+        self._rolling_summary_in_prompts = rolling_summary_in_prompts
 
     # Public #
     # -------#
@@ -108,6 +110,7 @@ class TranscriptManager(BaseTranscriptManager):
         parent_chat_context: list[dict] | None = None,
         clarification_up_q: asyncio.Queue[str] | None = None,
         clarification_down_q: asyncio.Queue[str] | None = None,
+        rolling_summary_in_prompts: Optional[bool] = None,
     ) -> SteerableToolHandle:
         # ── 0.  Build the *live* tools-dict (may include clarification helper) ──
         tools = dict(self._tools)
@@ -144,7 +147,15 @@ class TranscriptManager(BaseTranscriptManager):
             cache=json.loads(os.environ.get("UNIFY_CACHE", "true")),
             traced=json.loads(os.environ.get("UNIFY_TRACED", "true")),
         )
-        client.set_system_message(build_ask_prompt(tools))
+        include_activity = (
+            self._rolling_summary_in_prompts
+            if rolling_summary_in_prompts is None
+            else rolling_summary_in_prompts
+        )
+
+        client.set_system_message(
+            build_ask_prompt(tools, include_activity=include_activity),
+        )
 
         # ── 2.  Launch the interactive tool-use loop ───────────────────────
         handle = start_async_tool_use_loop(
@@ -189,6 +200,7 @@ class TranscriptManager(BaseTranscriptManager):
         parent_chat_context: Optional[List[Dict[str, Any]]] = None,
         clarification_up_q: asyncio.Queue[str] | None = None,
         clarification_down_q: asyncio.Queue[str] | None = None,
+        rolling_summary_in_prompts: Optional[bool] = None,
     ) -> SteerableToolHandle:
         # -- 0.  Validate & canonicalise ------------------------------------
         if from_exchanges is None and from_messages is None:
@@ -223,7 +235,15 @@ class TranscriptManager(BaseTranscriptManager):
             cache=json.loads(os.environ.get("UNIFY_CACHE", "true")),
             traced=json.loads(os.environ.get("UNIFY_TRACED", "true")),
         )
-        client.set_system_message(build_summarize_prompt(guidance))
+        include_activity = (
+            self._rolling_summary_in_prompts
+            if rolling_summary_in_prompts is None
+            else rolling_summary_in_prompts
+        )
+
+        client.set_system_message(
+            build_summarize_prompt(guidance, include_activity=include_activity),
+        )
 
         # ── 2.  Collect raw messages – single back-end filter ---------------
         inc_clauses: list[str] = []

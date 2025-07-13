@@ -58,6 +58,7 @@ class Conductor(BaseConductor):
         knowledge_manager: Optional[BaseKnowledgeManager] = None,
         task_scheduler: Optional[BaseTaskScheduler] = None,
         planner: Optional[BasePlanner] = None,
+        rolling_summary_in_prompts: bool = True,
     ) -> None:
         """
         Args:
@@ -104,6 +105,7 @@ class Conductor(BaseConductor):
 
         #  Run-time state & tool-dict helpers
         self._current_plan = None
+        self._rolling_summary_in_prompts = rolling_summary_in_prompts
 
         # -------- base passive helpers -------------------------------- #
         passive = methods_to_tool_dict(
@@ -145,6 +147,7 @@ class Conductor(BaseConductor):
         parent_chat_context: list[dict] | None = None,
         clarification_up_q: asyncio.Queue[str] | None = None,
         clarification_down_q: asyncio.Queue[str] | None = None,
+        rolling_summary_in_prompts: Optional[bool] = None,
     ):
 
         # ---- build live tool-dict BEFORE crafting the prompt ------------
@@ -174,7 +177,14 @@ class Conductor(BaseConductor):
             cache=json.loads(os.environ.get("UNIFY_CACHE", "true")),
             traced=json.loads(os.environ.get("UNIFY_TRACED", "true")),
         )
-        client.set_system_message(build_ask_prompt(tools))
+        include_activity = (
+            self._rolling_summary_in_prompts
+            if rolling_summary_in_prompts is None
+            else rolling_summary_in_prompts
+        )
+        client.set_system_message(
+            build_ask_prompt(tools, include_activity=include_activity),
+        )
 
         handle = start_async_tool_use_loop(
             client,
@@ -219,6 +229,7 @@ class Conductor(BaseConductor):
         parent_chat_context: list[dict] | None = None,
         clarification_up_q: asyncio.Queue[str] | None = None,
         clarification_down_q: asyncio.Queue[str] | None = None,
+        rolling_summary_in_prompts: Optional[bool] = None,
     ):
 
         call_id = new_call_id()
@@ -247,7 +258,14 @@ class Conductor(BaseConductor):
             cache=json.loads(os.environ.get("UNIFY_CACHE", "true")),
             traced=json.loads(os.environ.get("UNIFY_TRACED", "true")),
         )
-        client.set_system_message(build_request_prompt(tools))
+        include_activity = (
+            self._rolling_summary_in_prompts
+            if rolling_summary_in_prompts is None
+            else rolling_summary_in_prompts
+        )
+        client.set_system_message(
+            build_request_prompt(tools, include_activity=include_activity),
+        )
 
         handle = start_async_tool_use_loop(
             client,

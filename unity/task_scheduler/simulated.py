@@ -182,9 +182,11 @@ class SimulatedTaskScheduler(BaseTaskScheduler):
         description: str = "nothing fixed, make up some imaginary scenario",
         *,
         log_events: bool = False,
+        rolling_summary_in_prompts: bool = True,
     ) -> None:
         self._description = description
         self._log_events = log_events
+        self._rolling_summary_in_prompts = rolling_summary_in_prompts
 
         # One shared, *stateful* LLM for *everything*
         self._llm = unify.AsyncUnify(
@@ -218,8 +220,14 @@ class SimulatedTaskScheduler(BaseTaskScheduler):
             TaskScheduler._get_task_queue,
             include_class_name=False,
         )
-        ask_msg = build_ask_prompt(ask_tools)
-        update_msg = build_update_prompt(update_tools)
+        ask_msg = build_ask_prompt(
+            ask_tools,
+            include_activity=self._rolling_summary_in_prompts,
+        )
+        update_msg = build_update_prompt(
+            update_tools,
+            include_activity=self._rolling_summary_in_prompts,
+        )
 
         self._llm.set_system_message(
             "You are a *simulated* task-list manager. "
