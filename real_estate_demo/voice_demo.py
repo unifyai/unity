@@ -194,7 +194,9 @@ class Agent:
 {self.flow.render()}
 </current_node>
 </agent_script>""".strip()
-        user_msg = f"{conversation_history_prompt}\n\n{agent_script_prompt}"
+        # user_msg = f"{conversation_history_prompt}\n\n{agent_script_prompt}"
+        user_msg = f"{agent_script_prompt}\n\n{conversation_history_prompt}"
+
         print("\033[32m" + user_msg + "\033[0m", flush=True)
         
         with open(r"./prompts/v5.md") as f:

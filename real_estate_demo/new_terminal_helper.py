@@ -122,23 +122,26 @@ def run_script(
     else:
         # ───────────────────────── Linux / BSD / WSL ───────────────
         if not terminal:
+            # Headless: run in its own session so we can kill the whole group later
             return subprocess.Popen(py_cmd, start_new_session=True)
 
-        term = _find_unix_terminal()  # your helper that finds gnome-terminal / xterm …
+        term = _find_unix_terminal()           # gnome-terminal, xterm, kitty, …
         if not term:
-            raise RuntimeError("No terminal emulator found (gnome-terminal, xterm …)")
+            raise RuntimeError(
+                "No terminal emulator found (gnome-terminal, xterm, kitty, …)"
+            )
 
-        # Start python first so we know its PID
-        proc = subprocess.Popen(py_cmd, start_new_session=True)
-        # Point the new terminal at *that* interpreter
-        subprocess.Popen(
-            [
-                term,
-                "--",
-                "bash",
-                "-c",
-                f"exec {' '.join(map(shlex.quote, py_cmd))}",
-            ],
+        # The *only* process we launch is the terminal.  Inside it we `exec` Python,
+        # so the interpreter replaces the shell and becomes the leader of the new
+        # process-group created by start_new_session=True.
+        #
+        # ──> `proc` is therefore in the *same* PGID as the interpreter and any
+        #     children (e.g. the LiveKit binary), so os.killpg(proc.pid, …) works.
+        full_cmd = shlex.join(py_cmd)
+
+        proc = subprocess.Popen(
+            [term, "--", "bash", "-c", f"exec {full_cmd}"],
+            start_new_session=True,            # give the group its own PGID
         )
         return proc
 
