@@ -12,8 +12,8 @@ from pydantic_core import from_json
 
 from new_terminal_helper import run_script, terminate_process
 
-from demo_flow import get_action_event, GoBack, GoNext, EndSession, PromptUser, create_human_readable_delta
-from tree_2.tree import flow
+from demo_flow import get_action_event, GoBack, GoNext, EndCall, PromptUser, create_human_readable_delta
+from tree_2.tree import create_flow
 
 client = openai.AsyncOpenAI(api_key=os.environ["OPENAI_API_KEY"])
 
@@ -21,7 +21,7 @@ client = openai.AsyncOpenAI(api_key=os.environ["OPENAI_API_KEY"])
 NO_RESPONSE_COUNTER = 0
 class Agent:
     def __init__(self):
-        self.flow = flow
+        self.flow = None
         # events (history)
         self.events_listener_task = None
         self.events_queue = asyncio.Queue()
@@ -36,37 +36,45 @@ class Agent:
         print("COLLECTING...")
         self.call_proc = run_script("call.py", "dev")
         while True:
-            # try:
-            new_event = await self.events_queue.get()
-            # print("GOT NEW EVENT", new_event)
-            self.pending_events.append(new_event)
-            # urgent events should re-trigger, cancel events should cancel current running only
-            if new_event:
-                # must flush all events now
-                if self.current_llm_run is not None and not self.current_llm_run.done():
-                    print("CANCELLING CURRENT RUN")
-                    self.current_llm_run.cancel()
-                    try:
-                        # cancel gracefully
-                        await self.current_llm_run
-                    except asyncio.CancelledError:
-                        print("THIS WAS RUN")
-                        ev = {"topic": "call_process", "type": "cancel_gen"}
-                        # self.publish(ev)
-                        self.inflight_events = [
-                            *self.inflight_events,
-                            *self.pending_events,
-                        ]
-                else:
-                    self.inflight_events = self.pending_events.copy()
+            try:
+                # try:
+                new_event = await self.events_queue.get()
+                if new_event.get("content") == "<Call Started>":
+                    self.flow = create_flow()
+                    self.events_queue = asyncio.Queue()
+                    self.event_stream = []
+                    self.pending_events = []
+                    self.inflight_events = []
+                # print("GOT NEW EVENT", new_event)
+                self.pending_events.append(new_event)
+                # urgent events should re-trigger, cancel events should cancel current running only
+                if new_event:
+                    # must flush all events now
+                    if self.current_llm_run is not None and not self.current_llm_run.done():
+                        print("CANCELLING CURRENT RUN")
+                        self.current_llm_run.cancel()
+                        try:
+                            # cancel gracefully
+                            await self.current_llm_run
+                        except asyncio.CancelledError:
+                            print("THIS WAS RUN")
+                            ev = {"topic": "call_process", "type": "cancel_gen"}
+                            # self.publish(ev)
+                            self.inflight_events = [
+                                *self.inflight_events,
+                                *self.pending_events,
+                            ]
+                    else:
+                        self.inflight_events = self.pending_events.copy()
 
-                add_filler = False
-                if new_event.get("role") == "user" and new_event.get("content") != "<Call Started>":
-                    add_filler = True
-                self.current_llm_run = asyncio.create_task(self.run(add_filler))
-                self.current_llm_run.add_done_callback(self.on_run_end)
-                self.pending_events.clear()
-            # except asyncio.TimeoutError:
+                    add_filler = False
+                    if new_event.get("role") == "user" and new_event.get("content") != "<Call Started>":
+                        add_filler = True
+                    self.current_llm_run = asyncio.create_task(self.run(add_filler))
+                    self.current_llm_run.add_done_callback(self.on_run_end)
+                    self.pending_events.clear()
+            except Exception:
+                continue
             #     if not self.pending_events:
             #         continue
             #     if self.current_llm_run and not self.current_llm_run.done():
@@ -94,7 +102,7 @@ class Agent:
             # check actions
             if hasattr(next_action, "next"):
                 self.flow.play_actions([agent_output.next_action])
-                action_event = f"advanced to the next node: '{flow.current_node.title}'"
+                action_event = f"advanced to the next node: '{self.flow.current_node.title}'"
                 self.events_queue.put_nowait({"type": "action", "action_name":next_action.__class__.__name__, "content": action_event, "timestamp": datetime.now()})
 
             elif hasattr(next_action, "node_id"):
@@ -107,13 +115,15 @@ class Agent:
                 self.flow.play_actions(agent_output.next_action.fields_actions)
                 for action in agent_output.next_action.fields_actions:
                     print(action)
-                    action_event = get_action_event(flow, action)
+                    action_event = get_action_event(self.flow, action)
                     self.events_queue.put_nowait({"type": "action", "action_name":action.__class__.__name__, "content": action_event, "timestamp": datetime.now()})
                     
                     
 
         except asyncio.CancelledError:
             print("LOOOOOOL")
+            first_ev = {"topic": "call_process", "type": "end_gen"}
+            self.publish(first_ev)
             pass
         finally:
             ...
@@ -165,7 +175,7 @@ class Agent:
             thoughts: str = Field(..., description="Your inner thoughts before taking actions. Also determine if you need to give a small update to the user based on the conversation history")
             # phone_utterance: Optional[str] = Field(..., 
                                             # description="Your response to the user over the phone, shown as [Assistant] ... in the conversation history.")
-            next_action: flow.current_action_model() | PromptUser | EndSession = Field(..., 
+            next_action: self.flow.current_action_model() | PromptUser | EndCall = Field(..., 
                                         description="next action to take given the current state.")
         events = self.event_stream + self.inflight_events
         conversation_history = [e for e in events if e["type"] == "message"]
@@ -181,7 +191,7 @@ class Agent:
 </action_log>
 
 <current_node>
-{flow.render()}
+{self.flow.render()}
 </current_node>
 </agent_script>""".strip()
         user_msg = f"{conversation_history_prompt}\n\n{agent_script_prompt}"
@@ -247,7 +257,7 @@ class Agent:
                 ev = {
                                         "topic": "call_process",
                                         "type": "gen_chunk",
-                                        "chunk": ".",
+                                        "chunk": '.<break time="1s"/>',
                                     }
                 # this helps cartesia pronounce things correctly (it has to end with a full stop or question mark)
                 self.publish(ev)

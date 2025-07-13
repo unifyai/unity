@@ -6,11 +6,9 @@ def get_issue_2_fields(ctx):
             options = ["Vinyl flooring is damaged", "Floorboard Broken and hole in the floor", "Floorboard loose but not broken", "Skirting board loose, rotten, or missing"]
             return [RadioField("issue_type", "Issue Type", options)]
         case "Walls":
-            # TODO: Add specific fields for Walls issues
             options = ["Cracks in the wall", "Grouting between tiles missing or damaged", "Tiles are damaged or missing", "Grab rail (on wall) loose", "Skirting board loose, rotten, or missing", "Wall plaster damaged - loose crumbling or bulging", "Vent to outside wall missing or loose"]
             return [RadioField("issue_type", "Issue Type", options)]
         case "Ceilings":
-            # TODO: Add specific fields for Ceilings issues
             options = ["Ceiling is falling down", "Cracks in the ceiling", "Ceiling plaster damaged - loose crumbling or bulging", "Roof leaking"]
             return [RadioField("issue_type", "Issue Type", options)]
         case "Stairs":

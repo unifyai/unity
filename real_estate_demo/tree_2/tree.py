@@ -107,13 +107,22 @@ diagnostic_question_node = Node(
     next=handle_dq_next
 )
 
+# diagnostic_question_2_node = Node(
+#     "diagnostic_question_2",
+#     "Diagnostic Question",
+#     "Ask the user the following diagnostic question",
+#     fields=...,
+#     next="location"
+# )
 
-options = ["Attic / Loft", "Bathroom", "Bedroom", "Cellar", "Dining room", "Hall", "Kitchen", "Landing", "Laundry room", "Living room", "Stairs"]
+
+inside_options = ["Attic / Loft", "Bathroom", "Bedroom", "Cellar", "Dining room", "Hall", "Kitchen", "Landing", "Laundry room", "Living room", "Stairs"]
+outside_options = ["External", "Garden", "Roof"]
 location = Node(
     "location",
     "Issue Location",
     "Learn from the user the exact location of the issue",
-    fields=[RadioField("location", "Location", options)],
+    fields=lambda ctx: [RadioField("location", "Location", inside_options)] if ctx["area"] == "Inside Home" else [RadioField("location", "Location", outside_options)],
     next="confirmation"
 )
 
@@ -205,12 +214,13 @@ Else:
     next=None
 )
 
-flow = Flow([
-    start_call_screen, profile_screen,
-    area_node, type_node, issue_one_node, issue_two_node, diagnostic_question_node,
-    location,
-    confirmation_screen, 
-    appointment_screen, 
-    repair_ticket_raised_screen,
-    diy_node
-])
+def create_flow():
+    return Flow([
+        start_call_screen, profile_screen,
+        area_node, type_node, issue_one_node, issue_two_node, diagnostic_question_node,
+        location,
+        confirmation_screen, 
+        appointment_screen, 
+        repair_ticket_raised_screen,
+        diy_node
+    ])
