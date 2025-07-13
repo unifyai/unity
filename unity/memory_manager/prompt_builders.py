@@ -142,6 +142,30 @@ def build_knowledge_prompt(
     return _with_guidance(lines, guidance)
 
 
+def build_task_prompt(
+    tools: Dict[str, Callable],
+    guidance: Optional[str] = None,
+) -> str:
+    lines = [
+        _rolling_activity_section(),
+        "You are the **MemoryManager** tasked with updating the task list based on the latest 50-message transcript chunk.",
+        "",
+        "• Identify tasks that should be created, modified, cancelled or reordered.",
+        "• Always begin by calling `TaskScheduler.ask` to inspect the current list.",
+        "• Apply the required changes using `TaskScheduler.update`.",
+        "",
+        "Please do *not* perform the same action more than once. If you have already manipulated the task list via the `TaskScheduler.update` method, then you do not need to do this again!",
+        "",
+        "Return a short, human-readable summary of what you stored; if nothing was stored, just return 'no-op'.",
+        "",
+        "Tools (name → argspec):",
+        json.dumps(_sig_dict(tools), indent=4),
+        "",
+        "Current UTC time: " + _now(),
+    ]
+    return _with_guidance(lines, guidance)
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Shared historic activity snippet (uses *lazy* import to avoid cycles)
 # ─────────────────────────────────────────────────────────────────────────────

@@ -85,6 +85,11 @@ def _wrap_builder(monkeypatch, name: str, bucket: dict):
             "build_knowledge_prompt",
             "Company switched to PostgreSQL 15 in March 2025.",
         ),
+        (
+            "update_tasks",
+            "build_task_prompt",
+            "Please schedule a follow-up meeting next Monday.",
+        ),
     ],
 )
 async def test_guidance_is_propagated(
