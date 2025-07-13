@@ -164,6 +164,9 @@ class _SimulatedContactHandle(SteerableToolHandle):
 # ─────────────────────────────────────────────────────────────────────────────
 # Public simulated manager
 # ─────────────────────────────────────────────────────────────────────────────
+# Adding rolling summary flag
+
+
 class SimulatedContactManager(BaseContactManager):
     """
     Drop-in replacement for ContactManager with imaginary data and
@@ -175,6 +178,7 @@ class SimulatedContactManager(BaseContactManager):
         description: str = "nothing fixed, make up some imaginary scenario",
         *,
         log_events: bool = False,
+        rolling_summary_in_prompts: bool = True,
     ) -> None:
         self._description = description
         self._log_events = log_events
@@ -198,12 +202,18 @@ class SimulatedContactManager(BaseContactManager):
             ContactManager._search_contacts,
             include_class_name=False,
         )
+        self._rolling_summary_in_prompts = rolling_summary_in_prompts
+
         ask_msg = build_ask_prompt(
             ask_tools,
             10,
             [{k: str(v.annotation)} for k, v in Contact.model_fields.items()],
+            include_activity=self._rolling_summary_in_prompts,
         )
-        upd_msg = build_update_prompt(upd_tools)
+        upd_msg = build_update_prompt(
+            upd_tools,
+            include_activity=self._rolling_summary_in_prompts,
+        )
 
         self._llm.set_system_message(
             "You are a *simulated* contact-manager assistant. "

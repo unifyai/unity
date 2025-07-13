@@ -86,6 +86,8 @@ def build_ask_prompt(
     tools: Dict[str, Callable],
     num_contacts: int,
     columns: List[Dict[str, str]],
+    *,
+    include_activity: bool = True,
 ) -> str:
     """Return the system-prompt used by *ask*."""
     sig_json = json.dumps(_sig_dict(tools), indent=4)
@@ -148,9 +150,11 @@ def build_ask_prompt(
             f"then try {nearest_search} on the most relevant column(s) and see if you can find any semantic match.",
         )
 
+    activity_block = _rolling_activity_section() if include_activity else ""
+
     return "\n".join(
         [
-            _rolling_activity_section(),
+            activity_block,
             "You are an assistant specializing in **retrieving contact information**.",
             "Work strictly through the tools provided.",
             "You should attempt to answer *any* question as best you can, even if it seems out of scope.",
@@ -171,7 +175,11 @@ def build_ask_prompt(
     )
 
 
-def build_update_prompt(tools: Dict[str, Callable]) -> str:
+def build_update_prompt(
+    tools: Dict[str, Callable],
+    *,
+    include_activity: bool = True,
+) -> str:
     """Return the system-prompt used by *update*."""
     sig_json = json.dumps(_sig_dict(tools), indent=4)
 
@@ -217,9 +225,11 @@ def build_update_prompt(tools: Dict[str, Callable]) -> str:
     """,
     ).strip()
 
+    activity_block = _rolling_activity_section() if include_activity else ""
+
     return "\n".join(
         [
-            _rolling_activity_section(),
+            activity_block,
             "You are an assistant in charge of **creating or editing contacts**.",
             "Use the tools provided to create new entries or update existing ones.",
             "You should attempt to perform *any* request as best you can, even if it seems out of scope.",

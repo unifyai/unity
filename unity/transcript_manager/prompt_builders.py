@@ -75,7 +75,11 @@ def _rolling_activity_section() -> str:
 # ─────────────────────────────────────────────────────────────────────────────
 
 
-def build_ask_prompt(tools: Dict[str, Callable]) -> str:  # noqa: C901 – long, but flat
+def build_ask_prompt(
+    tools: Dict[str, Callable],
+    *,
+    include_activity: bool = True,
+) -> str:  # noqa: C901 – long, but flat
     """
     Build the system-prompt for :pyfunc:`TranscriptManager.ask`.
 
@@ -135,9 +139,11 @@ def build_ask_prompt(tools: Dict[str, Callable]) -> str:  # noqa: C901 – long,
     """,
     ).strip()
 
+    activity_block = _rolling_activity_section() if include_activity else ""
+
     return "\n".join(
         [
-            _rolling_activity_section(),
+            activity_block,
             "You are an assistant specialised in **querying and analysing communication transcripts**.",
             "Work **exclusively** through the tools listed below to gather data",
             "before composing your final answer.",
@@ -161,7 +167,11 @@ def build_ask_prompt(tools: Dict[str, Callable]) -> str:  # noqa: C901 – long,
     )
 
 
-def build_summarize_prompt(guidance: Optional[str] = None) -> str:
+def build_summarize_prompt(
+    guidance: Optional[str] = None,
+    *,
+    include_activity: bool = True,
+) -> str:
     """
     Build the system-prompt for :pyfunc:`TranscriptManager.summarize`.
 
@@ -176,9 +186,11 @@ def build_summarize_prompt(guidance: Optional[str] = None) -> str:
         else ""
     )
 
+    activity_block = _rolling_activity_section() if include_activity else ""
+
     return "\n".join(
         [
-            _rolling_activity_section(),
+            activity_block,
             "You will receive one or more message exchanges.",
             "Craft a concise summary that captures the most important points",
             "**across** all exchanges. If anything is unclear in the guidance provided,",

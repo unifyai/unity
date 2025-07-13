@@ -176,9 +176,11 @@ class SimulatedTranscriptManager(BaseTranscriptManager):
         description: str = "nothing fixed, make up some imaginary scenario",
         *,
         log_events: bool = False,
+        rolling_summary_in_prompts: bool = True,
     ) -> None:
         self._description = description
         self._log_events = log_events
+        self._rolling_summary_in_prompts = rolling_summary_in_prompts
 
         # Shared, *stateful* **asynchronous** LLM
         self._llm = unify.AsyncUnify(
@@ -187,8 +189,13 @@ class SimulatedTranscriptManager(BaseTranscriptManager):
             traced=json.loads(os.getenv("UNIFY_TRACED", "true")),
             stateful=True,
         )
-        ask_sys = build_ask_prompt({})
-        sum_sys = build_summarize_prompt()
+        ask_sys = build_ask_prompt(
+            {},
+            include_activity=self._rolling_summary_in_prompts,
+        )
+        sum_sys = build_summarize_prompt(
+            include_activity=self._rolling_summary_in_prompts,
+        )
 
         self._llm.set_system_message(
             "You are a *simulated* transcript assistant. "

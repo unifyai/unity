@@ -175,9 +175,11 @@ class SimulatedKnowledgeManager(BaseKnowledgeManager):
         description: str = "nothing fixed, make up some imaginary scenario",
         *,
         log_events: bool = False,
+        rolling_summary_in_prompts: bool = True,
     ) -> None:
         self._description = description
         self._log_events = log_events
+        self._rolling_summary_in_prompts = rolling_summary_in_prompts
 
         # One shared, memory-retaining LLM
         self._llm = unify.AsyncUnify(
@@ -187,9 +189,21 @@ class SimulatedKnowledgeManager(BaseKnowledgeManager):
             stateful=True,
         )
         # Build *empty* reference prompts (no tools, empty schema) purely for flavour.
-        refactor_ref = build_refactor_prompt({}, table_schemas_json="{}")
-        store_ref = build_update_prompt({}, table_schemas_json="{}")
-        retrieve_ref = build_ask_prompt({}, table_schemas_json="{}")
+        refactor_ref = build_refactor_prompt(
+            {},
+            table_schemas_json="{}",
+            include_activity=self._rolling_summary_in_prompts,
+        )
+        store_ref = build_update_prompt(
+            {},
+            table_schemas_json="{}",
+            include_activity=self._rolling_summary_in_prompts,
+        )
+        retrieve_ref = build_ask_prompt(
+            {},
+            table_schemas_json="{}",
+            include_activity=self._rolling_summary_in_prompts,
+        )
 
         self._llm.set_system_message(
             "You are a *simulated* knowledge-base manager. "

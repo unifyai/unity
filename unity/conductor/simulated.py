@@ -1,7 +1,7 @@
 # conductor/conductor.py
 from __future__ import annotations
 
-from typing import Callable, Dict
+from typing import Callable, Dict, Optional
 
 import asyncio
 import json
@@ -44,6 +44,7 @@ class SimulatedConductor:
         description: str = "nothing fixed, make up some imaginary scenario",
         *,
         log_events: bool = False,
+        rolling_summary_in_prompts: bool = True,
     ) -> None:
         """
         Args:
@@ -51,23 +52,28 @@ class SimulatedConductor:
             log_events: Whether to log ManagerMethod events to the EventBus.
         """
         self._log_events = log_events
+        self._rolling_summary_in_prompts = rolling_summary_in_prompts
 
         # ── Simulated façade (pure-LLM back-ends) ────────────────────
         self._contact_manager = SimulatedContactManager(
             description=description,
             log_events=log_events,
+            rolling_summary_in_prompts=rolling_summary_in_prompts,
         )
         self._transcript_manager = SimulatedTranscriptManager(
             description=description,
             log_events=log_events,
+            rolling_summary_in_prompts=rolling_summary_in_prompts,
         )
         self._knowledge_manager = SimulatedKnowledgeManager(
             description=description,
             log_events=log_events,
+            rolling_summary_in_prompts=rolling_summary_in_prompts,
         )
         self._task_scheduler = SimulatedTaskScheduler(
             description=description,
             log_events=log_events,
+            rolling_summary_in_prompts=rolling_summary_in_prompts,
         )
 
         #  Run-time state & tool-dict helpers
@@ -125,10 +131,12 @@ class SimulatedConductor:
         *,
         _return_reasoning_steps: bool = False,
         _log_tool_steps: bool = True,
-        parent_chat_context: list[dict] | None = None,
+        parent_chat_context: list[dict] | None = None,  # Unused – synthetic
+        _requests_clarification: bool = False,
         clarification_up_q: asyncio.Queue[str] | None = None,
         clarification_down_q: asyncio.Queue[str] | None = None,
         log_events: bool = False,
+        rolling_summary_in_prompts: Optional[bool] = None,
     ):
         """
         Read-only question: exposes *passive* helpers (+ active_task.ask when available).
@@ -163,7 +171,14 @@ class SimulatedConductor:
             cache=json.loads(os.environ.get("UNIFY_CACHE", "true")),
             traced=json.loads(os.environ.get("UNIFY_TRACED", "true")),
         )
-        client.set_system_message(build_ask_prompt(tools))
+        include_activity = (
+            self._rolling_summary_in_prompts
+            if rolling_summary_in_prompts is None
+            else rolling_summary_in_prompts
+        )
+        client.set_system_message(
+            build_ask_prompt(tools, include_activity=include_activity),
+        )
 
         handle = start_async_tool_use_loop(
             client,
@@ -207,6 +222,7 @@ class SimulatedConductor:
         clarification_up_q: asyncio.Queue[str] | None = None,
         clarification_down_q: asyncio.Queue[str] | None = None,
         log_events: bool = False,
+        rolling_summary_in_prompts: Optional[bool] = None,
     ):
         """
         Full-access entry-point – exposes every passive tool **plus** all
@@ -242,7 +258,14 @@ class SimulatedConductor:
             cache=json.loads(os.environ.get("UNIFY_CACHE", "true")),
             traced=json.loads(os.environ.get("UNIFY_TRACED", "true")),
         )
-        client.set_system_message(build_request_prompt(tools))
+        include_activity = (
+            self._rolling_summary_in_prompts
+            if rolling_summary_in_prompts is None
+            else rolling_summary_in_prompts
+        )
+        client.set_system_message(
+            build_request_prompt(tools, include_activity=include_activity),
+        )
 
         handle = start_async_tool_use_loop(
             client,
