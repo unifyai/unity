@@ -22,6 +22,7 @@ from livekit.plugins import (
 if sys.platform == "darwin":
     from livekit.plugins import noise_cancellation
 from livekit.plugins.turn_detector.multilingual import MultilingualModel
+from livekit.plugins.turn_detector.english import EnglishModel
 from livekit.agents import ChatContext, ChatMessage
 
 from livekit.agents import ModelSettings, llm, FunctionTool, Agent
@@ -130,11 +131,11 @@ async def entrypoint(ctx: agents.JobContext):
     # to_number = os.environ.get("CALL_TO_NUMBER", "")
 
     session = AgentSession(
-        stt=deepgram.STT(model="nova-3", language="multi"),
+        stt=deepgram.STT(model="nova-3", language="en-GB"),
         llm=openai.LLM(model="gpt-4o"),
         tts=cartesia.TTS(voice="a01c369f-6d2d-4185-bc20-b32c225eab70"),
         vad=silero.VAD.load(),
-        turn_detection=MultilingualModel(),
+        turn_detection=EnglishModel(),
     )
 
     async def end_call():

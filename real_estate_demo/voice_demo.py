@@ -89,6 +89,7 @@ class Agent:
     def on_run_end(self, t: asyncio.Task):
         global NO_RESPONSE_COUNTER
         try:
+            update_has_q = False
             agent_output = t.result()
             next_action = agent_output.next_action
             print(next_action)
@@ -199,7 +200,7 @@ class Agent:
 
         print("\033[32m" + user_msg + "\033[0m", flush=True)
         
-        with open(r"./prompts/v5.md") as f:
+        with open(r"./prompts/v6.md", encoding="utf-8") as f:
             sys = f.read()
         
         acc_text = ""
