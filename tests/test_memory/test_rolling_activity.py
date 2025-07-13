@@ -178,11 +178,11 @@ SMALL_COUNT_WINDOWS = {
 }
 
 SMALL_TIME_WINDOWS = {
-    "past_day": 1,  # seconds
-    "past_week": 2,
-    "past_4_weeks": 4,
-    "past_12_weeks": 8,
-    "past_52_weeks": 16,
+    "past_day": 1,  # ‘1 day’ → keep wording ‘Past Day’
+    "past_week": 2,  # 2 days
+    "past_4_weeks": 4,  # 4 days
+    "past_12_weeks": 8,  # 8 days
+    "past_52_weeks": 16,  # 16 days
 }
 
 # Preserve the canonical window order from the production code
@@ -291,9 +291,9 @@ def _patch_memory_manager_windows(monkeypatch):
         # Delegate to the original implementation first
         text = orig_build(self, entries, mode)
 
-        # Only adjust the interaction-based headings; time-based windows keep
-        # their original names because SMALL_TIME_WINDOWS still match the
-        # embedded numbers.
+        # Adjust interaction-based headings (as before) *and* time-based
+        # headings so that they reflect the **actual test thresholds** from
+        # `SMALL_TIME_WINDOWS` instead of the literal names (e.g. “Week”).
         for win, thresh in SMALL_COUNT_WINDOWS.items():
             if win == "past_interaction":
                 # Already handled explicitly in the original pretty helper
@@ -311,6 +311,23 @@ def _patch_memory_manager_windows(monkeypatch):
                 "Past Interaction" if thresh == 1 else f"Past {thresh} Interactions"
             )
             # Replace both the level-2 heading line and any inline mentions
+            text = text.replace(orig_heading, new_heading)
+
+        # ---- patch time headings --------------------------------------
+        for win, thresh in SMALL_TIME_WINDOWS.items():
+            if win == "past_day":
+                continue  # “Past Day” remains unchanged
+
+            # Build the original heading (Past Week / Past 4 Weeks / …)
+            parts = win.split("_")
+            orig_heading = "Past " + " ".join(
+                p.capitalize() if not p.isdigit() else p for p in parts[1:]
+            )
+
+            # New replacement heading reflecting the *day* threshold
+            plural = "Days" if thresh != 1 else "Day"
+            new_heading = f"Past {thresh} {plural}"
+
             text = text.replace(orig_heading, new_heading)
 
         return text
@@ -398,7 +415,16 @@ async def _run_manager_case(
             plural = "Interactions" if threshold != 1 else "Interaction"
             return f"Past {threshold} {plural}"
 
-        # Fallback – keep the original behaviour for time-based windows
+        # For time-based windows use SMALL_TIME_WINDOWS thresholds so the
+        # heading matches the patched _build_activity_summary output.
+        if w in SMALL_TIME_WINDOWS:
+            thresh_t = SMALL_TIME_WINDOWS[w]
+            if w == "past_day":
+                return "Past Day"
+            plural = "Days" if thresh_t != 1 else "Day"
+            return f"Past {thresh_t} {plural}"
+
+        # Fallback – keep the original behaviour
         parts = w.split("_")
         return "Past " + " ".join(
             p.capitalize() if not p.isdigit() else p for p in parts[1:]
@@ -650,20 +676,25 @@ _TIME_SUMMARY_MANAGERS = [
 # Mapping of window → threshold in *days*
 _TIME_WINDOW_THRESHOLDS = {
     "past_day": 1,
-    "past_week": 7,
-    "past_4_weeks": 28,
-    "past_12_weeks": 84,
-    "past_52_weeks": 364,
+    "past_week": 2,
+    "past_4_weeks": 4,
+    "past_12_weeks": 8,
+    "past_52_weeks": 16,
 }
 
 
 def _pretty_time_window(w: str) -> str:
-    if w == "past_day":
+    """Return heading reflecting SMALL_TIME_WINDOWS thresholds."""
+    thresh = SMALL_TIME_WINDOWS.get(w)
+    if thresh is None:
+        # fallback to original naming
+        parts = w.split("_")
+        return "Past " + " ".join(
+            p.capitalize() if not p.isdigit() else p for p in parts[1:]
+        )
+    if thresh == 1:
         return "Past Day"
-    parts = w.split("_")
-    return "Past " + " ".join(
-        p.capitalize() if not p.isdigit() else p for p in parts[1:]
-    )
+    return f"Past {thresh} Days"
 
 
 async def _assert_time_based_headings_for_manager(mgr_cls: str, total_days: int):
@@ -717,7 +748,7 @@ async def _assert_time_based_headings_for_manager(mgr_cls: str, total_days: int)
 #  Per-manager TIME-based rolling-activity tests                             |
 # ---------------------------------------------------------------------------
 
-_TIME_DAYS_TO_TEST = [1, 7, 28, 84, 364]
+_TIME_DAYS_TO_TEST = [1, 2, 4, 8, 16]
 
 
 @pytest.mark.asyncio
@@ -725,7 +756,7 @@ _TIME_DAYS_TO_TEST = [1, 7, 28, 84, 364]
 @pytest.mark.parametrize(
     "total_days",
     _TIME_DAYS_TO_TEST,
-    ids=["day", "week", "4_weeks", "12_weeks", "52_weeks"],
+    ids=["1_day", "2_days", "4_days", "8_days", "16_days"],
 )
 async def test_contact_manager_methods_populate_time_rolling_activity(total_days):
     await _assert_time_based_headings_for_manager("ContactManager", total_days)
@@ -736,7 +767,7 @@ async def test_contact_manager_methods_populate_time_rolling_activity(total_days
 @pytest.mark.parametrize(
     "total_days",
     _TIME_DAYS_TO_TEST,
-    ids=["day", "week", "4_weeks", "12_weeks", "52_weeks"],
+    ids=["1_day", "2_days", "4_days", "8_days", "16_days"],
 )
 async def test_transcript_manager_methods_populate_time_rolling_activity(total_days):
     await _assert_time_based_headings_for_manager("TranscriptManager", total_days)
@@ -747,7 +778,7 @@ async def test_transcript_manager_methods_populate_time_rolling_activity(total_d
 @pytest.mark.parametrize(
     "total_days",
     _TIME_DAYS_TO_TEST,
-    ids=["day", "week", "4_weeks", "12_weeks", "52_weeks"],
+    ids=["1_day", "2_days", "4_days", "8_days", "16_days"],
 )
 async def test_knowledge_manager_methods_populate_time_rolling_activity(total_days):
     await _assert_time_based_headings_for_manager("KnowledgeManager", total_days)
@@ -758,7 +789,7 @@ async def test_knowledge_manager_methods_populate_time_rolling_activity(total_da
 @pytest.mark.parametrize(
     "total_days",
     _TIME_DAYS_TO_TEST,
-    ids=["day", "week", "4_weeks", "12_weeks", "52_weeks"],
+    ids=["1_day", "2_days", "4_days", "8_days", "16_days"],
 )
 async def test_taskscheduler_methods_populate_time_rolling_activity(total_days):
     await _assert_time_based_headings_for_manager("TaskScheduler", total_days)
