@@ -10,7 +10,6 @@ from __future__ import annotations
 
 
 import unify
-import asyncio
 
 from tests.helpers import _handle_project
 
@@ -338,16 +337,9 @@ async def _run_manager_case(
 ):
     """Execute *n_calls* randomly chosen method calls and assert log count."""
 
+    await mm.reset()
+
     from unity.events.event_bus import EVENT_BUS
-
-    EVENT_BUS.reset()
-
-    # Re-register callbacks lost during the reset – ensures that higher-level
-    # RollingSummary subscriptions (e.g. for the 2-interaction window) are in
-    # place **before** we publish any further events.
-    await mm._setup_rolling_callbacks()
-    if hasattr(mm, "_callbacks_ready"):
-        await asyncio.wait_for(mm._callbacks_ready.wait(), timeout=5)
 
     # Record baseline number of rolling activity logs
     baseline_logs = len(
