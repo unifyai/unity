@@ -330,13 +330,14 @@ class Node:
             body.append(field.render())
 
         instruction_block = self.instructions.format(**ctx) if self.instructions else ""
+        body_str = "\n".join(body)
         return dedent(f"""
 Node: {self.title}
 Is Terminal Node?: {self.is_terminal}
 Instructions: {instruction_block}
 ---
 
-{"\n".join(body)}
+{body_str}
 """).strip()
 
     def reset(self):
