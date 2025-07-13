@@ -989,3 +989,172 @@ async def test_contact_manager_summary_contains_expected_companies(monkeypatch):
         assert (
             f"Person{idx}" not in body_16
         ), "Person-level details leaked into higher-level summary"
+
+
+# ---------------------------------------------------------------------------
+#  New test – random mix of manager methods populates rolling activity      |
+# ---------------------------------------------------------------------------
+
+
+import random
+
+
+@pytest.mark.asyncio
+@_handle_project
+async def test_multiple_manager_methods_populate_rolling_activity(monkeypatch):
+    """Randomly combine multiple manager method calls across managers and verify
+    that the rolling-activity summary (either interaction- or time-based) contains
+    all expected headings and at least the minimum number of snapshot rows.
+    The randomness is **deterministic** (seeded) so the test is reproducible.
+    """
+
+    # ------------------------------------------------------------------
+    # 1.  Shrink window sizes & patch helpers for fast roll-ups (reuse existing)
+    # ------------------------------------------------------------------
+    _patch_memory_manager_windows(monkeypatch)
+
+    from unity.memory_manager.memory_manager import (
+        MemoryManager,
+    )  # local import after patch
+    from unity.events.event_bus import EVENT_BUS
+
+    import unify  # local import (patched generate helper already in place)
+
+    rng = random.Random(12345)  # deterministic seed
+
+    # ------------------- manager config --------------------------------
+    manager_configs = {
+        "ContactManager": (CONTACT_MANAGER_FACTORY, CONTACT_CALL_FACTORIES),
+        "TranscriptManager": (TRANSCRIPT_MANAGER_FACTORY, TRANSCRIPT_CALL_FACTORIES),
+        "KnowledgeManager": (KNOWLEDGE_MANAGER_FACTORY, KNOWLEDGE_CALL_FACTORIES),
+        "TaskScheduler": (TASK_MANAGER_FACTORY, TASK_CALL_FACTORIES),
+    }
+
+    # Select a random subset (≥2 managers) for this run
+    selected = rng.sample(list(manager_configs.keys()), k=rng.randint(2, 4))
+
+    # Instantiate the chosen managers (fresh instances)
+    mgr_instances = {
+        name: cfg[0]()  # factory()
+        for name, cfg in manager_configs.items()
+        if name in selected
+    }
+
+    # Build one MemoryManager wired to the simulated sub-managers where possible
+    mm = MemoryManager(
+        contact_manager=mgr_instances.get("ContactManager"),
+        transcript_manager=mgr_instances.get("TranscriptManager"),
+        knowledge_manager=mgr_instances.get("KnowledgeManager"),
+    )
+
+    # Hard reset – clears EventBus state & (re-)registers callbacks
+    await mm.reset()
+
+    # ------------------------------------------------------------------
+    # 2.  Randomly invoke *n_calls* public methods per selected manager
+    # ------------------------------------------------------------------
+    calls_per_mgr: dict[str, int] = {}
+    total_calls = 0
+
+    for mgr_name in selected:
+        _, call_factories = manager_configs[mgr_name]
+        n_calls = rng.choice(_N_CALLS_TO_TEST)  # e.g. 1/2/4/8/16
+        calls_per_mgr[mgr_name] = n_calls
+        total_calls += n_calls
+
+        inst = mgr_instances[mgr_name]
+        for _ in range(n_calls):
+            factory = rng.choice(call_factories)
+            handle = await factory(inst)
+            await handle.result()
+
+    # Flush uploads & wait for entire callback cascade ------------------
+    EVENT_BUS.join_published()
+    EVENT_BUS.join_callbacks(cascade=True)
+
+    # ------------------------------------------------------------------
+    # 3.  Choose summary mode *deterministically* from RNG and fetch text
+    # ------------------------------------------------------------------
+    mode = rng.choice(["interaction", "time"])
+    summary = mm.get_rolling_activity(mode=mode)
+
+    assert summary.strip(), "Expected non-empty rolling activity summary"
+
+    # ------------------------------------------------------------------
+    # 4.  Build expected headings dynamically (mirrors helpers above)
+    # ------------------------------------------------------------------
+    _manager_titles = {
+        "ContactManager": "# Contacts",
+        "TranscriptManager": "# Transcripts",
+        "KnowledgeManager": "# Knowledge",
+        "TaskScheduler": "# Tasks",
+    }
+
+    def _pretty(window: str) -> str:
+        if window == "all_time":
+            return "All Time"
+        if window == "past_interaction":
+            return "Past Interaction"
+        if window.endswith("_interactions") and window in SMALL_COUNT_WINDOWS:
+            thresh = SMALL_COUNT_WINDOWS[window]
+            plural = "Interactions" if thresh != 1 else "Interaction"
+            return f"Past {thresh} {plural}"
+        if window in SMALL_TIME_WINDOWS:
+            thresh_t = SMALL_TIME_WINDOWS[window]
+            if window == "past_day":
+                return "Past Day"
+            plural = "Days" if thresh_t != 1 else "Day"
+            return f"Past {thresh_t} {plural}"
+        parts = window.split("_")
+        return "Past " + " ".join(
+            p.capitalize() if not p.isdigit() else p for p in parts[1:]
+        )
+
+    expected_headings: set[str] = set()
+
+    for mgr_name, n_calls in calls_per_mgr.items():
+        title = _manager_titles[mgr_name]
+        expected_headings.add(title)
+
+        if mode == "interaction":
+            for w in SMALL_COUNT_ORDER:
+                thresh = SMALL_COUNT_WINDOWS[w]
+                # Base-level window triggers immediately; others when n_calls ≥ threshold
+                if (w == "past_interaction" and n_calls >= 1) or (
+                    w != "past_interaction" and n_calls >= thresh
+                ):
+                    expected_headings.add(f"## {_pretty(w)}")
+        else:  # time-based summary
+            for w in SMALL_TIME_ORDER:
+                thresh = SMALL_TIME_WINDOWS[w]
+                if (w == "past_day" and n_calls >= 1) or (
+                    w != "past_day" and n_calls >= thresh
+                ):
+                    expected_headings.add(f"## {_pretty(w)}")
+
+    # ------------------------------------------------------------------
+    # 5.  Compare actual vs expected headings
+    # ------------------------------------------------------------------
+    def _extract_headings(text: str) -> set[str]:
+        return {ln.strip() for ln in text.splitlines() if ln.lstrip().startswith("#")}
+
+    actual_headings = _extract_headings(summary)
+    missing = expected_headings - actual_headings
+    unexpected = actual_headings - expected_headings
+
+    assert (
+        not missing
+    ), f"Missing expected headings in {mode} summary: {missing}.\nSummary:\n{summary}"
+    assert (
+        not unexpected
+    ), f"Unexpected headings in {mode} summary: {unexpected}.\nSummary:\n{summary}"
+
+    # ------------------------------------------------------------------
+    # 6.  Verify at least *2 × total_calls* snapshot rows were persisted
+    # ------------------------------------------------------------------
+    logs = unify.get_logs(context=mm._rolling_ctx)
+    min_rows = total_calls * 2  # one count + one time snapshot per ManagerMethod
+    assert len(logs) >= min_rows, (
+        f"Expected at least {min_rows} RollingActivity rows for {total_calls} total calls, "
+        f"found {len(logs)}."
+    )
