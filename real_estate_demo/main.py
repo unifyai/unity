@@ -169,6 +169,8 @@ async def main():
 
     event_manager = EventManager()
     event_manager_task = asyncio.create_task(event_manager.serve())
+
+    global support_agent
     support_agent = Agent()
     event_manager.client = support_agent
     support_agent.set_event_manager(event_manager=event_manager)

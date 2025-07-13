@@ -281,7 +281,7 @@ class Agent:
     def cleanup(self):
         """Clean up any running call processes"""
         if hasattr(self, "call_proc") and self.call_proc:
-            print(f"Terminating call process for agent {self.agent_id}")
+            # print(f"Terminating call process for agent {self.agent_id}")
             try:
                 terminate_process(self.call_proc)
                 self.call_proc = None
