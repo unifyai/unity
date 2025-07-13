@@ -99,3 +99,74 @@ async def test_join_callbacks_ignores_future_callbacks() -> None:
 
     # Allow the second callback to finish to keep the loop clean
     await done_second.wait()
+
+
+# --------------------------------------------------------------------------- #
+# 3. cascade=True waits for descendant callbacks                              #
+# --------------------------------------------------------------------------- #
+
+
+@pytest.mark.asyncio
+@_handle_project
+async def test_join_callbacks_waits_for_cascade() -> None:
+    """join_callbacks(cascade=True) must wait for callbacks spawned *within* other
+    callbacks (same root-sequence) but still ignore unrelated fresh activity."""
+
+    bus = EventBus()
+
+    done_low = asyncio.Event()  # first-level callback completion
+    done_high = asyncio.Event()  # second-level callback completion
+
+    # ----------------- second-level callback --------------------------------
+    async def high_cb(_):  # noqa: ANN001 – payload unused
+        # Simulate some work so it's still pending when join is invoked
+        await asyncio.sleep(0.05)
+        done_high.set()
+
+    await bus.register_callback(
+        event_type="Derived",
+        callback=high_cb,
+        every_n=1,
+    )
+
+    # ----------------- first-level callback ---------------------------------
+    async def low_cb(_):  # noqa: ANN001 – payload unused
+        # Fire an event that should trigger *high_cb*
+        await bus.publish(Event(type="Derived", payload={}))
+        bus.join_published()
+
+        # Short delay to allow high_cb to start running
+        await asyncio.sleep(0.01)
+        done_low.set()
+
+    await bus.register_callback(
+        event_type="Base",
+        callback=low_cb,
+        every_n=1,
+    )
+
+    # ----------------------------------------------------------------------
+    #  Publish the triggering event and ensure callbacks are scheduled
+    # ----------------------------------------------------------------------
+
+    await bus.publish(Event(type="Base", payload={}))
+    bus.join_published()
+
+    # ----------------------------------------------------------------------
+    #  Invoke join_callbacks(cascade=True) in a background thread
+    # ----------------------------------------------------------------------
+
+    join_task = asyncio.create_task(
+        asyncio.to_thread(bus.join_callbacks, cascade=True),
+    )
+
+    # Allow some time for the callbacks to start; join should *not* have
+    # returned yet because high_cb is still sleeping.
+    await asyncio.sleep(0.02)
+    assert not join_task.done(), "join_callbacks returned before cascade finished"
+
+    # Wait for join to complete – it should now wait for both levels
+    await join_task
+
+    assert done_low.is_set(), "First-level callback not finished"
+    assert done_high.is_set(), "Second-level (descendant) callback not finished"
