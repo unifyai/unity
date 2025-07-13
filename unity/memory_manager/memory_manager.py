@@ -11,6 +11,7 @@ import unify
 from ..contact_manager.contact_manager import ContactManager
 from ..transcript_manager.transcript_manager import TranscriptManager
 from ..knowledge_manager.knowledge_manager import KnowledgeManager
+from ..task_scheduler.task_scheduler import TaskScheduler
 from ..common.llm_helpers import methods_to_tool_dict, start_async_tool_use_loop
 from .prompt_builders import (
     build_contact_update_prompt,
@@ -108,12 +109,14 @@ class MemoryManager(BaseMemoryManager):
         contact_manager: Optional[ContactManager] = None,
         transcript_manager: Optional[TranscriptManager] = None,
         knowledge_manager: Optional[KnowledgeManager] = None,
+        task_scheduler: Optional[TaskScheduler] = None,
     ):
         self._contact_manager = contact_manager or ContactManager()
         self._transcript_manager = transcript_manager or TranscriptManager(
             contact_manager=self._contact_manager,
         )
         self._knowledge_manager = knowledge_manager or KnowledgeManager()
+        self._task_scheduler = task_scheduler or TaskScheduler()
 
         # ── NEW: Rolling-Activity context & subscriptions ─────────────────
         self._rolling_ctx = self._ensure_rolling_context()
@@ -305,6 +308,47 @@ class MemoryManager(BaseMemoryManager):
             transcript,
             tools,
             loop_id="MemoryManager.update_knowledge",
+            tool_policy=lambda i, _: ("required", _) if i < 2 else ("auto", _),
+        )
+
+        return await handle.result()
+
+    # ------------------------------------------------------------------ #
+    # 5  update_tasks                                                    #
+    # ------------------------------------------------------------------ #
+    async def update_tasks(
+        self,
+        transcript: str,
+        guidance: Optional[str] = None,
+    ) -> str:
+        """
+        Analyse the latest transcript chunk and update the task list using
+        the TaskScheduler's public API (ask / update).  Returns a concise
+        description of what was changed or 'no-op' when no updates were
+        necessary.
+        """
+
+        tools: Dict[str, Callable[..., Any]] = methods_to_tool_dict(
+            self._task_scheduler.ask,
+            self._task_scheduler.update,
+            include_class_name=True,
+        )
+
+        llm = unify.AsyncUnify(
+            "o4-mini@openai",
+            cache=json.loads(os.getenv("UNIFY_CACHE", "true")),
+            traced=json.loads(os.getenv("UNIFY_TRACED", "true")),
+        )
+
+        from .prompt_builders import build_task_prompt  # local import to avoid cycles
+
+        llm.set_system_message(build_task_prompt(tools, guidance))
+
+        handle = start_async_tool_use_loop(
+            llm,
+            transcript,
+            tools,
+            loop_id="MemoryManager.update_tasks",
             tool_policy=lambda i, _: ("required", _) if i < 2 else ("auto", _),
         )
 

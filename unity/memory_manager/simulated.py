@@ -19,6 +19,7 @@ import unify
 from ..contact_manager.simulated import SimulatedContactManager
 from ..transcript_manager.simulated import SimulatedTranscriptManager
 from ..knowledge_manager.simulated import SimulatedKnowledgeManager
+from ..task_scheduler.simulated import SimulatedTaskScheduler
 from ..common.llm_helpers import (
     methods_to_tool_dict,
     start_async_tool_use_loop,
@@ -39,6 +40,7 @@ class SimulatedMemoryManager(BaseMemoryManager):
         self._contact_manager = SimulatedContactManager(description=description)
         self._transcript_manager = SimulatedTranscriptManager(description=description)
         self._knowledge_manager = SimulatedKnowledgeManager(description=description)
+        self._task_scheduler = SimulatedTaskScheduler(description=description)
 
         # Light-weight overlay that remembers the *latest* bio / rolling / knowledge writes
         # without touching an external store – key = contact_id
@@ -215,4 +217,33 @@ class SimulatedMemoryManager(BaseMemoryManager):
             loop_id="SimulatedMemoryManager.update_knowledge",
             tool_policy=lambda i, _: ("required", _) if i < 2 else ("auto", _),
         )
+        return await handle.result()
+
+    async def update_tasks(
+        self,
+        transcript: str,
+        guidance: Optional[str] = None,
+    ) -> str:
+        """
+        Pretend to analyse the transcript and adjust the (simulated) task
+        list accordingly. Returns a concise summary.
+        """
+
+        tools: Dict[str, Callable[..., Any]] = {
+            "task_ask": self._task_scheduler.ask,
+            "task_update": self._task_scheduler.update,
+        }
+
+        self._llm.set_system_message(
+            pb.build_task_prompt(tools, guidance=guidance),
+        )
+
+        handle = start_async_tool_use_loop(
+            self._llm,
+            transcript,
+            tools,
+            loop_id="SimulatedMemoryManager.update_tasks",
+            tool_policy=lambda i, _: ("required", _) if i < 2 else ("auto", _),
+        )
+
         return await handle.result()

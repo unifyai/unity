@@ -26,6 +26,7 @@ import pytest
 from unity.memory_manager.simulated import SimulatedMemoryManager
 from unity.contact_manager.simulated import SimulatedContactManager
 from unity.knowledge_manager.simulated import SimulatedKnowledgeManager
+from unity.task_scheduler.simulated import SimulatedTaskScheduler
 
 # shared helper used throughout the test-suite – isolates each test run
 from tests.helpers import _handle_project
@@ -172,3 +173,38 @@ async def test_mm_update_knowledge_invokes_kb_update(monkeypatch):
 
     assert isinstance(result, str) and result.strip()
     assert counts["kb_update"] >= 1, "KnowledgeManager.update should be invoked"
+
+
+# --------------------------------------------------------------------------- #
+# 5. update_tasks – should call TaskScheduler.update at least once            #
+# --------------------------------------------------------------------------- #
+
+
+@pytest.mark.asyncio
+@_handle_project
+async def test_mm_update_tasks_invokes_scheduler_update(monkeypatch):
+    counts = {"ts_update": 0}
+
+    orig_ts_update = SimulatedTaskScheduler.update
+
+    @functools.wraps(orig_ts_update)
+    async def spy_ts_update(self, text: str, **kw):
+        counts["ts_update"] += 1
+        return await orig_ts_update(self, text, **kw)
+
+    monkeypatch.setattr(
+        SimulatedTaskScheduler,
+        "update",
+        spy_ts_update,
+        raising=True,
+    )
+
+    mm = SimulatedMemoryManager("Task list update demo.")
+    transcript = _build_transcript(
+        "Please create a task to organise the quarterly review meeting next Monday.",
+    )
+
+    result = await mm.update_tasks(transcript)
+
+    assert isinstance(result, str) and result.strip()
+    assert counts["ts_update"] >= 1, "TaskScheduler.update should be invoked"
