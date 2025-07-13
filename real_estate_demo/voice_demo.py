@@ -197,7 +197,7 @@ class Agent:
         user_msg = f"{conversation_history_prompt}\n\n{agent_script_prompt}"
         print("\033[32m" + user_msg + "\033[0m", flush=True)
         
-        with open(r"C:\Users\Yasser\Desktop\unity\unity\real_estate_demo\prompts\v5.md") as f:
+        with open(r".\prompts\v5.md") as f:
             sys = f.read()
         
         acc_text = ""

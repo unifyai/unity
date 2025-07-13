@@ -94,7 +94,7 @@ async def call_llm_3(sys: str, flow: Flow, conversation_history: list[str], acti
         # print(flow.current_node.title)
         action_events = []
         for action in next_action:
-            if isinstance(action, EndSession):
+            if isinstance(action, EndCall):
                 return
             elif isinstance(action, BaseGoToNode):
                 action_event = f"went to node `{action.node_id}`"
