@@ -697,13 +697,18 @@ def _pretty_time_window(w: str) -> str:
     return f"Past {thresh} Days"
 
 
-async def _assert_time_based_headings_for_manager(mgr_cls: str, total_days: int):
+async def _assert_time_based_headings_for_manager(
+    mgr_cls: str,
+    total_days: int,
+    monkeypatch,
+):
     """Publish enough *ManagerMethod* events with simulated timestamps so that
     all time-based windows *up to* the size implied by *total_days* are generated,
     then verify the presence of the corresponding headings in the summary.
     """
 
     # Fresh MemoryManager instance (ensures callback subscriptions) ----------
+    _patch_memory_manager_windows(monkeypatch)
     mm = MemoryManager()
     await mm.reset()
 
@@ -758,8 +763,15 @@ _TIME_DAYS_TO_TEST = [1, 2, 4, 8, 16]
     _TIME_DAYS_TO_TEST,
     ids=["1_day", "2_days", "4_days", "8_days", "16_days"],
 )
-async def test_contact_manager_methods_populate_time_rolling_activity(total_days):
-    await _assert_time_based_headings_for_manager("ContactManager", total_days)
+async def test_contact_manager_methods_populate_time_rolling_activity(
+    monkeypatch,
+    total_days,
+):
+    await _assert_time_based_headings_for_manager(
+        "ContactManager",
+        total_days,
+        monkeypatch,
+    )
 
 
 @pytest.mark.asyncio
@@ -769,8 +781,15 @@ async def test_contact_manager_methods_populate_time_rolling_activity(total_days
     _TIME_DAYS_TO_TEST,
     ids=["1_day", "2_days", "4_days", "8_days", "16_days"],
 )
-async def test_transcript_manager_methods_populate_time_rolling_activity(total_days):
-    await _assert_time_based_headings_for_manager("TranscriptManager", total_days)
+async def test_transcript_manager_methods_populate_time_rolling_activity(
+    monkeypatch,
+    total_days,
+):
+    await _assert_time_based_headings_for_manager(
+        "TranscriptManager",
+        total_days,
+        monkeypatch,
+    )
 
 
 @pytest.mark.asyncio
@@ -780,8 +799,15 @@ async def test_transcript_manager_methods_populate_time_rolling_activity(total_d
     _TIME_DAYS_TO_TEST,
     ids=["1_day", "2_days", "4_days", "8_days", "16_days"],
 )
-async def test_knowledge_manager_methods_populate_time_rolling_activity(total_days):
-    await _assert_time_based_headings_for_manager("KnowledgeManager", total_days)
+async def test_knowledge_manager_methods_populate_time_rolling_activity(
+    monkeypatch,
+    total_days,
+):
+    await _assert_time_based_headings_for_manager(
+        "KnowledgeManager",
+        total_days,
+        monkeypatch,
+    )
 
 
 @pytest.mark.asyncio
@@ -791,5 +817,12 @@ async def test_knowledge_manager_methods_populate_time_rolling_activity(total_da
     _TIME_DAYS_TO_TEST,
     ids=["1_day", "2_days", "4_days", "8_days", "16_days"],
 )
-async def test_taskscheduler_methods_populate_time_rolling_activity(total_days):
-    await _assert_time_based_headings_for_manager("TaskScheduler", total_days)
+async def test_taskscheduler_methods_populate_time_rolling_activity(
+    monkeypatch,
+    total_days,
+):
+    await _assert_time_based_headings_for_manager(
+        "TaskScheduler",
+        total_days,
+        monkeypatch,
+    )
