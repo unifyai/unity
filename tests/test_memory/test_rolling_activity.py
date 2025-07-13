@@ -339,6 +339,76 @@ def _patch_memory_manager_windows(monkeypatch):
         raising=True,
     )
 
+    # ------------------------------------------------------------------
+    #  NEW:  deterministic LLM summary – patch `unify.AsyncUnify.generate`
+    # ------------------------------------------------------------------
+
+    import json
+
+    async def _deterministic_generate(self, prompt: str, *_, **__):  # type: ignore[override]
+        """Return a reproducible “summary” so assertions can check content.
+
+        If *prompt* looks like a JSON array (the shape used by
+        `_record_rolling_activity_body`), the helper extracts company names
+        ("Accounting Ltd." / "Banks Are Us.") from either the *details*
+        section of dict items **or** from lower-level summary strings.
+        It then returns them in alpha-sorted order:
+
+            companies: Accounting Ltd., Banks Are Us.
+
+        For all other caller prompts (e.g. Simulated*Manager.ask/update
+        invocations) we just return a short canned response so unrelated
+        tests that expect a *non-empty* answer keep passing.
+        """
+
+        txt = prompt.strip()
+
+        # 1.  Attempt JSON decode – fast failure when not a JSON payload
+        if txt.startswith("["):
+            try:
+                data = json.loads(txt)
+            except Exception:
+                data = None
+            else:
+                companies: set[str] = set()
+
+                # a) list of dicts (base-level summaries)
+                if data and isinstance(data[0], dict):
+                    for itm in data:
+                        if not isinstance(itm, dict):
+                            continue
+                        details = (
+                            itm.get("details", {})
+                            if isinstance(itm.get("details"), dict)
+                            else {}
+                        )
+                        comp = details.get("company")
+                        if comp:
+                            companies.add(comp)
+                # b) list of strings (higher-level summaries)
+                if data and isinstance(data[0], str):
+                    joined = " ".join(data)
+                    for comp in ("Accounting Ltd.", "Banks Are Us."):
+                        if comp in joined:
+                            companies.add(comp)
+
+                if companies:
+                    return "companies: " + ", ".join(sorted(companies))
+                # fallback – still deterministic
+                return f"items: {len(data) if data else 0}"
+
+        # 2.  Non-JSON or failed parse – return fixed stub text
+        return "simulated-answer"
+
+    import unify  # noqa: WPS433 – local import needed for patching
+
+    monkeypatch.setattr(
+        unify.AsyncUnify,
+        "generate",
+        _deterministic_generate,
+        raising=True,
+    )
+
 
 # ---------------------------------------------------------------------------
 #  Shared helper to run a manager test case                                   |
@@ -826,3 +896,96 @@ async def test_taskscheduler_methods_populate_time_rolling_activity(
         total_days,
         monkeypatch,
     )
+
+
+@pytest.mark.asyncio
+@_handle_project
+async def test_contact_manager_summary_contains_expected_companies(monkeypatch):
+    """Verify that interaction-based rolling summaries aggregate companies correctly.
+
+    We publish 16 **ContactManager** events:
+        • first 8 reference **Accounting Ltd.**
+        • next  8 reference **Banks Are Us.**
+
+    With the shrunk COUNT windows (1-2-4-8-16) this yields summaries for
+    "Past 8 Interactions" and "Past 16 Interactions".  We expect the
+    8-interaction summary to mention *only* the first company and the
+    16-interaction summary to include **both**.
+    """
+
+    # ------------------------------------------------------------------
+    #  1.  Patch MM internals + deterministic LLM (helper already covers)
+    # ------------------------------------------------------------------
+    _patch_memory_manager_windows(monkeypatch)
+
+    from unity.events.event_bus import EVENT_BUS, Event  # local import after patch
+
+    mm = MemoryManager()
+    await mm.reset()
+
+    # ------------------------------------------------------------------
+    #  2.  Publish 16 deterministic ManagerMethod events
+    # ------------------------------------------------------------------
+    companies = ["Accounting Ltd." if i < 8 else "Banks Are Us." for i in range(16)]
+
+    for idx, comp in enumerate(companies):
+        await EVENT_BUS.publish(
+            Event(
+                type="ManagerMethod",
+                payload={
+                    "manager": "ContactManager",
+                    "method": "add_contact",
+                    "phase": "outgoing",
+                    "company": comp,
+                    "person_name": f"Person{idx}",
+                },
+            ),
+        )
+
+    # Flush uploads & wait for the entire callback cascade ----------------
+    EVENT_BUS.join_published()
+    EVENT_BUS.join_callbacks(cascade=True)
+
+    # ------------------------------------------------------------------
+    #  3.  Fetch the interaction-based rolling activity summary
+    # ------------------------------------------------------------------
+    summary = mm.get_rolling_activity(mode="interaction")
+
+    # Helper: extract the line immediately following a given heading -----
+    import re
+
+    def _section_line(text: str, heading: str) -> str:
+        pattern = rf"{re.escape(heading)}\n([^\n]*)"
+        m = re.search(pattern, text)
+        return m.group(1).strip() if m else ""
+
+    # Headings as produced by the patched pretty-printer ------------------
+    hdr_8 = "## Past 8 Interactions"
+    hdr_16 = "## Past 16 Interactions"
+
+    body_8 = _section_line(summary, hdr_8)
+    body_16 = _section_line(summary, hdr_16)
+
+    assert body_8, f"Did not find body for heading '{hdr_8}'. Full summary:\n{summary}"
+    assert (
+        body_16
+    ), f"Did not find body for heading '{hdr_16}'. Full summary:\n{summary}"
+
+    # 8-interaction summary must mention **only** the first company --------
+    assert (
+        "Accounting Ltd." in body_8
+    ), "Expected 'Accounting Ltd.' in 8-interaction summary"
+    assert (
+        "Banks Are Us." not in body_8
+    ), "Did not expect 'Banks Are Us.' in 8-interaction summary"
+
+    # 16-interaction summary must mention *both* companies -----------------
+    assert "Accounting Ltd." in body_16 and "Banks Are Us." in body_16, (
+        "16-interaction summary should aggregate both companies",
+    )
+
+    # Person-level names should *not* leak into aggregated summaries ------
+    for idx in range(16):
+        assert (
+            f"Person{idx}" not in body_16
+        ), "Person-level details leaked into higher-level summary"
