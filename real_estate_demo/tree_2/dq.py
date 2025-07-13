@@ -110,7 +110,7 @@ def get_dq_fields(ctx):
         case "Water leak":
             return [RadioField("catch_water_in_bucket", "Can you catch the water in a bucket or other container?", ["yes", "no"])]
 
-        # more_info
+        # location
         # case "No water in the property":
         #     return [RadioField("placeholder", "Placeholder question", ["yes", "no"])]
 
@@ -336,10 +336,10 @@ def handle_dq_next(ctx):
     match ctx["issue_type"]:
         # ───────────────────────────── Floors ─────────────────────────────
         case "Vinyl flooring is damaged":
-            return "more_info" if ctx["is_trip_hazard"] == "yes" else "location"
+            return "location" if ctx["is_trip_hazard"] == "yes" else "location"
 
         case "Floorboard Broken and hole in the floor":
-            return "more_info" if ctx["is_trip_hazard"] == "yes" else "location"
+            return "location" if ctx["is_trip_hazard"] == "yes" else "location"
 
         # ───────────────────────────── Walls ──────────────────────────────
         case "Cracks in the wall" | "Brick wall cracked" | "Outside wall covering (render) loose or cracked":
@@ -350,24 +350,24 @@ def handle_dq_next(ctx):
 
         # ──────────────────────────── Ceilings ────────────────────────────
         case "Ceiling is falling down":
-            return "more_info" if ctx["is_dangerous"] == "yes" else "location"
+            return "location" if ctx["is_dangerous"] == "yes" else "location"
 
         case "Cracks in the ceiling":
             return "location" if ctx["euro_coin"] == "yes" else "diy"
 
         case "Ceiling plaster damaged - loose crumbling or bulging":
-            return "more_info" if ctx["ceiling_about_to_fall"] == "yes" else "location"
+            return "location" if ctx["ceiling_about_to_fall"] == "yes" else "location"
 
         case "Roof leaking":
             return "location" if ctx["catch_water_in_bucket"] == "yes" else "diy"
 
         # ───────────────────────────── Stairs ─────────────────────────────
         case "Stair banister or spindles broken":
-            return "more_info" if ctx["broken_or_missing"] == "yes" else "diy"
+            return "location" if ctx["broken_or_missing"] == "yes" else "diy"
 
         # ───────────────────────── Kitchen units ──────────────────────────
         case "Kitchen wall unit loose or falling off the wall":
-            return "more_info" if ctx["falling_danger"] == "yes" else "diy"
+            return "location" if ctx["falling_danger"] == "yes" else "diy"
 
         # ─────────────────────── Bath / Sinks / Showers ───────────────────
         case "Water leak":
@@ -381,37 +381,37 @@ def handle_dq_next(ctx):
 
         # ──────────────────────────── Toilets ─────────────────────────────
         case "My only toilet is blocked" | "One of my toilets is blocked":
-            return "more_info" if ctx["unblock_yourself"] == "yes" else "diy"
+            return "location" if ctx["unblock_yourself"] == "yes" else "diy"
 
         case ("Toilet is loose from the floor and I don't feel like I can use it"
               | "Cistern behind toilet loose / unstable"
               | "Broken pipe behind toilet"):
-            return "more_info" if ctx["only_toilet"] == "yes" else "diy"
+            return "location" if ctx["only_toilet"] == "yes" else "diy"
 
         # ───────────────────────────── Doors ──────────────────────────────
         case "Fire door is sticking / loose / draughty":
-            return "more_info" if ctx["pass_smoke"] == "yes" else "diy"
+            return "location" if ctx["pass_smoke"] == "yes" else "diy"
 
         case "Door frame split or damaged":
-            return "more_info" if ctx["door_open_inside_corridor"] == "yes" else "diy"
+            return "location" if ctx["door_open_inside_corridor"] == "yes" else "diy"
 
         # ───────────────────────────── Locks ──────────────────────────────
         case "Door lock is sticking - my property is secure":
-            return "more_info" if ctx["placeholder"] == "yes" else "diy"
+            return "location" if ctx["placeholder"] == "yes" else "diy"
 
         # ──────────────────────────── Windows ─────────────────────────────
         case "Smashed window":
-            return "location" if ctx["crime_ref_num"] == "yes" else "more_info"
+            return "location" if ctx["crime_ref_num"] == "yes" else "location"
 
         # ─────────────────────────── Lighting / Power ─────────────────────
         case "No lights working in my property":
-            return "more_info" if ctx["checked_trip_switch"] == "yes" else "diy"
+            return "location" if ctx["checked_trip_switch"] == "yes" else "diy"
 
         case "Some lights not working":
-            return "location" if ctx["any_lights_working"] == "yes" else "more_info"
+            return "location" if ctx["any_lights_working"] == "yes" else "location"
 
         case "No power in my property":
-            return "more_info" if ctx["checked_trip_switch"] == "yes" else "diy"
+            return "location" if ctx["checked_trip_switch"] == "yes" else "diy"
 
         # ─────────────────────── Stair & Through-floor Lifts ──────────────
         case ("Stair Lift is not working / moving"
@@ -422,13 +422,13 @@ def handle_dq_next(ctx):
 
         # ──────────────── Gas Heating & Hot-Water (existing) ──────────────
         case "Gas boiler low pressure - no water leak":
-            return "more_info" if ctx["re_pressurise_boiler"] == "yes" else "diy"
+            return "location" if ctx["re_pressurise_boiler"] == "yes" else "diy"
 
         case "Gas central heating not working":
-            return "more_info" if ctx["checked_gas_meter"] == "yes" else "diy"
+            return "location" if ctx["checked_gas_meter"] == "yes" else "diy"
 
         case "Gas fire or heater not working":
-            return "more_info" if ctx["only_heating_form"] == "yes" else "diagnostic_question_2"
+            return "location" if ctx["only_heating_form"] == "yes" else "diagnostic_question_2"
 
         case "Hot water not working":
             return "diagnostic_question_2" if ctx["checked_gas_meter"] == "yes" else "diy"
@@ -439,7 +439,7 @@ def handle_dq_next(ctx):
               | "Gas fire or heater damaged"
               | "Gas boiler leaking water on electrical fittings"
               | "Gas boiler water leaking"):
-            return "more_info" if ctx["placeholder"] == "yes" else "diy"
+            return "location" if ctx["placeholder"] == "yes" else "diy"
 
         # ─────── Electric / Storage Heating, Radiators & Showers ──────────
         case ("No hot water from electric (immersion) heater"
@@ -456,7 +456,7 @@ def handle_dq_next(ctx):
               | "Electrical shower unit leaking"
               | "Electric shower hose, handset or rail broken"
               | "Electric shower not working / no hot water"):
-            return "more_info" if ctx["placeholder"] == "yes" else "diy"
+            return "location" if ctx["placeholder"] == "yes" else "diy"
 
         # ───────────────────────────── Fences ─────────────────────────────
         case "Fence panels missing or damaged":
@@ -468,7 +468,7 @@ def handle_dq_next(ctx):
               | "Personal rotary clothes line broken"
               | "Retractable clothes line & post (in any area) broken"
               | "Concrete post for personal clothes line broken"):
-            return "more_info" if ctx["placeholder"] == "yes" else "diy"
+            return "location" if ctx["placeholder"] == "yes" else "diy"
 
         # ──────────────────────────── Plumbing ────────────────────────────
         case ("Blocked drain overflowing sewage"
@@ -478,7 +478,7 @@ def handle_dq_next(ctx):
               | "Outside tap leaking or loose"
               | "Outside tap dripping"
               | "Gutter or drainpipe blocked or broken"):
-            return "more_info" if ctx["placeholder"] == "yes" else "diy"
+            return "location" if ctx["placeholder"] == "yes" else "diy"
 
         # ──────────────────────────── Catch-all ───────────────────────────
         case _:
