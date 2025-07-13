@@ -288,9 +288,9 @@ class Agent:
                 self.call_mode = False
                 global ONGOING_CALL
                 ONGOING_CALL = False
-                print(f"Call process terminated for agent {self.agent_id}")
+                print(f"Call process terminated for agent")
             except Exception as e:
-                print(f"Error terminating call process for agent {self.agent_id}: {e}")
+                print(f"Error terminating call process for agent")
 
     def handle_event(self, event: dict):
         global ONGOING_CALL
