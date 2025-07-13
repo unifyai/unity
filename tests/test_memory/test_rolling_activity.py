@@ -161,7 +161,172 @@ TASKSCHEDULER_TEST_CASES = [
     c for c in MANAGER_TEST_CASES if c[0].startswith("taskscheduler")
 ]
 
-# Shared helper to run a manager test case ----------------------------------
+# ---------------------------------------------------------------------------
+#  Test-specific: shrink window sizes & patch MemoryManager for fast roll-ups |
+# ---------------------------------------------------------------------------
+
+
+# Small deterministic windows so that a handful of manager calls exercise **all**
+# hierarchy levels without long waits or hundreds of calls.  They keep the
+# original naming order so the pretty-printing helper renders the same labels.
+
+SMALL_COUNT_WINDOWS = {
+    "past_interaction": 1,
+    "past_10_interactions": 2,
+    "past_40_interactions": 4,
+    "past_120_interactions": 8,
+    "past_520_interactions": 16,
+}
+
+SMALL_TIME_WINDOWS = {
+    "past_day": 1,  # seconds
+    "past_week": 2,
+    "past_4_weeks": 4,
+    "past_12_weeks": 8,
+    "past_52_weeks": 16,
+}
+
+# Preserve the canonical window order from the production code
+SMALL_COUNT_ORDER = [
+    "past_interaction",
+    "past_10_interactions",
+    "past_40_interactions",
+    "past_120_interactions",
+    "past_520_interactions",
+]
+
+SMALL_TIME_ORDER = [
+    "past_day",
+    "past_week",
+    "past_4_weeks",
+    "past_12_weeks",
+    "past_52_weeks",
+]
+
+# Build parent-mapping dicts exactly like the production class-level code.
+
+SMALL_COUNT_PARENT: dict[str, tuple[str, int]] = {}
+for i in range(1, len(SMALL_COUNT_ORDER)):
+    child, parent = SMALL_COUNT_ORDER[i], SMALL_COUNT_ORDER[i - 1]
+    SMALL_COUNT_PARENT[child] = (
+        parent,
+        SMALL_COUNT_WINDOWS[child] // SMALL_COUNT_WINDOWS[parent],
+    )
+
+SMALL_TIME_PARENT: dict[str, tuple[str, int]] = {}
+for i in range(1, len(SMALL_TIME_ORDER)):
+    child, parent = SMALL_TIME_ORDER[i], SMALL_TIME_ORDER[i - 1]
+    SMALL_TIME_PARENT[child] = (
+        parent,
+        SMALL_TIME_WINDOWS[child] // SMALL_TIME_WINDOWS[parent],
+    )
+
+
+def _patch_memory_manager_windows(monkeypatch):
+    """Apply window-size overrides to *MemoryManager* and patch Subscription.
+
+    Must be called **before** instantiating a new MemoryManager so that the
+    constructor registers callbacks with the shrunken thresholds.
+    """
+
+    from unity.memory_manager.memory_manager import MemoryManager
+    from unity.events.event_bus import Subscription
+
+    # ---- override window constants --------------------------------------
+    monkeypatch.setattr(
+        MemoryManager,
+        "_COUNT_WINDOWS",
+        SMALL_COUNT_WINDOWS,
+        raising=True,
+    )
+    monkeypatch.setattr(
+        MemoryManager,
+        "_TIME_WINDOWS",
+        SMALL_TIME_WINDOWS,
+        raising=True,
+    )
+
+    monkeypatch.setattr(MemoryManager, "_COUNT_ORDER", SMALL_COUNT_ORDER, raising=True)
+    monkeypatch.setattr(MemoryManager, "_TIME_ORDER", SMALL_TIME_ORDER, raising=True)
+
+    monkeypatch.setattr(
+        MemoryManager,
+        "_COUNT_PARENT",
+        SMALL_COUNT_PARENT,
+        raising=True,
+    )
+    monkeypatch.setattr(MemoryManager, "_TIME_PARENT", SMALL_TIME_PARENT, raising=True)
+
+    # ---- monkey-patch the Subscription trigger so time-based windows fire
+    #      immediately (no real waiting needed).
+
+    def _test_should_trigger(self, evt):  # noqa: D401 – imperative helper
+        # Preserve original count-based logic
+        if self.count_step is not None:
+            self.local_count += 1
+            if self.local_count >= self.count_step:
+                return True
+
+        # For time-based subscriptions we trigger **every** event so higher-level
+        # roll-ups occur without real-time delays.
+        if self.time_step is not None:
+            return True
+
+        return False
+
+    monkeypatch.setattr(
+        Subscription,
+        "should_trigger",
+        _test_should_trigger,
+        raising=True,
+    )
+
+    # ---- patch MemoryManager._build_activity_summary so headings use the
+    #      *actual* threshold values from SMALL_COUNT_WINDOWS rather than the
+    #      hard-coded digits embedded in the window name.  This keeps the
+    #      rendered markdown in sync with the shrunken test setup.
+
+    orig_build = MemoryManager._build_activity_summary
+
+    def _patched_build(self, entries: dict[str, str], mode: str = "time") -> str:  # type: ignore[override]
+        # Delegate to the original implementation first
+        text = orig_build(self, entries, mode)
+
+        # Only adjust the interaction-based headings; time-based windows keep
+        # their original names because SMALL_TIME_WINDOWS still match the
+        # embedded numbers.
+        for win, thresh in SMALL_COUNT_WINDOWS.items():
+            if win == "past_interaction":
+                # Already handled explicitly in the original pretty helper
+                continue
+
+            # Extract the *original* number from the window name – e.g.
+            # "past_10_interactions" → "10".
+            try:
+                original_num = win.split("_")[1]
+            except IndexError:
+                continue  # malformed, skip
+
+            orig_heading = f"Past {original_num} Interactions"
+            new_heading = (
+                "Past Interaction" if thresh == 1 else f"Past {thresh} Interactions"
+            )
+            # Replace both the level-2 heading line and any inline mentions
+            text = text.replace(orig_heading, new_heading)
+
+        return text
+
+    monkeypatch.setattr(
+        MemoryManager,
+        "_build_activity_summary",
+        _patched_build,
+        raising=True,
+    )
+
+
+# ---------------------------------------------------------------------------
+#  Shared helper to run a manager test case                                   |
+# ---------------------------------------------------------------------------
 
 
 async def _run_manager_case(
@@ -177,22 +342,12 @@ async def _run_manager_case(
 
     EVENT_BUS.reset()
 
-    # Ensure MemoryManager rolling-activity callbacks are fully registered
+    # Re-register callbacks lost during the reset – ensures that higher-level
+    # RollingSummary subscriptions (e.g. for the 2-interaction window) are in
+    # place **before** we publish any further events.
+    await mm._setup_rolling_callbacks()
     if hasattr(mm, "_callbacks_ready"):
-        try:
-            # `_callbacks_ready` is an asyncio.Event set at the end of
-            # `_setup_rolling_callbacks`.  Waiting for it eliminates races
-            # where the first ManagerMethod event fires *before* the
-            # time-based "past_day" subscription is registered (previously
-            # causing missing `## Past Day` headings in the 1-call tests).
-            await asyncio.wait_for(mm._callbacks_ready.wait(), timeout=5)
-        except (asyncio.TimeoutError, AttributeError):
-            # Fallback – shouldn't happen, but keep legacy short delay as a
-            # safety net rather than failing the test due to timing issues.
-            await asyncio.sleep(0.1)
-    else:
-        # Attribute not yet present – keep legacy delay.
-        await asyncio.sleep(0.1)
+        await asyncio.wait_for(mm._callbacks_ready.wait(), timeout=5)
 
     # Record baseline number of rolling activity logs
     baseline_logs = len(
@@ -209,9 +364,10 @@ async def _run_manager_case(
         handle = await factory(manager)
         await handle.result()
 
-    # Flush events & callbacks
+    # Flush events & *all* callbacks, including nested cascades triggered by
+    # lower-level summaries, using the new `cascade=True` flag.
     EVENT_BUS.join_published()
-    EVENT_BUS.join_callbacks()
+    EVENT_BUS.join_callbacks(cascade=True)
 
     # Build summary (interaction mode) – should be non-empty
     summary = mm.get_rolling_activity(mode="interaction")
@@ -219,15 +375,10 @@ async def _run_manager_case(
         summary.strip()
     ), f"Expected non-empty summary for {case_id} after {n_calls} call(s)"
 
-    # Ensure the correct heading generated by `_build_activity_summary` is present
-    # The interaction-mode summary must contain a section for the most recent window,
-    # i.e. *Past Interaction* (rendered as an H2 heading).
-    assert "## Past Interaction" in summary, (
-        "Expected the heading '## Past Interaction' to be present in the rolling "
-        f"activity summary for {case_id}. Got:\n{summary}"
-    )
+    # ------------------------------------------------------------------
+    # 1.  Expected headings (dynamic)
+    # ------------------------------------------------------------------
 
-    # Manager-specific section heading (e.g. "# Contacts") must be present.
     _manager_titles = {
         "ContactManager": "# Contacts",
         "TranscriptManager": "# Transcripts",
@@ -238,30 +389,98 @@ async def _run_manager_case(
     if expected_title is None:
         raise AssertionError(f"No expected title mapping for case_id={case_id}")
 
-    assert expected_title in summary, (
-        f"Expected manager-specific heading '{expected_title}' to be present in the "
-        f"interaction summary for {case_id}. Got:\n{summary}"
-    )
+    # Pretty helper (mirrors MemoryManager._build_activity_summary)
+    def _pretty(w: str) -> str:
+        if w == "all_time":
+            return "All Time"
+        # Special-case the single-interaction window so we keep the historic wording
+        if w == "past_interaction":
+            return "Past Interaction"
 
-    # Additionally verify that the *time*-based summary includes the expected
-    # heading for the *Past Day* window – this snapshot is triggered once on
-    # the very first ManagerMethod event.
+        # For interaction-based windows use the *configured* threshold from
+        # SMALL_COUNT_WINDOWS so the heading reflects the **actual** value
+        # (powers-of-two in the shrunk test setup) instead of the literal
+        # number embedded in the name (e.g. "past_10_interactions").
+        if w.endswith("_interactions") and w in SMALL_COUNT_WINDOWS:
+            threshold = SMALL_COUNT_WINDOWS[w]
+            plural = "Interactions" if threshold != 1 else "Interaction"
+            return f"Past {threshold} {plural}"
+
+        # Fallback – keep the original behaviour for time-based windows
+        parts = w.split("_")
+        return "Past " + " ".join(
+            p.capitalize() if not p.isdigit() else p for p in parts[1:]
+        )
+
+    # --- interaction-mode windows triggered so far
+    # Windows with a threshold **up to and including** the executed number of
+    # calls should now be present in the summary because each window triggers
+    # as soon as its `count_step` or `time_step` is reached.
+    active_count: list[str] = []
+    for w in SMALL_COUNT_ORDER:
+        thresh = SMALL_COUNT_WINDOWS[w]
+        if w == "past_interaction":
+            if n_calls >= thresh:
+                active_count.append(w)
+        else:
+            # With the small deterministic windows each higher-level summary
+            # is emitted after exactly **`thresh`** ManagerMethod events – the
+            # ratio between successive windows is 2×, but one summary of the
+            # parent window is sufficient to trigger the child.  Therefore we
+            # mark the window active as soon as `n_calls >= thresh`.
+            if n_calls >= thresh:
+                active_count.append(w)
+    expected_interaction_headings = {expected_title} | {
+        f"## {_pretty(w)}" for w in active_count
+    }
+
+    # --- time-mode windows triggered so far
+    active_time: list[str] = []
+    for w in SMALL_TIME_ORDER:
+        thresh = SMALL_TIME_WINDOWS[w]
+        if w == "past_day":
+            # Base-level time window fires immediately after the first event.
+            if n_calls >= 1:
+                active_time.append(w)
+        else:
+            # Same reasoning as for interaction windows: one lower-level
+            # summary per `thresh` events means the child window is triggered
+            # after exactly `thresh` ManagerMethod events.
+            if n_calls >= thresh:
+                active_time.append(w)
+
     time_summary = mm.get_rolling_activity(mode="time")
-    assert "## Past Day" in time_summary, (
-        "Expected the heading '## Past Day' to be present in the time-based "
-        f"rolling activity summary for {case_id}. Got:\n{time_summary}"
-    )
+    expected_time_headings = {expected_title} | {
+        f"## {_pretty(w)}" for w in active_time
+    }
 
-    # Verify that exactly *n_calls* new rolling activity logs were created
+    # --- Positive presence checks --------------------------------------
+    for hdr in expected_interaction_headings:
+        assert (
+            hdr in summary
+        ), f"Expected heading '{hdr}' in interaction summary for {case_id}.\nSummary:\n{summary}"
+
+    for hdr in expected_time_headings:
+        assert (
+            hdr in time_summary
+        ), f"Expected heading '{hdr}' in time summary for {case_id}.\nSummary:\n{time_summary}"
+
+    # ------------------------------------------------------------------
+    # 2.  Verify that at least the expected minimum number of snapshot rows
+    #     were created.  Each call produces one *count* and one *time* snapshot.
+    #     Additional rows appear when higher-level roll-ups are written.
+    # ------------------------------------------------------------------
+
     total_logs = len(
         unify.get_logs(
             context=mm._rolling_ctx,
         ),
     )
     new_logs = total_logs - baseline_logs
-    assert new_logs == n_calls + 1, (
-        f"Expected {n_calls} rolling activity logs for {case_id} after {n_calls} call(s), "
-        f"found {new_logs}.\nSummary:\n{summary}"
+    min_expected_rows = n_calls * 2  # 1 count + 1 time per call
+    assert new_logs >= min_expected_rows, (
+        f"Expected at least {min_expected_rows} rolling activity logs for {case_id} after {n_calls} call(s), "
+        f"found {new_logs}."
     )
 
     # ---------------- Negative assertions – no unexpected headings ---------
@@ -269,9 +488,7 @@ async def _run_manager_case(
         """Return all lines that start with one or more '#' characters."""
         return {ln.strip() for ln in text.splitlines() if ln.lstrip().startswith("#")}
 
-    # Interaction summary should only contain the manager title and the
-    # base-level *Past Interaction* sub-heading – nothing else.
-    expected_interaction_headings = {expected_title, "## Past Interaction"}
+    # Interaction summary should contain *only* the dynamically expected headings.
     interaction_headings = _extract_headings(summary)
 
     unexpected_interaction = interaction_headings - expected_interaction_headings
@@ -280,8 +497,7 @@ async def _run_manager_case(
         f"for {case_id}: {unexpected_interaction}. Full summary:\n{summary}"
     )
 
-    # Time-based summary should only include title + Past Day sub-heading.
-    expected_time_headings = {expected_title, "## Past Day"}
+    # Time-based summary should contain *only* the dynamically expected headings.
     time_headings = _extract_headings(time_summary)
     unexpected_time = time_headings - expected_time_headings
     assert not unexpected_time, (
@@ -294,7 +510,7 @@ async def _run_manager_case(
 #  Build (n_calls) list – we only test 1 and 2 calls for now                 |
 # ---------------------------------------------------------------------------
 
-_N_CALLS_TO_TEST = [1, 2]
+_N_CALLS_TO_TEST = [1, 2, 4, 8, 16]
 
 # ---------------------------------------------------------------------------
 #  Build lists of call_factories per manager ---------------------------------
@@ -319,7 +535,8 @@ TASK_MANAGER_FACTORY = TASKSCHEDULER_TEST_CASES[0][2]
 @pytest.mark.asyncio
 @_handle_project
 @pytest.mark.parametrize("n_calls", _N_CALLS_TO_TEST)
-async def test_contact_manager_methods_populate_rolling_activity(n_calls):
+async def test_contact_manager_methods_populate_rolling_activity(monkeypatch, n_calls):
+    _patch_memory_manager_windows(monkeypatch)
     manager = CONTACT_MANAGER_FACTORY()
     mm = MemoryManager(contact_manager=manager)
 
@@ -340,7 +557,11 @@ async def test_contact_manager_methods_populate_rolling_activity(n_calls):
 @pytest.mark.asyncio
 @_handle_project
 @pytest.mark.parametrize("n_calls", _N_CALLS_TO_TEST)
-async def test_transcript_manager_methods_populate_rolling_activity(n_calls):
+async def test_transcript_manager_methods_populate_rolling_activity(
+    monkeypatch,
+    n_calls,
+):
+    _patch_memory_manager_windows(monkeypatch)
     manager = TRANSCRIPT_MANAGER_FACTORY()
     mm = MemoryManager(transcript_manager=manager)
 
@@ -361,7 +582,11 @@ async def test_transcript_manager_methods_populate_rolling_activity(n_calls):
 @pytest.mark.asyncio
 @_handle_project
 @pytest.mark.parametrize("n_calls", _N_CALLS_TO_TEST)
-async def test_knowledge_manager_methods_populate_rolling_activity(n_calls):
+async def test_knowledge_manager_methods_populate_rolling_activity(
+    monkeypatch,
+    n_calls,
+):
+    _patch_memory_manager_windows(monkeypatch)
     manager = KNOWLEDGE_MANAGER_FACTORY()
     mm = MemoryManager(knowledge_manager=manager)
 
@@ -382,7 +607,8 @@ async def test_knowledge_manager_methods_populate_rolling_activity(n_calls):
 @pytest.mark.asyncio
 @_handle_project
 @pytest.mark.parametrize("n_calls", _N_CALLS_TO_TEST)
-async def test_taskscheduler_methods_populate_rolling_activity(n_calls):
+async def test_taskscheduler_methods_populate_rolling_activity(monkeypatch, n_calls):
+    _patch_memory_manager_windows(monkeypatch)
     manager = TASK_MANAGER_FACTORY()
     mm = MemoryManager()
 
