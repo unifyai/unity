@@ -428,10 +428,10 @@ def handle_dq_next(ctx):
             return "location" if ctx["checked_gas_meter"] == "yes" else "diy"
 
         case "Gas fire or heater not working":
-            return "location" if ctx["only_heating_form"] == "yes" else "diagnostic_question_2"
+            return "location" if ctx["only_heating_form"] == "yes" else "location"
 
         case "Hot water not working":
-            return "diagnostic_question_2" if ctx["checked_gas_meter"] == "yes" else "diy"
+            return "location" if ctx["checked_gas_meter"] == "yes" else "diy"
 
         # Newly-added gas / boiler sub-issues (placeholder logic)
         case ("Pipes have started making loud and unusual noises (I've not heard before)"
