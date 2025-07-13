@@ -527,7 +527,10 @@ TASK_MANAGER_FACTORY = TASKSCHEDULER_TEST_CASES[0][2]
 @pytest.mark.asyncio
 @_handle_project
 @pytest.mark.parametrize("n_calls", _N_CALLS_TO_TEST)
-async def test_contact_manager_methods_populate_rolling_activity(monkeypatch, n_calls):
+async def test_contact_manager_methods_populate_interaction_rolling_activity(
+    monkeypatch,
+    n_calls,
+):
     _patch_memory_manager_windows(monkeypatch)
     manager = CONTACT_MANAGER_FACTORY()
     mm = MemoryManager(contact_manager=manager)
@@ -549,7 +552,7 @@ async def test_contact_manager_methods_populate_rolling_activity(monkeypatch, n_
 @pytest.mark.asyncio
 @_handle_project
 @pytest.mark.parametrize("n_calls", _N_CALLS_TO_TEST)
-async def test_transcript_manager_methods_populate_rolling_activity(
+async def test_transcript_manager_methods_populate_interaction_rolling_activity(
     monkeypatch,
     n_calls,
 ):
@@ -574,7 +577,7 @@ async def test_transcript_manager_methods_populate_rolling_activity(
 @pytest.mark.asyncio
 @_handle_project
 @pytest.mark.parametrize("n_calls", _N_CALLS_TO_TEST)
-async def test_knowledge_manager_methods_populate_rolling_activity(
+async def test_knowledge_manager_methods_populate_interaction_rolling_activity(
     monkeypatch,
     n_calls,
 ):
@@ -599,7 +602,10 @@ async def test_knowledge_manager_methods_populate_rolling_activity(
 @pytest.mark.asyncio
 @_handle_project
 @pytest.mark.parametrize("n_calls", _N_CALLS_TO_TEST)
-async def test_taskscheduler_methods_populate_rolling_activity(monkeypatch, n_calls):
+async def test_taskscheduler_methods_populate_interaction_rolling_activity(
+    monkeypatch,
+    n_calls,
+):
     _patch_memory_manager_windows(monkeypatch)
     manager = TASK_MANAGER_FACTORY()
     mm = MemoryManager()
@@ -611,3 +617,148 @@ async def test_taskscheduler_methods_populate_rolling_activity(monkeypatch, n_ca
         n_calls,
         "TaskScheduler",
     )
+
+
+# ---------------------------------------------------------------------------
+#  New tests – verify time-based rolling activity summaries include **all**
+#  expected sub-headings for every manager (no window-shrinking monkey-patch)
+# ---------------------------------------------------------------------------
+
+import datetime as dt
+
+from unity.events.event_bus import EVENT_BUS, Event
+from unity.memory_manager.memory_manager import MemoryManager
+
+
+_TIME_BASED_HEADINGS = [
+    "## Past Day",
+    "## Past Week",
+    "## Past 4 Weeks",
+    "## Past 12 Weeks",
+    "## Past 52 Weeks",
+]
+
+# Manager class-names registered in MemoryManager._MANAGERS
+_TIME_SUMMARY_MANAGERS = [
+    "ContactManager",
+    "TranscriptManager",
+    "KnowledgeManager",
+    "TaskScheduler",
+    "Conductor",
+]
+
+# Mapping of window → threshold in *days*
+_TIME_WINDOW_THRESHOLDS = {
+    "past_day": 1,
+    "past_week": 7,
+    "past_4_weeks": 28,
+    "past_12_weeks": 84,
+    "past_52_weeks": 364,
+}
+
+
+def _pretty_time_window(w: str) -> str:
+    if w == "past_day":
+        return "Past Day"
+    parts = w.split("_")
+    return "Past " + " ".join(
+        p.capitalize() if not p.isdigit() else p for p in parts[1:]
+    )
+
+
+async def _assert_time_based_headings_for_manager(mgr_cls: str, total_days: int):
+    """Publish enough *ManagerMethod* events with simulated timestamps so that
+    all time-based windows *up to* the size implied by *total_days* are generated,
+    then verify the presence of the corresponding headings in the summary.
+    """
+
+    # Fresh MemoryManager instance (ensures callback subscriptions) ----------
+    mm = MemoryManager()
+    await mm.reset()
+
+    # Publish one event per *simulated* day for the requested span ----------
+    base_ts = dt.datetime(2025, 1, 1, tzinfo=dt.UTC)
+
+    for day in range(total_days):
+        ts = base_ts + dt.timedelta(days=day)
+        await EVENT_BUS.publish(
+            Event(
+                type="ManagerMethod",
+                timestamp=ts,
+                payload={
+                    "manager": mgr_cls,
+                    "method": "unit_test",
+                    "phase": "outgoing",
+                },
+            ),
+        )
+
+    # Flush logger & wait for all cascading callbacks -----------------------
+    EVENT_BUS.join_published()
+    EVENT_BUS.join_callbacks(cascade=True)
+
+    # Retrieve the *time-based* rolling activity summary --------------------
+    summary = mm.get_rolling_activity(mode="time")
+
+    # Determine which windows should have triggered given total_days
+    triggered_windows = [
+        w for w, thresh in _TIME_WINDOW_THRESHOLDS.items() if total_days >= thresh
+    ]
+
+    expected_headings = {f"## {_pretty_time_window(w)}" for w in triggered_windows}
+
+    missing = [hdr for hdr in expected_headings if hdr not in summary]
+    assert (
+        not missing
+    ), f"Missing expected heading(s) for {mgr_cls} after {total_days} day(s): {missing}.\nSummary:\n{summary}"
+
+
+# ---------------------------------------------------------------------------
+#  Per-manager TIME-based rolling-activity tests                             |
+# ---------------------------------------------------------------------------
+
+_TIME_DAYS_TO_TEST = [1, 7, 28, 84, 364]
+
+
+@pytest.mark.asyncio
+@_handle_project
+@pytest.mark.parametrize(
+    "total_days",
+    _TIME_DAYS_TO_TEST,
+    ids=["day", "week", "4_weeks", "12_weeks", "52_weeks"],
+)
+async def test_contact_manager_methods_populate_time_rolling_activity(total_days):
+    await _assert_time_based_headings_for_manager("ContactManager", total_days)
+
+
+@pytest.mark.asyncio
+@_handle_project
+@pytest.mark.parametrize(
+    "total_days",
+    _TIME_DAYS_TO_TEST,
+    ids=["day", "week", "4_weeks", "12_weeks", "52_weeks"],
+)
+async def test_transcript_manager_methods_populate_time_rolling_activity(total_days):
+    await _assert_time_based_headings_for_manager("TranscriptManager", total_days)
+
+
+@pytest.mark.asyncio
+@_handle_project
+@pytest.mark.parametrize(
+    "total_days",
+    _TIME_DAYS_TO_TEST,
+    ids=["day", "week", "4_weeks", "12_weeks", "52_weeks"],
+)
+async def test_knowledge_manager_methods_populate_time_rolling_activity(total_days):
+    await _assert_time_based_headings_for_manager("KnowledgeManager", total_days)
+
+
+@pytest.mark.asyncio
+@_handle_project
+@pytest.mark.parametrize(
+    "total_days",
+    _TIME_DAYS_TO_TEST,
+    ids=["day", "week", "4_weeks", "12_weeks", "52_weeks"],
+)
+async def test_taskscheduler_methods_populate_time_rolling_activity(total_days):
+    await _assert_time_based_headings_for_manager("TaskScheduler", total_days)
