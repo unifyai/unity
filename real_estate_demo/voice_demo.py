@@ -273,7 +273,6 @@ class Agent:
     def set_event_manager(self, event_manager):
         self.event_manager = event_manager
 
-
     def publish(self, event: dict):
         self.event_manager.publish(event)
 
