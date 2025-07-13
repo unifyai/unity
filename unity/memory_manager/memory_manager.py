@@ -310,6 +310,33 @@ class MemoryManager(BaseMemoryManager):
 
         return await handle.result()
 
+    # ------------------------------------------------------------------ #
+    # 5  reset – new blocking helper                                     #
+    # ------------------------------------------------------------------ #
+    async def reset(self) -> None:  # noqa: D401 – imperative name
+        """Completely reset the MemoryManager's rolling-activity state.
+
+        1. Delegates to ``EVENT_BUS.reset()`` to wipe all event history and
+           callback registrations.
+        2. Re-creates and waits for a fresh set of rolling-activity callback
+           subscriptions so callers can immediately publish new events without
+           manually re-registering helpers.
+        """
+
+        # 1. Reset the global EventBus singleton (clears callbacks & logs)
+        EVENT_BUS.reset()
+
+        # 2. Re-establish rolling-activity subscriptions *synchronously*
+        #    so callers can rely on them right after this coroutine returns.
+        #    We create a new readiness Event to avoid races with any still-
+        #    pending tasks from a previous incarnation.
+
+        self._callbacks_ready = asyncio.Event()
+        await self._setup_rolling_callbacks()
+
+        # Wait until _setup_rolling_callbacks signals completion (max 5 s)
+        await asyncio.wait_for(self._callbacks_ready.wait(), timeout=5)
+
     # ───────────────────────────  NEW HELPERS  ────────────────────────────
     # 1. Context & schema ---------------------------------------------------
     def _ensure_rolling_context(self) -> str:
