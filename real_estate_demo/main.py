@@ -38,7 +38,7 @@ class EventManager:
 
         self.event_aggregator_task = asyncio.create_task(self.collect_events())
         # Start inactivity monitor
-        self.inactivity_task = asyncio.create_task(self.check_inactivity())
+        # self.inactivity_task = asyncio.create_task(self.check_inactivity())
 
         async with self.servers["call"]:
             await self.servers["call"].serve_forever()

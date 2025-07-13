@@ -1,25 +1,72 @@
 from wizard_2 import *
 
-dq_options = ["Vinyl flooring is damaged",
-     "Floorboard Broken and hole in the floor",
-     "Cracks in the wall",
-     "Grouting between tiles missing or damaged",
-     "Tiles are damaged or missing",
-     "Ceiling is falling down",
-     "Cracks in the ceiling",
-     "Ceiling plaster damaged - loose crumbling or bulging",
-     "Roof leaking",
-     "No lights working in my property",
-     "Some lights not working",
-     "Gas boiler low pressure - no water leak",
-     "Gas central heating not working",
-     "Gas fire or heater not working",
-     "Fence panels missing or damaged"]
+dq_options = [
+    # Floors
+    "Vinyl flooring is damaged",
+    "Floorboard Broken and hole in the floor",
 
+    # Walls
+    "Cracks in the wall",
+    "Grouting between tiles missing or damaged",
+    "Tiles are damaged or missing",
 
+    # Ceilings
+    "Ceiling is falling down",
+    "Cracks in the ceiling",
+    "Ceiling plaster damaged - loose crumbling or bulging",
+    "Roof leaking",
 
+    # Stairs
+    "Stair banister or spindles broken",
 
-from wizard_2 import RadioField
+    # Kitchen Units
+    "Kitchen wall unit loose or falling off the wall",
+
+    # Bath, Sinks & Showers
+    "Water leak",
+    "Sealant damaged around bath/basin or sink",
+    "Shower curtain rail broken",
+    "Mixer shower not working",
+
+    # Toilets
+    "My only toilet is blocked",
+    "One of my toilets is blocked",
+    "Toilet is loose from the floor and I don't feel like I can use it",
+    "Cistern behind toilet loose / unstable",
+    "Broken pipe behind toilet",
+
+    # Doors & Locks
+    "Fire door is sticking / loose / draughty",
+    "Door frame split or damaged",
+    "Door lock is sticking - my property is secure",
+
+    # Windows
+    "Smashed window",
+
+    # Lighting & Electrics
+    "No lights working in my property",
+    "Some lights not working",
+    "No power in my property",
+
+    # Stair & Through-floor Lifts
+    "Stair Lift is not working / moving",
+    "Damage to stair lift (still working)",
+    "Through floor lift not working",
+    "Damage to through floor lift (still working)",
+
+    # Gas Heating & Hot Water
+    "Gas boiler low pressure - no water leak",
+    "Gas central heating not working",
+    "Gas fire or heater not working",
+    "Hot water not working",
+
+    # Fences
+    "Fence panels missing or damaged",
+
+    # Brickwork
+    "Brick wall cracked",
+    "Outside wall covering (render) loose or cracked",
+]
 
 
 def get_dq_fields(ctx):
@@ -179,50 +226,50 @@ def get_dq_fields(ctx):
             return [RadioField("only_heating_form", "Is this your only form of heating?", ["yes", "no"])]
         case "Hot water not working":
             return [RadioField("checked_gas_meter", "Have you checked your gas meter is topped up?", ["yes", "no"])]
-        case "Pipes have started making loud and unusual noises (I've not heard before)":
-            return [RadioField("placeholder", "Placeholder question", ["yes", "no"])]
-        case "Error code on boiler display":
-            return [RadioField("placeholder", "Placeholder question", ["yes", "no"])]
-        case "Gas fire or heater damaged":
-            return [RadioField("placeholder", "Placeholder question", ["yes", "no"])]
-        case "Gas boiler leaking water on electrical fittings":
-            return [RadioField("placeholder", "Placeholder question", ["yes", "no"])]
-        case "Gas boiler water leaking":
-            return [RadioField("placeholder", "Placeholder question", ["yes", "no"])]
+        # case "Pipes have started making loud and unusual noises (I've not heard before)":
+        #     return [RadioField("placeholder", "Placeholder question", ["yes", "no"])]
+        # case "Error code on boiler display":
+        #     return [RadioField("placeholder", "Placeholder question", ["yes", "no"])]
+        # case "Gas fire or heater damaged":
+        #     return [RadioField("placeholder", "Placeholder question", ["yes", "no"])]
+        # case "Gas boiler leaking water on electrical fittings":
+        #     return [RadioField("placeholder", "Placeholder question", ["yes", "no"])]
+        # case "Gas boiler water leaking":
+        #     return [RadioField("placeholder", "Placeholder question", ["yes", "no"])]
 
         # Electric / Storage Heating & Hot Water
-        case "No hot water from electric (immersion) heater":
-            return [RadioField("placeholder", "Placeholder question", ["yes", "no"])]
-        case "An electric heater or fire is not working":
-            return [RadioField("placeholder", "Placeholder question", ["yes", "no"])]
-        case "Hot Water Cylinder is Leaking":
-            return [RadioField("placeholder", "Placeholder question", ["yes", "no"])]
-        case "Electric heating not working":
-            return [RadioField("placeholder", "Placeholder question", ["yes", "no"])]
-        case "Air Source Heating - not working":
-            return [RadioField("placeholder", "Placeholder question", ["yes", "no"])]
+        # case "No hot water from electric (immersion) heater":
+        #     return [RadioField("placeholder", "Placeholder question", ["yes", "no"])]
+        # case "An electric heater or fire is not working":
+        #     return [RadioField("placeholder", "Placeholder question", ["yes", "no"])]
+        # case "Hot Water Cylinder is Leaking":
+        #     return [RadioField("placeholder", "Placeholder question", ["yes", "no"])]
+        # case "Electric heating not working":
+        #     return [RadioField("placeholder", "Placeholder question", ["yes", "no"])]
+        # case "Air Source Heating - not working":
+        #     return [RadioField("placeholder", "Placeholder question", ["yes", "no"])]
 
         # Electric / Storage – Radiators (and Gas Radiators share same issue-texts)
-        case "Radiator loose - coming away from the wall":
-            return [RadioField("placeholder", "Placeholder question", ["yes", "no"])]
-        case "One of my radiators isn't getting warm":
-            return [RadioField("placeholder", "Placeholder question", ["yes", "no"])]
-        case "Radiator needs putting back on the wall":
-            return [RadioField("placeholder", "Placeholder question", ["yes", "no"])]
-        case "Radiator leaking - electrical fittings getting wet":
-            return [RadioField("placeholder", "Placeholder question", ["yes", "no"])]
-        case "Radiator leaking - flooding the property":
-            return [RadioField("placeholder", "Placeholder question", ["yes", "no"])]
-        case "Radiator leaking - collecting water in a bucket":
-            return [RadioField("placeholder", "Placeholder question", ["yes", "no"])]
+        # case "Radiator loose - coming away from the wall":
+        #     return [RadioField("placeholder", "Placeholder question", ["yes", "no"])]
+        # case "One of my radiators isn't getting warm":
+        #     return [RadioField("placeholder", "Placeholder question", ["yes", "no"])]
+        # case "Radiator needs putting back on the wall":
+        #     return [RadioField("placeholder", "Placeholder question", ["yes", "no"])]
+        # case "Radiator leaking - electrical fittings getting wet":
+        #     return [RadioField("placeholder", "Placeholder question", ["yes", "no"])]
+        # case "Radiator leaking - flooding the property":
+        #     return [RadioField("placeholder", "Placeholder question", ["yes", "no"])]
+        # case "Radiator leaking - collecting water in a bucket":
+        #     return [RadioField("placeholder", "Placeholder question", ["yes", "no"])]
 
         # Electric Showers
-        case "Electrical shower unit leaking":
-            return [RadioField("placeholder", "Placeholder question", ["yes", "no"])]
-        case "Electric shower hose, handset or rail broken":
-            return [RadioField("placeholder", "Placeholder question", ["yes", "no"])]
-        case "Electric shower not working / no hot water":
-            return [RadioField("placeholder", "Placeholder question", ["yes", "no"])]
+        # case "Electrical shower unit leaking":
+        #     return [RadioField("placeholder", "Placeholder question", ["yes", "no"])]
+        # case "Electric shower hose, handset or rail broken":
+        #     return [RadioField("placeholder", "Placeholder question", ["yes", "no"])]
+        # case "Electric shower not working / no hot water":
+        #     return [RadioField("placeholder", "Placeholder question", ["yes", "no"])]
 
         # Fences
         case "Fence panels missing or damaged":
@@ -240,32 +287,32 @@ def get_dq_fields(ctx):
         #     return [RadioField("placeholder", "Placeholder question", ["yes", "no"])]
 
         # Groundworks
-        case "Driveway has multiple large cracks":
-            return [RadioField("placeholder", "Placeholder question", ["yes", "no"])]
-        case "Garden path/step is loose/broken":
-            return [RadioField("placeholder", "Placeholder question", ["yes", "no"])]
-        case "Personal rotary clothes line broken":
-            return [RadioField("placeholder", "Placeholder question", ["yes", "no"])]
-        case "Retractable clothes line & post (in any area) broken":
-            return [RadioField("placeholder", "Placeholder question", ["yes", "no"])]
-        case "Concrete post for personal clothes line broken":
-            return [RadioField("placeholder", "Placeholder question", ["yes", "no"])]
+        # case "Driveway has multiple large cracks":
+        #     return [RadioField("placeholder", "Placeholder question", ["yes", "no"])]
+        # case "Garden path/step is loose/broken":
+        #     return [RadioField("placeholder", "Placeholder question", ["yes", "no"])]
+        # case "Personal rotary clothes line broken":
+        #     return [RadioField("placeholder", "Placeholder question", ["yes", "no"])]
+        # case "Retractable clothes line & post (in any area) broken":
+        #     return [RadioField("placeholder", "Placeholder question", ["yes", "no"])]
+        # case "Concrete post for personal clothes line broken":
+        #     return [RadioField("placeholder", "Placeholder question", ["yes", "no"])]
 
         # Plumbing
-        case "Blocked drain overflowing sewage":
-            return [RadioField("placeholder", "Placeholder question", ["yes", "no"])]
-        case "Blocked drain":
-            return [RadioField("placeholder", "Placeholder question", ["yes", "no"])]
-        case "Drain cover broken (no trip hazard)":
-            return [RadioField("placeholder", "Placeholder question", ["yes", "no"])]
-        case "Drain cover missing (fall or trip hazard)":
-            return [RadioField("placeholder", "Placeholder question", ["yes", "no"])]
-        case "Outside tap leaking or loose":
-            return [RadioField("placeholder", "Placeholder question", ["yes", "no"])]
-        case "Outside tap dripping":
-            return [RadioField("placeholder", "Placeholder question", ["yes", "no"])]
-        case "Gutter or drainpipe blocked or broken":
-            return [RadioField("placeholder", "Placeholder question", ["yes", "no"])]
+        # case "Blocked drain overflowing sewage":
+        #     return [RadioField("placeholder", "Placeholder question", ["yes", "no"])]
+        # case "Blocked drain":
+        #     return [RadioField("placeholder", "Placeholder question", ["yes", "no"])]
+        # case "Drain cover broken (no trip hazard)":
+        #     return [RadioField("placeholder", "Placeholder question", ["yes", "no"])]
+        # case "Drain cover missing (fall or trip hazard)":
+        #     return [RadioField("placeholder", "Placeholder question", ["yes", "no"])]
+        # case "Outside tap leaking or loose":
+        #     return [RadioField("placeholder", "Placeholder question", ["yes", "no"])]
+        # case "Outside tap dripping":
+        #     return [RadioField("placeholder", "Placeholder question", ["yes", "no"])]
+        # case "Gutter or drainpipe blocked or broken":
+        #     return [RadioField("placeholder", "Placeholder question", ["yes", "no"])]
 
         # Roofing & Tiles
         # case "Tiles, lead, or chimney brickwork loose and dangerous":

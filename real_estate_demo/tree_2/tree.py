@@ -133,7 +133,6 @@ confirmation_screen = Node(
 Details to confirm with the user, in case they would like to change anything:
 Location: {location}
 Area: {area}
-Type: {section}
 Issue: {issue_element} > {issue_type}""".strip(),
 fields=[
     RadioField(
@@ -178,7 +177,6 @@ repair_ticket_raised_screen = Node(
 Ticket Details:
 Location: {location}
 Area: {area}
-Type: {section}
 Issue: {issue_element} > {issue_type}
 Appointment Date: {chosen_slot}
 
