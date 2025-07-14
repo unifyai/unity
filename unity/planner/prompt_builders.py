@@ -530,31 +530,25 @@ def build_exploration_prompt(goal: str, *, tools: Dict[str, Callable]) -> str:
 
     return textwrap.dedent(
         f"""
-        You are an intelligent Research Assistant. Your goal is to gather critical information to create a robust plan for the main objective.
+        You are a Research Assistant for a web automation agent. Your mission is to gather facts to help write a successful script.
 
         **Main Objective:** "{goal}"
 
         **Your Task:**
-        1. Think step-by-step to determine what information is needed.
-        2. Use the `observe` tool to gather this information.
-        3. If necessary, use `request_clarification` to ask for guidance.
-        4. When you have gathered all necessary information, provide a final, concise summary of your findings. This summary will be used to generate the main plan. DO NOT say that you are ready; your final output MUST BE the summary itself.
+        1.  **Think Step-by-Step**: What specific pieces of information are missing from the objective? (e.g., URLs, exact text on buttons, structure of a search results page).
+        2.  **Use `browser_observe`**: Use this tool to gather the missing information. Ask targeted questions.
+        3.  **Summarize Findings**: Once you have gathered the necessary details, your final output MUST be a concise summary of your findings. This summary will be fed into the next stage of planning. Do not just say you are ready.
 
-         ---
-        ### Tools Reference
-        You have access to a global `action_provider` object with the following methods. You must call them with the correct arguments as specified here.
-        ```json
-        {tool_reference}
-        ```
+        **Example Workflow:**
+        - **Goal:** "Find the contact email on the UnifyAI website."
+        - **Your Thought Process:** I need the URL for UnifyAI. Then I need to find a "Contact" or "About Us" link. Then I need to read that page to find the email.
+        - **Your Final Summary:** "The website is unify.ai. The contact information is located on the '/contact' page, which is linked in the footer. The email address is not directly listed, but there is a contact form."
 
         ---
-        ### Handle APIs
-        Some tools return a "handle" object for ongoing interaction. The available methods for these handles are listed below. You MUST only use the methods listed.
-
-        {handle_apis}
-
-        Begin your response now. Your response must start immediately with the code.
-
+        ### Tools Reference
+        {tool_reference}
+        ---
+        Begin. Your final output must be the summary.
         """,
     )
 
@@ -565,20 +559,17 @@ def build_should_explore_prompt(goal: str) -> str:
     """
     return textwrap.dedent(
         f"""
-            You are a web browser agent assessing a task description from a user.
-            The agent's goal is to generate a complete Python script to accomplish a task.
-            The available tools are high-level: `act(instruction)` and `observe(query)`.
-            The agent will be using the `act` tool to navigate the web and the `observe` tool to get information about the page.
+        You are a planning analyst for a web automation agent. Your job is to decide if a task description contains enough specific information to write a Python script directly, or if an initial information-gathering phase is required.
 
-            Analyze the following goal:
-            **Goal:** "{goal}"
+        **Analyze the following user goal:**
+        "{goal}"
 
-            Is the goal specific and actionable enough to directly write a Python script?
-            Or is the goal ambiguous, broad, or lacking key details (like URLs, exact button text, or a clear workflow)
-            that the agent would need to discover first using the `observe` and `request_clarification` tools?
+        **Decision Criteria:**
+        - **EXECUTE directly if:** The goal contains specific URLs, precise names of buttons/links ("Images tab", "Sign In button"), and a clear, linear workflow.
+        - **EXPLORE first if:** The goal is ambiguous. For example, it mentions a site but not a URL ("a popular news site"), asks to find something without specifying where ("find their contact email"), or implies a complex workflow that needs discovery ("find the cheapest can opener and add it to the cart"). The presence of a task like finding a specific item from a list of search results warrants exploration.
 
-            - If the goal is **clear and specific**, respond with the single word: **EXECUTE**.
-            - If the goal is **ambiguous or requires information gathering**, respond with the single word: **EXPLORE**.
+        - If the goal is **clear and specific**, respond with the single word: **EXECUTE**.
+        - If the goal is **ambiguous or requires information gathering**, respond with the single word: **EXPLORE**.
         """,
     )
 
