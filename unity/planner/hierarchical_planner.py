@@ -1216,34 +1216,39 @@ class HierarchicalPlanner(BasePlanner):
             @functools.wraps(fn)
             async def wrapper(*args, **kwargs):
                 """The wrapper that performs verification and correction."""
+                func_name = fn.__name__
+                current_fn = plan.execution_namespace[func_name]
                 try:
-                    sig = inspect.signature(fn)
+                    sig = inspect.signature(current_fn)
                     bound_args = sig.bind(*args, **kwargs)
                     bound_args.apply_defaults()
-                    cache_key = (fn.__name__, frozenset(bound_args.arguments.items()))
+                    cache_key = (func_name, frozenset(bound_args.arguments.items()))
                 except (TypeError, ValueError):
-                    cache_key = (fn.__name__, str(args), str(kwargs))
+                    cache_key = (func_name, str(args), str(kwargs))
 
                 if cache_key in plan.completed_functions:
 
                     logger.info(
-                        f"CACHE HIT: Skipping already completed call to '{fn.__name__}' with args {args}, {kwargs}",
+                        f"CACHE HIT: Skipping already completed call to '{func_name}' with args {args}, {kwargs}",
                     )
                     return
                 logger.info(
-                    f"CACHE MISS: Proceeding with execution for '{fn.__name__}'.",
+                    f"CACHE MISS: Proceeding with execution for '{func_name}'.",
                 )
-                plan.call_stack.append(fn.__name__)
+                plan.call_stack.append(func_name)
                 plan.interaction_stack.append([])
-                logger.info(f"VERIFY: Entering '{fn.__name__}'")
+                logger.info(f"VERIFY: Entering '{func_name}'")
                 try:
                     last_error_traceback = ""
                     for _ in range(plan.MAX_LOCAL_RETRIES):
                         try:
-                            func_source = plan.function_source_map.get(fn.__name__)
+                            current_fn_for_execution = plan.execution_namespace[
+                                func_name
+                            ]
+                            func_source = plan.function_source_map.get(func_name)
                             return await self._execute_and_verify_step(
                                 plan,
-                                fn,
+                                inspect.unwrap(current_fn_for_execution),
                                 func_source,
                                 args,
                                 kwargs,
@@ -1251,8 +1256,10 @@ class HierarchicalPlanner(BasePlanner):
                             )
                         except _ForcedRetryException:
                             plan.action_log.append(
-                                f"Retrying '{fn.__name__}' after reimplementation.",
+                                f"Retrying '{func_name}' after reimplementation.",
                             )
+                            if plan.interaction_stack:
+                                plan.interaction_stack[-1].clear()
                             continue
                         except InvalidActionError as e:
                             logger.warning(
@@ -1279,14 +1286,14 @@ class HierarchicalPlanner(BasePlanner):
                             raise
                         except Exception as e:
                             logger.error(
-                                f"Function '{fn.__name__}' failed: {e}",
+                                f"Function '{func_name}' failed: {e}",
                                 exc_info=True,
                             )
                             last_error_traceback = traceback.format_exc()
                             await asyncio.sleep(1)
                             continue
                     raise ReplanFromParentException(
-                        f"Function '{fn.__name__}' failed after multiple retries.",
+                        f"Function '{func_name}' failed after multiple retries.",
                         reason=last_error_traceback,
                     )
                 finally:
