@@ -256,6 +256,7 @@ def build_dynamic_implement_prompt(
     parent_code: str,
     browser_state: str | None,
     replan_context: str,
+    implementation_strategy: Optional[Any] = None,
     *,
     tools: Dict[str, Callable],
 ) -> str:
@@ -278,15 +279,42 @@ def build_dynamic_implement_prompt(
         The complete prompt string.
     """
 
-    browser_context_section = ""
-    strategy_instruction = """You are likely being asked to implement this because a previous attempt failed. Your first step should be to **re-assess the situation** and devise a new, robust plan to achieve the goal."""
-    tool_usage_instruction = """Use the `action_provider` global object to interact with the environment. Available tools and their handle APIs have been described in the rules below."""
+    failure_analysis_section = ""
+    if replan_context:
+        failure_analysis_section = textwrap.dedent(
+            f"""
+            ---
+            ### CRITICAL: Failure Analysis & Recovery Instructions
+            You are being asked to implement this function because a previous attempt **failed**. You MUST analyze the following reason and write a new implementation that avoids this specific error.
 
+            **Reason for Previous Failure:**
+            {replan_context}
+            ---
+            """,
+        )
+    browser_context_section = ""
     if browser_state:
-        browser_context_section = f"""
-**Current Browser State:**
-{browser_state}
-"""
+        browser_context_section = f"""**Current Browser State:**
+        {browser_state}
+        """
+
+    strategy_section = ""
+    if implementation_strategy:
+        strategy_steps = "\n".join(implementation_strategy.steps)
+        strategy_section = textwrap.dedent(
+            f"""
+            ---
+            ### CRITICAL: New Implementation Strategy
+            You have already analyzed the failure and created a new plan. You MUST write Python code that strictly follows these steps.
+
+            **Rationale:** {implementation_strategy.rationale}
+            **Steps to Follow:**
+            {strategy_steps}
+            ---
+            """,
+        )
+    strategy_instruction = "Analyze the function's purpose and the available tools to decide on the best implementation strategy."
+    tool_usage_instruction = "Use the `action_provider` global object to interact with the environment. Available tools and their handle APIs have been described in the rules below."
     rules_and_examples = _build_rules_and_examples_prompt(
         tools,
         strategy_instruction,
@@ -295,19 +323,27 @@ def build_dynamic_implement_prompt(
 
     return textwrap.dedent(
         f"""
-        You are an expert Python programmer. Your task is to write the implementation for the function `{function_name}`.
+        You are an expert Python programmer. Your task is to **only**write the implementation for the function `{function_name}` and nothing else.
+
+        **CRITICAL RULES:**
+        1.  Your response MUST contain ONLY the Python code for the function `{function_name}`.
+        2.  DO NOT write a `main_plan` or any other functions. Your response must begin immediately with the `@verify` decorator for the function you are implementing.
 
         **Overall Goal:** "{goal}"
         **Function to Implement:** `async def {function_name}{func_sig}`
+
+        {failure_analysis_section}
+        {strategy_section}
+
+        ### Situation Analysis
         **Parent Function (for context):**
         ```python
         {parent_code}
         ```
         {browser_context_section}
-        {replan_context}
         {rules_and_examples}
 
-        Begin your response now.
+        Begin your response now. Your response must start immediately with the code.
         """,
     )
 
