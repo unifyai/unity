@@ -301,15 +301,18 @@ class HierarchicalPlan(BaseActiveTask):
             self._state = _HierarchicalPlanState.ERROR
             self._set_final_result(f"ERROR: Plan initialization failed: {e}")
 
-    async def _perform_exploration(self):
+    async def _perform_exploration(self, function_purpose: str):
         """
-        Runs an interactive conversational loop to gather information before planning.
+        Runs an interactive conversational loop to gather information for a specific function.
         """
         self._state = _HierarchicalPlanState.EXPLORING
-        self.action_log.append("Starting interactive exploratory phase...")
+        self.action_log.append(
+            f"Starting exploration for task: '{function_purpose}'...",
+        )
         try:
             research_prompt = build_exploration_prompt(
-                goal=self.goal,
+                function_purpose=function_purpose,
+                overall_goal=self.goal,
                 tools=self.planner.tools,
             )
 
@@ -321,21 +324,21 @@ class HierarchicalPlan(BaseActiveTask):
                 client=client,
                 message="Begin your research based on the main objective.",
                 tools=self.planner.tools,
-                loop_id="ExploratoryPhase",
+                loop_id="FunctionExplorationPhase",
                 max_steps=10,
             )
 
             summary = await exploration_loop_handle.result()
-            self.exploration_summary = summary
-            self.action_log.append("Exploratory phase completed.")
+            self.action_log.append("Exploration completed.")
             self.action_log.append(f"Exploration Summary: {summary}")
+            return summary
 
         except Exception as e:
             logger.error(f"Exploration phase failed: {e}", exc_info=True)
             self.action_log.append(
                 f"WARNING: Exploration failed: {e}. Proceeding without extra context.",
             )
-            self.exploration_summary = None
+            return None
         finally:
             self._state = _HierarchicalPlanState.RUNNING
 
