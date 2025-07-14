@@ -533,8 +533,45 @@ def build_should_explore_prompt(goal: str) -> str:
 
             - If the goal is **clear and specific**, respond with the single word: **EXECUTE**.
             - If the goal is **ambiguous or requires information gathering**, respond with the single word: **EXPLORE**.
+        """,
+    )
 
-            """,
+
+def build_implementation_strategy_prompt(
+    goal: str,
+    function_name: str,
+    function_docstring: str | None,
+    failure_reason: str,
+    browser_state: str | None,
+    *,
+    tools: Dict[str, Callable],
+) -> str:
+    """Builds a prompt to devise a new strategy for a failed function."""
+
+    browser_context_section = (
+        f"**Current Browser State:**\n{browser_state}" if browser_state else ""
+    )
+    tool_reference = _build_tool_signatures(tools)
+    return textwrap.dedent(
+        f"""
+        You are a master strategist for a web automation agent. A function has failed to achieve its goal. Your task is to analyze the failure and devise a new, creative, step-by-step natural language plan to succeed.
+
+        **Overall Goal:** "{goal}"
+        **Function Under Review:** `{function_name}`
+        **Purpose of this function:** {function_docstring or 'No docstring provided.'}
+
+        **CRITICAL: Reason for Previous Failure:** "{failure_reason}"
+
+        {browser_context_section}
+
+        ---
+        ### Available Tools
+        {tool_reference}
+        ---
+        ### Your Task
+        Based on the failure reason and current state, devise a new strategy. Think outside the box. If observing failed, consider acting (scrolling, clicking). If acting failed, consider observing first.
+        Respond with ONLY the JSON object matching the requested schema.
+        """,
     )
 
 
