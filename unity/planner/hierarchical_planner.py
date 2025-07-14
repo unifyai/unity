@@ -2,6 +2,10 @@ from __future__ import annotations
 
 import ast
 import asyncio
+import base64
+import collections
+import datetime
+import re
 import enum
 import functools
 import inspect
@@ -1144,6 +1148,10 @@ class HierarchicalPlanner(BasePlanner):
         return {
             "__builtins__": safe_builtins,
             "asyncio": asyncio,
+            "re": re,
+            "json": json,
+            "datetime": datetime,
+            "collections": collections,
             "BaseModel": BaseModel,
             "Field": Field,
         }
