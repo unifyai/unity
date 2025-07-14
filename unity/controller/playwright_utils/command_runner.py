@@ -252,7 +252,7 @@ class CommandRunner:
                 except Exception:
                     pass
             else:
-                self.active.wait_for_load_state("networkidle", timeout=5000)
+                time.sleep(0.1)
 
             after_shot_b64 = base64.b64encode(
                 _safe_screenshot(self.active, self.log),
