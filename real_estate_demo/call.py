@@ -161,17 +161,17 @@ async def entrypoint(ctx: agents.JobContext):
         if WRITER and not WRITER.is_closing():
             try:
                 # Send end call event before closing connection
-                await publish_event(
-                    {
-                        "topic": from_number,
-                        "to": "past",
-                        # "event": PhoneCallEndedEvent().to_dict(),
-                        "event": {
-                            "content": "Phone call has ended."
-                        }
-                    },
-                )
-                print("End call event sent")
+                # await publish_event(
+                #     {
+                #         "topic": from_number,
+                #         "to": "past",
+                #         # "event": PhoneCallEndedEvent().to_dict(),
+                #         "event": {
+                #             "content": "Phone call has ended."
+                #         }
+                #     },
+                # )
+                # print("End call event sent")
 
                 # Close the writer
                 WRITER.close()
@@ -197,13 +197,13 @@ async def entrypoint(ctx: agents.JobContext):
                 break  # Exit the loop after shutdown
 
     # Start inactivity checker
-    asyncio.create_task(check_inactivity())
+    # asyncio.create_task(check_inactivity())
 
     # Create a wrapper for the room event handler since it expects a sync function
-    def on_participant_disconnected(*args, **kwargs):
-        asyncio.create_task(end_call())
+    # def on_participant_disconnected(*args, **kwargs):
+    #     asyncio.create_task(end_call())
 
-    ctx.room.on("participant_disconnected", on_participant_disconnected)
+    # ctx.room.on("participant_disconnected", on_participant_disconnected)
 
     await session.start(
         room=ctx.room,
