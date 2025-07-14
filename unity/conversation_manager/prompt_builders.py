@@ -94,10 +94,19 @@ def _build_user_details_section(name: str) -> str:
     )
 
 
-def _build_assistant_details_section(name: str, age: str, region: str) -> str:
+def _build_assistant_details_section(
+    name: str, age: str, region: str, about: str
+) -> str:
     return (
-        f"You are {name} from {region}, and you are {age} years old. "
-        "You are a general purpose AI assistant for your user."
+        f"You are {name} from {region}, and you are {age} years old. \n"
+        "You are a helpful and friendly AI assistant for your user. \n"
+        f"Your Bio: {about} \n"
+        "You are also free to make up your own preferences and personality as you "
+        "see fit to fill the gaps, provided you're consistent, friendly and helpful. \n"
+        "The goal is to make the conversation as natural and as human as possible, "
+        "and to make the user feel like they're talking to a real person. \n"
+        "You are also free to make up names and numbers as you see fit, "
+        "as long as it's something you can answer without using tools."
     )
 
 
@@ -124,13 +133,17 @@ def _build_your_capabilities_section(is_call: bool) -> str:
 
 # Refactored builders
 def build_call_sys_prompt(
-    user_name: str, assistant_name: str, assistant_age: str, assistant_region: str
+    user_name: str,
+    assistant_name: str,
+    assistant_age: str,
+    assistant_region: str,
+    assistant_about: str,
 ) -> str:
     """Build the **system** prompt for phone-call LLM runs."""
     # assemble all sections
     sections = [
         _build_assistant_details_section(
-            assistant_name, assistant_age, assistant_region
+            assistant_name, assistant_age, assistant_region, assistant_about
         ),
         _build_user_details_section(user_name),
         # _build_your_capabilities_section(is_call=True),
@@ -145,13 +158,17 @@ def build_call_sys_prompt(
 
 
 def build_non_call_sys_prompt(
-    user_name: str, assistant_name: str, assistant_age: str, assistant_region: str
+    user_name: str,
+    assistant_name: str,
+    assistant_age: str,
+    assistant_region: str,
+    assistant_about: str,
 ) -> str:
     """Build the **system** prompt for non-call LLM runs."""
     # assemble all sections
     sections = [
         _build_assistant_details_section(
-            assistant_name, assistant_age, assistant_region
+            assistant_name, assistant_age, assistant_region, assistant_about
         ),
         _build_user_details_section(user_name),
         # _build_your_capabilities_section(is_call=False),
