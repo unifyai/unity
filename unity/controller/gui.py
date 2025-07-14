@@ -351,7 +351,7 @@ class ControlPanel(tk.Tk):
                         observation_text,
                         response_format=str,
                         context=context,
-                        screenshot=screenshot,
+                        screenshots={"current_view": screenshot},
                     )
                     self._llm_stream_q.put("🔍 Observation succeeded")
                     # Package the observation result

@@ -64,7 +64,7 @@ class Controller(threading.Thread):
 
         # Cached data for LLM observation queries
         self._observe_ctx: dict[str, Any] = {}
-        self._last_shot: bytes = b""
+        self._last_shot: str = ""  # Changed from bytes to str for base64
 
     def run(self) -> None:
         """
@@ -117,7 +117,7 @@ class Controller(threading.Thread):
                             "history": browser_state.get("history", []),
                         },
                     )
-                    self._last_shot = browser_state.get("screenshot", b"")
+                    self._last_shot = browser_state.get("screenshot", "")
         except (redis.ConnectionError, ValueError) as e:
             # Redis connection closed or file operation on closed file
             if not self._stop_event.is_set():
@@ -380,7 +380,7 @@ class Controller(threading.Thread):
                                 "after_action": after_b64,
                             }
                     verification_prompt = (
-                        "You are a pragmatic verification agent. Your task is to determine if a browser action was successful by "
+                        "You are a meticulous QA engineer. Your task is to determine if a browser action was successful by "
                         "analyzing the 'Before' and 'After' screenshots.\n\n"
                         "## CONTEXT\n"
                         f"- **Action Performed**: '{action}'\n"
@@ -388,7 +388,7 @@ class Controller(threading.Thread):
                         "## VERIFICATION TASK\n"
                         "Compare the 'before_action' and 'after_action' screenshots. Does the visual change between them "
                         "logically correspond to the 'Action Performed' and satisfy the core intent of the 'Expected Outcome'? "
-                        "Focus on the overall goal, not on minor, irrelevant details. Do not infer the intent. Your judgment must be based on evidence from the browser context and screenshots."
+                        "Do not infer the intent. Your judgment must be based on evidence from the browser context and screenshots."
                     )
                     verification = await self.observe(
                         verification_prompt,
