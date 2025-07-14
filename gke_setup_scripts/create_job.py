@@ -10,7 +10,6 @@ Usage:
 """
 
 import argparse
-import os
 import sys
 from kubernetes import client, config
 from kubernetes.client.rest import ApiException
@@ -88,7 +87,9 @@ def setup_kubernetes_client():
 
         # Get access token using service account
         token_result = subprocess.run(
-            ["gcloud", "auth", "print-access-token"], capture_output=True, text=True
+            ["gcloud", "auth", "print-access-token"],
+            capture_output=True,
+            text=True,
         )
 
         if token_result.returncode != 0:
@@ -108,14 +109,14 @@ def setup_kubernetes_client():
                         "server": f"https://{cluster_endpoint}",
                         "certificate-authority-data": cluster_ca_cert,
                     },
-                }
+                },
             ],
             "users": [{"name": "unity-user", "user": {"token": access_token}}],
             "contexts": [
                 {
                     "name": "unity-context",
                     "context": {"cluster": "unity-cluster", "user": "unity-user"},
-                }
+                },
             ],
             "current-context": "unity-context",
         }
@@ -217,7 +218,7 @@ def create_unity_job(
                 "ttlSecondsAfterFinished": 0,  # Auto-delete job and pods after specified delay
                 "template": {
                     "metadata": {
-                        "labels": {"app": "unity", "assistant-id": assistant_id}
+                        "labels": {"app": "unity", "assistant-id": assistant_id},
                     },
                     "spec": {
                         "restartPolicy": "Never",
@@ -271,12 +272,12 @@ def create_unity_job(
                                         "name": "sa-key",
                                         "mountPath": "/secrets",
                                         "readOnly": True,
-                                    }
+                                    },
                                 ],
-                            }
+                            },
                         ],
                         "volumes": [
-                            {"name": "sa-key", "secret": {"secretName": "comm-sa-key"}}
+                            {"name": "sa-key", "secret": {"secretName": "comm-sa-key"}},
                         ],
                     },
                 },
@@ -286,7 +287,8 @@ def create_unity_job(
         # Create the job
         try:
             api_response = batch_api.create_namespaced_job(
-                namespace=namespace, body=job_manifest
+                namespace=namespace,
+                body=job_manifest,
             )
 
             print(f"✅ Job created successfully!")
@@ -346,12 +348,13 @@ def get_job_status(batch_api, core_api, assistant_id: str, namespace: str = "def
                             if condition.last_transition_time
                             else None
                         ),
-                    }
+                    },
                 )
 
         # Get pod information
         pods = core_api.list_namespaced_pod(
-            namespace=namespace, label_selector=f"job-name={job_name}"
+            namespace=namespace,
+            label_selector=f"job-name={job_name}",
         )
 
         status["pods"] = []
@@ -423,11 +426,12 @@ def cleanup_completed_jobs(
         import datetime
 
         jobs = batch_api.list_namespaced_job(
-            namespace=namespace, label_selector="app=unity"
+            namespace=namespace,
+            label_selector="app=unity",
         )
 
         cutoff_time = datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(
-            hours=max_age_hours
+            hours=max_age_hours,
         )
         cleaned_count = 0
 
@@ -459,7 +463,8 @@ def list_jobs(batch_api, namespace: str = "default"):
     """List all Unity jobs in the namespace"""
     try:
         jobs = batch_api.list_namespaced_job(
-            namespace=namespace, label_selector="app=unity"
+            namespace=namespace,
+            label_selector="app=unity",
         )
 
         print(f"📋 Unity Jobs in namespace '{namespace}':")
@@ -525,7 +530,9 @@ Examples:
     )
 
     parser.add_argument(
-        "--assistant-number", default="", help="Assistant's phone number (optional)"
+        "--assistant-number",
+        default="",
+        help="Assistant's phone number (optional)",
     )
 
     parser.add_argument(
@@ -535,7 +542,9 @@ Examples:
     )
 
     parser.add_argument(
-        "--namespace", default="default", help="Kubernetes namespace (default: default)"
+        "--namespace",
+        default="default",
+        help="Kubernetes namespace (default: default)",
     )
 
     parser.add_argument(
@@ -633,7 +642,7 @@ Examples:
                     if "scheduling_issue" in pod:
                         issue = pod["scheduling_issue"]
                         print(
-                            f"       ❌ Scheduling issue: {issue['reason']} - {issue['message']}"
+                            f"       ❌ Scheduling issue: {issue['reason']} - {issue['message']}",
                         )
             else:
                 print(f"   Pods: (none created yet)")
@@ -672,13 +681,13 @@ Examples:
         print("\n✅ Job created successfully!")
         print("\n💡 Next steps:")
         print(
-            f"   1. Check job status: python create_job.py --assistant-id {args.assistant_id} --status"
+            f"   1. Check job status: python create_job.py --assistant-id {args.assistant_id} --status",
         )
         print(
-            f"   2. View pod logs: kubectl logs -n {args.namespace} -l job-name={job.metadata.name}"
+            f"   2. View pod logs: kubectl logs -n {args.namespace} -l job-name={job.metadata.name}",
         )
         print(
-            f"   3. Delete job: python create_job.py --assistant-id {args.assistant_id} --delete"
+            f"   3. Delete job: python create_job.py --assistant-id {args.assistant_id} --delete",
         )
     else:
         print("❌ Failed to create job")

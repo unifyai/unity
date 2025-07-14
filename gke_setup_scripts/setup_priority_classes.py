@@ -110,7 +110,7 @@ def create_priority_classes(api_client):
                     # Create the PriorityClass
                     api_client.create_priority_class(body=priority_class_manifest)
                     print(
-                        f"✅ Created PriorityClass '{pc['name']}' (value: {pc['value']})"
+                        f"✅ Created PriorityClass '{pc['name']}' (value: {pc['value']})",
                     )
                     created_count += 1
                 else:
@@ -195,13 +195,17 @@ Usage in Jobs:
     )
 
     parser.add_argument(
-        "--create", action="store_true", help="Create Unity priority classes"
+        "--create",
+        action="store_true",
+        help="Create Unity priority classes",
     )
 
     parser.add_argument("--list", action="store_true", help="List all priority classes")
 
     parser.add_argument(
-        "--delete", action="store_true", help="Delete Unity priority classes"
+        "--delete",
+        action="store_true",
+        help="Delete Unity priority classes",
     )
 
     args = parser.parse_args()
