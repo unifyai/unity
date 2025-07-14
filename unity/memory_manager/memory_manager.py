@@ -124,6 +124,16 @@ class MemoryManager(BaseMemoryManager):
         self._rolling_lock = asyncio.Lock()
         asyncio.create_task(self._setup_rolling_callbacks())  # fire-and-forget
 
+        # ── NEW: real-time 50-message trigger -----------------------------------------
+        self._CHUNK_SIZE: int = 50
+        self._recent_messages: list[dict] = []
+        self._messages_since_update: int = 0
+        # Serialise overlap between concurrent chunk updates
+        self._chunk_lock = asyncio.Lock()
+
+        # Fire-and-forget setup of the message counter callback
+        asyncio.create_task(self._setup_message_callbacks())
+
     # ------------------------------------------------------------------ #
     # 1  update_contacts                                                 #
     # ------------------------------------------------------------------ #
@@ -376,10 +386,136 @@ class MemoryManager(BaseMemoryManager):
         #    pending tasks from a previous incarnation.
 
         self._callbacks_ready = asyncio.Event()
-        await self._setup_rolling_callbacks()
+        # Register both rolling-activity *and* message-based callbacks concurrently
+        await asyncio.gather(
+            self._setup_rolling_callbacks(),
+            self._setup_message_callbacks(),
+        )
 
-        # Wait until _setup_rolling_callbacks signals completion (max 5 s)
+        # Wait until rolling-callbacks signalled readiness (max 5 s)
         await asyncio.wait_for(self._callbacks_ready.wait(), timeout=5)
+
+    # ───────────────────────────  NEW MESSAGE-BASED CALLBACKS  ───────────────────────────
+
+    async def _setup_message_callbacks(self) -> None:
+        """Register a callback that fires *every* incoming `message` event.
+
+        The helper relies on the EventBus singleton being fully initialised – we therefore
+        make sure to await `_ensure_ready` via `register_callback` internally.
+        """
+
+        async def _cb(events):  # noqa: ANN001 – signature imposed by EventBus
+            await self._on_new_message(events[0])
+
+        try:
+            await EVENT_BUS.register_callback(
+                event_type="message",
+                callback=_cb,
+                every_n=1,  # every single message
+            )
+        except Exception:  # pragma: no cover – defensive
+            # We do *not* propagate registration failures – the MemoryManager still
+            # works via manual scheduling even when the callback cannot be installed.
+            pass
+
+    async def _on_new_message(self, evt: Event) -> None:
+        """Collect messages and trigger memory updates every *CHUNK_SIZE* messages."""
+
+        # Payload is guaranteed to be a `Message` instance thanks to the
+        # instrumentation in TranscriptManager.log_message.
+        from unity.transcript_manager.types.message import Message  # local import
+
+        if not isinstance(evt.payload, Message):  # ignore unexpected payloads
+            return
+
+        msg = evt.payload
+
+        # Append a lightweight dict – keeps everything JSON-serialisable
+        self._recent_messages.append(
+            {
+                "sender_id": msg.sender_id,
+                "receiver_id": msg.receiver_id,
+                "medium": msg.medium,
+                "timestamp": msg.timestamp.isoformat(),
+                "content": msg.content,
+            },
+        )
+
+        self._messages_since_update += 1
+
+        if self._messages_since_update < self._CHUNK_SIZE:
+            return  # not enough yet
+
+        # Reset counters *before* kicking off heavy work so the next chunk can start
+        self._messages_since_update = 0
+        transcript_msgs = self._recent_messages.copy()
+        self._recent_messages.clear()
+
+        # Launch the chunk processing asynchronously so we don't block EventBus
+        asyncio.create_task(self._process_message_chunk(transcript_msgs))
+
+    async def _process_message_chunk(self, messages: list[dict]) -> None:
+        """Run the full suite of memory updates for one 50-message chunk."""
+
+        # Serialise – prevent concurrent chunks from interleaving updates
+        async with self._chunk_lock:
+            try:
+                transcript_blob = json.dumps(messages, indent=2)
+
+                # ── 1. Global, transcript-level updates (run *concurrently*) ────────
+                global_tasks = [
+                    self.update_contacts(transcript_blob),
+                    self.update_knowledge(transcript_blob),
+                    self.update_tasks(transcript_blob),
+                ]
+
+                # ── 2. Per-contact updates (bio & rolling summary) ──────────────────
+                contact_ids: set[int] = set()
+
+                # Attempt to exclude the assistant contact (id provided via env-var or 0)
+                try:
+                    assistant_id = int(os.getenv("ASSISTANT_CONTACT_ID", "0"))
+                except ValueError:
+                    assistant_id = 0
+
+                for msg in messages:
+                    for cid in (msg.get("sender_id"), msg.get("receiver_id")):
+                        if cid is None:
+                            continue
+                        if cid == assistant_id:
+                            continue  # skip assistant
+                        contact_ids.add(cid)
+
+                # Build per-contact tasks
+                for _cid in contact_ids:
+                    # Filter transcript to messages involving *_cid*
+                    sub_msgs = [
+                        m
+                        for m in messages
+                        if m.get("sender_id") == _cid or m.get("receiver_id") == _cid
+                    ]
+
+                    sub_blob = json.dumps(sub_msgs, indent=2)
+
+                    global_tasks.extend(
+                        [
+                            self.update_contact_bio(sub_blob, latest_bio=None),
+                            self.update_contact_rolling_summary(
+                                sub_blob,
+                                latest_rolling_summary=None,
+                            ),
+                        ],
+                    )
+
+                # Run *all* updates concurrently – failures are captured but do not
+                # cancel the remaining updates so one misbehaving method doesn’t stall
+                # the entire batch.
+                await asyncio.gather(*global_tasks, return_exceptions=True)
+            except Exception:  # pragma: no cover – defensive
+                # Never propagate errors back to the EventBus – log and swallow.
+                import traceback
+
+                traceback.print_exc()
 
     # ───────────────────────────  NEW HELPERS  ────────────────────────────
     # 1. Context & schema ---------------------------------------------------
