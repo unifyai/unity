@@ -72,8 +72,14 @@ def _build_rules_and_examples_prompt(
 
     strategy_instruction += textwrap.dedent(
         """\n
-        - For **simple, single-step** browser actions (e.g., "click the login button", "type in the search field"), use the `action_provider.browser_act()` tool.
-        - For **complex, multi-step** browser tasks that require reasoning, state, and potentially retries (e.g., "log into my account", "find and summarize the return policy"), use the more powerful `action_provider.browser_multi_step()` tool. This will delegate the sub-task to a specialized agent.
+        ---
+        ### Strategic Principles for Web Automation
+        To create a robust plan, always consider these heuristics:
+        1.  **Observe Before You Act**: Before attempting to click or type, use `browser_observe` to confirm the element is present and to get its precise text or description. You cannot act on what you cannot see.
+        2.  **The Scroll Heuristic**: If an element is not immediately visible, it may be off-screen. The most common reason for this is needing to scroll. Your plan should include steps to scroll down the page to find elements.
+        3.  **Specificity is Key**: When using `browser_act`, be as specific as possible. Instead of "click the button," prefer "click the 'Sign In' button with a blue background."
+        ---
+
     """,
     )
     return textwrap.dedent(
@@ -122,7 +128,7 @@ def _build_rules_and_examples_prompt(
             return confirmation
         ```
 
-        **Browser Interaction:**
+        **Simple Browser Interaction:**
         ```python
         @verify
         async def check_unify_blog():
@@ -133,39 +139,41 @@ def _build_rules_and_examples_prompt(
             return blog_title
         ```
 
-        **Structured Observation:**
+        **Structured Outputs:**
         ```python
-        class ConsentCheck(BaseModel):
-            is_present: bool = Field(description="True if a cookie consent dialog is visible, False otherwise.")
+        # The strategy is to find a "Privacy Policy" link in a list of footer links and click it.
+        # Step 1: Define a Pydantic model for structured observation.
+        class LinkInfo(BaseModel):
+            element_id: str = Field(description="The unique ID for the link element, like 'link_27'.")
+            text: str = Field(description="The visible text of the link.")
+
+        class FooterLinks(BaseModel):
+            links: list[LinkInfo]
 
         @verify
-        async def handle_cookies():
-            # Use a Pydantic model to get a reliable boolean response.
-            consent_status = await action_provider.browser_observe(
-                "Is a cookie consent dialog visible on the page?",
-                response_format=ConsentCheck
-            )
-            if consent_status.is_present:
-                await action_provider.browser_act("Click the 'Accept All' button")
-            return "Cookie consent handled."
-        ```
-
-        **Multi-Step Browser Task:**
-        ```python
-        @verify
-        async def login_and_get_dashboard_title():
-            # Use multi_step for a complex sequence like logging in.
-            login_handle = await action_provider.browser_multi_step(
-                "Log into the website using the username 'testuser' and password 'password123'"
+        async def find_privacy_policy_link():
+            # Step 2: OBSERVE to get structured data.
+            footer_data = await action_provider.browser_observe(
+                "List all links in the footer section with their text and element IDs.",
+                response_format=FooterLinks
             )
 
-            # Wait for the multi-step task to complete.
-            login_result = await login_handle.result()
-            print(f"Login task finished with result: {{login_result}}")
+            # Step 3: Perform LOGIC in Python to find the target.
+            target_link_id = None
+            for link in footer_data.links:
+                if "privacy policy" in link.text.lower():
+                    target_link_id = link.element_id
+                    break
 
-            # Now that we are logged in, we can perform a simple observation.
-            title = await action_provider.browser_observe("What is the title of the main dashboard heading?")
-            return title
+            # Step 4: ACT on the identified element.
+            if target_link_id:
+                await action_provider.browser_act(
+                    f"Click the link with element ID 'target_link_id'",
+                    "The page should navigate to the privacy policy."
+                )
+            else:
+                # Handle the case where the link wasn't found.
+                print("Could not find the 'Privacy Policy' link.")
         ```
 
         **Generic Reasoning:**
@@ -220,7 +228,9 @@ def build_initial_plan_prompt(
     formatted_functions = _format_existing_functions(existing_functions)
 
     strategy_instruction = (
-        "Decompose the problem logically into a series of `async def` functions."
+        "Decompose the problem into logical `async def` functions. Each function should represent a complete, "
+        "meaningful sub-task from a user's perspective (e.g., 'search_for_product_and_navigate_to_images' is better than "
+        "having separate functions for typing, pressing enter, and clicking the images tab)."
     )
     tool_usage_instruction = "Use the `action_provider` global object to interact with the environment. Available tools and their handle APIs have been described in the rules below."
 
