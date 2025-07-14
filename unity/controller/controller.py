@@ -204,6 +204,7 @@ class Controller(threading.Thread):
         self,
         request: str,
         response_format: Type = str,
+        screenshots: dict[str, bytes] | None = None,
     ) -> Any:  # noqa: ANN401
         """
         Ask a question about the current browser session.
@@ -215,7 +216,8 @@ class Controller(threading.Thread):
         Returns:
             Any: The answer returned by the LLM, coerced to the specified response_format.
         """
-
+        if screenshots is None:
+            screenshots = {"current_view": self._last_shot}
         # strip the history from the context to save tokens
         current_context = {
             "state": self._observe_ctx.get("state", {}),
@@ -228,7 +230,7 @@ class Controller(threading.Thread):
             request,
             response_format=response_format,
             context=current_context,
-            screenshot=self._last_shot,
+            screenshots=screenshots,
         )
         return result
 
@@ -366,10 +368,32 @@ class Controller(threading.Thread):
 
             for attempt in range(1, MAX_VERIFY_TRIES + 1):
                 try:
-                    verification_prompt = f"Does the current page state satisfy this expectation: '{expectation}'? Explain your reasoning."
+                    action_screenshots = {}
+                    history = self._observe_ctx.get("history", [])
+                    if history:
+                        last_action_record = history[-1]  # Get the most recent action
+                        before_b64 = last_action_record.get("before_screenshot_b64")
+                        after_b64 = last_action_record.get("after_screenshot_b64")
+                        if before_b64 and after_b64:
+                            action_screenshots = {
+                                "before_action": before_b64,
+                                "after_action": after_b64,
+                            }
+                    verification_prompt = (
+                        "You are a pragmatic verification agent. Your task is to determine if a browser action was successful by "
+                        "analyzing the 'Before' and 'After' screenshots.\n\n"
+                        "## CONTEXT\n"
+                        f"- **Action Performed**: '{action}'\n"
+                        f"- **Expected Outcome**: '{expectation}'\n\n"
+                        "## VERIFICATION TASK\n"
+                        "Compare the 'before_action' and 'after_action' screenshots. Does the visual change between them "
+                        "logically correspond to the 'Action Performed' and satisfy the core intent of the 'Expected Outcome'? "
+                        "Focus on the overall goal, not on minor, irrelevant details. Do not infer the intent. Your judgment must be based on evidence from the browser context and screenshots."
+                    )
                     verification = await self.observe(
                         verification_prompt,
                         response_format=VerificationResult,
+                        screenshots=action_screenshots,
                     )
 
                     if verification.is_satisfied:
