@@ -1,3 +1,5 @@
+import asyncio
+from pydantic import Field
 import os
 import unify
 from typing import Any
@@ -158,46 +160,65 @@ class ActionProvider:
     # --- Browser Actions ---
     async def browser_act(self, instruction: str, expectation: str) -> str:
         """
-        Performs a single, atomic high-level action in the browser and verifies its outcome.
-        This tool is for discrete, state-changing operations like a single click, a typing sequence, or a navigation event.
+        Performs a **single, high-level action** in the browser and verifies its outcome.
+
+        This tool functions by looking at the screen; it **does not have access to the underlying HTML or DOM**. Therefore, instructions must describe elements based on their **visible text or position**, not by HTML attributes like `id`, `class`, or `aria-label`.
 
         Args:
-            instruction (str): The natural-language instruction for the action.
-                            **IMPORTANT**: This must be a single command. Do not chain multiple actions
-                            together (e.g., "click login and type username").
-            expectation (str): A clear, verifiable description of the expected state of the page *after*
+            instruction (str): A single, natural-language command. Describe the element to interact with
+                            based on its visible properties.
+            expectation (str): A clear, verifiable description of what the page should look like *after*
                             the action is successfully completed.
 
         Examples:
-            # Good Example (Single Action)
+            # ✅ Good Example (Using Visible Text)
             - instruction: "Click the 'Login' button"
-            expectation: "The URL should now contain '/login'."
+            expectation: "The page should now show a password field."
 
-            # Good Example (Single Action)
-            - instruction: "Type 'hello world' into the search bar with ID 'search-input'"
+            # ✅ Good Example (Using Visible Text)
+            - instruction: "Type 'hello world' into the search bar"
             expectation: "The search bar should contain the text 'hello world'."
 
-            # Bad Example (Chained Actions - Do Not Do This)
+            # ❌ Bad Example (Using HTML Attributes)
+            - instruction: "Click the button with id 'submit-btn'"
+            # This will fail because the tool cannot see HTML IDs.
+
+            # ❌ Bad Example (Using ARIA Labels)
+            - instruction: "Click the image with 'logo' in the aria-label"
+            # This will fail because the tool cannot see aria-labels.
+
+            # ❌ Bad Example (Chained Actions)
             - instruction: "Click the login button and then enter 'my_user' into the username field."
         """
         return await self.browser.act(
-            instruction, expectation=expectation, multi_step_mode=True
+            instruction,
+            expectation=expectation,
+            multi_step_mode=True,
         )
 
     async def browser_observe(self, query: str, response_format: Any = str) -> Any:
         """
-        Asks a question about the current state of the browser page and returns the answer.
-        This tool is for read-only operations to gather information without changing the page state.
-        It uses an LLM to analyze a screenshot and the page's DOM to answer the query.
+        Analyzes a screenshot of the current browser page to answer a question.
+
+        This tool functions like a person looking at the screen; it **does not have access to the underlying HTML or DOM structure**. It can only answer questions about what is currently visible. Use it for read-only operations to gather information without changing the page state.
+
+        **✅ Good Queries (What you can see):**
+        - "What is the title of the page?"
+        - "List the text on all visible buttons."
+        - "Is the text 'Welcome back, user!' visible on the screen?"
+        - "Transcribe the text from the paragraph under the 'About Us' heading."
+        - "What is the phone number displayed at the top of the page?"
+
+        **❌ Bad Queries (Requires HTML/DOM access):**
+        - Avoid asking for non-visible information.
+        - **Do not ask for HTML attributes** like `href`, `src`, or `alt` text (e.g., "What is the URL of the main product image?" or "Get the alt text for the logo.").
+        - **Do not ask about HTML tags** (e.g., "Find all the `<h1>` tags.").
+        - Avoid asking the tool to interpret meaning. Instead of "Does this image look professional?", ask "Describe the image in the center of the page."
+        - Avoid multi-step queries. Instead of "Find the contact link and tell me the email," break it into separate steps.
 
         Args:
-            query: The natural-language question to ask about the page.
-            response_format: Optional. A Pydantic model to structure the output. If provided, the LLM will return a JSON object matching the model.
-
-        Examples:
-        - "What is the title of the page?"
-        - "Is there a button with the text 'Submit' visible on the screen?"
-        - "What are the headlines of the articles in the main content area?"
+            query: The natural-language question to ask about what is visible on the page.
+            response_format: Optional. A Pydantic model to structure the output. The LLM will return a JSON object matching the model.
         """
         return await self.browser.observe(query, response_format=response_format)
 
