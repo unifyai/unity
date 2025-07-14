@@ -761,7 +761,9 @@ def text_to_browser_action(
 ) -> Optional[BaseModel]:
     t0 = time.perf_counter()
     t = datetime.now(timezone.utc).time().isoformat(timespec="milliseconds")
-    LOGGER.info(f"\n🤖 Controller: text command to browser action... ⏳ [⏱️ {t}]\n")
+    LOGGER.info(
+        f"\n🤖 Controller: text command to browser action with text: {text}... ⏳ [⏱️ {t}]\n",
+    )
     if ADVANCED_MODE:
         response_format = _create_full_response_format(tabs, buttons, state)
         client.set_endpoint("o4-mini@openai")
@@ -1020,7 +1022,7 @@ def ask_llm(
     *,
     response_format: Type = str,
     context: dict[str, Any] | None = None,
-    screenshot: bytes | None = None,
+    screenshots: bytes | None = None,
 ) -> Any:  # noqa: ANN401
     """Call the underlying LLM with the given *question* and browser *context*.
 
@@ -1032,25 +1034,27 @@ def ask_llm(
         Desired Python / Pydantic type for the answer.
     context : dict | None
         Rich browser-context payload (state, elements, tabs, history …).
-    screenshot : bytes | None
-        Base-64 JPEG screenshot of current viewport (optional).
+    screenshots : bytes | None
+        Base-64 JPEG screenshots (before and after) of current viewport (optional).
     """
 
     Model = _wrap_type(response_format)
 
-    client.set_endpoint("o4-mini@openai")
+    client.set_endpoint("gemini-2.0-flash@vertex-ai")
     client.set_system_message(_OBSERVE_PROMPT)
     client.set_response_format(Model)
 
     # 1) build user message content (text + optional image)
     content = [{"type": "text", "text": question}]
-    if screenshot:
-        content.append(
-            {
-                "type": "image_url",
-                "image_url": {"url": f"data:image/jpeg;base64,{screenshot}"},
-            },
-        )
+    if screenshots:
+        for label, png_bytes in screenshots.items():
+            content.append({"type": "text", "text": f"## Screenshot: '{label}'"})
+            content.append(
+                {
+                    "type": "image_url",
+                    "image_url": {"url": f"data:image/jpeg;base64,{png_bytes}"},
+                },
+            )
 
     # 2) include browser context as separate system message (JSON string)
     if context:
