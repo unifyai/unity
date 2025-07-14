@@ -201,14 +201,14 @@ class ActionProvider:
         """
         return await self.browser.observe(query, response_format=response_format)
 
-    async def browser_multi_step(self, description: str) -> SteerableToolHandle:
-        """
-        Performs a complex, sequential browser task that may require multiple steps.
-        Use this for high-level goals like "Log into my account" or "Find the latest blog post and summarize it."
-        This tool is more powerful than `act` for tasks that are not single-step.
-        It returns a handle to a sub-agent that will execute the task.
-        """
-        return await self.browser.multi_step(description)
+    # async def browser_multi_step(self, description: str) -> SteerableToolHandle:
+    #     """
+    #     Performs a complex, sequential browser task that may require multiple steps.
+    #     Use this for high-level goals like "Log into my account" or "Find the latest blog post and summarize it."
+    #     This tool is more powerful than `act` for tasks that are not single-step.
+    #     It returns a handle to a sub-agent that will execute the task.
+    #     """
+    #     return await self.browser.multi_step(description)
 
     # async def browser_start_recording(self):
     #     """Alias for browser.start_recording."""
