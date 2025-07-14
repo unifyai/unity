@@ -32,6 +32,7 @@ from unity.planner.prompt_builders import (
     build_course_correction_prompt,
     build_dynamic_implement_prompt,
     build_exploration_prompt,
+    build_implementation_strategy_prompt,
     build_initial_plan_prompt,
     build_plan_surgery_prompt,
     build_should_explore_prompt,
@@ -1481,7 +1482,30 @@ class HierarchicalPlanner(BasePlanner):
         browser_state = None
         if is_browser_task:
             browser_state = await self.action_provider.browser.observe(
-                "Describe current page for context.",
+                "Concisely summarize the current viewable page, including the URL and the main visible elements in the current viewport, to provide context for the next action.",
+            )
+
+        if replan_reason:
+            docstring = inspect.getdoc(plan.execution_namespace[function_name])
+            strategy_prompt = build_implementation_strategy_prompt(
+                goal=plan.goal,
+                function_name=function_name,
+                function_docstring=docstring,
+                failure_reason=replan_reason,
+                browser_state=browser_state,
+                tools=self.tools,
+            )
+            self.implementation_client.set_response_format(ImplementationStrategy)
+            strategy_response_raw = await llm_call(
+                self.implementation_client,
+                strategy_prompt,
+            )
+            new_strategy = ImplementationStrategy.model_validate_json(
+                strategy_response_raw,
+            )
+            self.implementation_client.reset_response_format()
+            plan.action_log.append(
+                f"Devised new strategy for '{function_name}': {new_strategy.rationale}",
             )
 
         replan_context_str = kwargs.get("replan_reason")
