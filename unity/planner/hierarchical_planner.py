@@ -326,6 +326,7 @@ class HierarchicalPlan(BaseActiveTask):
                 tools=self.planner.tools,
                 loop_id="FunctionExplorationPhase",
                 max_steps=10,
+                timeout=self.planner.timeout,
             )
 
             summary = await exploration_loop_handle.result()
@@ -480,10 +481,11 @@ class HierarchicalPlan(BaseActiveTask):
             client=client,
             message="Executing hierarchical plan...",
             tools={"_run_one_plan_step": _run_one_plan_step},
-            loop_id=f"HierarchicalPlan-{self.goal[:20]}",
+            loop_id=f"HierarchicalPlan-{self.goal[:50]}",
             max_steps=100,
             tool_policy=dynamic_tool_policy,
             interrupt_llm_with_interjections=True,
+            timeout=self.planner.timeout,
         )
         await self.main_loop_handle.result()
 
@@ -954,6 +956,7 @@ class HierarchicalPlanner(BasePlanner):
         headless: bool = False,
         max_escalations: Optional[int] = None,
         max_local_retries: Optional[int] = None,
+        timeout: Optional[int] = 300,
     ):
         """
         Initializes the HierarchicalPlanner.
@@ -979,6 +982,7 @@ class HierarchicalPlanner(BasePlanner):
         }
         self.max_escalations = max_escalations or 3
         self.max_local_retries = max_local_retries or 2
+        self.timeout = timeout
 
         model = os.environ.get("UNIFY_MODEL", "gpt-4o-mini@openai")
         self.main_loop_client: unify.AsyncUnify = unify.AsyncUnify(model)
@@ -1442,7 +1446,6 @@ class HierarchicalPlanner(BasePlanner):
                     ),
                     exploration_summary=exploration_summary,
                 )
-                logger.debug(f"Prompt for initial plan generation: {prompt}")
                 response = await llm_call(self.plan_generation_client, prompt)
                 code = (
                     response.strip().replace("```python", "").replace("```", "").strip()
@@ -1543,7 +1546,6 @@ class HierarchicalPlanner(BasePlanner):
             implementation_strategy=new_strategy,
             tools=self.tools,
         )
-        logger.debug(f"Prompt for dynamic implementation: {prompt}")
         code = await llm_call(self.implementation_client, prompt)
 
         try:
