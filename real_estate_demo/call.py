@@ -134,7 +134,7 @@ async def entrypoint(ctx: agents.JobContext):
         stt=deepgram.STT(model="nova-3", language="en-GB"),
         llm=openai.LLM(model="gpt-4o"),
         tts=cartesia.TTS(voice="a01c369f-6d2d-4185-bc20-b32c225eab70"),
-        vad=silero.VAD.load(),
+        vad=silero.VAD.load(min_speech_duration=0.15),
         turn_detection=EnglishModel(),
     )
 
