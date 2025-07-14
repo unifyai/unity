@@ -93,6 +93,7 @@ def _build_user_details_section(name: str) -> str:
         ],
     )
 
+
 def _build_assistant_details_section(name: str, age: str, region: str) -> str:
     return (
         f"You are {name} from {region}, and you are {age} years old. "
@@ -123,15 +124,14 @@ def _build_your_capabilities_section(is_call: bool) -> str:
 
 # Refactored builders
 def build_call_sys_prompt(
-    user_name: str,
-    assistant_name: str,
-    assistant_age: str,
-    assistant_region: str
+    user_name: str, assistant_name: str, assistant_age: str, assistant_region: str
 ) -> str:
     """Build the **system** prompt for phone-call LLM runs."""
     # assemble all sections
     sections = [
-        _build_assistant_details_section(assistant_name, assistant_age, assistant_region),
+        _build_assistant_details_section(
+            assistant_name, assistant_age, assistant_region
+        ),
         _build_user_details_section(user_name),
         # _build_your_capabilities_section(is_call=True),
         _build_event_stream_section(),
@@ -145,15 +145,14 @@ def build_call_sys_prompt(
 
 
 def build_non_call_sys_prompt(
-    user_name: str,
-    assistant_name: str,
-    assistant_age: str,
-    assistant_region: str
+    user_name: str, assistant_name: str, assistant_age: str, assistant_region: str
 ) -> str:
     """Build the **system** prompt for non-call LLM runs."""
     # assemble all sections
     sections = [
-        _build_assistant_details_section(assistant_name, assistant_age, assistant_region),
+        _build_assistant_details_section(
+            assistant_name, assistant_age, assistant_region
+        ),
         _build_user_details_section(user_name),
         # _build_your_capabilities_section(is_call=False),
         _build_event_stream_section(),
