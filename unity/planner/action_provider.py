@@ -7,8 +7,6 @@ from pydantic import BaseModel
 import inspect
 from unity.common.llm_helpers import (
     SteerableToolHandle,
-    methods_to_tool_dict,
-    start_async_tool_use_loop,
 )
 
 from unity.conversation_manager import comms_actions
@@ -54,25 +52,7 @@ class ActionProvider:
         3. It then calls the low-level `_send_sms_message_via_number` to finally send the message.
         You should provide a clear and complete description, e.g., "Send a text to John Doe letting him know his appointment is confirmed for 3 PM tomorrow."
         """
-        client = unify.AsyncUnify("o4-mini@openai")
-        client.set_system_message(
-            "Your task is to send an SMS message. First, use the ContactManager to find the recipient's phone number. Then, draft a message. Finally, use the `_send_sms_message_via_number` tool to send it.",
-        )
-        tools = methods_to_tool_dict(
-            self.contact_manager.ask,
-            self.transcript_manager.ask,
-            self.knowledge_manager.ask,
-            comms_actions._send_sms_message_via_number,
-            include_class_name=True,
-        )
-        return start_async_tool_use_loop(
-            client,
-            description,
-            tools,
-            loop_id="send_sms_message",
-            parent_chat_context=parent_chat_context,
-            tool_policy=lambda i, _: ("required", _) if i < 1 else ("auto", _),
-        )
+        return comms_actions.send_sms_message(description, parent_chat_context)
 
     async def send_email(
         self,
@@ -86,25 +66,7 @@ class ActionProvider:
         3. It then calls the low-level `_send_email_via_address` to send the email.
         You should provide a clear and complete description, e.g., "Email Jane Doe to follow up on our conversation from yesterday about the project proposal."
         """
-        client = unify.AsyncUnify("o4-mini@openai")
-        client.set_system_message(
-            "Your task is to send an email. First, use the ContactManager to find the recipient's email address. Then, draft a message. Finally, use the `_send_email_via_address` tool to send it.",
-        )
-        tools = methods_to_tool_dict(
-            self.contact_manager.ask,
-            self.transcript_manager.ask,
-            self.knowledge_manager.ask,
-            comms_actions._send_email_via_address,
-            include_class_name=True,
-        )
-        return start_async_tool_use_loop(
-            client,
-            description,
-            tools,
-            loop_id="send_email",
-            parent_chat_context=parent_chat_context,
-            tool_policy=lambda i, _: ("required", _) if i < 1 else ("auto", _),
-        )
+        return comms_actions.send_email(description, parent_chat_context)
 
     async def send_whatsapp_message(
         self,
@@ -118,25 +80,7 @@ class ActionProvider:
         3. It calls the low-level `_send_whatsapp_message_via_number` to dispatch the message.
         You should provide a clear and complete description, e.g., "Send a WhatsApp message to the team group to remind them of the 10 AM meeting."
         """
-        client = unify.AsyncUnify("o4-mini@openai")
-        client.set_system_message(
-            "Your task is to send a WhatsApp message. First, use the ContactManager to find the recipient's phone number. Then, draft a message. Finally, use the `_send_whatsapp_message_via_number` tool to send it.",
-        )
-        tools = methods_to_tool_dict(
-            self.contact_manager.ask,
-            self.transcript_manager.ask,
-            self.knowledge_manager.ask,
-            comms_actions._send_whatsapp_message_via_number,
-            include_class_name=True,
-        )
-        return start_async_tool_use_loop(
-            client,
-            description,
-            tools,
-            loop_id="send_whatsapp_message",
-            parent_chat_context=parent_chat_context,
-            tool_policy=lambda i, _: ("required", _) if i < 1 else ("auto", _),
-        )
+        return comms_actions.send_whatsapp_message(description, parent_chat_context)
 
     def start_call(self, phone_number: str, purpose: str) -> SteerableToolHandle:
         """
@@ -235,7 +179,7 @@ class ActionProvider:
     #     """Alias for browser.start_recording."""
     #     return self.browser.start_recording()
 
-     #TODO: move this to the FM
+    # TODO: move this to the FM
     async def scroll_until_visible(
         self,
         element_description: str,

@@ -243,3 +243,30 @@ def build_local_chat_search_prompt(local_chat_history: str) -> str:
         "Otherwise, return answer is not found.",
     ]
     return "\n".join(lines)
+
+
+def build_message_prompt(tools: Dict[str, Callable], question: str, medium: str) -> str:
+    """Build the system prompt to await the user's reply and choose a tool."""
+    # Dump tool signatures
+    sig_json = json.dumps(_sig_dict(tools), indent=4)
+    whatsapp_tool = _tool_name(tools, "whatsapp")
+    sms_tool = _tool_name(tools, "sms")
+    email_tool = _tool_name(tools, "email")
+
+    # Assemble the ask prompt
+    lines = [
+        "Tools (name → argspec):",
+        sig_json,
+        "",
+        "Where appropriate, use the provided tools to find more context for formulating the message.",
+        "If phone number (for whatsapp and sms) or email address (for email) is not provided, you should use the ContactManager to find the recipient's phone number or email address.",
+        "Send out the message using the appropriate tool based on given medium.",
+        f"Whatsapp: {whatsapp_tool}",
+        f"SMS: {sms_tool}",
+        f"Email: {email_tool}",
+        "",
+        "Task:",
+        f"Send a message through {medium} to the user.",
+        f"The requested content is: {question}.",
+    ]
+    return "\n".join(lines)
