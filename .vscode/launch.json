@@ -18,7 +18,7 @@
           "type": "debugpy",
           "request": "launch",
           "program": "${workspaceFolder}/sandboxes/memory_manager.py",
-          "args": ["--voice"],
+          "args": ["--voice", "--manual_summaries", "--manual_updates"],
           "cwd": "${workspaceFolder}",
           "env": { "PYTHONPATH": "${workspaceFolder}" },
           "console": "integratedTerminal",
