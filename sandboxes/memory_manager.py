@@ -38,7 +38,6 @@ import re
 import sys
 from pathlib import Path
 from typing import List, Dict, Any
-from datetime import datetime
 
 import unify
 from dotenv import load_dotenv
@@ -51,9 +50,6 @@ if str(ROOT) not in sys.path:
 from unity.memory_manager.memory_manager import MemoryManager  # type: ignore[attr-defined]
 from sandboxes.utils import (
     TranscriptGenerator,
-    record_until_enter as _record_until_enter,
-    transcribe_deepgram as _transcribe_deepgram,
-    speak as _speak,
 )
 
 load_dotenv()
@@ -143,6 +139,17 @@ async def _main_async() -> None:
         metavar="IDX",
         help="Project version index to load (default -1 for latest; supports positive and negative indexing)",
     )
+    # NEW ------------------------------------------------------------------
+    parser.add_argument(
+        "--manual_summaries",
+        action="store_true",
+        help="Disable automatic rolling-activity snapshot generation (MemoryManager._setup_rolling_callbacks).",
+    )
+    parser.add_argument(
+        "--manual_updates",
+        action="store_true",
+        help="Disable automatic memory updates triggered by message chunks (MemoryManager._setup_message_callbacks).",
+    )
     args = parser.parse_args()
 
     # Unify context
@@ -171,148 +178,193 @@ async def _main_async() -> None:
         _clear_contacts()
         _clear_knowledge()
 
-    # ── Step 1: obtain scenario (voice or text), build transcript ────────────
-    if not args.voice:
-        scenario = input(
-            "\n🧮  Describe the conversation you'd like to simulate (one or two "
-            "sentences, e.g. *'A product-design chat between Alice, Bob and their "
-            "client Carol discussing a new smartwatch'*)\n> ",
-        ).strip()
-    else:
-        _speak(
-            "Describe the conversation you'd like to simulate.  "
-            "Press enter to start recording and again to finish.",
-        )
-        audio = _record_until_enter()
-        scenario = _transcribe_deepgram(audio).strip()
-        if not scenario:
-            _speak("I didn't catch that, please type your description instead.")
-            scenario = input("> ").strip()
+    # ── Monkey-patch MemoryManager behaviour based on CLI flags ─────────────
+    async def _noop(self, *_, **__):
+        return None
 
-    if not scenario:
-        print("Nothing entered – exiting.")
-        return
+    if args.manual_summaries:
+        setattr(MemoryManager, "_setup_rolling_callbacks", _noop)  # type: ignore[arg-type]
+    if args.manual_updates:
+        setattr(MemoryManager, "_setup_message_callbacks", _noop)  # type: ignore[arg-type]
 
-    print("\n[seed] Generating transcript – this can take a minute…")
-    transcript = await _build_transcript(scenario)
-    num_messages = len(transcript)
+    # Helper to create a fresh, patched MemoryManager instance --------------
+    def _create_mm() -> MemoryManager:
+        inst = MemoryManager()
+        try:
+            inst._CHUNK_SIZE = int(os.getenv("MM_CHUNK_SIZE", "10"))  # type: ignore[attr-defined]
+        except Exception:
+            pass
+        return inst
+
+    mm = _create_mm()
+
+    tm = mm._transcript_manager  # use the TranscriptManager owned by MemoryManager
+
+    # Helper: convert *TranscriptGenerator* dict → Message-schema dict ----------
+    _name_to_id: dict[str, int] = {}
+
+    def _normalise_msg(raw: dict) -> dict:
+        """Return a dict that satisfies TranscriptManager.log_message schema."""
+        sender_name = str(raw.get("sender", "User"))
+        sender_id = _name_to_id.setdefault(sender_name, len(_name_to_id) + 1)
+
+        # By convention the assistant uses contact-id 0 so MemoryManager skips it.
+        receiver_id = 0
+
+        return {
+            "medium": raw.get("medium", "sms_message"),
+            "sender_id": sender_id,
+            "receiver_id": receiver_id,
+            "timestamp": raw.get("timestamp"),
+            "content": raw.get("content", ""),
+            "exchange_id": raw.get("exchange_id", 0),
+        }
+
+    # Helper: ingest a whole transcript list -----------------------------------
+    def _log_transcript(messages: list[dict]):
+        for m in messages:
+            tm.log_message(_normalise_msg(m))
+        tm.join_published()
+
+    # Store the *latest* transcript so manual commands can reference it -------
+    last_transcript: List[Dict[str, Any]] = []
+
+    # ── Interactive REPL ------------------------------------------------------
     print(
-        f"[seed] Done.  Generated {num_messages} messages (indices 0-{num_messages-1}).\n",
+        "\nMemoryManager sandbox – enter a conversation *description* to generate "
+        "and log synthetic messages.  Type 'summary' to display the latest "
+        "rolling-activity overview or 'quit' to exit.\n",
     )
-    _speak(
-        "That's now been generated for you. From this point forward, just use the commands in the terminal to use tools on the transcript.",
-    )
 
-    # ── MemoryManager instance ──────────────────────────────────────────────
-    mm: MemoryManager = MemoryManager()
-
-    _explain_commands()
-
-    # ── Interactive loop ───────────────────────────────────────────────────
     while True:
         try:
-            raw = input("\n>> ").strip().lower()
+            prompt = input("scenario> ").strip()
         except (EOFError, KeyboardInterrupt):
             print("\nExiting…")
             break
 
-        if raw in {"quit", "exit"}:
+        if not prompt:
+            continue
+
+        if prompt.lower() in {"quit", "exit"}:
             break
-        if raw in {"help", "h", "?"}:
+
+        if prompt.lower() in {"summary", "s"}:
+            overview = mm.get_rolling_activity()
+            print("\n──────── Historic Activity ────────\n")
+            print(overview or "<no activity yet>")
+            print("\n──────────────────────────────────\n")
+            continue
+
+        # ------------------------------------------------------------------
+        #  Manual command loop (uc, uk, …) – executed *before* scenario mode
+        # ------------------------------------------------------------------
+
+        lower = prompt.lower()
+
+        if lower in {"help", "h", "?"}:
             _explain_commands()
             continue
 
-        # ─── clearing commands ────────────────────────────────────────────
-        if raw in {"cc", "ccb", "ccrs"}:
+        if lower in {"cc", "ccb", "ccrs"}:
             _clear_contacts()
-            mm = MemoryManager()  # new instance, clean slate
+            mm = _create_mm()
+            tm = mm._transcript_manager
             print("✅ Contacts store cleared.")
             continue
-        if raw == "ck":
+        if lower == "ck":
             _clear_knowledge()
-            mm = MemoryManager()
+            mm = _create_mm()
+            tm = mm._transcript_manager
             print("✅ Knowledge store cleared.")
             continue
 
-        # ─── functional commands ─────────────────────────────────────────
-        parts = raw.split(maxsplit=1)
+        # Functional uc/ucb/ucrs/uk commands --------------------------------
+        parts = prompt.split(maxsplit=1)
         cmd = parts[0]
-        if cmd not in {"uc", "ucb", "ucrs", "uk"}:
-            print("⚠️  Unrecognised command. Type 'help' for guidance.")
-            continue
-
-        # Default slice – entire transcript
-        start, end = 0, num_messages - 1
-        if len(parts) == 2:
-            rng = parts[1].strip()
-            m = _RANGE_RE.match(rng)
-            if not m:
-                print("⚠️  Range must be of the form X-Y (e.g. 4-18).")
-                continue
-            start, end = map(int, m.groups())
-            if not (0 <= start <= end < num_messages):
-                print(f"⚠️  Indices must satisfy 0 ≤ x ≤ y < {num_messages}.")
+        if cmd in {"uc", "ucb", "ucrs", "uk"}:
+            if not last_transcript:
+                print("⚠️  No transcript available yet – generate one first.")
                 continue
 
-        chunk_txt = _chunk_to_text(transcript[start : end + 1])
+            num_messages = len(last_transcript)
+            start, end = 0, num_messages - 1
+            if len(parts) == 2:
+                rng = parts[1].strip()
+                m = _RANGE_RE.match(rng)
+                if not m:
+                    print("⚠️  Range must be of the form X-Y (e.g. 4-18).")
+                    continue
+                start, end = map(int, m.groups())
+                if not (0 <= start <= end < num_messages):
+                    print(f"⚠️  Indices must satisfy 0 ≤ x ≤ y < {num_messages}.")
+                    continue
 
-        # ─── optional GUIDANCE capture ──────────────────────────────────
-        guidance_txt: str | None = None
-        yn = input("Add guidance for this run? [y/N] ").strip().lower()
-        if yn in {"y", "yes"}:
-            if args.voice:
-                _speak(
-                    "Please dictate your guidance now. Press enter to start "
-                    "recording and again to finish.",
-                )
-                audio = _record_until_enter()
-                guidance_txt = _transcribe_deepgram(audio).strip()
-                if not guidance_txt:
-                    _speak("I didn't catch that, please type your guidance.")
-            if guidance_txt is None:  # fallback for voice or non-voice
+            chunk_txt = _chunk_to_text(last_transcript[start : end + 1])
+
+            # Optional guidance -------------------------------------------
+            guidance_txt: str | None = None
+            yn = input("Add guidance for this run? [y/N] ").strip().lower()
+            if yn in {"y", "yes"}:
                 guidance_txt = input("Guidance> ").strip()
-            if not guidance_txt:
-                guidance_txt = None  # treat empty as absent
+                guidance_txt = guidance_txt or None
 
-        print(f"[{cmd}] Running on messages {start}-{end} …")
+            print(f"[{cmd}] Running on messages {start}-{end} …")
+            try:
+                if cmd == "uc":
+                    result = await mm.update_contacts(chunk_txt, guidance=guidance_txt)
+                elif cmd == "ucb":
+                    result = await mm.update_contact_bio(
+                        chunk_txt,
+                        guidance=guidance_txt,
+                    )
+                elif cmd == "ucrs":
+                    result = await mm.update_contact_rolling_summary(
+                        chunk_txt,
+                        guidance=guidance_txt,
+                    )
+                else:  # uk
+                    result = await mm.update_knowledge(chunk_txt, guidance=guidance_txt)
+
+                print(f"→ {result}")
+            except Exception as exc:
+                LG.error("Error during MemoryManager call: %s", exc, exc_info=True)
+                print(f"❌  {exc}")
+
+            continue  # back to REPL
+
+        # ------------------------------------------------------------------
+        #  Scenario generation branch (default)
+        # ------------------------------------------------------------------
+
+        # Otherwise treat the input as a new transcript scenario description.
+        print("[generate] Building synthetic transcript – this can take a moment…")
         try:
-            if cmd == "uc":
-                result = await mm.update_contacts(
-                    chunk_txt,
-                    guidance=guidance_txt,
-                )
-            elif cmd == "ucb":
-                result = await mm.update_contact_bio(
-                    chunk_txt,
-                    guidance=guidance_txt,
-                )
-            elif cmd == "ucrs":
-                result = await mm.update_contact_rolling_summary(
-                    chunk_txt,
-                    guidance=guidance_txt,
-                )
-            else:  # uk
-                result = await mm.update_knowledge(
-                    chunk_txt,
-                    guidance=guidance_txt,
-                )
-
-            print(f"→ {result}")
-            _speak(str(result))
+            transcript = await _build_transcript(prompt)
         except Exception as exc:
-            LG.error("Error during MemoryManager call: %s", exc, exc_info=True)
-            print(f"❌  {exc}")
-            _speak("There was an error running that command.")
-
-        # ─────────────── save project snapshot ────────────────
-        if raw in {"save_project", "sp"}:
-            commit_hash = unify.commit_project(
-                args.project_name,
-                commit_message=f"Sandbox save {datetime.utcnow().isoformat()}",
-            ).get("commit_hash")
-            print(f"💾 Project saved at commit {commit_hash}")
-            _speak("Project saved")
+            LG.error("Transcript generation failed: %s", exc, exc_info=True)
+            print(f"❌  Failed to generate transcript: {exc}")
             continue
+
+        print(f"[log] Ingesting {len(transcript)} messages …")
+        _log_transcript(transcript)
+
+        # Save as latest for manual commands
+        last_transcript = transcript
+
+        # Give EventBus a chance to upload + process subscriptions --------
+        from unity.events.event_bus import EVENT_BUS
+
+        EVENT_BUS.join_published()
+        EVENT_BUS.join_callbacks(cascade=True)
+
+        # Show updated rolling activity -----------------------------------
+        overview = mm.get_rolling_activity()
+        print("\n──────── Updated Historic Activity ────────\n")
+        print(overview or "<no activity captured>")
+        print("\n──────────────────────────────────────────\n")
+
+    print("Goodbye! 👋")
 
 
 def main() -> None:
