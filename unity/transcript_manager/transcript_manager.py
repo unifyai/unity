@@ -365,6 +365,45 @@ class TranscriptManager(BaseTranscriptManager):
             entries=message,
         )
 
+        # ────────────────────────────────  NEW: EventBus integration  ────────────────────────────────
+        # In addition to persisting the message in the backing store we now also emit a
+        # lightweight *"message"* event so that other components (e.g. MemoryManager)
+        # can react to new transcript entries **in real-time**.
+
+        from ..events.event_bus import EVENT_BUS, Event  # local import to avoid cycles
+
+        # Ensure we have a *Message* object for the payload so downstream code can rely on
+        # the schema.
+        if isinstance(message, Message):
+            payload_obj = message
+        else:
+            payload_obj = Message(**message)  # type: ignore[arg-type]
+
+        # Helper coroutine so we can schedule the publish call regardless of the current
+        # execution context (sync vs. async).
+        async def _publish() -> None:  # noqa: D401 – imperative helper name
+            try:
+                await EVENT_BUS.publish(
+                    Event(
+                        type="message",
+                        timestamp=payload_obj.timestamp,
+                        payload=payload_obj,
+                    ),
+                )
+            except Exception:
+                # Defensive – never propagate EventBus issues to caller
+                pass
+
+        try:
+            # If we're already inside an event-loop schedule the coroutine there …
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            # … otherwise create a *temporary* loop to run it synchronously so the
+            # event doesn't get lost in purely synchronous contexts (e.g. tests).
+            asyncio.run(_publish())
+        else:
+            loop.create_task(_publish())
+
     def join_published(self):
         self._logger.join()
 
