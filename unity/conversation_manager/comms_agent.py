@@ -49,6 +49,7 @@ class CommsAgent:
         assistant_name: str,
         assistant_age: str,
         assistant_region: str,
+        assistant_about: str,
         assistant_number: str,
         user_number: str,
         user_phone_call_number: str = None,
@@ -61,6 +62,7 @@ class CommsAgent:
         self.assistant_name = assistant_name
         self.assistant_age = assistant_age
         self.assistant_region = assistant_region
+        self.assistant_about = assistant_about
 
         # contact data
         self.assistant_number = assistant_number
@@ -396,6 +398,7 @@ class CommsAgent:
             self.assistant_name,
             self.assistant_age,
             self.assistant_region,
+            self.assistant_about,
         )
         user_msg = self.get_user_agent_prompt()
         print(user_msg, flush=True)
@@ -423,6 +426,7 @@ class CommsAgent:
             self.assistant_name,
             self.assistant_age,
             self.assistant_region,
+            self.assistant_about,
         )
 
         user_msg = self.get_user_agent_prompt()
