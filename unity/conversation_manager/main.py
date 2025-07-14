@@ -192,6 +192,7 @@ async def main(
         os.getenv("ASSISTANT_NAME", ""),
         os.getenv("ASSISTANT_AGE", ""),
         os.getenv("ASSISTANT_REGION", ""),
+        os.getenv("ASSISTANT_ABOUT", ""),
         os.getenv("ASSISTANT_NUMBER", ""),
         os.getenv("USER_NUMBER", ""),
         os.getenv("USER_PHONE_NUMBER", ""),
