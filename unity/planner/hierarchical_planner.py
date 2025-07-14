@@ -38,6 +38,7 @@ from unity.planner.prompt_builders import (
     build_should_explore_prompt,
     build_verification_prompt,
 )
+from unity.controller.controller import InvalidActionError
 
 logger = logging.getLogger(__name__)
 
@@ -66,6 +67,17 @@ class VerificationAssessment(BaseModel):
         description="Outcome: 'ok', 'reimplement_local', 'replan_parent', 'fatal_error', or 'request_clarification'.",
     )
     reason: str = Field(..., description="A concise explanation for the status.")
+
+
+class ImplementationStrategy(BaseModel):
+    """A structured plan for implementing a function."""
+
+    rationale: str = Field(
+        description="A brief explanation of the chosen approach based on the current context.",
+    )
+    steps: List[str] = Field(
+        description="A detailed, step-by-step natural language plan for the implementation.",
+    )
 
 
 class _HierarchicalPlanState(enum.Enum):
@@ -1242,6 +1254,23 @@ class HierarchicalPlanner(BasePlanner):
                                 f"Retrying '{fn.__name__}' after reimplementation.",
                             )
                             continue
+                        except InvalidActionError as e:
+                            logger.warning(
+                                f"Caught InvalidActionError in '{func_name}'. Forcing local reimplementation.",
+                            )
+                            replan_reason = (
+                                f"The function failed because it tried to execute an invalid browser action. "
+                                f"The instruction it gave resulted in the error: '{e}'.\n\n"
+                                f"The 'browser_act' tool can only perform atomic actions like clicking, typing, navigating, or scrolling. "
+                                f"Please rewrite the function to use only valid, direct actions."
+                            )
+                            await plan._handle_dynamic_implementation(
+                                func_name,
+                                replan_reason=replan_reason,
+                            )
+                            raise _ForcedRetryException(
+                                "Forced retry after invalid action.",
+                            )
                         except (
                             ReplanFromParentException,
                             NotImplementedError,
