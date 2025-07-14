@@ -6,18 +6,18 @@ set -e
 # Function to handle graceful shutdown
 cleanup() {
     echo "Received shutdown signal, cleaning up..."
-    
+
     # Stop the main application (uvicorn)
     if [ ! -z "$UVICORN_PID" ]; then
         echo "Stopping uvicorn (PID: $UVICORN_PID)..."
         kill -TERM $UVICORN_PID 2>/dev/null || true
         wait $UVICORN_PID 2>/dev/null || true
     fi
-    
+
     # Stop Redis
     echo "Stopping Redis..."
     redis-cli shutdown 2>/dev/null || true
-    
+
     echo "Cleanup complete"
     exit 0
 }

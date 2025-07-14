@@ -11,8 +11,6 @@ Usage:
 
 import argparse
 import base64
-import json
-import os
 import sys
 from kubernetes import client, config
 from kubernetes.client.rest import ApiException
@@ -90,7 +88,9 @@ def setup_kubernetes_client():
 
         # Get access token using service account
         token_result = subprocess.run(
-            ["gcloud", "auth", "print-access-token"], capture_output=True, text=True
+            ["gcloud", "auth", "print-access-token"],
+            capture_output=True,
+            text=True,
         )
 
         if token_result.returncode != 0:
@@ -110,14 +110,14 @@ def setup_kubernetes_client():
                         "server": f"https://{cluster_endpoint}",
                         "certificate-authority-data": cluster_ca_cert,
                     },
-                }
+                },
             ],
             "users": [{"name": "unity-user", "user": {"token": access_token}}],
             "contexts": [
                 {
                     "name": "unity-context",
                     "context": {"cluster": "unity-cluster", "user": "unity-user"},
-                }
+                },
             ],
             "current-context": "unity-context",
         }
@@ -191,7 +191,8 @@ def create_global_configmap(api_client, namespace="default"):
         # Check if ConfigMap exists
         try:
             api_client.read_namespaced_config_map(
-                name="unity-global-config", namespace=namespace
+                name="unity-global-config",
+                namespace=namespace,
             )
             print("✅ Global ConfigMap already exists")
             return True
@@ -199,7 +200,8 @@ def create_global_configmap(api_client, namespace="default"):
             if e.status == 404:
                 # Create the ConfigMap
                 api_client.create_namespaced_config_map(
-                    namespace=namespace, body=configmap_manifest
+                    namespace=namespace,
+                    body=configmap_manifest,
                 )
                 print("✅ Created global ConfigMap")
                 return True
@@ -247,7 +249,7 @@ def create_global_secrets(api_client, namespace="default"):
                 secret_value = response.payload.data.decode("UTF-8")
 
                 secrets_data[secret_name] = base64.b64encode(
-                    secret_value.encode()
+                    secret_value.encode(),
                 ).decode()
                 print(f"   ✅ {secret_name}")
 
@@ -273,7 +275,8 @@ def create_global_secrets(api_client, namespace="default"):
         except ApiException as e:
             if e.status == 404:
                 api_client.create_namespaced_secret(
-                    namespace=namespace, body=secret_manifest
+                    namespace=namespace,
+                    body=secret_manifest,
                 )
                 print("✅ Created application secrets")
             else:
@@ -301,13 +304,15 @@ def create_global_secrets(api_client, namespace="default"):
 
             try:
                 api_client.read_namespaced_secret(
-                    name="comm-sa-key", namespace=namespace
+                    name="comm-sa-key",
+                    namespace=namespace,
                 )
                 print("✅ Service account key secret already exists")
             except ApiException as e:
                 if e.status == 404:
                     api_client.create_namespaced_secret(
-                        namespace=namespace, body=sa_key_manifest
+                        namespace=namespace,
+                        body=sa_key_manifest,
                     )
                     print("✅ Created service account key secret")
                 else:
@@ -340,7 +345,8 @@ def create_service_account(api_client, namespace="default"):
         # Check if ServiceAccount exists
         try:
             api_client.read_namespaced_service_account(
-                name="comm-sa", namespace=namespace
+                name="comm-sa",
+                namespace=namespace,
             )
             print("✅ ServiceAccount 'comm-sa' already exists")
             return True
@@ -348,7 +354,8 @@ def create_service_account(api_client, namespace="default"):
             if e.status == 404:
                 # Create the ServiceAccount
                 api_client.create_namespaced_service_account(
-                    namespace=namespace, body=service_account_manifest
+                    namespace=namespace,
+                    body=service_account_manifest,
                 )
                 print("✅ Created ServiceAccount 'comm-sa'")
                 return True
@@ -372,7 +379,8 @@ def list_resources(api_client, namespace="default"):
         # List ConfigMaps
         print("🔧 ConfigMaps:")
         configmaps = api_client.list_namespaced_config_map(
-            namespace=namespace, label_selector="app=unity"
+            namespace=namespace,
+            label_selector="app=unity",
         )
         for cm in configmaps.items:
             print(f"   - {cm.metadata.name}")
@@ -383,7 +391,8 @@ def list_resources(api_client, namespace="default"):
         # List Secrets
         print("🔐 Secrets:")
         secrets = api_client.list_namespaced_secret(
-            namespace=namespace, label_selector="app=unity"
+            namespace=namespace,
+            label_selector="app=unity",
         )
         for secret in secrets.items:
             print(f"   - {secret.metadata.name}")
@@ -394,7 +403,8 @@ def list_resources(api_client, namespace="default"):
         # List ServiceAccounts
         print("👤 ServiceAccounts:")
         service_accounts = api_client.list_namespaced_service_account(
-            namespace=namespace, label_selector="app=unity"
+            namespace=namespace,
+            label_selector="app=unity",
         )
         for sa in service_accounts.items:
             print(f"   - {sa.metadata.name}")
@@ -413,31 +423,37 @@ def delete_resources(api_client, namespace="default"):
 
         # Delete ConfigMaps
         configmaps = api_client.list_namespaced_config_map(
-            namespace=namespace, label_selector="app=unity"
+            namespace=namespace,
+            label_selector="app=unity",
         )
         for cm in configmaps.items:
             api_client.delete_namespaced_config_map(
-                name=cm.metadata.name, namespace=namespace
+                name=cm.metadata.name,
+                namespace=namespace,
             )
             print(f"   ✅ Deleted ConfigMap: {cm.metadata.name}")
 
         # Delete Secrets
         secrets = api_client.list_namespaced_secret(
-            namespace=namespace, label_selector="app=unity"
+            namespace=namespace,
+            label_selector="app=unity",
         )
         for secret in secrets.items:
             api_client.delete_namespaced_secret(
-                name=secret.metadata.name, namespace=namespace
+                name=secret.metadata.name,
+                namespace=namespace,
             )
             print(f"   ✅ Deleted Secret: {secret.metadata.name}")
 
         # Delete ServiceAccounts
         service_accounts = api_client.list_namespaced_service_account(
-            namespace=namespace, label_selector="app=unity"
+            namespace=namespace,
+            label_selector="app=unity",
         )
         for sa in service_accounts.items:
             api_client.delete_namespaced_service_account(
-                name=sa.metadata.name, namespace=namespace
+                name=sa.metadata.name,
+                namespace=namespace,
             )
             print(f"   ✅ Deleted ServiceAccount: {sa.metadata.name}")
 
@@ -461,21 +477,29 @@ Examples:
     )
 
     parser.add_argument(
-        "--create", action="store_true", help="Create all Kubernetes resources"
+        "--create",
+        action="store_true",
+        help="Create all Kubernetes resources",
     )
 
     parser.add_argument("--list", action="store_true", help="List all Unity resources")
 
     parser.add_argument(
-        "--delete", action="store_true", help="Delete all Unity resources"
+        "--delete",
+        action="store_true",
+        help="Delete all Unity resources",
     )
 
     parser.add_argument(
-        "--update", action="store_true", help="Update existing resources"
+        "--update",
+        action="store_true",
+        help="Update existing resources",
     )
 
     parser.add_argument(
-        "--namespace", default="default", help="Kubernetes namespace (default: default)"
+        "--namespace",
+        default="default",
+        help="Kubernetes namespace (default: default)",
     )
 
     args = parser.parse_args()
@@ -501,7 +525,7 @@ Examples:
 
     if args.delete:
         confirm = input(
-            "⚠️  Are you sure you want to delete all Unity resources? (y/N): "
+            "⚠️  Are you sure you want to delete all Unity resources? (y/N): ",
         )
         if confirm.lower() == "y":
             delete_resources(api_client, args.namespace)
@@ -536,7 +560,7 @@ Examples:
         print("\n💡 Next steps:")
         print("   1. Verify resources: python setup_k8s_config.py --list")
         print(
-            "   2. Create a test job: python create_job.py --assistant-id test --user-name 'Test' --user-number '+1234567890'"
+            "   2. Create a test job: python create_job.py --assistant-id test --user-name 'Test' --user-number '+1234567890'",
         )
         print("   3. Check job logs: kubectl logs -n unity -l job-name=unity-test")
         return
