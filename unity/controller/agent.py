@@ -991,7 +991,7 @@ _OBSERVE_PROMPT = (
 )
 
 
-def _wrap_type(tp: Type):  # type: ignore[override]
+def _wrap_type(tp: Any):  # type: ignore[override]
     """Return a Pydantic model appropriate for *tp* (primitive or model)."""
     # Handle string type hints
     if isinstance(tp, str):
@@ -1010,6 +1010,18 @@ def _wrap_type(tp: Type):  # type: ignore[override]
 
     if inspect.isclass(tp) and issubclass(tp, BaseModel):
         return tp  # already a model
+
+    if callable(tp) and not isinstance(tp, type):
+        try:
+            # Check if it's a function that returns a Pydantic model
+            model_instance = tp()
+            if isinstance(model_instance, BaseModel):
+                return type(model_instance)
+        except Exception:
+            # If it fails, then it's an unsupported type
+            raise TypeError(
+                f"Unsupported response_type: {tp!r}. It appears to be a function but not a Pydantic model factory.",
+            )
 
     if get_origin(tp) is not None:  # e.g. Literal, Annotated
         return create_model("AnswerModel", answer=(tp, ...))
