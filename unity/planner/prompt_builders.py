@@ -90,11 +90,11 @@ def _build_rules_and_examples_prompt(
         2.  **Entry Point:** For a full plan, the main entry point MUST be `async def main_plan()`.
         3.  **Decomposition:** Break down complex problems into smaller, logical, self-contained `async def` helper functions.
         4.  **Decorators & Docstrings:** Every function you define MUST be decorated with `@verify` and include a concise one-line docstring.
-        5.  **No Imports:** You MUST NOT use any `import` statements.
+        5.  **No Imports:** You **MUST NOT** use any `import`/ `__import__` statements. All standard library imports are already present within the execution environment.
         6.  **Stubbing:** If you cannot implement a function immediately, stub it out with `raise NotImplementedError`.
         7.  **Await Keyword**: All `action_provider` methods that are asynchronous MUST be called with the `await` keyword.
         8.  **Structured Output**: For `observe` or `reason` calls that expect a structured answer (e.g., yes/no, a list of items), you MUST define a Pydantic `BaseModel` and pass it to the `response_format` argument to ensure reliable, parsable output.
-
+        9.  **Robust Error Handling**: Proactively use `try...except` blocks to handle potential failures (e.g., an element not being found). When you must raise an exception, make it informative. Instead of `raise Exception('It failed')`, prefer `raise Exception('Failed to find the "Login" button after 3 scroll attempts.')`. This provides crucial context for self-correction.
         ---
         ### Strategy & Tool Usage
         {strategy_instruction}
@@ -141,39 +141,109 @@ def _build_rules_and_examples_prompt(
 
         **Structured Outputs:**
         ```python
-        # The strategy is to find a "Privacy Policy" link in a list of footer links and click it.
-        # Step 1: Define a Pydantic model for structured observation.
-        class LinkInfo(BaseModel):
-            element_id: str = Field(description="The unique ID for the link element, like 'link_27'.")
-            text: str = Field(description="The visible text of the link.")
+        # Example 1: Extract product information from a search results page
+        class ProductInfo(BaseModel):
+            name: str = Field(description="The product name as displayed")
+            price: str = Field(description="The price shown, including currency symbol")
+            in_stock: bool = Field(description="Whether the item shows as available")
 
-        class FooterLinks(BaseModel):
-            links: list[LinkInfo]
+        class SearchResults(BaseModel):
+            products: list[ProductInfo] = Field(description="List of visible products")
+            total_count: str = Field(description="Total number of results shown on page")
 
         @verify
-        async def find_privacy_policy_link():
-            # Step 2: OBSERVE to get structured data.
-            footer_data = await action_provider.browser_observe(
-                "List all links in the footer section with their text and element IDs.",
-                response_format=FooterLinks
+        async def extract_search_results():
+            # Observe the page to extract structured product data
+            results = await action_provider.browser_observe(
+                "List all visible products on this search results page with their prices and availability status. Also note the total result count.",
+                response_format=SearchResults
             )
 
-            # Step 3: Perform LOGIC in Python to find the target.
-            target_link_id = None
-            for link in footer_data.links:
-                if "privacy policy" in link.text.lower():
-                    target_link_id = link.element_id
-                    break
+            # Now we can process the data programmatically
+            affordable_products = []
+            for p in results.products:
+                try:
+                    # Remove $ and commas, then convert to float
+                    price_value = float(p.price.replace("$", "").replace(",", "").strip())
+                    if price_value < 50:
+                        affordable_products.append(p)
+                except ValueError:
+                    # Skip products with unparseable prices
+                    pass
+            return results
 
-            # Step 4: ACT on the identified element.
-            if target_link_id:
-                await action_provider.browser_act(
-                    f"Click the link with element ID 'target_link_id'",
-                    "The page should navigate to the privacy policy."
+        # Example 2: Navigate through a multi-step form by reading visible labels
+        class FormField(BaseModel):
+            label: str = Field(description="The visible label text for this form field")
+            field_type: str = Field(description="Type of input: 'text', 'dropdown', 'checkbox', etc.")
+            is_required: bool = Field(description="Whether the field shows a required indicator like * or 'required'")
+
+        class FormAnalysis(BaseModel):
+            page_title: str = Field(description="The form's title or heading")
+            fields: list[FormField] = Field(description="All visible form fields")
+            submit_button_text: str = Field(description="Text on the submit button")
+
+        @verify
+        async def fill_checkout_form():
+            # First, analyze what's on the form
+            form_info = await action_provider.browser_observe(
+                "Analyze this form page. What is the title, what fields are visible, and what does the submit button say?",
+                response_format=FormAnalysis
+            )
+
+            # Use the structured data to interact with specific fields
+            for field in form_info.fields:
+                if field.is_required and field.field_type == "text":
+                    if "email" in field.label.lower():
+                        await action_provider.browser_act(
+                            f"Click on the text field labeled '{{field.label}}' and type 'user@example.com'",
+                            "The email field should now contain 'user@example.com'"
+                        )
+                    elif "name" in field.label.lower():
+                        await action_provider.browser_act(
+                            f"Click on the text field labeled '{{field.label}}' and type 'John Doe'",
+                            "The name field should now contain 'John Doe'"
+                        )
+
+            # Submit using the exact button text we observed
+            await action_provider.browser_act(
+                f"Click the '{{form_info.submit_button_text}}' button",
+                "The form should be submitted and we should see a confirmation page"
+            )
+
+        # Example 3: Monitor page state changes
+        class PageState(BaseModel):
+            has_error_message: bool = Field(description="Whether any error message is visible")
+            error_text: str = Field(default="", description="The error message text if visible")
+            loading_indicator_visible: bool = Field(description="Whether a loading spinner or progress indicator is shown")
+            success_message: str = Field(default="", description="Any success/confirmation message if visible")
+
+        @verify
+        async def wait_for_operation_complete():
+            # Keep checking until the operation completes
+            max_attempts = 10
+            for attempt in range(max_attempts):
+                state = await action_provider.browser_observe(
+                    "Check if there are any error messages, loading indicators, or success messages visible on the page",
+                    response_format=PageState
                 )
-            else:
-                # Handle the case where the link wasn't found.
-                print("Could not find the 'Privacy Policy' link.")
+
+                if state.has_error_message:
+                    raise Exception(f"Operation failed with error: {{state.error_text}}")
+
+                if state.success_message and not state.loading_indicator_visible:
+                    print(f"Operation completed successfully: {{state.success_message}}")
+                    return True
+
+                if state.loading_indicator_visible:
+                    print(f"Still loading... (attempt {{attempt + 1}}/{{max_attempts}})")
+                    await asyncio.sleep(2)  # Wait before checking again
+                    continue
+
+                # No loading, no error, no success - might need to trigger the operation
+                break
+
+            return False
         ```
 
         **Generic Reasoning:**
@@ -329,6 +399,8 @@ def build_dynamic_implement_prompt(
             ---
             """,
         )
+    print("---- Strategy Section ----")
+    print(strategy_section)
     strategy_instruction = "Analyze the function's purpose and the available tools to decide on the best implementation strategy."
     tool_usage_instruction = "Use the `action_provider` global object to interact with the environment. Available tools and their handle APIs have been described in the rules below."
     rules_and_examples = _build_rules_and_examples_prompt(
