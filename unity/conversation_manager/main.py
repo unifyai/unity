@@ -189,6 +189,9 @@ async def main(
     event_manager = EventManager()
     user_agent = CommsAgent(
         os.getenv("USER_NAME", ""),
+        os.getenv("ASSISTANT_NAME", ""),
+        os.getenv("ASSISTANT_AGE", ""),
+        os.getenv("ASSISTANT_REGION", ""),
         os.getenv("ASSISTANT_NUMBER", ""),
         os.getenv("USER_NUMBER", ""),
         os.getenv("USER_PHONE_NUMBER", ""),
