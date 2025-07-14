@@ -12,6 +12,7 @@ from unity.conversation_manager.events import (
 from unity.conversation_manager.prompt_builders import (
     build_call_ask_prompt,
     build_local_chat_search_prompt,
+    build_message_prompt,
 )
 from unity.conversation_manager.utils import (
     publish_event,
@@ -190,13 +191,19 @@ async def _send_sms_message_via_number(
             return response_text
 
 
-async def _send_email_via_address(from_email: str, to_email: str, content: str) -> str:
+async def _send_email_via_address(
+    from_email: str,
+    to_email: str,
+    subject: str,
+    content: str,
+) -> str:
     """
     Send an SMS message using the SMS provider API.
 
     Args:
         from_email: The email address to send the email from
         to_email: The email address to send the email to
+        subject: The subject of the email
         content: The message content to send
 
     Returns:
@@ -215,6 +222,7 @@ async def _send_email_via_address(from_email: str, to_email: str, content: str) 
             json={
                 "from": from_email,
                 "to": to_email,
+                "subject": subject,
                 "body": content,
             },
         ) as response:
@@ -275,22 +283,17 @@ async def send_whatsapp_message(
     contact_manager = ContactManager()
     transcript_manager = TranscriptManager(contact_manager=contact_manager)
     knowledge_manager = KnowledgeManager()
-    # Lazy import to avoid circular dependency at module-load time.
-    from unity.task_scheduler.task_scheduler import TaskScheduler
-
-    task_scheduler = TaskScheduler()
 
     client = unify.AsyncUnify("o4-mini@openai")
-    client.set_system_message(description)
     tools = methods_to_tool_dict(
         contact_manager.ask,
         transcript_manager.ask,
         transcript_manager.summarize,
         knowledge_manager.ask,
-        task_scheduler.ask,
         _send_whatsapp_message_via_number,
         include_class_name=True,
     )
+    client.set_system_message(build_message_prompt(tools, description, "whatsapp"))
     return start_async_tool_use_loop(
         client,
         description,
@@ -308,22 +311,17 @@ async def send_sms_message(
     contact_manager = ContactManager()
     transcript_manager = TranscriptManager(contact_manager=contact_manager)
     knowledge_manager = KnowledgeManager()
-    # Lazy import to avoid circular dependency at module-load time.
-    from unity.task_scheduler.task_scheduler import TaskScheduler
-
-    task_scheduler = TaskScheduler()
 
     client = unify.AsyncUnify("o4-mini@openai")
-    client.set_system_message(description)
     tools = methods_to_tool_dict(
         contact_manager.ask,
         transcript_manager.ask,
         transcript_manager.summarize,
         knowledge_manager.ask,
-        task_scheduler.ask,
         _send_sms_message_via_number,
         include_class_name=True,
     )
+    client.set_system_message(build_message_prompt(tools, description, "sms"))
     return start_async_tool_use_loop(
         client,
         description,
@@ -341,22 +339,17 @@ async def send_email(
     contact_manager = ContactManager()
     transcript_manager = TranscriptManager(contact_manager=contact_manager)
     knowledge_manager = KnowledgeManager()
-    # Lazy import to avoid circular dependency at module-load time.
-    from unity.task_scheduler.task_scheduler import TaskScheduler
-
-    task_scheduler = TaskScheduler()
 
     client = unify.AsyncUnify("o4-mini@openai")
-    client.set_system_message(description)
     tools = methods_to_tool_dict(
         contact_manager.ask,
         transcript_manager.ask,
         transcript_manager.summarize,
         knowledge_manager.ask,
-        task_scheduler.ask,
         _send_email_via_address,
         include_class_name=True,
     )
+    client.set_system_message(build_message_prompt(tools, description, "email"))
     return start_async_tool_use_loop(
         client,
         description,
