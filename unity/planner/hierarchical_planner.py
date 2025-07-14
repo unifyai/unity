@@ -1476,10 +1476,11 @@ class HierarchicalPlanner(BasePlanner):
         Returns:
             The sanitized source code for the new function implementation.
         """
-        func_source = plan.function_source_map.get(function_name, "")
-        is_browser_task = "action_provider.browser" in func_source
-
+        is_browser_task = "action_provider.browser" in plan.plan_source_code
+        replan_reason = kwargs.get("replan_reason")
         browser_state = None
+        new_strategy = None
+
         if is_browser_task:
             browser_state = await self.action_provider.browser.observe(
                 "Concisely summarize the current viewable page, including the URL and the main visible elements in the current viewport, to provide context for the next action.",
@@ -1536,6 +1537,7 @@ class HierarchicalPlanner(BasePlanner):
             parent_code=parent_code,
             browser_state=browser_state,
             replan_context=replan_context,
+            implementation_strategy=new_strategy,
             tools=self.tools,
         )
         logger.debug(f"Prompt for dynamic implementation: {prompt}")
