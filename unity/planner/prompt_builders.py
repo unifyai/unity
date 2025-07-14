@@ -265,6 +265,7 @@ def build_dynamic_implement_prompt(
     goal: str,
     parent_code: str,
     browser_state: str | None,
+    has_browser_screenshot: bool,
     replan_context: str,
     implementation_strategy: Optional[Any] = None,
     *,
@@ -306,6 +307,11 @@ def build_dynamic_implement_prompt(
     if browser_state:
         browser_context_section = f"""**Current Browser State:**
         {browser_state}
+        """
+    if has_browser_screenshot:
+        browser_context_section += """
+        **Current Browser View (Screenshot):**
+        An image of the current browser page has been provided. Analyze it carefully to inform your new implementation.
         """
 
     strategy_section = ""
@@ -580,6 +586,7 @@ def build_implementation_strategy_prompt(
     function_docstring: str | None,
     failure_reason: str,
     browser_state: str | None,
+    has_browser_screenshot: bool,
     *,
     tools: Dict[str, Callable],
 ) -> str:
@@ -588,6 +595,11 @@ def build_implementation_strategy_prompt(
     browser_context_section = (
         f"**Current Browser State:**\n{browser_state}" if browser_state else ""
     )
+    if has_browser_screenshot:
+        browser_context_section += """
+        **Current Browser View (Screenshot):**
+        An image of the current browser page has been provided. Analyze it carefully to inform your new implementation.
+        """
     tool_reference = _build_tool_signatures(tools)
     return textwrap.dedent(
         f"""

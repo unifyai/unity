@@ -84,6 +84,20 @@ class ImplementationStrategy(BaseModel):
     )
 
 
+class PageAnalysis(BaseModel):
+    page_title: str = Field(description="The title of the current page.")
+    url: str = Field(description="The current URL.")
+    visible_headings: List[str] = Field(
+        description="A list of all visible headings on the page.",
+    )
+    visible_links: List[str] = Field(
+        description="A list of all visible links and their text.",
+    )
+    interactive_elements: List[str] = Field(
+        description="A list of all buttons, input fields, and other interactive elements.",
+    )
+
+
 class _HierarchicalPlanState(enum.Enum):
     """Manages the detailed lifecycle state of a hierarchical plan."""
 
@@ -98,7 +112,11 @@ class _HierarchicalPlanState(enum.Enum):
     ERROR = enum.auto()
 
 
-async def llm_call(client: unify.AsyncUnify, prompt: str) -> str:
+async def llm_call(
+    client: unify.AsyncUnify,
+    prompt: str,
+    screenshot: bytes | str | None = None,
+) -> str:
     """
     Convenience wrapper for a simple, stateless LLM call.
 
@@ -106,7 +124,23 @@ async def llm_call(client: unify.AsyncUnify, prompt: str) -> str:
     the call to ensure no context is leaked from previous interactions.
     """
     client.reset_messages()
-    return await client.generate(prompt)
+    content = [{"type": "text", "text": prompt}]
+    if screenshot:
+        if isinstance(screenshot, str):
+            screenshot_b64 = screenshot
+        else:
+            screenshot_b64 = base64.b64encode(screenshot).decode("utf-8")
+
+        content.append(
+            {
+                "type": "image_url",
+                "image_url": {
+                    "url": f"data:image/jpeg;base64,{screenshot_b64}",
+                },
+            },
+        )
+    messages_to_send = [{"role": "user", "content": content}]
+    return await client.generate(messages=messages_to_send)
 
 
 class PlanSanitizer(ast.NodeTransformer):
@@ -1532,9 +1566,16 @@ class HierarchicalPlanner(BasePlanner):
         new_strategy = None
 
         if is_browser_task:
+            # Get a summary AND the raw screenshot
             browser_state = await self.action_provider.browser.observe(
-                "Concisely summarize the current viewable page, including the URL and the main visible elements in the current viewport, to provide context for the next action.",
+                "Analyze the current page and provide a structured summary of its content.",
+                response_format=PageAnalysis,
             )
+            # Get the raw screenshot bytes from the controller's cache
+            browser_screenshot = self.action_provider.browser.controller._last_shot
+        else:
+            browser_state = None
+            browser_screenshot = None
 
         if replan_reason:
             docstring = inspect.getdoc(plan.execution_namespace[function_name])
@@ -1544,12 +1585,14 @@ class HierarchicalPlanner(BasePlanner):
                 function_docstring=docstring,
                 failure_reason=replan_reason,
                 browser_state=browser_state,
+                has_browser_screenshot=browser_screenshot is not None,
                 tools=self.tools,
             )
             self.implementation_client.set_response_format(ImplementationStrategy)
             strategy_response_raw = await llm_call(
                 self.implementation_client,
                 strategy_prompt,
+                screenshot=browser_screenshot,
             )
             new_strategy = ImplementationStrategy.model_validate_json(
                 strategy_response_raw,
@@ -1586,11 +1629,16 @@ class HierarchicalPlanner(BasePlanner):
             goal=plan.goal,
             parent_code=parent_code,
             browser_state=browser_state,
+            has_browser_screenshot=browser_screenshot is not None,
             replan_context=replan_context,
             implementation_strategy=new_strategy,
             tools=self.tools,
         )
-        code = await llm_call(self.implementation_client, prompt)
+        code = await llm_call(
+            self.implementation_client,
+            prompt,
+            screenshot=browser_screenshot,
+        )
 
         try:
             sanitized_code = self._sanitize_code(
