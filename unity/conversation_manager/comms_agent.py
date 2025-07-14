@@ -46,6 +46,9 @@ class CommsAgent:
     def __init__(
         self,
         user_name: str,
+        assistant_name: str,
+        assistant_age: str,
+        assistant_region: str,
         assistant_number: str,
         user_number: str,
         user_phone_call_number: str = None,
@@ -54,6 +57,11 @@ class CommsAgent:
         start_local: bool = False,
         enabled_tools: list | str | None = "conductor",
     ):
+        # assistant details
+        self.assistant_name = assistant_name
+        self.assistant_age = assistant_age
+        self.assistant_region = assistant_region
+
         # contact data
         self.assistant_number = assistant_number
         self.user_name = user_name
@@ -383,7 +391,12 @@ class CommsAgent:
             return await self.non_phone_call_llm_run()
 
     async def non_phone_call_llm_run(self):
-        non_call_sys = build_non_call_sys_prompt(self.user_name)
+        non_call_sys = build_non_call_sys_prompt(
+            self.user_name,
+            self.assistant_name,
+            self.assistant_age,
+            self.assistant_region,
+        )
         user_msg = self.get_user_agent_prompt()
         print(user_msg, flush=True)
 
@@ -405,7 +418,12 @@ class CommsAgent:
         ev = {"topic": "call_process", "type": "start_gen"}
         self.publish(ev)
 
-        call_sys = build_call_sys_prompt(self.user_name)
+        call_sys = build_call_sys_prompt(
+            self.user_name,
+            self.assistant_name,
+            self.assistant_age,
+            self.assistant_region,
+        )
 
         user_msg = self.get_user_agent_prompt()
         print(user_msg)
