@@ -90,6 +90,13 @@ class _DummyPage:
     def title(self):
         return getattr(self, "_title", "dummy")
 
+    def wait_for_load_state(self, state=None, timeout=None):
+        """Dummy implementation for wait_for_load_state - does nothing"""
+
+    def screenshot(self, *args, **kwargs):
+        """Dummy implementation for screenshot - returns empty bytes"""
+        return b""
+
     url = "about:blank"
 
 
