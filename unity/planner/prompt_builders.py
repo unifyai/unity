@@ -686,6 +686,7 @@ def build_implementation_strategy_prompt(
     failure_reason: str,
     browser_state: str | None,
     has_browser_screenshot: bool,
+    failed_interactions: Optional[list],
     *,
     tools: Dict[str, Callable],
 ) -> str:
@@ -699,6 +700,20 @@ def build_implementation_strategy_prompt(
         **Current Browser View (Screenshot):**
         An image of the current browser page has been provided. Analyze it carefully to inform your new implementation.
         """
+    interaction_log_section = ""
+    if failed_interactions:
+        interactions_log = "\n".join(
+            f"- {kind}: {act} -> {obs}" for kind, act, obs in failed_interactions
+        )
+        interaction_log_section = textwrap.dedent(
+            f"""
+            **Log of Failed Attempt:**
+            Here are the actions that were taken in the last attempt. You should use this to inform your new strategy.
+            ```
+            {interactions_log}
+            ```
+            """,
+        )
     tool_reference = _build_tool_signatures(tools)
     return textwrap.dedent(
         f"""
@@ -710,6 +725,7 @@ def build_implementation_strategy_prompt(
 
         **CRITICAL: Reason for Previous Failure:** "{failure_reason}"
 
+        {interaction_log_section}
         {browser_context_section}
 
         ---

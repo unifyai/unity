@@ -50,9 +50,15 @@ logger = logging.getLogger(__name__)
 class ReplanFromParentException(Exception):
     """Raised by the @verify decorator when a function's goal is misguided."""
 
-    def __init__(self, message, reason: Optional[str] = None):
+    def __init__(
+        self,
+        message,
+        reason: Optional[str] = None,
+        failed_interactions: Optional[List] = None,
+    ):
         super().__init__(message)
         self.reason = reason if reason else message
+        self.failed_interactions = failed_interactions
 
 
 class _ForcedRetryException(Exception):
@@ -509,6 +515,7 @@ class HierarchicalPlan(BaseActiveTask):
                     parent_to_replan,
                     is_strategic_replan=True,
                     replan_reason=e.reason,
+                    failed_interactions=e.failed_interactions,
                 )
                 plan_iterator = self._create_main_loop_iterator()
                 return {
@@ -1476,11 +1483,13 @@ class HierarchicalPlanner(BasePlanner):
             await plan._handle_dynamic_implementation(
                 fn.__name__,
                 replan_reason=assessment.reason,
+                failed_interactions=interactions,
             )
             raise _ForcedRetryException("Forced retry after local reimplementation")
         elif assessment.status == "replan_parent":
             raise ReplanFromParentException(
                 f"Strategic failure in '{fn.__name__}': {assessment.reason}",
+                failed_interactions=interactions,
             )
         else:
             raise FatalVerificationError(
