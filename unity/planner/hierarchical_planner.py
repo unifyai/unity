@@ -1348,8 +1348,18 @@ class HierarchicalPlanner(BasePlanner):
                                 exc_info=True,
                             )
                             last_error_traceback = traceback.format_exc()
-                            await asyncio.sleep(1)
-                            continue
+                            replan_reason = (
+                                f"The function '{func_name}' failed with an unexpected code error. "
+                                f"Analyze the following traceback and rewrite the function to fix the bug.\n\n"
+                                f"**Traceback:**\n{traceback.format_exc()}"
+                            )
+                            await plan._handle_dynamic_implementation(
+                                func_name,
+                                replan_reason=replan_reason,
+                            )
+                            raise _ForcedRetryException(
+                                "Forced retry after unexpected exception.",
+                            )
                     raise ReplanFromParentException(
                         f"Function '{func_name}' failed after multiple retries.",
                         reason=last_error_traceback,
