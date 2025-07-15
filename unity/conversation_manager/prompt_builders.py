@@ -95,7 +95,10 @@ def _build_user_details_section(name: str) -> str:
 
 
 def _build_assistant_details_section(
-    name: str, age: str, region: str, about: str
+    name: str,
+    age: str,
+    region: str,
+    about: str,
 ) -> str:
     return (
         f"You are {name} from {region}, and you are {age} years old. \n"
@@ -107,6 +110,23 @@ def _build_assistant_details_section(
         "and to make the user feel like they're talking to a real person. \n"
         "You are also free to make up names and numbers as you see fit, "
         "as long as it's something you can answer without using tools."
+    )
+
+
+def _build_task_context_section(
+    task_context: Dict[str, str],
+    is_call: bool = True,
+) -> str:
+    title = "Task Context:"
+    underline = "-" * len(title)
+    return "\n".join(
+        [
+            title,
+            underline,
+            f"The {"call" if is_call else "message"} is part of a broader task as described below:",
+            f"Task name: {task_context["name"]}",
+            f"Task description: {task_context["description"]}",
+        ],
     )
 
 
@@ -138,12 +158,16 @@ def build_call_sys_prompt(
     assistant_age: str,
     assistant_region: str,
     assistant_about: str,
+    task_context: Dict[str, str] = None,
 ) -> str:
     """Build the **system** prompt for phone-call LLM runs."""
     # assemble all sections
     sections = [
         _build_assistant_details_section(
-            assistant_name, assistant_age, assistant_region, assistant_about
+            assistant_name,
+            assistant_age,
+            assistant_region,
+            assistant_about,
         ),
         _build_user_details_section(user_name),
         # _build_your_capabilities_section(is_call=True),
@@ -151,6 +175,11 @@ def build_call_sys_prompt(
         _build_agent_loop_section(),
         _build_tool_use_tasks_rules_section(),
         _build_communication_rules_section(),
+        (
+            _build_task_context_section(task_context, is_call=True)
+            if task_context is not None
+            else None
+        ),
     ]
     # filter out None
     sections = [s for s in sections if s]
@@ -163,12 +192,16 @@ def build_non_call_sys_prompt(
     assistant_age: str,
     assistant_region: str,
     assistant_about: str,
+    task_context: Dict[str, str] = None,
 ) -> str:
     """Build the **system** prompt for non-call LLM runs."""
     # assemble all sections
     sections = [
         _build_assistant_details_section(
-            assistant_name, assistant_age, assistant_region, assistant_about
+            assistant_name,
+            assistant_age,
+            assistant_region,
+            assistant_about,
         ),
         _build_user_details_section(user_name),
         # _build_your_capabilities_section(is_call=False),
@@ -176,7 +209,13 @@ def build_non_call_sys_prompt(
         _build_agent_loop_section(),
         _build_tool_use_tasks_rules_section(),
         _build_communication_rules_section(),
+        (
+            _build_task_context_section(task_context, is_call=False)
+            if task_context is not None
+            else None
+        ),
     ]
+    # filter out None
     sections = [s for s in sections if s]
     return "\n\n".join(sections)
 
@@ -212,7 +251,8 @@ def build_user_agent_prompt(
 
     # Assemble lines for the prompt
     lines = [
-        f"CALL PURPOSE: {call_purpose}",
+        f"Other than the task context (in system prompt) related to the call, this call purpose is: {call_purpose}",
+        "",
         "Events Stream:",
         "** PAST EVENTS **",
         past_events_str.strip(),

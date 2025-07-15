@@ -57,6 +57,7 @@ class CommsAgent:
         conv_context_length: int = 50,
         start_local: bool = False,
         enabled_tools: list | str | None = "conductor",
+        task_context: Dict[str, str] = None,
     ):
         # assistant details
         self.assistant_name = assistant_name
@@ -85,6 +86,7 @@ class CommsAgent:
         # switches to "True" when in a call
         self.call_mode = False
         self.call_purpose = "general"
+        self.task_context = task_context
 
         # conductor
         self.conductor = None
@@ -190,6 +192,7 @@ class CommsAgent:
                     global ONGOING_CALL
                     if not ONGOING_CALL:
                         self.call_purpose = new_event["payload"]["purpose"]
+                        self.task_context = new_event["payload"]["task_context"]
                         if not self.start_local:
                             self.call_proc = run_script(
                                 "unity/conversation_manager/call.py",
@@ -399,6 +402,7 @@ class CommsAgent:
             self.assistant_age,
             self.assistant_region,
             self.assistant_about,
+            self.task_context,
         )
         user_msg = self.get_user_agent_prompt()
         print(user_msg, flush=True)
@@ -427,6 +431,7 @@ class CommsAgent:
             self.assistant_age,
             self.assistant_region,
             self.assistant_about,
+            self.task_context,
         )
 
         user_msg = self.get_user_agent_prompt()
@@ -465,6 +470,8 @@ class CommsAgent:
         await _start_call(
             self.assistant_number,
             self.user_phone_call_number,
+            self.call_purpose,
+            self.task_context,
         )
 
     async def wait_for_seconds_or_next_event(self, time: int): ...

@@ -1,4 +1,5 @@
 import asyncio
+from typing import Dict
 import aiohttp
 import os
 import redis
@@ -236,6 +237,7 @@ async def _start_call(
     from_number: str,
     to_number: str,
     purpose: str = "general",
+    task_context: Dict[str, str] = None,
 ) -> str:
     """
     Send a call using the call provider API.
@@ -254,7 +256,10 @@ async def _start_call(
         {
             "topic": to_number,
             "event": {
-                **PhoneCallInitiatedEvent(purpose=purpose).to_dict(),
+                **PhoneCallInitiatedEvent(
+                    purpose=purpose,
+                    task_context=task_context,
+                ).to_dict(),
                 "voice_id": None,
                 "tts_provider": None,
                 "outbound": True,
@@ -362,14 +367,20 @@ async def send_email(
 
 class Call(SteerableToolHandle):
 
-    def __init__(self, phone_number: str, purpose: str, tools=None):
+    def __init__(
+        self,
+        phone_number: str,
+        purpose: str,
+        task_context: Dict[str, str] = None,
+        tools=None,
+    ):
         """
         Starts a new phone call session and exposes the steerable methods
         """
 
         self.phone_number = phone_number
         self.purpose = purpose
-
+        self.task_context = task_context
         self.client = unify.AsyncUnify("o4-mini@openai")
         self.tools = methods_to_tool_dict(
             self._search_local_chat,
@@ -388,7 +399,12 @@ class Call(SteerableToolHandle):
         self.call_ask_status.set()
 
         async def do_call():
-            await _start_call(os.getenv("ASSISTANT_NUMBER"), phone_number, purpose)
+            await _start_call(
+                os.getenv("ASSISTANT_NUMBER"),
+                phone_number,
+                purpose,
+                task_context,
+            )
             # give time to start call and complete greeting
             await asyncio.sleep(20)
             self.call_ready.set()
