@@ -345,8 +345,8 @@ def build_initial_plan_prompt(
 
 def build_dynamic_implement_prompt(
     function_name: str,
-    func_sig: inspect.Signature,
-    goal: str,
+    function_sig: inspect.Signature,
+    function_docstring: str,
     parent_code: str,
     browser_state: str | None,
     has_browser_screenshot: bool,
@@ -363,8 +363,8 @@ def build_dynamic_implement_prompt(
 
     Args:
         function_name: The name of the function to implement.
-        func_sig: The signature of the function to implement.
-        goal: The overall user goal.
+        function_sig: The signature of the function to implement.
+        function_docstring: The docstring of the function to implement.
         parent_code: The source code of the calling function.
         browser_state: An optional description of the current browser state.
         replan_context: A message providing context for a replan.
@@ -495,7 +495,7 @@ def build_verification_prompt(
         )
     return textwrap.dedent(
         f"""
-        You are a meticulous verification agent. Your task is to assess if the executed actions successfully achieved the function's intended purpose, in the context of the overall goal.
+        You are a meticulous verification agent. Your task is to assess if the executed actions successfully achieved the function's intended purpose and have made **meaningful and accurate progress** toward the **Overall User Goal**.
 
         **Overall User Goal:** "{goal}"
         **Function Under Review:** `{function_name}`
