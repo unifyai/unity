@@ -65,6 +65,7 @@ def _build_rules_and_examples_prompt(
     tools: Dict[str, Callable],
     strategy_instruction: str,
     tool_usage_instruction: str,
+    is_dynamic_implement: bool = False,
 ) -> str:
     """Builds the reusable block of core rules and examples for code generation."""
     tool_reference = _build_tool_signatures(tools)
@@ -82,19 +83,38 @@ def _build_rules_and_examples_prompt(
 
     """,
     )
+    if is_dynamic_implement:
+        instructions_and_rules = textwrap.dedent(
+            f"""
+            1.  **Single Code Block:** Your entire response MUST be a single, valid Python code block.
+            2.  **No Imports:** You **MUST NOT** use any `import`/ `__import__` statements in your code. All standard library imports(eg: `asyncio`, `re`, `pydantic`) are already present within the execution environment so you can use them directly.
+            3.  **Decorators & Docstrings:** Every **function** you define MUST be decorated with `@verify` and include docstrings.
+            4.  **Async All The Way**: All helper functions you define MUST be `async def`.
+            5.  **Await Keyword**: All `action_provider` methods that are asynchronous MUST be called with the `await` keyword.
+            6.  **Structured Output**: For `observe` or `reason` calls that expect a structured answer (e.g., yes/no, a list of items), you MUST define a Pydantic `BaseModel` and pass it to the `response_format` argument to ensure reliable, parsable output.
+            7.  **Robust Error Handling**: Proactively use `try...except` blocks to handle potential **unexpected** failures (e.g., an element not being found) with informative error messages. However, **DO NOT** wrap calls to stubbed functions in a `try...except` block. Let `NotImplementedError` propagate.
+            """,
+        )
+    else:
+        instructions_and_rules = textwrap.dedent(
+            f"""
+            1.  **Single Code Block:** Your entire response MUST be a single, valid Python code block.
+            2.  **Entry Point:** For a full plan, the main entry point MUST be `async def main_plan()`.
+            3.  **No Imports:** You **MUST NOT** use any `import`/ `__import__` statements in your code. All standard library imports(eg: `asyncio`, `re`, `pydantic`) are already present within the execution environment so you can use them directly.
+            4.  **Decomposition:** Break down complex problems into smaller, logical, self-contained `async def` helper functions.
+            5.  **Defer Complex Steps**: For any step that requires knowing what a webpage looks like (e.g., finding an element, extracting specific data, clicking a non-obvious button), you **MUST** create a descriptive helper function stubbed with `raise NotImplementedError`. This allows the agent to implement that step later when it can see the page.
+            6.  **Decorators & Docstrings:** Every **function** you define MUST be decorated with `@verify` and include docstrings.
+            7.  **Async All The Way**: All helper functions you define MUST be `async def`.
+            8.  **Await Keyword**: All `action_provider` methods that are asynchronous MUST be called with the `await` keyword.
+            9.  **Structured Output**: For `observe` or `reason` calls that expect a structured answer (e.g., yes/no, a list of items), you MUST define a Pydantic `BaseModel` and pass it to the `response_format` argument to ensure reliable, parsable output.
+            10.  **Robust Error Handling**: Proactively use `try...except` blocks to handle potential **unexpected** failures (e.g., an element not being found) with informative error messages. However, **DO NOT** wrap calls to stubbed functions in a `try...except` block. Let `NotImplementedError` propagate.
+            """,
+        )
     return textwrap.dedent(
         f"""
         ---
         ### Core Instructions & Rules
-        1.  **Single Code Block:** Your entire response MUST be a single, valid Python code block, starting with `@verify`.
-        2.  **Entry Point:** For a full plan, the main entry point MUST be `async def main_plan()`.
-        3.  **Decomposition:** Break down complex problems into smaller, logical, self-contained `async def` helper functions.
-        4.  **Decorators & Docstrings:** Every function you define MUST be decorated with `@verify` and include a concise one-line docstring.
-        5.  **No Imports:** You **MUST NOT** use any `import`/ `__import__` statements. All standard library imports are already present within the execution environment.
-        6.  **Stubbing:** If you cannot implement a function immediately, stub it out with `raise NotImplementedError`.
-        7.  **Await Keyword**: All `action_provider` methods that are asynchronous MUST be called with the `await` keyword.
-        8.  **Structured Output**: For `observe` or `reason` calls that expect a structured answer (e.g., yes/no, a list of items), you MUST define a Pydantic `BaseModel` and pass it to the `response_format` argument to ensure reliable, parsable output.
-        9.  **Robust Error Handling**: Proactively use `try...except` blocks to handle potential failures (e.g., an element not being found). When you must raise an exception, make it informative. Instead of `raise Exception('It failed')`, prefer `raise Exception('Failed to find the "Login" button after 3 scroll attempts.')`. This provides crucial context for self-correction.
+        {instructions_and_rules}
         ---
         ### Strategy & Tool Usage
         {strategy_instruction}
@@ -399,14 +419,13 @@ def build_dynamic_implement_prompt(
             ---
             """,
         )
-    print("---- Strategy Section ----")
-    print(strategy_section)
     strategy_instruction = "Analyze the function's purpose and the available tools to decide on the best implementation strategy."
     tool_usage_instruction = "Use the `action_provider` global object to interact with the environment. Available tools and their handle APIs have been described in the rules below."
     rules_and_examples = _build_rules_and_examples_prompt(
         tools,
         strategy_instruction,
         tool_usage_instruction,
+        is_dynamic_implement=True,
     )
 
     return textwrap.dedent(
@@ -415,10 +434,11 @@ def build_dynamic_implement_prompt(
 
         **CRITICAL RULES:**
         1.  Your response MUST contain ONLY the Python code for the function `{function_name}`.
-        2.  DO NOT write a `main_plan` or any other functions. Your response must begin immediately with the `@verify` decorator for the function you are implementing.
+        2.  **START FROM THE CURRENT STATE**: You are implementing a single step in a larger plan. Analyze the `Current Browser State` and provided screenshot carefully. Your code **MUST NOT** repeat steps that have already been completed. Your logic must begin from the state shown.
 
-        **Overall Goal:** "{goal}"
-        **Function to Implement:** `async def {function_name}{func_sig}`
+        **Your Task:** Implement the function `{function_name}` to achieve the following purpose.
+        **Function's Purpose:** "{function_docstring}"
+        **Function to Implement:** `async def {function_name}{function_sig}`
 
         {failure_analysis_section}
         {strategy_section}
