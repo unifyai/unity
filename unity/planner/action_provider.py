@@ -225,6 +225,7 @@ class ActionProvider:
             )
 
             if visibility_status.is_visible:
+                print(f"Success: Element '{element_description}' is now visible.")
                 return f"Success: Element '{element_description}' is now visible."
 
             print(f"Continue scrolling. Reason: {visibility_status.reason}")
