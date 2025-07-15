@@ -484,9 +484,14 @@ class HierarchicalPlan(BaseActiveTask):
                     f"Escalation ({self.escalation_count}/{self.MAX_ESCALATIONS}): {e}",
                 )
 
-                parent_to_replan = self._get_main_function_name()
+                parent_to_replan = None
+                if len(self.call_stack) > 1:
+                    parent_to_replan = self.call_stack[-2]
+                else:
+                    parent_to_replan = self._get_main_function_name()
+
                 if not parent_to_replan:
-                    raise RuntimeError("Could not determine main_plan to replan.")
+                    raise RuntimeError("Could not determine a function to replan.")
 
                 if self.escalation_count > self.MAX_ESCALATIONS:
                     self._state = _HierarchicalPlanState.PAUSED_FOR_ESCALATION
