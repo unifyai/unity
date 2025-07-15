@@ -320,7 +320,7 @@ class CommandRunner:
                             f"Click failed: Element {element_id_to_click} has no handle or bbox.",
                         )
 
-                execute_and_record(f"click {label}", click_action)
+                execute_and_record(f"click {label}", click_action, is_nav=True)
 
             except (ValueError, PWError, IndexError) as exc:
                 self.log(
