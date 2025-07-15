@@ -1046,14 +1046,17 @@ class HierarchicalPlanner(BasePlanner):
         self.max_local_retries = max_local_retries or 2
         self.timeout = timeout
 
-        model = os.environ.get("UNIFY_MODEL", "gpt-4o-mini@openai")
-        self.main_loop_client: unify.AsyncUnify = unify.AsyncUnify(model)
-        self.plan_generation_client: unify.AsyncUnify = unify.AsyncUnify(model)
-        self.verification_client: unify.AsyncUnify = unify.AsyncUnify(model)
-        self.implementation_client: unify.AsyncUnify = unify.AsyncUnify(model)
-        self.modification_client: unify.AsyncUnify = unify.AsyncUnify(model)
-        self.exploration_client: unify.AsyncUnify = unify.AsyncUnify(model)
-        self.ask_client: unify.AsyncUnify = unify.AsyncUnify(model)
+        self.main_loop_client: unify.AsyncUnify = unify.AsyncUnify("gpt-4o-mini@openai")
+        self.plan_generation_client: unify.AsyncUnify = unify.AsyncUnify(
+            "o4-mini@openai",
+        )
+        self.verification_client: unify.AsyncUnify = unify.AsyncUnify("o4-mini@openai")
+        self.implementation_client: unify.AsyncUnify = unify.AsyncUnify(
+            "o4-mini@openai",
+        )
+        self.modification_client: unify.AsyncUnify = unify.AsyncUnify("o4-mini@openai")
+        self.exploration_client: unify.AsyncUnify = unify.AsyncUnify("o4-mini@openai")
+        self.ask_client: unify.AsyncUnify = unify.AsyncUnify("gpt-4o-mini@openai")
 
     def _sanitize_code(self, code: str) -> str:
         """
@@ -1581,56 +1584,60 @@ class HierarchicalPlanner(BasePlanner):
         """
         is_browser_task = "action_provider.browser" in plan.plan_source_code
         replan_reason = kwargs.get("replan_reason")
+        failed_interactions = kwargs.get("failed_interactions")
         browser_state = None
         new_strategy = None
-
+        docstring = (
+            inspect.getdoc(plan.execution_namespace[function_name])
+            or "No docstring provided."
+        )
         if is_browser_task:
-            # Get a summary AND the raw screenshot
             browser_state = await self.action_provider.browser.observe(
                 "Analyze the current page and provide a structured summary of its content.",
                 response_format=PageAnalysis,
             )
-            # Get the raw screenshot bytes from the controller's cache
             browser_screenshot = self.action_provider.browser.controller._last_shot
         else:
             browser_state = None
             browser_screenshot = None
 
-        if replan_reason:
-            docstring = inspect.getdoc(plan.execution_namespace[function_name])
-            strategy_prompt = build_implementation_strategy_prompt(
-                goal=plan.goal,
-                function_name=function_name,
-                function_docstring=docstring,
-                failure_reason=replan_reason,
-                browser_state=browser_state,
-                has_browser_screenshot=browser_screenshot is not None,
-                tools=self.tools,
-            )
-            self.implementation_client.set_response_format(ImplementationStrategy)
-            strategy_response_raw = await llm_call(
-                self.implementation_client,
-                strategy_prompt,
-                screenshot=browser_screenshot,
-            )
-            new_strategy = ImplementationStrategy.model_validate_json(
-                strategy_response_raw,
-            )
-            self.implementation_client.reset_response_format()
-            plan.action_log.append(
-                f"Devised new strategy for '{function_name}': {new_strategy.rationale}",
-            )
+        strategy_reason = replan_reason
+        if not strategy_reason:
+            strategy_reason = f"This is the first time the function '{function_name}' is being implemented. Please devise a clear, step-by-step plan to achieve its purpose: {docstring}"
 
-        replan_context_str = kwargs.get("replan_reason")
+        strategy_prompt = build_implementation_strategy_prompt(
+            goal=plan.goal,
+            function_name=function_name,
+            function_docstring=docstring,
+            failure_reason=strategy_reason,
+            failed_interactions=failed_interactions,
+            browser_state=browser_state,
+            has_browser_screenshot=browser_screenshot is not None,
+            tools=self.tools,
+        )
+        self.implementation_client.set_response_format(ImplementationStrategy)
+        strategy_response_raw = await llm_call(
+            self.implementation_client,
+            strategy_prompt,
+            screenshot=browser_screenshot,
+        )
+        new_strategy = ImplementationStrategy.model_validate_json(
+            strategy_response_raw,
+        )
+        self.implementation_client.reset_response_format()
+        plan.action_log.append(
+            f"Devised new strategy for '{function_name}': {new_strategy.rationale}",
+        )
+
         replan_context = ""
-        if kwargs.get("is_strategic_replan") and replan_context_str:
+        if kwargs.get("is_strategic_replan") and replan_reason:
             replan_context = textwrap.dedent(
                 f"""
             **REPLANNING NOTE:** The previous attempt failed. Analyze the error traceback below and devise a new, more robust implementation.
 
             **Failure Traceback:**
             ```
-            {replan_context_str}
+            {replan_reason}
             ```
             """,
             )
@@ -1644,8 +1651,8 @@ class HierarchicalPlanner(BasePlanner):
 
         prompt = build_dynamic_implement_prompt(
             function_name=function_name,
-            func_sig=func_sig,
-            goal=plan.goal,
+            function_sig=func_sig,
+            function_docstring=docstring,
             parent_code=parent_code,
             browser_state=browser_state,
             has_browser_screenshot=browser_screenshot is not None,
