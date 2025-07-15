@@ -208,6 +208,12 @@ async def main(
             "tool_use",
         ],
     )
+
+    # Initialize Redis connection (waits for Redis to be ready)
+    print("Initializing Redis connection...")
+    await user_agent.initialize_redis()
+    print("Redis connection initialized successfully")
+
     comms_manager = CommsManager(events_queue=event_manager.events_queue)
     event_manager_task = asyncio.create_task(event_manager.serve())
     asyncio.create_task(comms_manager.start())
