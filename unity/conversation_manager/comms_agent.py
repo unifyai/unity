@@ -97,7 +97,7 @@ class CommsAgent:
 
         # logging
         self.transcript_manager = None
-        self.redis = redis.Redis(host="localhost", port=6379, db=0)
+        self.redis = None
 
     def _build_enabled_tools_dict(self):
         from unity.common.llm_helpers import AsyncToolUseLoopHandle
@@ -477,6 +477,49 @@ class CommsAgent:
 
     def set_event_manager(self, event_manager):
         self.event_manager = event_manager
+
+    async def initialize_redis(self):
+        """Initialize Redis connection after server is ready"""
+        import socket
+
+        # Wait for Redis to be available
+        max_retries = 10
+        retry_count = 0
+
+        while retry_count < max_retries:
+            try:
+                # Check if Redis port is open
+                sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                sock.settimeout(2)
+                result = sock.connect_ex(("localhost", 6379))
+                sock.close()
+
+                if result == 0:
+                    # Try to connect to Redis
+                    test_redis = redis.Redis(host="localhost", port=6379, db=0)
+                    test_redis.ping()
+                    test_redis.close()
+
+                    # Redis is ready, initialize the connection
+                    self.redis = redis.Redis(host="localhost", port=6379, db=0)
+                    print("Redis connection initialized successfully")
+                    return
+                else:
+                    retry_count += 1
+                    print(
+                        f"Redis not ready yet, retrying... ({retry_count}/{max_retries})"
+                    )
+                    await asyncio.sleep(2)
+            except Exception as e:
+                retry_count += 1
+                print(
+                    f"Redis connection attempt {retry_count}/{max_retries} failed: {e}"
+                )
+                await asyncio.sleep(2)
+
+        print("Warning: Failed to initialize Redis connection after all retries")
+        # Initialize with None to avoid errors, but log the issue
+        self.redis = None
 
     def get_user_agent_prompt(self):
         return build_user_agent_prompt(
