@@ -136,6 +136,34 @@ def _build_rules_and_examples_prompt(
         ---
         ### Usage Examples
 
+        **Handling Stubs & Dynamic Implementation (IMPORTANT):**
+        This example shows the correct way to structure a plan that defers a complex step.
+
+        ```python
+        @verify
+        async def login_to_portal():
+            # This part is simple and can be implemented directly.
+            await action_provider.browser_act("Navigate to [https://portal.example.com/login](https://portal.example.com/login)")
+            await action_provider.browser_act("Enter 'user@example.com' into the email field")
+            await action_provider.browser_act("Click the 'Next' button")
+
+        @verify
+        async def scrape_user_dashboard():
+            # This is a complex step that requires seeing the dashboard page first.
+            # Therefore, we correctly stub it out.
+            raise NotImplementedError("Implement logic to find and extract data from the user dashboard.")
+
+        @verify
+        async def main_plan():
+            # In the main plan, we call the functions in order.
+            # Notice there is NO try...except block here.
+            # The planner is designed to automatically catch the NotImplementedError from
+            # scrape_user_dashboard, implement that function, and then resume the plan.
+            await login_to_portal()
+            dashboard_data = await scrape_user_dashboard()
+            return dashboard_data
+        ```
+
         **Using a Handle-Based Tool (like sending a message):**
         ```python
         @verify
@@ -230,40 +258,6 @@ def _build_rules_and_examples_prompt(
                 f"Click the '{{form_info.submit_button_text}}' button",
                 "The form should be submitted and we should see a confirmation page"
             )
-
-        # Example 3: Monitor page state changes
-        class PageState(BaseModel):
-            has_error_message: bool = Field(description="Whether any error message is visible")
-            error_text: str = Field(default="", description="The error message text if visible")
-            loading_indicator_visible: bool = Field(description="Whether a loading spinner or progress indicator is shown")
-            success_message: str = Field(default="", description="Any success/confirmation message if visible")
-
-        @verify
-        async def wait_for_operation_complete():
-            # Keep checking until the operation completes
-            max_attempts = 10
-            for attempt in range(max_attempts):
-                state = await action_provider.browser_observe(
-                    "Check if there are any error messages, loading indicators, or success messages visible on the page",
-                    response_format=PageState
-                )
-
-                if state.has_error_message:
-                    raise Exception(f"Operation failed with error: {{state.error_text}}")
-
-                if state.success_message and not state.loading_indicator_visible:
-                    print(f"Operation completed successfully: {{state.success_message}}")
-                    return True
-
-                if state.loading_indicator_visible:
-                    print(f"Still loading... (attempt {{attempt + 1}}/{{max_attempts}})")
-                    await asyncio.sleep(2)  # Wait before checking again
-                    continue
-
-                # No loading, no error, no success - might need to trigger the operation
-                break
-
-            return False
         ```
 
         **Generic Reasoning:**
@@ -332,7 +326,7 @@ def build_initial_plan_prompt(
 
     return textwrap.dedent(
         f"""
-        You are an expert Python programmer tasked with generating a complete, single-file script to achieve a user's goal.
+        You are an expert strategist. Your task is to generate a high-level Python script that outlines the **strategy** to achieve a user's goal.
 
         **Primary Goal:** "{goal}"
         {rules_and_examples}
