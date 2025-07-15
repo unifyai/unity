@@ -132,8 +132,13 @@ class EmailScreen(Screen):
 class CallScreen(Screen):
     def compose(self) -> ComposeResult:
         yield Header()
+        # Task name and description inputs
+        yield Label("Task Name:")
+        yield Input(placeholder="Enter task name", id="task_name")
+        yield Label("Task Description:")
+        yield Input(placeholder="Enter task description", id="task_description")
         yield Label("Purpose:")
-        yield Input(placeholder="Enter purpose", id="purpose")
+        yield Input(placeholder="Enter purpose", id="purpose", value="general")
         yield Horizontal(
             Button("Call", id="send_call"),
             Button("End Call", id="end_call"),
@@ -143,11 +148,18 @@ class CallScreen(Screen):
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
         if event.button.id == "send_call":
+            # Gather task details
+            task_name = self.query_one("#task_name", Input).value
+            task_description = self.query_one("#task_description", Input).value
             purpose = self.query_one("#purpose", Input).value
-            # Publish a PhoneCallInitiatedEvent for the user
+            # Publish a PhoneCallInitiatedEvent with task_context
             ev = {
                 "topic": os.getenv("USER_PHONE_NUMBER"),
-                "event": PhoneCallInitiatedEvent(purpose=purpose).to_dict(),
+                "event": PhoneCallInitiatedEvent(
+                    purpose=purpose,
+                    task_context={"name": task_name, "description": task_description},
+                    timestamp=datetime.now(),
+                ).to_dict(),
             }
             asyncio.create_task(publish_event(ev))
         elif event.button.id == "end_call":
