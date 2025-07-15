@@ -11,12 +11,12 @@ import functools
 import inspect
 import json
 import logging
-import os
 import sys
 import textwrap
 import traceback
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
+import pydantic
 import unify
 from pydantic import BaseModel, Field
 
@@ -152,12 +152,12 @@ class PlanSanitizer(ast.NodeTransformer):
     """
 
     def visit_Import(self, node: ast.Import) -> Any:
-        """Blocks `import` statements."""
-        raise SyntaxError("Import statements are not allowed in plans.")
+        """Removes all `import <module>` statements."""
+        return None
 
     def visit_ImportFrom(self, node: ast.ImportFrom) -> Any:
-        """Blocks `from ... import` statements."""
-        raise SyntaxError("Import statements are not allowed in plans.")
+        """Removes all `from <module> import ...` statements."""
+        return None
 
     def visit_AsyncFunctionDef(
         self,
@@ -1191,6 +1191,7 @@ class HierarchicalPlanner(BasePlanner):
             "json": json,
             "datetime": datetime,
             "collections": collections,
+            "pydantic": pydantic,
             "BaseModel": BaseModel,
             "Field": Field,
         }
