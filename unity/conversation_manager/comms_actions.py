@@ -381,6 +381,7 @@ class Call(SteerableToolHandle):
         self.phone_number = phone_number
         self.purpose = purpose
         self.task_context = task_context
+
         self.client = unify.AsyncUnify("o4-mini@openai")
         self.tools = methods_to_tool_dict(
             self._search_local_chat,
