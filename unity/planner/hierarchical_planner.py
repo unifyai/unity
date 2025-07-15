@@ -1389,11 +1389,15 @@ class HierarchicalPlanner(BasePlanner):
             f"   - Purpose: {fn.__doc__ or 'N/A'}\n"
             f"   - Interactions:\n{json.dumps(all_interactions, indent=4)}",
         )
+        final_screenshot = None
+        if "action_provider.browser" in plan.plan_source_code:
+            final_screenshot = self.action_provider.browser.controller._last_shot
         assessment = await self._check_state_against_goal(
             plan,
             fn.__name__,
             fn.__doc__,
             all_interactions,
+            screenshot=final_screenshot,
         )
         logger.info(
             f"🕵️ VERIFICATION ASSESSMENT for '{fn.__name__}': {assessment.model_dump_json(indent=2)}",
@@ -1665,6 +1669,7 @@ class HierarchicalPlanner(BasePlanner):
         function_name: str,
         function_docstring: str | None,
         interactions: list,
+        screenshot: bytes | str | None = None,
     ) -> VerificationAssessment:
         """
         Uses an LLM to assess if a function's execution achieved its goal.
@@ -1674,6 +1679,7 @@ class HierarchicalPlanner(BasePlanner):
             function_name: The name of the function being verified.
             function_docstring: The docstring of the function.
             interactions: A log of interactions that occurred.
+            screenshot: The screenshot of the current state of the browser.
 
         Returns:
             A VerificationAssessment object with the outcome.
@@ -1683,8 +1689,13 @@ class HierarchicalPlanner(BasePlanner):
             function_name=function_name,
             function_docstring=function_docstring,
             interactions=interactions,
+            has_browser_screenshot=screenshot is not None,
         )
-        response_str = await llm_call(self.verification_client, prompt)
+        response_str = await llm_call(
+            self.verification_client,
+            prompt,
+            screenshot=screenshot,
+        )
         try:
             clean_response = (
                 response_str.strip().replace("```json", "").replace("```", "")

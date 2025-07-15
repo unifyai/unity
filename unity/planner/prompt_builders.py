@@ -441,6 +441,7 @@ def build_verification_prompt(
     function_name: str,
     function_docstring: str | None,
     interactions: list,
+    has_browser_screenshot: bool,
 ) -> str:
     """
     Builds the prompt for verifying a function's execution.
@@ -450,6 +451,7 @@ def build_verification_prompt(
         function_name: The name of the function being verified.
         function_docstring: The docstring of the function.
         interactions: A log of `act` and `observe` calls made.
+        has_browser_screenshot: Whether a screenshot of the browser is provided.
 
     Returns:
         The complete prompt string for the verification LLM call.
@@ -465,7 +467,18 @@ def build_verification_prompt(
         )
         or "No browser actions were logged for this step."
     )
-
+    screenshot_context_section = ""
+    if has_browser_screenshot:
+        screenshot_context_section = textwrap.dedent(
+            """
+            ---
+            ### CRITICAL: Visual Verification
+            You have been provided a **screenshot** of the browser's final state after the function finished.
+            - **Use this screenshot as the primary source of truth.**
+            - If the interaction log claims success (e.g., "navigated to page X") but the screenshot clearly shows this did not happen, you MUST rule the function a failure (`reimplement_local`).
+            - Use both the interaction log and the screenshot to make your assessment.
+            """,
+        )
     return textwrap.dedent(
         f"""
         You are a meticulous verification agent. Your task is to assess if the executed actions successfully achieved the function's intended purpose, in the context of the overall goal.
@@ -474,6 +487,7 @@ def build_verification_prompt(
         **Function Under Review:** `{function_name}`
         **Purpose of this function:** {function_docstring or 'No docstring provided.'}
 
+        {screenshot_context_section}
         **Execution Log (Primitives Used):**
         {interactions_log}
 
@@ -481,8 +495,7 @@ def build_verification_prompt(
         ### Assessment Task
         Based on the function's purpose and the execution log, provide your assessment as a single JSON object.
         - **Be pragmatic:** If the function's purpose is to gather data (like search results), and the log shows that the data was successfully retrieved, this should be considered a success (`ok`). The function does not need to perform extra analysis unless explicitly asked.
-        - **Consider the overall goal:** If a function's individual purpose is unclear but its actions logically progress toward the overall user goal, you should also consider it a success (`ok`).
-        - **Trust the code:** If the interaction log is empty, assess based on the function's likely outcome given its purpose and the overall goal. Assume it acted correctly unless there's a clear logical flaw.
+        **Compare the Result to the Goal**: Do not just check if the function *did something*. Check if the *outcome* of the function satisfies the requirements of the overall goal.
 
         **Response Schema:**
         `{{"status": "...", "reason": "..."}}`
