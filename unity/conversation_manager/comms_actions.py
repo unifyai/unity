@@ -42,7 +42,6 @@ headers = {"Authorization": f"Bearer {os.getenv('ORCHESTRA_ADMIN_KEY')}"}
 
 # Low-level functions
 async def _send_whatsapp_message_via_number(
-    # from_number: str, # for debugging, to remove
     to_number: str,
     message: str,
 ) -> str:
@@ -57,7 +56,7 @@ async def _send_whatsapp_message_via_number(
     Returns:
         str: The response from the WhatsApp API
     """
-    from_number = os.getenv("ASSISTANT_WHATSAPP_NUMBER")  # for debugging, to remove
+    from_number = os.getenv("ASSISTANT_NUMBER")  # for debugging, to remove
     if not from_number:
         # always use the assistant phone number (unique) to find whatsapp number
         from_number = await find_assistant_whatsapp_number()
@@ -156,7 +155,7 @@ async def _send_whatsapp_message_via_number(
 
 
 async def _send_sms_message_via_number(
-    # from_number: str, # for debugging, to remove
+    from_number: str,
     to_number: str,
     message: str,
 ) -> str:
@@ -171,9 +170,8 @@ async def _send_sms_message_via_number(
     Returns:
         str: The response from the SMS API
     """
-    from_number = os.getenv("ASSISTANT_NUMBER")
     if not from_number:
-        raise ValueError("ASSISTANT_NUMBER environment variable not set.")
+        from_number = os.getenv("ASSISTANT_NUMBER")
 
     print(f"Sending SMS from {from_number} to {to_number}: {message}")
     async with aiohttp.ClientSession() as session:
@@ -210,11 +208,9 @@ async def _send_email_via_address(
     Returns:
         str: The response from the email API
     """
-    # from_email = os.getenv("ASSISTANT_EMAIL") # for debugging, to remove
     if not from_email:
-        from_email = "unity.agent@unify.ai"  # todo: temp placeholder
-        # print("No email address found for assistant")
-        # return "Message not sent: No email address found for assistant"
+        from_email = os.getenv("ASSISTANT_EMAIL")
+
     print(f"Sending email from {from_email} to {to_email}: {content}")
     async with aiohttp.ClientSession() as session:
         async with session.post(
@@ -250,7 +246,8 @@ async def _start_call(
     Returns:
         str: The response from the email API
     """
-    from_number = os.getenv("ASSISTANT_NUMBER")  # for debugging, to remove
+    if not from_number:
+        from_number = os.getenv("ASSISTANT_NUMBER")
 
     await publish_event(
         {
@@ -386,8 +383,6 @@ class Call(SteerableToolHandle):
         self.tools = methods_to_tool_dict(
             self._search_local_chat,
             self._ask_user_then_search,
-            # _send_email_via_address,
-            # _send_sms_message_via_number,
         )
         if tools:
             self.tools = {

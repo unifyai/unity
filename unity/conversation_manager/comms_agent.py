@@ -4,11 +4,15 @@ import openai
 import os
 import redis
 import traceback
-
 import unify
 from unity.common.llm_helpers import start_async_tool_use_loop, methods_to_tool_dict
 from unity.helpers import run_script, terminate_process
-from unity.conversation_manager.comms_actions import _start_call
+from unity.conversation_manager.comms_actions import (
+    _start_call,
+    _send_email_via_address,
+    _send_sms_message_via_number,
+    _send_whatsapp_message_via_number,
+)
 from unity.conversation_manager.actions import *
 from unity.conversation_manager.events import *
 from unity.conversation_manager.prompt_builders import (
@@ -51,8 +55,10 @@ class CommsAgent:
         assistant_region: str,
         assistant_about: str,
         assistant_number: str,
+        assistant_email: str,
         user_number: str,
         user_phone_call_number: str = None,
+        user_email: str = None,
         past_events: list | None = None,
         conv_context_length: int = 50,
         start_local: bool = False,
@@ -67,8 +73,10 @@ class CommsAgent:
 
         # contact data
         self.assistant_number = assistant_number
+        self.assistant_email = assistant_email
         self.user_name = user_name
         self.user_number = user_number
+        self.user_email = user_email
         self.user_phone_call_number = (
             user_phone_call_number if user_phone_call_number else user_number
         )
@@ -153,6 +161,14 @@ class CommsAgent:
 
                 manager = TaskScheduler()
                 tools_list += [manager.ask, manager.update]
+
+            elif tool == "comms":
+                tools_list += [
+                    # self._inner_send_call,
+                    self._inner_send_sms,
+                    self._inner_send_email,
+                    self._inner_send_whatsapp,
+                ]
 
         self.enabled_tools = methods_to_tool_dict(*tools_list)
 
@@ -372,8 +388,6 @@ class CommsAgent:
                 if t.actions is not None:
                     print("actions", t.actions)
                     for action in t.actions:
-                        # if isinstance(action, SendCallAction):
-                        #     asyncio.create_task(self.send_call())
                         if isinstance(action, ToolUseAction):
                             asyncio.create_task(self.tool_use_action(action))
                         elif isinstance(action, ToolUseHandleAction):
@@ -465,13 +479,64 @@ class CommsAgent:
         self.inflight_events.clear()
         return event.parsed
 
-    async def send_call(self):
-        print(self.assistant_number, self.user_phone_call_number)
+    async def _inner_send_call(
+        self,
+        purpose: str = "general",
+        task_context: Dict[str, str] = None,
+    ):
+        """
+        Sends a call from the assistant's number to the user's number.
+
+        Args:
+            purpose (str): The purpose of the call. Use 'general' if there is no specific purpose.
+            task_context (Dict[str, str]): The broader task context for the call, with name and description attributes. Use None if there is no task context.
+        """
         await _start_call(
             self.assistant_number,
             self.user_phone_call_number,
-            self.call_purpose,
-            self.task_context,
+            purpose,
+            task_context,
+        )
+
+    async def _inner_send_sms(self, message: str):
+        """
+        Sends an SMS message from the assistant's number to the user's number.
+
+        Args:
+            message (str): The message content to be sent via SMS.
+        """
+        await _send_sms_message_via_number(
+            self.assistant_number,
+            self.user_phone_call_number,
+            message,
+        )
+
+    async def _inner_send_email(self, subject: str, message: str):
+        """
+        Sends an email from the assistant's email address to the user's email address.
+
+        Args:
+            subject (str): The subject of the email.
+            message (str): The message content to be sent via email.
+        """
+        await _send_email_via_address(
+            self.assistant_email,
+            self.user_email,
+            subject,
+            message,
+        )
+
+    async def _inner_send_whatsapp(self, message: str):
+        """
+        Sends a WhatsApp message from the assistant's number to the user's number.
+
+        Args:
+            message (str): The message content to be sent via WhatsApp.
+        """
+        await _send_whatsapp_message_via_number(
+            self.assistant_number,
+            self.user_number,
+            message,
         )
 
     async def wait_for_seconds_or_next_event(self, time: int): ...
@@ -575,6 +640,7 @@ class CommsAgent:
                 self.call_proc = None
                 self.call_mode = False
                 ONGOING_CALL = False
+
         elif event["event"]["event_name"] == "PhoneCallStopEvent":
             self.publish(
                 {
