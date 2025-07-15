@@ -53,6 +53,7 @@ from sandboxes.utils import (
     record_until_enter as _record_until_enter,
     transcribe_deepgram as _transcribe_deepgram,
     speak as _speak,
+    activate_project,
 )
 
 load_dotenv()
@@ -156,7 +157,7 @@ async def _main_async() -> None:
     args = parser.parse_args()
 
     # Unify context
-    unify.activate(args.project_name)
+    activate_project(args.project_name)
     unify.set_trace_context("Traces")
     if args.traced:
         LG.info("[trace] Unify tracing enabled")
