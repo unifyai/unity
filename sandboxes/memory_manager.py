@@ -50,6 +50,9 @@ if str(ROOT) not in sys.path:
 from unity.memory_manager.memory_manager import MemoryManager  # type: ignore[attr-defined]
 from sandboxes.utils import (
     TranscriptGenerator,
+    record_until_enter as _record_until_enter,
+    transcribe_deepgram as _transcribe_deepgram,
+    speak as _speak,
 )
 
 load_dotenv()
@@ -236,9 +239,23 @@ async def _main_async() -> None:
         "rolling-activity overview or 'quit' to exit.\n",
     )
 
+    # Voice-mode greeting so behaviour matches other sandboxes
+    if args.voice:
+        _speak(
+            "Welcome to the Memory Manager sandbox. Describe your conversation scenario or choose a maintenance command. Press enter to start recording.",
+        )
+
     while True:
         try:
-            prompt = input("scenario> ").strip()
+            # Voice or text capture for the scenario / command prompt
+            if args.voice:
+                audio = _record_until_enter()
+                prompt = _transcribe_deepgram(audio).strip()
+                if not prompt:
+                    continue
+                print(f"▶️  {prompt}")
+            else:
+                prompt = input("scenario> ").strip()
         except (EOFError, KeyboardInterrupt):
             print("\nExiting…")
             break
