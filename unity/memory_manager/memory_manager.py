@@ -21,6 +21,7 @@ from .prompt_builders import (
 )
 from .base import BaseMemoryManager
 from ..events.event_bus import EVENT_BUS, Event
+from .rolling_activity import set_rolling_activity
 
 
 class MemoryManager(BaseMemoryManager):
@@ -756,6 +757,15 @@ class MemoryManager(BaseMemoryManager):
             mutable=True,
             **base_payload,
         )
+
+        # ---- 2b.  update global cache --------------------------------------
+        # Keep the in-process snapshot in sync so prompt builders never have
+        # to query the backend after the initial bootstrap.
+        try:
+            set_rolling_activity(base_payload[self._SUMMARY_TIME_COL])
+        except Exception:
+            # Defensive guard – updating the cache must never break the caller.
+            pass
 
         # ---- 3.  notify dependants ----------------------------------------
         # Emit a *RollingSummary* event so higher-level windows trigger only

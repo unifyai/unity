@@ -6,6 +6,8 @@ import inspect
 from datetime import datetime, timezone
 from typing import Callable, Dict, Optional
 
+from .rolling_activity import get_rolling_activity
+
 
 # ── utils ───────────────────────────────────────────────────────────────
 def _sig_dict(tools: Dict[str, Callable]) -> Dict[str, str]:
@@ -172,22 +174,22 @@ def build_task_prompt(
 
 
 def _rolling_activity_section() -> str:
-    """Return a markdown summary of the agent's historic activity."""
+    """Return a markdown summary of the agent's historic activity.
+
+    Reads the **process-wide** cached snapshot instead of querying the backend
+    via `MemoryManager().get_rolling_activity()` on every call.  Callers can
+    still rely on the helper to return an *empty string* when nothing useful
+    has been recorded yet.
+    """
 
     try:
-        # Lazy import to avoid circular dependency issues
-        from .memory_manager import MemoryManager  # noqa: WPS433
-
-        overview = MemoryManager().get_rolling_activity()
-    except Exception:  # pragma: no cover
+        overview = get_rolling_activity()
+    except Exception:  # pragma: no cover – defensive guard
         return ""
 
-    # Skip the entire section when there's nothing meaningful to report.
     if not overview:
         return ""
 
-    # Compose the section with a *closing* dashed line to clearly separate it
-    # from any subsequent system-message content.
     return "\n".join(
         [
             "Historic Activity Overview",
