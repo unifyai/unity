@@ -1,4 +1,12 @@
-# Starts the convo manager
+"""
+Starts the conversation manager.
+
+This script can be run as a CLI with the following arguments:
+    --local         Enable local GUI mode (default).
+    --full          Disable local GUI mode (real comms and no GUI).
+    --enabled-tools Comma-separated list of enabled tools (choices: conductor, contact, transcript, knowledge, scheduler, comms). Default: None
+"""
+
 import signal
 import time
 import unity.conversation_manager
@@ -42,7 +50,7 @@ if __name__ == "__main__":
         dest="enabled_tools",
         type=lambda s: [t.strip() for t in s.split(",")],
         default=None,
-        help="Comma-separated list of enabled tools with choices of conductor, contact, transcript, knowledge, scheduler. Default: None",
+        help="Comma-separated list of enabled tools with choices of conductor, contact, transcript, knowledge, scheduler, comms. Default: None",
     )
     args = parser.parse_args()
 
