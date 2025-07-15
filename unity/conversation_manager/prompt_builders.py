@@ -123,9 +123,9 @@ def _build_task_context_section(
         [
             title,
             underline,
-            f"The {"call" if is_call else "message"} is part of a broader task as described below:",
-            f"Task name: {task_context["name"]}",
-            f"Task description: {task_context["description"]}",
+            f"The {'call' if is_call else 'message'} is part of a broader task as described below:",
+            f"Task name: {task_context['name']}",
+            f"Task description: {task_context['description']}",
         ],
     )
 
