@@ -168,7 +168,9 @@ def create_unity_job(
     user_name: str,
     user_number: str,
     assistant_number: str = "",
+    assistant_email: str = "",
     user_phone_number: str = "",
+    user_email: str = "",
     namespace: str = "default",
     image: str = "us-central1-docker.pkg.dev/responsive-city-458413-a2/unity/unity:latest",
 ):
@@ -181,7 +183,9 @@ def create_unity_job(
         user_name: User's name
         user_number: User's phone number
         assistant_number: Assistant's phone number (optional)
+        assistant_email: Assistant's email address (optional)
         user_phone_number: User's phone for calls (defaults to user_number)
+        user_email: User's email address
         namespace: Kubernetes namespace
         image: Docker image to use
     """
@@ -241,6 +245,11 @@ def create_unity_job(
                                     # Assistant-specific environment variables
                                     {"name": "ASSISTANT_ID", "value": assistant_id},
                                     {"name": "USER_NAME", "value": user_name},
+                                    {"name": "USER_EMAIL", "value": user_email},
+                                    {
+                                        "name": "ASSISTANT_EMAIL",
+                                        "value": assistant_email,
+                                    },
                                     {
                                         "name": "ASSISTANT_NUMBER",
                                         "value": assistant_number,
@@ -671,7 +680,9 @@ Examples:
         user_name=args.user_name,
         user_number=args.user_number,
         assistant_number=args.assistant_number,
+        assistant_email=args.assistant_email,
         user_phone_number=args.user_phone_number,
+        user_email=args.user_email,
         namespace=args.namespace,
         image=args.image,
         cleanup_delay_seconds=args.cleanup_delay,
