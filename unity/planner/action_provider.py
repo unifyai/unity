@@ -14,6 +14,7 @@ from unity.controller.browser import Browser
 from unity.contact_manager.contact_manager import ContactManager
 from unity.transcript_manager.transcript_manager import TranscriptManager
 from unity.knowledge_manager.knowledge_manager import KnowledgeManager
+from unity.common.llm_helpers import methods_to_tool_dict
 
 
 class ActionProvider:
@@ -93,12 +94,12 @@ class ActionProvider:
         return comms_actions.Call(
             phone_number,
             purpose,
-            # tools=methods_to_tool_dict(
-            #     self.contact_manager.ask,
-            #     self.transcript_manager.ask,
-            #     self.knowledge_manager.ask,
-            #     self.task_scheduler.ask,
-            # ),
+            tools=methods_to_tool_dict(
+                self.contact_manager.ask,
+                self.transcript_manager.ask,
+                self.knowledge_manager.ask,
+                self.task_scheduler.ask,
+            ),
         )
 
     # --- Browser Actions ---
