@@ -527,7 +527,7 @@ class Call(SteerableToolHandle):
 
     async def interject(self, text: str) -> str:
         """
-        Interject a message to the assistant for them to speak it to the user.
+        Interject a message to the assistant for them to log as instruction for next response.
         """
         await self.call_ready.wait()
         await self.call_ask_status.wait()
@@ -537,16 +537,9 @@ class Call(SteerableToolHandle):
             {
                 "topic": self.phone_number,
                 "to": "past",
-                "event": InterruptEvent().to_dict(),
-            },
-        ),
-        await publish_event(
-            {
-                "topic": self.phone_number,
-                "to": "pending",
                 "event": PhoneUtteranceEvent(
                     role="System",
-                    content=f"Speak this content to the user directly: {text}",
+                    content=f"Instruction on next response: {text}",
                 ).to_dict(),
             },
         )
