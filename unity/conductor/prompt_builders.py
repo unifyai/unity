@@ -7,6 +7,7 @@ from typing import Dict, Callable
 
 from ..task_scheduler.types.task import Task
 from ..common.llm_helpers import SteerableToolHandle, class_api_overview
+from ..memory_manager.rolling_activity import get_rolling_activity
 
 # ───────────────────────────────────── helpers ─────────────────────────────────────
 
@@ -27,13 +28,11 @@ def _now() -> str:
 
 
 def _rolling_activity_section() -> str:
-    """Return a markdown summary of the agent's historic activity."""
+    """Return a markdown summary of historic activity from cache."""
 
     try:
-        from ..memory_manager.memory_manager import MemoryManager  # noqa: WPS433
-
-        overview = MemoryManager().get_rolling_activity()
-    except Exception:  # pragma: no cover
+        overview = get_rolling_activity()
+    except Exception:
         return ""
 
     if not overview:

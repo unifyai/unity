@@ -8,6 +8,7 @@ from typing import Dict, Callable, List
 
 from .types.contact import Contact
 from ..knowledge_manager.types import column_type_schema
+from ..memory_manager.rolling_activity import get_rolling_activity
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -51,19 +52,13 @@ def _tool_name(tools: Dict[str, Callable], needle: str) -> str | None:
 def _rolling_activity_section() -> str:
     """Return a human-readable summary of historic agent activity.
 
-    The summary is fetched via ``MemoryManager.get_rolling_activity``.  If the
-    call fails for *any* reason we silently return an empty string so that
-    prompt generation never breaks at runtime.
+    Uses the **process-wide** in-memory cache instead of hitting the backend
+    on every invocation.
     """
 
     try:
-        # Local import to avoid heavy or circular imports at module load time
-        from ..memory_manager.memory_manager import (
-            MemoryManager,
-        )  # noqa: WPS433 – runtime import by design
-
-        overview = MemoryManager().get_rolling_activity()
-    except Exception:  # pragma: no cover – defensive guard
+        overview = get_rolling_activity()
+    except Exception:  # pragma: no cover – defensive
         return ""
 
     if not overview:

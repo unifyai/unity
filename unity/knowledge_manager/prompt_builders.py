@@ -7,6 +7,7 @@ from datetime import datetime, timezone
 from typing import Callable, Dict
 
 from .types import column_type_schema
+from ..memory_manager.rolling_activity import get_rolling_activity
 
 # ────────────────────────────────────────────────────────────────────────────
 # helpers
@@ -28,12 +29,10 @@ def _now() -> str:  # UTC timestamp helper
 
 
 def _rolling_activity_section() -> str:
-    """Return a markdown summary of the agent's historic activity."""
+    """Return a markdown summary of the agent's historic activity from cache."""
 
     try:
-        from ..memory_manager.memory_manager import MemoryManager  # noqa: WPS433
-
-        overview = MemoryManager().get_rolling_activity()
+        overview = get_rolling_activity()
     except Exception:  # pragma: no cover
         return ""
 

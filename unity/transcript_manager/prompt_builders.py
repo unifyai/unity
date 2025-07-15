@@ -20,6 +20,7 @@ from typing import Callable, Dict, Optional
 from ..contact_manager.types.contact import Contact
 from .types.message import Message
 from .types.message_exchange_summary import MessageExchangeSummary
+from ..memory_manager.rolling_activity import get_rolling_activity
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Internal helpers
@@ -44,14 +45,11 @@ def _now() -> str:
 
 
 def _rolling_activity_section() -> str:
-    """Return a human-readable summary of historic agent activity."""
+    """Return a human-readable summary of historic agent activity using cache."""
 
     try:
-        # Local import to avoid circular deps at import time
-        from ..memory_manager.memory_manager import MemoryManager  # noqa: WPS433
-
-        overview = MemoryManager().get_rolling_activity()
-    except Exception:  # pragma: no cover – keep prompts robust
+        overview = get_rolling_activity()
+    except Exception:  # pragma: no cover – safe fallback
         return ""
 
     if not overview:
