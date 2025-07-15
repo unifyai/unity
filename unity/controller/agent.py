@@ -795,7 +795,7 @@ def text_to_browser_action(
                 {
                     "type": "image_url",
                     "image_url": {
-                        "url": f"data:image/jpeg;base64," f"{screenshot}",
+                        "url": f"data:image/png;base64," f"{screenshot}",
                     },
                 },
             ]
@@ -883,7 +883,7 @@ def text_to_browser_action(
                 {
                     "type": "image_url",
                     "image_url": {
-                        "url": f"data:image/jpeg;base64," f"{screenshot}",
+                        "url": f"data:image/png;base64," f"{screenshot}",
                     },
                 },
             ]
@@ -1064,7 +1064,7 @@ def ask_llm(
             content.append(
                 {
                     "type": "image_url",
-                    "image_url": {"url": f"data:image/jpeg;base64,{png_bytes}"},
+                    "image_url": {"url": f"data:image/png;base64,{png_bytes}"},
                 },
             )
 
