@@ -616,42 +616,43 @@ class HierarchicalPlan(BaseActiveTask):
             )
 
         try:
-            new_code_module = ast.parse(textwrap.dedent(new_code))
-            if not new_code_module.body or not isinstance(
-                new_code_module.body[0],
-                (ast.FunctionDef, ast.AsyncFunctionDef),
-            ):
-                raise ValueError("New code does not define a function.")
-
-            new_functions = {
-                node.name: node
-                for node in new_code_module.body
-                if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
-            }
-
             old_tree = ast.parse(self.plan_source_code or "pass")
+            new_tree = ast.parse(textwrap.dedent(new_code))
 
-            old_functions = {
+            old_defs = {
                 node.name: node
                 for node in old_tree.body
-                if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+                if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef))
             }
 
-            for name, new_func_node in new_functions.items():
-                if name in old_functions:
-                    transformer = FunctionReplacer(name, new_func_node)
-                    old_tree = transformer.visit(old_tree)
-                else:
-                    old_tree.body.append(new_func_node)
+            new_defs = {
+                node.name: node
+                for node in new_tree.body
+                if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef))
+            }
 
-            self.plan_source_code = ast.unparse(old_tree)
-
-            for name, new_func_node in new_functions.items():
-                self.function_source_map[name] = ast.get_source_segment(
-                    self.plan_source_code,
-                    new_func_node,
+            if function_name not in new_defs:
+                raise ValueError(
+                    f"The new code block from the LLM does not contain the required "
+                    f"function '{function_name}'."
                 )
 
+            old_defs.update(new_defs)
+
+            final_body = list(old_defs.values())
+            final_tree = ast.Module(body=final_body, type_ignores=[])
+            ast.fix_missing_locations(final_tree)
+
+            self.plan_source_code = ast.unparse(final_tree)
+
+            self.function_source_map.clear()
+            for name, node in old_defs.items():
+                if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                    self.function_source_map[name] = ast.get_source_segment(
+                        self.plan_source_code,
+                        node,
+                    )
+            
             exec(
                 compile(self.plan_source_code, "<string>", "exec"),
                 self.execution_namespace,
