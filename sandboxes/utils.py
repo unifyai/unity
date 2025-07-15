@@ -676,3 +676,19 @@ class TranscriptGenerator:
             raise RuntimeError("TranscriptGenerator produced an empty transcript.")
 
         return transcript
+
+
+def activate_project(project_name: str) -> None:
+    """
+    Activate *project_name* and re-initialise the global EventBus singleton so
+    that all subsequent Unify contexts (including those automatically created
+    by EventBus) belong to that project.  Call this immediately after handling
+    CLI arguments and before any manager instances are constructed.
+    """
+    import unify
+    from unity.events.event_bus import EVENT_BUS
+
+    # Switch active project first
+    unify.activate(project_name)
+    # Rebuild EventBus under the new project so its contexts live in `project_name`
+    EVENT_BUS.reset()

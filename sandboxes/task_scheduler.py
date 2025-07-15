@@ -44,6 +44,7 @@ from sandboxes.utils import (
     get_custom_scenario,
     await_with_interrupt as _await_with_interrupt,
     build_cli_parser,
+    activate_project,
 )
 
 LG = logging.getLogger("task_scheduler_sandbox")
@@ -184,7 +185,7 @@ async def _main_async() -> None:
 
     os.environ["UNIFY_TRACED"] = "true" if args.traced else "false"
 
-    unify.activate(args.project_name)
+    activate_project(args.project_name)
     unify.set_trace_context("Traces")
     if args.overwrite:
         contexts = unify.get_contexts()
