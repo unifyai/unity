@@ -1,4 +1,4 @@
-from typing import List, Dict, Optional, Callable, Any
+from typing import List, Dict, Optional, Callable, Any, Tuple
 import asyncio
 import requests
 import json
@@ -61,17 +61,12 @@ class ContactManager(BaseContactManager):
             )
 
         # ── immutable built-in columns ───────────────────────────────────
-        self._REQUIRED_COLUMNS: set[str] = {
-            "contact_id",
-            "first_name",
-            "surname",
-            "email_address",
-            "phone_number",
-            "whatsapp_number",
-            "description",
-            "bio",
-            "rolling_summary",
-        }
+        # Derive the required/built-in columns directly from the Contact model so
+        # that there is a single source-of-truth for field names across the
+        # code-base.  Any future change to the Contact schema will
+        # automatically propagate here.
+        self._BUILTIN_FIELDS: Tuple[str, ...] = tuple(Contact.model_fields.keys())
+        self._REQUIRED_COLUMNS: set[str] = set(self._BUILTIN_FIELDS)
 
         # ── schema-management internal tools (mirrors KnowledgeManager) ──
         self._schema_tools: Dict[str, Callable] = methods_to_tool_dict(
@@ -197,36 +192,49 @@ class ContactManager(BaseContactManager):
 
         if selected is not None:
             a = selected
+            # Start with a dictionary that contains *all* builtin fields (except
+            # contact_id) set to None so we never forget to initialise a field if
+            # the Contact schema evolves.
             base_fields = {
-                "first_name": a.get("first_name"),
-                "surname": a.get("surname"),
-                "email_address": a.get("email"),
-                "phone_number": a.get("phone"),
-                "whatsapp_number": a.get("phone"),
-                "description": a.get("about"),
-                "bio": a.get("about"),
-                "rolling_summary": None,
+                fld: None for fld in self._BUILTIN_FIELDS if fld != "contact_id"
             }
+
+            # Map assistant API payload → Contact fields.  We still spell the
+            # Contact field names exactly *once* here, centralising the mapping
+            # logic in a single place.
+            base_fields.update(
+                {
+                    "first_name": a.get("first_name"),
+                    "surname": a.get("surname"),
+                    "email_address": a.get("email"),
+                    "phone_number": a.get("phone"),
+                    "whatsapp_number": a.get("phone"),
+                    "description": a.get("about"),
+                    "bio": a.get("about"),
+                    "rolling_summary": None,
+                },
+            )
             # Everything else is stored verbatim as custom fields
-            mapped_keys = {
-                "first_name",
-                "surname",
-                "email",
-                "phone",
-                "about",
-            }
+            mapped_keys = {"first_name", "surname", "email", "phone", "about"}
         else:
-            # Dummy assistant when account has no assistants configured
+            # Dummy assistant when account has no assistants configured – again
+            # start with all builtin fields set to None and then populate the
+            # known ones so that we never miss a schema update.
             base_fields = {
-                "first_name": "Unify",
-                "surname": "Assistant",
-                "email_address": "unify.assistant@unify.ai",
-                "phone_number": "+10000000000",
-                "whatsapp_number": "+10000000000",
-                "description": "Automatically generated assistant placeholder.",
-                "bio": "Your helpful Unify AI assistant.",
-                "rolling_summary": None,
+                fld: None for fld in self._BUILTIN_FIELDS if fld != "contact_id"
             }
+            base_fields.update(
+                {
+                    "first_name": "Unify",
+                    "surname": "Assistant",
+                    "email_address": "unify.assistant@unify.ai",
+                    "phone_number": "+10000000000",
+                    "whatsapp_number": "+10000000000",
+                    "description": "Automatically generated assistant placeholder.",
+                    "bio": "Your helpful Unify AI assistant.",
+                    "rolling_summary": None,
+                },
+            )
 
         # ------------------------------------------------------------------
         # Retrieve contact_id == 0 (if any) and decide whether to create/update
@@ -717,7 +725,7 @@ class ContactManager(BaseContactManager):
             (email / phone / WhatsApp) is violated.
         """
 
-        # Prune None values
+        # Build the contact dictionary directly from the arguments
         contact_details = {
             "first_name": first_name,
             "surname": surname,
@@ -727,10 +735,14 @@ class ContactManager(BaseContactManager):
             "description": description,
             "bio": bio,
             "rolling_summary": rolling_summary,
-            **(custom_fields if custom_fields is not None else {}),
         }
+
+        # Merge any custom fields provided by the caller
+        if custom_fields:
+            contact_details.update(custom_fields)
+
         assert any(
-            contact_details.values(),
+            v is not None for v in contact_details.values()
         ), "At least one contact detail must be provided."
 
         # If it's the first contact, create immediately
@@ -746,9 +758,17 @@ class ContactManager(BaseContactManager):
                 "details": {"contact_id": 0},
             }
 
-        # Verify uniqueness
+        # Verify uniqueness for contact fields that should be unique (emails,
+        # phone numbers, etc.).  We use a simple heuristic to consider any
+        # field ending in *_address or *_number as unique.
+        unique_fields = {
+            f
+            for f in Contact.model_fields
+            if f.endswith("_address") or f.endswith("_number")
+        }
+
         for key, value in contact_details.items():
-            if key in ["first_name", "surname"] or value is None:
+            if key not in unique_fields or value is None:
                 continue
             logs = unify.get_logs(
                 context=self._ctx,
@@ -824,7 +844,6 @@ class ContactManager(BaseContactManager):
             When no updatable field is provided, when contact_id does not exist,
             or when the new email/phone/WhatsApp value duplicates another record.
         """
-        # Prune None values
         contact_details = {
             "first_name": first_name,
             "surname": surname,
@@ -832,19 +851,27 @@ class ContactManager(BaseContactManager):
             "phone_number": phone_number,
             "whatsapp_number": whatsapp_number,
             "description": description,
-            **(custom_fields if custom_fields is not None else {}),
+            "bio": bio,
+            "rolling_summary": rolling_summary,
         }
+
+        if custom_fields:
+            contact_details.update(custom_fields)
+
         updates_to_apply = [{k: v} for k, v in contact_details.items() if v is not None]
         if not updates_to_apply:
             raise ValueError(
                 "At least one contact detail must be provided for an update.",
             )
 
+        unique_fields = {
+            f
+            for f in Contact.model_fields
+            if f.endswith("_address") or f.endswith("_number")
+        }
+
         for key, value in contact_details.items():
-            if (
-                key in ["email_address", "phone_number", "whatsapp_number"]
-                and value is not None
-            ):
+            if key in unique_fields and value is not None:
                 logs = unify.get_logs(
                     context=self._ctx,
                     filter=f"{key} == '{value}' and contact_id != {contact_id}",
