@@ -19,8 +19,7 @@ def test_create_contact():
     assert len(user_contacts) == 1, "Exactly one user contact should have been created"
     contact = user_contacts[0]
 
-    # The new contact should *not* reuse ID 0
-    assert contact.contact_id != 0
+    assert contact.contact_id == 1
     assert contact.first_name == "Dan"
     assert contact.bio == "A bit of a loser"
     # Remaining built-in fields should default to None
@@ -28,7 +27,6 @@ def test_create_contact():
     assert contact.email_address is None
     assert contact.phone_number is None
     assert contact.whatsapp_number is None
-    assert contact.bio is None
     assert contact.rolling_summary is None
 
 
