@@ -76,7 +76,7 @@ def _build_rules_and_examples_prompt(
             f"""
             1.  **Single Code Block:** Your entire response MUST be a single, valid Python code block.
             2.  **No Imports:** You **MUST NOT** use any `import`/ `__import__` statements in your code. All standard library imports(eg: `asyncio`, `re`, `pydantic`) are already present within the execution environment so you can use them directly.
-            3.  **Decorators & Docstrings:** Every **function** you define MUST be decorated with `@verify` and include docstrings.
+            3.  **Decorators & Docstrings:** Every **function** you define MUST include docstrings which include the function's purpose, its arguments, and its return value.
             4.  **Async All The Way**: All helper functions you define MUST be `async def`.
             5.  **Await Keyword**: All `action_provider` methods that are asynchronous MUST be called with the `await` keyword.
             6.  **Structured Output**: For `observe` or `reason` calls that expect a structured answer (e.g., yes/no, a list of items), you MUST define a Pydantic `BaseModel` and pass it to the `response_format` argument to ensure reliable, parsable output.
@@ -91,7 +91,7 @@ def _build_rules_and_examples_prompt(
             3.  **No Imports:** You **MUST NOT** use any `import`/ `__import__` statements in your code. All standard library imports(eg: `asyncio`, `re`, `pydantic`) are already present within the execution environment so you can use them directly.
             4.  **Decomposition:** Break down complex problems into smaller, logical, self-contained `async def` helper functions.
             5.  **Defer Complex Steps**: For any step that requires knowing what a webpage looks like (e.g., finding an element, extracting specific data, clicking a non-obvious button), you **MUST** create a descriptive helper function stubbed with `raise NotImplementedError`. This allows the agent to implement that step later when it can see the page.
-            6.  **Decorators & Docstrings:** Every **function** you define MUST be decorated with `@verify` and include docstrings.
+            6.  **Decorators & Docstrings:** Every **function** you define MUST include docstrings which include the function's purpose, its arguments, and its return value.
             7.  **Async All The Way**: All helper functions you define MUST be `async def`.
             8.  **Await Keyword**: All `action_provider` methods that are asynchronous MUST be called with the `await` keyword.
             9.  **Structured Output**: For `observe` or `reason` calls that expect a structured answer (e.g., yes/no, a list of items), you MUST define a Pydantic `BaseModel` and pass it to the `response_format` argument to ensure reliable, parsable output.
