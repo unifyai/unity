@@ -64,7 +64,7 @@ class CommsAgent:
         start_local: bool = False,
         enabled_tools: list | str | None = "conductor",
         task_context: Dict[str, str] = None,
-        outer_comms_enabled: bool = True,
+        outer_comms_enabled: bool = False,
     ):
         # assistant details
         self.assistant_name = assistant_name
