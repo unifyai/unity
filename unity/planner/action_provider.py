@@ -53,7 +53,7 @@ class ActionProvider:
         3. It then calls the low-level `_send_sms_message_via_number` to finally send the message.
         You should provide a clear and complete description, e.g., "Send a text to John Doe letting him know his appointment is confirmed for 3 PM tomorrow."
         """
-        return comms_actions.send_sms_message(description, parent_chat_context)
+        return await comms_actions.send_sms_message(description, parent_chat_context)
 
     async def send_email(
         self,
@@ -67,7 +67,7 @@ class ActionProvider:
         3. It then calls the low-level `_send_email_via_address` to send the email.
         You should provide a clear and complete description, e.g., "Email Jane Doe to follow up on our conversation from yesterday about the project proposal."
         """
-        return comms_actions.send_email(description, parent_chat_context)
+        return await comms_actions.send_email(description, parent_chat_context)
 
     async def send_whatsapp_message(
         self,
@@ -81,7 +81,7 @@ class ActionProvider:
         3. It calls the low-level `_send_whatsapp_message_via_number` to dispatch the message.
         You should provide a clear and complete description, e.g., "Send a WhatsApp message to the team group to remind them of the 10 AM meeting."
         """
-        return comms_actions.send_whatsapp_message(description, parent_chat_context)
+        return await comms_actions.send_whatsapp_message(description, parent_chat_context)
 
     def start_call(self, phone_number: str, purpose: str) -> SteerableToolHandle:
         """
