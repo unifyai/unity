@@ -527,7 +527,7 @@ class CommsAgent:
             message (str): The message content to be sent via SMS.
         """
         await _send_sms_message_via_number(
-            self.assistant_number,
+            # self.assistant_number,
             self.user_phone_call_number,
             message,
         )
@@ -541,7 +541,7 @@ class CommsAgent:
             message (str): The message content to be sent via email.
         """
         await _send_email_via_address(
-            self.assistant_email,
+            # self.assistant_email,
             self.user_email,
             subject,
             message,
@@ -555,7 +555,7 @@ class CommsAgent:
             message (str): The message content to be sent via WhatsApp.
         """
         await _send_whatsapp_message_via_number(
-            self.assistant_number,
+            # self.assistant_number,
             self.user_number,
             message,
         )
@@ -593,7 +593,7 @@ class CommsAgent:
             message (str): The message content to be sent via SMS.
         """
         await _send_sms_message_via_number(
-            self.assistant_number,
+            # self.assistant_number,
             to_number,
             message,
         )
@@ -608,7 +608,7 @@ class CommsAgent:
             message (str): The message content to be sent via email.
         """
         await _send_email_via_address(
-            self.assistant_email,
+            # self.assistant_email,
             to_email,
             subject,
             message,
@@ -623,7 +623,7 @@ class CommsAgent:
             message (str): The message content to be sent via WhatsApp.
         """
         await _send_whatsapp_message_via_number(
-            self.assistant_number,
+            # self.assistant_number,
             to_number,
             message,
         )
