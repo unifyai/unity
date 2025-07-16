@@ -368,7 +368,7 @@ class TranscriptManager(BaseTranscriptManager):
             msg.to_post_json() if isinstance(msg, Message) else msg for msg in messages
         ]
         messages = [
-            msg if isinstance(msg, Message) else Message(**messages) for msg in messages
+            msg if isinstance(msg, Message) else Message(**msg) for msg in messages
         ]
 
         from ..events.event_bus import EVENT_BUS, Event  # local import to avoid cycles
