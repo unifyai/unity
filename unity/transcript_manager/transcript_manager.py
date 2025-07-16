@@ -403,29 +403,6 @@ class TranscriptManager(BaseTranscriptManager):
     def _nearest_summaries(self, *args, **kwargs):
         raise NotImplementedError("Summary functionality removed.")
 
-    # ------------------------------------------------------------------ #
-    #  Reset helper (sandbox)                                            #
-    # ------------------------------------------------------------------ #
-    @staticmethod
-    def reset() -> None:
-        """
-        Delete the `Transcripts` contexts (and any namespaced variants) for the
-        *current* Unify project so that a clean slate is created when a
-        new TranscriptManager is instantiated.
-        """
-        import unify
-
-        targets = [
-            ctx
-            for ctx in list(unify.get_contexts())
-            if ctx == "Transcripts" or ctx.endswith("/Transcripts")
-        ]
-        for ctx in targets:
-            try:
-                unify.delete_context(ctx)
-            except Exception:
-                pass
-
     def _search_messages(
         self,
         *,

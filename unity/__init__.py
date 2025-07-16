@@ -7,7 +7,10 @@ import unify
 _INITIALISED = False
 
 
-def init(project_name: str = "Assistants") -> None:  # noqa: D401 – imperative name
+def init(
+    project_name: str = "Assistants",
+    overwrite: bool = False,
+) -> None:  # noqa: D401 – imperative name
     """Initialise the *unity* runtime.
 
     This performs two steps **once** per interpreter session:
@@ -25,7 +28,7 @@ def init(project_name: str = "Assistants") -> None:  # noqa: D401 – imperative
 
     # 1. Ensure Unify project is active ------------------------------------
     if not unify.active_project():
-        unify.activate(project_name)
+        unify.activate(project_name, overwrite)
 
     # 2. Bring up the global EventBus --------------------------------------
     from .events import event_bus as _event_bus_mod

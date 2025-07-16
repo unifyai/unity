@@ -759,28 +759,10 @@ def activate_project(project_name: str, overwrite: bool = False) -> None:
     by EventBus) belong to that project.  Call this immediately after handling
     CLI arguments and before any manager instances are constructed.
     """
-    import unify
+    import unity
     from unity.events.event_bus import EVENT_BUS
 
     # Switch active project first
-    unify.activate(project_name, overwrite=overwrite)
-    # Rebuild EventBus under the new project so its contexts live in `project_name`
+    unity.init(project_name, overwrite=overwrite)
+    # Clears all contexts in the EventBus
     EVENT_BUS.reset()
-
-    # ── Also reset every domain manager so their tables are recreated in the new project ──
-    try:
-        from unity.contact_manager.contact_manager import ContactManager
-        from unity.transcript_manager.transcript_manager import TranscriptManager
-        from unity.knowledge_manager.knowledge_manager import KnowledgeManager
-        from unity.task_scheduler.task_scheduler import TaskScheduler
-        from unity.conductor.conductor import Conductor
-
-        ContactManager.reset()
-        TranscriptManager.reset()
-        KnowledgeManager.reset()
-        TaskScheduler.reset()
-        # Conductor.reset cascades but call for completeness
-        Conductor.reset()
-    except Exception:
-        # Defensive – sandbox should never hard-fail if any optional reset is missing
-        pass
