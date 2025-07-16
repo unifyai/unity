@@ -294,7 +294,7 @@ class TranscriptManager(BaseTranscriptManager):
     @staticmethod
     def reset() -> None:
         """
-        Delete the `Messages` contexts (and any namespaced variants) for the
+        Delete the `Transcripts` contexts (and any namespaced variants) for the
         *current* Unify project so that a clean slate is created when a
         new TranscriptManager is instantiated.
         """
@@ -303,7 +303,7 @@ class TranscriptManager(BaseTranscriptManager):
         targets = [
             ctx
             for ctx in list(unify.get_contexts())
-            if ctx == "Messages" or ctx.endswith("/Messages")
+            if ctx == "Transcripts" or ctx.endswith("/Transcripts")
         ]
         for ctx in targets:
             try:
