@@ -14,7 +14,6 @@ from ..common.llm_helpers import SteerableToolHandle
 from .base import BaseTranscriptManager
 from .prompt_builders import (
     build_ask_prompt,
-    build_summarize_prompt,
     build_simulated_method_prompt,
 )
 from ..events.manager_event_logging import (
@@ -193,9 +192,6 @@ class SimulatedTranscriptManager(BaseTranscriptManager):
             {},
             include_activity=self._rolling_summary_in_prompts,
         )
-        sum_sys = build_summarize_prompt(
-            include_activity=self._rolling_summary_in_prompts,
-        )
 
         self._llm.set_system_message(
             "You are a *simulated* transcript assistant. "
@@ -204,7 +200,6 @@ class SimulatedTranscriptManager(BaseTranscriptManager):
             "For reference, here are the *real* system messages used by the "
             "production implementation:\n"
             f"\n\n'ask' system message:\n{ask_sys}\n\n"
-            f"\n\n'summarize' system message:\n{sum_sys}\n\n"
             f"Back-story: {self._description}",
         )
 
