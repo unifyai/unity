@@ -201,14 +201,37 @@ async def _main_async() -> None:
 
     # Helper: convert *TranscriptGenerator* dict → Message-schema dict ----------
     _name_to_id: dict[str, int] = {}
+    # Keep track of the sender of the previous message so we can infer the receiver
+    last_sender_id: int | None = None
 
     def _normalise_msg(raw: dict) -> dict:
         """Return a dict that satisfies TranscriptManager.log_message schema."""
-        sender_name = str(raw.get("sender", "User"))
-        sender_id = _name_to_id.setdefault(sender_name, len(_name_to_id) + 1)
 
-        # By convention the assistant uses contact-id 0 so MemoryManager skips it.
-        receiver_id = 0
+        nonlocal last_sender_id
+
+        sender_name = str(raw.get("sender", "User"))
+
+        # Keep **contact-id 0** reserved for the assistant / system persona so
+        # that MemoryManager logic (which skips contact_id 0) continues to work.
+        if sender_name.lower() in {"assistant", "system", "agent", "bot"}:
+            sender_id = 0
+        else:
+            sender_id = _name_to_id.setdefault(sender_name, len(_name_to_id) + 1)
+
+        # 1️⃣ Prefer explicit receiver information if provided by the generator
+        receiver_name = raw.get("receiver")
+        if receiver_name is not None:
+            receiver_id = _name_to_id.setdefault(receiver_name, len(_name_to_id) + 1)
+        # 2️⃣ Otherwise assume a back-and-forth pattern so the receiver is the
+        #    previous sender (when different from the current sender).
+        elif last_sender_id is not None and last_sender_id != sender_id:
+            receiver_id = last_sender_id
+        # 3️⃣ Fallback for very first message or single-speaker transcripts
+        else:
+            receiver_id = 0  # assistant / unknown contact by convention
+
+        # Update the tracker for the next message
+        last_sender_id = sender_id
 
         return {
             "medium": raw.get("medium", "sms_message"),
