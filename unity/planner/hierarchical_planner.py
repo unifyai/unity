@@ -208,11 +208,90 @@ class FunctionReplacer(ast.NodeTransformer):
         return self.generic_visit(node)
 
 
+class _SteerableToolHandleProxy:
+    """
+    A proxy for SteerableToolHandle to intercept its method calls and log
+    them for the @verify decorator. This ensures that interactions with
+    handles (e.g., call_handle.ask()) are visible to the verification process.
+    """
+
+    def __init__(
+        self,
+        real_handle: SteerableToolHandle,
+        plan: "HierarchicalPlan",
+        handle_name: str,
+    ):
+        self._real_handle = real_handle
+        self._plan = plan
+        self._handle_name = handle_name
+
+    def __getattr__(self, name: str) -> Any:
+        """
+        Intercepts attribute access on the handle (e.g., call_handle.ask).
+        """
+        real_attr = getattr(self._real_handle, name)
+
+        if not callable(real_attr):
+            return real_attr
+
+        @functools.wraps(real_attr)
+        async def async_method_wrapper(*args, **kwargs):
+            interactions_log = self._plan.interaction_stack[-1]
+            arg_str = ", ".join(map(repr, args))
+            kwarg_str = ", ".join(f"{k}={v!r}" for k, v in kwargs.items())
+            call_repr = f"{self._handle_name}.{name}({arg_str}, {kwarg_str})"
+
+            output = await real_attr(*args, **kwargs)
+
+            if isinstance(output, SteerableToolHandle):
+                interactions_log.append(
+                    (
+                        "handle_method_call",
+                        call_repr,
+                        f"Returned new handle: {output.__class__.__name__}",
+                    ),
+                )
+                new_handle_name = f"{self._handle_name}_{name}"
+                return _SteerableToolHandleProxy(output, self._plan, new_handle_name)
+            else:
+                interactions_log.append(("handle_method_call", call_repr, str(output)))
+                return output
+
+        @functools.wraps(real_attr)
+        def sync_method_wrapper(*args, **kwargs):
+            interactions_log = self._plan.interaction_stack[-1]
+            arg_str = ", ".join(map(repr, args))
+            kwarg_str = ", ".join(f"{k}={v!r}" for k, v in kwargs.items())
+            call_repr = f"{self._handle_name}.{name}({arg_str}, {kwarg_str})"
+
+            output = real_attr(*args, **kwargs)
+
+            if isinstance(output, SteerableToolHandle):
+                interactions_log.append(
+                    (
+                        "handle_method_call",
+                        call_repr,
+                        f"Returned new handle: {output.__class__.__name__}",
+                    ),
+                )
+                new_handle_name = f"{self._handle_name}_{name}"
+                return _SteerableToolHandleProxy(output, self._plan, new_handle_name)
+            else:
+                interactions_log.append(("handle_method_call", call_repr, str(output)))
+                return output
+
+        if inspect.iscoroutinefunction(real_attr):
+            return async_method_wrapper
+        else:
+            return sync_method_wrapper
+
+
 class _ActionProviderProxy:
     """
     A generic proxy that wraps the real ActionProvider to intercept all tool
-    calls and log them for the @verify decorator. This version correctly
-    handles both synchronous and asynchronous tools.
+    calls and log them for the @verify decorator. Itcorrectly
+    handles both synchronous and asynchronous tools and ensures that handles
+    returned by tools are also proxied to log subsequent interactions.
     """
 
     def __init__(self, real_action_provider: ActionProvider, plan: "HierarchicalPlan"):
@@ -241,12 +320,23 @@ class _ActionProviderProxy:
             tool_output = await real_attr(*args, **kwargs)
 
             if isinstance(tool_output, SteerableToolHandle):
-                final_result = await tool_output.result()
-                interactions_log.append(("tool_call", call_repr, str(final_result)))
+                interactions_log.append(
+                    (
+                        "tool_call",
+                        call_repr,
+                        f"Returned handle: {tool_output.__class__.__name__}",
+                    ),
+                )
+                handle_name = f"{name}_handle"
+                return _SteerableToolHandleProxy(tool_output, self._plan, handle_name)
             else:
-                interactions_log.append(("tool_call", call_repr, str(tool_output)))
+                if isinstance(tool_output, SteerableToolHandle):
+                    final_result = await tool_output.result()
+                    interactions_log.append(("tool_call", call_repr, str(final_result)))
+                else:
+                    interactions_log.append(("tool_call", call_repr, str(tool_output)))
 
-            return tool_output
+                return tool_output
 
         @functools.wraps(real_attr)
         def sync_wrapper(*args, **kwargs):
@@ -259,8 +349,19 @@ class _ActionProviderProxy:
 
             result = real_attr(*args, **kwargs)
 
-            interactions_log.append(("tool_call", call_repr, str(result)))
-            return result
+            if isinstance(result, SteerableToolHandle):
+                interactions_log.append(
+                    (
+                        "tool_call",
+                        call_repr,
+                        f"Returned handle: {result.__class__.__name__}",
+                    ),
+                )
+                handle_name = f"{name}_handle"
+                return _SteerableToolHandleProxy(result, self._plan, handle_name)
+            else:
+                interactions_log.append(("tool_call", call_repr, str(result)))
+                return result
 
         if inspect.iscoroutinefunction(real_attr):
             return async_wrapper
@@ -622,19 +723,25 @@ class HierarchicalPlan(BaseActiveTask):
             old_defs = {
                 node.name: node
                 for node in old_tree.body
-                if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef))
+                if isinstance(
+                    node,
+                    (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef),
+                )
             }
 
             new_defs = {
                 node.name: node
                 for node in new_tree.body
-                if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef))
+                if isinstance(
+                    node,
+                    (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef),
+                )
             }
 
             if function_name not in new_defs:
                 raise ValueError(
                     f"The new code block from the LLM does not contain the required "
-                    f"function '{function_name}'."
+                    f"function '{function_name}'.",
                 )
 
             old_defs.update(new_defs)
@@ -652,7 +759,7 @@ class HierarchicalPlan(BaseActiveTask):
                         self.plan_source_code,
                         node,
                     )
-            
+
             exec(
                 compile(self.plan_source_code, "<string>", "exec"),
                 self.execution_namespace,
