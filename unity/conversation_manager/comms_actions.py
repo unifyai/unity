@@ -234,6 +234,7 @@ async def _start_call(
     to_number: str,
     purpose: str = "general",
     task_context: Dict[str, str] = None,
+    ongoing_call: bool = False,
 ) -> str:
     """
     Send a call using the call provider API.
@@ -242,6 +243,7 @@ async def _start_call(
         from_number: The sender's phone number
         to_number: The recipient's phone number
         purpose: The purpose of the call
+        task_context: The broader task context for the call, with name and description attributes. Use None if there is no task context.
 
     Returns:
         str: The response from the email API
@@ -256,6 +258,7 @@ async def _start_call(
                 **PhoneCallInitiatedEvent(
                     purpose=purpose,
                     task_context=task_context,
+                    target_number=to_number,
                 ).to_dict(),
                 "voice_id": None,
                 "tts_provider": None,
@@ -264,17 +267,18 @@ async def _start_call(
         },
     )
 
-    print(f"Sending call from {from_number} to {to_number}")
-    async with aiohttp.ClientSession() as session:
-        async with session.post(
-            f"{os.getenv('UNITY_COMMS_URL')}/phone/send-call",
-            headers=headers,
-            json={"From": from_number, "To": to_number, "NewCall": "true"},
-        ) as response:
-            response.raise_for_status()
-            response_text = await response.text()
-            print(f"Response: {response_text}")
-            return response_text
+    if not ongoing_call:
+        print(f"Sending call from {from_number} to {to_number}")
+        async with aiohttp.ClientSession() as session:
+            async with session.post(
+                f"{os.getenv('UNITY_COMMS_URL')}/phone/send-call",
+                headers=headers,
+                json={"From": from_number, "To": to_number, "NewCall": "true"},
+            ) as response:
+                response.raise_for_status()
+                response_text = await response.text()
+                print(f"Response: {response_text}")
+                return response_text
 
 
 # High-level Actions

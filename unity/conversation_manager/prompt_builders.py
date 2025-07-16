@@ -76,6 +76,8 @@ def _build_communication_rules_section() -> str:
         "- Any communication action (other than interactions on the current call) will happen through the ToolUse, so you'd need to create ToolUse tasks or act on existing tasks for any communication through whatsapp, sms, email, or sending a call.",
         "- Break large WhatsApp messages into multiple chunks when appropriate.",
         "- Send the full SMS message in one go when possible.",
+        "- If the user asks for a call, you should initiate a call task using the ToolUseAction",
+        "- Always ensure phone numbers have prefixed with +",
     ]
 
     return "\n".join([title, underline] + lines)

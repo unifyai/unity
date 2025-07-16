@@ -64,6 +64,7 @@ class CommsAgent:
         start_local: bool = False,
         enabled_tools: list | str | None = "conductor",
         task_context: Dict[str, str] = None,
+        outer_comms_enabled: bool = True,
     ):
         # assistant details
         self.assistant_name = assistant_name
@@ -95,6 +96,8 @@ class CommsAgent:
         self.call_mode = False
         self.call_purpose = "general"
         self.task_context = task_context
+        self.outer_comms_enabled = outer_comms_enabled
+        self.pending_calls = []
 
         # conductor
         self.conductor = None
@@ -164,11 +167,19 @@ class CommsAgent:
 
             elif tool == "comms":
                 tools_list += [
-                    # self._inner_send_call,
+                    self._inner_send_call,
                     self._inner_send_sms,
                     self._inner_send_email,
                     self._inner_send_whatsapp,
                 ]
+
+                if self.outer_comms_enabled:
+                    tools_list += [
+                        self._outer_send_call,
+                        self._outer_send_sms,
+                        self._outer_send_email,
+                        self._outer_send_whatsapp,
+                    ]
 
         self.enabled_tools = methods_to_tool_dict(*tools_list)
 
@@ -209,11 +220,16 @@ class CommsAgent:
                     if not ONGOING_CALL:
                         self.call_purpose = new_event["payload"]["purpose"]
                         self.task_context = new_event["payload"]["task_context"]
+                        target_number = new_event["payload"]["target_number"]
                         if not self.start_local:
                             self.call_proc = run_script(
                                 "unity/conversation_manager/call.py",
                                 "dev",
-                                self.user_phone_call_number,
+                                (
+                                    target_number
+                                    if target_number
+                                    else self.user_phone_call_number
+                                ),
                                 self.assistant_number,
                                 (
                                     new_event["tts_provider"]
@@ -242,7 +258,8 @@ class CommsAgent:
                         continue
                     else:
                         # append initated phone call and failed
-                        ...
+                        self.pending_calls.append(new_event)
+                        continue
 
                 self.pending_events.append(new_event)
                 # urgent events should re-trigger, cancel events should cancel current running only
@@ -409,6 +426,7 @@ class CommsAgent:
         else:
             return await self.non_phone_call_llm_run()
 
+    # response handling
     async def non_phone_call_llm_run(self):
         non_call_sys = build_non_call_sys_prompt(
             self.user_name,
@@ -479,6 +497,7 @@ class CommsAgent:
         self.inflight_events.clear()
         return event.parsed
 
+    # inner communications
     async def _inner_send_call(
         self,
         purpose: str = "general",
@@ -491,11 +510,13 @@ class CommsAgent:
             purpose (str): The purpose of the call. Use 'general' if there is no specific purpose.
             task_context (Dict[str, str]): The broader task context for the call, with name and description attributes. Use None if there is no task context.
         """
+        global ONGOING_CALL
         await _start_call(
             self.assistant_number,
             self.user_phone_call_number,
             purpose,
             task_context,
+            ongoing_call=ONGOING_CALL,
         )
 
     async def _inner_send_sms(self, message: str):
@@ -536,6 +557,74 @@ class CommsAgent:
         await _send_whatsapp_message_via_number(
             self.assistant_number,
             self.user_number,
+            message,
+        )
+
+    # outer communications
+    async def _outer_send_call(
+        self,
+        to_number: str,
+        purpose: str = "general",
+        task_context: Dict[str, str] = None,
+    ):
+        """
+        Sends a call from the assistant's number to the user's number.
+
+        Args:
+            to_number (str): The number to call prefixed with +.
+            purpose (str): The purpose of the call. Use 'general' if there is no specific purpose.
+            task_context (Dict[str, str]): The broader task context for the call, with name and description attributes. Use None if there is no task context.
+        """
+        global ONGOING_CALL
+        await _start_call(
+            self.assistant_number,
+            to_number,
+            purpose,
+            task_context,
+            ongoing_call=ONGOING_CALL,
+        )
+
+    async def _outer_send_sms(self, to_number: str, message: str):
+        """
+        Sends an SMS message from the assistant's number to the user's number.
+
+        Args:
+            to_number (str): The number to send the SMS to prefixed with +.
+            message (str): The message content to be sent via SMS.
+        """
+        await _send_sms_message_via_number(
+            self.assistant_number,
+            to_number,
+            message,
+        )
+
+    async def _outer_send_email(self, to_email: str, subject: str, message: str):
+        """
+        Sends an email from the assistant's email address to the user's email address.
+
+        Args:
+            to_email (str): The email address to send the email to in the format of example@example.com.
+            subject (str): The subject of the email.
+            message (str): The message content to be sent via email.
+        """
+        await _send_email_via_address(
+            self.assistant_email,
+            to_email,
+            subject,
+            message,
+        )
+
+    async def _outer_send_whatsapp(self, to_number: str, message: str):
+        """
+        Sends a WhatsApp message from the assistant's number to the user's number.
+
+        Args:
+            to_number (str): The number to send the WhatsApp message to prefixed with +.
+            message (str): The message content to be sent via WhatsApp.
+        """
+        await _send_whatsapp_message_via_number(
+            self.assistant_number,
+            to_number,
             message,
         )
 
@@ -640,6 +729,19 @@ class CommsAgent:
                 self.call_proc = None
                 self.call_mode = False
                 ONGOING_CALL = False
+
+                # check for queued calls
+                if self.pending_calls:
+                    next_call_event = self.pending_calls.pop(0)
+                    asyncio.create_task(
+                        _start_call(
+                            self.assistant_number,
+                            next_call_event["payload"]["target_number"],
+                            next_call_event["payload"]["purpose"],
+                            next_call_event["payload"]["task_context"],
+                            ongoing_call=ONGOING_CALL,
+                        ),
+                    )
 
         elif event["event"]["event_name"] == "PhoneCallStopEvent":
             self.publish(
