@@ -26,6 +26,7 @@ from .agent import (
     text_to_browser_action,
     list_available_actions,
     ADVANCED_MODE,
+    ask_llm,
 )
 from .states import BrowserState
 from .commands import *
@@ -222,7 +223,14 @@ class ControlPanel(tk.Tk):
         # update the existing line in‑place
         self.log.configure(state="normal")
         self.log.delete(self._llm_line_idx, f"{self._llm_line_idx} lineend")
-        new_txt = "⏳ calling model" + next(self._llm_dots)
+
+        # Check current line content to determine if observation or action
+        current_line = self.log.get(self._llm_line_idx, f"{self._llm_line_idx} lineend")
+        if "observing" in current_line:
+            new_txt = "🔍 observing" + next(self._llm_dots)
+        else:
+            new_txt = "⏳ calling model" + next(self._llm_dots)
+
         self.log.insert(self._llm_line_idx, new_txt, "llm")
         self.log.configure(state="disabled")
         self.log.yview_moveto(1.0)
@@ -263,8 +271,22 @@ class ControlPanel(tk.Tk):
         self.llm_entry.configure(state="disabled")
         self.llm_loader.grid()
 
+        # Check if this is an observation request
+        is_observation = False
+        observation_text = user_text
+        if user_text.strip().startswith(("observe:", "?")):
+            is_observation = True
+            # Remove the prefix
+            if user_text.strip().startswith("observe:"):
+                observation_text = user_text.strip()[8:].strip()
+            elif user_text.strip().startswith("?"):
+                observation_text = user_text.strip()[1:].strip()
+
         # --- spawn animated log line ------------------------------------
-        msg = "⏳ calling model" + next(self._llm_dots)
+        if is_observation:
+            msg = "🔍 observing" + next(self._llm_dots)
+        else:
+            msg = "⏳ calling model" + next(self._llm_dots)
         self._llm_line_idx = self._log_line(msg, tag="llm")
         self.after(400, self._advance_llm_dots)
 
@@ -310,18 +332,42 @@ class ControlPanel(tk.Tk):
             # Be verbose for HTTP + model calls
             logging.getLogger("urllib3").setLevel(logging.DEBUG)
 
-            self._llm_stream_q.put(f"🛈 LLM call start › {user_text[:60]}")
-            try:
-                resp = text_to_browser_action(
-                    user_text,
-                    screenshot,
-                    tabs=tabs,
-                    buttons=buttons,
-                    history=history,
-                    state=state,
+            if is_observation:
+                self._llm_stream_q.put(
+                    f"🔍 Observation start › {observation_text[:60]}",
                 )
-                self._llm_stream_q.put("🛈 LLM call succeeded")
-                self._llm_resp_q.put(("ok", resp))
+            else:
+                self._llm_stream_q.put(f"🛈 LLM call start › {user_text[:60]}")
+
+            try:
+                if is_observation:
+                    # Call ask_llm for observations
+                    context = {
+                        "state": state,
+                        "elements": buttons,
+                        "tabs": tabs,
+                    }
+                    result = ask_llm(
+                        observation_text,
+                        response_format=str,
+                        context=context,
+                        screenshots={"current_view": screenshot},
+                    )
+                    self._llm_stream_q.put("🔍 Observation succeeded")
+                    # Package the observation result
+                    self._llm_resp_q.put(("observation", result))
+                else:
+                    # Call text_to_browser_action for actions (existing code)
+                    resp = text_to_browser_action(
+                        user_text,
+                        screenshot,
+                        tabs=tabs,
+                        buttons=buttons,
+                        history=history,
+                        state=state,
+                    )
+                    self._llm_stream_q.put("🛈 LLM call succeeded")
+                    self._llm_resp_q.put(("ok", resp))
             except Exception as exc:
                 self._llm_stream_q.put(
                     f"❌ LLM error: {exc.__class__.__name__}: {exc}",
@@ -341,7 +387,34 @@ class ControlPanel(tk.Tk):
             while True:
                 status, payload = self._llm_resp_q.get_nowait()
 
-                if status == "ok":
+                if status == "observation":
+                    # Handle observation results
+                    # Clear animated line
+                    if self._llm_line_idx is not None:
+                        self.log.configure(state="normal")
+                        self.log.delete(
+                            self._llm_line_idx,
+                            f"{self._llm_line_idx} lineend",
+                        )
+                        self.log.configure(state="disabled")
+                        self._llm_line_idx = None
+
+                    # Display the observation result
+                    self.log.configure(state="normal")
+                    self.log.insert("end", "🔍 Observation Result:\n", "observation")
+                    # Format the result nicely
+                    result_text = str(payload)
+                    # Indent multi-line results
+                    if "\n" in result_text:
+                        lines = result_text.split("\n")
+                        formatted_result = "\n".join(f"   {line}" for line in lines)
+                        self.log.insert("end", formatted_result + "\n")
+                    else:
+                        self.log.insert("end", f"   {result_text}\n")
+                    self.log.configure(state="disabled")
+                    self.log.yview_moveto(1.0)
+
+                elif status == "ok":
                     # Determine command list: supports direct list or dict with 'action'
                     if isinstance(payload, list):
                         cmds = payload
@@ -867,7 +940,21 @@ class ControlPanel(tk.Tk):
             pady=(0, 8),
         )
         bar.columnconfigure(2, weight=1)
-        tk.Label(bar, text="LLM Command:").grid(row=0, column=0, sticky="w")
+
+        # Create a frame for the label and help icon
+        label_frame = tk.Frame(bar)
+        label_frame.grid(row=0, column=0, sticky="w")
+
+        tk.Label(label_frame, text="LLM Command:").grid(row=0, column=0, sticky="w")
+
+        # Add help text as a small label
+        help_text = tk.Label(
+            label_frame,
+            text="(use 'observe:' or '?' prefix for questions)",
+            font=("Helvetica", 8),
+            fg="gray",
+        )
+        help_text.grid(row=0, column=1, padx=(4, 0), sticky="w")
 
         # Loader icon (hourglass) – hidden until LLM busy
         self.llm_loader = tk.Label(bar, text="⏳")
@@ -902,6 +989,10 @@ class ControlPanel(tk.Tk):
 
         self.log = scrolledtext.ScrolledText(tab_log, state="disabled")
         self.log.pack(fill="both", expand=True)
+
+        # Configure text tags for different types of messages
+        self.log.tag_config("observation", foreground="#00BFFF", font=("Helvetica", 10))
+        self.log.tag_config("llm", foreground="#FFD700")
 
         self.act_box = scrolledtext.ScrolledText(tab_actions, state="disabled")
         self.act_box.pack(fill="both", expand=True)
@@ -1506,7 +1597,14 @@ class ControlPanel(tk.Tk):
     # ─────────────────────── HIGH‑LEVEL INPUT HANDLER ───────────────────
     def _handle_input(self, text: str, *, from_llm_box: bool = False) -> None:
         try:
-            self._log(f"> {text}")
+            # Check if this is an observation request
+            is_observation = text.strip().startswith(("observe:", "?"))
+
+            if is_observation:
+                # Log observation requests with a different icon
+                self._log(f"🔍 {text}")
+            else:
+                self._log(f"> {text}")
 
             def _is_valid_primitive(cmd: str) -> bool:
                 valid = get_valid_actions(BrowserState(**self.state))
@@ -1520,8 +1618,12 @@ class ControlPanel(tk.Tk):
                         return True
                 return False
 
-            # skip the fast-path when the text came from the LLM box
-            if (not from_llm_box) and _is_valid_primitive(text):
+            # skip the fast-path when the text came from the LLM box or is an observation
+            if (
+                (not from_llm_box)
+                and (not is_observation)
+                and _is_valid_primitive(text)
+            ):
                 self._queue_command(text)
                 return
 

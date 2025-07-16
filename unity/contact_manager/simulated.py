@@ -6,7 +6,7 @@ import json
 import os
 import functools
 import threading
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Optional, TYPE_CHECKING
 
 import unify
 from .base import BaseContactManager
@@ -18,6 +18,11 @@ from .prompt_builders import (
     build_simulated_method_prompt,
 )
 from ..common.llm_helpers import SteerableToolHandle, methods_to_tool_dict
+from ..events.manager_event_logging import (
+    new_call_id,
+    publish_manager_method_event,
+    wrap_handle_with_logging,
+)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -159,6 +164,9 @@ class _SimulatedContactHandle(SteerableToolHandle):
 # ─────────────────────────────────────────────────────────────────────────────
 # Public simulated manager
 # ─────────────────────────────────────────────────────────────────────────────
+# Adding rolling summary flag
+
+
 class SimulatedContactManager(BaseContactManager):
     """
     Drop-in replacement for ContactManager with imaginary data and
@@ -168,8 +176,12 @@ class SimulatedContactManager(BaseContactManager):
     def __init__(
         self,
         description: str = "nothing fixed, make up some imaginary scenario",
+        *,
+        log_events: bool = False,
+        rolling_summary_in_prompts: bool = True,
     ) -> None:
         self._description = description
+        self._log_events = log_events
 
         # Shared, *stateful* **asynchronous** LLM
         self._llm = unify.AsyncUnify(
@@ -190,12 +202,18 @@ class SimulatedContactManager(BaseContactManager):
             ContactManager._search_contacts,
             include_class_name=False,
         )
+        self._rolling_summary_in_prompts = rolling_summary_in_prompts
+
         ask_msg = build_ask_prompt(
             ask_tools,
             10,
             [{k: str(v.annotation)} for k, v in Contact.model_fields.items()],
+            include_activity=self._rolling_summary_in_prompts,
         )
-        upd_msg = build_update_prompt(upd_tools)
+        upd_msg = build_update_prompt(
+            upd_tools,
+            include_activity=self._rolling_summary_in_prompts,
+        )
 
         self._llm.set_system_message(
             "You are a *simulated* contact-manager assistant. "
@@ -221,13 +239,27 @@ class SimulatedContactManager(BaseContactManager):
         _requests_clarification: bool = False,
         clarification_up_q: asyncio.Queue[str] | None = None,
         clarification_down_q: asyncio.Queue[str] | None = None,
+        log_events: bool = False,
     ) -> SteerableToolHandle:
+        should_log = self._log_events or log_events
+        call_id = None
+
+        if should_log:
+            call_id = new_call_id()
+            await publish_manager_method_event(
+                call_id,
+                "ContactManager",
+                "ask",
+                phase="incoming",
+                question=text,
+            )
+
         instruction = build_simulated_method_prompt(
             "ask",
             text,
             parent_chat_context=parent_chat_context,
         )
-        return _SimulatedContactHandle(
+        handle = _SimulatedContactHandle(
             self._llm,
             instruction,
             _return_reasoning_steps=_return_reasoning_steps,
@@ -235,6 +267,16 @@ class SimulatedContactManager(BaseContactManager):
             clarification_up_q=clarification_up_q,
             clarification_down_q=clarification_down_q,
         )
+
+        if should_log and call_id is not None:
+            handle = wrap_handle_with_logging(
+                handle,
+                call_id,
+                "ContactManager",
+                "ask",
+            )
+
+        return handle
 
     # --------------------------------------------------------------------- #
     # update                                                                #
@@ -249,13 +291,27 @@ class SimulatedContactManager(BaseContactManager):
         _requests_clarification: bool = False,
         clarification_up_q: asyncio.Queue[str] | None = None,
         clarification_down_q: asyncio.Queue[str] | None = None,
+        log_events: bool = False,
     ) -> SteerableToolHandle:
+        should_log = self._log_events or log_events
+        call_id = None
+
+        if should_log:
+            call_id = new_call_id()
+            await publish_manager_method_event(
+                call_id,
+                "ContactManager",
+                "update",
+                phase="incoming",
+                request=text,
+            )
+
         instruction = build_simulated_method_prompt(
             "update",
             text,
             parent_chat_context=parent_chat_context,
         )
-        return _SimulatedContactHandle(
+        handle = _SimulatedContactHandle(
             self._llm,
             instruction,
             _return_reasoning_steps=_return_reasoning_steps,
@@ -263,3 +319,172 @@ class SimulatedContactManager(BaseContactManager):
             clarification_up_q=clarification_up_q,
             clarification_down_q=clarification_down_q,
         )
+
+        if should_log and call_id is not None:
+            handle = wrap_handle_with_logging(
+                handle,
+                call_id,
+                "ContactManager",
+                "update",
+            )
+
+        return handle
+
+    def _search_contacts(
+        self,
+        *,
+        filter: Optional[str] = None,
+        offset: int = 0,
+        limit: int = 100,
+    ) -> List[Contact]:
+        """
+        Simulated variant of :pyfunc:`ContactManager._search_contacts`.
+
+        Delegates the heavy lifting to the *stateful* LLM backing this
+        simulated manager.  We instruct the model to respond **only** with a
+        JSON array of contact records that match the requested *filter* so the
+        result can be parsed straight into :class:`Contact` objects.
+
+        The method guarantees a *non-empty* return value to satisfy downstream
+        components (e.g. TranscriptManager) that expect at least one contact.
+        """
+        # Craft an instruction that re-uses the manager's description so the
+        # LLM keeps its narrative consistent across turns.
+        import json
+
+        schema_json = json.dumps(Contact.model_json_schema(), indent=2)
+        filter_clause = f"Filter: `{filter}`." if filter else "No filter."
+
+        prompt = (
+            "The user has called _search_contacts with the following arguments. Please simulate the response. "
+            f"{filter_clause} Return ONLY a JSON array (no markdown) of up to {limit} contacts starting at index {offset}.\n\n"
+            f"Here is the Contact JSON schema for reference:\n{schema_json}"
+        )
+
+        # Because this helper is synchronous while the underlying LLM is async,
+        # we spin up a temporary event-loop when needed.
+        async def _call_llm() -> str:
+            return await self._llm.generate(prompt)
+
+        try:
+            # Attempt to use an existing running loop if present (rare for sync callers)
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            loop = None
+
+        try:
+            if loop and loop.is_running():
+                # Synchronous function called from an active event loop: this is a misuse
+                # of the simulated contact manager – surface a clear error.
+                raise RuntimeError(
+                    "SimulatedContactManager._search_contacts cannot be invoked from within an active event loop.",
+                )
+            else:
+                raw = asyncio.run(_call_llm())
+
+            data = json.loads(raw)
+            if not isinstance(data, list):
+                raise ValueError("Model did not return a JSON array.")
+        except Exception as exc:
+            # Propagate parsing / generation errors to the caller – no silent fallbacks.
+            raise exc
+
+        # Apply offset/limit and convert to Contact objects
+        sliced = data[offset : offset + limit] if limit is not None else data[offset:]
+        return [Contact(**c) for c in sliced]
+
+    # ------------------------------------------------------------------ #
+    #  Simulated _update_contact                                          #
+    # ------------------------------------------------------------------ #
+    def _update_contact(
+        self,
+        *,
+        contact_id: int,
+        first_name: Optional[str] = None,
+        surname: Optional[str] = None,
+        email_address: Optional[str] = None,
+        phone_number: Optional[str] = None,
+        whatsapp_number: Optional[str] = None,
+        description: Optional[str] = None,
+        bio: Optional[str] = None,
+        rolling_summary: Optional[str] = None,
+        custom_fields: Optional[Dict[str, Any]] = None,
+    ) -> "ToolOutcome":
+        """
+        Simulated variant of :pyfunc:`ContactManager._update_contact`.
+
+        The method formulates a short instruction to the **stateful** LLM
+        backing this simulated manager asking it to *pretend* that the given
+        contact has been updated.  The LLM must respond with a JSON object
+        matching the :class:`~unity.common.tool_outcome.ToolOutcome` schema so
+        downstream callers can parse the result.
+        """
+
+        import json
+
+        # Build a concise instruction that lists only the fields that are actually being modified
+        updates = {
+            k: v
+            for k, v in {
+                "first_name": first_name,
+                "surname": surname,
+                "email_address": email_address,
+                "phone_number": phone_number,
+                "whatsapp_number": whatsapp_number,
+                "description": description,
+                "bio": bio,
+                "rolling_summary": rolling_summary,
+                **(custom_fields or {}),
+            }.items()
+            if v is not None
+        }
+
+        if not updates:
+            updates = {"note": "no-op update requested – acknowledge anyway"}
+
+        prompt = (
+            "You are simulating the private helper `_update_contact` of a CRM. "
+            f"Pretend that the contact with id {contact_id} has just been updated with the fields below. "
+            "Reply with a JSON object **without** markdown that contains keys 'outcome' and 'details'. "
+            "The 'details' object must include the 'contact_id' and the changed fields."
+        )
+
+        user_payload = json.dumps(
+            {"contact_id": contact_id, "updates": updates},
+            indent=2,
+        )
+
+        async def _call_llm() -> str:
+            return await self._llm.generate(f"{prompt}\n\n{user_payload}")
+
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            loop = None
+
+        try:
+            if loop and loop.is_running():
+                raise RuntimeError(
+                    "SimulatedContactManager._update_contact cannot be invoked from within an active event loop.",
+                )
+            else:
+                raw = asyncio.run(_call_llm())
+
+            data = json.loads(raw)
+            if not isinstance(data, dict):
+                raise ValueError("Model did not return a JSON object.")
+            if "outcome" not in data or "details" not in data:
+                raise ValueError("Returned JSON missing required keys.")
+        except Exception:
+            data = {
+                "outcome": "contact updated (simulated)",
+                "details": {"contact_id": contact_id, **updates},
+            }
+
+        return data
+
+
+# --- TYPE CHECKING SUPPORT --------------------------------------------------
+
+if TYPE_CHECKING:
+    from ..common.tool_outcome import ToolOutcome

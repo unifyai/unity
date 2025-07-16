@@ -1,4 +1,12 @@
-# Starts the convo manager
+"""
+Starts the conversation manager.
+
+This script can be run as a CLI with the following arguments:
+    --local         Enable local GUI mode (default).
+    --full          Disable local GUI mode (real comms and no GUI).
+    --enabled-tools Comma-separated list of enabled tools (choices: conductor, contact, transcript, knowledge, scheduler, comms). Default: None
+"""
+
 import signal
 import time
 import unity.conversation_manager
@@ -31,18 +39,18 @@ if __name__ == "__main__":
         default=True,
         help="Enable local GUI mode",
     )
-    # group.add_argument(
-    #     "--global",
-    #     dest="start_local",
-    #     action="store_false",
-    #     help="Disable local GUI mode (no GUI)",
-    # )
+    group.add_argument(
+        "--full",
+        dest="start_local",
+        action="store_false",
+        help="Disable local GUI mode (real comms and no GUI)",
+    )
     parser.add_argument(
         "--enabled-tools",
         dest="enabled_tools",
         type=lambda s: [t.strip() for t in s.split(",")],
         default=None,
-        help="Comma-separated list of enabled tools with choices of conductor, contact, transcript, knowledge, scheduler. Default: None",
+        help="Comma-separated list of enabled tools with choices of conductor, contact, transcript, knowledge, scheduler, comms. Default: None",
     )
     args = parser.parse_args()
 
@@ -60,14 +68,10 @@ if __name__ == "__main__":
 
         from unity.helpers import run_script
 
-        # if args.start_local:
-        proc = run_script("sandboxes/gui/local.py", terminal=True)
-        proc.wait()
-        # else:
-        #     proc = run_script("sandboxes/gui/global.py", terminal=True)
-        #     proc.wait()
-
-        unity.conversation_manager.stop("signal_shutdown")
+        if args.start_local:
+            proc = run_script("sandboxes/gui/local.py", terminal=True)
+            proc.wait()
+            unity.conversation_manager.stop("signal_shutdown")
 
         # Keep running until the convo manager process is dead
         while unity.conversation_manager.is_running():

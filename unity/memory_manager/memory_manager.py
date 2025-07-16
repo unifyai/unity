@@ -11,6 +11,7 @@ import unify
 from ..contact_manager.contact_manager import ContactManager
 from ..transcript_manager.transcript_manager import TranscriptManager
 from ..knowledge_manager.knowledge_manager import KnowledgeManager
+from ..task_scheduler.task_scheduler import TaskScheduler
 from ..common.llm_helpers import methods_to_tool_dict, start_async_tool_use_loop
 from .prompt_builders import (
     build_contact_update_prompt,
@@ -20,6 +21,7 @@ from .prompt_builders import (
 )
 from .base import BaseMemoryManager
 from ..events.event_bus import EVENT_BUS, Event
+from .rolling_activity import set_rolling_activity
 
 
 class MemoryManager(BaseMemoryManager):
@@ -93,7 +95,7 @@ class MemoryManager(BaseMemoryManager):
         for window in list(_TIME_WINDOWS) + list(_COUNT_WINDOWS) + list(_ALL_TIME):
             _tmp_cols.append(f"{nick}/{window}")
 
-    # ───────────────────────────  NEW SUMMARY COLS  ───────────────────────────
+    # ───────────────────────────  SUMMARY COLS  ───────────────────────────
     _SUMMARY_TIME_COL = "time_based_activity"
     _SUMMARY_COUNT_COL = "count_based_activity"
     _tmp_cols.extend([_SUMMARY_TIME_COL, _SUMMARY_COUNT_COL])
@@ -108,16 +110,30 @@ class MemoryManager(BaseMemoryManager):
         contact_manager: Optional[ContactManager] = None,
         transcript_manager: Optional[TranscriptManager] = None,
         knowledge_manager: Optional[KnowledgeManager] = None,
+        task_scheduler: Optional[TaskScheduler] = None,
     ):
         self._contact_manager = contact_manager or ContactManager()
         self._transcript_manager = transcript_manager or TranscriptManager(
             contact_manager=self._contact_manager,
         )
         self._knowledge_manager = knowledge_manager or KnowledgeManager()
+        self._task_scheduler = task_scheduler or TaskScheduler()
 
         # ── NEW: Rolling-Activity context & subscriptions ─────────────────
         self._rolling_ctx = self._ensure_rolling_context()
+        # Serialise updates to the RollingActivity context to avoid race conditions
+        self._rolling_lock = asyncio.Lock()
         asyncio.create_task(self._setup_rolling_callbacks())  # fire-and-forget
+
+        # ── NEW: real-time 50-message trigger -----------------------------------------
+        self._CHUNK_SIZE: int = 50
+        self._recent_messages: list[dict] = []
+        self._messages_since_update: int = 0
+        # Serialise overlap between concurrent chunk updates
+        self._chunk_lock = asyncio.Lock()
+
+        # Fire-and-forget setup of the message counter callback
+        asyncio.create_task(self._setup_message_callbacks())
 
     # ------------------------------------------------------------------ #
     # 1  update_contacts                                                 #
@@ -182,7 +198,7 @@ class MemoryManager(BaseMemoryManager):
                 contact_id=contact_id,
                 custom_fields={"bio": bio},
             )
-            return "bio updated"
+            return f"Bio for contact with id {contact_id} successfully updated"
 
         tools: Dict[str, Callable[..., Any]] = {
             "transcript_ask": self._transcript_manager.ask,
@@ -235,7 +251,9 @@ class MemoryManager(BaseMemoryManager):
                 contact_id=contact_id,
                 custom_fields={"rolling_summary": rolling_summary},
             )
-            return "rolling_summary updated"
+            return (
+                f"Rolling summary for contact with id {contact_id} successfully updated"
+            )
 
         tools: Dict[str, Callable[..., Any]] = {
             "transcript_ask": self._transcript_manager.ask,
@@ -306,6 +324,200 @@ class MemoryManager(BaseMemoryManager):
 
         return await handle.result()
 
+    # ------------------------------------------------------------------ #
+    # 5  update_tasks                                                    #
+    # ------------------------------------------------------------------ #
+    async def update_tasks(
+        self,
+        transcript: str,
+        guidance: Optional[str] = None,
+    ) -> str:
+        """
+        Analyse the latest transcript chunk and update the task list using
+        the TaskScheduler's public API (ask / update).  Returns a concise
+        description of what was changed or 'no-op' when no updates were
+        necessary.
+        """
+
+        tools: Dict[str, Callable[..., Any]] = methods_to_tool_dict(
+            self._task_scheduler.ask,
+            self._task_scheduler.update,
+            include_class_name=True,
+        )
+
+        llm = unify.AsyncUnify(
+            "o4-mini@openai",
+            cache=json.loads(os.getenv("UNIFY_CACHE", "true")),
+            traced=json.loads(os.getenv("UNIFY_TRACED", "true")),
+        )
+
+        from .prompt_builders import build_task_prompt  # local import to avoid cycles
+
+        llm.set_system_message(build_task_prompt(tools, guidance))
+
+        handle = start_async_tool_use_loop(
+            llm,
+            transcript,
+            tools,
+            loop_id="MemoryManager.update_tasks",
+            tool_policy=lambda i, _: ("required", _) if i < 2 else ("auto", _),
+        )
+
+        return await handle.result()
+
+    # ------------------------------------------------------------------ #
+    # 5  reset – new blocking helper                                     #
+    # ------------------------------------------------------------------ #
+    async def reset(self) -> None:  # noqa: D401 – imperative name
+        """Completely reset the MemoryManager's rolling-activity state.
+
+        1. Delegates to ``EVENT_BUS.reset()`` to wipe all event history and
+           callback registrations.
+        2. Re-creates and waits for a fresh set of rolling-activity callback
+           subscriptions so callers can immediately publish new events without
+           manually re-registering helpers.
+        """
+
+        # 1. Reset the global EventBus singleton (clears callbacks & logs)
+        EVENT_BUS.reset()
+
+        # 2. Re-establish rolling-activity subscriptions *synchronously*
+        #    so callers can rely on them right after this coroutine returns.
+        #    We create a new readiness Event to avoid races with any still-
+        #    pending tasks from a previous incarnation.
+
+        self._callbacks_ready = asyncio.Event()
+        # Register both rolling-activity *and* message-based callbacks concurrently
+        await asyncio.gather(
+            self._setup_rolling_callbacks(),
+            self._setup_message_callbacks(),
+        )
+
+        # Wait until rolling-callbacks signalled readiness (max 5 s)
+        await asyncio.wait_for(self._callbacks_ready.wait(), timeout=5)
+
+    # ───────────────────────────  NEW MESSAGE-BASED CALLBACKS  ───────────────────────────
+
+    async def _setup_message_callbacks(self) -> None:
+        """Register a callback that fires *every* incoming `message` event.
+
+        The helper relies on the EventBus singleton being fully initialised – we therefore
+        make sure to await `_ensure_ready` via `register_callback` internally.
+        """
+
+        async def _cb(events):  # noqa: ANN001 – signature imposed by EventBus
+            await self._on_new_message(events[0])
+
+        try:
+            await EVENT_BUS.register_callback(
+                event_type="Message",
+                callback=_cb,
+                every_n=1,  # every single message
+            )
+        except Exception:  # pragma: no cover – defensive
+            # We do *not* propagate registration failures – the MemoryManager still
+            # works via manual scheduling even when the callback cannot be installed.
+            pass
+
+    async def _on_new_message(self, evt: Event) -> None:
+        """Collect messages and trigger memory updates every *CHUNK_SIZE* messages."""
+
+        # Payload is guaranteed to be a `Message` instance thanks to the
+        # instrumentation in TranscriptManager.log_message.
+        from unity.transcript_manager.types.message import Message  # local import
+
+        if not isinstance(evt.payload, Message):  # ignore unexpected payloads
+            return
+
+        msg = evt.payload
+
+        # Append a lightweight dict – keeps everything JSON-serialisable
+        self._recent_messages.append(
+            {
+                "sender_id": msg.sender_id,
+                "receiver_id": msg.receiver_id,
+                "medium": msg.medium,
+                "timestamp": msg.timestamp.isoformat(),
+                "content": msg.content,
+            },
+        )
+
+        self._messages_since_update += 1
+
+        if self._messages_since_update < self._CHUNK_SIZE:
+            return  # not enough yet
+
+        # Reset counters *before* kicking off heavy work so the next chunk can start
+        self._messages_since_update = 0
+        transcript_msgs = self._recent_messages.copy()
+        self._recent_messages.clear()
+
+        # Launch the chunk processing asynchronously so we don't block EventBus
+        asyncio.create_task(self._process_message_chunk(transcript_msgs))
+
+    async def _process_message_chunk(self, messages: list[dict]) -> None:
+        """Run the full suite of memory updates for one 50-message chunk."""
+
+        # Serialise – prevent concurrent chunks from interleaving updates
+        async with self._chunk_lock:
+            try:
+                transcript_blob = json.dumps(messages, indent=2)
+
+                # ── 1. Global, transcript-level updates (run *concurrently*) ────────
+                global_tasks = [
+                    self.update_contacts(transcript_blob),
+                    self.update_knowledge(transcript_blob),
+                    self.update_tasks(transcript_blob),
+                ]
+
+                # ── 2. Per-contact updates (bio & rolling summary) ──────────────────
+                contact_ids: set[int] = set()
+
+                # Attempt to exclude the assistant contact (id provided via env-var or 0)
+                try:
+                    assistant_id = int(os.getenv("ASSISTANT_CONTACT_ID", "0"))
+                except ValueError:
+                    assistant_id = 0
+
+                for msg in messages:
+                    for cid in (msg.get("sender_id"), msg.get("receiver_id")):
+                        if cid is None:
+                            continue
+                        if cid == assistant_id:
+                            continue  # skip assistant
+                        contact_ids.add(cid)
+
+                # Build per-contact tasks
+                for _cid in contact_ids:
+                    # Filter transcript to messages involving *_cid*
+                    sub_msgs = [
+                        m
+                        for m in messages
+                        if m.get("sender_id") == _cid or m.get("receiver_id") == _cid
+                    ]
+
+                    sub_blob = json.dumps(sub_msgs, indent=2)
+
+                    global_tasks.extend(
+                        [
+                            self.update_contact_bio(sub_blob, latest_bio=None),
+                            self.update_contact_rolling_summary(
+                                sub_blob,
+                                latest_rolling_summary=None,
+                            ),
+                        ],
+                    )
+
+                # Run *all* updates concurrently – failures are captured but do not
+                # cancel the remaining updates so one misbehaving method doesn’t stall
+                # the entire batch.
+                await asyncio.gather(*global_tasks, return_exceptions=True)
+            except Exception:  # pragma: no cover – defensive
+                # Never propagate errors back to the EventBus – log and swallow.
+                import traceback
+
+                traceback.print_exc()
+
     # ───────────────────────────  NEW HELPERS  ────────────────────────────
     # 1. Context & schema ---------------------------------------------------
     def _ensure_rolling_context(self) -> str:
@@ -318,19 +530,6 @@ class MemoryManager(BaseMemoryManager):
                 col: {"type": "str", "mutable": True} for col in self._ROLLING_COLUMNS
             }
             unify.create_fields(fields, context=ctx)
-        else:
-            # Context already exists – ensure the two new summary columns are present.
-            try:
-                unify.create_fields(
-                    {
-                        self._SUMMARY_TIME_COL: {"type": "str", "mutable": True},
-                        self._SUMMARY_COUNT_COL: {"type": "str", "mutable": True},
-                    },
-                    context=ctx,
-                )
-            except Exception:
-                # Field might already exist – safe to ignore any error here.
-                pass
         return ctx
 
     # 2. Callback registration ---------------------------------------------
@@ -348,84 +547,92 @@ class MemoryManager(BaseMemoryManager):
           The callback fires once *ratio* (= how many lower-level
           summaries constitute this window) such events have arrived.
         """
-        for mgr_cls, nick in self._MANAGERS.items():
 
-            # ── Helper: build one callback that writes the column it was
-            #           created for.
+        async def _register_for_manager(mgr_cls: str, nick: str):
+            # Register callbacks for one manager
+
             def _mk_cb(col_name: str):
                 async def _cb(events, _col=col_name):
                     await self._record_rolling_activity(_col, events)
 
+                    # schedule recording (silent now)
+
                 return _cb
 
-            # ────────────────────────────────────────────────────────────
-            # 1️⃣  BASE-LEVEL windows (raw ManagerMethod events)
-            # ────────────────────────────────────────────────────────────
             mm_filter = (
                 f'evt.payload["manager"] == "{mgr_cls}" '
                 f'and evt.payload.get("phase") == "outgoing"'
             )
 
-            # 1a)  past_interaction  (every single outgoing manager call)
-            base_col = f"{nick}/past_interaction"
-            await EVENT_BUS.register_callback(
+            async def _reg(cb_col: str, *, event_type: str, **kw):
+                try:
+                    await EVENT_BUS.register_callback(
+                        event_type=event_type,
+                        callback=_mk_cb(cb_col),
+                        **kw,
+                    )
+                except Exception as e:
+                    # propagate any registration error
+                    raise
+
+            # base-level
+            await _reg(
+                f"{nick}/past_interaction",
                 event_type="ManagerMethod",
-                callback=_mk_cb(base_col),
                 filter=mm_filter,
                 every_n=self._COUNT_WINDOWS["past_interaction"],
             )
 
-            # 1b)  past_day  (time-based, every 24 h worth of events)
-            day_col = f"{nick}/past_day"
-            await EVENT_BUS.register_callback(
+            await _reg(
+                f"{nick}/past_day",
                 event_type="ManagerMethod",
-                callback=_mk_cb(day_col),
                 filter=mm_filter,
                 every_seconds=self._TIME_WINDOWS["past_day"],
             )
 
-            # ────────────────────────────────────────────────────────────
-            # 2️⃣  HIGHER-LEVEL  COUNT-based windows (triggered by
-            #     RollingSummary events from the immediate lower window)
-            # ────────────────────────────────────────────────────────────
+            # count hierarchy
             for child, (parent, ratio) in self._COUNT_PARENT.items():
-                child_col = f"{nick}/{child}"
-                rs_filter = (
-                    f'evt.payload["manager"] == "{nick}" '
-                    f'and evt.payload["window"] == "{parent}"'
-                )
-                await EVENT_BUS.register_callback(
+                await _reg(
+                    f"{nick}/{child}",
                     event_type="RollingSummary",
-                    callback=_mk_cb(child_col),
-                    filter=rs_filter,
+                    filter=(
+                        f'evt.payload["manager"] == "{nick}" '
+                        f'and evt.payload["window"] == "{parent}"'
+                    ),
                     every_n=ratio,
                 )
 
-            # ────────────────────────────────────────────────────────────
-            # 3️⃣  HIGHER-LEVEL  TIME-based windows (same idea as above)
-            # ────────────────────────────────────────────────────────────
+            # time hierarchy
             for child, (parent, ratio) in self._TIME_PARENT.items():
-                # skip the base 'past_day' which is handled already
                 if child == "past_day":
                     continue
-                child_col = f"{nick}/{child}"
-                rs_filter = (
-                    f'evt.payload["manager"] == "{nick}" '
-                    f'and evt.payload["window"] == "{parent}"'
-                )
-                await EVENT_BUS.register_callback(
+                await _reg(
+                    f"{nick}/{child}",
                     event_type="RollingSummary",
-                    callback=_mk_cb(child_col),
-                    filter=rs_filter,
+                    filter=(
+                        f'evt.payload["manager"] == "{nick}" '
+                        f'and evt.payload["window"] == "{parent}"'
+                    ),
                     every_n=ratio,
                 )
 
-        # ensure we have at least one mutable row to start with
-        if not unify.get_logs(context=self._rolling_ctx, limit=1):
-            unify.log(context=self._rolling_ctx, new=True, mutable=True)
+        # launch all manager registrations concurrently
+        await asyncio.gather(
+            *[
+                _register_for_manager(mgr_cls, nick)
+                for mgr_cls, nick in self._MANAGERS.items()
+            ],
+        )
+
+        # indicate readiness (useful for tests)
+        try:
+            self._callbacks_ready.set()  # type: ignore[attr-defined]
+        except AttributeError:
+            self._callbacks_ready = asyncio.Event()
+            self._callbacks_ready.set()
 
     # 3. Persisting the new snapshot ---------------------------------------
-    async def _record_rolling_activity(
+    async def _record_rolling_activity_body(
         self,
         column: str,
         events: list[Event],
@@ -525,6 +732,12 @@ class MemoryManager(BaseMemoryManager):
                 summary = await _summarise(collected)
 
         # ---- 2.  persist --------------------------------------------------
+        # Ensure **new** row creation: remove any inherited `row_id` so Unify
+        # allocates a fresh sequence number instead of silently updating the
+        # previous snapshot (which would make successive interactions appear
+        # as a single row and break tests expecting one row per call).
+        base_payload.pop("row_id", None)
+
         base_payload[column] = summary
 
         # ──────────────────────────  NEW: Pre-compute summaries  ────────────────
@@ -545,6 +758,15 @@ class MemoryManager(BaseMemoryManager):
             **base_payload,
         )
 
+        # ---- 2b.  update global cache --------------------------------------
+        # Keep the in-process snapshot in sync so prompt builders never have
+        # to query the backend after the initial bootstrap.
+        try:
+            set_rolling_activity(base_payload[self._SUMMARY_TIME_COL])
+        except Exception:
+            # Defensive guard – updating the cache must never break the caller.
+            pass
+
         # ---- 3.  notify dependants ----------------------------------------
         # Emit a *RollingSummary* event so higher-level windows trigger only
         # after the lower-level snapshot is fully written.
@@ -557,6 +779,26 @@ class MemoryManager(BaseMemoryManager):
                 },
             ),
         )
+
+    # ------------------------------------------------------------------ #
+    #  Wrapper: guarantees single writer for RollingActivity             #
+    # ------------------------------------------------------------------ #
+    async def _record_rolling_activity(
+        self,
+        column: str,
+        events: list[Event],
+    ) -> None:
+        """
+        Thread-safe wrapper around :py:meth:`_record_rolling_activity_body` that
+        ensures only *one* coroutine at a time can append a new snapshot to the
+        ``RollingActivity`` context.  This prevents scenarios where two
+        concurrent callbacks would both read the same *latest* row, apply their
+        individual update, and then write out diverging successors derived from
+        an inconsistent base state.
+        """
+
+        async with self._rolling_lock:
+            await self._record_rolling_activity_body(column, events)
 
     # ------------------------------------------------------------------ #
     #  helper: build human-readable activity summary                     #

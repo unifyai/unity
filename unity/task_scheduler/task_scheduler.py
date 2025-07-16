@@ -47,6 +47,7 @@ class TaskScheduler(BaseTaskScheduler):
         self,
         *,
         planner: Optional[BasePlanner] = None,
+        rolling_summary_in_prompts: bool = True,
     ) -> None:
         """
         Responsible for managing the list of tasks, updating the names, descriptions, schedules, repeating pattern and status of all tasks.
@@ -130,6 +131,8 @@ class TaskScheduler(BaseTaskScheduler):
         else:
             self._primed_task: Optional[Dict[str, Any]] = None
 
+        self._rolling_summary_in_prompts = rolling_summary_in_prompts
+
     # Public #
     # -------#
 
@@ -145,6 +148,7 @@ class TaskScheduler(BaseTaskScheduler):
         parent_chat_context: list[dict] | None = None,
         clarification_up_q: asyncio.Queue[str] | None = None,
         clarification_down_q: asyncio.Queue[str] | None = None,
+        rolling_summary_in_prompts: Optional[bool] = None,
     ) -> SteerableToolHandle:
         call_id = new_call_id()
         await publish_manager_method_event(
@@ -176,7 +180,14 @@ class TaskScheduler(BaseTaskScheduler):
             tools["request_clarification"] = request_clarification
 
         # ── 1.  Inject the dynamic system-prompt ───────────────────────────
-        client.set_system_message(build_ask_prompt(tools))
+        include_activity = (
+            self._rolling_summary_in_prompts
+            if rolling_summary_in_prompts is None
+            else rolling_summary_in_prompts
+        )
+        client.set_system_message(
+            build_ask_prompt(tools, include_activity=include_activity),
+        )
 
         # ── 2.  Kick off the tool-use loop ────────────────────────────────
         handle = start_async_tool_use_loop(
@@ -221,6 +232,7 @@ class TaskScheduler(BaseTaskScheduler):
         parent_chat_context: list[dict] | None = None,
         clarification_up_q: asyncio.Queue[str] | None = None,
         clarification_down_q: asyncio.Queue[str] | None = None,
+        rolling_summary_in_prompts: Optional[bool] = None,
     ) -> SteerableToolHandle:
         call_id = new_call_id()
         await publish_manager_method_event(
@@ -252,7 +264,15 @@ class TaskScheduler(BaseTaskScheduler):
             tools["request_clarification"] = request_clarification
 
         # ── 1.  Inject the dynamic system-prompt ──────────────────────────
-        client.set_system_message(build_update_prompt(tools))
+        include_activity = (
+            self._rolling_summary_in_prompts
+            if rolling_summary_in_prompts is None
+            else rolling_summary_in_prompts
+        )
+
+        client.set_system_message(
+            build_update_prompt(tools, include_activity=include_activity),
+        )
 
         # ── 2.  Kick off interactive loop ─────────────────────────────────
         handle = start_async_tool_use_loop(
@@ -1615,3 +1635,22 @@ class TaskScheduler(BaseTaskScheduler):
                 exclude_fields=[self._VEC_TASK],
             )
         ]
+
+    # ------------------------------------------------------------------ #
+    #  Reset helper (sandbox)                                            #
+    # ------------------------------------------------------------------ #
+    @staticmethod
+    def reset() -> None:
+        """
+        Delete the `Tasks` context (and any namespaced variants) for the active
+        Unify project so that the next TaskScheduler instance starts with a
+        clean queue.
+        """
+        import unify
+
+        for ctx in list(unify.get_contexts()):
+            if ctx.endswith("/Tasks") or ctx == "Tasks":
+                try:
+                    unify.delete_context(ctx)
+                except Exception:
+                    pass

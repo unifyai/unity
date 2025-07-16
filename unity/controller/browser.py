@@ -38,7 +38,9 @@ class Browser:
 
         """
         return await self.controller.act(
-            instruction, expectation=expectation, multi_step_mode=multi_step_mode
+            instruction,
+            expectation=expectation,
+            multi_step_mode=multi_step_mode,
         )
 
     async def observe(self, query: str, response_format: Type = str) -> Any:

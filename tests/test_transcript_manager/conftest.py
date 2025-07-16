@@ -86,9 +86,6 @@ class ScenarioBuilder:
         await self._seed_key_exchanges()
         await self._seed_filler()
 
-        # Store an initial summary so that summaries exist
-        await self.tm.summarize(from_exchanges=[0, 1])
-
         return self
 
     # --------------------------------------------------------------------- #
@@ -231,11 +228,11 @@ class ScenarioBuilder:
         msgs: List[tuple[int, int, datetime, str]],
     ) -> None:
         [
-            self.tm.log_message(
+            self.tm.log_messages(
                 Message(
                     medium=medium,
                     sender_id=s,
-                    receiver_id=r,
+                    receiver_ids=[r],
                     timestamp=ts,
                     content=txt,
                     exchange_id=ex_id,

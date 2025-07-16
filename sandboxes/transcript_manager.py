@@ -48,6 +48,7 @@ from sandboxes.utils import (  # shared helpers reused in other sandboxes
     get_custom_scenario,
     await_with_interrupt as _await_with_interrupt,
     build_cli_parser,
+    activate_project,
 )
 
 LG = logging.getLogger("transcript_sandbox")
@@ -90,7 +91,7 @@ async def _build_scenario(custom: Optional[str] = None) -> Optional[str]:
 
     def log_messages(messages: list[dict]) -> str:
         for msg in messages:
-            tm.log_message(msg)
+            tm.log_messages(msg)
         tm.join_published()
         return "messages logged successfully"
 
@@ -197,13 +198,12 @@ async def _main_async() -> None:
 
     os.environ["UNIFY_TRACED"] = "true" if args.traced else "false"
 
-    unify.activate(args.project_name)
+    activate_project(args.project_name, args.overwrite)
     unify.set_trace_context("Traces")
     if args.overwrite:
         ctxs = unify.get_contexts()
         for tbl in (
             "Messages",
-            "MessageExchangeSummaries",
             "Contacts",
             "Traces",
         ):

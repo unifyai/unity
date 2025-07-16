@@ -2,17 +2,21 @@ from __future__ import annotations
 
 import ast
 import asyncio
+import base64
+import collections
+import datetime
+import re
 import enum
 import functools
 import inspect
 import json
 import logging
-import os
 import sys
 import textwrap
 import traceback
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
+import pydantic
 import unify
 from pydantic import BaseModel, Field
 
@@ -32,11 +36,13 @@ from unity.planner.prompt_builders import (
     build_course_correction_prompt,
     build_dynamic_implement_prompt,
     build_exploration_prompt,
+    build_implementation_strategy_prompt,
     build_initial_plan_prompt,
     build_plan_surgery_prompt,
     build_should_explore_prompt,
     build_verification_prompt,
 )
+from unity.controller.controller import InvalidActionError
 
 logger = logging.getLogger(__name__)
 
@@ -44,9 +50,15 @@ logger = logging.getLogger(__name__)
 class ReplanFromParentException(Exception):
     """Raised by the @verify decorator when a function's goal is misguided."""
 
-    def __init__(self, message, reason: Optional[str] = None):
+    def __init__(
+        self,
+        message,
+        reason: Optional[str] = None,
+        failed_interactions: Optional[List] = None,
+    ):
         super().__init__(message)
         self.reason = reason if reason else message
+        self.failed_interactions = failed_interactions
 
 
 class _ForcedRetryException(Exception):
@@ -67,6 +79,31 @@ class VerificationAssessment(BaseModel):
     reason: str = Field(..., description="A concise explanation for the status.")
 
 
+class ImplementationStrategy(BaseModel):
+    """A structured plan for implementing a function."""
+
+    rationale: str = Field(
+        description="A brief explanation of the chosen approach based on the current context.",
+    )
+    steps: List[str] = Field(
+        description="A detailed, step-by-step natural language plan for the implementation.",
+    )
+
+
+class PageAnalysis(BaseModel):
+    page_title: str = Field(description="The title of the current page.")
+    url: str = Field(description="The current URL.")
+    visible_headings: List[str] = Field(
+        description="A list of all visible headings on the page.",
+    )
+    visible_links: List[str] = Field(
+        description="A list of all visible links and their text.",
+    )
+    interactive_elements: List[str] = Field(
+        description="A list of all buttons, input fields, and other interactive elements.",
+    )
+
+
 class _HierarchicalPlanState(enum.Enum):
     """Manages the detailed lifecycle state of a hierarchical plan."""
 
@@ -81,7 +118,11 @@ class _HierarchicalPlanState(enum.Enum):
     ERROR = enum.auto()
 
 
-async def llm_call(client: unify.AsyncUnify, prompt: str) -> str:
+async def llm_call(
+    client: unify.AsyncUnify,
+    prompt: str,
+    screenshot: bytes | str | None = None,
+) -> str:
     """
     Convenience wrapper for a simple, stateless LLM call.
 
@@ -89,7 +130,23 @@ async def llm_call(client: unify.AsyncUnify, prompt: str) -> str:
     the call to ensure no context is leaked from previous interactions.
     """
     client.reset_messages()
-    return await client.generate(prompt)
+    content = [{"type": "text", "text": prompt}]
+    if screenshot:
+        if isinstance(screenshot, str):
+            screenshot_b64 = screenshot
+        else:
+            screenshot_b64 = base64.b64encode(screenshot).decode("utf-8")
+
+        content.append(
+            {
+                "type": "image_url",
+                "image_url": {
+                    "url": f"data:image/png;base64,{screenshot_b64}",
+                },
+            },
+        )
+    messages_to_send = [{"role": "user", "content": content}]
+    return await client.generate(messages=messages_to_send)
 
 
 class PlanSanitizer(ast.NodeTransformer):
@@ -101,12 +158,12 @@ class PlanSanitizer(ast.NodeTransformer):
     """
 
     def visit_Import(self, node: ast.Import) -> Any:
-        """Blocks `import` statements."""
-        raise SyntaxError("Import statements are not allowed in plans.")
+        """Removes all `import <module>` statements."""
+        return None
 
     def visit_ImportFrom(self, node: ast.ImportFrom) -> Any:
-        """Blocks `from ... import` statements."""
-        raise SyntaxError("Import statements are not allowed in plans.")
+        """Removes all `from <module> import ...` statements."""
+        return None
 
     def visit_AsyncFunctionDef(
         self,
@@ -151,11 +208,90 @@ class FunctionReplacer(ast.NodeTransformer):
         return self.generic_visit(node)
 
 
+class _SteerableToolHandleProxy:
+    """
+    A proxy for SteerableToolHandle to intercept its method calls and log
+    them for the @verify decorator. This ensures that interactions with
+    handles (e.g., call_handle.ask()) are visible to the verification process.
+    """
+
+    def __init__(
+        self,
+        real_handle: SteerableToolHandle,
+        plan: "HierarchicalPlan",
+        handle_name: str,
+    ):
+        self._real_handle = real_handle
+        self._plan = plan
+        self._handle_name = handle_name
+
+    def __getattr__(self, name: str) -> Any:
+        """
+        Intercepts attribute access on the handle (e.g., call_handle.ask).
+        """
+        real_attr = getattr(self._real_handle, name)
+
+        if not callable(real_attr):
+            return real_attr
+
+        @functools.wraps(real_attr)
+        async def async_method_wrapper(*args, **kwargs):
+            interactions_log = self._plan.interaction_stack[-1]
+            arg_str = ", ".join(map(repr, args))
+            kwarg_str = ", ".join(f"{k}={v!r}" for k, v in kwargs.items())
+            call_repr = f"{self._handle_name}.{name}({arg_str}, {kwarg_str})"
+
+            output = await real_attr(*args, **kwargs)
+
+            if isinstance(output, SteerableToolHandle):
+                interactions_log.append(
+                    (
+                        "handle_method_call",
+                        call_repr,
+                        f"Returned new handle: {output.__class__.__name__}",
+                    ),
+                )
+                new_handle_name = f"{self._handle_name}_{name}"
+                return _SteerableToolHandleProxy(output, self._plan, new_handle_name)
+            else:
+                interactions_log.append(("handle_method_call", call_repr, str(output)))
+                return output
+
+        @functools.wraps(real_attr)
+        def sync_method_wrapper(*args, **kwargs):
+            interactions_log = self._plan.interaction_stack[-1]
+            arg_str = ", ".join(map(repr, args))
+            kwarg_str = ", ".join(f"{k}={v!r}" for k, v in kwargs.items())
+            call_repr = f"{self._handle_name}.{name}({arg_str}, {kwarg_str})"
+
+            output = real_attr(*args, **kwargs)
+
+            if isinstance(output, SteerableToolHandle):
+                interactions_log.append(
+                    (
+                        "handle_method_call",
+                        call_repr,
+                        f"Returned new handle: {output.__class__.__name__}",
+                    ),
+                )
+                new_handle_name = f"{self._handle_name}_{name}"
+                return _SteerableToolHandleProxy(output, self._plan, new_handle_name)
+            else:
+                interactions_log.append(("handle_method_call", call_repr, str(output)))
+                return output
+
+        if inspect.iscoroutinefunction(real_attr):
+            return async_method_wrapper
+        else:
+            return sync_method_wrapper
+
+
 class _ActionProviderProxy:
     """
     A generic proxy that wraps the real ActionProvider to intercept all tool
-    calls and log them for the @verify decorator. This version correctly
-    handles both synchronous and asynchronous tools.
+    calls and log them for the @verify decorator. Itcorrectly
+    handles both synchronous and asynchronous tools and ensures that handles
+    returned by tools are also proxied to log subsequent interactions.
     """
 
     def __init__(self, real_action_provider: ActionProvider, plan: "HierarchicalPlan"):
@@ -184,12 +320,23 @@ class _ActionProviderProxy:
             tool_output = await real_attr(*args, **kwargs)
 
             if isinstance(tool_output, SteerableToolHandle):
-                final_result = await tool_output.result()
-                interactions_log.append(("tool_call", call_repr, str(final_result)))
+                interactions_log.append(
+                    (
+                        "tool_call",
+                        call_repr,
+                        f"Returned handle: {tool_output.__class__.__name__}",
+                    ),
+                )
+                handle_name = f"{name}_handle"
+                return _SteerableToolHandleProxy(tool_output, self._plan, handle_name)
             else:
-                interactions_log.append(("tool_call", call_repr, str(tool_output)))
+                if isinstance(tool_output, SteerableToolHandle):
+                    final_result = await tool_output.result()
+                    interactions_log.append(("tool_call", call_repr, str(final_result)))
+                else:
+                    interactions_log.append(("tool_call", call_repr, str(tool_output)))
 
-            return tool_output
+                return tool_output
 
         @functools.wraps(real_attr)
         def sync_wrapper(*args, **kwargs):
@@ -202,8 +349,19 @@ class _ActionProviderProxy:
 
             result = real_attr(*args, **kwargs)
 
-            interactions_log.append(("tool_call", call_repr, str(result)))
-            return result
+            if isinstance(result, SteerableToolHandle):
+                interactions_log.append(
+                    (
+                        "tool_call",
+                        call_repr,
+                        f"Returned handle: {result.__class__.__name__}",
+                    ),
+                )
+                handle_name = f"{name}_handle"
+                return _SteerableToolHandleProxy(result, self._plan, handle_name)
+            else:
+                interactions_log.append(("tool_call", call_repr, str(result)))
+                return result
 
         if inspect.iscoroutinefunction(real_attr):
             return async_wrapper
@@ -300,15 +458,18 @@ class HierarchicalPlan(BaseActiveTask):
             self._state = _HierarchicalPlanState.ERROR
             self._set_final_result(f"ERROR: Plan initialization failed: {e}")
 
-    async def _perform_exploration(self):
+    async def _perform_exploration(self, function_purpose: str):
         """
-        Runs an interactive conversational loop to gather information before planning.
+        Runs an interactive conversational loop to gather information for a specific function.
         """
         self._state = _HierarchicalPlanState.EXPLORING
-        self.action_log.append("Starting interactive exploratory phase...")
+        self.action_log.append(
+            f"Starting exploration for task: '{function_purpose}'...",
+        )
         try:
             research_prompt = build_exploration_prompt(
-                goal=self.goal,
+                function_purpose=function_purpose,
+                overall_goal=self.goal,
                 tools=self.planner.tools,
             )
 
@@ -320,21 +481,22 @@ class HierarchicalPlan(BaseActiveTask):
                 client=client,
                 message="Begin your research based on the main objective.",
                 tools=self.planner.tools,
-                loop_id="ExploratoryPhase",
+                loop_id="FunctionExplorationPhase",
                 max_steps=10,
+                timeout=self.planner.timeout,
             )
 
             summary = await exploration_loop_handle.result()
-            self.exploration_summary = summary
-            self.action_log.append("Exploratory phase completed.")
+            self.action_log.append("Exploration completed.")
             self.action_log.append(f"Exploration Summary: {summary}")
+            return summary
 
         except Exception as e:
             logger.error(f"Exploration phase failed: {e}", exc_info=True)
             self.action_log.append(
                 f"WARNING: Exploration failed: {e}. Proceeding without extra context.",
             )
-            self.exploration_summary = None
+            return None
         finally:
             self._state = _HierarchicalPlanState.RUNNING
 
@@ -429,9 +591,14 @@ class HierarchicalPlan(BaseActiveTask):
                     f"Escalation ({self.escalation_count}/{self.MAX_ESCALATIONS}): {e}",
                 )
 
-                parent_to_replan = self._get_main_function_name()
+                parent_to_replan = None
+                if len(self.call_stack) > 1:
+                    parent_to_replan = self.call_stack[-2]
+                else:
+                    parent_to_replan = self._get_main_function_name()
+
                 if not parent_to_replan:
-                    raise RuntimeError("Could not determine main_plan to replan.")
+                    raise RuntimeError("Could not determine a function to replan.")
 
                 if self.escalation_count > self.MAX_ESCALATIONS:
                     self._state = _HierarchicalPlanState.PAUSED_FOR_ESCALATION
@@ -449,6 +616,7 @@ class HierarchicalPlan(BaseActiveTask):
                     parent_to_replan,
                     is_strategic_replan=True,
                     replan_reason=e.reason,
+                    failed_interactions=e.failed_interactions,
                 )
                 plan_iterator = self._create_main_loop_iterator()
                 return {
@@ -476,10 +644,11 @@ class HierarchicalPlan(BaseActiveTask):
             client=client,
             message="Executing hierarchical plan...",
             tools={"_run_one_plan_step": _run_one_plan_step},
-            loop_id=f"HierarchicalPlan-{self.goal[:20]}",
+            loop_id=f"HierarchicalPlan-{self.goal[:50]}",
             max_steps=100,
             tool_policy=dynamic_tool_policy,
             interrupt_llm_with_interjections=True,
+            timeout=self.planner.timeout,
         )
         await self.main_loop_handle.result()
 
@@ -548,41 +717,48 @@ class HierarchicalPlan(BaseActiveTask):
             )
 
         try:
-            new_code_module = ast.parse(textwrap.dedent(new_code))
-            if not new_code_module.body or not isinstance(
-                new_code_module.body[0],
-                (ast.FunctionDef, ast.AsyncFunctionDef),
-            ):
-                raise ValueError("New code does not define a function.")
-
-            new_functions = {
-                node.name: node
-                for node in new_code_module.body
-                if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
-            }
-
             old_tree = ast.parse(self.plan_source_code or "pass")
+            new_tree = ast.parse(textwrap.dedent(new_code))
 
-            old_functions = {
+            old_defs = {
                 node.name: node
                 for node in old_tree.body
-                if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+                if isinstance(
+                    node,
+                    (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef),
+                )
             }
 
-            for name, new_func_node in new_functions.items():
-                if name in old_functions:
-                    transformer = FunctionReplacer(name, new_func_node)
-                    old_tree = transformer.visit(old_tree)
-                else:
-                    old_tree.body.append(new_func_node)
-
-            self.plan_source_code = ast.unparse(old_tree)
-
-            for name, new_func_node in new_functions.items():
-                self.function_source_map[name] = ast.get_source_segment(
-                    self.plan_source_code,
-                    new_func_node,
+            new_defs = {
+                node.name: node
+                for node in new_tree.body
+                if isinstance(
+                    node,
+                    (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef),
                 )
+            }
+
+            if function_name not in new_defs:
+                raise ValueError(
+                    f"The new code block from the LLM does not contain the required "
+                    f"function '{function_name}'.",
+                )
+
+            old_defs.update(new_defs)
+
+            final_body = list(old_defs.values())
+            final_tree = ast.Module(body=final_body, type_ignores=[])
+            ast.fix_missing_locations(final_tree)
+
+            self.plan_source_code = ast.unparse(final_tree)
+
+            self.function_source_map.clear()
+            for name, node in old_defs.items():
+                if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                    self.function_source_map[name] = ast.get_source_segment(
+                        self.plan_source_code,
+                        node,
+                    )
 
             exec(
                 compile(self.plan_source_code, "<string>", "exec"),
@@ -950,6 +1126,7 @@ class HierarchicalPlanner(BasePlanner):
         headless: bool = False,
         max_escalations: Optional[int] = None,
         max_local_retries: Optional[int] = None,
+        timeout: Optional[int] = 300,
     ):
         """
         Initializes the HierarchicalPlanner.
@@ -975,15 +1152,19 @@ class HierarchicalPlanner(BasePlanner):
         }
         self.max_escalations = max_escalations or 3
         self.max_local_retries = max_local_retries or 2
+        self.timeout = timeout
 
-        model = os.environ.get("UNIFY_MODEL", "gpt-4o-mini@openai")
-        self.main_loop_client: unify.AsyncUnify = unify.AsyncUnify(model)
-        self.plan_generation_client: unify.AsyncUnify = unify.AsyncUnify(model)
-        self.verification_client: unify.AsyncUnify = unify.AsyncUnify(model)
-        self.implementation_client: unify.AsyncUnify = unify.AsyncUnify(model)
-        self.modification_client: unify.AsyncUnify = unify.AsyncUnify(model)
-        self.exploration_client: unify.AsyncUnify = unify.AsyncUnify(model)
-        self.ask_client: unify.AsyncUnify = unify.AsyncUnify(model)
+        self.main_loop_client: unify.AsyncUnify = unify.AsyncUnify("gpt-4o-mini@openai")
+        self.plan_generation_client: unify.AsyncUnify = unify.AsyncUnify(
+            "o4-mini@openai",
+        )
+        self.verification_client: unify.AsyncUnify = unify.AsyncUnify("o4-mini@openai")
+        self.implementation_client: unify.AsyncUnify = unify.AsyncUnify(
+            "o4-mini@openai",
+        )
+        self.modification_client: unify.AsyncUnify = unify.AsyncUnify("o4-mini@openai")
+        self.exploration_client: unify.AsyncUnify = unify.AsyncUnify("o4-mini@openai")
+        self.ask_client: unify.AsyncUnify = unify.AsyncUnify("gpt-4o-mini@openai")
 
     def _sanitize_code(self, code: str) -> str:
         """
@@ -1124,6 +1305,11 @@ class HierarchicalPlanner(BasePlanner):
         return {
             "__builtins__": safe_builtins,
             "asyncio": asyncio,
+            "re": re,
+            "json": json,
+            "datetime": datetime,
+            "collections": collections,
+            "pydantic": pydantic,
             "BaseModel": BaseModel,
             "Field": Field,
         }
@@ -1196,34 +1382,39 @@ class HierarchicalPlanner(BasePlanner):
             @functools.wraps(fn)
             async def wrapper(*args, **kwargs):
                 """The wrapper that performs verification and correction."""
+                func_name = fn.__name__
+                current_fn = plan.execution_namespace[func_name]
                 try:
-                    sig = inspect.signature(fn)
+                    sig = inspect.signature(current_fn)
                     bound_args = sig.bind(*args, **kwargs)
                     bound_args.apply_defaults()
-                    cache_key = (fn.__name__, frozenset(bound_args.arguments.items()))
+                    cache_key = (func_name, frozenset(bound_args.arguments.items()))
                 except (TypeError, ValueError):
-                    cache_key = (fn.__name__, str(args), str(kwargs))
+                    cache_key = (func_name, str(args), str(kwargs))
 
                 if cache_key in plan.completed_functions:
 
                     logger.info(
-                        f"CACHE HIT: Skipping already completed call to '{fn.__name__}' with args {args}, {kwargs}",
+                        f"CACHE HIT: Skipping already completed call to '{func_name}' with args {args}, {kwargs}",
                     )
                     return
                 logger.info(
-                    f"CACHE MISS: Proceeding with execution for '{fn.__name__}'.",
+                    f"CACHE MISS: Proceeding with execution for '{func_name}'.",
                 )
-                plan.call_stack.append(fn.__name__)
+                plan.call_stack.append(func_name)
                 plan.interaction_stack.append([])
-                logger.info(f"VERIFY: Entering '{fn.__name__}'")
+                logger.info(f"VERIFY: Entering '{func_name}'")
                 try:
                     last_error_traceback = ""
                     for _ in range(plan.MAX_LOCAL_RETRIES):
                         try:
-                            func_source = plan.function_source_map.get(fn.__name__)
+                            current_fn_for_execution = plan.execution_namespace[
+                                func_name
+                            ]
+                            func_source = plan.function_source_map.get(func_name)
                             return await self._execute_and_verify_step(
                                 plan,
-                                fn,
+                                inspect.unwrap(current_fn_for_execution),
                                 func_source,
                                 args,
                                 kwargs,
@@ -1231,9 +1422,28 @@ class HierarchicalPlanner(BasePlanner):
                             )
                         except _ForcedRetryException:
                             plan.action_log.append(
-                                f"Retrying '{fn.__name__}' after reimplementation.",
+                                f"Retrying '{func_name}' after reimplementation.",
                             )
+                            if plan.interaction_stack:
+                                plan.interaction_stack[-1].clear()
                             continue
+                        except InvalidActionError as e:
+                            logger.warning(
+                                f"Caught InvalidActionError in '{func_name}'. Forcing local reimplementation.",
+                            )
+                            replan_reason = (
+                                f"The function failed because it tried to execute an invalid browser action. "
+                                f"The instruction it gave resulted in the error: '{e}'.\n\n"
+                                f"The 'browser_act' tool can only perform atomic actions like clicking, typing, navigating, or scrolling. "
+                                f"Please rewrite the function to use only valid, direct actions."
+                            )
+                            await plan._handle_dynamic_implementation(
+                                func_name,
+                                replan_reason=replan_reason,
+                            )
+                            raise _ForcedRetryException(
+                                "Forced retry after invalid action.",
+                            )
                         except (
                             ReplanFromParentException,
                             NotImplementedError,
@@ -1242,14 +1452,24 @@ class HierarchicalPlanner(BasePlanner):
                             raise
                         except Exception as e:
                             logger.error(
-                                f"Function '{fn.__name__}' failed: {e}",
+                                f"Function '{func_name}' failed: {e}",
                                 exc_info=True,
                             )
                             last_error_traceback = traceback.format_exc()
-                            await asyncio.sleep(1)
-                            continue
+                            replan_reason = (
+                                f"The function '{func_name}' failed with an unexpected code error. "
+                                f"Analyze the following traceback and rewrite the function to fix the bug.\n\n"
+                                f"**Traceback:**\n{traceback.format_exc()}"
+                            )
+                            await plan._handle_dynamic_implementation(
+                                func_name,
+                                replan_reason=replan_reason,
+                            )
+                            raise _ForcedRetryException(
+                                "Forced retry after unexpected exception.",
+                            )
                     raise ReplanFromParentException(
-                        f"Function '{fn.__name__}' failed after multiple retries.",
+                        f"Function '{func_name}' failed after multiple retries.",
                         reason=last_error_traceback,
                     )
                 finally:
@@ -1298,11 +1518,15 @@ class HierarchicalPlanner(BasePlanner):
             f"   - Purpose: {fn.__doc__ or 'N/A'}\n"
             f"   - Interactions:\n{json.dumps(all_interactions, indent=4)}",
         )
+        final_screenshot = None
+        if "action_provider.browser" in plan.plan_source_code:
+            final_screenshot = self.action_provider.browser.controller._last_shot
         assessment = await self._check_state_against_goal(
             plan,
             fn.__name__,
             fn.__doc__,
             all_interactions,
+            screenshot=final_screenshot,
         )
         logger.info(
             f"🕵️ VERIFICATION ASSESSMENT for '{fn.__name__}': {assessment.model_dump_json(indent=2)}",
@@ -1380,11 +1604,13 @@ class HierarchicalPlanner(BasePlanner):
             await plan._handle_dynamic_implementation(
                 fn.__name__,
                 replan_reason=assessment.reason,
+                failed_interactions=interactions,
             )
             raise _ForcedRetryException("Forced retry after local reimplementation")
         elif assessment.status == "replan_parent":
             raise ReplanFromParentException(
                 f"Strategic failure in '{fn.__name__}': {assessment.reason}",
+                failed_interactions=interactions,
             )
         else:
             raise FatalVerificationError(
@@ -1438,7 +1664,6 @@ class HierarchicalPlanner(BasePlanner):
                     ),
                     exploration_summary=exploration_summary,
                 )
-                logger.debug(f"Prompt for initial plan generation: {prompt}")
                 response = await llm_call(self.plan_generation_client, prompt)
                 code = (
                     response.strip().replace("```python", "").replace("```", "").strip()
@@ -1475,25 +1700,62 @@ class HierarchicalPlanner(BasePlanner):
         Returns:
             The sanitized source code for the new function implementation.
         """
-        func_source = plan.function_source_map.get(function_name, "")
-        is_browser_task = "action_provider.browser" in func_source
-
+        is_browser_task = "action_provider.browser" in plan.plan_source_code
+        replan_reason = kwargs.get("replan_reason")
+        failed_interactions = kwargs.get("failed_interactions")
         browser_state = None
+        new_strategy = None
+        docstring = (
+            inspect.getdoc(plan.execution_namespace[function_name])
+            or "No docstring provided."
+        )
         if is_browser_task:
             browser_state = await self.action_provider.browser.observe(
-                "Describe current page for context.",
+                "Analyze the current page and provide a structured summary of its content.",
+                response_format=PageAnalysis,
             )
+            browser_screenshot = self.action_provider.browser.controller._last_shot
+        else:
+            browser_state = None
+            browser_screenshot = None
 
-        replan_context_str = kwargs.get("replan_reason")
+        strategy_reason = replan_reason
+        if not strategy_reason:
+            strategy_reason = f"This is the first time the function '{function_name}' is being implemented. Please devise a clear, step-by-step plan to achieve its purpose: {docstring}"
+
+        strategy_prompt = build_implementation_strategy_prompt(
+            goal=plan.goal,
+            function_name=function_name,
+            function_docstring=docstring,
+            failure_reason=strategy_reason,
+            failed_interactions=failed_interactions,
+            browser_state=browser_state,
+            has_browser_screenshot=browser_screenshot is not None,
+            tools=self.tools,
+        )
+        self.implementation_client.set_response_format(ImplementationStrategy)
+        strategy_response_raw = await llm_call(
+            self.implementation_client,
+            strategy_prompt,
+            screenshot=browser_screenshot,
+        )
+        new_strategy = ImplementationStrategy.model_validate_json(
+            strategy_response_raw,
+        )
+        self.implementation_client.reset_response_format()
+        plan.action_log.append(
+            f"Devised new strategy for '{function_name}': {new_strategy.rationale}",
+        )
+
         replan_context = ""
-        if kwargs.get("is_strategic_replan") and replan_context_str:
+        if kwargs.get("is_strategic_replan") and replan_reason:
             replan_context = textwrap.dedent(
                 f"""
             **REPLANNING NOTE:** The previous attempt failed. Analyze the error traceback below and devise a new, more robust implementation.
 
             **Failure Traceback:**
             ```
-            {replan_context_str}
+            {replan_reason}
             ```
             """,
             )
@@ -1507,15 +1769,20 @@ class HierarchicalPlanner(BasePlanner):
 
         prompt = build_dynamic_implement_prompt(
             function_name=function_name,
-            func_sig=func_sig,
-            goal=plan.goal,
+            function_sig=func_sig,
+            function_docstring=docstring,
             parent_code=parent_code,
             browser_state=browser_state,
+            has_browser_screenshot=browser_screenshot is not None,
             replan_context=replan_context,
+            implementation_strategy=new_strategy,
             tools=self.tools,
         )
-        logger.debug(f"Prompt for dynamic implementation: {prompt}")
-        code = await llm_call(self.implementation_client, prompt)
+        code = await llm_call(
+            self.implementation_client,
+            prompt,
+            screenshot=browser_screenshot,
+        )
 
         try:
             sanitized_code = self._sanitize_code(
@@ -1537,6 +1804,7 @@ class HierarchicalPlanner(BasePlanner):
         function_name: str,
         function_docstring: str | None,
         interactions: list,
+        screenshot: bytes | str | None = None,
     ) -> VerificationAssessment:
         """
         Uses an LLM to assess if a function's execution achieved its goal.
@@ -1546,6 +1814,7 @@ class HierarchicalPlanner(BasePlanner):
             function_name: The name of the function being verified.
             function_docstring: The docstring of the function.
             interactions: A log of interactions that occurred.
+            screenshot: The screenshot of the current state of the browser.
 
         Returns:
             A VerificationAssessment object with the outcome.
@@ -1555,8 +1824,13 @@ class HierarchicalPlanner(BasePlanner):
             function_name=function_name,
             function_docstring=function_docstring,
             interactions=interactions,
+            has_browser_screenshot=screenshot is not None,
         )
-        response_str = await llm_call(self.verification_client, prompt)
+        response_str = await llm_call(
+            self.verification_client,
+            prompt,
+            screenshot=screenshot,
+        )
         try:
             clean_response = (
                 response_str.strip().replace("```json", "").replace("```", "")

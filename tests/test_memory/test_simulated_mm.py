@@ -26,6 +26,7 @@ import pytest
 from unity.memory_manager.simulated import SimulatedMemoryManager
 from unity.contact_manager.simulated import SimulatedContactManager
 from unity.knowledge_manager.simulated import SimulatedKnowledgeManager
+from unity.task_scheduler.simulated import SimulatedTaskScheduler
 
 # shared helper used throughout the test-suite – isolates each test run
 from tests.helpers import _handle_project
@@ -81,25 +82,17 @@ async def test_mm_update_contacts_invokes_expected_tools(monkeypatch):
 @pytest.mark.asyncio
 @_handle_project
 async def test_mm_update_contact_bio_calls_inner_helpers(monkeypatch):
-    counts = {"_upd": 0}
+    counts = {"cm_update": 0}
 
-    async def stub_update_contact(
-        self,
-        *,
-        contact_id: int,
-        custom_fields: dict,
-        **kw,
-    ):
-        # Increment counter, pretend success
-        counts["_upd"] += 1
-        return {"outcome": "stub ok", "details": {"contact_id": contact_id}}
+    # --- patch SimulatedContactManager.update ------------------------------
+    orig_cm_upd = SimulatedContactManager.update
 
-    monkeypatch.setattr(
-        SimulatedContactManager,
-        "_update_contact",
-        stub_update_contact,
-        raising=False,
-    )
+    @functools.wraps(orig_cm_upd)
+    async def spy_cm_upd(self, text: str, **kw):
+        counts["cm_update"] += 1
+        return await orig_cm_upd(self, text, **kw)
+
+    monkeypatch.setattr(SimulatedContactManager, "update", spy_cm_upd, raising=True)
 
     # run --------------------------------------------------------------------
     mm = SimulatedMemoryManager("Bio refresh demo.")
@@ -109,7 +102,8 @@ async def test_mm_update_contact_bio_calls_inner_helpers(monkeypatch):
 
     # check ------------------------------------------------------------------
     assert isinstance(new_bio, str) and new_bio.strip()
-    assert counts["_upd"] == 1, "_update_contact should be called exactly once"
+    # At least one call to update contacts
+    assert counts["cm_update"] >= 1
 
 
 # --------------------------------------------------------------------------- #
@@ -118,26 +112,19 @@ async def test_mm_update_contact_bio_calls_inner_helpers(monkeypatch):
 @pytest.mark.asyncio
 @_handle_project
 async def test_mm_update_contact_rolling_summary_invocations(monkeypatch):
-    counts = {"_upd": 0}
+    counts = {"cm_update": 0}
 
-    # ---- ensure _update_contact is available & spied ----------------------
-    async def stub_update_contact(
-        self,
-        *,
-        contact_id: int,
-        custom_fields: dict,
-        **kw,
-    ):
-        counts["_upd"] += 1
-        return {"outcome": "stub ok", "details": {"contact_id": contact_id}}
+    # --- patch SimulatedContactManager.update ------------------------------
+    orig_cm_upd = SimulatedContactManager.update
 
-    monkeypatch.setattr(
-        SimulatedContactManager,
-        "_update_contact",
-        stub_update_contact,
-        raising=False,
-    )
+    @functools.wraps(orig_cm_upd)
+    async def spy_cm_upd(self, text: str, **kw):
+        counts["cm_update"] += 1
+        return await orig_cm_upd(self, text, **kw)
 
+    monkeypatch.setattr(SimulatedContactManager, "update", spy_cm_upd, raising=True)
+
+    # run --------------------------------------------------------------------
     mm = SimulatedMemoryManager("Rolling-summary refresh demo.")
     prev_summary = "Discussing Q3 marketing launch."
     transcript = _build_transcript(
@@ -149,8 +136,10 @@ async def test_mm_update_contact_rolling_summary_invocations(monkeypatch):
         latest_rolling_summary=prev_summary,
     )
 
+    # check ------------------------------------------------------------------
     assert isinstance(new_summary, str) and new_summary.strip()
-    assert counts["_upd"] == 1, "_update_contact should be invoked once"
+    # At least one call to update contacts
+    assert counts["cm_update"] >= 1
 
 
 # --------------------------------------------------------------------------- #
@@ -184,3 +173,38 @@ async def test_mm_update_knowledge_invokes_kb_update(monkeypatch):
 
     assert isinstance(result, str) and result.strip()
     assert counts["kb_update"] >= 1, "KnowledgeManager.update should be invoked"
+
+
+# --------------------------------------------------------------------------- #
+# 5. update_tasks – should call TaskScheduler.update at least once            #
+# --------------------------------------------------------------------------- #
+
+
+@pytest.mark.asyncio
+@_handle_project
+async def test_mm_update_tasks_invokes_scheduler_update(monkeypatch):
+    counts = {"ts_update": 0}
+
+    orig_ts_update = SimulatedTaskScheduler.update
+
+    @functools.wraps(orig_ts_update)
+    async def spy_ts_update(self, text: str, **kw):
+        counts["ts_update"] += 1
+        return await orig_ts_update(self, text, **kw)
+
+    monkeypatch.setattr(
+        SimulatedTaskScheduler,
+        "update",
+        spy_ts_update,
+        raising=True,
+    )
+
+    mm = SimulatedMemoryManager("Task list update demo.")
+    transcript = _build_transcript(
+        "Please create a task to organise the quarterly review meeting next Monday.",
+    )
+
+    result = await mm.update_tasks(transcript)
+
+    assert isinstance(result, str) and result.strip()
+    assert counts["ts_update"] >= 1, "TaskScheduler.update should be invoked"

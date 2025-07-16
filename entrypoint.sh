@@ -17,7 +17,7 @@ cleanup() {
         kill -TERM $MAIN_PID 2>/dev/null || true
         wait $MAIN_PID 2>/dev/null || true
     fi
-    
+
     # Stop Redis
     if [ ! -z "$REDIS_PID" ]; then
         echo "Stopping Redis (PID: $REDIS_PID)..."

@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 import asyncio
-from typing import Dict, List, Optional, Any
+from typing import Dict, List, Optional, Any, TYPE_CHECKING
 
 from ..common.llm_helpers import SteerableToolHandle
 
@@ -90,3 +90,86 @@ class BaseContactManager(ABC):
             Handle whose :pyfunc:`result` yields confirmation of the mutation
             and (optionally) reasoning steps.
         """
+
+    @abstractmethod
+    def _search_contacts(
+        self,
+        *,
+        filter: Optional[str] = None,
+        offset: int = 0,
+        limit: int = 100,
+    ) -> List["Contact"]:
+        """
+        Retrieve contact records that satisfy *filter*.
+
+        This private method is intentionally *part* of the public-facing contract
+        because other managers (e.g. :class:`~unity.transcript_manager.TranscriptManager`)
+        rely on its existence for tool-chaining.  Concrete subclasses **must**
+        implement it – even simulated ones – so that the LLM can access a
+        deterministic search primitive.
+
+        Parameters
+        ----------
+        filter : str | None, default ``None``
+            Python expression evaluated against every contact (``None`` selects all).
+        offset : int, default ``0``
+            Zero-based index of the first result to return.
+        limit : int, default ``100``
+            Maximum number of contacts to return.
+
+        Returns
+        -------
+        list[Contact]
+            Matching contacts in creation order.
+        """
+        raise NotImplementedError
+
+    @abstractmethod
+    def _update_contact(
+        self,
+        *,
+        contact_id: int,
+        first_name: Optional[str] = None,
+        surname: Optional[str] = None,
+        email_address: Optional[str] = None,
+        phone_number: Optional[str] = None,
+        whatsapp_number: Optional[str] = None,
+        description: Optional[str] = None,
+        bio: Optional[str] = None,
+        rolling_summary: Optional[str] = None,
+        custom_fields: Optional[Dict[str, Any]] = None,
+    ) -> "ToolOutcome":
+        """
+        Modify **one** existing contact identified by *contact_id*.
+
+        Although private, this helper is *part* of the public-facing
+        contract just like :pyfunc:`_search_contacts`.  Other managers –
+        notably :class:`~unity.memory_manager.MemoryManager` – rely on its
+        presence for fast, deterministic updates without a full natural-
+        language round-trip through :pyfunc:`update`.
+
+        Concrete subclasses **must** supply a *synchronous* implementation so
+        that it can safely be invoked inside an ``asyncio.to_thread`` call.
+
+        Parameters
+        ----------
+        contact_id : int
+            The unique ``contact_id`` of the record to update.
+        first_name, surname, email_address, phone_number, whatsapp_number,
+        description, bio, rolling_summary, custom_fields
+            Same semantics as the public :pyfunc:`update` method.
+
+        Returns
+        -------
+        ToolOutcome
+            A standard outcome payload summarising what changed.  Must be
+            non-empty so that simulated managers can fabricate realistic
+            confirmations.
+        """
+        raise NotImplementedError
+
+
+if TYPE_CHECKING:
+    # Avoid a runtime import to prevent circular dependencies
+    from .types.contact import Contact
+    from ..common.tool_outcome import ToolOutcome

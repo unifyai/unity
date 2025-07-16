@@ -252,7 +252,7 @@ class CommandRunner:
                 except Exception:
                     pass
             else:
-                self.active.wait_for_load_state("networkidle", timeout=5000)
+                time.sleep(0.1)
 
             after_shot_b64 = base64.b64encode(
                 _safe_screenshot(self.active, self.log),
@@ -320,7 +320,7 @@ class CommandRunner:
                             f"Click failed: Element {element_id_to_click} has no handle or bbox.",
                         )
 
-                execute_and_record(f"click {label}", click_action)
+                execute_and_record(f"click {label}", click_action, is_nav=True)
 
             except (ValueError, PWError, IndexError) as exc:
                 self.log(

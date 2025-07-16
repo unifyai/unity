@@ -1,3 +1,5 @@
+import asyncio
+from pydantic import Field
 import os
 import unify
 from typing import Any
@@ -5,8 +7,6 @@ from pydantic import BaseModel
 import inspect
 from unity.common.llm_helpers import (
     SteerableToolHandle,
-    methods_to_tool_dict,
-    start_async_tool_use_loop,
 )
 
 from unity.conversation_manager import comms_actions
@@ -14,6 +14,7 @@ from unity.controller.browser import Browser
 from unity.contact_manager.contact_manager import ContactManager
 from unity.transcript_manager.transcript_manager import TranscriptManager
 from unity.knowledge_manager.knowledge_manager import KnowledgeManager
+from unity.common.llm_helpers import methods_to_tool_dict
 
 
 class ActionProvider:
@@ -52,25 +53,7 @@ class ActionProvider:
         3. It then calls the low-level `_send_sms_message_via_number` to finally send the message.
         You should provide a clear and complete description, e.g., "Send a text to John Doe letting him know his appointment is confirmed for 3 PM tomorrow."
         """
-        client = unify.AsyncUnify("o4-mini@openai")
-        client.set_system_message(
-            "Your task is to send an SMS message. First, use the ContactManager to find the recipient's phone number. Then, draft a message. Finally, use the `_send_sms_message_via_number` tool to send it.",
-        )
-        tools = methods_to_tool_dict(
-            self.contact_manager.ask,
-            self.transcript_manager.ask,
-            self.knowledge_manager.ask,
-            comms_actions._send_sms_message_via_number,
-            include_class_name=True,
-        )
-        return start_async_tool_use_loop(
-            client,
-            description,
-            tools,
-            loop_id="send_sms_message",
-            parent_chat_context=parent_chat_context,
-            tool_policy=lambda i, _: ("required", _) if i < 1 else ("auto", _),
-        )
+        return await comms_actions.send_sms_message(description, parent_chat_context)
 
     async def send_email(
         self,
@@ -84,25 +67,7 @@ class ActionProvider:
         3. It then calls the low-level `_send_email_via_address` to send the email.
         You should provide a clear and complete description, e.g., "Email Jane Doe to follow up on our conversation from yesterday about the project proposal."
         """
-        client = unify.AsyncUnify("o4-mini@openai")
-        client.set_system_message(
-            "Your task is to send an email. First, use the ContactManager to find the recipient's email address. Then, draft a message. Finally, use the `_send_email_via_address` tool to send it.",
-        )
-        tools = methods_to_tool_dict(
-            self.contact_manager.ask,
-            self.transcript_manager.ask,
-            self.knowledge_manager.ask,
-            comms_actions._send_email_via_address,
-            include_class_name=True,
-        )
-        return start_async_tool_use_loop(
-            client,
-            description,
-            tools,
-            loop_id="send_email",
-            parent_chat_context=parent_chat_context,
-            tool_policy=lambda i, _: ("required", _) if i < 1 else ("auto", _),
-        )
+        return await comms_actions.send_email(description, parent_chat_context)
 
     async def send_whatsapp_message(
         self,
@@ -116,24 +81,9 @@ class ActionProvider:
         3. It calls the low-level `_send_whatsapp_message_via_number` to dispatch the message.
         You should provide a clear and complete description, e.g., "Send a WhatsApp message to the team group to remind them of the 10 AM meeting."
         """
-        client = unify.AsyncUnify("o4-mini@openai")
-        client.set_system_message(
-            "Your task is to send a WhatsApp message. First, use the ContactManager to find the recipient's phone number. Then, draft a message. Finally, use the `_send_whatsapp_message_via_number` tool to send it.",
-        )
-        tools = methods_to_tool_dict(
-            self.contact_manager.ask,
-            self.transcript_manager.ask,
-            self.knowledge_manager.ask,
-            comms_actions._send_whatsapp_message_via_number,
-            include_class_name=True,
-        )
-        return start_async_tool_use_loop(
-            client,
+        return await comms_actions.send_whatsapp_message(
             description,
-            tools,
-            loop_id="send_whatsapp_message",
-            parent_chat_context=parent_chat_context,
-            tool_policy=lambda i, _: ("required", _) if i < 1 else ("auto", _),
+            parent_chat_context,
         )
 
     def start_call(self, phone_number: str, purpose: str) -> SteerableToolHandle:
@@ -147,72 +97,150 @@ class ActionProvider:
         return comms_actions.Call(
             phone_number,
             purpose,
-            # tools=methods_to_tool_dict(
-            #     self.contact_manager.ask,
-            #     self.transcript_manager.ask,
-            #     self.knowledge_manager.ask,
-            #     self.task_scheduler.ask,
-            # ),
+            tools=methods_to_tool_dict(
+                self.contact_manager.ask,
+                self.transcript_manager.ask,
+                self.knowledge_manager.ask,
+                self.task_scheduler.ask,
+            ),
         )
 
     # --- Browser Actions ---
     async def browser_act(self, instruction: str, expectation: str) -> str:
         """
-        Performs a single, atomic high-level action in the browser and verifies its outcome.
-        This tool is for discrete, state-changing operations like a single click, a typing sequence, or a navigation event.
+        Performs a **single, high-level action** in the browser and verifies its outcome.
+
+        This tool functions by looking at the screen; it **does not have access to the underlying HTML or DOM**. Therefore, instructions must describe elements based on their **visible text or position**, not by HTML attributes like `id`, `class`, or `aria-label`.
 
         Args:
-            instruction (str): The natural-language instruction for the action.
-                            **IMPORTANT**: This must be a single command. Do not chain multiple actions
-                            together (e.g., "click login and type username").
-            expectation (str): A clear, verifiable description of the expected state of the page *after*
+            instruction (str): A single, natural-language command. Describe the element to interact with
+                            based on its visible properties.
+            expectation (str): A clear, verifiable description of what the page should look like *after*
                             the action is successfully completed.
 
         Examples:
-            # Good Example (Single Action)
+            # ✅ Good Example (Using Visible Text)
             - instruction: "Click the 'Login' button"
-            expectation: "The URL should now contain '/login'."
+            expectation: "The page should now show a password field."
 
-            # Good Example (Single Action)
-            - instruction: "Type 'hello world' into the search bar with ID 'search-input'"
+            # ✅ Good Example (Using Visible Text)
+            - instruction: "Type 'hello world' into the search bar"
             expectation: "The search bar should contain the text 'hello world'."
 
-            # Bad Example (Chained Actions - Do Not Do This)
+            # ❌ Bad Example (Using HTML Attributes)
+            - instruction: "Click the button with id 'submit-btn'"
+            # This will fail because the tool cannot see HTML IDs.
+
+            # ❌ Bad Example (Using ARIA Labels)
+            - instruction: "Click the image with 'logo' in the aria-label"
+            # This will fail because the tool cannot see aria-labels.
+
+            # ❌ Bad Example (Chained Actions)
             - instruction: "Click the login button and then enter 'my_user' into the username field."
         """
         return await self.browser.act(
-            instruction, expectation=expectation, multi_step_mode=True
+            instruction,
+            expectation=expectation,
+            multi_step_mode=True,
         )
 
     async def browser_observe(self, query: str, response_format: Any = str) -> Any:
         """
-        Asks a question about the current state of the browser page and returns the answer.
-        This tool is for read-only operations to gather information without changing the page state.
-        It uses an LLM to analyze a screenshot and the page's DOM to answer the query.
+        Analyzes a screenshot of the current browser page to answer a question.
+
+        This tool functions like a person looking at the screen; it **does not have access to the underlying HTML or DOM structure**. It can only answer questions about what is currently visible. Use it for read-only operations to gather information without changing the page state.
+
+        **✅ Good Queries (What you can see):**
+        - "What is the title of the page?"
+        - "List the text on all visible buttons."
+        - "Is the text 'Welcome back, user!' visible on the screen?"
+        - "Transcribe the text from the paragraph under the 'About Us' heading."
+        - "What is the phone number displayed at the top of the page?"
+
+        **❌ Bad Queries (Requires HTML/DOM access):**
+        - Avoid asking for non-visible information.
+        - **Do not ask for HTML attributes** like `href`, `src`, or `alt` text (e.g., "What is the URL of the main product image?" or "Get the alt text for the logo.").
+        - **Do not ask about HTML tags** (e.g., "Find all the `<h1>` tags.").
+        - Avoid asking the tool to interpret meaning. Instead of "Does this image look professional?", ask "Describe the image in the center of the page."
+        - Avoid multi-step queries. Instead of "Find the contact link and tell me the email," break it into separate steps.
 
         Args:
-            query: The natural-language question to ask about the page.
-            response_format: Optional. A Pydantic model to structure the output. If provided, the LLM will return a JSON object matching the model.
-
-        Examples:
-        - "What is the title of the page?"
-        - "Is there a button with the text 'Submit' visible on the screen?"
-        - "What are the headlines of the articles in the main content area?"
+            query: The natural-language question to ask about what is visible on the page.
+            response_format: Optional. A Pydantic model to structure the output. The LLM will return a JSON object matching the model.
         """
         return await self.browser.observe(query, response_format=response_format)
 
-    async def browser_multi_step(self, description: str) -> SteerableToolHandle:
-        """
-        Performs a complex, sequential browser task that may require multiple steps.
-        Use this for high-level goals like "Log into my account" or "Find the latest blog post and summarize it."
-        This tool is more powerful than `act` for tasks that are not single-step.
-        It returns a handle to a sub-agent that will execute the task.
-        """
-        return await self.browser.multi_step(description)
+    # async def browser_multi_step(self, description: str) -> SteerableToolHandle:
+    #     """
+    #     Performs a complex, sequential browser task that may require multiple steps.
+    #     Use this for high-level goals like "Log into my account" or "Find the latest blog post and summarize it."
+    #     This tool is more powerful than `act` for tasks that are not single-step.
+    #     It returns a handle to a sub-agent that will execute the task.
+    #     """
+    #     return await self.browser.multi_step(description)
 
     # async def browser_start_recording(self):
     #     """Alias for browser.start_recording."""
     #     return self.browser.start_recording()
+
+    # TODO: move this to the FM
+    async def scroll_until_visible(
+        self,
+        element_description: str,
+        direction: str = "down",
+        max_retries: int = 5,
+    ) -> str:
+        """
+        Scrolls the page in a specified direction until a target element is visible.
+
+        This is a robust tool for finding elements that may be off-screen. It is generally
+        preferable to writing manual scroll loops in a plan.
+
+        Args:
+            element_description (str): A clear, natural-language description of the target
+                                     element to find (e.g., "the 'Submit' button",
+                                     "the footer section containing 'About Us'").
+            direction (str, optional): The direction to scroll. Can be "down" or "up".
+                                     Defaults to "down".
+            max_retries (int, optional): The maximum number of times to scroll before giving up.
+                                       Defaults to 5.
+
+        Returns:
+            str: A status message indicating success or failure.
+
+        Example:
+            await action_provider.scroll_until_visible(
+                element_description="the 'Terms of Service' link in the footer"
+            )
+        """
+
+        class ElementVisibility(BaseModel):
+            is_visible: bool = Field(
+                description="True if the element is visible on the screen, False otherwise.",
+            )
+            reason: str = Field(description="The reason for the visibility status.")
+
+        for i in range(max_retries):
+            # First, check if the element is already visible.
+            visibility_status = await self.browser.observe(
+                f"Is'{element_description}' currently visible on the screen?",
+                response_format=ElementVisibility,
+            )
+
+            if visibility_status.is_visible:
+                print(f"Success: Element '{element_description}' is now visible.")
+                return f"Success: Element '{element_description}' is now visible."
+
+            print(f"Continue scrolling. Reason: {visibility_status.reason}")
+            # If not visible, perform the scroll action.
+            await self.browser.act(
+                f"Scroll {direction} slightly",
+                expectation=f"The page should scroll {direction}.",
+            )
+            await asyncio.sleep(1)
+
+        # If the loop finishes without finding the element, return a failure message.
+        return f"Failure: Could not find element '{element_description}' after {max_retries} scrolls."
 
     # --- Generic Reasoning Action ---
     async def reason(

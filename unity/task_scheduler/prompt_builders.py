@@ -6,6 +6,7 @@ from datetime import datetime, timezone
 from typing import Dict, Callable
 
 from .types.task import Task
+from ..memory_manager.rolling_activity import get_rolling_activity
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Internal helpers
@@ -28,12 +29,10 @@ def _now() -> str:
 
 
 def _rolling_activity_section() -> str:
-    """Return a markdown summary of the agent's historic activity."""
+    """Return a markdown summary of the agent's historic activity from cache."""
 
     try:
-        from ..memory_manager.memory_manager import MemoryManager  # noqa: WPS433
-
-        overview = MemoryManager().get_rolling_activity()
+        overview = get_rolling_activity()
     except Exception:  # pragma: no cover
         return ""
 
@@ -58,7 +57,11 @@ def _rolling_activity_section() -> str:
 # ─────────────────────────────────────────────────────────────────────────────
 
 
-def build_ask_prompt(tools: Dict[str, Callable]) -> str:
+def build_ask_prompt(
+    tools: Dict[str, Callable],
+    *,
+    include_activity: bool = True,
+) -> str:
     """
     Build the **system** prompt for the `ask` method.
 
@@ -67,9 +70,11 @@ def build_ask_prompt(tools: Dict[str, Callable]) -> str:
     """
     sig_json = json.dumps(_sig_dict(tools), indent=4)
 
+    activity_block = _rolling_activity_section() if include_activity else ""
+
     return "\n".join(
         [
-            _rolling_activity_section(),
+            activity_block,
             "You are an assistant specialising in **answering questions about the task list**.",
             "Interact with the read-only tools provided (see below) to gather whatever",
             "information you need, *step-by-step*.  When you have everything, respond",
@@ -88,15 +93,21 @@ def build_ask_prompt(tools: Dict[str, Callable]) -> str:
     )
 
 
-def build_update_prompt(tools: Dict[str, Callable]) -> str:
+def build_update_prompt(
+    tools: Dict[str, Callable],
+    *,
+    include_activity: bool = True,
+) -> str:
     """
     Build the **system** prompt for the `update` method.
     """
     sig_json = json.dumps(_sig_dict(tools), indent=4)
 
+    activity_block = _rolling_activity_section() if include_activity else ""
+
     return "\n".join(
         [
-            _rolling_activity_section(),
+            activity_block,
             "You are an assistant responsible for **creating and updating tasks**.",
             "Use the tools supplied *only* – never invent your own – until the task",
             "list fully reflects the user's intent.",

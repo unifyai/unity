@@ -20,7 +20,11 @@ from typing import (
     Optional,
     Callable,
     Awaitable,
+    Set,
 )
+
+# NEW: context propagation helper for callback cascades
+import contextvars
 
 from importlib import import_module
 from pydantic import (
@@ -37,6 +41,19 @@ from pydantic.alias_generators import to_snake
 from uuid import uuid4
 
 __all__ = ["Event", "EventBus", "Subscription", "EVENT_BUS"]
+
+# ---------------------------------------------------------------------------
+# Context-variable to track the *root* sequence number of a callback cascade.
+# Every time EventBus schedules a callback it checks whether we are currently
+# inside another callback; if yes, the descendant inherits the same root-seq
+# so that join_callbacks(cascade=True) can await the complete cascade while
+# still ignoring unrelated new activity.
+# ---------------------------------------------------------------------------
+
+_CURRENT_ROOT_SEQ: contextvars.ContextVar[int | None] = contextvars.ContextVar(
+    "_CURRENT_ROOT_SEQ",
+    default=None,
+)
 
 
 # ───────────────────────────   Event envelope   ─────────────────────────────
@@ -201,15 +218,8 @@ class Subscription(BaseModel):
     def matches(self, evt: "Event") -> bool:
         if self.event_type != evt.type:
             return False
-        if not self.filter:
-            return True
-        ns = {
-            "evt": evt,
-            "event_type": evt.type,
-            "type": evt.type,
-            **evt.model_dump(mode="python"),
-        }
-        return bool(eval(self.filter, {"__builtins__": {}}, ns))
+        # Reuse shared helper for evaluating optional filter expressions
+        return EventBus._match_filter(evt, self.filter)
 
     # ------------------------------------------------------------------
     def should_trigger(self, evt: "Event") -> bool:
@@ -280,6 +290,14 @@ class EventBus:
         # Manual per-event-type row_id counters (initialised during hydration)
         self._next_row_ids: Dict[str, int] = {}
 
+        # Track pending callback futures so we can await their completion
+        self._callback_futures: Set[asyncio.Future] = set()
+        # Monotonically increasing sequence number for callback tasks –
+        # allows join_callbacks to distinguish tasks scheduled *before* its
+        # invocation from those scheduled afterwards (see implementation
+        # below).
+        self._callback_seq: int = 0
+
         # runtime subscriptions (id → Subscription)
         self._subscriptions: Dict[str, Subscription] = {}
 
@@ -341,43 +359,9 @@ class EventBus:
             )
             dq: Deque[Event] = deque(maxlen=window_size)
             for log in reversed(raw_logs):
-                entries = log.entries
-                if not entries:
+                if not log.entries:
                     continue
-
-                row_id = entries.pop("row_id", None)
-                event_id = entries.pop("event_id")
-                calling_id = entries.pop("calling_id")
-                timestamp = entries.pop("event_timestamp")
-                cls_path = entries.pop("payload_cls")
-
-                Model: type[BaseModel] | None = None
-                if cls_path:
-                    try:
-                        mod, name = cls_path.rsplit(".", 1)
-                        Model = getattr(import_module(mod), name)
-                    except (ModuleNotFoundError, AttributeError, ValueError):
-                        Model = None
-
-                if Model is not None:
-                    try:
-                        payload_obj = Model.model_validate(entries)
-                    except ValidationError:
-                        payload_obj = entries
-                else:
-                    payload_obj = entries
-
-                dq.append(
-                    Event(
-                        event_id=event_id,
-                        row_id=row_id,
-                        calling_id=calling_id,
-                        type=etype,
-                        timestamp=timestamp,
-                        payload=payload_obj,
-                        payload_cls=cls_path or "",
-                    ),
-                )
+                dq.append(self._row_to_event(log.entries, default_type=etype))
             self._deques[etype] = dq
 
         tasks = [
@@ -406,21 +390,7 @@ class EventBus:
             context=self._callbacks_ctx,
             sorting={"row_id": "ascending"},
         )
-        latest: Dict[str, dict] = {}
-        for lg in rows:
-            data = lg.entries.copy()
-            latest[data["subscription_id"]] = data
-
-        for sdata in latest.values():
-            self._subscriptions[sdata["subscription_id"]] = Subscription(
-                subscription_id=sdata["subscription_id"],
-                event_type=sdata["event_type"],
-                filter=sdata.get("filter"),
-                count_step=sdata.get("count_step"),
-                time_step=sdata.get("time_step"),
-                last_row_id=sdata.get("last_row_id", -1),
-                last_timestamp=sdata.get("last_timestamp", ""),
-            )
+        self._subscriptions = self._rows_to_subscriptions(rows)
 
     # ------------------------------------------------------------------
     async def _ensure_ready(self) -> None:
@@ -460,29 +430,12 @@ class EventBus:
 
     # ------------------------------------------------------------------
     def _load_subscriptions(self) -> None:
-        """
-        Recreate the in-memory ``_subscriptions`` map from the metadata
-        persisted in *self._callbacks_ctx*.
-        """
+        """Synchronously rebuild the in-memory subscription map."""
         rows = unify.get_logs(
             context=self._callbacks_ctx,
             sorting={"row_id": "ascending"},
         )
-        latest: Dict[str, dict] = {}
-        for lg in rows:
-            data = lg.entries.copy()
-            latest[data["subscription_id"]] = data
-
-        for sdata in latest.values():
-            self._subscriptions[sdata["subscription_id"]] = Subscription(
-                subscription_id=sdata["subscription_id"],
-                event_type=sdata["event_type"],
-                filter=sdata.get("filter"),
-                count_step=sdata.get("count_step"),
-                time_step=sdata.get("time_step"),
-                last_row_id=sdata.get("last_row_id", -1),
-                last_timestamp=sdata.get("last_timestamp", ""),
-            )
+        self._subscriptions = self._rows_to_subscriptions(rows)
 
     # ------------------------------------------------------------------
     # Public API
@@ -504,7 +457,7 @@ class EventBus:
             # Ensure a local counter exists for this event-type
             self._next_row_ids.setdefault(event_type, 0)
 
-    async def publish(self, event: Event, *, sync: bool = False) -> None:
+    async def publish(self, event: Event, *, blocking: bool = False) -> None:
         self._lazy_start_hydration_if_needed()
         # Guarantee that local row_id counters are initialised before use
         await self._ensure_ready()
@@ -524,21 +477,13 @@ class EventBus:
             while len(dq) > window:
                 dq.popleft()
 
-        if isinstance(event.payload, BaseModel):
-            # JSON-mode: datetimes already serialised
-            payload_dict = event.payload.model_dump(mode="json")
-        else:
-            # Recursively coerce datetimes inside plain dict payloads
-            def _serialise(obj: Any):
-                if isinstance(obj, (dt.datetime, dt.date, dt.time)):
-                    return obj.isoformat()
-                if isinstance(obj, Mapping):
-                    return {k: _serialise(v) for k, v in obj.items()}
-                if isinstance(obj, (list, tuple, set)):
-                    return [_serialise(o) for o in obj]
-                return obj
-
-            payload_dict = _serialise(event.payload)
+        # Uniform serialisation – reuse the robust helper already implemented
+        # on the Event model to avoid maintaining a second custom walker.
+        payload_dict = (
+            event.payload.model_dump(mode="json")
+            if isinstance(event.payload, BaseModel)
+            else Event._to_python(event.payload)
+        )
 
         # Log to global event table
         self._logger.log_create(
@@ -575,7 +520,7 @@ class EventBus:
         self._process_event(event)
 
         # maybe block until published, if sync mode
-        if sync:
+        if blocking:
             self._logger.join()
 
     def join_published(self):
@@ -642,17 +587,7 @@ class EventBus:
 
         # ----------------------------------------------------------------------
         # 1. scan the deque -----------------------------------------------------
-        def _matches(evt: Event) -> bool:
-            if not filter:
-                return True
-            # VERY small, controlled eval-sandbox
-            ns = {
-                "evt": evt,
-                "event_type": evt.type,
-                "type": evt.type,
-                **evt.model_dump(mode="python"),
-            }
-            return bool(eval(filter, {"__builtins__": {}}, ns))
+        _matches = lambda evt: self._match_filter(evt, filter)
 
         in_memory: Dict[str, List[Event]] = {}
         deque_meta: Dict[str, tuple[int, int]] = {}  # etype -> (skipped, collected)
@@ -721,27 +656,7 @@ class EventBus:
                 )
 
                 for lg in logs:
-                    e = lg.entries.copy()
-                    meta_keys = {
-                        "row_id",
-                        "event_id",
-                        "calling_id",
-                        "event_timestamp",
-                        "timestamp",
-                        "payload_cls",
-                        "type",
-                    }
-                    payload = {k: v for k, v in e.items() if k not in meta_keys}
-
-                    evt = Event(
-                        event_id=e.get("event_id"),
-                        row_id=e.get("row_id"),
-                        calling_id=e.get("calling_id", ""),
-                        type=e.get("type"),
-                        timestamp=e.get("event_timestamp") or e.get("timestamp"),
-                        payload_cls=e.get("payload_cls", ""),
-                        payload=payload,
-                    )
+                    evt = self._row_to_event(lg.entries)
                     in_memory.setdefault(evt.type, []).append(evt)
 
                 # We've satisfied the need; skip the per-type fetch branch
@@ -765,33 +680,7 @@ class EventBus:
                 limit=want,
             )
 
-            evts: list[Event] = []
-            for lg in logs:
-                e = lg.entries.copy()
-
-                # Split metadata vs. payload (payload is fully *flattened* in Unify)
-                meta_keys = {
-                    "row_id",
-                    "event_id",
-                    "calling_id",
-                    "event_timestamp",
-                    "timestamp",
-                    "payload_cls",
-                    "type",
-                }
-                payload = {k: v for k, v in e.items() if k not in meta_keys}
-
-                evts.append(
-                    Event(
-                        event_id=e.get("event_id"),
-                        row_id=e.get("row_id"),
-                        calling_id=e.get("calling_id", ""),
-                        type=e.get("type", etype),
-                        timestamp=e.get("event_timestamp") or e.get("timestamp"),
-                        payload_cls=e.get("payload_cls", ""),
-                        payload=payload,
-                    ),
-                )
+            evts = [self._row_to_event(lg.entries, default_type=etype) for lg in logs]
             return etype, evts
 
         # Kick off all remaining I/O in parallel (if any)
@@ -883,83 +772,43 @@ class EventBus:
                 and sub.count_step == every_n
                 and sub.time_step == every_seconds
             ):
+                # (re-)attach the runtime callback
                 sub.callback = callback
+
+                # NEW: make sure we have a baseline that survived round-trip
+                if every_seconds is not None and sub.last_timestamp is None:
+                    # same helper used for brand new subscriptions
+                    sub.last_row_id, sub.last_timestamp = await self._compute_baseline(
+                        event_type,
+                        filter,
+                    )
+                    self._persist_subscription_state(sub)
+
                 return sub.subscription_id
 
         # ------------------------------------------------------------------
-        # Snapshot current *matching* event to establish baseline
-        #
-        # The incoming `filter` usually references the payload via
-        #    evt.payload["key"] == value
-        # but inside Unify the payload is *flattened* into top-level columns.
-        # Therefore we:
-        #   1. Pull a bounded slice of the newest events for this type.
-        #   2. Re-create lightweight `Event` objects.
-        #   3. Re-evaluate the filter expression locally.
-        # The first match gives us the proper baseline.
+        # no existing subscription – create a fresh one **immediately** so
+        # events published concurrently are not missed.  We then compute the
+        # baseline *asynchronously* and update the persisted state.
         # ------------------------------------------------------------------
-        last_row_id = -1
-        last_ts: Optional[dt.datetime] = None
-
-        recent_logs = await asyncio.to_thread(
-            unify.get_logs,
-            context=self._specific_ctxs[event_type],
-            sorting={"row_id": "descending"},
-            limit=100,  # small window is enough for baseline detection
-        )
-
-        def _row_to_event(row: dict) -> Event:
-            meta = {
-                "row_id",
-                "event_id",
-                "calling_id",
-                "event_timestamp",
-                "timestamp",
-                "payload_cls",
-                "type",
-            }
-            payload = {k: v for k, v in row.items() if k not in meta}
-            return Event(
-                row_id=row.get("row_id"),
-                event_id=row.get("event_id"),
-                calling_id=row.get("calling_id", ""),
-                type=event_type,
-                timestamp=row.get("event_timestamp") or row.get("timestamp"),
-                payload=payload,
-                payload_cls=row.get("payload_cls", ""),
-            )
-
-        for lg in recent_logs:  # newest → oldest
-            evt = _row_to_event(lg.entries.copy())
-            if not filter:
-                match = True
-            else:
-                ns = {
-                    "evt": evt,
-                    "event_type": evt.type,
-                    "type": evt.type,
-                    **evt.model_dump(mode="python"),
-                }
-                try:
-                    match = bool(eval(filter, {"__builtins__": {}}, ns))
-                except Exception:
-                    match = False
-            if match:
-                last_row_id = evt.row_id
-                last_ts = evt.timestamp
-                break
-
         sub = Subscription(
             event_type=event_type,
             filter=filter,
             count_step=every_n,
             time_step=every_seconds,
-            last_row_id=last_row_id,
-            last_timestamp=last_ts,
             callback=callback,
         )
-        self._subscriptions[sub.subscription_id] = sub
+        self._subscriptions[sub.subscription_id] = sub  # <-- race-free registration
+
+        # Compute the baseline *after* registering so we don't miss events
+        # that may arrive during the potentially slow I/O below.
+        sub.last_row_id, sub.last_timestamp = await self._compute_baseline(
+            event_type,
+            filter,
+        )
+
         self._persist_subscription_state(sub)
+
         return sub.subscription_id
 
     # ------------------------------------------------------------------
@@ -1000,9 +849,37 @@ class EventBus:
             cb = sub.callback
             try:
                 if asyncio.iscoroutinefunction(cb):
-                    asyncio.create_task(cb([evt]))
+                    # Assign a sequence number and decide the *root* seq
+                    self._callback_seq += 1
+                    seq = self._callback_seq
+                    root_seq = _CURRENT_ROOT_SEQ.get() or seq
+
+                    # Propagate root-seq to descendants via context-var
+                    token = _CURRENT_ROOT_SEQ.set(root_seq)
+                    try:
+                        task = asyncio.create_task(cb([evt]))
+                    finally:
+                        _CURRENT_ROOT_SEQ.reset(token)
+
+                    # Attach sequencing metadata
+                    setattr(task, "_eb_seq", seq)
+                    setattr(task, "_eb_root_seq", root_seq)
+
+                    # Track the new task and remove it when done
+                    self._callback_futures.add(task)
+                    task.add_done_callback(self._callback_futures.discard)
                 else:
-                    loop.run_in_executor(None, cb, [evt])
+                    # For executor jobs we still assign a seq for filtering
+                    self._callback_seq += 1
+                    seq = self._callback_seq
+                    root_seq = _CURRENT_ROOT_SEQ.get() or seq
+
+                    fut = loop.run_in_executor(None, cb, [evt])
+                    setattr(fut, "_eb_seq", seq)  # type: ignore[attr-defined]
+                    setattr(fut, "_eb_root_seq", root_seq)  # type: ignore[attr-defined]
+
+                    self._callback_futures.add(fut)  # type: ignore[arg-type]
+                    fut.add_done_callback(self._callback_futures.discard)  # type: ignore[attr-defined]
             except RuntimeError:
                 # No running loop (shutdown) – last-ditch synchronous call
                 cb([evt])
@@ -1072,6 +949,230 @@ class EventBus:
 
         # 3. Re-initialise this *same* instance
         type(self).__init__(self)
+
+    # ------------------------------------------------------------------
+    def join_callbacks(
+        self,
+        *,
+        cascade: bool = False,
+    ) -> None:  # noqa: D401 – imperative name
+        """Block until callback tasks have finished.
+
+        Parameters
+        ----------
+        cascade : bool, default False
+            If *False* (default) the behaviour is identical to the historic
+            implementation: only tasks that were already pending at the time
+            of invocation are awaited – tasks spawned later are ignored.
+
+            If *True* the method also waits for **all** tasks that share the
+            *root sequence* of those initial callbacks, i.e. any descendants
+            spawned *indirectly* by them.  Unrelated new activity triggered
+            by fresh, external events (and thus carrying a higher root-seq)
+            is **not** awaited, preventing deadlocks under high throughput
+            while still guaranteeing that entire cascades (e.g. the rolling
+            summary hierarchy) have settled before returning."""
+
+        async def _helper():  # inner coroutine – former implementation
+            # Snapshot the highest sequence number currently assigned so that
+            # we can identify all callbacks that belong to the *same* cascade
+            # (root-seq ≤ cutoff).  New, unrelated work gets a fresh root-seq
+            # > cutoff and is therefore ignored even in cascade-mode.
+
+            cutoff = self._callback_seq
+
+            while True:
+                to_await: list[asyncio.Future] = [
+                    t
+                    for t in list(self._callback_futures)
+                    if getattr(
+                        t,
+                        "_eb_root_seq" if cascade else "_eb_seq",
+                        0,
+                    )
+                    <= cutoff
+                ]
+
+                if not to_await:
+                    return
+
+                await asyncio.gather(*to_await, return_exceptions=True)
+
+                # If not cascading, we only wait once (historic behaviour)
+                if not cascade:
+                    return
+
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            # No active event-loop in *this* thread.  However, the callback
+            # tasks we want to await are bound to *some* loop (typically the
+            # main thread's loop).  Use that loop to run the helper
+            # coroutine via `run_coroutine_threadsafe` instead of creating a
+            # fresh, incompatible loop.
+
+            # Determine the target loop from one of the pending tasks (if any)
+            pending = [t for t in list(self._callback_futures)]
+            if pending:
+                tgt_loop = pending[0].get_loop()
+
+                # Schedule the helper coroutine onto the target loop and
+                # block until it completes.
+                fut = asyncio.run_coroutine_threadsafe(_helper(), tgt_loop)
+                fut.result()
+                return
+
+            # Fallback – nothing to wait for: no pending tasks
+            return
+        else:
+            # If we're already inside an event-loop, attempt a re-entrant run
+            # using `nest_asyncio`; otherwise delegate to a background thread.
+
+            try:
+                import nest_asyncio  # type: ignore
+
+                nest_asyncio.apply(loop)  # type: ignore[arg-type]
+                loop.run_until_complete(_helper())
+            except ModuleNotFoundError:
+                # Fallback: run the coroutine in a background thread
+                import threading
+
+                exc: list[BaseException] | None = []
+
+                # Instead of creating a **new** event-loop (which cannot await
+                # tasks bound to the **original** loop), schedule the helper
+                # coroutine *onto the existing running loop* in a
+                # thread-safe manner and wait for its completion.
+
+                def _runner():  # noqa: D401 – imperative helper
+                    try:
+                        fut = asyncio.run_coroutine_threadsafe(_helper(), loop)
+                        # Wait for the coroutine to finish (propagates errors)
+                        fut.result()
+                    except BaseException as e:  # noqa: BLE001
+                        exc.append(e)
+
+                t = threading.Thread(target=_runner, daemon=True)
+                t.start()
+                t.join()
+                if exc:
+                    raise exc[0]
+
+    # helper extracted from the old inline code
+    async def _compute_baseline(
+        self,
+        event_type: str,
+        filter: Optional[str],
+    ) -> tuple[int, Optional[dt.datetime]]:
+        """
+        Return (last_row_id, last_timestamp) of the most-recent event of
+        *event_type* that matches *filter* (or ``(-1, None)`` if none exist).
+        """
+        recent_logs = await asyncio.to_thread(
+            unify.get_logs,
+            context=self._specific_ctxs[event_type],
+            sorting={"row_id": "descending"},
+            limit=100,
+        )
+
+        for lg in recent_logs:  # newest → oldest
+            evt = self._row_to_event(lg.entries, default_type=event_type)
+            if self._match_filter(evt, filter):
+                return evt.row_id, evt.timestamp
+        return -1, None
+
+    # ────────────────────────────  Static helpers  ────────────────────────────
+    @staticmethod
+    def _match_filter(evt: "Event", filter_expr: Optional[str]) -> bool:
+        """Return True if *evt* satisfies the provided *filter_expr* (or if the
+        expression is None/empty). The eval sandbox mirrors the original
+        implementation but is now centralised for reuse across the class."""
+        if not filter_expr:
+            return True
+        ns: dict[str, Any] = {
+            "evt": evt,
+            "event_type": evt.type,
+            "type": evt.type,  # legacy alias
+            **evt.model_dump(mode="python"),
+        }
+        return bool(eval(filter_expr, {"__builtins__": {}}, ns))
+
+    @staticmethod
+    def _row_to_event(row: dict, default_type: Optional[str] | None = None) -> "Event":
+        """Convert a *flattened* Unify log row back into an :class:`Event`.
+
+        The logic was previously duplicated in several places (prefill, search
+        fetch, baseline computation). Centralising it greatly reduces code
+        repetition and ensures consistent behaviour.
+        """
+        entries = row.copy()
+        row_id = entries.pop("row_id", None)
+        event_id = entries.pop("event_id", str(uuid4()))
+        calling_id = entries.pop("calling_id", "")
+        timestamp = entries.pop("event_timestamp", None) or entries.pop(
+            "timestamp",
+            None,
+        )
+        cls_path = entries.pop("payload_cls", "")
+        etype = entries.pop("type", default_type)
+
+        # Attempt to rehydrate structured payloads
+        Model: type[BaseModel] | None = None
+        if cls_path:
+            try:
+                mod, name = cls_path.rsplit(".", 1)
+                Model = getattr(import_module(mod), name)
+            except (ModuleNotFoundError, AttributeError, ValueError):
+                Model = None
+
+        if Model is not None:
+            try:
+                payload_obj = Model.model_validate(entries)
+            except ValidationError:
+                payload_obj = entries
+        else:
+            payload_obj = entries
+
+        return Event(
+            event_id=event_id,
+            row_id=row_id,
+            calling_id=calling_id,
+            type=etype,
+            timestamp=timestamp,
+            payload=payload_obj,
+            payload_cls=cls_path or "",
+        )
+
+    # ------------------------------------------------------------------
+    #  Static subscription helpers
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _rows_to_subscriptions(rows: Iterable[Any]) -> Dict[str, Subscription]:
+        """Convert raw Unify log *rows* into a mapping of Subscription objects.
+
+        Multiple log entries may exist for the *same* ``subscription_id`` – we
+        keep only the newest per ID (matching previous behaviour) before
+        instantiating the Subscription models.
+        """
+
+        latest: Dict[str, dict] = {}
+        for lg in rows:
+            data = lg.entries.copy()
+            latest[data["subscription_id"]] = data
+
+        return {
+            sid: Subscription(
+                subscription_id=sid,
+                event_type=sdata["event_type"],
+                filter=sdata.get("filter"),
+                count_step=sdata.get("count_step"),
+                time_step=sdata.get("time_step"),
+                last_row_id=sdata.get("last_row_id", -1),
+                last_timestamp=sdata.get("last_timestamp", ""),
+            )
+            for sid, sdata in latest.items()
+        }
 
 
 # ─────────────────────────   Global singleton   ──────────────────────────
