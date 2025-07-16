@@ -410,7 +410,7 @@ class MemoryManager(BaseMemoryManager):
 
         try:
             await EVENT_BUS.register_callback(
-                event_type="message",
+                event_type="Message",
                 callback=_cb,
                 every_n=1,  # every single message
             )
