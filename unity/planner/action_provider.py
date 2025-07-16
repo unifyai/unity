@@ -81,7 +81,10 @@ class ActionProvider:
         3. It calls the low-level `_send_whatsapp_message_via_number` to dispatch the message.
         You should provide a clear and complete description, e.g., "Send a WhatsApp message to the team group to remind them of the 10 AM meeting."
         """
-        return await comms_actions.send_whatsapp_message(description, parent_chat_context)
+        return await comms_actions.send_whatsapp_message(
+            description,
+            parent_chat_context,
+        )
 
     def start_call(self, phone_number: str, purpose: str) -> SteerableToolHandle:
         """
