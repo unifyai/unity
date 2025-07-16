@@ -166,19 +166,19 @@ class CommsAgent:
                 tools_list += [manager.ask, manager.update]
 
             elif tool == "comms":
-                tools_list += [
-                    self._inner_send_call,
-                    self._inner_send_sms,
-                    self._inner_send_email,
-                    self._inner_send_whatsapp,
-                ]
-
                 if self.outer_comms_enabled:
                     tools_list += [
                         self._outer_send_call,
                         self._outer_send_sms,
                         self._outer_send_email,
                         self._outer_send_whatsapp,
+                    ]
+                else:
+                    tools_list += [
+                        self._inner_send_call,
+                        self._inner_send_sms,
+                        self._inner_send_email,
+                        self._inner_send_whatsapp,
                     ]
 
         self.enabled_tools = methods_to_tool_dict(*tools_list)
