@@ -186,6 +186,20 @@ class CommsAgent:
                 # continue
                 if new_event["payload"]["transient"]:
                     continue
+                if new_event["event_name"] == "StartupEvent":
+                    # set assistant details
+                    self.set_assistant_details(new_event["payload"])
+
+                    # remove subscription for the startup topic
+                    self.unsubscribe(["startup"])
+
+                    # activate unify project
+                    import unify
+
+                    if not unify.active_project():
+                        unify.activate("Assistants")
+
+                    continue
                 if new_event["event_name"] == "PhoneCallInitiatedEvent":
                     global ONGOING_CALL
                     if not ONGOING_CALL:
@@ -385,7 +399,7 @@ class CommsAgent:
 
     async def run(self):
         if self.past_events is None:
-            self.past_events = []  # await self.get_bus_events()
+            self.past_events = await self.get_bus_events()
 
         if self.call_mode:
             return await self.phone_call_llm_run()
@@ -475,8 +489,24 @@ class CommsAgent:
         for topic in topics:
             self.event_manager.topic_to_subs[topic].add(self)
 
+    def unsubscribe(self, topics):
+        if not self.event_manager:
+            raise Exception("Set an event manager first.")
+        for topic in topics:
+            self.event_manager.topic_to_subs[topic].remove(self)
+
     def set_event_manager(self, event_manager):
         self.event_manager = event_manager
+
+    def set_assistant_details(self, payload):
+        self.assistant_name = payload["assistant_name"]
+        self.assistant_age = payload["assistant_age"]
+        self.assistant_region = payload["assistant_region"]
+        self.assistant_about = payload["assistant_about"]
+        self.assistant_number = payload["assistant_number"]
+        self.user_name = payload["user_name"]
+        self.user_number = payload["user_number"]
+        self.user_phone_number = payload["user_phone_number"]
 
     async def initialize_redis(self):
         """Initialize Redis connection after server is ready"""

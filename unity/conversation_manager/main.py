@@ -116,7 +116,7 @@ class EventManager:
 
             await asyncio.sleep(30)  # Check every 30 seconds
             current_time = asyncio.get_event_loop().time()
-            if current_time - self.last_activity_time > self.INACTIVITY_TIMEOUT:
+            if os.getenv("USER_NAME") and current_time - self.last_activity_time > self.INACTIVITY_TIMEOUT:
                 print(
                     f"Inactivity timeout reached ({self.INACTIVITY_TIMEOUT}s), shutting down gracefully...",
                 )
@@ -206,6 +206,7 @@ async def main(
             os.getenv("USER_NUMBER", ""),
             os.getenv("USER_PHONE_NUMBER", ""),
             "tool_use",
+            "startup",
         ],
     )
 
