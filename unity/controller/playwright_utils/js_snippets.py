@@ -21,17 +21,25 @@ el => {
     return false;
   }
 
-  // ---- compute rect relative to the *top* window ---------------------
+  // ---- compute rect relative to the *top* document ---------------------
   function rectInPage(element){
     const r = element.getBoundingClientRect();
     let left = r.left, top = r.top;
     let win  = element.ownerDocument.defaultView;
+
+    // This loop correctly translates coordinates from a nested iframe
+    // to be relative to the top-level window's viewport.
     while (win && win !== window.top && win.frameElement){
       const fr = win.frameElement.getBoundingClientRect();
       left += fr.left;
       top  += fr.top;
       win = win.parent;
     }
+
+    // Add the top-level window's scroll offset to get absolute document coordinates.
+    left += window.top.scrollX;
+    top  += window.top.scrollY;
+
     return {left, top, width:r.width, height:r.height};
   }
 
@@ -52,8 +60,8 @@ el => {
   return {
     fixed  : hasFixedAncestor(el) || isInsideIframe(el),
     hover  : el.matches(':hover'),
-    left   : rp.left,   // absolute page coords (no scroll subtraction)
-    top    : rp.top,
+    left   : rp.left,   // absolute document coords
+    top    : rp.top,    // absolute document coords
     width  : rp.width,
     height : rp.height,
     label  : label,

@@ -432,7 +432,7 @@ class BrowserWorker(threading.Thread):
                                     vision_results,
                                     heuristic_elements,
                                     self.runner.active,
-                                    overlap_threshold=0.5,
+                                    overlap_threshold=0.3,
                                 )
 
                                 # 3. De-duplicate the fused list to remove overlapping boxes.

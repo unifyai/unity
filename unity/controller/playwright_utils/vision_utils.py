@@ -260,7 +260,7 @@ def _finalize_and_renumber_elements(
     for i, el in enumerate(elements):
         final_list.append(
             {
-                "id": i + 1,  # Assign a new, sequential ID
+                "id": el.get("id"),  # Assign a new, sequential ID
                 "label": el.get("label", ""),
                 "handle": el.get("handle"),
                 "bbox": el.get("bbox"),
