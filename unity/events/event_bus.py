@@ -457,7 +457,7 @@ class EventBus:
             # Ensure a local counter exists for this event-type
             self._next_row_ids.setdefault(event_type, 0)
 
-    async def publish(self, event: Event, *, sync: bool = False) -> None:
+    async def publish(self, event: Event, *, blocking: bool = False) -> None:
         self._lazy_start_hydration_if_needed()
         # Guarantee that local row_id counters are initialised before use
         await self._ensure_ready()
@@ -520,7 +520,7 @@ class EventBus:
         self._process_event(event)
 
         # maybe block until published, if sync mode
-        if sync:
+        if blocking:
             self._logger.join()
 
     def join_published(self):

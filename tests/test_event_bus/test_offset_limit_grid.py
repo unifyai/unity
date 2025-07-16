@@ -60,19 +60,19 @@ async def test_offset_int_limit_int_global_window() -> None:
 
     await bus.publish(
         Event(type="A", timestamp=ts(0), payload={"idx": "a0"}),
-        sync=True,
+        blocking=True,
     )
     await bus.publish(
         Event(type="B", timestamp=ts(1), payload={"idx": "b0"}),
-        sync=True,
+        blocking=True,
     )
     await bus.publish(
         Event(type="A", timestamp=ts(2), payload={"idx": "a1"}),
-        sync=True,
+        blocking=True,
     )
     await bus.publish(
         Event(type="B", timestamp=ts(3), payload={"idx": "b1"}),
-        sync=True,
+        blocking=True,
     )
 
     out = await bus.search(offset=1, limit=2)
@@ -103,13 +103,13 @@ async def test_offset_dict_limit_dict_per_type_window() -> None:
     for i in range(3):
         await bus.publish(
             Event(type="A", timestamp=ts(i), payload={"seq": i}),
-            sync=True,
+            blocking=True,
         )
     # three B-events, later timestamps so they don't interfere with A ordering
     for i in range(3):
         await bus.publish(
             Event(type="B", timestamp=ts(10 + i), payload={"seq": i}),
-            sync=True,
+            blocking=True,
         )
 
     out = await bus.search(
@@ -159,7 +159,7 @@ async def test_offset_dict_limit_int_mixed_window() -> None:
     for idx, (typ, seq) in enumerate(events):
         await bus.publish(
             Event(type=typ, timestamp=ts(idx), payload={"seq": seq}),
-            sync=True,
+            blocking=True,
         )
 
     out = await bus.search(offset={"A": 1}, limit=4)
@@ -189,12 +189,12 @@ async def test_offset_int_limit_dict_mixed_window() -> None:
     for i in range(3):
         await bus.publish(
             Event(type="A", timestamp=ts(i), payload={"seq": i}),
-            sync=True,
+            blocking=True,
         )
     for i in range(3):
         await bus.publish(
             Event(type="B", timestamp=ts(10 + i), payload={"seq": i}),
-            sync=True,
+            blocking=True,
         )
 
     out = await bus.search(
