@@ -53,7 +53,7 @@ async def test_log_messages():
             Message(
                 medium=random.choice(VALID_MEDIA),
                 sender_id=random.randint(0, 2),
-                receiver_id=random.randint(0, 2),
+                receiver_ids=[random.randint(0, 2)],
                 timestamp=datetime.now(UTC),
                 content=random.choice(MESSAGES),
                 exchange_id=i,
@@ -79,7 +79,7 @@ async def test_get_messages():
             Message(
                 medium=random.choice(VALID_MEDIA),
                 sender_id=random.randint(0, 2),
-                receiver_id=random.randint(0, 2),
+                receiver_ids=[random.randint(0, 2)],
                 timestamp=datetime.now(UTC),
                 content=random.choice(MESSAGES),
                 exchange_id=i,

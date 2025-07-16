@@ -322,7 +322,7 @@ async def test_ask_respects_parent_context(
             {
                 "medium": "phone_call",
                 "sender_id": s,
-                "receiver_id": r,
+                "receiver_ids": [r],
                 "timestamp": t.isoformat(),
                 "content": txt,
                 "exchange_id": 99,
@@ -382,7 +382,7 @@ async def test_ask_requests_clarification_when_context_missing(
             {
                 "medium": "phone_call",
                 "sender_id": s,
-                "receiver_id": r,
+                "receiver_ids": [r],
                 "timestamp": t_conv_basketball.isoformat(),
                 "content": txt,
                 "exchange_id": 123,
@@ -397,7 +397,7 @@ async def test_ask_requests_clarification_when_context_missing(
             {
                 "medium": "email",
                 "sender_id": s,
-                "receiver_id": r,
+                "receiver_ids": [r],
                 "timestamp": t_conv_holiday.isoformat(),
                 "content": txt,
                 "exchange_id": 321,
