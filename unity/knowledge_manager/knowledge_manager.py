@@ -1386,23 +1386,3 @@ class KnowledgeManager(BaseKnowledgeManager):
             pass
 
         return rows
-
-    # ------------------------------------------------------------------ #
-    #  Reset helper (sandbox)                                            #
-    # ------------------------------------------------------------------ #
-    @staticmethod
-    def reset() -> None:
-        """
-        Remove every context that belongs to the *Knowledge* hierarchy for the
-        current project ("Knowledge" plus any child contexts).  Called by the
-        sandbox `activate_project` helper to guarantee that subsequent
-        KnowledgeManager instances work with a fresh schema.
-        """
-        import unify
-
-        for ctx in list(unify.get_contexts()):
-            if ctx == "Knowledge" or "/Knowledge" in ctx:
-                try:
-                    unify.delete_context(ctx)
-                except Exception:
-                    pass
