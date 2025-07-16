@@ -3,7 +3,7 @@ from __future__ import annotations
 import inspect
 import textwrap
 import json
-from typing import Callable, Dict, Any, Optional, Type, List
+from typing import Callable, Dict, Any, Optional
 from unity.common.llm_helpers import (
     class_api_overview,
     get_type_hints,
@@ -124,7 +124,68 @@ def _build_rules_and_examples_prompt(
         ---
         ### Usage Examples
 
-        **Handling Stubs & Dynamic Implementation (IMPORTANT):**
+        **Using a Handle-Based Tool (like sending a message or making a call):**
+
+        # Example 1: Sending a message
+        ```python
+        @verify
+        async def send_confirmation_sms():
+            # First, await the tool to get the interactive handle.
+            sms_handle = await action_provider.send_sms_message("Text Jane Doe to confirm her 3pm appointment")
+
+            # You can now interact with the handle if needed, or just get the final result.
+            confirmation = await sms_handle.result()
+            return confirmation
+        ```
+
+        # Example 2: Making an Interactive Phone Call
+        ```python
+        @verify
+        async def make_appointment_followup_call():
+            # Note: start_call is synchronous and returns a Call handle immediately
+            call_handle = action_provider.start_call(
+                phone_number="+1234567890",
+                purpose="Follow up with patient about their upcoming appointment on Friday at 2 PM and confirm they received the pre-appointment instructions"
+            )
+
+            # The Call handle returns a SteerableToolHandle object.
+            # You can use methods like ask(), interject(), or get the full result
+
+            # Example of using ask() to get specific information during the call:
+            ask_handle = await call_handle.ask("Do you have any allergies we should be aware of?")
+            allergy_response = await ask_handle.result()
+
+            # Or you can just wait for the full call result:
+            call_result = await call_handle.result()
+
+            # Extract key information from the call
+            class CallOutcome(BaseModel):
+                appointment_confirmed: bool = Field(description="Whether the patient confirmed the appointment")
+                instructions_received: bool = Field(description="Whether they received the pre-appointment instructions")
+                notes: str = Field(description="Any additional notes from the conversation")
+
+            # Analyze the call transcript
+            analysis = await action_provider.reason(
+                request="Extract the key outcomes from this phone call transcript",
+                context=call_result,
+                response_format=CallOutcome
+            )
+
+            return analysis
+        ```
+
+        **Simple Browser Interaction:**
+        ```python
+        @verify
+        async def check_unify_blog():
+            # The browser object can be used directly from the action_provider
+            await action_provider.browser_act("Navigate to unify.ai")
+            await action_provider.browser_act("Click the 'Blog' link in the main navigation")
+            blog_title = await action_provider.browser_observe("What is the title of the first blog post?")
+            return blog_title
+        ```
+
+        **Multiple Steps with Stubs & Dynamic Implementation:**
         This example shows the correct way to structure a plan that defers a complex step.
 
         ```python
@@ -152,30 +213,7 @@ def _build_rules_and_examples_prompt(
             return dashboard_data
         ```
 
-        **Using a Handle-Based Tool (like sending a message):**
-        ```python
-        @verify
-        async def send_confirmation_sms():
-            # First, await the tool to get the interactive handle.
-            sms_handle = await action_provider.send_sms_message("Text Jane Doe to confirm her 3pm appointment")
-
-            # You can now interact with the handle if needed, or just get the final result.
-            confirmation = await sms_handle.result()
-            return confirmation
-        ```
-
-        **Simple Browser Interaction:**
-        ```python
-        @verify
-        async def check_unify_blog():
-            # The browser object can be used directly from the action_provider
-            await action_provider.browser_act("Navigate to unify.ai")
-            await action_provider.browser_act("Click the 'Blog' link in the main navigation")
-            blog_title = await action_provider.browser_observe("What is the title of the first blog post?")
-            return blog_title
-        ```
-
-        **Structured Outputs:**
+        **Using Structured Outputs:**
         ```python
         # Example 1: Extract product information from a search results page
         class ProductInfo(BaseModel):
