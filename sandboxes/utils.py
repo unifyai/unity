@@ -812,11 +812,13 @@ class TranscriptGenerator:
                 if last_sender_contact is not None and last_sender_contact != sender_c:
                     receiver_c = last_sender_contact
                 else:
-                    # try any other known participant, else synthetic Assistant contact
-                    receiver_c = next(
-                        (c for n, c in _name_to_contact.items() if c != sender_c),
-                        _contact_for("Assistant", medium, {}),
-                    )
+                    # Avoid mutating _name_to_contact during iteration which would
+                    # raise `RuntimeError: dictionary changed size during iteration`.
+                    _others = [c for c in _name_to_contact.values() if c != sender_c]
+                    if _others:
+                        receiver_c = _others[0]
+                    else:
+                        receiver_c = _contact_for("Assistant", medium, {})
 
                 last_sender_contact = sender_c
 
