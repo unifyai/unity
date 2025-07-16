@@ -691,6 +691,11 @@ class CommandRunner:
             execute_and_record(cmd, lambda: self.new_tab())
             return
 
+        # Close current/active tab
+        if cmd == CMD_CLOSE_THIS_TAB:
+            execute_and_record(cmd, lambda: self.close_tab(None))
+            return
+
         close_prefix = CMD_CLOSE_TAB.rstrip("*").rstrip()  # "close_tab"
         if low.startswith(close_prefix):
             title = cmd[len(close_prefix) :].strip()  # may be empty
