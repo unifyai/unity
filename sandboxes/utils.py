@@ -693,7 +693,7 @@ class TranscriptGenerator:
         await builder.create()
 
 
-def activate_project(project_name: str) -> None:
+def activate_project(project_name: str, overwrite: bool = False) -> None:
     """
     Activate *project_name* and re-initialise the global EventBus singleton so
     that all subsequent Unify contexts (including those automatically created
@@ -704,7 +704,7 @@ def activate_project(project_name: str) -> None:
     from unity.events.event_bus import EVENT_BUS
 
     # Switch active project first
-    unify.activate(project_name)
+    unify.activate(project_name, overwrite=overwrite)
     # Rebuild EventBus under the new project so its contexts live in `project_name`
     EVENT_BUS.reset()
 

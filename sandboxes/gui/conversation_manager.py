@@ -253,7 +253,7 @@ async def entrypoint(ctx: agents.JobContext):
     args, unknown = parser.parse_known_args()
 
     # Setup Unify context
-    activate_project(args.project_name)
+    activate_project(args.project_name, args.overwrite)
     unify.set_trace_context("Traces")
     if args.overwrite:
         ctxs = unify.get_contexts()

@@ -198,7 +198,7 @@ async def _main_async() -> None:
 
     os.environ["UNIFY_TRACED"] = "true" if args.traced else "false"
 
-    activate_project(args.project_name)
+    activate_project(args.project_name, args.overwrite)
     unify.set_trace_context("Traces")
     if args.overwrite:
         ctxs = unify.get_contexts()
