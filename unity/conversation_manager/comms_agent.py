@@ -225,6 +225,7 @@ class CommsAgent:
                     # activate unify project
                     import unify
 
+                    os.environ["UNIFY_KEY"] = new_event["payload"]["api_key"]
                     if not unify.active_project():
                         unify.activate("Assistants")
 
@@ -738,10 +739,12 @@ class CommsAgent:
                 print(f"Error terminating call process: {e}")
 
     def handle_logging(self, event: dict):
+        import unity
         from unity.transcript_manager.transcript_manager import TranscriptManager
         from unity.transcript_manager.types.message import Message
         from unity.events.event_bus import EVENT_BUS
 
+        unity.init()
         if self.transcript_manager is None:
             self.transcript_manager = TranscriptManager()
 
