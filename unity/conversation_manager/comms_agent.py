@@ -196,7 +196,7 @@ class CommsAgent:
 
     def get_chat_history(self):
         chat_history = []
-        for event in self.past_events:
+        for event in self.past_events[-self.conv_context_length :]:
             if event["event_name"] == "PhoneUtteranceEvent":
                 chat_history.append(
                     {
@@ -642,7 +642,7 @@ class CommsAgent:
     def get_user_agent_prompt(self):
         return build_user_agent_prompt(
             call_purpose=self.call_purpose,
-            past_events=self.past_events or [],
+            past_events=self.past_events[-self.conv_context_length :] or [],
             inflight_events=self.inflight_events,
             tool_use_handles=self.tool_use_handles,
         )
