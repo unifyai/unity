@@ -121,12 +121,15 @@ class ScenarioBuilder:
 
         # 2️⃣  Fire up the generic tool‑loop – the **description itself** acts
         #     as the initial *user* turn.
+        # Enforce that the LLM *must* call at least one tool (index 0) so
+        # generators like TranscriptGenerator are guaranteed to receive data.
         handle = start_async_tool_use_loop(
             self._client,
             self._description,
             self._tools,
             loop_id=f"{self.__class__.__name__}.{self.create.__name__}",
             parent_chat_context=parent_chat_context,
+            tool_policy=lambda i, _: ("required", _) if i < 1 else ("auto", _),
         )
 
         if not _return_reasoning_steps:
