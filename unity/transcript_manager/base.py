@@ -59,7 +59,6 @@ class BaseTranscriptManager(ABC):
             or interjected with extra user turns.
         """
 
-    @abstractmethod
     async def summarize(
         self,
         *,
@@ -99,3 +98,6 @@ class BaseTranscriptManager(ABC):
         str
             The generated summary text (also written to persistent storage).
         """
+        raise NotImplementedError(
+            "Summarize functionality has been removed from TranscriptManager.",
+        )

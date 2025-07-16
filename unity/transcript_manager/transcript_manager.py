@@ -2,7 +2,7 @@ import os
 import json
 import asyncio
 import functools
-from typing import List, Dict, Optional, Union, Callable, Any
+from typing import List, Dict, Optional, Union
 
 import unify
 from ..common.embed_utils import EMBED_MODEL, ensure_vector_column
@@ -10,7 +10,6 @@ from ..contact_manager.base import BaseContactManager
 from ..contact_manager.contact_manager import ContactManager
 from .types.message import Message
 from ..common.model_to_fields import model_to_fields
-from .types.message_exchange_summary import MessageExchangeSummary
 from ..common.llm_helpers import (
     start_async_tool_use_loop,
     SteerableToolHandle,
@@ -21,7 +20,7 @@ from ..events.manager_event_logging import (
     publish_manager_method_event,
     wrap_handle_with_logging,
 )
-from .prompt_builders import build_ask_prompt, build_summarize_prompt
+from .prompt_builders import build_ask_prompt
 from .base import BaseTranscriptManager
 
 
@@ -29,7 +28,6 @@ class TranscriptManager(BaseTranscriptManager):
 
     # Vector embedding column names
     _MSG_EMB = "_content_emb"
-    _SUM_EMB = "_summary_emb"
 
     def __init__(
         self,
@@ -46,10 +44,8 @@ class TranscriptManager(BaseTranscriptManager):
             self._contact_manager = ContactManager()
 
         self._tools = methods_to_tool_dict(
-            self.summarize,
             self._contact_manager._search_contacts,
             self._search_messages,
-            self._search_summaries,
             self._nearest_messages,
             include_class_name=False,
         )
@@ -62,10 +58,8 @@ class TranscriptManager(BaseTranscriptManager):
 
         if read_ctx:
             self._messages_ctx = f"{read_ctx}/Messages"
-            self._summaries_ctx = f"{read_ctx}/MessageExchangeSummaries"
         else:
             self._messages_ctx = "Contacts"
-            self._summaries_ctx = "MessageExchangeSummaries"
         ctxs = unify.get_contexts()
         if self._messages_ctx not in ctxs:
             unify.create_context(
@@ -77,17 +71,6 @@ class TranscriptManager(BaseTranscriptManager):
             unify.create_fields(
                 fields,
                 context=self._messages_ctx,
-            )
-        if self._summaries_ctx not in ctxs:
-            unify.create_context(
-                self._summaries_ctx,
-                unique_column_ids="summary_id",
-                description="List of all message exchange summaries, with each summary covering a fixed number of exchanges.",
-            )
-            fields = model_to_fields(MessageExchangeSummary)
-            unify.create_fields(
-                fields,
-                context=self._summaries_ctx,
             )
 
         # ── Async logging (mirrors EventBus) ────────────────────────────────
@@ -187,155 +170,11 @@ class TranscriptManager(BaseTranscriptManager):
 
         return handle
 
-    # Summarize Exchange(s)
-
-    @functools.wraps(BaseTranscriptManager.summarize, updated=())
-    async def summarize(
-        self,
-        *,
-        from_exchanges: Optional[Union[int, List[int]]] = None,
-        from_messages: Optional[Union[int, List[int]]] = None,
-        omit_messages: Optional[List[int]] = None,
-        guidance: Optional[str] = None,
-        parent_chat_context: Optional[List[Dict[str, Any]]] = None,
-        clarification_up_q: asyncio.Queue[str] | None = None,
-        clarification_down_q: asyncio.Queue[str] | None = None,
-        rolling_summary_in_prompts: Optional[bool] = None,
-    ) -> SteerableToolHandle:
-        # -- 0.  Validate & canonicalise ------------------------------------
-        if from_exchanges is None and from_messages is None:
-            raise ValueError(
-                "Either 'from_exchanges' or 'from_messages' must be provided.",
-            )
-
-        if isinstance(from_exchanges, int):
-            from_exchanges = [from_exchanges]
-        if isinstance(from_messages, int):
-            from_messages = [from_messages]
-        from_exchanges = list(from_exchanges or [])
-        from_messages = list(from_messages or [])
-        omit_messages = set(omit_messages or [])
-
-        # -- 0b.  Create call-ID & *incoming* ManagerMethod event ----------
-        call_id = new_call_id()
-        await publish_manager_method_event(
-            call_id,
-            "TranscriptManager",
-            "summarize",
-            phase="incoming",
-            from_exchanges=from_exchanges,
-            from_messages=from_messages,
-            omit_messages=list(omit_messages or []),
-            guidance=guidance,
+    async def summarize(self, *args, **kwargs):
+        """Deprecated: summarize functionality removed."""
+        raise NotImplementedError(
+            "Summarize functionality has been removed from TranscriptManager.",
         )
-
-        # ── 1.  Build LLM client ────────────────────────────────────────────
-        client = unify.AsyncUnify(
-            "o4-mini@openai",
-            cache=json.loads(os.environ.get("UNIFY_CACHE", "true")),
-            traced=json.loads(os.environ.get("UNIFY_TRACED", "true")),
-        )
-        include_activity = (
-            self._rolling_summary_in_prompts
-            if rolling_summary_in_prompts is None
-            else rolling_summary_in_prompts
-        )
-
-        client.set_system_message(
-            build_summarize_prompt(guidance, include_activity=include_activity),
-        )
-
-        # ── 2.  Collect raw messages – single back-end filter ---------------
-        inc_clauses: list[str] = []
-        if from_exchanges:
-            inc_clauses.append(f"exchange_id in {from_exchanges}")
-        if from_messages:
-            inc_clauses.append(f"message_id in {from_messages}")
-
-        include_expr = " or ".join(f"({c})" for c in inc_clauses)
-        filter_expr = include_expr
-        if omit_messages:
-            filter_expr = (
-                f"({include_expr}) and (message_id not in {list(omit_messages)})"
-            )
-
-        msgs: list[Message] = self._search_messages(filter=filter_expr, limit=None)
-
-        #  Group by exchange so the LLM can see conversation structure
-        exchanges: dict[int, list[str]] = {}
-        for m in msgs:
-            exchanges.setdefault(m.exchange_id, []).append(m.content)
-
-        message_ids_sorted = sorted(m.message_id for m in msgs)
-        exchanges_json = json.dumps(exchanges, indent=2)
-
-        # ── 3.  Optional request_clarification helper tool ─────────────────
-        tools: dict[str, Callable] = {}
-        if (
-            clarification_up_q is not None
-            and clarification_down_q is not None
-            and guidance is not None
-        ):
-
-            # clarification capability only added if explicit guidance is given.
-            async def request_clarification(question: str) -> str:
-                """Query the user for more information, and wait for the reply."""
-                if clarification_up_q is None or clarification_down_q is None:
-                    raise RuntimeError("Clarification queues missing")
-                await clarification_up_q.put(question)
-                return await clarification_down_q.get()
-
-            tools["request_clarification"] = request_clarification
-
-        # ── 4.  Kick off the interactive loop (even if no tools) ───────────
-        from unity.common.llm_helpers import start_async_tool_use_loop
-
-        prompt = (
-            "Here are the raw messages selected for this summary "
-            f"(grouped by exchange_id):\n{exchanges_json}\n\nPlease "
-            "produce a concise cross-exchange summary."
-            + (f"\n\nAdditional guidance:\n{guidance}" if guidance else "")
-        )
-
-        handle = start_async_tool_use_loop(
-            client,
-            prompt,
-            tools,
-            loop_id=f"{self.__class__.__name__}.{self.summarize.__name__}",
-            parent_chat_context=parent_chat_context,
-            tool_policy=lambda i, _: (
-                ("required", _) if (tools and i < 1) else ("auto", _)
-            ),
-        )
-
-        # Wrap the original result to log the summary when it completes
-        # -- 3.  Attach logging wrapper -------------------------------------
-        handle = wrap_handle_with_logging(
-            handle,
-            call_id,
-            "TranscriptManager",
-            "summarize",
-        )
-
-        # -- 4.  Persist the summary after the OUTGOING event has fired -----
-        original_result = handle.result
-
-        async def wrapped_result():
-            summary = await original_result()  # emits outgoing ManagerMethod
-            ex_ids_for_log = sorted(exchanges.keys())
-            unify.log(
-                context=self._summaries_ctx,
-                exchange_ids=ex_ids_for_log,
-                message_ids=message_ids_sorted,
-                summary=summary,
-                new=True,
-                mutable=True,
-            )
-            return summary
-
-        handle.result = wrapped_result  # type: ignore
-
-        return handle
 
     # Helpers #
     # --------#
@@ -445,43 +284,9 @@ class TranscriptManager(BaseTranscriptManager):
         )
         return [Message(**lg.entries) for lg in logs]
 
-    def _nearest_summaries(
-        self,
-        *,
-        text: str,
-        k: int = 10,
-    ) -> List[MessageExchangeSummary]:
-        """
-        Retrieve the *k* stored summaries whose **summary text** embedding is
-        closest to the embedding of **text**.
-
-        Parameters
-        ----------
-        text : str
-            Query text.
-        k : int, default ``10``
-            How many nearest summaries to return.
-
-        Returns
-        -------
-        list[MessageExchangeSummary]
-            Summaries ordered by similarity (*lowest* cosine distance first).
-        """
-
-        ensure_vector_column(self._summaries_ctx, self._SUM_EMB, "summary")
-        logs = unify.get_logs(
-            context=self._summaries_ctx,
-            sorting={
-                f"cosine({self._SUM_EMB}, embed('{text}', model='{EMBED_MODEL}'))": "ascending",
-            },
-            limit=k,
-            exclude_fields=[
-                k
-                for k in unify.get_fields(context=self._summaries_ctx).keys()
-                if k.endswith("_emb")
-            ],
-        )
-        return [MessageExchangeSummary(**lg.entries) for lg in logs]
+    # _nearest_summaries removed – summary functionality deprecated.
+    def _nearest_summaries(self, *args, **kwargs):
+        raise NotImplementedError("Summary functionality removed.")
 
     # ------------------------------------------------------------------ #
     #  Reset helper (sandbox)                                            #
@@ -489,18 +294,16 @@ class TranscriptManager(BaseTranscriptManager):
     @staticmethod
     def reset() -> None:
         """
-        Delete the `Messages` and `MessageExchangeSummaries` contexts (and
-        any namespaced variants) for the *current* Unify project so that a
-        clean slate is created when a new TranscriptManager is instantiated.
+        Delete the `Messages` contexts (and any namespaced variants) for the
+        *current* Unify project so that a clean slate is created when a
+        new TranscriptManager is instantiated.
         """
         import unify
 
         targets = [
             ctx
             for ctx in list(unify.get_contexts())
-            if ctx in {"Messages", "MessageExchangeSummaries"}
-            or ctx.endswith("/Messages")
-            or ctx.endswith("/MessageExchangeSummaries")
+            if ctx == "Messages" or ctx.endswith("/Messages")
         ]
         for ctx in targets:
             try:
@@ -549,43 +352,6 @@ class TranscriptManager(BaseTranscriptManager):
         )
         return [Message(**lg.entries) for lg in logs]
 
-    def _search_summaries(
-        self,
-        *,
-        filter: Optional[str] = None,
-        offset: int = 0,
-        limit: int = 100,
-    ) -> List[MessageExchangeSummary]:
-        """
-        Retrieve persisted **exchange summaries** selected by an arbitrary
-        Python boolean *filter*.
-
-        Parameters
-        ----------
-        filter : str | None, default ``None``
-            Expression evaluated against each
-            :class:`~MessageExchangeSummary`
-            (e.g. ``"5 in exchange_ids and 'deadline' in summary"``).
-        offset : int, default ``0``
-            Start index for pagination.
-        limit : int, default ``100``
-            Maximum number of summaries to return.
-
-        Returns
-        -------
-        list[MessageExchangeSummary]
-            Summaries satisfying the filter in creation order.
-        """
-        logs = unify.get_logs(
-            context=self._summaries_ctx,
-            filter=filter,
-            offset=offset,
-            limit=limit,
-            sorting={"timestamp": "descending"},
-            exclude_fields=[
-                k
-                for k in unify.get_fields(context=self._summaries_ctx).keys()
-                if k.endswith("_emb")
-            ],
-        )
-        return [MessageExchangeSummary(**lg.entries) for lg in logs]
+    # _search_summaries removed – summary functionality deprecated.
+    def _search_summaries(self, *args, **kwargs):
+        raise NotImplementedError("Summary functionality removed.")

@@ -14,12 +14,11 @@ import inspect
 import json
 import textwrap
 from datetime import datetime, timezone
-from typing import Callable, Dict, Optional
+from typing import Callable, Dict
 
 # Schemas used in the prompt -------------------------------------------------
 from ..contact_manager.types.contact import Contact
 from .types.message import Message
-from .types.message_exchange_summary import MessageExchangeSummary
 from ..memory_manager.rolling_activity import get_rolling_activity
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -130,9 +129,6 @@ def build_ask_prompt(
         • **Filter search** – most recent WhatsApp from *contact 7*
           `{search_messages_name}(filter="contact_id == 7 and medium == 'whatsapp_message'", limit=1, offset=0)`
 
-        • **Summarise** two exchanges (23 & 24) before answering
-          `{summarise_name}(from_exchanges=[23, 24])`
-
         Important: if the question, refers to message *content* (topic etc.) rather than meta-data (datetime, medium etc.) then you should *almost always* use {nearest_messages_name} before trying exact string matching via {search_messages_name}. You're much more likely to get a match on your first attempt.
     """,
     ).strip()
@@ -158,48 +154,7 @@ def build_ask_prompt(
             "",
             f"Message  = {json.dumps(Message.model_json_schema(), indent=4)}",
             "",
-            f"Summary  = {json.dumps(MessageExchangeSummary.model_json_schema(), indent=4)}",
-            "",
             f"Current UTC time: {_now()}.",
-        ],
-    )
-
-
-def build_summarize_prompt(
-    guidance: Optional[str] = None,
-    *,
-    include_activity: bool = True,
-) -> str:
-    """
-    Build the system-prompt for :pyfunc:`TranscriptManager.summarize`.
-
-    No tool names are hard-coded; the prompt simply instructs the model
-    to produce a cross-exchange summary and reminds it to ask for
-    clarification if needed.  A *guidance* string can be injected.
-    """
-
-    guidance_block = (
-        f"\n\nAdditional guidance provided by the caller:\n{guidance}"
-        if guidance
-        else ""
-    )
-
-    activity_block = _rolling_activity_section() if include_activity else ""
-
-    return "\n".join(
-        [
-            activity_block,
-            "You will receive one or more message exchanges.",
-            "Craft a concise summary that captures the most important points",
-            "**across** all exchanges. If anything is unclear in the guidance provided,",
-            "then use the `request_clarification` tool – do **not** hallucinate.",
-            "",
-            "However, if the guidance is already clear, then please try to 'read between the lines'",
-            "and do not use `request_clarification` unless something is genuinely contradictory,",
-            "unclear, or there is missing information.",
-            "",
-            f"Current UTC time: {_now()}.",
-            guidance_block,
         ],
     )
 
