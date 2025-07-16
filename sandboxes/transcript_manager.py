@@ -204,7 +204,6 @@ async def _main_async() -> None:
         ctxs = unify.get_contexts()
         for tbl in (
             "Messages",
-            "MessageExchangeSummaries",
             "Contacts",
             "Traces",
         ):

@@ -106,12 +106,6 @@ MANAGER_TEST_CASES: Tuple[
         lambda m: m.ask("What's the latest message?"),
     ),
     (
-        "transcript_summarize",
-        "transcript",
-        lambda: SimulatedTranscriptManager(log_events=True),
-        lambda m: m.summarize(from_messages=[1]),
-    ),
-    (
         "knowledge_ask",
         "knowledge",
         lambda: SimulatedKnowledgeManager(log_events=True),

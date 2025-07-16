@@ -5,9 +5,6 @@ from collections import deque
 
 from unity.events.event_bus import EventBus, Event
 from unity.transcript_manager.types.message import Message
-from unity.transcript_manager.types.message_exchange_summary import (
-    MessageExchangeSummary,
-)
 from tests.helpers import _handle_project
 
 
@@ -56,13 +53,9 @@ async def test_concurrent_publishes_lock_integrity():
     n_events = 100
     events: list[Event] = []
     publish_tasks = []
+    etype, payload_cls = "message", Message
 
     for i in range(n_events):
-        etype, payload_cls = (
-            ("message", Message)
-            if i % 2 == 0
-            else ("message_exchange_summary", MessageExchangeSummary)
-        )
         evt = Event(
             type=etype,
             timestamp=base_ts
