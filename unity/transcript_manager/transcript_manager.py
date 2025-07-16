@@ -218,17 +218,10 @@ class TranscriptManager(BaseTranscriptManager):
             messages = [messages]
 
         # ── 1. Helper to ensure we have a numeric contact-id ───────────────
-        built_in_fields = {
-            "contact_id",
-            "first_name",
-            "surname",
-            "email_address",
-            "phone_number",
-            "whatsapp_number",
-            "description",
-            "bio",
-            "rolling_summary",
-        }
+        # Derive the built-in (canonical) Contact fields *dynamically* from the
+        # `Contact` model itself – this avoids hard-coding and ensures there is
+        # exactly one source of truth across the code-base.
+        built_in_fields = set(Contact.model_fields.keys())
 
         contact_cache: Dict[int, int] = {}
 
@@ -252,20 +245,18 @@ class TranscriptManager(BaseTranscriptManager):
             if obj_key in contact_cache:
                 return contact_cache[obj_key]
 
-            # Build kwargs for _create_contact using *non-None* fields only
+            # Build kwargs for _create_contact using *non-None* built-in fields
+            # detected directly from the `Contact` schema instead of hard-coding
+            # the field names.  This ensures any future additions to the
+            # Contact model automatically propagate here.
+
+            full_data = c.model_dump(exclude_none=True)  # include only defined fields
+
+            # Separate canonical Contact fields from any custom extras
             create_kwargs: Dict[str, Any] = {
-                k: getattr(c, k)
-                for k in (
-                    "first_name",
-                    "surname",
-                    "email_address",
-                    "phone_number",
-                    "whatsapp_number",
-                    "description",
-                    "bio",
-                    "rolling_summary",
-                )
-                if getattr(c, k) is not None
+                k: v
+                for k, v in full_data.items()
+                if k in built_in_fields and k != "contact_id"
             }
 
             # Capture any extra / custom fields present on the Contact
