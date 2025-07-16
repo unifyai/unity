@@ -60,20 +60,20 @@ class TranscriptManager(BaseTranscriptManager):
         ), "read and write contexts must be the same when instantiating a TranscriptManager."
 
         if read_ctx:
-            self._messages_ctx = f"{read_ctx}/Messages"
+            self._transcripts_ctx = f"{read_ctx}/Transcripts"
         else:
-            self._messages_ctx = "Contacts"
+            self._transcripts_ctx = "Transcripts"
         ctxs = unify.get_contexts()
-        if self._messages_ctx not in ctxs:
+        if self._transcripts_ctx not in ctxs:
             unify.create_context(
-                self._messages_ctx,
+                self._transcripts_ctx,
                 unique_column_ids="message_id",
                 description="List of *all* timestamped messages sent between *all* contacts across *all* mediums.",
             )
             fields = model_to_fields(Message)
             unify.create_fields(
                 fields,
-                context=self._messages_ctx,
+                context=self._transcripts_ctx,
             )
 
         # ── Async logging (mirrors EventBus) ────────────────────────────────
@@ -344,7 +344,7 @@ class TranscriptManager(BaseTranscriptManager):
             # the logger call (already satisfied above).  Now we can log safely.
             self._logger.log_create(
                 project=unify.active_project(),
-                context=self._messages_ctx,
+                context=self._transcripts_ctx,
                 params={},
                 entries=entries,
             )
@@ -384,16 +384,16 @@ class TranscriptManager(BaseTranscriptManager):
         list[Message]
             Messages sorted by **ascending** cosine distance (best match first).
         """
-        ensure_vector_column(self._messages_ctx, self._MSG_EMB, "content")
+        ensure_vector_column(self._transcripts_ctx, self._MSG_EMB, "content")
         logs = unify.get_logs(
-            context=self._messages_ctx,
+            context=self._transcripts_ctx,
             sorting={
                 f"cosine({self._MSG_EMB}, embed('{text}', model='{EMBED_MODEL}'))": "ascending",
             },
             limit=k,
             exclude_fields=[
                 k
-                for k in unify.get_fields(context=self._messages_ctx).keys()
+                for k in unify.get_fields(context=self._transcripts_ctx).keys()
                 if k.endswith("_emb")
             ],
         )
@@ -431,14 +431,14 @@ class TranscriptManager(BaseTranscriptManager):
             Matching messages in creation order.
         """
         logs = unify.get_logs(
-            context=self._messages_ctx,
+            context=self._transcripts_ctx,
             filter=filter,
             offset=offset,
             limit=limit,
             sorting={"timestamp": "descending"},
             exclude_fields=[
                 k
-                for k in unify.get_fields(context=self._messages_ctx).keys()
+                for k in unify.get_fields(context=self._transcripts_ctx).keys()
                 if k.endswith("_emb")
             ],
         )
