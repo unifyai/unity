@@ -12,20 +12,24 @@ def test_create_contact():
         first_name="Dan",
         description="A bit of a loser",
     )
-    contacts = contact_manager._search_contacts()
-    assert len(contacts) == 1
-    contact = contacts[0]
-    assert contact.model_dump() == {
-        "contact_id": 0,
-        "first_name": "Dan",
-        "surname": None,
-        "email_address": None,
-        "phone_number": None,
-        "whatsapp_number": None,
-        "description": "A bit of a loser",
-        "bio": None,
-        "rolling_summary": None,
-    }
+
+    # Exclude the auto-synced assistant (contact_id == 0)
+    user_contacts = [c for c in contact_manager._search_contacts() if c.contact_id != 0]
+
+    assert len(user_contacts) == 1, "Exactly one user contact should have been created"
+    contact = user_contacts[0]
+
+    # The new contact should *not* reuse ID 0
+    assert contact.contact_id != 0
+    assert contact.first_name == "Dan"
+    assert contact.description == "A bit of a loser"
+    # Remaining built-in fields should default to None
+    assert contact.surname is None
+    assert contact.email_address is None
+    assert contact.phone_number is None
+    assert contact.whatsapp_number is None
+    assert contact.bio is None
+    assert contact.rolling_summary is None
 
 
 @pytest.mark.unit
@@ -38,44 +42,24 @@ def test_update_contact():
         first_name="Dan",
     )
 
-    # check
-    contacts = contact_manager._search_contacts()
-    assert len(contacts) == 1
-    contact = contacts[0]
-    assert contact.model_dump() == {
-        "contact_id": 0,
-        "first_name": "Dan",
-        "surname": None,
-        "email_address": None,
-        "phone_number": None,
-        "whatsapp_number": None,
-        "description": None,
-        "bio": None,
-        "rolling_summary": None,
-    }
+    # check (exclude assistant)
+    user_contacts = [c for c in contact_manager._search_contacts() if c.contact_id != 0]
+    assert len(user_contacts) == 1
+    contact = user_contacts[0]
+    assert contact.first_name == "Dan"
 
     # update
     contact_manager._update_contact(
-        contact_id=0,
+        contact_id=contact.contact_id,
         first_name="Daniel",
         description="He's alright",
     )
 
-    # check
-    contacts = contact_manager._search_contacts()
-    assert len(contacts) == 1
-    contact = contacts[0]
-    assert contact.model_dump() == {
-        "contact_id": 0,
-        "first_name": "Daniel",
-        "surname": None,
-        "email_address": None,
-        "phone_number": None,
-        "whatsapp_number": None,
-        "description": "He's alright",
-        "bio": None,
-        "rolling_summary": None,
-    }
+    user_contacts = [c for c in contact_manager._search_contacts() if c.contact_id != 0]
+    assert len(user_contacts) == 1
+    contact = user_contacts[0]
+    assert contact.first_name == "Daniel"
+    assert contact.description == "He's alright"
 
 
 @pytest.mark.unit
@@ -87,39 +71,30 @@ def test_create_contacts():
     contact_manager._create_contact(
         first_name="Dan",
     )
-    contacts = contact_manager._search_contacts()
-    assert len(contacts) == 1
-    contact = contacts[0]
-    assert contact.model_dump() == {
-        "contact_id": 0,
-        "first_name": "Dan",
-        "surname": None,
-        "email_address": None,
-        "phone_number": None,
-        "whatsapp_number": None,
-        "description": None,
-        "bio": None,
-        "rolling_summary": None,
-    }
+    user_contacts = [c for c in contact_manager._search_contacts() if c.contact_id != 0]
+    assert len(user_contacts) == 1
+    contact = user_contacts[0]
+    assert contact.first_name == "Dan"
 
     # second
     contact_manager._create_contact(
         first_name="Tom",
     )
-    contacts = contact_manager._search_contacts()
-    assert len(contacts) == 2
-    contact = contacts[0]
-    assert contact.model_dump() == {
-        "contact_id": 1,
-        "first_name": "Tom",
-        "surname": None,
-        "email_address": None,
-        "phone_number": None,
-        "whatsapp_number": None,
-        "description": None,
-        "bio": None,
-        "rolling_summary": None,
-    }
+    user_contacts = [c for c in contact_manager._search_contacts() if c.contact_id != 0]
+    assert len(user_contacts) == 2
+    tom_contact = next(c for c in user_contacts if c.first_name == "Tom")
+    dan_contact = next(c for c in user_contacts if c.first_name == "Dan")
+
+    # ensure IDs are unique and not 0
+    assert tom_contact.contact_id != dan_contact.contact_id
+    assert tom_contact.contact_id != 0 and dan_contact.contact_id != 0
+    assert tom_contact.surname is None
+    assert tom_contact.description is None
+    assert tom_contact.email_address is None
+    assert tom_contact.phone_number is None
+    assert tom_contact.whatsapp_number is None
+    assert tom_contact.bio is None
+    assert tom_contact.rolling_summary is None
 
 
 @pytest.mark.unit
