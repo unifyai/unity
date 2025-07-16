@@ -224,11 +224,11 @@ async def test_time_across_sessions() -> None:
 def _mk_msg(sender: int, receiver: int, seq: int) -> Event:
     return Event(
         type="Chat",
-        payload={"sender_id": sender, "receiver_id": receiver, "seq": seq},
+        payload={"sender_id": sender, "receiver_ids": [receiver], "seq": seq},
     )
 
 
-FILTER = 'evt.payload["sender_id"] == 1 and evt.payload["receiver_id"] == 2'
+FILTER = 'evt.payload["sender_id"] == 1 and evt.payload["receiver_ids"] == [2]'
 
 
 @pytest.mark.asyncio
@@ -315,21 +315,21 @@ async def test_time_single_session_with_filter() -> None:
         Event(
             type="ChatTime",
             timestamp=ts(0),
-            payload={"sender_id": 1, "receiver_id": 2, "seq": 0},
+            payload={"sender_id": 1, "receiver_ids": [2], "seq": 0},
         ),
     )  # trigger
     await bus.publish(
         Event(
             type="ChatTime",
             timestamp=ts(1),
-            payload={"sender_id": 1, "receiver_id": 2, "seq": 1},
+            payload={"sender_id": 1, "receiver_ids": [2], "seq": 1},
         ),
     )  # ignore (Δ=1)
     await bus.publish(
         Event(
             type="ChatTime",
             timestamp=ts(3),
-            payload={"sender_id": 1, "receiver_id": 2, "seq": 2},
+            payload={"sender_id": 1, "receiver_ids": [2], "seq": 2},
         ),
     )  # trigger (Δ=3)
     bus.join_published()
@@ -352,7 +352,7 @@ async def test_time_across_sessions_with_filter() -> None:
         Event(
             type="ChatTimeX",
             timestamp=ts(0),
-            payload={"sender_id": 1, "receiver_id": 2, "seq": 0},
+            payload={"sender_id": 1, "receiver_ids": [2], "seq": 0},
         ),
     )  # trigger
     bus1.join_published()
@@ -376,14 +376,14 @@ async def test_time_across_sessions_with_filter() -> None:
         Event(
             type="ChatTimeX",
             timestamp=ts(1),
-            payload={"sender_id": 1, "receiver_id": 2, "seq": 1},
+            payload={"sender_id": 1, "receiver_ids": [2], "seq": 1},
         ),
     )  # too soon
     await bus2.publish(
         Event(
             type="ChatTimeX",
             timestamp=ts(3),
-            payload={"sender_id": 1, "receiver_id": 2, "seq": 2},
+            payload={"sender_id": 1, "receiver_ids": [2], "seq": 2},
         ),
     )  # Δ=3 ⇒ trigger
     bus2.join_published()

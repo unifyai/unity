@@ -56,7 +56,7 @@ def _answer_semantic(
                 m
                 for m in messages
                 if m.medium == "phone_call"
-                and {m.sender_id, m.receiver_id} == {cid("dan"), cid("julia")}
+                and {m.sender_id, m.receiver_ids} == {cid("dan"), [cid("julia")]}
             ),
             key=lambda m: m.timestamp,
         )[-2:]
@@ -97,7 +97,7 @@ def _answer_semantic(
             m.timestamp
             for m in messages
             if m.medium == "phone_call"
-            and {m.sender_id, m.receiver_id} == {cid("dan"), cid("julia")}
+            and {m.sender_id, m.receiver_ids} == {cid("dan"), [cid("julia")]}
         )
         return last.isoformat().split("T")[0]
 
@@ -123,7 +123,7 @@ def _answer_semantic(
             m
             for m in messages
             if m.medium == "phone_call"
-            and {m.sender_id, m.receiver_id} == {cid("dan"), cid("julia")}
+            and {m.sender_id, m.receiver_ids} == {cid("dan"), [cid("julia")]}
         ]
         last_ts = max(m.timestamp for m in last_call)
         combined = " ".join(m.content for m in last_call if m.timestamp == last_ts)
