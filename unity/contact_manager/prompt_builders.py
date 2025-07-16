@@ -140,9 +140,11 @@ def build_ask_prompt(
     if num_contacts < 50:
         guidance = f"given that the number of contacts is so small, you should simply use {search_name} with *no filter arguments* for now, so you can unpack the *full* contact list and answer the question directly."
     else:
-        guidance = (
-            "If the question is open-ended or doesn't clearly match any of the column names,",
-            f"then try {nearest_search} on the most relevant column(s) and see if you can find any semantic match.",
+        guidance = "\n".join(
+            [
+                "If the question is open-ended or doesn't clearly match any of the column names,",
+                f"then try {nearest_search} on the most relevant column(s) and see if you can find any semantic match.",
+            ],
         )
 
     activity_block = _rolling_activity_section() if include_activity else ""
