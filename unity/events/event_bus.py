@@ -1175,5 +1175,47 @@ class EventBus:
         }
 
 
-# ─────────────────────────   Global singleton   ──────────────────────────
-EVENT_BUS: "EventBus" = EventBus()
+# ─────────────────────────   Global singleton (lazy)   ────────────────────
+
+
+class _EventBusProxy:
+    """Proxy that defers creation of the real :class:`EventBus` instance
+    until :pyfunc:`unity.init` is invoked. Attempting to use the bus before
+    initialisation raises a helpful :class:`RuntimeError`."""
+
+    __slots__ = ("_inner",)
+
+    def __init__(self) -> None:
+        self._inner: EventBus | None = None
+
+    # internal – called by unity.init()
+    def _set(self, bus: "EventBus") -> None:
+        if self._inner is not None:
+            raise RuntimeError("EVENT_BUS has already been initialised.")
+        self._inner = bus
+
+    # transparent proxy behaviour -----------------------------------
+    def __getattr__(self, item):
+        if self._inner is None:
+            raise RuntimeError(
+                "EVENT_BUS has not been initialised yet – call unity.init() first.",
+            )
+        return getattr(self._inner, item)
+
+    def __bool__(self):
+        return self._inner is not None
+
+
+# Module-level placeholder – becomes the real EventBus once unity.init() runs
+EVENT_BUS: "EventBus" = _EventBusProxy()  # type: ignore[assignment]
+
+
+def _initialize_event_bus() -> "EventBus":
+    """Internal helper used by :pyfunc:`unity.init` to instantiate the real
+    :class:`EventBus` exactly once and wire it up to the module-level proxy.
+    """
+    if isinstance(EVENT_BUS, _EventBusProxy):
+        bus = EventBus()
+        EVENT_BUS._set(bus)  # type: ignore[attr-defined]
+        return bus  # type: ignore[return-value]
+    return EVENT_BUS  # type: ignore[return-value]
