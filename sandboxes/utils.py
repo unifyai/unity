@@ -26,6 +26,9 @@ from deepgram import DeepgramClient, FileSource, PrerecordedOptions
 from livekit.plugins import cartesia
 import argparse
 from unity.common.llm_helpers import SteerableToolHandle
+
+# Added for direct logging of generated messages
+from unity.transcript_manager.transcript_manager import TranscriptManager
 from scenario_builder import ScenarioBuilder
 
 from dotenv import load_dotenv
@@ -631,6 +634,12 @@ class TranscriptGenerator:
         self._traced = traced
         self._stateful = stateful
 
+        # Initialise a TranscriptManager instance so that generated messages
+        # are immediately persisted and routed through the normal logging &
+        # EventBus pathways.  Using a single instance across multiple calls
+        # avoids recreating Unify contexts when the generator is reused.
+        self._tm = TranscriptManager()
+
     async def generate(
         self,
         description: str,
@@ -650,9 +659,46 @@ class TranscriptGenerator:
 
         transcript: List[dict] = []
 
+        # Mapping from *sender name* → numeric contact-id so that successive
+        # messages from the same alias reuse the contact id assigned on the
+        # first occurrence.  This mirrors the behaviour of the MemoryManager
+        # sandbox which treats contact-id **0** as the assistant.
+        _name_to_id: dict[str, int] = {}
+
+        def _normalise_msg(raw: dict) -> dict:
+            """Return a dict that satisfies TranscriptManager.log_messages schema."""
+
+            sender_name = str(raw.get("sender", "User"))
+            sender_id = _name_to_id.setdefault(sender_name, len(_name_to_id) + 1)
+
+            # By convention the assistant uses contact-id 0 so replies from
+            # the other party point to 0 as the receiver.
+            receiver_id = 0
+
+            return {
+                "medium": raw.get("medium", "sms_message"),
+                "sender_id": sender_id,
+                "receiver_id": receiver_id,
+                "timestamp": raw.get("timestamp"),
+                "content": raw.get("content", ""),
+                "exchange_id": raw.get("exchange_id", 0),
+            }
+
         def log_messages(messages: list[dict]) -> str:  # noqa: D401 – tool sig
+            """Tool that both captures *messages* locally **and** persists them."""
+
             nonlocal transcript
             transcript.extend(messages)
+
+            # Persist each message via TranscriptManager so that all normal
+            # logging, embedding & EventBus side-effects happen.
+            for msg in messages:
+                self._tm.log_messages(_normalise_msg(msg))
+
+            # Make sure the async logger flushes before the next tool call so
+            # that subsequent LLM reasoning can already query the messages.
+            self._tm.join_published()
+
             return f"{len(messages)} messages logged"
 
         prompt = (
