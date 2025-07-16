@@ -113,6 +113,166 @@ class ContactManager(BaseContactManager):
         # rolling activity inclusion flag
         self._rolling_summary_in_prompts = rolling_summary_in_prompts
 
+        # ── ensure an assistant contact with id 0 exists and is up-to-date ──
+        self._sync_assistant_contact()
+
+    # ──────────────────────────────────────────────────────────────────────
+    #  Assistant syncing helpers
+    # ──────────────────────────────────────────────────────────────────────
+
+    def _fetch_assistant_info(self) -> List[Dict[str, Any]]:
+        """Return the list of assistants configured for the current account.
+
+        The API is expected to return a JSON object with an ``info`` key
+        containing the assistant records.  If the request fails, an
+        exception is raised via ``_handle_exceptions`` so callers do not
+        silently proceed with incomplete data.
+        """
+        url = f"{os.environ['UNIFY_BASE_URL']}/assistant?phone=None&email=None"
+        headers = {"Authorization": f"Bearer {os.environ['UNIFY_KEY']}"}
+        response = requests.request("GET", url, headers=headers)
+        _handle_exceptions(response)
+        data = response.json()
+        return data.get("info", []) if isinstance(data, dict) else []
+
+    def _ensure_columns_exist(self, extra_fields: Dict[str, Any]) -> None:
+        """Create custom columns for *extra_fields* that are not yet present.
+
+        Only simple string columns are created for now – if richer typing is
+        required in future we can extend the heuristics.
+        """
+        existing_cols = self._get_columns()
+        for col in extra_fields:
+            if col in self._REQUIRED_COLUMNS or col in existing_cols:
+                continue
+            try:
+                # Default to string type for new assistant metadata columns
+                self._create_custom_column(
+                    column_name=col,
+                    column_type=ColumnType.str,
+                )
+            except Exception:
+                # Column may have been created concurrently – ignore
+                pass
+
+    def _sync_assistant_contact(self) -> None:
+        """Ensure a *single* assistant contact (id == 0) exists and is correct.
+
+        1. Fetch assistants via the external API.
+        2. Validate that **at most** one assistant is returned ( >1 → error ).
+        3. Transform the assistant record into contact + custom-field payloads.
+        4. Insert or update the contact with ``contact_id == 0`` so that all
+           stored data matches the assistant metadata exactly.
+        5. If *no* assistants exist, a dummy "Unify Assistant" record is used.
+        """
+        assistants = self._fetch_assistant_info()
+
+        if len(assistants) > 1:
+            raise AssertionError(
+                f"Expected at most one assistant, got {len(assistants)}.",
+            )
+
+        # ------------------------------------------------------------------
+        # Build the canonical assistant record (real or dummy)
+        # ------------------------------------------------------------------
+        if assistants:
+            a = assistants[0]
+            base_fields = {
+                "first_name": a.get("first_name"),
+                "surname": a.get("surname"),
+                "email_address": a.get("email"),
+                "phone_number": a.get("phone"),
+                "whatsapp_number": a.get("phone"),
+                "description": a.get("about"),
+                "bio": a.get("about"),
+                "rolling_summary": None,
+            }
+            # Everything else is stored verbatim as custom fields
+            mapped_keys = {
+                "first_name",
+                "surname",
+                "email",
+                "phone",
+                "about",
+            }
+            custom_fields = {k: v for k, v in a.items() if k not in mapped_keys}
+        else:
+            # Dummy assistant when account has no assistants configured
+            base_fields = {
+                "first_name": "Unify",
+                "surname": "Assistant",
+                "email_address": "unify.assistant@unify.ai",
+                "phone_number": "+10000000000",
+                "whatsapp_number": "+10000000000",
+                "description": "Automatically generated assistant placeholder.",
+                "bio": "Your helpful Unify AI assistant.",
+                "rolling_summary": None,
+            }
+            custom_fields = {
+                "agent_id": "0",
+                "region": "Global",
+                "profile_photo": "https://example.com/photos/unify_assistant.jpg",
+                "country": "US",
+            }
+
+        # ------------------------------------------------------------------
+        # Ensure the schema can accommodate all custom fields first
+        # ------------------------------------------------------------------
+        self._ensure_columns_exist(custom_fields)
+
+        # ------------------------------------------------------------------
+        # Retrieve contact_id == 0 (if any) and decide whether to create/update
+        # ------------------------------------------------------------------
+        existing_logs = unify.get_logs(
+            context=self._ctx,
+            filter="contact_id == 0",
+            limit=1,
+        )
+
+        if not existing_logs:
+            # Either the table is empty or contact_id 0 was never created.
+            # Use the standard helper which will assign contact_id == 0 when
+            # inserting the first contact into an empty table.  If the table
+            # already had contacts, fall back to a direct log with explicit id.
+            if not unify.get_logs(context=self._ctx):
+                self._create_contact(
+                    **base_fields,
+                    custom_fields=custom_fields,
+                )
+            else:
+                # Direct log insertion with explicit contact_id 0
+                unify.log(
+                    context=self._ctx,
+                    contact_id=0,
+                    **base_fields,
+                    **custom_fields,
+                    new=True,
+                    mutable=True,
+                )
+            return  # nothing further to do
+
+        # A record exists – check if it matches and update if necessary
+        current = existing_logs[0]
+        mismatches: List[Dict[str, Any]] = []
+
+        def _needs_update(key: str, desired: Any) -> bool:
+            return current.entries.get(key) != desired
+
+        for field, value in base_fields.items():
+            if _needs_update(field, value):
+                mismatches.append({field: value})
+        for field, value in custom_fields.items():
+            if _needs_update(field, value):
+                mismatches.append({field: value})
+
+        if mismatches:
+            unify.update_logs(
+                logs=[current.id] * len(mismatches),
+                context=self._ctx,
+                entries=mismatches,
+                overwrite=True,
+            )
+
     # ──────────────────────────────────────────────────────────────────────
     #  Column helpers (single-table version of KnowledgeManager's helpers)
     # ──────────────────────────────────────────────────────────────────────
