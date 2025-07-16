@@ -484,6 +484,31 @@ class TranscriptManager(BaseTranscriptManager):
         )
         return [MessageExchangeSummary(**lg.entries) for lg in logs]
 
+    # ------------------------------------------------------------------ #
+    #  Reset helper (sandbox)                                            #
+    # ------------------------------------------------------------------ #
+    @staticmethod
+    def reset() -> None:
+        """
+        Delete the `Messages` and `MessageExchangeSummaries` contexts (and
+        any namespaced variants) for the *current* Unify project so that a
+        clean slate is created when a new TranscriptManager is instantiated.
+        """
+        import unify
+
+        targets = [
+            ctx
+            for ctx in list(unify.get_contexts())
+            if ctx in {"Messages", "MessageExchangeSummaries"}
+            or ctx.endswith("/Messages")
+            or ctx.endswith("/MessageExchangeSummaries")
+        ]
+        for ctx in targets:
+            try:
+                unify.delete_context(ctx)
+            except Exception:
+                pass
+
     def _search_messages(
         self,
         *,
