@@ -124,8 +124,8 @@ def build_ask_prompt(
           `{search_name}(filter="email_address is not None")`
 
         ─ Semantic search ─
-        • Find contacts *similar* to "machine-learning expert" in the *description* field
-          `{nearest_search}(source='description', text='machine-learning expert')`
+        • Find contacts *similar* to "machine-learning expert" in the *bio* field
+          `{nearest_search}(source='bio', text='machine-learning expert')`
 
         ─ Custom columns ─
         • Inspect schema
