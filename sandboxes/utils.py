@@ -676,7 +676,8 @@ class TranscriptGenerator:
 
         prompt = (
             description.strip()
-            + f"\n\nGenerate {min_messages}-{max_messages} chronological chat messages that fit the scenario above. "
+            + "\n\nGenerate chronological chat messages that fit the scenario above. "
+            f"If no guidance is given for the *length* of the chat (number of messages), then (and only then) we can assume {min_messages}-{max_messages} is suitable."
             "Each dict **must** include 'timestamp' (ISO 8601), 'sender' and 'content'. "
             f"Use the `log_messages` tool in batches of {batch_min}-{batch_max} messages until the full transcript is logged, then stop."
         )
