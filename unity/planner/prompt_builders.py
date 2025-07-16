@@ -678,7 +678,7 @@ def build_implementation_strategy_prompt(
     *,
     tools: Dict[str, Callable],
 ) -> str:
-    """Builds a prompt to devise a new strategy for a failed function."""
+    """Builds a prompt to devise a new, FOCUSED strategy for a single failed function."""
 
     browser_context_section = (
         f"**Current Browser State:**\n{browser_state}" if browser_state else ""
@@ -705,13 +705,13 @@ def build_implementation_strategy_prompt(
     tool_reference = _build_tool_signatures(tools)
     return textwrap.dedent(
         f"""
-        You are a master strategist for a web automation agent. A function has failed to achieve its goal. Your task is to analyze the failure and devise a new, creative, step-by-step natural language plan to succeed.
+        You are a tactical debugging agent. The function `{function_name}` has failed. Your task is to analyze the failure and devise a new, specific, step-by-step plan to successfully implement **only the logic for this function**.
 
-        **Overall Goal:** "{goal}"
-        **Function Under Review:** `{function_name}`
-        **Purpose of this function:** {function_docstring or 'No docstring provided.'}
+        **Function to Fix:** `{function_name}`
+        **Purpose of this Function:** {function_docstring or 'No docstring provided.'}
+        **(Context) This function is one step in the Overall Goal:** "{goal}"
 
-        **CRITICAL: Reason for Previous Failure:** "{failure_reason}"
+        **CRITICAL: Reason for Failure:** "{failure_reason}"
 
         {interaction_log_section}
         {browser_context_section}
@@ -721,7 +721,8 @@ def build_implementation_strategy_prompt(
         {tool_reference}
         ---
         ### Your Task
-        Based on the failure reason and current state, devise a new strategy. Think outside the box. If observing failed, consider acting (scrolling, clicking). If acting failed, consider observing first.
+        Based on the failure reason and current state, devise a new, focused strategy for **only the function `{function_name}`**. Do not create steps for other parts of the plan that have already succeeded.
+
         Respond with ONLY the JSON object matching the requested schema.
         """,
     )
