@@ -26,39 +26,27 @@ def _build_tool_signatures(tool_dict: Dict[str, Callable]) -> str:
 
 
 def _build_handle_apis(tool_dict: Dict[str, Callable]) -> str:
-    """
-    Builds a consolidated block of API documentation for each unique handle
-    type returned by the available tools.
-    """
-    handle_groups: Dict[Type[SteerableToolHandle], List[str]] = {}
+    handle_docs = []
     for name, func in tool_dict.items():
         try:
             hints = get_type_hints(func)
             return_type = hints.get("return")
-
             if (
                 return_type
                 and inspect.isclass(return_type)
                 and issubclass(return_type, SteerableToolHandle)
             ):
-                if return_type not in handle_groups:
-                    handle_groups[return_type] = []
-                handle_groups[return_type].append(f"`{name}`")
+                doc = f"**`{return_type.__name__}` (returned by `{name}`)**\n"
+                doc += "This handle represents an interactive session. Its available methods are:\n"
+                doc += class_api_overview(return_type)
+                handle_docs.append(doc)
         except Exception:
             continue
 
-    if not handle_groups:
+    if not handle_docs:
         return "There are no special handle APIs for the available tools."
 
-    final_docs = []
-    for handle_class, tool_names in handle_groups.items():
-        tools_list_str = ", ".join(sorted(tool_names))
-        doc = f"**`{handle_class.__name__}` (returned by {tools_list_str})**\n"
-        doc += "This handle represents an interactive session. Its available methods are:\n"
-        doc += class_api_overview(handle_class)
-        final_docs.append(doc)
-
-    return "\n\n".join(final_docs)
+    return "\n\n".join(handle_docs)
 
 
 def _build_rules_and_examples_prompt(
