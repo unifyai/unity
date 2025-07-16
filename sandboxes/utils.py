@@ -666,9 +666,32 @@ class TranscriptGenerator:
 
         from datetime import datetime, timedelta, timezone  # local import
 
-        def _build_contact(name: str, medium: str, details: dict[str, Any] | None) -> Contact:  # type: ignore[valid-type]
-            """Create a *new* Contact object using any details supplied by the LLM."""
+        def _build_contact(
+            name: str,
+            medium: str,
+            details: dict[str, Any] | None,
+        ) -> Contact:  # type: ignore[valid-type]
+            """Return an existing Contact when the *first name* already exists.
 
+            • If exactly one stored contact matches the first name, reuse it.
+            • Otherwise create a *new* Contact instance (with contact_id = -1) so
+              TranscriptManager will persist it on first use.
+            """
+
+            # 1️⃣  Attempt to reuse an existing contact (sandbox rule: first names are unique)
+            try:
+                cm = self._tm._contact_manager  # ContactManager instance
+                existing = cm._search_contacts(
+                    filter=f"first_name == '{name.title()}'",
+                    limit=1,
+                )
+                if existing:
+                    return existing[0]
+            except Exception:
+                # Any backend/cycle issues → fall through to new contact generation
+                pass
+
+            # 2️⃣  No existing contact found → fabricate a new one
             details = details or {}
             base_kwargs: dict[str, Any] = {"first_name": name.title()}
 
