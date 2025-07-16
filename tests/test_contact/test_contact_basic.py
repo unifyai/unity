@@ -10,7 +10,7 @@ def test_create_contact():
     contact_manager = ContactManager()
     contact_manager._create_contact(
         first_name="Dan",
-        description="A bit of a loser",
+        bio="A bit of a loser",
     )
 
     # Exclude the auto-synced assistant (contact_id == 0)
@@ -22,7 +22,7 @@ def test_create_contact():
     # The new contact should *not* reuse ID 0
     assert contact.contact_id != 0
     assert contact.first_name == "Dan"
-    assert contact.description == "A bit of a loser"
+    assert contact.bio == "A bit of a loser"
     # Remaining built-in fields should default to None
     assert contact.surname is None
     assert contact.email_address is None
@@ -52,14 +52,14 @@ def test_update_contact():
     contact_manager._update_contact(
         contact_id=contact.contact_id,
         first_name="Daniel",
-        description="He's alright",
+        bio="He's alright",
     )
 
     user_contacts = [c for c in contact_manager._search_contacts() if c.contact_id != 0]
     assert len(user_contacts) == 1
     contact = user_contacts[0]
     assert contact.first_name == "Daniel"
-    assert contact.description == "He's alright"
+    assert contact.bio == "He's alright"
 
 
 @pytest.mark.unit
@@ -89,7 +89,7 @@ def test_create_contacts():
     assert tom_contact.contact_id != dan_contact.contact_id
     assert tom_contact.contact_id != 0 and dan_contact.contact_id != 0
     assert tom_contact.surname is None
-    assert tom_contact.description is None
+    assert tom_contact.bio is None
     assert tom_contact.email_address is None
     assert tom_contact.phone_number is None
     assert tom_contact.whatsapp_number is None

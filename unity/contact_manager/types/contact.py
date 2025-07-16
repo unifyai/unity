@@ -37,10 +37,6 @@ class Contact(BaseModel):
         description="Optional leading +, then digits only",
         pattern=r"^\+?[0-9]+$",
     )
-    description: Optional[str] = Field(
-        default=None,
-        description="Free-form notes about the contact.",
-    )
     bio: Optional[str] = Field(
         default=None,
         description="Concise biographic profile of the contact (role, background, why they matter).",
@@ -66,7 +62,6 @@ class Contact(BaseModel):
         "email_address",
         "phone_number",
         "whatsapp_number",
-        "description",
         "bio",
         "rolling_summary",
         mode="before",

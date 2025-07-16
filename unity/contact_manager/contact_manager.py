@@ -209,7 +209,6 @@ class ContactManager(BaseContactManager):
                     "email_address": a.get("email"),
                     "phone_number": a.get("phone"),
                     "whatsapp_number": a.get("phone"),
-                    "description": a.get("about"),
                     "bio": a.get("about"),
                     "rolling_summary": None,
                 },
@@ -230,7 +229,6 @@ class ContactManager(BaseContactManager):
                     "email_address": "unify.assistant@unify.ai",
                     "phone_number": "+10000000000",
                     "whatsapp_number": "+10000000000",
-                    "description": "Automatically generated assistant placeholder.",
                     "bio": "Your helpful Unify AI assistant.",
                     "rolling_summary": None,
                 },
@@ -680,7 +678,6 @@ class ContactManager(BaseContactManager):
         email_address: Optional[str] = None,
         phone_number: Optional[str] = None,
         whatsapp_number: Optional[str] = None,
-        description: Optional[str] = None,
         bio: Optional[str] = None,
         rolling_summary: Optional[str] = None,
         custom_fields: Optional[Dict[str, ColumnType]] = None,
@@ -705,7 +702,7 @@ class ContactManager(BaseContactManager):
         whatsapp_number : str | None
             Contact's WhatsApp number. Can optionally start with '+' (only if explicitly
             mentioned by the user), but must otherwise contain only digits. Must be unique.
-        description : str | None
+        bio : str | None
             A free-form text description of the contact. Can contain any additional notes
             or information about the contact. May be None.
         custom_fields : Dict[str, ColumnType] | None
@@ -732,7 +729,6 @@ class ContactManager(BaseContactManager):
             "email_address": email_address,
             "phone_number": phone_number,
             "whatsapp_number": whatsapp_number,
-            "description": description,
             "bio": bio,
             "rolling_summary": rolling_summary,
         }
@@ -799,7 +795,6 @@ class ContactManager(BaseContactManager):
         email_address: Optional[str] = None,
         phone_number: Optional[str] = None,
         whatsapp_number: Optional[str] = None,
-        description: Optional[str] = None,
         bio: Optional[str] = None,
         rolling_summary: Optional[str] = None,
         custom_fields: Optional[Dict[str, ColumnType]] = None,
@@ -826,7 +821,7 @@ class ContactManager(BaseContactManager):
         whatsapp_number : str | None
             Contact's WhatsApp number - can optionally start with '+' (only if explicitly
             mentioned by the user), but must otherwise contain only digits.
-        description : str | None
+        bio : str | None
             A free-form text description or notes about the contact.
         custom_fields : Dict[str, ColumnType] | None
             Additional contact information as key-value pairs, where keys are string column
@@ -850,7 +845,6 @@ class ContactManager(BaseContactManager):
             "email_address": email_address,
             "phone_number": phone_number,
             "whatsapp_number": whatsapp_number,
-            "description": description,
             "bio": bio,
             "rolling_summary": rolling_summary,
         }
