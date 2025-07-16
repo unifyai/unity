@@ -633,11 +633,6 @@ class TranscriptGenerator:
         self._endpoint = endpoint
         self._traced = traced
         self._stateful = stateful
-
-        # Initialise a TranscriptManager instance so that generated messages
-        # are immediately persisted and routed through the normal logging &
-        # EventBus pathways.  Using a single instance across multiple calls
-        # avoids recreating Unify contexts when the generator is reused.
         self._tm = TranscriptManager()
 
     async def generate(
@@ -656,13 +651,6 @@ class TranscriptGenerator:
         • ``sender``    – speaker name / alias
         • ``content``   – raw text
         """
-
-        transcript: List[dict] = []
-
-        # Mapping from *sender name* → numeric contact-id so that successive
-        # messages from the same alias reuse the contact id assigned on the
-        # first occurrence.  This mirrors the behaviour of the MemoryManager
-        # sandbox which treats contact-id **0** as the assistant.
         _name_to_id: dict[str, int] = {}
 
         def _normalise_msg(raw: dict) -> dict:
@@ -670,9 +658,6 @@ class TranscriptGenerator:
 
             sender_name = str(raw.get("sender", "User"))
             sender_id = _name_to_id.setdefault(sender_name, len(_name_to_id) + 1)
-
-            # By convention the assistant uses contact-id 0 so replies from
-            # the other party point to 0 as the receiver.
             receiver_id = 0
 
             return {
@@ -684,21 +669,9 @@ class TranscriptGenerator:
                 "exchange_id": raw.get("exchange_id", 0),
             }
 
-        def log_messages(messages: list[dict]) -> str:  # noqa: D401 – tool sig
-            """Tool that both captures *messages* locally **and** persists them."""
-
-            nonlocal transcript
-            transcript.extend(messages)
-
-            # Persist each message via TranscriptManager so that all normal
-            # logging, embedding & EventBus side-effects happen.
-            for msg in messages:
-                self._tm.log_messages(_normalise_msg(msg))
-
-            # Make sure the async logger flushes before the next tool call so
-            # that subsequent LLM reasoning can already query the messages.
+        def log_messages(messages: list[dict]) -> str:
+            self._tm.log_messages([_normalise_msg(msg) for msg in messages])
             self._tm.join_published()
-
             return f"{len(messages)} messages logged"
 
         prompt = (
@@ -717,11 +690,6 @@ class TranscriptGenerator:
         )
 
         await builder.create()
-
-        if not transcript:
-            raise RuntimeError("TranscriptGenerator produced an empty transcript.")
-
-        return transcript
 
 
 def activate_project(project_name: str) -> None:
