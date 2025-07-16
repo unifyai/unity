@@ -654,47 +654,68 @@ class TranscriptGenerator:
 
         transcript: List[dict] = []
 
-        _name_to_id: dict[str, int] = {}
-        # Track the sender of the *previous* message so we can infer the receiver
-        last_sender_id: int | None = None
+        from unity.contact_manager.types.contact import Contact  # local import
+
+        _name_to_contact: dict[str, Contact] = {}
+        # Track the Contact object of the previous message to infer receiver
+        last_sender_contact: Contact | None = None
+
+        def _create_contact(name: str, medium: str) -> Contact:
+            """Return a *new* Contact instance for *name* with synthetic details."""
+
+            slug = name.lower().replace(" ", ".")
+            idx = len(_name_to_contact) + 1
+
+            # For email mediums create an email address else a phone number
+            if medium == "email":
+                return Contact(
+                    first_name=name.title(),
+                    email_address=f"{slug}@example.com",
+                )
+            # For chat / call mediums generate a phone number
+            return Contact(
+                first_name=name.title(),
+                phone_number=f"+155500{idx:04d}",
+            )
+
+        def _contact_for(name: str, medium: str) -> Contact:
+            """Lookup or lazily create a Contact for *name*."""
+
+            if name not in _name_to_contact:
+                _name_to_contact[name] = _create_contact(name, medium)
+            return _name_to_contact[name]
 
         def _normalise_msg(raw: dict) -> dict:
-            """Return a dict that satisfies TranscriptManager.log_messages schema."""
+            """Convert LLM-provided dict → schema dict using Contact objects."""
 
-            nonlocal last_sender_id
+            nonlocal last_sender_contact
 
             sender_name = str(raw.get("sender", "User"))
+            medium = raw.get("medium", "sms_message")
 
-            # Reserve **contact-id 0** for the assistant / system so that
-            # downstream logic (e.g. MemoryManager updates) can continue to
-            # skip agent utterances.
-            if sender_name.lower() in {"assistant", "system", "agent", "bot"}:
-                sender_id = 0
-            else:
-                sender_id = _name_to_id.setdefault(sender_name, len(_name_to_id) + 1)
+            sender_contact = _contact_for(sender_name, medium)
 
-            # 1️⃣  Prefer an explicit receiver field if the LLM provided one
+            # 1️⃣ explicit receiver name
             receiver_name = raw.get("receiver")
             if receiver_name is not None:
-                receiver_id = _name_to_id.setdefault(
-                    receiver_name,
-                    len(_name_to_id) + 1,
-                )
-            # 2️⃣  Otherwise assume a simple back-and-forth → the receiver is the
-            #     previous sender (if any and different from the current sender)
-            elif last_sender_id is not None and last_sender_id != sender_id:
-                receiver_id = last_sender_id
-            # 3️⃣  Fallback – unknown receiver (e.g. first message)
+                receiver_contact = _contact_for(receiver_name, medium)
+            # 2️⃣ back-and-forth heuristic
+            elif (
+                last_sender_contact is not None
+                and last_sender_contact != sender_contact
+            ):
+                receiver_contact = last_sender_contact
+            # 3️⃣ fallback – unknown / system
             else:
-                receiver_id = 0  # convention: assistant / unknown contact
+                receiver_contact = _contact_for("Assistant", medium)
 
-            # Update the *last* sender for the next call
-            last_sender_id = sender_id
+            # Update for next iteration
+            last_sender_contact = sender_contact
 
             return {
-                "medium": raw.get("medium", "sms_message"),
-                "sender_id": sender_id,
-                "receiver_id": receiver_id,
+                "medium": medium,
+                "sender_id": sender_contact,
+                "receiver_ids": [receiver_contact],
                 "timestamp": raw.get("timestamp"),
                 "content": raw.get("content", ""),
                 "exchange_id": raw.get("exchange_id", 0),
