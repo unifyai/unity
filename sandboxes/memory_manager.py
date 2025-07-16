@@ -157,7 +157,7 @@ async def _main_async() -> None:
     args = parser.parse_args()
 
     # Unify context
-    activate_project(args.project_name)
+    activate_project(args.project_name, args.overwrite)
     unify.set_trace_context("Traces")
     if args.traced:
         LG.info("[trace] Unify tracing enabled")
@@ -176,11 +176,6 @@ async def _main_async() -> None:
                     "[version] project_version index %s out of range, ignoring",
                     args.project_version,
                 )
-
-    # Optionally wipe existing data first
-    if args.overwrite:
-        _clear_contacts()
-        _clear_knowledge()
 
     # ── Monkey-patch MemoryManager behaviour based on CLI flags ─────────────
     async def _noop(self, *_, **__):
@@ -223,15 +218,6 @@ async def _main_async() -> None:
             "content": raw.get("content", ""),
             "exchange_id": raw.get("exchange_id", 0),
         }
-
-    # Helper: ingest a whole transcript list -----------------------------------
-    def _log_transcript(messages: list[dict]):
-        for m in messages:
-            tm.log_messages(_normalise_msg(m))
-        tm.join_published()
-
-    # Store the *latest* transcript so manual commands can reference it -------
-    last_transcript: List[Dict[str, Any]] = []
 
     # ── Interactive REPL ------------------------------------------------------
     print(
