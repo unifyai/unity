@@ -368,8 +368,12 @@ async def _main_async() -> None:
 
         # Otherwise treat the input as a new transcript scenario description.
         print("[generate] Building synthetic transcript – this can take a moment…")
+        if args.voice:
+            _speak("Sure thing, building your custom scenario now.")
         try:
             transcript = await _build_transcript(prompt)
+            if args.voice:
+                _speak("All done, your custom scenario is built and ready to go.")
         except Exception as exc:
             LG.error("Transcript generation failed: %s", exc, exc_info=True)
             print(f"❌  Failed to generate transcript: {exc}")
