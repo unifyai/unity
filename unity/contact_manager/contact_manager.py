@@ -156,27 +156,47 @@ class ContactManager(BaseContactManager):
                 pass
 
     def _sync_assistant_contact(self) -> None:
-        """Ensure a *single* assistant contact (id == 0) exists and is correct.
+        """Ensure the *current* assistant (id == 0 in this context) exists and is correct.
 
-        1. Fetch assistants via the external API.
-        2. Validate that **at most** one assistant is returned ( >1 → error ).
-        3. Transform the assistant record into contact + custom-field payloads.
-        4. Insert or update the contact with ``contact_id == 0`` so that all
-           stored data matches the assistant metadata exactly.
-        5. If *no* assistants exist, a dummy "Unify Assistant" record is used.
+        The assistant record is selected using the following precedence:
+
+        1. The globally initialised ``unity.ASSISTANT`` object – this is set
+           by :pyfunc:`unity.init` *after* validating that the requested
+           ``assistant_id`` exists via the Unify API.
+        2. Fallback to the *assistant_index* implied by the active context
+           (i.e. ``unify.get_active_context()['read']``) when the global
+           variable is ``None``.
+        3. If neither method yields a record or the API returns an empty list
+           (offline tests), a dummy placeholder assistant is created.
         """
+
+        from .. import ASSISTANT as _GLOBAL_ASSISTANT  # local import to avoid cycles
+
         assistants = self._fetch_assistant_info()
 
-        if len(assistants) > 1:
-            raise AssertionError(
-                f"Expected at most one assistant, got {len(assistants)}.",
-            )
+        # 1) Prefer the assistant provided by unity.init
+        if _GLOBAL_ASSISTANT is not None:
+            selected = _GLOBAL_ASSISTANT
+
+        # 2) Otherwise map the active context (if numeric) onto the list index
+        else:
+            ctxs = unify.get_active_context()
+            read_ctx = ctxs.get("read")
+            try:
+                idx = int(read_ctx) if read_ctx is not None else 0
+            except (TypeError, ValueError):
+                idx = 0
+
+            selected = assistants[idx] if idx < len(assistants) else None
+
+        # 3) No assistant found – will create a dummy record
 
         # ------------------------------------------------------------------
         # Build the canonical assistant record (real or dummy)
         # ------------------------------------------------------------------
-        if assistants:
-            a = assistants[0]
+
+        if selected is not None:
+            a = selected
             base_fields = {
                 "first_name": a.get("first_name"),
                 "surname": a.get("surname"),
@@ -195,7 +215,6 @@ class ContactManager(BaseContactManager):
                 "phone",
                 "about",
             }
-            custom_fields = {k: v for k, v in a.items() if k not in mapped_keys}
         else:
             # Dummy assistant when account has no assistants configured
             base_fields = {
@@ -208,17 +227,6 @@ class ContactManager(BaseContactManager):
                 "bio": "Your helpful Unify AI assistant.",
                 "rolling_summary": None,
             }
-            custom_fields = {
-                "agent_id": "0",
-                "region": "Global",
-                "profile_photo": "https://example.com/photos/unify_assistant.jpg",
-                "country": "US",
-            }
-
-        # ------------------------------------------------------------------
-        # Ensure the schema can accommodate all custom fields first
-        # ------------------------------------------------------------------
-        self._ensure_columns_exist(custom_fields)
 
         # ------------------------------------------------------------------
         # Retrieve contact_id == 0 (if any) and decide whether to create/update
@@ -235,17 +243,13 @@ class ContactManager(BaseContactManager):
             # inserting the first contact into an empty table.  If the table
             # already had contacts, fall back to a direct log with explicit id.
             if not unify.get_logs(context=self._ctx):
-                self._create_contact(
-                    **base_fields,
-                    custom_fields=custom_fields,
-                )
+                self._create_contact(**base_fields)
             else:
                 # Direct log insertion with explicit contact_id 0
                 unify.log(
                     context=self._ctx,
                     contact_id=0,
                     **base_fields,
-                    **custom_fields,
                     new=True,
                     mutable=True,
                 )
@@ -259,9 +263,6 @@ class ContactManager(BaseContactManager):
             return current.entries.get(key) != desired
 
         for field, value in base_fields.items():
-            if _needs_update(field, value):
-                mismatches.append({field: value})
-        for field, value in custom_fields.items():
             if _needs_update(field, value):
                 mismatches.append({field: value})
 
