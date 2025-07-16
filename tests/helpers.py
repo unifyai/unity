@@ -59,6 +59,14 @@ def _handle_project(
             try:
                 with unify.Context(ctx):
                     EVENT_BUS.reset()
+                    # Ensure EVENT_BUS has been initialised – in case the
+                    # global pytest_sessionstart hook was bypassed (e.g. when
+                    # running an individual test without the full suite).
+                    if not EVENT_BUS:
+                        import unity as _unity_mod
+
+                        _unity_mod.init("UnityTests")
+                        EVENT_BUS.reset()
                     if json.loads(os.environ.get("UNIFY_TRACED", "true")):
                         unify.set_trace_context("Traces")
                     await _call(test_fn, *args, **kwargs)
@@ -90,6 +98,14 @@ def _handle_project(
             try:
                 with unify.Context(ctx):
                     EVENT_BUS.reset()
+                    # Ensure EVENT_BUS has been initialised – in case the
+                    # global pytest_sessionstart hook was bypassed (e.g. when
+                    # running an individual test without the full suite).
+                    if not EVENT_BUS:
+                        import unity as _unity_mod
+
+                        _unity_mod.init("UnityTests")
+                        EVENT_BUS.reset()
                     if json.loads(os.environ.get("UNIFY_TRACED", "true")):
                         unify.set_trace_context("Traces")
                         unify.traced(test_fn)(*args, **kwargs)
