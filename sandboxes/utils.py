@@ -747,11 +747,33 @@ class TranscriptGenerator:
 
             nonlocal transcript, last_sender_contact
 
+            # Accept either a dict *object* or a JSON *string*
+            if isinstance(payload, str):
+                import json as _json
+
+                try:
+                    payload = _json.loads(payload)
+                except Exception as exc:
+                    raise ValueError(
+                        "submit_conversation: string payload must be valid JSON",
+                    ) from exc
+
+            if not isinstance(payload, dict):
+                raise ValueError(
+                    "submit_conversation expects a dict or JSON string argument",
+                )
+
             medium = str(payload.get("medium", "sms_message"))
             participants: dict[str, Any] = payload.get("participants", {}) or {}
-            convo = payload.get("conversation", [])
+            convo_raw = payload.get("conversation", [])
 
-            if not convo:
+            # Support dict-format conversation {sender: message, ...} or list
+            if isinstance(convo_raw, dict):
+                convo_items = list(convo_raw.items())
+            else:
+                convo_items = convo_raw  # assume list-like
+
+            if not convo_items:
                 raise ValueError("'conversation' list cannot be empty")
 
             # Build contacts early so receiver heuristics work reliably
@@ -760,7 +782,7 @@ class TranscriptGenerator:
 
             # Helper: extract (sender, content) from each entry while preserving order
             def _iter_messages():
-                for entry in convo:
+                for entry in convo_items:
                     if isinstance(entry, str):
                         if ":" not in entry:
                             continue  # skip malformed string
@@ -845,6 +867,8 @@ class TranscriptGenerator:
             f"If the scenario doesn't specify how long the chat should be, aim for roughly {min_messages}-{max_messages} messages. "
             "Be concise – avoid unnecessary filler text. After you have called the tool, do **not** output anything else."
         )
+
+        prompt += f"The description is as follows:\n\n{description}."
 
         builder = ScenarioBuilder(
             description=prompt,
