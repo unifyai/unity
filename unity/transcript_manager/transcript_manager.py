@@ -208,7 +208,6 @@ class TranscriptManager(BaseTranscriptManager):
             - A :class:`~unity.transcript_manager.types.message.Message` instance
               whose *id* fields may likewise contain ``Contact`` objects.
             - A list with any combination of the above.
-            The deprecated single ``receiver_id`` field is **not** supported.
         """
 
         # ── 0. Early-exit on empty input ────────────────────────────────────

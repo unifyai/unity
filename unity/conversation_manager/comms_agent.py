@@ -691,26 +691,26 @@ class CommsAgent:
                     if "phone" in event_name
                     else "sms_message" if "sms" in event_name else "whatsapp_message"
                 )
-                sender_id, receiver_id = "", ""
+                sender_id, receiver_ids = "", [""]
                 if medium == "phone_call":
                     if role == "Assistant":
                         sender_id = self.assistant_number
-                        receiver_id = self.user_phone_call_number
+                        receiver_ids = [self.user_phone_call_number]
                     else:
                         sender_id = self.user_phone_call_number
-                        receiver_id = self.assistant_number
+                        receiver_ids = [self.assistant_number]
                 else:
                     if "recieved" in event_name.lower():
                         sender_id = self.user_number
-                        receiver_id = self.assistant_number
+                        receiver_ids = [self.assistant_number]
                     else:
                         sender_id = self.assistant_number
-                        receiver_id = self.user_number
+                        receiver_ids = [self.user_number]
                 self.transcript_manager.log_messages(
                     Message(
                         medium=medium,
                         sender_id=sender_id,
-                        receiver_id=receiver_id,
+                        receiver_ids=receiver_ids,
                         timestamp=timestamp,
                         content=content,
                     ),

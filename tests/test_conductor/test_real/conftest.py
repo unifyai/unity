@@ -110,7 +110,7 @@ class ConductorScenarioBuilder:
             Message(
                 medium="phone_call",
                 sender_id=s,
-                receiver_id=r,
+                receiver_ids=[r],
                 timestamp=ts,
                 content=txt,
                 exchange_id=1,

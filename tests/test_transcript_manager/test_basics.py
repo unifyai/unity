@@ -163,5 +163,3 @@ async def test_multiple_receivers():
     m = found[0]
     # Primary assertions ----------------------------------------------------
     assert m.receiver_ids == [1, 2], "receiver_ids should preserve the full list"
-    # Back-compat property should expose the first receiver
-    assert m.receiver_id == 1, "Legacy .receiver_id alias must return the first ID"
