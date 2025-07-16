@@ -385,7 +385,7 @@ class TranscriptManager(BaseTranscriptManager):
             try:
                 await EVENT_BUS.publish(
                     Event(
-                        type="message",
+                        type="Message",
                         timestamp=payload_obj.timestamp,
                         payload=payload_obj,
                     ),

@@ -25,7 +25,7 @@ async def test_prefill_from_upstream_on_new_instance():
     # Publish five message events with ascending timestamps
     for i in range(5):
         evt = Event(
-            type="message",
+            type="Message",
             timestamp=base_ts + dt.timedelta(seconds=i),
             payload=Message(
                 medium=random.choice(list(Medium)),

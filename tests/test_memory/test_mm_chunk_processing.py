@@ -151,7 +151,7 @@ async def test_memory_manager_parse_transcript_for_updates(monkeypatch):
     ]
 
     for m in msgs:
-        await EVENT_BUS.publish(Event(type="message", payload=m))
+        await EVENT_BUS.publish(Event(type="Message", payload=m))
 
     EVENT_BUS.join_published()
 

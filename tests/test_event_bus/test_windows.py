@@ -27,7 +27,7 @@ async def test_window_cache_is_faster():
     base_ts = dt.datetime.now(dt.UTC)
     for i in range(window + 1):
         evt = Event(
-            type="message",
+            type="Message",
             timestamp=base_ts + dt.timedelta(seconds=i),
             payload=Message(
                 medium=random.choice(list(Medium)),

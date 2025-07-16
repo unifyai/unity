@@ -24,7 +24,7 @@ async def test_publish():
     payload = Message.model_construct()
 
     event = Event(
-        type="message",
+        type="Message",
         timestamp=dt.datetime.now(dt.UTC).isoformat(),
         payload=payload,
     )
