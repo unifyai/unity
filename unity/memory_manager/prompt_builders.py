@@ -6,6 +6,8 @@ import inspect
 from datetime import datetime, timezone
 from typing import Callable, Dict, Optional
 
+from .rolling_activity import get_rolling_activity
+
 
 # ── utils ───────────────────────────────────────────────────────────────
 def _sig_dict(tools: Dict[str, Callable]) -> Dict[str, str]:
@@ -142,28 +144,52 @@ def build_knowledge_prompt(
     return _with_guidance(lines, guidance)
 
 
+def build_task_prompt(
+    tools: Dict[str, Callable],
+    guidance: Optional[str] = None,
+) -> str:
+    lines = [
+        _rolling_activity_section(),
+        "You are the **MemoryManager** tasked with updating the task list based on the latest 50-message transcript chunk.",
+        "",
+        "• Identify tasks that should be created, modified, cancelled or reordered.",
+        "• Always begin by calling `TaskScheduler.ask` to inspect the current list.",
+        "• Apply the required changes using `TaskScheduler.update`.",
+        "",
+        "Please do *not* perform the same action more than once. If you have already manipulated the task list via the `TaskScheduler.update` method, then you do not need to do this again!",
+        "",
+        "Return a short, human-readable summary of what you stored; if nothing was stored, just return 'no-op'.",
+        "",
+        "Tools (name → argspec):",
+        json.dumps(_sig_dict(tools), indent=4),
+        "",
+        "Current UTC time: " + _now(),
+    ]
+    return _with_guidance(lines, guidance)
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Shared historic activity snippet (uses *lazy* import to avoid cycles)
 # ─────────────────────────────────────────────────────────────────────────────
 
 
 def _rolling_activity_section() -> str:
-    """Return a markdown summary of the agent's historic activity."""
+    """Return a markdown summary of the agent's historic activity.
+
+    Reads the **process-wide** cached snapshot instead of querying the backend
+    via `MemoryManager().get_rolling_activity()` on every call.  Callers can
+    still rely on the helper to return an *empty string* when nothing useful
+    has been recorded yet.
+    """
 
     try:
-        # Lazy import to avoid circular dependency issues
-        from .memory_manager import MemoryManager  # noqa: WPS433
-
-        overview = MemoryManager().get_rolling_activity()
-    except Exception:  # pragma: no cover
+        overview = get_rolling_activity()
+    except Exception:  # pragma: no cover – defensive guard
         return ""
 
-    # Skip the entire section when there's nothing meaningful to report.
     if not overview:
         return ""
 
-    # Compose the section with a *closing* dashed line to clearly separate it
-    # from any subsequent system-message content.
     return "\n".join(
         [
             "Historic Activity Overview",

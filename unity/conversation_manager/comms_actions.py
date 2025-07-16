@@ -1,4 +1,5 @@
 import asyncio
+from typing import Dict
 import aiohttp
 import os
 import redis
@@ -12,6 +13,7 @@ from unity.conversation_manager.events import (
 from unity.conversation_manager.prompt_builders import (
     build_call_ask_prompt,
     build_local_chat_search_prompt,
+    build_message_prompt,
 )
 from unity.conversation_manager.utils import (
     publish_event,
@@ -27,7 +29,6 @@ import unify
 from unity.contact_manager.contact_manager import ContactManager
 from unity.transcript_manager.transcript_manager import TranscriptManager
 from unity.knowledge_manager.knowledge_manager import KnowledgeManager
-from unity.task_scheduler.task_scheduler import TaskScheduler
 from unity.common.llm_helpers import (
     SteerableToolHandle,
     methods_to_tool_dict,
@@ -41,7 +42,6 @@ headers = {"Authorization": f"Bearer {os.getenv('ORCHESTRA_ADMIN_KEY')}"}
 
 # Low-level functions
 async def _send_whatsapp_message_via_number(
-    # from_number: str, # for debugging, to remove
     to_number: str,
     message: str,
 ) -> str:
@@ -56,7 +56,7 @@ async def _send_whatsapp_message_via_number(
     Returns:
         str: The response from the WhatsApp API
     """
-    from_number = os.getenv("ASSISTANT_WHATSAPP_NUMBER")  # for debugging, to remove
+    from_number = os.getenv("ASSISTANT_NUMBER")  # for debugging, to remove
     if not from_number:
         # always use the assistant phone number (unique) to find whatsapp number
         from_number = await find_assistant_whatsapp_number()
@@ -155,7 +155,6 @@ async def _send_whatsapp_message_via_number(
 
 
 async def _send_sms_message_via_number(
-    # from_number: str, # for debugging, to remove
     to_number: str,
     message: str,
 ) -> str:
@@ -163,7 +162,6 @@ async def _send_sms_message_via_number(
     Send an SMS message using the SMS provider API.
 
     Args:
-        from_number: The sender's phone number
         to_number: The recipient's phone number
         message: The message content to send
 
@@ -171,8 +169,6 @@ async def _send_sms_message_via_number(
         str: The response from the SMS API
     """
     from_number = os.getenv("ASSISTANT_NUMBER")
-    if not from_number:
-        raise ValueError("ASSISTANT_NUMBER environment variable not set.")
 
     print(f"Sending SMS from {from_number} to {to_number}: {message}")
     async with aiohttp.ClientSession() as session:
@@ -191,23 +187,24 @@ async def _send_sms_message_via_number(
             return response_text
 
 
-async def _send_email_via_address(from_email: str, to_email: str, content: str) -> str:
+async def _send_email_via_address(
+    to_email: str,
+    subject: str,
+    content: str,
+) -> str:
     """
     Send an SMS message using the SMS provider API.
 
     Args:
-        from_email: The email address to send the email from
         to_email: The email address to send the email to
+        subject: The subject of the email
         content: The message content to send
 
     Returns:
         str: The response from the email API
     """
-    # from_email = os.getenv("ASSISTANT_EMAIL") # for debugging, to remove
-    if not from_email:
-        from_email = "unity.agent@unify.ai"  # todo: temp placeholder
-        # print("No email address found for assistant")
-        # return "Message not sent: No email address found for assistant"
+    from_email = os.getenv("ASSISTANT_EMAIL")
+
     print(f"Sending email from {from_email} to {to_email}: {content}")
     async with aiohttp.ClientSession() as session:
         async with session.post(
@@ -216,6 +213,7 @@ async def _send_email_via_address(from_email: str, to_email: str, content: str) 
             json={
                 "from": from_email,
                 "to": to_email,
+                "subject": subject,
                 "body": content,
             },
         ) as response:
@@ -229,6 +227,8 @@ async def _start_call(
     from_number: str,
     to_number: str,
     purpose: str = "general",
+    task_context: Dict[str, str] = None,
+    ongoing_call: bool = False,
 ) -> str:
     """
     Send a call using the call provider API.
@@ -237,17 +237,23 @@ async def _start_call(
         from_number: The sender's phone number
         to_number: The recipient's phone number
         purpose: The purpose of the call
+        task_context: The broader task context for the call, with name and description attributes. Use None if there is no task context.
 
     Returns:
         str: The response from the email API
     """
-    from_number = os.getenv("ASSISTANT_NUMBER")  # for debugging, to remove
+    if not from_number:
+        from_number = os.getenv("ASSISTANT_NUMBER")
 
     await publish_event(
         {
             "topic": to_number,
             "event": {
-                **PhoneCallInitiatedEvent(purpose=purpose).to_dict(),
+                **PhoneCallInitiatedEvent(
+                    purpose=purpose,
+                    task_context=task_context,
+                    target_number=to_number,
+                ).to_dict(),
                 "voice_id": None,
                 "tts_provider": None,
                 "outbound": True,
@@ -255,17 +261,18 @@ async def _start_call(
         },
     )
 
-    print(f"Sending call from {from_number} to {to_number}")
-    async with aiohttp.ClientSession() as session:
-        async with session.post(
-            f"{os.getenv('UNITY_COMMS_URL')}/phone/send-call",
-            headers=headers,
-            json={"From": from_number, "To": to_number, "NewCall": "true"},
-        ) as response:
-            response.raise_for_status()
-            response_text = await response.text()
-            print(f"Response: {response_text}")
-            return response_text
+    if not ongoing_call:
+        print(f"Sending call from {from_number} to {to_number}")
+        async with aiohttp.ClientSession() as session:
+            async with session.post(
+                f"{os.getenv('UNITY_COMMS_URL')}/phone/send-call",
+                headers=headers,
+                json={"From": from_number, "To": to_number, "NewCall": "true"},
+            ) as response:
+                response.raise_for_status()
+                response_text = await response.text()
+                print(f"Response: {response_text}")
+                return response_text
 
 
 # High-level Actions
@@ -276,19 +283,17 @@ async def send_whatsapp_message(
     contact_manager = ContactManager()
     transcript_manager = TranscriptManager(contact_manager=contact_manager)
     knowledge_manager = KnowledgeManager()
-    task_scheduler = TaskScheduler()
 
     client = unify.AsyncUnify("o4-mini@openai")
-    client.set_system_message(description)
     tools = methods_to_tool_dict(
         contact_manager.ask,
         transcript_manager.ask,
         transcript_manager.summarize,
         knowledge_manager.ask,
-        task_scheduler.ask,
         _send_whatsapp_message_via_number,
         include_class_name=True,
     )
+    client.set_system_message(build_message_prompt(tools, description, "whatsapp"))
     return start_async_tool_use_loop(
         client,
         description,
@@ -306,19 +311,17 @@ async def send_sms_message(
     contact_manager = ContactManager()
     transcript_manager = TranscriptManager(contact_manager=contact_manager)
     knowledge_manager = KnowledgeManager()
-    task_scheduler = TaskScheduler()
 
     client = unify.AsyncUnify("o4-mini@openai")
-    client.set_system_message(description)
     tools = methods_to_tool_dict(
         contact_manager.ask,
         transcript_manager.ask,
         transcript_manager.summarize,
         knowledge_manager.ask,
-        task_scheduler.ask,
         _send_sms_message_via_number,
         include_class_name=True,
     )
+    client.set_system_message(build_message_prompt(tools, description, "sms"))
     return start_async_tool_use_loop(
         client,
         description,
@@ -336,19 +339,17 @@ async def send_email(
     contact_manager = ContactManager()
     transcript_manager = TranscriptManager(contact_manager=contact_manager)
     knowledge_manager = KnowledgeManager()
-    task_scheduler = TaskScheduler()
 
     client = unify.AsyncUnify("o4-mini@openai")
-    client.set_system_message(description)
     tools = methods_to_tool_dict(
         contact_manager.ask,
         transcript_manager.ask,
         transcript_manager.summarize,
         knowledge_manager.ask,
-        task_scheduler.ask,
         _send_email_via_address,
         include_class_name=True,
     )
+    client.set_system_message(build_message_prompt(tools, description, "email"))
     return start_async_tool_use_loop(
         client,
         description,
@@ -361,20 +362,25 @@ async def send_email(
 
 class Call(SteerableToolHandle):
 
-    def __init__(self, phone_number: str, purpose: str, tools=None):
+    def __init__(
+        self,
+        phone_number: str,
+        purpose: str,
+        task_context: Dict[str, str] = None,
+        tools=None,
+    ):
         """
         Starts a new phone call session and exposes the steerable methods
         """
 
         self.phone_number = phone_number
         self.purpose = purpose
+        self.task_context = task_context
 
         self.client = unify.AsyncUnify("o4-mini@openai")
         self.tools = methods_to_tool_dict(
             self._search_local_chat,
             self._ask_user_then_search,
-            # _send_email_via_address,
-            # _send_sms_message_via_number,
         )
         if tools:
             self.tools = {
@@ -387,7 +393,12 @@ class Call(SteerableToolHandle):
         self.call_ask_status.set()
 
         async def do_call():
-            await _start_call(os.getenv("ASSISTANT_NUMBER"), phone_number, purpose)
+            await _start_call(
+                os.getenv("ASSISTANT_NUMBER"),
+                phone_number,
+                purpose,
+                task_context,
+            )
             # give time to start call and complete greeting
             await asyncio.sleep(20)
             self.call_ready.set()
@@ -475,7 +486,7 @@ class Call(SteerableToolHandle):
         )
 
         # give time for utterance and response
-        await asyncio.sleep(20)
+        await asyncio.sleep(40)
         return await self._search_local_chat(question)
 
     async def ask(self, question: str) -> SteerableToolHandle:
@@ -509,7 +520,7 @@ class Call(SteerableToolHandle):
 
     async def interject(self, text: str) -> str:
         """
-        Interject a message to the assistant for them to speak it to the user.
+        Interject a message to the assistant for them to log as instruction for next response.
         """
         await self.call_ready.wait()
         await self.call_ask_status.wait()
@@ -519,16 +530,9 @@ class Call(SteerableToolHandle):
             {
                 "topic": self.phone_number,
                 "to": "past",
-                "event": InterruptEvent().to_dict(),
-            },
-        ),
-        await publish_event(
-            {
-                "topic": self.phone_number,
-                "to": "pending",
                 "event": PhoneUtteranceEvent(
                     role="System",
-                    content=f"Speak this content to the user directly: {text}",
+                    content=f"Instruction on next response: {text}",
                 ).to_dict(),
             },
         )

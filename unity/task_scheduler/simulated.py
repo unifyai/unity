@@ -18,6 +18,11 @@ from .prompt_builders import (
 from ..common.llm_helpers import methods_to_tool_dict
 from .task_scheduler import TaskScheduler
 from ..planner.simulated import SimulatedPlanner
+from ..events.manager_event_logging import (
+    new_call_id,
+    publish_manager_method_event,
+    wrap_handle_with_logging,
+)
 
 
 class _SimulatedTaskScheduleHandle(SteerableToolHandle):
@@ -175,8 +180,13 @@ class SimulatedTaskScheduler(BaseTaskScheduler):
     def __init__(
         self,
         description: str = "nothing fixed, make up some imaginary scenario",
+        *,
+        log_events: bool = False,
+        rolling_summary_in_prompts: bool = True,
     ) -> None:
         self._description = description
+        self._log_events = log_events
+        self._rolling_summary_in_prompts = rolling_summary_in_prompts
 
         # One shared, *stateful* LLM for *everything*
         self._llm = unify.AsyncUnify(
@@ -210,8 +220,14 @@ class SimulatedTaskScheduler(BaseTaskScheduler):
             TaskScheduler._get_task_queue,
             include_class_name=False,
         )
-        ask_msg = build_ask_prompt(ask_tools)
-        update_msg = build_update_prompt(update_tools)
+        ask_msg = build_ask_prompt(
+            ask_tools,
+            include_activity=self._rolling_summary_in_prompts,
+        )
+        update_msg = build_update_prompt(
+            update_tools,
+            include_activity=self._rolling_summary_in_prompts,
+        )
 
         self._llm.set_system_message(
             "You are a *simulated* task-list manager. "
@@ -237,7 +253,21 @@ class SimulatedTaskScheduler(BaseTaskScheduler):
         _requests_clarification: bool = False,
         clarification_up_q: asyncio.Queue[str] | None = None,
         clarification_down_q: asyncio.Queue[str] | None = None,
+        log_events: bool = False,
     ) -> SteerableToolHandle:
+        should_log = self._log_events or log_events
+        call_id = None
+
+        if should_log:
+            call_id = new_call_id()
+            await publish_manager_method_event(
+                call_id,
+                "TaskScheduler",
+                "ask",
+                phase="incoming",
+                question=text,
+            )
+
         instruction = build_simulated_method_prompt(
             "ask",
             text,
@@ -247,7 +277,7 @@ class SimulatedTaskScheduler(BaseTaskScheduler):
             "\n\nPlease *always* mention the relevant task id(s) in your response. "
             "If the user asks whether a task already exists in the list, reply 'No' and state it does *not* exist."
         )
-        return _SimulatedTaskScheduleHandle(
+        handle = _SimulatedTaskScheduleHandle(
             self._llm,
             instruction,
             mode="ask",
@@ -256,6 +286,16 @@ class SimulatedTaskScheduler(BaseTaskScheduler):
             clarification_up_q=clarification_up_q,
             clarification_down_q=clarification_down_q,
         )
+
+        if should_log and call_id is not None:
+            handle = wrap_handle_with_logging(
+                handle,
+                call_id,
+                "TaskScheduler",
+                "ask",
+            )
+
+        return handle
 
     # ------------------------------------------------------------------ #
     #  update                                                            #
@@ -271,14 +311,28 @@ class SimulatedTaskScheduler(BaseTaskScheduler):
         _requests_clarification: bool = False,
         clarification_up_q: asyncio.Queue[str] | None = None,
         clarification_down_q: asyncio.Queue[str] | None = None,
+        log_events: bool = False,
     ) -> SteerableToolHandle:
+        should_log = self._log_events or log_events
+        call_id = None
+
+        if should_log:
+            call_id = new_call_id()
+            await publish_manager_method_event(
+                call_id,
+                "TaskScheduler",
+                "update",
+                phase="incoming",
+                request=text,
+            )
+
         instruction = build_simulated_method_prompt(
             "update",
             text,
             parent_chat_context=parent_chat_context,
         )
         instruction += "\n\nIf any tasks were created or updated during the imagined process, include their id(s) in your reply."
-        return _SimulatedTaskScheduleHandle(
+        handle = _SimulatedTaskScheduleHandle(
             self._llm,
             instruction,
             mode="update",
@@ -287,6 +341,16 @@ class SimulatedTaskScheduler(BaseTaskScheduler):
             clarification_up_q=clarification_up_q,
             clarification_down_q=clarification_down_q,
         )
+
+        if should_log and call_id is not None:
+            handle = wrap_handle_with_logging(
+                handle,
+                call_id,
+                "TaskScheduler",
+                "update",
+            )
+
+        return handle
 
     # ------------------------------------------------------------------ #
     #  execite_task – delegate to SimulatedPlanner.execute                     #
@@ -300,12 +364,26 @@ class SimulatedTaskScheduler(BaseTaskScheduler):
         _requests_clarification: bool = False,
         clarification_up_q: asyncio.Queue[str] | None = None,
         clarification_down_q: asyncio.Queue[str] | None = None,
+        log_events: bool = False,
     ) -> SteerableToolHandle:
         """
         In the simulated world we don't have a real DB of tasks, so we
         fabricate a description from the *task_id* and spin up a **real**
         `SimulatedPlan` by calling the shared `SimulatedPlanner.execute`.
         """
+        should_log = self._log_events or log_events
+        call_id = None
+
+        if should_log:
+            call_id = new_call_id()
+            await publish_manager_method_event(
+                call_id,
+                "TaskScheduler",
+                "execute_task",
+                phase="incoming",
+                task_id=task_id,
+            )
+
         task_description = f"Simulated task #{task_id}"
         planner = SimulatedPlanner(
             timeout=10,
@@ -317,4 +395,13 @@ class SimulatedTaskScheduler(BaseTaskScheduler):
             clarification_up_q=clarification_up_q,
             clarification_down_q=clarification_down_q,
         )
+
+        if should_log and call_id is not None:
+            handle = wrap_handle_with_logging(
+                handle,
+                call_id,
+                "TaskScheduler",
+                "execute_task",
+            )
+
         return handle

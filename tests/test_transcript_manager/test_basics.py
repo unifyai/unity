@@ -49,11 +49,11 @@ def _create_contacts():
 async def test_log_messages():
     tm = TranscriptManager()
     [
-        tm.log_message(
+        tm.log_messages(
             Message(
                 medium=random.choice(VALID_MEDIA),
                 sender_id=random.randint(0, 2),
-                receiver_id=random.randint(0, 2),
+                receiver_ids=[random.randint(0, 2)],
                 timestamp=datetime.now(UTC),
                 content=random.choice(MESSAGES),
                 exchange_id=i,
@@ -75,11 +75,11 @@ async def test_get_messages():
 
     # log messages
     for i in range(10):
-        tm.log_message(
+        tm.log_messages(
             Message(
                 medium=random.choice(VALID_MEDIA),
                 sender_id=random.randint(0, 2),
-                receiver_id=random.randint(0, 2),
+                receiver_ids=[random.randint(0, 2)],
                 timestamp=datetime.now(UTC),
                 content=random.choice(MESSAGES),
                 exchange_id=i,
@@ -127,90 +127,3 @@ async def test_get_messages():
     assert len(messages) == 0
     messages = tm._search_messages(filter=f"timestamp > '{start_time}'")
     assert len(messages) == 10
-
-
-@pytest.mark.unit
-@pytest.mark.asyncio
-@_handle_project
-async def test_summarize_exchanges():
-    tm = TranscriptManager()
-
-    # create contacts
-    _create_contacts()
-
-    # phone call
-    for i, msg in enumerate(
-        [
-            "Hey, how's it going?",
-            "Yeah good thanks, how can I help you?",
-            "How are your office staplers doing? Are they underperforming?",
-            "Actually yeah, they're a bit rusty, but I can't make any buying decisions. My manager can.",
-            "Okay, no worries. Let's catch up again soon.",
-        ],
-    ):
-        tm.log_message(
-            Message(
-                medium="phone_call",
-                sender_id=i % 2,
-                receiver_id=(i + 1) % 2,
-                timestamp=datetime.now(UTC),
-                content=msg,
-                exchange_id=0,
-            ),
-        )
-
-    # email exchange
-    for i, msg in enumerate(
-        [
-            "Great catching up the other day, did you manage to talk to your manager?",
-            "Hey, yeah I did actually. I'll reach out soon.",
-            "Okay great, thanks!",
-        ],
-    ):
-        tm.log_message(
-            Message(
-                medium="email",
-                sender_id=i % 2,
-                receiver_id=(i + 1) % 2,
-                timestamp=datetime.now(UTC),
-                content=msg,
-                exchange_id=1,
-            ),
-        )
-
-    # whatsapp exchange
-    for i, msg in enumerate(
-        [
-            "Hey, yeah we'd love to buy your staplers!",
-            "Great! Excited to hear :)",
-        ],
-    ):
-        tm.log_message(
-            Message(
-                medium="whatsapp_message",
-                sender_id=(i + 1) % 2,
-                receiver_id=i % 2,
-                timestamp=datetime.now(UTC),
-                content=msg,
-                exchange_id=2,
-            ),
-        )
-    tm.join_published()
-
-    # summarize
-    handle = await tm.summarize(from_exchanges=[0, 1, 2])
-    summary = await handle.result()
-
-    # retrieve summary
-    summaries = tm._search_summaries()
-    assert len(summaries) == 1
-    summ = summaries[0].model_dump()
-    # a) new column exists and is non-empty list
-    assert isinstance(summ["message_ids"], list) and summ["message_ids"]
-    # b) remaining keys still as expected
-    for k, v in {
-        "summary_id": 0,
-        "exchange_ids": [0, 1, 2],
-        "summary": summary,
-    }.items():
-        assert summ[k] == v

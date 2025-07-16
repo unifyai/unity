@@ -29,3 +29,4 @@ textual>=0.40.0
 textual-dev>=1.2.0
 twilio>=8.0.0
 uvicorn[standard]>=0.24.0
+hypothesis>=6.135.29

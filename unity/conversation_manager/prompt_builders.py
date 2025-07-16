@@ -76,6 +76,8 @@ def _build_communication_rules_section() -> str:
         "- Any communication action (other than interactions on the current call) will happen through the ToolUse, so you'd need to create ToolUse tasks or act on existing tasks for any communication through whatsapp, sms, email, or sending a call.",
         "- Break large WhatsApp messages into multiple chunks when appropriate.",
         "- Send the full SMS message in one go when possible.",
+        "- If the user asks for a call, you should initiate a call task using the ToolUseAction",
+        "- Always ensure phone numbers have prefixed with +",
     ]
 
     return "\n".join([title, underline] + lines)
@@ -95,7 +97,10 @@ def _build_user_details_section(name: str) -> str:
 
 
 def _build_assistant_details_section(
-    name: str, age: str, region: str, about: str
+    name: str,
+    age: str,
+    region: str,
+    about: str,
 ) -> str:
     return (
         f"You are {name} from {region}, and you are {age} years old. \n"
@@ -107,6 +112,23 @@ def _build_assistant_details_section(
         "and to make the user feel like they're talking to a real person. \n"
         "You are also free to make up names and numbers as you see fit, "
         "as long as it's something you can answer without using tools."
+    )
+
+
+def _build_task_context_section(
+    task_context: Dict[str, str],
+    is_call: bool = True,
+) -> str:
+    title = "Task Context:"
+    underline = "-" * len(title)
+    return "\n".join(
+        [
+            title,
+            underline,
+            f"The {'call' if is_call else 'message'} is part of a broader task as described below:",
+            f"Task name: {task_context['name']}",
+            f"Task description: {task_context['description']}",
+        ],
     )
 
 
@@ -138,12 +160,16 @@ def build_call_sys_prompt(
     assistant_age: str,
     assistant_region: str,
     assistant_about: str,
+    task_context: Dict[str, str] = None,
 ) -> str:
     """Build the **system** prompt for phone-call LLM runs."""
     # assemble all sections
     sections = [
         _build_assistant_details_section(
-            assistant_name, assistant_age, assistant_region, assistant_about
+            assistant_name,
+            assistant_age,
+            assistant_region,
+            assistant_about,
         ),
         _build_user_details_section(user_name),
         # _build_your_capabilities_section(is_call=True),
@@ -151,6 +177,11 @@ def build_call_sys_prompt(
         _build_agent_loop_section(),
         _build_tool_use_tasks_rules_section(),
         _build_communication_rules_section(),
+        (
+            _build_task_context_section(task_context, is_call=True)
+            if task_context is not None
+            else None
+        ),
     ]
     # filter out None
     sections = [s for s in sections if s]
@@ -163,12 +194,16 @@ def build_non_call_sys_prompt(
     assistant_age: str,
     assistant_region: str,
     assistant_about: str,
+    task_context: Dict[str, str] = None,
 ) -> str:
     """Build the **system** prompt for non-call LLM runs."""
     # assemble all sections
     sections = [
         _build_assistant_details_section(
-            assistant_name, assistant_age, assistant_region, assistant_about
+            assistant_name,
+            assistant_age,
+            assistant_region,
+            assistant_about,
         ),
         _build_user_details_section(user_name),
         # _build_your_capabilities_section(is_call=False),
@@ -176,7 +211,13 @@ def build_non_call_sys_prompt(
         _build_agent_loop_section(),
         _build_tool_use_tasks_rules_section(),
         _build_communication_rules_section(),
+        (
+            _build_task_context_section(task_context, is_call=False)
+            if task_context is not None
+            else None
+        ),
     ]
+    # filter out None
     sections = [s for s in sections if s]
     return "\n\n".join(sections)
 
@@ -212,7 +253,8 @@ def build_user_agent_prompt(
 
     # Assemble lines for the prompt
     lines = [
-        f"CALL PURPOSE: {call_purpose}",
+        f"Other than the task context (in system prompt) related to the call, this call purpose is: {call_purpose}",
+        "",
         "Events Stream:",
         "** PAST EVENTS **",
         past_events_str.strip(),
@@ -273,5 +315,32 @@ def build_local_chat_search_prompt(local_chat_history: str) -> str:
         "",
         "Search the chat history and summarise the answer if a response relevant to the question is found.",
         "Otherwise, return answer is not found.",
+    ]
+    return "\n".join(lines)
+
+
+def build_message_prompt(tools: Dict[str, Callable], question: str, medium: str) -> str:
+    """Build the system prompt to await the user's reply and choose a tool."""
+    # Dump tool signatures
+    sig_json = json.dumps(_sig_dict(tools), indent=4)
+    whatsapp_tool = _tool_name(tools, "whatsapp")
+    sms_tool = _tool_name(tools, "sms")
+    email_tool = _tool_name(tools, "email")
+
+    # Assemble the ask prompt
+    lines = [
+        "Tools (name → argspec):",
+        sig_json,
+        "",
+        "Where appropriate, use the provided tools to find more context for formulating the message.",
+        "If phone number (for whatsapp and sms) or email address (for email) is not provided, you should use the ContactManager to find the recipient's phone number or email address.",
+        "Send out the message using the appropriate tool based on given medium.",
+        f"Whatsapp: {whatsapp_tool}",
+        f"SMS: {sms_tool}",
+        f"Email: {email_tool}",
+        "",
+        "Task:",
+        f"Send a message through {medium} to the user.",
+        f"The requested content is: {question}.",
     ]
     return "\n".join(lines)

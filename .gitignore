@@ -13,3 +13,4 @@ test.py
 .env.clean
 dump.rdb
 *venv/
+.hypothesis

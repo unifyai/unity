@@ -32,7 +32,7 @@ API_KEY = os.environ["UNIFY_KEY"]
 
 
 class KnowledgeManager(BaseKnowledgeManager):
-    def __init__(self) -> None:
+    def __init__(self, *, rolling_summary_in_prompts: bool = True) -> None:
         """
         KnowledgeManager now **directly manipulates** the root-level
         ``Contacts`` table instead of calling the public ContactManager API.
@@ -93,6 +93,8 @@ class KnowledgeManager(BaseKnowledgeManager):
             ),
         }
 
+        self._rolling_summary_in_prompts = rolling_summary_in_prompts
+
         ctxs = unify.get_active_context()
         read_ctx, write_ctx = ctxs["read"], ctxs["write"]
         assert (
@@ -132,6 +134,7 @@ class KnowledgeManager(BaseKnowledgeManager):
         parent_chat_context: list[dict] | None = None,
         clarification_up_q: asyncio.Queue[str] | None = None,
         clarification_down_q: asyncio.Queue[str] | None = None,
+        rolling_summary_in_prompts: Optional[bool] = None,
     ) -> "SteerableToolHandle":
 
         # ── 0.  Emit *incoming* ManagerMethod event ──────────────────────
@@ -168,10 +171,16 @@ class KnowledgeManager(BaseKnowledgeManager):
 
         # 2️⃣  Build & inject system prompt
         table_schemas_json = json.dumps(self._tables_overview(), indent=4)
+        include_activity = (
+            self._rolling_summary_in_prompts
+            if rolling_summary_in_prompts is None
+            else rolling_summary_in_prompts
+        )
         client.set_system_message(
             build_refactor_prompt(
                 tools=tools,
                 table_schemas_json=table_schemas_json,
+                include_activity=include_activity,
             ),
         )
 
@@ -214,6 +223,7 @@ class KnowledgeManager(BaseKnowledgeManager):
         parent_chat_context: list[dict] | None = None,
         clarification_up_q: asyncio.Queue[str] | None = None,
         clarification_down_q: asyncio.Queue[str] | None = None,
+        rolling_summary_in_prompts: Optional[bool] = None,
     ) -> "SteerableToolHandle":
 
         call_id = new_call_id()
@@ -251,10 +261,17 @@ class KnowledgeManager(BaseKnowledgeManager):
         # ── 2.  Launch the interactive tool-use loop ──────────────────────
         # Add the system message with all tools
         table_schemas_json = json.dumps(self._tables_overview(), indent=4)
+        include_activity = (
+            self._rolling_summary_in_prompts
+            if rolling_summary_in_prompts is None
+            else rolling_summary_in_prompts
+        )
+
         client.set_system_message(
             build_update_prompt(
                 tools=tools,
                 table_schemas_json=table_schemas_json,
+                include_activity=include_activity,
             ),
         )
 
@@ -296,6 +313,7 @@ class KnowledgeManager(BaseKnowledgeManager):
         parent_chat_context: list[dict] | None = None,
         clarification_up_q: asyncio.Queue[str] | None = None,
         clarification_down_q: asyncio.Queue[str] | None = None,
+        rolling_summary_in_prompts: Optional[bool] = None,
     ) -> "SteerableToolHandle":
         call_id = new_call_id()
         await publish_manager_method_event(
@@ -332,10 +350,17 @@ class KnowledgeManager(BaseKnowledgeManager):
         # ── 2.  Launch the interactive tool-use loop ──────────────────────
         # Add the system message with all tools
         table_schemas_json = json.dumps(self._tables_overview(), indent=4)
+        include_activity = (
+            self._rolling_summary_in_prompts
+            if rolling_summary_in_prompts is None
+            else rolling_summary_in_prompts
+        )
+
         client.set_system_message(
             build_ask_prompt(
                 tools=tools,
                 table_schemas_json=table_schemas_json,
+                include_activity=include_activity,
             ),
         )
         handle = start_async_tool_use_loop(
@@ -1361,3 +1386,23 @@ class KnowledgeManager(BaseKnowledgeManager):
             pass
 
         return rows
+
+    # ------------------------------------------------------------------ #
+    #  Reset helper (sandbox)                                            #
+    # ------------------------------------------------------------------ #
+    @staticmethod
+    def reset() -> None:
+        """
+        Remove every context that belongs to the *Knowledge* hierarchy for the
+        current project ("Knowledge" plus any child contexts).  Called by the
+        sandbox `activate_project` helper to guarantee that subsequent
+        KnowledgeManager instances work with a fresh schema.
+        """
+        import unify
+
+        for ctx in list(unify.get_contexts()):
+            if ctx == "Knowledge" or "/Knowledge" in ctx:
+                try:
+                    unify.delete_context(ctx)
+                except Exception:
+                    pass

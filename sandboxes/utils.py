@@ -26,6 +26,9 @@ from deepgram import DeepgramClient, FileSource, PrerecordedOptions
 from livekit.plugins import cartesia
 import argparse
 from unity.common.llm_helpers import SteerableToolHandle
+
+# Added for direct logging of generated messages
+from unity.transcript_manager.transcript_manager import TranscriptManager
 from scenario_builder import ScenarioBuilder
 
 from dotenv import load_dotenv
@@ -630,6 +633,7 @@ class TranscriptGenerator:
         self._endpoint = endpoint
         self._traced = traced
         self._stateful = stateful
+        self._tm = TranscriptManager()
 
     async def generate(
         self,
@@ -650,14 +654,63 @@ class TranscriptGenerator:
 
         transcript: List[dict] = []
 
-        def log_messages(messages: list[dict]) -> str:  # noqa: D401 – tool sig
+        _name_to_id: dict[str, int] = {}
+        # Track the sender of the *previous* message so we can infer the receiver
+        last_sender_id: int | None = None
+
+        def _normalise_msg(raw: dict) -> dict:
+            """Return a dict that satisfies TranscriptManager.log_messages schema."""
+
+            nonlocal last_sender_id
+
+            sender_name = str(raw.get("sender", "User"))
+
+            # Reserve **contact-id 0** for the assistant / system so that
+            # downstream logic (e.g. MemoryManager updates) can continue to
+            # skip agent utterances.
+            if sender_name.lower() in {"assistant", "system", "agent", "bot"}:
+                sender_id = 0
+            else:
+                sender_id = _name_to_id.setdefault(sender_name, len(_name_to_id) + 1)
+
+            # 1️⃣  Prefer an explicit receiver field if the LLM provided one
+            receiver_name = raw.get("receiver")
+            if receiver_name is not None:
+                receiver_id = _name_to_id.setdefault(
+                    receiver_name,
+                    len(_name_to_id) + 1,
+                )
+            # 2️⃣  Otherwise assume a simple back-and-forth → the receiver is the
+            #     previous sender (if any and different from the current sender)
+            elif last_sender_id is not None and last_sender_id != sender_id:
+                receiver_id = last_sender_id
+            # 3️⃣  Fallback – unknown receiver (e.g. first message)
+            else:
+                receiver_id = 0  # convention: assistant / unknown contact
+
+            # Update the *last* sender for the next call
+            last_sender_id = sender_id
+
+            return {
+                "medium": raw.get("medium", "sms_message"),
+                "sender_id": sender_id,
+                "receiver_id": receiver_id,
+                "timestamp": raw.get("timestamp"),
+                "content": raw.get("content", ""),
+                "exchange_id": raw.get("exchange_id", 0),
+            }
+
+        def log_messages(messages: list[dict]) -> str:
             nonlocal transcript
             transcript.extend(messages)
+            self._tm.log_messages([_normalise_msg(msg) for msg in messages])
+            self._tm.join_published()
             return f"{len(messages)} messages logged"
 
         prompt = (
             description.strip()
-            + f"\n\nGenerate {min_messages}-{max_messages} chronological chat messages that fit the scenario above. "
+            + "\n\nGenerate chronological chat messages that fit the scenario above. "
+            f"If no guidance is given for the *length* of the chat (number of messages), then (and only then) we can assume {min_messages}-{max_messages} is suitable."
             "Each dict **must** include 'timestamp' (ISO 8601), 'sender' and 'content'. "
             f"Use the `log_messages` tool in batches of {batch_min}-{batch_max} messages until the full transcript is logged, then stop."
         )
@@ -676,3 +729,37 @@ class TranscriptGenerator:
             raise RuntimeError("TranscriptGenerator produced an empty transcript.")
 
         return transcript
+
+
+def activate_project(project_name: str, overwrite: bool = False) -> None:
+    """
+    Activate *project_name* and re-initialise the global EventBus singleton so
+    that all subsequent Unify contexts (including those automatically created
+    by EventBus) belong to that project.  Call this immediately after handling
+    CLI arguments and before any manager instances are constructed.
+    """
+    import unify
+    from unity.events.event_bus import EVENT_BUS
+
+    # Switch active project first
+    unify.activate(project_name, overwrite=overwrite)
+    # Rebuild EventBus under the new project so its contexts live in `project_name`
+    EVENT_BUS.reset()
+
+    # ── Also reset every domain manager so their tables are recreated in the new project ──
+    try:
+        from unity.contact_manager.contact_manager import ContactManager
+        from unity.transcript_manager.transcript_manager import TranscriptManager
+        from unity.knowledge_manager.knowledge_manager import KnowledgeManager
+        from unity.task_scheduler.task_scheduler import TaskScheduler
+        from unity.conductor.conductor import Conductor
+
+        ContactManager.reset()
+        TranscriptManager.reset()
+        KnowledgeManager.reset()
+        TaskScheduler.reset()
+        # Conductor.reset cascades but call for completeness
+        Conductor.reset()
+    except Exception:
+        # Defensive – sandbox should never hard-fail if any optional reset is missing
+        pass

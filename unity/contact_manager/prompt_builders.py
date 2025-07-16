@@ -8,6 +8,7 @@ from typing import Dict, Callable, List
 
 from .types.contact import Contact
 from ..knowledge_manager.types import column_type_schema
+from ..memory_manager.rolling_activity import get_rolling_activity
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -51,19 +52,13 @@ def _tool_name(tools: Dict[str, Callable], needle: str) -> str | None:
 def _rolling_activity_section() -> str:
     """Return a human-readable summary of historic agent activity.
 
-    The summary is fetched via ``MemoryManager.get_rolling_activity``.  If the
-    call fails for *any* reason we silently return an empty string so that
-    prompt generation never breaks at runtime.
+    Uses the **process-wide** in-memory cache instead of hitting the backend
+    on every invocation.
     """
 
     try:
-        # Local import to avoid heavy or circular imports at module load time
-        from ..memory_manager.memory_manager import (
-            MemoryManager,
-        )  # noqa: WPS433 – runtime import by design
-
-        overview = MemoryManager().get_rolling_activity()
-    except Exception:  # pragma: no cover – defensive guard
+        overview = get_rolling_activity()
+    except Exception:  # pragma: no cover – defensive
         return ""
 
     if not overview:
@@ -86,6 +81,8 @@ def build_ask_prompt(
     tools: Dict[str, Callable],
     num_contacts: int,
     columns: List[Dict[str, str]],
+    *,
+    include_activity: bool = True,
 ) -> str:
     """Return the system-prompt used by *ask*."""
     sig_json = json.dumps(_sig_dict(tools), indent=4)
@@ -143,14 +140,18 @@ def build_ask_prompt(
     if num_contacts < 50:
         guidance = f"given that the number of contacts is so small, you should simply use {search_name} with *no filter arguments* for now, so you can unpack the *full* contact list and answer the question directly."
     else:
-        guidance = (
-            "If the question is open-ended or doesn't clearly match any of the column names,",
-            f"then try {nearest_search} on the most relevant column(s) and see if you can find any semantic match.",
+        guidance = "\n".join(
+            [
+                "If the question is open-ended or doesn't clearly match any of the column names,",
+                f"then try {nearest_search} on the most relevant column(s) and see if you can find any semantic match.",
+            ],
         )
+
+    activity_block = _rolling_activity_section() if include_activity else ""
 
     return "\n".join(
         [
-            _rolling_activity_section(),
+            activity_block,
             "You are an assistant specializing in **retrieving contact information**.",
             "Work strictly through the tools provided.",
             "You should attempt to answer *any* question as best you can, even if it seems out of scope.",
@@ -171,7 +172,11 @@ def build_ask_prompt(
     )
 
 
-def build_update_prompt(tools: Dict[str, Callable]) -> str:
+def build_update_prompt(
+    tools: Dict[str, Callable],
+    *,
+    include_activity: bool = True,
+) -> str:
     """Return the system-prompt used by *update*."""
     sig_json = json.dumps(_sig_dict(tools), indent=4)
 
@@ -217,9 +222,11 @@ def build_update_prompt(tools: Dict[str, Callable]) -> str:
     """,
     ).strip()
 
+    activity_block = _rolling_activity_section() if include_activity else ""
+
     return "\n".join(
         [
-            _rolling_activity_section(),
+            activity_block,
             "You are an assistant in charge of **creating or editing contacts**.",
             "Use the tools provided to create new entries or update existing ones.",
             "You should attempt to perform *any* request as best you can, even if it seems out of scope.",

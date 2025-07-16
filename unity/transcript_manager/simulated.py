@@ -14,8 +14,12 @@ from ..common.llm_helpers import SteerableToolHandle
 from .base import BaseTranscriptManager
 from .prompt_builders import (
     build_ask_prompt,
-    build_summarize_prompt,
     build_simulated_method_prompt,
+)
+from ..events.manager_event_logging import (
+    new_call_id,
+    publish_manager_method_event,
+    wrap_handle_with_logging,
 )
 
 
@@ -169,8 +173,13 @@ class SimulatedTranscriptManager(BaseTranscriptManager):
     def __init__(
         self,
         description: str = "nothing fixed, make up some imaginary scenario",
+        *,
+        log_events: bool = False,
+        rolling_summary_in_prompts: bool = True,
     ) -> None:
         self._description = description
+        self._log_events = log_events
+        self._rolling_summary_in_prompts = rolling_summary_in_prompts
 
         # Shared, *stateful* **asynchronous** LLM
         self._llm = unify.AsyncUnify(
@@ -179,8 +188,10 @@ class SimulatedTranscriptManager(BaseTranscriptManager):
             traced=json.loads(os.getenv("UNIFY_TRACED", "true")),
             stateful=True,
         )
-        ask_sys = build_ask_prompt({})
-        sum_sys = build_summarize_prompt()
+        ask_sys = build_ask_prompt(
+            {},
+            include_activity=self._rolling_summary_in_prompts,
+        )
 
         self._llm.set_system_message(
             "You are a *simulated* transcript assistant. "
@@ -189,7 +200,6 @@ class SimulatedTranscriptManager(BaseTranscriptManager):
             "For reference, here are the *real* system messages used by the "
             "production implementation:\n"
             f"\n\n'ask' system message:\n{ask_sys}\n\n"
-            f"\n\n'summarize' system message:\n{sum_sys}\n\n"
             f"Back-story: {self._description}",
         )
 
@@ -206,13 +216,27 @@ class SimulatedTranscriptManager(BaseTranscriptManager):
         _requests_clarification: bool = False,
         clarification_up_q: asyncio.Queue[str] | None = None,
         clarification_down_q: asyncio.Queue[str] | None = None,
+        log_events: bool = False,
     ) -> SteerableToolHandle:
+        should_log = self._log_events or log_events
+        call_id = None
+
+        if should_log:
+            call_id = new_call_id()
+            await publish_manager_method_event(
+                call_id,
+                "TranscriptManager",
+                "ask",
+                phase="incoming",
+                question=text,
+            )
+
         instruction = build_simulated_method_prompt(
             "ask",
             text,
             parent_chat_context=parent_chat_context,
         )
-        return _SimulatedTranscriptHandle(
+        handle = _SimulatedTranscriptHandle(
             self._llm,
             instruction,
             _return_reasoning_steps=_return_reasoning_steps,
@@ -220,6 +244,16 @@ class SimulatedTranscriptManager(BaseTranscriptManager):
             clarification_up_q=clarification_up_q,
             clarification_down_q=clarification_down_q,
         )
+
+        if should_log and call_id is not None:
+            handle = wrap_handle_with_logging(
+                handle,
+                call_id,
+                "TranscriptManager",
+                "ask",
+            )
+
+        return handle
 
     # --------------------------------------------------------------------- #
     # summarize                                                             #
@@ -237,7 +271,24 @@ class SimulatedTranscriptManager(BaseTranscriptManager):
         _requests_clarification: bool = False,
         clarification_up_q: asyncio.Queue[str] | None = None,
         clarification_down_q: asyncio.Queue[str] | None = None,
+        log_events: bool = False,
     ) -> SteerableToolHandle:
+        should_log = self._log_events or log_events
+        call_id = None
+
+        if should_log:
+            call_id = new_call_id()
+            await publish_manager_method_event(
+                call_id,
+                "TranscriptManager",
+                "summarize",
+                phase="incoming",
+                from_exchanges=from_exchanges,
+                from_messages=from_messages,
+                omit_messages=list(omit_messages or []),
+                guidance=guidance,
+            )
+
         # Base prompt with dynamic disclaimers
         instruction = build_simulated_method_prompt(
             "summarize",
@@ -290,7 +341,7 @@ class SimulatedTranscriptManager(BaseTranscriptManager):
         if clar:
             prompt_parts.append(f"User clarification: {clar}")
 
-        return _SimulatedTranscriptHandle(
+        handle = _SimulatedTranscriptHandle(
             self._llm,
             "\n\n".join(prompt_parts),
             _return_reasoning_steps=_return_reasoning_steps,
@@ -298,3 +349,13 @@ class SimulatedTranscriptManager(BaseTranscriptManager):
             clarification_up_q=clarification_up_q,
             clarification_down_q=clarification_down_q,
         )
+
+        if should_log and call_id is not None:
+            handle = wrap_handle_with_logging(
+                handle,
+                call_id,
+                "TranscriptManager",
+                "summarize",
+            )
+
+        return handle

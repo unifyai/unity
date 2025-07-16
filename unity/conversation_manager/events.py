@@ -208,19 +208,36 @@ class PhoneCallStartedEvent(Event):
 # this should be either done by user or assistant, should
 # make variants (cleanly)
 class PhoneCallInitiatedEvent(Event):
-    def __init__(self, purpose: str = None, **kwargs):
+    def __init__(
+        self,
+        purpose: str = None,
+        task_context: Dict[str, str] = None,
+        target_number: str = None,
+        **kwargs,
+    ):
         kwargs.pop("content", None)
         kwargs.pop("purpose", None)
+        kwargs.pop("task_context", None)
+        kwargs.pop("target_number", None)
+
         self.purpose = purpose if purpose else "general"
+        self.task_context = task_context
+        self.target_number = target_number
         super().__init__(**kwargs)
 
     def to_dict(self) -> dict[str, Any]:
         base_dict = super().to_dict()
-        base_dict["payload"].update({"purpose": self.purpose})
+        base_dict["payload"].update(
+            {
+                "purpose": self.purpose,
+                "task_context": self.task_context,
+                "target_number": self.target_number,
+            },
+        )
         return base_dict
 
     def __str__(self):
-        return f"[Phone Call Initiated... @ {self.fmt_timestamp} for purpose {self.purpose}]"
+        return f"[Phone Call Initiated... to {self.target_number} @ {self.fmt_timestamp} for purpose {self.purpose} with task context {self.task_context}]"
 
 
 class PhoneCallEndedEvent(Event):

@@ -27,7 +27,7 @@ async def test_window_cache_is_faster():
     base_ts = dt.datetime.now(dt.UTC)
     for i in range(window + 1):
         evt = Event(
-            type="message",
+            type="Message",
             timestamp=base_ts + dt.timedelta(seconds=i),
             payload=Message(
                 medium=random.choice(list(Medium)),
@@ -39,7 +39,7 @@ async def test_window_cache_is_faster():
             ),
         )
         event_ids.append(evt.event_id)
-        await bus.publish(evt, sync=True)
+        await bus.publish(evt, blocking=True)
 
     # Time fetching just from cache vs having to hit backend
     await bus.search(filter="type == 'message'", limit=4)  # warm up

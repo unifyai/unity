@@ -134,23 +134,6 @@ async def test_tm_stateful_memory():
 
 
 # ────────────────────────────────────────────────────────────────────────────
-# 6.  Summarize                                                             #
-# ────────────────────────────────────────────────────────────────────────────
-@pytest.mark.asyncio
-@_handle_project
-async def test_simulated_tm_summarize():
-    """
-    Ensure summarize(...) returns a non-empty, human-readable string.
-    """
-    tm = SimulatedTranscriptManager()
-    guidance = "Focus on the key points."
-    handle = await tm.summarize(from_exchanges=99, guidance=guidance)
-    summary = await handle.result()
-
-    assert isinstance(summary, str) and summary.strip(), "Summary should not be empty"
-
-
-# ────────────────────────────────────────────────────────────────────────────
 # 7.  Doc-string inheritance                                                 #
 # ────────────────────────────────────────────────────────────────────────────
 def test_simulated_cm_docstrings_match_base():

@@ -43,6 +43,7 @@ from sandboxes.utils import (  # shared helpers reused in other sandboxes
     get_custom_scenario,
     await_with_interrupt as _await_with_interrupt,
     build_cli_parser,
+    activate_project,
 )
 
 LG = logging.getLogger("contact_sandbox")
@@ -150,7 +151,7 @@ async def _main_async() -> None:
     os.environ["UNIFY_TRACED"] = "true" if args.traced else "false"
 
     # ─────────────────── Unify context ────────────────────
-    unify.activate(args.project_name)
+    activate_project(args.project_name, args.overwrite)
     unify.set_trace_context("Traces")
     if args.overwrite:
         ctxs = unify.get_contexts()

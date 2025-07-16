@@ -48,6 +48,7 @@ from sandboxes.utils import (  # shared helpers reused in other sandboxes
     speak as _speak,
     run_in_loop,
     get_custom_scenario,
+    activate_project,
 )
 
 LG = logging.getLogger("contact_sandbox")
@@ -252,7 +253,7 @@ async def entrypoint(ctx: agents.JobContext):
     args, unknown = parser.parse_known_args()
 
     # Setup Unify context
-    unify.activate(args.project_name)
+    activate_project(args.project_name, args.overwrite)
     unify.set_trace_context("Traces")
     if args.overwrite:
         ctxs = unify.get_contexts()

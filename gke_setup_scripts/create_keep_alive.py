@@ -72,7 +72,7 @@ def create_keep_alive_deployment(api_client, namespace="default"):
             "spec": {
                 "replicas": 1,
                 "selector": {
-                    "matchLabels": {"app": "unity", "component": "keep-alive"}
+                    "matchLabels": {"app": "unity", "component": "keep-alive"},
                 },
                 "template": {
                     "metadata": {"labels": {"app": "unity", "component": "keep-alive"}},
@@ -88,7 +88,7 @@ def create_keep_alive_deployment(api_client, namespace="default"):
                                     "requests": {"cpu": "2", "memory": "8Gi"},
                                     "limits": {"cpu": "2", "memory": "8Gi"},
                                 },
-                            }
+                            },
                         ],
                     },
                 },
@@ -98,7 +98,8 @@ def create_keep_alive_deployment(api_client, namespace="default"):
         # Check if deployment exists
         try:
             api_client.read_namespaced_deployment(
-                name="unity-keep-alive", namespace=namespace
+                name="unity-keep-alive",
+                namespace=namespace,
             )
             print("✅ Keep-alive deployment already exists")
             return True
@@ -106,7 +107,8 @@ def create_keep_alive_deployment(api_client, namespace="default"):
             if e.status == 404:
                 # Create the deployment
                 api_client.create_namespaced_deployment(
-                    namespace=namespace, body=deployment_manifest
+                    namespace=namespace,
+                    body=deployment_manifest,
                 )
                 print("✅ Created keep-alive deployment")
                 return True
@@ -122,7 +124,8 @@ def delete_keep_alive_deployment(api_client, namespace="default"):
     """Delete the keep-alive deployment"""
     try:
         api_client.delete_namespaced_deployment(
-            name="unity-keep-alive", namespace=namespace
+            name="unity-keep-alive",
+            namespace=namespace,
         )
         print("✅ Deleted keep-alive deployment")
         return True
@@ -140,7 +143,8 @@ def check_keep_alive_status(api_client, namespace="default"):
     """Check the status of the keep-alive deployment"""
     try:
         deployment = api_client.read_namespaced_deployment(
-            name="unity-keep-alive", namespace=namespace
+            name="unity-keep-alive",
+            namespace=namespace,
         )
 
         print(f"📊 Keep-alive deployment status:")
@@ -178,17 +182,23 @@ Purpose:
     )
 
     parser.add_argument(
-        "--create", action="store_true", help="Create keep-alive deployment"
+        "--create",
+        action="store_true",
+        help="Create keep-alive deployment",
     )
 
     parser.add_argument(
-        "--delete", action="store_true", help="Delete keep-alive deployment"
+        "--delete",
+        action="store_true",
+        help="Delete keep-alive deployment",
     )
 
     parser.add_argument("--status", action="store_true", help="Check deployment status")
 
     parser.add_argument(
-        "--namespace", default="default", help="Kubernetes namespace (default: default)"
+        "--namespace",
+        default="default",
+        help="Kubernetes namespace (default: default)",
     )
 
     args = parser.parse_args()
@@ -208,10 +218,10 @@ Purpose:
         if create_keep_alive_deployment(api_client, args.namespace):
             print("\n✅ Keep-alive deployment created successfully!")
             print(
-                "\n💡 This deployment will maintain at least one node to reduce scheduling delays."
+                "\n💡 This deployment will maintain at least one node to reduce scheduling delays.",
             )
             print(
-                "   Monitor with: kubectl get pods -n default -l app=unity,component=keep-alive"
+                "   Monitor with: kubectl get pods -n default -l app=unity,component=keep-alive",
             )
         else:
             sys.exit(1)

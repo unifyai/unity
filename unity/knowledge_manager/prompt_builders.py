@@ -7,6 +7,7 @@ from datetime import datetime, timezone
 from typing import Callable, Dict
 
 from .types import column_type_schema
+from ..memory_manager.rolling_activity import get_rolling_activity
 
 # ────────────────────────────────────────────────────────────────────────────
 # helpers
@@ -28,12 +29,10 @@ def _now() -> str:  # UTC timestamp helper
 
 
 def _rolling_activity_section() -> str:
-    """Return a markdown summary of the agent's historic activity."""
+    """Return a markdown summary of the agent's historic activity from cache."""
 
     try:
-        from ..memory_manager.memory_manager import MemoryManager  # noqa: WPS433
-
-        overview = MemoryManager().get_rolling_activity()
+        overview = get_rolling_activity()
     except Exception:  # pragma: no cover
         return ""
 
@@ -62,6 +61,7 @@ def build_refactor_prompt(
     tools: dict[str, callable],
     *,
     table_schemas_json: str,
+    include_activity: bool = True,
 ) -> str:
     """
     Construct the system-prompt for :pymeth:`KnowledgeManager.refactor`.
@@ -132,13 +132,15 @@ def build_refactor_prompt(
         """,
     ).strip()
 
-    return _rolling_activity_section() + "\n\n" + base_prompt
+    activity_block = _rolling_activity_section() if include_activity else ""
+    return activity_block + "\n\n" + base_prompt
 
 
 def build_update_prompt(
     tools: Dict[str, Callable],
     *,
     table_schemas_json: str,
+    include_activity: bool = True,
 ) -> str:
     """
     Build the **system message** for `KnowledgeManager.store`.
@@ -180,9 +182,11 @@ def build_update_prompt(
         """,
     ).strip()
 
+    activity_block = _rolling_activity_section() if include_activity else ""
+
     return "\n".join(
         [
-            _rolling_activity_section(),
+            activity_block,
             core_instructions,
             "",
             "Tools (name → argspec)",
@@ -206,6 +210,7 @@ def build_ask_prompt(
     tools: Dict[str, Callable],
     *,
     table_schemas_json: str,
+    include_activity: bool = True,
 ) -> str:
     """
     Build the **system message** for `KnowledgeManager.retrieve`.
@@ -233,9 +238,11 @@ def build_ask_prompt(
         """,
     ).strip()
 
+    activity_block = _rolling_activity_section() if include_activity else ""
+
     return "\n".join(
         [
-            _rolling_activity_section(),
+            activity_block,
             core_instructions,
             "",
             "Tools (name → argspec)",

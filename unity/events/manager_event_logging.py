@@ -57,8 +57,7 @@ def wrap_handle_with_logging(
     method_name: str,
 ) -> SteerableToolHandle:
     """
-    Return a SteerableToolHandle proxy that mirrors the behaviour previously
-    embedded in *ContactManager* – emitting a **ManagerMethod** event every
+    Return a SteerableToolHandle proxy which emits a **ManagerMethod** event every
     time the user interacts with the handle (pause/resume/…/result).
     """
 

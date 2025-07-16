@@ -1,7 +1,7 @@
 # conductor/conductor.py
 from __future__ import annotations
 
-from typing import Callable, Dict
+from typing import Callable, Dict, Optional
 
 import asyncio
 import json
@@ -21,6 +21,11 @@ from ..contact_manager.simulated import SimulatedContactManager
 from ..transcript_manager.simulated import SimulatedTranscriptManager
 from ..knowledge_manager.simulated import SimulatedKnowledgeManager
 from ..task_scheduler.simulated import SimulatedTaskScheduler
+from ..events.manager_event_logging import (
+    new_call_id,
+    publish_manager_method_event,
+    wrap_handle_with_logging,
+)
 
 
 class SimulatedConductor:
@@ -37,17 +42,39 @@ class SimulatedConductor:
     def __init__(
         self,
         description: str = "nothing fixed, make up some imaginary scenario",
+        *,
+        log_events: bool = False,
+        rolling_summary_in_prompts: bool = True,
     ) -> None:
         """
         Args:
             description: A detailed description of the hypothetical scenario to simulate.
+            log_events: Whether to log ManagerMethod events to the EventBus.
         """
+        self._log_events = log_events
+        self._rolling_summary_in_prompts = rolling_summary_in_prompts
 
         # ── Simulated façade (pure-LLM back-ends) ────────────────────
-        self._contact_manager = SimulatedContactManager(description=description)
-        self._transcript_manager = SimulatedTranscriptManager(description=description)
-        self._knowledge_manager = SimulatedKnowledgeManager(description=description)
-        self._task_scheduler = SimulatedTaskScheduler(description=description)
+        self._contact_manager = SimulatedContactManager(
+            description=description,
+            log_events=log_events,
+            rolling_summary_in_prompts=rolling_summary_in_prompts,
+        )
+        self._transcript_manager = SimulatedTranscriptManager(
+            description=description,
+            log_events=log_events,
+            rolling_summary_in_prompts=rolling_summary_in_prompts,
+        )
+        self._knowledge_manager = SimulatedKnowledgeManager(
+            description=description,
+            log_events=log_events,
+            rolling_summary_in_prompts=rolling_summary_in_prompts,
+        )
+        self._task_scheduler = SimulatedTaskScheduler(
+            description=description,
+            log_events=log_events,
+            rolling_summary_in_prompts=rolling_summary_in_prompts,
+        )
 
         #  Run-time state & tool-dict helpers
         self._active_task = None  # type: ignore
@@ -104,13 +131,28 @@ class SimulatedConductor:
         *,
         _return_reasoning_steps: bool = False,
         _log_tool_steps: bool = True,
-        parent_chat_context: list[dict] | None = None,
+        parent_chat_context: list[dict] | None = None,  # Unused – synthetic
+        _requests_clarification: bool = False,
         clarification_up_q: asyncio.Queue[str] | None = None,
         clarification_down_q: asyncio.Queue[str] | None = None,
+        log_events: bool = False,
+        rolling_summary_in_prompts: Optional[bool] = None,
     ):
         """
         Read-only question: exposes *passive* helpers (+ active_task.ask when available).
         """
+        should_log = self._log_events or log_events
+        call_id = None
+
+        if should_log:
+            call_id = new_call_id()
+            await publish_manager_method_event(
+                call_id,
+                "Conductor",
+                "ask",
+                phase="incoming",
+                question=text,
+            )
 
         tools: Dict[str, Callable] = dict(self._passive_tools)
 
@@ -129,7 +171,14 @@ class SimulatedConductor:
             cache=json.loads(os.environ.get("UNIFY_CACHE", "true")),
             traced=json.loads(os.environ.get("UNIFY_TRACED", "true")),
         )
-        client.set_system_message(build_ask_prompt(tools))
+        include_activity = (
+            self._rolling_summary_in_prompts
+            if rolling_summary_in_prompts is None
+            else rolling_summary_in_prompts
+        )
+        client.set_system_message(
+            build_ask_prompt(tools, include_activity=include_activity),
+        )
 
         handle = start_async_tool_use_loop(
             client,
@@ -139,6 +188,14 @@ class SimulatedConductor:
             parent_chat_context=parent_chat_context,
             log_steps=_log_tool_steps,
         )
+
+        if should_log and call_id is not None:
+            handle = wrap_handle_with_logging(
+                handle,
+                call_id,
+                "Conductor",
+                "ask",
+            )
 
         if _return_reasoning_steps:
             original_result = handle.result
@@ -164,11 +221,25 @@ class SimulatedConductor:
         parent_chat_context: list[dict] | None = None,
         clarification_up_q: asyncio.Queue[str] | None = None,
         clarification_down_q: asyncio.Queue[str] | None = None,
+        log_events: bool = False,
+        rolling_summary_in_prompts: Optional[bool] = None,
     ):
         """
         Full-access entry-point – exposes every passive tool **plus** all
         write-capable helpers and `execute_task` (which unlocks plan steering).
         """
+        should_log = self._log_events or log_events
+        call_id = None
+
+        if should_log:
+            call_id = new_call_id()
+            await publish_manager_method_event(
+                call_id,
+                "Conductor",
+                "request",
+                phase="incoming",
+                request=text,
+            )
 
         tools: Dict[str, Callable] = dict(self._active_tools)
 
@@ -187,7 +258,14 @@ class SimulatedConductor:
             cache=json.loads(os.environ.get("UNIFY_CACHE", "true")),
             traced=json.loads(os.environ.get("UNIFY_TRACED", "true")),
         )
-        client.set_system_message(build_request_prompt(tools))
+        include_activity = (
+            self._rolling_summary_in_prompts
+            if rolling_summary_in_prompts is None
+            else rolling_summary_in_prompts
+        )
+        client.set_system_message(
+            build_request_prompt(tools, include_activity=include_activity),
+        )
 
         handle = start_async_tool_use_loop(
             client,
@@ -197,6 +275,14 @@ class SimulatedConductor:
             parent_chat_context=parent_chat_context,
             log_steps=_log_tool_steps,
         )
+
+        if should_log and call_id is not None:
+            handle = wrap_handle_with_logging(
+                handle,
+                call_id,
+                "Conductor",
+                "request",
+            )
 
         if _return_reasoning_steps:
             original_result = handle.result
