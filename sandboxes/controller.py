@@ -28,19 +28,19 @@ from unity.controller.controller import Controller
 from unity.controller.playwright_utils.worker import BrowserWorker
 
 
-def main(use_controller: bool = True) -> None:
+def main(use_controller: bool = True, debug: bool = True, mode: str = "hybrid") -> None:
 
     # queue for user commands only (GUI → backend)
     gui_to_backend_queue: queue.Queue[str] = queue.Queue(maxsize=50)
 
     if use_controller:
         # Use full Controller with act/observe capabilities and proper context management
-        log.debug("Starting with full Controller (recommended)...")
+        log.debug(f"Starting with full Controller (mode={mode}, debug={debug})...")
         controller = Controller(
             session_connect_url=None,
             headless=False,
-            mode="heuristic",
-            debug=True,
+            mode=mode,
+            debug=debug,
         )
         controller.start()
 
@@ -71,7 +71,7 @@ def main(use_controller: bool = True) -> None:
 
     else:
         # Use bare BrowserWorker for basic testing (no act/observe, potential context issues)
-        log.debug("Starting with basic BrowserWorker (limited functionality)...")
+        log.debug(f"Starting with basic BrowserWorker (debug={debug})...")
         # queue for worker updates (worker → GUI)
         worker_to_gui_queue: queue.Queue[dict] = queue.Queue(maxsize=50)
 
@@ -79,7 +79,7 @@ def main(use_controller: bool = True) -> None:
             commands_queue=gui_to_backend_queue,
             updates_queue=worker_to_gui_queue,
             headless=False,
-            debug=True,
+            debug=debug,
         )
         worker.start()
 
@@ -107,6 +107,18 @@ if __name__ == "__main__":
         default=True,
         help="Use basic BrowserWorker instead of full Controller (disables act/observe methods and may cause context issues)",
     )
+    parser.add_argument(
+        "--debug",
+        type=bool,
+        default=True,
+        help="Enable debug mode (default: True)",
+    )
+    parser.add_argument(
+        "--mode",
+        choices=["hybrid", "vision", "heuristic"],
+        default="hybrid",
+        help="Controller mode: hybrid (default), vision, or heuristic",
+    )
 
     args = parser.parse_args()
-    main(use_controller=args.use_controller)
+    main(use_controller=args.use_controller, debug=args.debug, mode=args.mode)
