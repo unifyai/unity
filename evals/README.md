@@ -24,8 +24,8 @@ The `generate_initial_plans.py` script generates fully-implemented Python plans 
 ### Format 2: WebVoyager format with website context
 ```json
 {
-  "web_name": "Allrecipes", 
-  "id": "Allrecipes--0", 
+  "web_name": "Allrecipes",
+  "id": "Allrecipes--0",
   "ques": "Provide a recipe for vegetarian lasagna...",
   "web": "https://www.allrecipes.com/"
 }

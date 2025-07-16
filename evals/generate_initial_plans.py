@@ -24,25 +24,26 @@ sys.path.append(str(Path(__file__).parent.parent))
 
 os.environ["UNIFY_MODEL"] = "o4-mini@openai"
 from dotenv import load_dotenv
+
 load_dotenv()
 
 import unify
+
 unify.activate("web_voyager_eval", overwrite=True)
 
 from unity.planner import HierarchicalPlanner
 from unity.planner.hierarchical_planner import HierarchicalPlan, _HierarchicalPlanState
 import unity.planner.prompt_builders as prompt_builders
 import logging
-from unity.planner.action_provider import ActionProvider
 
 # Configure logging
 logging.basicConfig(
     level=logging.INFO,
-    format='%(asctime)s - %(levelname)s - %(message)s',
+    format="%(asctime)s - %(levelname)s - %(message)s",
     handlers=[
         logging.StreamHandler(sys.stdout),
-        logging.FileHandler('evals/plan_generation.log')
-    ]
+        logging.FileHandler("evals/plan_generation.log"),
+    ],
 )
 logger = logging.getLogger(__name__)
 
@@ -53,6 +54,7 @@ logging.getLogger("httpcore").setLevel(logging.WARNING)
 
 
 # ========== MONKEY PATCHES ==========
+
 
 def patched_build_initial_plan_prompt(
     goal: str,
@@ -65,17 +67,20 @@ def patched_build_initial_plan_prompt(
     # Build a completely new prompt without any stubbing instructions
     tool_reference = prompt_builders._build_tool_signatures(tools)
     handle_apis = prompt_builders._build_handle_apis(tools)
-    formatted_functions = prompt_builders._format_existing_functions(existing_functions or {})
-    
-    prompt = textwrap.dedent(f"""
+    formatted_functions = prompt_builders._format_existing_functions(
+        existing_functions or {},
+    )
+
+    prompt = textwrap.dedent(
+        f"""
         You are an expert strategist and implementer. Your task is to generate a COMPLETE, FULLY IMPLEMENTED Python script to achieve a user's goal.
 
         **Primary Goal:** "{goal}"
-        
+
         ---
         ### CRITICAL IMPLEMENTATION REQUIREMENTS
-        
-        1. **COMPLETE IMPLEMENTATIONS ONLY**: Every function you write MUST be fully implemented with working code. 
+
+        1. **COMPLETE IMPLEMENTATIONS ONLY**: Every function you write MUST be fully implemented with working code.
         2. **NO STUBS OR PLACEHOLDERS**: NEVER use 'raise NotImplementedError' or any other placeholder.
         3. **NO DECORATORS**: DO NOT use @verify or any other decorators - just define clean async functions.
         4. **Entry Point**: The main entry point MUST be `async def main_plan()`.
@@ -84,10 +89,10 @@ def patched_build_initial_plan_prompt(
         7. **Await Calls**: All `action_provider` methods that are async MUST be called with `await`.
         8. **Structured Output**: Use Pydantic BaseModel for structured data extraction.
         9. **Error Handling**: Include proper try/except blocks for error handling.
-        
+
         ---
         ### IMPLEMENTATION STRATEGY
-        
+
         When implementing browser automation:
         1. **Observe Before Acting**: Always use `browser_observe` to confirm elements exist before interacting.
         2. **Be Specific**: Use precise descriptions like "Click the blue 'Submit' button" not just "Click button".
@@ -102,25 +107,25 @@ def patched_build_initial_plan_prompt(
            - Look for specific patterns (e.g., currency symbols, product names)
            - Return structured data using Pydantic models
         6. **Website Navigation**: For tasks that require navigating to a specific website:
-           - Start with `browser_act("Navigate to [URL]")` 
+           - Start with `browser_act("Navigate to [URL]")`
            - Wait for page load if needed
            - Use `browser_observe` to understand the page structure
         7. **Search and Filter**: When finding specific items:
            - Look for search boxes, filter options, or navigation menus
            - Use descriptive actions like "Type 'vegetarian lasagna' in the search box"
            - Apply filters step by step
-        
+
         ---
         ### Tools Reference
         You have access to a global `action_provider` object with these methods:
         ```json
         {tool_reference}
         ```
-        
+
         ---
         ### Handle APIs
         {handle_apis}
-        
+
         ---
         ### Usage Examples
 
@@ -307,15 +312,17 @@ def patched_build_initial_plan_prompt(
         ### Existing Functions Library
         You may use these pre-existing functions if they are suitable:
         {formatted_functions}
-        
+
         ---
         {retry_msg}
-        
+
         Remember: Every function must be FULLY IMPLEMENTED. NO STUBS. NO NotImplementedError.
         Your response must start immediately with the code.
-    """).strip()
-    
+    """,
+    ).strip()
+
     return prompt
+
 
 # Apply the monkey patch
 prompt_builders.build_initial_plan_prompt = patched_build_initial_plan_prompt
@@ -329,20 +336,20 @@ def post_process_generated_code(code: str) -> str:
     3. Ensure action_provider initialization is present after imports
     """
     # Remove @verify decorators
-    code = re.sub(r'@verify\s*\n', '', code)
-    
+    code = re.sub(r"@verify\s*\n", "", code)
+
     # Split the code into lines
-    lines = code.split('\n')
-    
+    lines = code.split("\n")
+
     # Collect existing imports and non-import code separately
     import_lines = []
     code_lines = []
     in_imports_section = True
-    
+
     for line in lines:
         stripped = line.strip()
         if in_imports_section:
-            if stripped.startswith(('import ', 'from ')) or not stripped:
+            if stripped.startswith(("import ", "from ")) or not stripped:
                 import_lines.append(line)
             else:
                 # We've reached the first non-import line
@@ -350,113 +357,118 @@ def post_process_generated_code(code: str) -> str:
                 code_lines.append(line)
         else:
             code_lines.append(line)
-    
+
     # Define required imports
     required_imports = [
-        'import asyncio',
-        'import re',
-        'from pydantic import BaseModel, Field',
-        'from typing import List, Optional',
-        'from unity.planner.action_provider import ActionProvider'
+        "import asyncio",
+        "import re",
+        "from pydantic import BaseModel, Field",
+        "from typing import List, Optional",
+        "from unity.planner.action_provider import ActionProvider",
     ]
-    
+
     # Check which imports are missing
-    existing_imports_text = '\n'.join(import_lines)
+    existing_imports_text = "\n".join(import_lines)
     imports_to_add = []
-    
+
     for imp in required_imports:
         # Check if this import (or a variation) already exists
-        if imp.startswith('import '):
+        if imp.startswith("import "):
             module = imp.split()[1]
-            if f'import {module}' not in existing_imports_text:
+            if f"import {module}" not in existing_imports_text:
                 imports_to_add.append(imp)
-        elif imp.startswith('from '):
+        elif imp.startswith("from "):
             # For 'from X import Y' statements, check more carefully
             parts = imp.split()
             module = parts[1]
-            if imp == 'from pydantic import BaseModel, Field':
+            if imp == "from pydantic import BaseModel, Field":
                 # Check if pydantic imports exist in any form
-                if 'from pydantic import' not in existing_imports_text:
+                if "from pydantic import" not in existing_imports_text:
                     imports_to_add.append(imp)
-            elif imp == 'from typing import List, Optional':
+            elif imp == "from typing import List, Optional":
                 # Check if typing imports exist
-                if 'from typing import' not in existing_imports_text:
+                if "from typing import" not in existing_imports_text:
                     imports_to_add.append(imp)
-            elif imp == 'from unity.planner.action_provider import ActionProvider':
+            elif imp == "from unity.planner.action_provider import ActionProvider":
                 # Check if ActionProvider import exists
-                if 'from unity.planner.action_provider import ActionProvider' not in existing_imports_text:
+                if (
+                    "from unity.planner.action_provider import ActionProvider"
+                    not in existing_imports_text
+                ):
                     imports_to_add.append(imp)
-    
+
     # Build the final code
     final_lines = []
-    
+
     # Add all imports (existing + new)
     final_lines.extend(imports_to_add)
     final_lines.extend(import_lines)
-    
+
     # Remove any empty lines at the end of imports
     while final_lines and not final_lines[-1].strip():
         final_lines.pop()
-    
+
     # Add blank line after imports
     if final_lines:
-        final_lines.append('')
-    
+        final_lines.append("")
+
     # Add action_provider initialization
-    final_lines.append('action_provider = ActionProvider()')
-    final_lines.append('')
-    
+    final_lines.append("action_provider = ActionProvider()")
+    final_lines.append("")
+
     # Check if action_provider initialization already exists in code_lines
-    has_action_provider = any('action_provider = ActionProvider()' in line for line in code_lines)
-    
+    has_action_provider = any(
+        "action_provider = ActionProvider()" in line for line in code_lines
+    )
+
     # Add the rest of the code, skipping any existing action_provider initialization
     for line in code_lines:
-        if 'action_provider = ActionProvider()' not in line or not has_action_provider:
+        if "action_provider = ActionProvider()" not in line or not has_action_provider:
             final_lines.append(line)
-        if 'action_provider = ActionProvider()' in line:
+        if "action_provider = ActionProvider()" in line:
             has_action_provider = True  # Mark that we've seen it
-    
+
     # Join and clean up
-    result = '\n'.join(final_lines)
-    
+    result = "\n".join(final_lines)
+
     # Clean up multiple blank lines
-    result = re.sub(r'\n\n\n+', '\n\n', result)
-    
+    result = re.sub(r"\n\n\n+", "\n\n", result)
+
     # Clean up any pydantic.BaseModel or pydantic.Field references
-    result = re.sub(r'pydantic\.BaseModel', 'BaseModel', result)
-    result = re.sub(r'pydantic\.Field', 'Field', result)
-    
+    result = re.sub(r"pydantic\.BaseModel", "BaseModel", result)
+    result = re.sub(r"pydantic\.Field", "Field", result)
+
     # Ensure there's no leading/trailing whitespace
-    result = result.strip() + '\n'
-    
+    result = result.strip() + "\n"
+
     return result
 
 
 # 2. Mock HierarchicalPlan to return initial code instead of executing
 class MockHierarchicalPlan(HierarchicalPlan):
     """Mock plan that just returns the generated code instead of executing it."""
-    
+
     async def _initialize_and_run(self):
         """Override to just generate and return the plan code."""
         self.action_log.append("Generating initial plan code...")
         try:
             # Skip exploration for initial plan generation
             self._state = _HierarchicalPlanState.RUNNING
-            
+
             # Generate the initial plan
             self.plan_source_code = await self.planner._generate_initial_plan(
                 self.goal,
                 self.exploration_summary,
             )
             self.action_log.append("Initial plan generated successfully.")
-            
+
             # Post-process the generated code
             self.plan_source_code = post_process_generated_code(self.plan_source_code)
-            
+
             # Set the plan code as the final result and mark as completed
             self._state = _HierarchicalPlanState.COMPLETED
             self._set_final_result(self.plan_source_code)
-            
+
         except Exception as e:
             self._state = _HierarchicalPlanState.ERROR
             self._set_final_result(f"ERROR: Plan generation failed: {e}")
@@ -465,105 +477,112 @@ class MockHierarchicalPlan(HierarchicalPlan):
 # 3. Patch the planner to use our mock plan
 original_execute_task = HierarchicalPlanner._execute_task_and_return_handle
 
+
 async def patched_execute_task(self, task_description: str, **kwargs):
     """Return our mock plan instead of the real one."""
     return MockHierarchicalPlan(
         planner=self,
         goal=task_description,
-        parent_chat_context=kwargs.get('parent_chat_context'),
-        clarification_up_q=kwargs.get('clarification_up_q'),
-        clarification_down_q=kwargs.get('clarification_down_q'),
+        parent_chat_context=kwargs.get("parent_chat_context"),
+        clarification_up_q=kwargs.get("clarification_up_q"),
+        clarification_down_q=kwargs.get("clarification_down_q"),
         max_escalations=self.max_escalations,
         max_local_retries=self.max_local_retries,
     )
+
 
 HierarchicalPlanner._execute_task_and_return_handle = patched_execute_task
 
 # 4. Also patch the execute method to bypass the active task check for batch processing
 original_execute = HierarchicalPlanner.execute
 
+
 async def patched_execute(self, task_description: str, **kwargs):
     """Override execute to allow multiple sequential tasks in batch mode."""
     # Always clear any existing active task before starting a new one
     self._active_task = None
-    
+
     # Call the original execute method
     return await original_execute(self, task_description, **kwargs)
+
 
 HierarchicalPlanner.execute = patched_execute
 
 
 # ========== MAIN FUNCTIONALITY ==========
 
+
 async def generate_plan_for_task(
     task: str,
     task_id: str,
     output_dir: Path,
-    planner: HierarchicalPlanner
+    planner: HierarchicalPlanner,
 ) -> Dict[str, Any]:
     """
     Generate a plan for a single task and save it to a file.
-    
+
     Args:
         task: The task description
         task_id: Unique identifier for the task
         output_dir: Directory to save the generated plan
         planner: The HierarchicalPlanner instance
-        
+
     Returns:
         Dict with task_id, success status, and any error message
     """
     logger.info(f"Processing task {task_id}: {task[:100]}...")
-    
+
     result = {
         "task_id": task_id,
         "task": task,
         "success": False,
         "error": None,
         "has_stubs": False,
-        "output_file": None
+        "output_file": None,
     }
-    
+
     try:
         # Execute the task (which will just generate the plan)
         active_task = await planner.execute(task)
         plan_code = await active_task.result()
-        
+
         # Check if the plan contains NotImplementedError
         if "NotImplementedError" in plan_code:
             result["has_stubs"] = True
             logger.warning(f"Task {task_id}: Plan contains NotImplementedError stubs!")
-        
+
         # Save the plan to a file
         output_file = output_dir / f"{task_id}.py"
-        with open(output_file, 'w') as f:
+        with open(output_file, "w") as f:
             # Add header comment
-            f.write(f'"""\nGenerated plan for task: {task}\nTask ID: {task_id}\nGenerated at: {datetime.now().isoformat()}\n"""\n\n')
+            f.write(
+                f'"""\nGenerated plan for task: {task}\nTask ID: {task_id}\nGenerated at: {datetime.now().isoformat()}\n"""\n\n',
+            )
             f.write(plan_code)
-        
+
         result["success"] = True
         result["output_file"] = str(output_file)
         logger.info(f"Task {task_id}: Successfully generated plan → {output_file}")
-        
+
     except Exception as e:
         error_msg = str(e)
         result["error"] = error_msg
         logger.error(f"Task {task_id}: Failed to generate plan - {error_msg}")
-    
+
     return result
 
 
 async def process_jsonl_file(
     jsonl_path: Path,
     output_dir: Path,
-    limit: Optional[int] = None
+    limit: Optional[int] = None,
 ) -> None:
     """
     Process a JSONL file containing WebVoyager tasks.
-    
+
     Expected JSONL format:
     {"task_id": "123", "task": "Find a recipe..."}
-    
+
     Args:
         jsonl_path: Path to the JSONL file
         output_dir: Directory to save generated plans
@@ -571,47 +590,56 @@ async def process_jsonl_file(
     """
     # Create output directory
     output_dir.mkdir(parents=True, exist_ok=True)
-    
+
     # Create a summary file
     summary_file = output_dir / "generation_summary.json"
     results = []
-    
+
     # Read tasks from JSONL
     tasks = []
-    with open(jsonl_path, 'r') as f:
+    with open(jsonl_path, "r") as f:
         for i, line in enumerate(f):
             if limit and i >= limit:
                 break
             try:
                 data = json.loads(line.strip())
-                
+
                 # Handle different possible formats
                 # Format 1: {"task_id": "123", "task": "..."}
-                # Format 2: {"id": "123", "query": "...", ...}  
+                # Format 2: {"id": "123", "query": "...", ...}
                 # Format 3: {"id": "123", "ques": "...", "web": "...", ...}
-                
+
                 # Extract task_id
                 task_id = data.get("task_id") or data.get("id") or f"task_{i}"
-                
+
                 # Extract task description
-                task = data.get("task") or data.get("query") or data.get("ques") or data.get("description", "")
-                
+                task = (
+                    data.get("task")
+                    or data.get("query")
+                    or data.get("ques")
+                    or data.get("description", "")
+                )
+
                 # For patchedTasks.jsonl format, prepend the website context if available
                 if "web" in data and "ques" in data:
                     # This is the patchedTasks format
                     web_url = data["web"]
                     web_name = data.get("web_name", "")
                     # Enhance the task with website context
-                    task = f"Navigate to {web_url} ({web_name}) and {task}" if web_name else f"Navigate to {web_url} and {task}"
-                
+                    task = (
+                        f"Navigate to {web_url} ({web_name}) and {task}"
+                        if web_name
+                        else f"Navigate to {web_url} and {task}"
+                    )
+
                 if task:
                     tasks.append((task_id, task))
                     logger.info(f"Loaded task {task_id}: {task[:100]}...")
             except json.JSONDecodeError:
                 logger.warning(f"Skipping invalid JSON at line {i+1}")
-    
+
     logger.info(f"Loaded {len(tasks)} tasks from {jsonl_path}")
-    
+
     # Initialize planner once for all tasks
     planner = HierarchicalPlanner(
         headless=True,
@@ -619,39 +647,43 @@ async def process_jsonl_file(
         max_escalations=1,
         timeout=1000,
     )
-    
+
     try:
         # Process each task
         for i, (task_id, task) in enumerate(tasks):
             logger.info(f"\n{'='*60}")
             logger.info(f"Processing task {i+1}/{len(tasks)}")
             logger.info(f"{'='*60}")
-            
+
             result = await generate_plan_for_task(task, task_id, output_dir, planner)
             results.append(result)
-            
+
             # Clear the active task after each plan completes
             planner.clear_active_task()
-            
+
             # Save intermediate results
-            with open(summary_file, 'w') as f:
-                json.dump({
-                    "total_tasks": len(tasks),
-                    "processed": i + 1,
-                    "results": results
-                }, f, indent=2)
-            
+            with open(summary_file, "w") as f:
+                json.dump(
+                    {
+                        "total_tasks": len(tasks),
+                        "processed": i + 1,
+                        "results": results,
+                    },
+                    f,
+                    indent=2,
+                )
+
             # Small delay between tasks to avoid rate limiting
             await asyncio.sleep(1)
-            
+
     finally:
         await planner.close()
         await asyncio.sleep(0.5)
-    
+
     # Final summary
     successful = sum(1 for r in results if r["success"])
     with_stubs = sum(1 for r in results if r["has_stubs"])
-    
+
     logger.info(f"\n{'='*60}")
     logger.info(f"FINAL SUMMARY:")
     logger.info(f"Total tasks: {len(tasks)}")
@@ -664,47 +696,59 @@ async def process_jsonl_file(
 
 async def main():
     parser = argparse.ArgumentParser(
-        description="Generate initial HierarchicalPlanner plans. Supports multiple JSONL formats including WebVoyager tasks."
+        description="Generate initial HierarchicalPlanner plans. Supports multiple JSONL formats including WebVoyager tasks.",
     )
-    parser.add_argument("input", help="Task string or path to JSONL file (supports multiple formats)")
-    parser.add_argument("-o", "--output", default="evals/generated_plans", 
-                       help="Output directory for generated plans (default: evals/generated_plans)")
+    parser.add_argument(
+        "input",
+        help="Task string or path to JSONL file (supports multiple formats)",
+    )
+    parser.add_argument(
+        "-o",
+        "--output",
+        default="evals/generated_plans",
+        help="Output directory for generated plans (default: evals/generated_plans)",
+    )
     parser.add_argument("-i", "--task-id", help="Task ID (for single task mode)")
-    parser.add_argument("-l", "--limit", type=int, help="Limit number of tasks to process (for JSONL mode)")
-    
+    parser.add_argument(
+        "-l",
+        "--limit",
+        type=int,
+        help="Limit number of tasks to process (for JSONL mode)",
+    )
+
     args = parser.parse_args()
-    
+
     output_dir = Path(args.output)
-    
+
     # Check if input is a file or a task string
     input_path = Path(args.input)
-    if input_path.exists() and input_path.suffix == '.jsonl':
+    if input_path.exists() and input_path.suffix == ".jsonl":
         # Batch mode
         await process_jsonl_file(input_path, output_dir, args.limit)
     else:
         # Single task mode
         output_dir.mkdir(parents=True, exist_ok=True)
-        
+
         task = args.input
         task_id = args.task_id or f"task_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
-        
+
         planner = HierarchicalPlanner(
             headless=True,
             max_local_retries=2,
             max_escalations=1,
             timeout=1000,
         )
-        
+
         try:
             result = await generate_plan_for_task(task, task_id, output_dir, planner)
-            
+
             if result["success"]:
                 print(f"\n✅ Successfully generated plan → {result['output_file']}")
                 if result["has_stubs"]:
                     print("⚠️  Warning: Plan contains NotImplementedError stubs")
             else:
                 print(f"\n❌ Failed to generate plan: {result['error']}")
-                
+
         finally:
             await planner.close()
             await asyncio.sleep(0.5)
@@ -717,4 +761,4 @@ if __name__ == "__main__":
         print("\nShutdown requested...")
     except Exception as e:
         print(f"\nUnexpected error: {e}")
-        raise 
+        raise
