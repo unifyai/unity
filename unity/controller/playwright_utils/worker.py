@@ -151,7 +151,11 @@ class BrowserWorker(threading.Thread):
                     self.log(f"Failed to save annotated image: {e}")
 
             # Filter for interactive elements
-            return [e for e in result.get("parsed_content_list", [])]
+            return [
+                e
+                for e in result.get("parsed_content_list", [])
+                if e.get("interactivity", False)
+            ]
         except requests.exceptions.RequestException as e:
             self.log(f"OmniParser API error: {e}")
             return []
