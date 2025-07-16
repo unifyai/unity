@@ -294,3 +294,22 @@ class Conductor(BaseConductor):
             handle.result = _wrapped_result
 
         return handle
+
+    # ------------------------------------------------------------------ #
+    #  Reset helper (sandbox)                                            #
+    # ------------------------------------------------------------------ #
+    @staticmethod
+    def reset() -> None:
+        """
+        Cascade reset across all subordinate managers so that *all* domain
+        tables are recreated for the newly-activated project.
+        """
+        from ..contact_manager.contact_manager import ContactManager
+        from ..transcript_manager.transcript_manager import TranscriptManager
+        from ..knowledge_manager.knowledge_manager import KnowledgeManager
+        from ..task_scheduler.task_scheduler import TaskScheduler
+
+        ContactManager.reset()
+        TranscriptManager.reset()
+        KnowledgeManager.reset()
+        TaskScheduler.reset()

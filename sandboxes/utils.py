@@ -692,3 +692,21 @@ def activate_project(project_name: str) -> None:
     unify.activate(project_name)
     # Rebuild EventBus under the new project so its contexts live in `project_name`
     EVENT_BUS.reset()
+
+    # ── Also reset every domain manager so their tables are recreated in the new project ──
+    try:
+        from unity.contact_manager.contact_manager import ContactManager
+        from unity.transcript_manager.transcript_manager import TranscriptManager
+        from unity.knowledge_manager.knowledge_manager import KnowledgeManager
+        from unity.task_scheduler.task_scheduler import TaskScheduler
+        from unity.conductor.conductor import Conductor
+
+        ContactManager.reset()
+        TranscriptManager.reset()
+        KnowledgeManager.reset()
+        TaskScheduler.reset()
+        # Conductor.reset cascades but call for completeness
+        Conductor.reset()
+    except Exception:
+        # Defensive – sandbox should never hard-fail if any optional reset is missing
+        pass

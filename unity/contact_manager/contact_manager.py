@@ -889,3 +889,24 @@ class ContactManager(BaseContactManager):
             )
 
         return [ok[i] for i in range(len(contacts))]
+
+    # ------------------------------------------------------------------ #
+    #  Reset helper (sandbox)                                            #
+    # ------------------------------------------------------------------ #
+    @staticmethod
+    def reset() -> None:
+        """
+        Remove every *Contacts* context belonging to the **current** Unify
+        project so that the next ContactManager instantiation creates a fresh
+        table.  This mirrors `EventBus.reset()` and is called by the sandbox
+        `activate_project` helper.
+        """
+        import unify
+
+        for ctx in list(unify.get_contexts()):
+            if ctx.endswith("/Contacts") or ctx == "Contacts":
+                try:
+                    unify.delete_context(ctx)
+                except Exception:
+                    # Best-effort – context may already be gone
+                    pass
