@@ -151,6 +151,16 @@ class ControlPanel(tk.Tk):
         # for graying out when not in textbox
         self._key_buttons = {}
 
+        # Auto-scroll state management variables
+        self._scroll_mode = tk.IntVar(value=1)  # 0=up, 1=stop, 2=down
+        self._last_scroll_dir: str | None = None  # 'up' or 'down'
+        self._scroll_pending_target: int | None = None
+        self._scroll_toggle_guard = False  # re-entrancy flag
+        self._manual_stop_pending = False  # wait until worker confirms
+
+        # Layout management
+        self._reset_el_scroll = False
+
         self._build_widgets()
 
         self._worker = None  # will be set by set_worker()
@@ -942,7 +952,50 @@ class ControlPanel(tk.Tk):
         self._cmd_buttons[CMD_PRESS_KEY] = press_key_btn
 
         # ===================================================================
-        # SECTION 5: Scrolling Controls
+        # SECTION 5: LLM Command Interface
+        # ===================================================================
+        llm_frame = ttk.LabelFrame(
+            controls_frame,
+            text="LLM Command Interface",
+            padding="10",
+        )
+        llm_frame.pack(fill="x", padx=5, pady=5)
+        llm_frame.columnconfigure(2, weight=1)
+
+        # Mode selection
+        mode_frame = tk.Frame(llm_frame)
+        mode_frame.grid(row=0, column=0, sticky="w", padx=(0, 10))
+
+        tk.Label(mode_frame, text="Mode:").pack(side="left")
+        self._llm_mode = tk.StringVar(value="act")
+        rb_act = tk.Radiobutton(
+            mode_frame,
+            text="Act",
+            variable=self._llm_mode,
+            value="act",
+        )
+        rb_obs = tk.Radiobutton(
+            mode_frame,
+            text="Observe",
+            variable=self._llm_mode,
+            value="observe",
+        )
+        rb_act.pack(side="left", padx=(5, 0))
+        rb_obs.pack(side="left", padx=(2, 0))
+
+        # Loader icon
+        self.llm_loader = tk.Label(llm_frame, text="⏳")
+        self.llm_loader.grid(row=0, column=1, padx=5)
+        self.llm_loader.grid_remove()
+
+        # Command entry
+        self.cmd_var = tk.StringVar()
+        self.llm_entry = tk.Entry(llm_frame, textvariable=self.cmd_var)
+        self.llm_entry.grid(row=0, column=2, sticky="ew", padx=2)
+        self.llm_entry.bind("<Return>", lambda _e: self._send_llm_command())
+
+        # ===================================================================
+        # SECTION 6: Scrolling Controls
         # ===================================================================
         scroll_frame = ttk.LabelFrame(
             controls_frame,
@@ -1038,8 +1091,95 @@ class ControlPanel(tk.Tk):
         )
         self._cmd_buttons[CMD_CONT_SCROLLING] = continue_btn
 
+        # Advanced auto-scroll toggle (3-position vertical slider)
+        toggle_frame = tk.Frame(scroll_frame)
+        toggle_frame.pack(fill="x", pady=(10, 0))
+
+        tk.Label(toggle_frame, text="Auto-scroll Toggle:").pack(side="left")
+
+        # Speed entry for auto-scroll
+        self.scroll_speed_var = tk.StringVar(value="250")
+        speed_entry = tk.Entry(
+            toggle_frame,
+            textvariable=self.scroll_speed_var,
+            width=6,
+            justify="center",
+        )
+        speed_entry.pack(side="right", padx=(4, 0))
+
+        def _on_scroll_toggle(val):
+            if self._scroll_toggle_guard:
+                return  # ignore programmatic updates
+            try:
+                mode = int(float(val))
+            except Exception:
+                return
+
+            # Helper to sanitise speed input
+            def _speed_px() -> str:
+                val = self.scroll_speed_var.get().strip()
+                return val if val.isdigit() and int(val) > 0 else "250"
+
+            if mode == 0:
+                self._queue_command(f"{CMD_START_SCROLL_UP} {_speed_px()}")
+                self._last_scroll_dir = "up"
+            elif mode == 2:
+                self._queue_command(f"{CMD_START_SCROLL_DOWN} {_speed_px()}")
+                self._last_scroll_dir = "down"
+            else:
+                self._queue_command(CMD_STOP_SCROLLING)
+                self._manual_stop_pending = True
+
+            # Disable toggle until browser confirms
+            self.scroll_toggle.configure(state="disabled")
+            self._scroll_pending_target = mode
+
+        # horizontal slider with 3 notches
+        slider_frame = tk.Frame(toggle_frame)
+        slider_frame.pack(side="left", padx=(10, 0))
+
+        self.scroll_toggle = tk.Scale(
+            slider_frame,
+            from_=0,
+            to=2,
+            orient="vertical",
+            length=100,
+            showvalue=False,
+            variable=self._scroll_mode,
+            command=_on_scroll_toggle,
+        )
+        self.scroll_toggle.pack(side="left")
+
+        # Label markers – placed to the right of the vertical slider
+        lbls = tk.Frame(slider_frame)
+        lbls.pack(side="right", padx=(4, 0))
+        for row_idx, txt in enumerate(["▲", "■", "▼"]):
+            tk.Label(lbls, text=txt).grid(row=row_idx, column=0, sticky="n")
+            lbls.rowconfigure(row_idx, weight=1)
+
+        # Add step widgets for proper disable logic
+        self._step_widgets = [speed_entry, self.scroll_toggle]
+
         # ===================================================================
-        # SECTION 6: Dialog & Popup Management
+        # SECTION 7: Security & CAPTCHA
+        # ===================================================================
+        security_frame = ttk.LabelFrame(
+            controls_frame,
+            text="Security & CAPTCHA",
+            padding="10",
+        )
+        security_frame.pack(fill="x", padx=5, pady=5)
+
+        solve_captcha_btn = ttk.Button(
+            security_frame,
+            text="🔓 Solve CAPTCHA",
+            command=lambda: self._handle_input(CMD_SOLVE_CAPTCHA),
+        )
+        solve_captcha_btn.pack(fill="x", padx=2)
+        self._cmd_buttons[CMD_SOLVE_CAPTCHA] = solve_captcha_btn
+
+        # ===================================================================
+        # SECTION 8: Dialog & Popup Management
         # ===================================================================
         dialog_frame = ttk.LabelFrame(
             controls_frame,
@@ -1133,67 +1273,6 @@ class ControlPanel(tk.Tk):
         self._cmd_buttons[CMD_SELECT_POPUP] = select_popup_btn
 
         # ===================================================================
-        # SECTION 7: Security & CAPTCHA
-        # ===================================================================
-        security_frame = ttk.LabelFrame(
-            controls_frame,
-            text="Security & CAPTCHA",
-            padding="10",
-        )
-        security_frame.pack(fill="x", padx=5, pady=5)
-
-        solve_captcha_btn = ttk.Button(
-            security_frame,
-            text="🔓 Solve CAPTCHA",
-            command=lambda: self._handle_input(CMD_SOLVE_CAPTCHA),
-        )
-        solve_captcha_btn.pack(fill="x", padx=2)
-        self._cmd_buttons[CMD_SOLVE_CAPTCHA] = solve_captcha_btn
-
-        # ===================================================================
-        # SECTION 8: LLM Command Interface
-        # ===================================================================
-        llm_frame = ttk.LabelFrame(
-            controls_frame,
-            text="LLM Command Interface",
-            padding="10",
-        )
-        llm_frame.pack(fill="x", padx=5, pady=5)
-        llm_frame.columnconfigure(2, weight=1)
-
-        # Mode selection
-        mode_frame = tk.Frame(llm_frame)
-        mode_frame.grid(row=0, column=0, sticky="w", padx=(0, 10))
-
-        tk.Label(mode_frame, text="Mode:").pack(side="left")
-        self._llm_mode = tk.StringVar(value="act")
-        rb_act = tk.Radiobutton(
-            mode_frame,
-            text="Act",
-            variable=self._llm_mode,
-            value="act",
-        )
-        rb_obs = tk.Radiobutton(
-            mode_frame,
-            text="Observe",
-            variable=self._llm_mode,
-            value="observe",
-        )
-        rb_act.pack(side="left", padx=(5, 0))
-        rb_obs.pack(side="left", padx=(2, 0))
-
-        # Loader icon
-        self.llm_loader = tk.Label(llm_frame, text="⏳")
-        self.llm_loader.grid(row=0, column=1, padx=5)
-        self.llm_loader.grid_remove()
-
-        # Command entry
-        self.cmd_var = tk.StringVar()
-        self.llm_entry = tk.Entry(llm_frame, textvariable=self.cmd_var)
-        self.llm_entry.grid(row=0, column=2, sticky="ew", padx=2)
-        self.llm_entry.bind("<Return>", lambda _e: self._send_llm_command())
-
-        # ===================================================================
         # RIGHT PANEL →  Log, Actions, State (existing but improved)
         # ===================================================================
         self.right_panel = tk.Frame(main_paned)
@@ -1254,7 +1333,6 @@ class ControlPanel(tk.Tk):
         self._key_button_widgets = []
         self._element_buttons = []
         self._tab_row_buttons = []
-        self._step_widgets = []
 
         # Set up color scheme and styling
         r, g, b = [c // 256 for c in self.winfo_rgb(self.cget("bg"))]
@@ -1338,7 +1416,6 @@ class ControlPanel(tk.Tk):
         # Store references for later use
         self._el_canvas = el_canvas
         self._el_scroll = el_scroll
-        self._reset_el_scroll = False
 
     # Remove the old layout functions as they're no longer needed
     def _relayout_key_buttons(self):
@@ -1550,7 +1627,8 @@ class ControlPanel(tk.Tk):
         # ----- Step-scroll widgets ------------------------------------ NEW
         auto = self.state.get("auto_scroll", None)
         for w in getattr(self, "_step_widgets", []):
-            w.configure(state="disabled" if auto else "normal")
+            if hasattr(w, "configure"):
+                w.configure(state="disabled" if auto else "normal")
 
     # ──────────────────────── ACTIONS‑PANE HELPER ───────────────────────
     def _refresh_actions_list(self) -> None:
@@ -1632,6 +1710,21 @@ class ControlPanel(tk.Tk):
                     self._scroll_pending_target = None
                     if self._manual_stop_pending and expected is None:
                         self._manual_stop_pending = False
+
+            # Update toggle position to match current auto-scroll state
+            current_auto = self.state.get("auto_scroll")
+            if current_auto == "up":
+                target_pos = 0
+            elif current_auto == "down":
+                target_pos = 2
+            else:
+                target_pos = 1  # stopped
+
+            # Only update if different to avoid triggering callback
+            if self._scroll_mode.get() != target_pos:
+                self._scroll_toggle_guard = True
+                self._scroll_mode.set(target_pos)
+                self._scroll_toggle_guard = False
 
         # Lazy-create CAPTCHA banner so we don't depend on call order
         if not hasattr(self, "captcha_lbl"):
@@ -1727,6 +1820,8 @@ class ControlPanel(tk.Tk):
             if self._worker:
                 self._worker.stop()
                 self._worker.join(timeout=0.5)
+            if self._controller:
+                self._controller.stop()
         except Exception:
             pass
         self.destroy()
