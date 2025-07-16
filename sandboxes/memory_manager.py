@@ -374,7 +374,6 @@ async def _main_async() -> None:
             continue
 
         print(f"[log] Ingesting {len(transcript)} messages …")
-        _log_transcript(transcript)
 
         # Save as latest for manual commands
         last_transcript = transcript
