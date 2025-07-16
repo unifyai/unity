@@ -651,6 +651,9 @@ class TranscriptGenerator:
         • ``sender``    – speaker name / alias
         • ``content``   – raw text
         """
+
+        transcript: List[dict] = []
+
         _name_to_id: dict[str, int] = {}
 
         def _normalise_msg(raw: dict) -> dict:
@@ -670,6 +673,8 @@ class TranscriptGenerator:
             }
 
         def log_messages(messages: list[dict]) -> str:
+            nonlocal transcript
+            transcript.extend(messages)
             self._tm.log_messages([_normalise_msg(msg) for msg in messages])
             self._tm.join_published()
             return f"{len(messages)} messages logged"
@@ -691,6 +696,11 @@ class TranscriptGenerator:
         )
 
         await builder.create()
+
+        if not transcript:
+            raise RuntimeError("TranscriptGenerator produced an empty transcript.")
+
+        return transcript
 
 
 def activate_project(project_name: str, overwrite: bool = False) -> None:
