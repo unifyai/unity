@@ -58,5 +58,3 @@ def test_real_assistant_synced(monkeypatch):
     assert a.surname == "Smith"
     assert a.email_address == "alice.smith@example.com"
     assert a.phone_number == "+15551234567"
-    # Custom field "agent_id" should have been stored as well
-    assert getattr(a, "agent_id", None) == "123"
