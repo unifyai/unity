@@ -339,70 +339,69 @@ class TranscriptManager(BaseTranscriptManager):
 
     # Helpers #
     # --------#
-    def log_message(self, message: Union[Dict, Message]) -> None:
+    def log_messages(
+        self,
+        messages: Union[Union[Dict, Message], List[Union[Dict, Message]]],
+    ) -> None:
         """
-        Insert messages into the backing store.
+        Insert one or more messages into the backing store.
 
         Parameters
         ----------
-        message : dict | Message
-            Either a dictionary whose keys conform to the
-            :class:`unity.transcript_manager.types.message.Message` schema
-            (``medium``, ``sender_id``, ``receiver_id``, ``timestamp``,
-            ``content``, ``exchange_id`` …), or a Message object.
+        messages : dict | Message | list[dict | Message]
+            One or more messages to log. Each message can be either:
+            - A dictionary whose keys conform to the
+              :class:`unity.transcript_manager.types.message.Message` schema
+              (``medium``, ``sender_id``, ``receiver_id``, ``timestamp``,
+              ``content``, ``exchange_id`` …)
+            - A Message object
+            - A list containing any combination of the above
         """
         # Fast-return if nothing to log --------------------------------------
-        if not message:
+        if not messages:
             return
 
-        if isinstance(message, Message):
-            message = message.to_post_json()
+        if not isinstance(messages, list):
+            messages = [messages]
 
-        self._logger.log_create(
-            project=unify.active_project(),
-            context=self._messages_ctx,
-            params={},
-            entries=message,
-        )
-
-        # ────────────────────────────────  NEW: EventBus integration  ────────────────────────────────
-        # In addition to persisting the message in the backing store we now also emit a
-        # lightweight *"message"* event so that other components (e.g. MemoryManager)
-        # can react to new transcript entries **in real-time**.
+        msg_entries = [
+            msg.to_post_json() if isinstance(msg, Message) else msg for msg in messages
+        ]
+        messages = [
+            msg if isinstance(msg, Message) else Message(**messages) for msg in messages
+        ]
 
         from ..events.event_bus import EVENT_BUS, Event  # local import to avoid cycles
 
-        # Ensure we have a *Message* object for the payload so downstream code can rely on
-        # the schema.
-        if isinstance(message, Message):
-            payload_obj = message
-        else:
-            payload_obj = Message(**message)  # type: ignore[arg-type]
-
-        # Helper coroutine so we can schedule the publish call regardless of the current
-        # execution context (sync vs. async).
-        async def _publish() -> None:  # noqa: D401 – imperative helper name
+        async def _publish_message(msg: Message) -> None:
             try:
                 await EVENT_BUS.publish(
                     Event(
                         type="Message",
-                        timestamp=payload_obj.timestamp,
-                        payload=payload_obj,
+                        timestamp=msg.timestamp,
+                        payload=msg,
                     ),
                 )
             except Exception:
                 # Defensive – never propagate EventBus issues to caller
                 pass
 
-        try:
-            # If we're already inside an event-loop schedule the coroutine there …
-            loop = asyncio.get_running_loop()
-        except RuntimeError:
-            # … otherwise create a *temporary* loop to run it synchronously so the
-            # event doesn't get lost in purely synchronous contexts (e.g. tests).
-            asyncio.run(_publish())
-        else:
-            loop.create_task(_publish())
+        for entries, msg in zip(msg_entries, messages):
+            self._logger.log_create(
+                project=unify.active_project(),
+                context=self._messages_ctx,
+                params={},
+                entries=entries,
+            )
+
+            try:
+                # If we're already inside an event-loop schedule the coroutine there …
+                loop = asyncio.get_running_loop()
+                loop.create_task(_publish_message(msg))
+            except RuntimeError:
+                # … otherwise create a *temporary* loop to run it synchronously so the
+                # event doesn't get lost in purely synchronous contexts (e.g. tests).
+                asyncio.run(_publish_message(msg))
 
     def join_published(self):
         self._logger.join()

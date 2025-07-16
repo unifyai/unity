@@ -231,7 +231,7 @@ class ScenarioBuilder:
         msgs: List[tuple[int, int, datetime, str]],
     ) -> None:
         [
-            self.tm.log_message(
+            self.tm.log_messages(
                 Message(
                     medium=medium,
                     sender_id=s,
