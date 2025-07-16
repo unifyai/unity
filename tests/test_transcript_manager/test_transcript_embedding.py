@@ -22,7 +22,7 @@ async def test_transcript_embedding_semantic_search():
         Message(
             medium=random.choice(VALID_MEDIA),
             sender_id=1,
-            receiver_id=2,
+            receiver_ids=[2],
             timestamp="2025-05-19 12:00:00",
             content="Can you help me with my banking questions? I'm looking to set up a new account.",
             exchange_id=1,
@@ -30,7 +30,7 @@ async def test_transcript_embedding_semantic_search():
         Message(
             medium=random.choice(VALID_MEDIA),
             sender_id=2,
-            receiver_id=1,
+            receiver_ids=[1],
             timestamp="2025-05-19 12:00:01",
             content="I'd be happy to help with your banking needs! What type of account would you like to set up? Checking, savings, or investment?",
             exchange_id=1,
@@ -38,7 +38,7 @@ async def test_transcript_embedding_semantic_search():
         Message(
             medium=random.choice(VALID_MEDIA),
             sender_id=1,
-            receiver_id=2,
+            receiver_ids=[2],
             timestamp="2025-05-19 12:00:02",
             content="I'm interested in learning about Python programming, especially data science applications.",
             exchange_id=1,

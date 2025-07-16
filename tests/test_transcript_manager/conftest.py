@@ -232,7 +232,7 @@ class ScenarioBuilder:
                 Message(
                     medium=medium,
                     sender_id=s,
-                    receiver_id=r,
+                    receiver_ids=[r],
                     timestamp=ts,
                     content=txt,
                     exchange_id=ex_id,
