@@ -44,7 +44,7 @@ async def test_transcript_embedding_semantic_search():
             exchange_id=1,
         ),
     ]
-    [tm.log_message(m) for m in msgs]
+    [tm.log_messages(m) for m in msgs]
     tm.join_published()
 
     # Ensure that a lexical search for the word 'budgeting' returns no results

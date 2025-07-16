@@ -706,7 +706,7 @@ class CommsAgent:
                     else:
                         sender_id = self.assistant_number
                         receiver_id = self.user_number
-                self.transcript_manager.log_message(
+                self.transcript_manager.log_messages(
                     Message(
                         medium=medium,
                         sender_id=sender_id,

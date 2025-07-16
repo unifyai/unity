@@ -67,7 +67,7 @@ async def test_managermethod_events_for_summarize():
 
     # Seed a minimal transcript: single exchange containing two messages.
     ex_id = 999
-    tm.log_message(
+    tm.log_messages(
         {
             "medium": "email",
             "sender_id": 1,
@@ -78,7 +78,7 @@ async def test_managermethod_events_for_summarize():
             "message_id": 1,
         },
     )
-    tm.log_message(
+    tm.log_messages(
         {
             "medium": "email",
             "sender_id": 2,

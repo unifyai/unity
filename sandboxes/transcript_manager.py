@@ -91,7 +91,7 @@ async def _build_scenario(custom: Optional[str] = None) -> Optional[str]:
 
     def log_messages(messages: list[dict]) -> str:
         for msg in messages:
-            tm.log_message(msg)
+            tm.log_messages(msg)
         tm.join_published()
         return "messages logged successfully"
 

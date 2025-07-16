@@ -227,7 +227,7 @@ async def _main_async() -> None:
     # Helper: ingest a whole transcript list -----------------------------------
     def _log_transcript(messages: list[dict]):
         for m in messages:
-            tm.log_message(_normalise_msg(m))
+            tm.log_messages(_normalise_msg(m))
         tm.join_published()
 
     # Store the *latest* transcript so manual commands can reference it -------

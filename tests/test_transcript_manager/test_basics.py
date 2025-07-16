@@ -49,7 +49,7 @@ def _create_contacts():
 async def test_log_messages():
     tm = TranscriptManager()
     [
-        tm.log_message(
+        tm.log_messages(
             Message(
                 medium=random.choice(VALID_MEDIA),
                 sender_id=random.randint(0, 2),
@@ -75,7 +75,7 @@ async def test_get_messages():
 
     # log messages
     for i in range(10):
-        tm.log_message(
+        tm.log_messages(
             Message(
                 medium=random.choice(VALID_MEDIA),
                 sender_id=random.randint(0, 2),
@@ -148,7 +148,7 @@ async def test_summarize_exchanges():
             "Okay, no worries. Let's catch up again soon.",
         ],
     ):
-        tm.log_message(
+        tm.log_messages(
             Message(
                 medium="phone_call",
                 sender_id=i % 2,
@@ -167,7 +167,7 @@ async def test_summarize_exchanges():
             "Okay great, thanks!",
         ],
     ):
-        tm.log_message(
+        tm.log_messages(
             Message(
                 medium="email",
                 sender_id=i % 2,
@@ -185,7 +185,7 @@ async def test_summarize_exchanges():
             "Great! Excited to hear :)",
         ],
     ):
-        tm.log_message(
+        tm.log_messages(
             Message(
                 medium="whatsapp_message",
                 sender_id=(i + 1) % 2,
