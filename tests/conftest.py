@@ -247,6 +247,18 @@ def pytest_sessionstart(session):
     else:
         _using_unify_stub = False
 
+    # ------------------------------------------------------------------
+    #  Ensure the unity runtime is fully initialised for the test suite
+    # ------------------------------------------------------------------
+
+    import unity  # local import to avoid affecting stub installation order
+
+    try:
+        unity.init("UnityTests")
+    except Exception:
+        # Fallback to default project if UnityTests not available yet
+        unity.init()
+
 
 # Function to check if we're using the unify stub
 def is_using_unify_stub():
