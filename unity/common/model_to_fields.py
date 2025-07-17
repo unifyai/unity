@@ -64,8 +64,6 @@ def model_to_fields(model: type[BaseModel]) -> dict[str, dict[str, Any]]:
     unify_fields: dict[str, dict[str, Any]] = {}
 
     for name, field in fields_source.items():
-        if name.endswith("_id"):
-            continue  # special-case IDs → omit
 
         # Unwrap Optional / Union[..., None]
         annotation = field.annotation
