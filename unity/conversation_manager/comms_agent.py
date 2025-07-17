@@ -86,7 +86,7 @@ class CommsAgent:
         self.conv_context_length = conv_context_length
         self.events_listener_task = None
         self.events_queue = asyncio.Queue()
-        self.past_events = past_events
+        self.past_events = past_events or []
         self.pending_events = []
         self.inflight_events = []
 
@@ -660,7 +660,7 @@ class CommsAgent:
         self.assistant_number = payload["assistant_number"]
         self.user_name = payload["user_name"]
         self.user_number = payload["user_number"]
-        self.user_phone_number = payload["user_phone_number"]
+        self.user_phone_call_number = payload["user_phone_number"]
 
     async def initialize_redis(self):
         """Initialize Redis connection after server is ready"""
@@ -736,6 +736,7 @@ class CommsAgent:
         from unity.transcript_manager.types.message import Message
         from unity.events.event_bus import EVENT_BUS
 
+        unity.init()
         if self.transcript_manager is None:
             self.transcript_manager = TranscriptManager()
 
@@ -790,17 +791,10 @@ class CommsAgent:
         global ONGOING_CALL
         to = event.get("to")
         if event["event"]["event_name"] == "StartupEvent":
-            # set assistant details
+            # set assistant details and set unify key
             self.set_assistant_details(event["event"]["payload"])
-
-            # remove subscription for the startup topic
-            self.unsubscribe(["startup"])
-
-            # activate unify project
-            import unity
-
             os.environ["UNIFY_KEY"] = event["event"]["payload"]["api_key"]
-            unity.init()
+
         if event["event"]["event_name"] == "PhoneCallEndedEvent":
             if self.call_proc:
                 self.call_proc.kill()
