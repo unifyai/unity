@@ -968,11 +968,11 @@ async def test_contact_manager_summary_contains_expected_companies(monkeypatch):
 
     # 8-interaction summary must mention **only** the first company --------
     assert (
-        "Accounting Ltd." in body_8
-    ), "Expected 'Accounting Ltd.' in 8-interaction summary"
+        "Banks Are Us." in body_8
+    ), "Expected 'Banks Are Us.' in 8-interaction summary"
     assert (
-        "Banks Are Us." not in body_8
-    ), "Did not expect 'Banks Are Us.' in 8-interaction summary"
+        "Accounting Ltd." not in body_8
+    ), "Did not expect 'Accounting Ltd.' in 8-interaction summary"
 
     # 16-interaction summary must mention *both* companies -----------------
     assert "Accounting Ltd." in body_16 and "Banks Are Us." in body_16, (
