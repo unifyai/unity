@@ -1,5 +1,6 @@
+# -*- coding: utf-8 -*-
 """
-Tk‑based front‑end.
+Tk-based front-end.
 
 • All Playwright work is done in BrowserWorker (background thread)
 • This file now accepts *arbitrary English* in the command bar, sends it to
@@ -98,7 +99,7 @@ class _Tooltip:
         tw.wm_overrideredirect(True)
         tw.wm_geometry(f"+{x}+{y}")
         bg = "#ffffe0"
-        tk.Label(
+        tw_label = tk.Label(
             tw,
             text=self.text,
             bg=bg,
@@ -106,7 +107,8 @@ class _Tooltip:
             relief="solid",
             borderwidth=1,
             font=("tahoma", 8),
-        ).pack()
+        )
+        tw_label.pack()
 
     def _hide(self, *_):
         if hasattr(self, "_id"):
@@ -144,13 +146,25 @@ class ControlPanel(tk.Tk):
         self._llm_busy = False
         self._llm_dots = itertools.cycle([".", "..", "..."])
         self._llm_line_idx = None
+        self._llm_mode = None
 
         # for graying out when not in textbox
         self._key_buttons = {}
 
+        # Auto-scroll state management variables
+        self._scroll_mode = tk.IntVar(value=1)  # 0=up, 1=stop, 2=down
+        self._last_scroll_dir: str | None = None  # 'up' or 'down'
+        self._scroll_pending_target: int | None = None
+        self._scroll_toggle_guard = False  # re-entrancy flag
+        self._manual_stop_pending = False  # wait until worker confirms
+
+        # Layout management
+        self._reset_el_scroll = False
+
         self._build_widgets()
 
         self._worker = None  # will be set by set_worker()
+        self._controller = None  # will be set by set_controller()
 
         # first refreshes
         self._refresh_state_label()
@@ -257,7 +271,12 @@ class ControlPanel(tk.Tk):
         return idx
 
     # ─────────────────── background LLM thread ──────────────────────
-    def _start_llm_thread(self, user_text: str) -> None:
+    def _start_llm_thread(
+        self,
+        user_text: str,
+        *,
+        is_observation: bool | None = None,
+    ) -> None:
         """
         Fire a daemon thread that calls `primitive_to_browser_action`
         and drops (status, payload) tuples onto `_llm_resp_q`.
@@ -271,12 +290,13 @@ class ControlPanel(tk.Tk):
         self.llm_entry.configure(state="disabled")
         self.llm_loader.grid()
 
-        # Check if this is an observation request
-        is_observation = False
+        # Determine observation vs action.
+        if is_observation is None:
+            is_observation = user_text.strip().startswith(("observe:", "?"))
+
         observation_text = user_text
-        if user_text.strip().startswith(("observe:", "?")):
-            is_observation = True
-            # Remove the prefix
+        if is_observation:
+            # Strip any legacy prefixes, if present
             if user_text.strip().startswith("observe:"):
                 observation_text = user_text.strip()[8:].strip()
             elif user_text.strip().startswith("?"):
@@ -341,31 +361,70 @@ class ControlPanel(tk.Tk):
 
             try:
                 if is_observation:
-                    # Call ask_llm for observations
-                    context = {
-                        "state": state,
-                        "elements": buttons,
-                        "tabs": tabs,
-                    }
-                    result = ask_llm(
-                        observation_text,
-                        response_format=str,
-                        context=context,
-                        screenshots={"current_view": screenshot},
-                    )
+                    # Use Controller.observe method for proper context management
+                    if self._controller:
+                        import asyncio
+
+                        loop = asyncio.new_event_loop()
+                        asyncio.set_event_loop(loop)
+                        try:
+                            result = loop.run_until_complete(
+                                self._controller.observe(
+                                    observation_text,
+                                    response_format=str,
+                                ),
+                            )
+                        finally:
+                            loop.close()
+                    else:
+                        # Fallback to direct call if controller not available
+                        context = {
+                            "state": state,
+                            "elements": buttons,
+                            "tabs": tabs,
+                        }
+                        result = ask_llm(
+                            observation_text,
+                            response_format=str,
+                            context=context,
+                            screenshots={"current_view": screenshot},
+                        )
                     self._llm_stream_q.put("🔍 Observation succeeded")
                     # Package the observation result
                     self._llm_resp_q.put(("observation", result))
                 else:
-                    # Call text_to_browser_action for actions (existing code)
-                    resp = text_to_browser_action(
-                        user_text,
-                        screenshot,
-                        tabs=tabs,
-                        buttons=buttons,
-                        history=history,
-                        state=state,
-                    )
+                    # Use Controller.act method for proper context and history management
+                    if self._controller:
+                        import asyncio
+
+                        loop = asyncio.new_event_loop()
+                        asyncio.set_event_loop(loop)
+                        try:
+                            result = loop.run_until_complete(
+                                self._controller.act(user_text, multi_step_mode=False),
+                            )
+                            # Controller.act returns str or list[str], convert to expected format
+                            if isinstance(result, str):
+                                # Single command result
+                                resp = {"action": [result] if result else []}
+                            elif isinstance(result, list):
+                                # Multiple commands result
+                                resp = {"action": result}
+                            else:
+                                # Should not happen, but fallback
+                                resp = {"action": []}
+                        finally:
+                            loop.close()
+                    else:
+                        # Fallback to direct call if controller not available
+                        resp = text_to_browser_action(
+                            user_text,
+                            screenshot,
+                            tabs=tabs,
+                            buttons=buttons,
+                            history=history,
+                            state=state,
+                        )
                     self._llm_stream_q.put("🛈 LLM call succeeded")
                     self._llm_resp_q.put(("ok", resp))
             except Exception as exc:
@@ -504,14 +563,14 @@ class ControlPanel(tk.Tk):
         """Build the full Tk layout (GUI thread)."""
 
         # ----- main window -------------------------------------------------
-        self.title("Playwright helper")
-        self.geometry("1100x700")
+        self.title("Unity Browser Controller Sandbox")
+        self.geometry("1400x800")  # Wider to accommodate new controls
 
-        paned = tk.PanedWindow(self, orient=tk.HORIZONTAL, sashwidth=4)
-        paned.grid(row=0, column=0, columnspan=2, sticky="nsew")
+        # Main horizontal paned window
+        main_paned = tk.PanedWindow(self, orient=tk.HORIZONTAL, sashwidth=4)
+        main_paned.grid(row=0, column=0, columnspan=2, sticky="nsew")
         self.rowconfigure(0, weight=1)
-        self.columnconfigure(0, weight=1, minsize=250)
-        self.columnconfigure(1, weight=2)
+        self.columnconfigure(0, weight=1)
 
         # ── top‑right "X" button (absolute) ─────────────────────────────────
         close_btn = ttk.Button(
@@ -521,37 +580,30 @@ class ControlPanel(tk.Tk):
             style="Danger.TButton",
             command=self._on_exit,
         )
-        # place at the top‑right corner (6 px padding)
         close_btn.place(relx=1.0, rely=0.0, x=-6, y=6, anchor="ne")
-
-        # after all other widgets have been laid out, raise the button
-        self.after_idle(close_btn.lift)  # NEW — guarantees visibility
+        self.after_idle(close_btn.lift)
 
         # ===================================================================
-        # LEFT NOTEBOOK  →  Elements  |  Tabs
+        # LEFT PANEL →  Elements & Tabs (existing)
         # ===================================================================
-        self.left_wrapper = tk.Frame(paned, width=300)
+        self.left_wrapper = tk.Frame(main_paned, width=300)
         self.left_wrapper.pack_propagate(False)
-        paned.add(self.left_wrapper, minsize=200, stretch="always")
+        main_paned.add(self.left_wrapper, minsize=200, stretch="never")
 
         left_nb = ttk.Notebook(self.left_wrapper)
         left_nb.pack(fill="both", expand=True)
 
-        left_nb.columnconfigure(0, weight=1)
-        left_nb.rowconfigure(0, weight=1)
-
-        # frames
+        # Elements and Tabs frames (existing implementation)
         tab_elements_frame = ttk.Frame(left_nb)
         tab_tabs_frame = ttk.Frame(left_nb)
         left_nb.add(tab_elements_frame, text="Elements")
         left_nb.add(tab_tabs_frame, text="Tabs")
 
-        # expand frames
         for f in (tab_elements_frame, tab_tabs_frame):
             f.rowconfigure(0, weight=1)
             f.columnconfigure(0, weight=1)
 
-        # ── Elements pane – scrollable buttons ──────────────────────────
+        # Elements pane setup (existing)
         el_canvas = tk.Canvas(tab_elements_frame, highlightthickness=0)
         el_scroll = ttk.Scrollbar(
             tab_elements_frame,
@@ -563,22 +615,17 @@ class ControlPanel(tk.Tk):
         el_canvas.configure(yscrollcommand=el_scroll.set)
         el_rows.bind(
             "<Configure>",
-            lambda e: el_canvas.configure(
-                scrollregion=el_canvas.bbox("all"),
-            ),
+            lambda e: el_canvas.configure(scrollregion=el_canvas.bbox("all")),
         )
         el_canvas.grid(row=0, column=0, sticky="nsew")
         el_scroll.grid(row=0, column=1, sticky="ns")
         tab_elements_frame.rowconfigure(0, weight=1)
         tab_elements_frame.columnconfigure(0, weight=1)
-
         self._elements_rows_frame = el_rows
-
-        # ---- universal mouse‑wheel support --------------------------------
         self._bind_mousewheel(el_canvas, el_canvas)
         self._bind_mousewheel(el_rows, el_canvas)
 
-        # ── Tabs pane (scrollable rows with buttons) ────────────────────
+        # Tabs pane setup (existing)
         tab_canvas = tk.Canvas(tab_tabs_frame, highlightthickness=0)
         scroll_v = ttk.Scrollbar(
             tab_tabs_frame,
@@ -598,206 +645,228 @@ class ControlPanel(tk.Tk):
             tab_canvas.itemconfig("tabframe", width=event.width)
 
         tab_canvas.bind("<Configure>", resize_tabs)
-
         tab_canvas.configure(yscrollcommand=scroll_v.set)
         tab_rows.bind(
             "<Configure>",
             lambda e: tab_canvas.configure(scrollregion=tab_canvas.bbox("all")),
         )
-
         tab_canvas.grid(row=0, column=0, sticky="nsew")
         scroll_v.grid(row=0, column=1, sticky="ns")
         tab_tabs_frame.rowconfigure(0, weight=1)
         tab_tabs_frame.columnconfigure(0, weight=1)
-
         self._tab_rows_frame = tab_rows
-        tab_canvas.columnconfigure(0, weight=1)
-        self._el_canvas = el_canvas
-        self._el_scroll = el_scroll
-        self._reset_el_scroll = False
-
-        # ── colour‑aware style for element buttons ────────────────────
-        # Decide if the window background is "dark" or "light"
-        r, g, b = [c // 256 for c in self.winfo_rgb(self.cget("bg"))]  # 0‑255
-        brightness = 0.299 * r + 0.587 * g + 0.114 * b  # luminance
-        dark = brightness < 128
-
-        fg_light, fg_dark = "#000000", "#ffffff"
-        bg_idle_light, bg_idle_dark = "#f0f0f0", "#3a3a3a"
-        bg_active_light, bg_active_dark = "#dcdcdc", "#505050"
-
-        style = ttk.Style()
-
-        # centre text on buttons
-        style.configure("TButton", anchor="center")
-
-        # tighter vertical padding
-        style.configure(
-            "Element.TButton",
-            font=("Helvetica", 11),
-            anchor="w",
-            relief="flat",
-            padding=(2, 1),
-            foreground=fg_dark if dark else fg_light,
-            background=bg_idle_dark if dark else bg_idle_light,
-        )
-        style.map(
-            "Element.TButton",
-            background=[
-                ("active", bg_active_dark if dark else bg_active_light),
-                ("pressed", bg_active_dark if dark else bg_active_light),
-            ],
-            foreground=[("pressed", fg_dark if dark else fg_light)],
-        )
-
-        # ── Disabled look (same palette used by main scroll buttons) ──
-        disabled_bg = "#2a2a2a"
-        active_bg = "#505050"
-        idle_bg = bg_idle_dark if dark else bg_idle_light
-        active_fg = fg_dark if dark else fg_light
-
-        # Element‑list rows
-        style.map(
-            "Element.TButton",
-            foreground=[("disabled", "#888888"), ("!disabled", active_fg)],
-            background=[
-                ("disabled", disabled_bg),
-                ("active", active_bg),
-                ("pressed", active_bg),
-                ("!disabled", idle_bg),
-            ],
-        )
-
-        # Per‑tab "×" and Go buttons
-        style.configure(
-            "TabRow.TButton",
-            font=("Helvetica", 10, "bold"),
-            padding=(4, 2),
-            foreground=active_fg,
-            background=idle_bg,
-            relief="flat",
-        )
-        style.map(
-            "TabRow.TButton",
-            foreground=[("disabled", "#888888"), ("!disabled", active_fg)],
-            background=[
-                ("disabled", disabled_bg),
-                ("active", active_bg),
-                ("pressed", active_bg),
-                ("!disabled", idle_bg),
-            ],
-        )
-
-        # Disabled and enabled button styles
-        style.map(
-            "TButton",
-            foreground=[
-                ("disabled", "#888888"),
-                ("!disabled", "#ffffff"),
-            ],
-            background=[
-                ("disabled", "#2a2a2a"),
-                ("active", "#505050"),
-                ("!disabled", "#3a3a3a"),
-            ],
-        )
 
         # ===================================================================
-        #  ROW‑1  →  Search / URL bar
+        # CENTER PANEL →  Command Controls (NEW ORGANIZED LAYOUT)
         # ===================================================================
-        search = tk.Frame(self)
-        search.grid(row=1, column=0, columnspan=2, sticky="ew", padx=5, pady=(0, 4))
-        search.columnconfigure(1, weight=1)
+        center_frame = tk.Frame(main_paned, width=500)
+        center_frame.pack_propagate(False)
+        main_paned.add(center_frame, minsize=400, stretch="always")
 
-        tk.Label(search, text="Search / URL:").grid(row=0, column=0, sticky="w")
+        # Scrollable area for controls
+        controls_canvas = tk.Canvas(center_frame, highlightthickness=0)
+        controls_scroll = ttk.Scrollbar(
+            center_frame,
+            orient="vertical",
+            command=controls_canvas.yview,
+        )
+        controls_frame = ttk.Frame(controls_canvas)
 
+        controls_canvas.create_window((0, 0), window=controls_frame, anchor="nw")
+        controls_canvas.configure(yscrollcommand=controls_scroll.set)
+        controls_frame.bind(
+            "<Configure>",
+            lambda e: controls_canvas.configure(
+                scrollregion=controls_canvas.bbox("all"),
+            ),
+        )
+
+        controls_canvas.pack(side="left", fill="both", expand=True)
+        controls_scroll.pack(side="right", fill="y")
+
+        self._bind_mousewheel(controls_canvas, controls_canvas)
+        self._bind_mousewheel(controls_frame, controls_canvas)
+
+        # Initialize button registry
+        self._key_buttons = {}
+        self._cmd_buttons = {}
+
+        # ===================================================================
+        # SECTION 1: Browser Lifecycle
+        # ===================================================================
+        browser_frame = ttk.LabelFrame(
+            controls_frame,
+            text="Browser Control",
+            padding="10",
+        )
+        browser_frame.pack(fill="x", padx=5, pady=5)
+        browser_frame.columnconfigure(0, weight=1)
+        browser_frame.columnconfigure(1, weight=1)
+
+        open_browser_btn = ttk.Button(
+            browser_frame,
+            text="Open Browser",
+            command=lambda: self._handle_input(CMD_OPEN_BROWSER),
+        )
+        open_browser_btn.grid(row=0, column=0, sticky="ew", padx=2, pady=2)
+        self._cmd_buttons[CMD_OPEN_BROWSER] = open_browser_btn
+
+        close_browser_btn = ttk.Button(
+            browser_frame,
+            text="Close Browser",
+            command=lambda: self._handle_input(CMD_CLOSE_BROWSER),
+        )
+        close_browser_btn.grid(row=0, column=1, sticky="ew", padx=2, pady=2)
+        self._cmd_buttons[CMD_CLOSE_BROWSER] = close_browser_btn
+
+        # ===================================================================
+        # SECTION 2: Navigation & URL
+        # ===================================================================
+        nav_frame = ttk.LabelFrame(
+            controls_frame,
+            text="Navigation & URL",
+            padding="10",
+        )
+        nav_frame.pack(fill="x", padx=5, pady=5)
+        nav_frame.columnconfigure(1, weight=1)
+
+        # URL/Search row
+        tk.Label(nav_frame, text="URL/Search:").grid(
+            row=0,
+            column=0,
+            sticky="w",
+            padx=(0, 5),
+        )
         self.search_var = tk.StringVar()
-        self.search_mode = tk.StringVar(value="google")
-        self.search_entry = tk.Entry(search, textvariable=self.search_var)
-        self.search_entry.grid(row=0, column=1, sticky="ew")
+        self.search_entry = tk.Entry(nav_frame, textvariable=self.search_var)
+        self.search_entry.grid(row=0, column=1, sticky="ew", padx=2)
         self.search_entry.bind("<Return>", lambda _e: self._send_search())
 
+        # Search mode selection
+        self.search_mode = tk.StringVar(value="google")
         rb_google = tk.Radiobutton(
-            search,
+            nav_frame,
             text="Google",
             variable=self.search_mode,
             value="google",
         )
         rb_url = tk.Radiobutton(
-            search,
+            nav_frame,
             text="URL",
             variable=self.search_mode,
             value="url",
         )
-        rb_google.grid(row=0, column=2, padx=(6, 0))
-        rb_url.grid(row=0, column=3)
-        rb_google.select()
+        rb_google.grid(row=0, column=2, padx=2)
+        rb_url.grid(row=0, column=3, padx=2)
+
+        # Navigation buttons
+        nav_buttons_frame = tk.Frame(nav_frame)
+        nav_buttons_frame.grid(row=1, column=0, columnspan=4, sticky="ew", pady=(5, 0))
+        nav_buttons_frame.columnconfigure(0, weight=1)
+        nav_buttons_frame.columnconfigure(1, weight=1)
+        nav_buttons_frame.columnconfigure(2, weight=1)
+
+        back_btn = ttk.Button(
+            nav_buttons_frame,
+            text="← Back",
+            command=lambda: self._handle_input(CMD_BACK_NAV),
+        )
+        back_btn.grid(row=0, column=0, sticky="ew", padx=2)
+        self._cmd_buttons[CMD_BACK_NAV] = back_btn
+
+        forward_btn = ttk.Button(
+            nav_buttons_frame,
+            text="Forward →",
+            command=lambda: self._handle_input(CMD_FORWARD_NAV),
+        )
+        forward_btn.grid(row=0, column=1, sticky="ew", padx=2)
+        self._cmd_buttons[CMD_FORWARD_NAV] = forward_btn
+
+        reload_btn = ttk.Button(
+            nav_buttons_frame,
+            text="🔄 Reload",
+            command=lambda: self._handle_input(CMD_RELOAD_PAGE),
+        )
+        reload_btn.grid(row=0, column=2, sticky="ew", padx=2)
+        self._cmd_buttons[CMD_RELOAD_PAGE] = reload_btn
 
         # ===================================================================
-        #  ROW‑3  →  Enter‑text bar
+        # SECTION 3: Tab Management
         # ===================================================================
-        et = tk.Frame(self)
-        et.grid(row=3, column=0, columnspan=2, sticky="ew", padx=5, pady=(0, 6))
-        et.columnconfigure(1, weight=1)
+        tab_frame = ttk.LabelFrame(controls_frame, text="Tab Management", padding="10")
+        tab_frame.pack(fill="x", padx=5, pady=5)
+        tab_frame.columnconfigure(0, weight=1)
+        tab_frame.columnconfigure(1, weight=1)
 
-        tk.Label(et, text="Enter text:").grid(row=0, column=0, sticky="w")
+        new_tab_btn = ttk.Button(
+            tab_frame,
+            text="+ New Tab",
+            command=lambda: self._handle_input(CMD_NEW_TAB),
+        )
+        new_tab_btn.grid(row=0, column=0, sticky="ew", padx=2)
+        self._cmd_buttons[CMD_NEW_TAB] = new_tab_btn
+
+        close_tab_btn = ttk.Button(
+            tab_frame,
+            text="✕ Close Tab",
+            command=lambda: self._handle_input(CMD_CLOSE_THIS_TAB),
+        )
+        close_tab_btn.grid(row=0, column=1, sticky="ew", padx=2)
+        self._cmd_buttons[CMD_CLOSE_THIS_TAB] = close_tab_btn
+
+        # ===================================================================
+        # SECTION 4: Text Input & Keyboard
+        # ===================================================================
+        text_frame = ttk.LabelFrame(
+            controls_frame,
+            text="Text Input & Keyboard",
+            padding="10",
+        )
+        text_frame.pack(fill="x", padx=5, pady=5)
+
+        # Text entry row
+        text_entry_frame = tk.Frame(text_frame)
+        text_entry_frame.pack(fill="x", pady=(0, 5))
+        text_entry_frame.columnconfigure(1, weight=1)
+
+        tk.Label(text_entry_frame, text="Enter text:").grid(
+            row=0,
+            column=0,
+            sticky="w",
+            padx=(0, 5),
+        )
         self.enter_var = tk.StringVar()
-        self.enter_text_box = tk.Entry(et, textvariable=self.enter_var)
-        self.enter_text_box.grid(row=0, column=1, sticky="ew")
+        self.enter_text_box = tk.Entry(text_entry_frame, textvariable=self.enter_var)
+        self.enter_text_box.grid(row=0, column=1, sticky="ew", padx=2)
         self.enter_text_box.bind("<Return>", lambda _e: self._send_enter_text())
 
-        # ===================================================================
-        #  ROW‑4  →  Key‑buttons bar (stack horizontally)
-        # ===================================================================
+        # Keyboard action buttons
+        keyboard_frame = tk.Frame(text_frame)
+        keyboard_frame.pack(fill="x")
 
-        # Create frame
-        self.keyrow = tk.Frame(self)
-        self.keyrow.bind("<Configure>", lambda e: self._relayout_key_buttons())
-        self.keyrow.grid(
-            row=4,
-            column=0,
-            columnspan=2,
-            sticky="ew",
-            padx=5,
-            pady=(0, 8),
-        )
-
-        # Store buttons in a list
-        self._key_buttons = {}
-        self._key_button_widgets = []
-
-        key_cmds = [
+        # Row 1: Basic actions
+        basic_keys = [
             ("Enter", CMD_PRESS_ENTER),
             ("Backspace", CMD_PRESS_BACKSPACE),
             ("Delete", CMD_PRESS_DELETE),
-            (CMD_CLICK_OUT, CMD_CLICK_OUT),
+            ("Click Out", CMD_CLICK_OUT),
         ]
 
-        for label, cmd in key_cmds:
-            b = ttk.Button(
-                self.keyrow,
+        for i, (label, cmd) in enumerate(basic_keys):
+            btn = ttk.Button(
+                keyboard_frame,
                 text=label,
                 width=12,
                 command=lambda c=cmd: self._handle_input(c),
             )
-            self._key_buttons[cmd] = b
-            self._key_button_widgets.append(b)
+            btn.grid(row=0, column=i, sticky="ew", padx=1, pady=1)
+            self._key_buttons[cmd] = btn
+            keyboard_frame.columnconfigure(i, weight=1)
 
-        # second row  (line break)
-        self.keyrow2 = tk.Frame(self)
-        self.keyrow2.bind("<Configure>", lambda e: self._relayout_arrow_buttons())
-        self.keyrow2.grid(
-            row=5,
-            column=0,
-            columnspan=2,
-            sticky="ew",
-            padx=5,
-            pady=(0, 8),
-        )
+        # Row 2: Arrow keys
+        arrow_frame = tk.Frame(keyboard_frame)
+        arrow_frame.grid(row=1, column=0, columnspan=4, sticky="ew", pady=(5, 0))
 
-        self._arrow_button_widgets = []
-
-        # Arrow navigation only
         arrow_cmds = [
             ("←", CMD_CURSOR_LEFT),
             ("→", CMD_CURSOR_RIGHT),
@@ -805,323 +874,238 @@ class ControlPanel(tk.Tk):
             ("↓", CMD_CURSOR_DOWN),
         ]
 
-        for label, cmd in arrow_cmds:
-            b = ttk.Button(
-                self.keyrow2,
+        for i, (label, cmd) in enumerate(arrow_cmds):
+            btn = ttk.Button(
+                arrow_frame,
                 text=label,
                 width=12,
                 command=lambda c=cmd: self._handle_input(c),
             )
-            self._key_buttons[cmd] = b
-            self._arrow_button_widgets.append(b)
+            btn.grid(row=0, column=i, sticky="ew", padx=1, pady=1)
+            self._key_buttons[cmd] = btn
+            arrow_frame.columnconfigure(i, weight=1)
 
-        # ── Third row: Modifier hold/release keys ----------------
-        self._modifier_button_widgets = []
+        # Row 3: Modifier keys
+        modifier_frame = tk.Frame(keyboard_frame)
+        modifier_frame.grid(row=2, column=0, columnspan=4, sticky="ew", pady=(5, 0))
+
         modifier_cmds = [
             ("Shift ⬇", CMD_HOLD_SHIFT),
             ("Shift ⬆", CMD_RELEASE_SHIFT),
             ("Ctrl ⬇", CMD_HOLD_CTRL),
             ("Ctrl ⬆", CMD_RELEASE_CTRL),
+        ]
+
+        for i, (label, cmd) in enumerate(modifier_cmds):
+            btn = ttk.Button(
+                modifier_frame,
+                text=label,
+                width=12,
+                command=lambda c=cmd: self._handle_input(c),
+            )
+            btn.grid(row=0, column=i, sticky="ew", padx=1, pady=1)
+            self._key_buttons[cmd] = btn
+            modifier_frame.columnconfigure(i, weight=1)
+
+        # Row 4: Additional modifiers
+        modifier_frame2 = tk.Frame(keyboard_frame)
+        modifier_frame2.grid(row=3, column=0, columnspan=4, sticky="ew", pady=(5, 0))
+
+        modifier_cmds2 = [
             ("Alt ⬇", CMD_HOLD_ALT),
             ("Alt ⬆", CMD_RELEASE_ALT),
             ("Cmd ⬇", CMD_HOLD_CMD),
             ("Cmd ⬆", CMD_RELEASE_CMD),
         ]
-        for label, cmd in modifier_cmds:
-            b = ttk.Button(
-                self.keyrow2,
+
+        for i, (label, cmd) in enumerate(modifier_cmds2):
+            btn = ttk.Button(
+                modifier_frame2,
                 text=label,
                 width=12,
                 command=lambda c=cmd: self._handle_input(c),
             )
-            self._key_buttons[cmd] = b
-            self._modifier_button_widgets.append(b)
+            btn.grid(row=0, column=i, sticky="ew", padx=1, pady=1)
+            self._key_buttons[cmd] = btn
+            modifier_frame2.columnconfigure(i, weight=1)
 
-        # ===================================================================
-        #  ROW‑6  →  Bottom bar (Tab controls)
-        # ===================================================================
-        bottom_bar = tk.Frame(self)
-        bottom_bar.grid(
-            row=6,
-            column=0,
-            columnspan=2,
-            sticky="ew",
-            padx=5,
-            pady=(0, 8),
+        # Custom key press
+        custom_key_frame = tk.Frame(text_frame)
+        custom_key_frame.pack(fill="x", pady=(5, 0))
+        custom_key_frame.columnconfigure(1, weight=1)
+
+        self.press_key_var = tk.StringVar(value="")
+        press_key_btn = ttk.Button(
+            custom_key_frame,
+            text="Press Key:",
+            width=15,
+            command=lambda: self._send_press_key(),
         )
-
-        bottom_bar.columnconfigure(0, weight=1)
-        bottom_bar.columnconfigure(1, weight=1)
-        bottom_bar.columnconfigure(2, weight=1)
-        bottom_bar.columnconfigure(3, weight=1)
-        bottom_bar.columnconfigure(4, weight=1)
-
-        # Ensure command-button registry exists before any buttons are created below.
-        self._cmd_buttons: dict[str, ttk.Button] = {}
-
-        def _mk_tab_btn(col: int, txt: str, cmd: str):
-            b = ttk.Button(
-                bottom_bar,
-                text=txt,
-                width=12,
-                command=lambda: self._handle_input(cmd),
-            )
-            b.grid(row=0, column=col, sticky="ew", padx=2)
-            self._cmd_buttons[cmd] = b
-
-        _mk_tab_btn(0, "New Tab", CMD_NEW_TAB)
-        _mk_tab_btn(1, "Close Tab", CMD_CLOSE_THIS_TAB)
-        _mk_tab_btn(2, "Back", CMD_BACK_NAV)
-        _mk_tab_btn(3, "Forward", CMD_FORWARD_NAV)
-        _mk_tab_btn(4, "Reload", CMD_RELOAD_PAGE)
-
-        # ===================================================================
-        #  ROW-7  →  Dialog bar (JS pop-ups)
-        # ===================================================================
-        dialog_bar = tk.Frame(self)
-        dialog_bar.grid(
-            row=7,
-            column=0,
-            columnspan=2,
-            sticky="ew",
-            padx=5,
-            pady=(0, 6),
+        press_key_btn.grid(row=0, column=0, sticky="w", padx=(0, 5))
+        press_key_entry = tk.Entry(
+            custom_key_frame,
+            textvariable=self.press_key_var,
+            width=10,
         )
+        press_key_entry.grid(row=0, column=1, sticky="w", padx=2)
+        press_key_entry.bind("<Return>", lambda _e: self._send_press_key())
+        self._cmd_buttons[CMD_PRESS_KEY] = press_key_btn
 
-        dialog_bar.columnconfigure(1, weight=1)  # message / entry stretch
+        # ===================================================================
+        # SECTION 5: LLM Command Interface
+        # ===================================================================
+        llm_frame = ttk.LabelFrame(
+            controls_frame,
+            text="LLM Command Interface",
+            padding="10",
+        )
+        llm_frame.pack(fill="x", padx=5, pady=5)
+        llm_frame.columnconfigure(2, weight=1)
 
-        self.dialog_msg_var = tk.StringVar()
-        tk.Label(dialog_bar, textvariable=self.dialog_msg_var, anchor="w").grid(
+        # Mode selection
+        mode_frame = tk.Frame(llm_frame)
+        mode_frame.grid(row=0, column=0, sticky="w", padx=(0, 10))
+
+        tk.Label(mode_frame, text="Mode:").pack(side="left")
+        self._llm_mode = tk.StringVar(value="act")
+        rb_act = tk.Radiobutton(
+            mode_frame,
+            text="Act",
+            variable=self._llm_mode,
+            value="act",
+        )
+        rb_obs = tk.Radiobutton(
+            mode_frame,
+            text="Observe",
+            variable=self._llm_mode,
+            value="observe",
+        )
+        rb_act.pack(side="left", padx=(5, 0))
+        rb_obs.pack(side="left", padx=(2, 0))
+
+        # Loader icon
+        self.llm_loader = tk.Label(llm_frame, text="⏳")
+        self.llm_loader.grid(row=0, column=1, padx=5)
+        self.llm_loader.grid_remove()
+
+        # Command entry
+        self.cmd_var = tk.StringVar()
+        self.llm_entry = tk.Entry(llm_frame, textvariable=self.cmd_var)
+        self.llm_entry.grid(row=0, column=2, sticky="ew", padx=2)
+        self.llm_entry.bind("<Return>", lambda _e: self._send_llm_command())
+
+        # ===================================================================
+        # SECTION 6: Scrolling Controls
+        # ===================================================================
+        scroll_frame = ttk.LabelFrame(
+            controls_frame,
+            text="Scrolling Controls",
+            padding="10",
+        )
+        scroll_frame.pack(fill="x", padx=5, pady=5)
+
+        # Manual scroll controls
+        manual_scroll_frame = tk.Frame(scroll_frame)
+        manual_scroll_frame.pack(fill="x", pady=(0, 5))
+        manual_scroll_frame.columnconfigure(1, weight=1)
+
+        tk.Label(manual_scroll_frame, text="Scroll pixels:").grid(
             row=0,
             column=0,
             sticky="w",
+            padx=(0, 5),
         )
-
-        # Entry for prompt text (enabled only for prompt dialogs)
-        self.dialog_input_var = tk.StringVar()
-        self.dialog_entry = tk.Entry(
-            dialog_bar,
-            textvariable=self.dialog_input_var,
-            width=24,
-        )
-        self.dialog_entry.grid(row=0, column=1, sticky="ew", padx=(6, 4))
-
-        self.dialog_accept_btn = ttk.Button(
-            dialog_bar,
-            text="Accept",
-            width=8,
-            command=self._accept_dialog,
-        )
-        self.dialog_accept_btn.grid(row=0, column=2, padx=(2, 2))
-
-        self.dialog_dismiss_btn = ttk.Button(
-            dialog_bar,
-            text="Dismiss",
-            width=8,
-            command=lambda: self._queue_command(CMD_DISMISS_DIALOG),
-        )
-        self.dialog_dismiss_btn.grid(row=0, column=3, padx=(2, 0))
-
-        # start disabled
-        for b in (self.dialog_accept_btn, self.dialog_dismiss_btn):
-            b.configure(state="disabled")
-        self.dialog_entry.configure(state="disabled")
-
-        # ===================================================================
-        #  ROW-8  →  LLM Command bar (shifted down)
-        # ===================================================================
-        bar = tk.Frame(self)
-        bar.grid(
-            row=8,
-            column=0,
-            columnspan=2,
-            sticky="ew",
-            padx=5,
-            pady=(0, 8),
-        )
-        bar.columnconfigure(2, weight=1)
-
-        # Create a frame for the label and help icon
-        label_frame = tk.Frame(bar)
-        label_frame.grid(row=0, column=0, sticky="w")
-
-        tk.Label(label_frame, text="LLM Command:").grid(row=0, column=0, sticky="w")
-
-        # Add help text as a small label
-        help_text = tk.Label(
-            label_frame,
-            text="(use 'observe:' or '?' prefix for questions)",
-            font=("Helvetica", 8),
-            fg="gray",
-        )
-        help_text.grid(row=0, column=1, padx=(4, 0), sticky="w")
-
-        # Loader icon (hourglass) – hidden until LLM busy
-        self.llm_loader = tk.Label(bar, text="⏳")
-        self.llm_loader.grid(row=0, column=1, padx=(4, 0))
-        self.llm_loader.grid_remove()
-
-        self.cmd_var = tk.StringVar()
-        self.llm_entry = tk.Entry(bar, textvariable=self.cmd_var)
-        self.llm_entry.grid(row=0, column=2, sticky="ew")
-        self.llm_entry.bind("<Return>", lambda _e: self._send_llm_command())
-
-        # ================================================================
-        # RIGHT‑HAND PANEL →  notebook(Log/Actions) + state + buttons
-        # ================================================================
-        self.right_panel = tk.Frame(paned)
-        paned.add(self.right_panel, stretch="always")
-        right = self.right_panel
-        right.rowconfigure(0, weight=1)
-        right.rowconfigure(1, weight=0)
-        right.rowconfigure(2, weight=0)
-        right.columnconfigure(0, weight=1)
-
-        # Log / Actions notebook
-        note = ttk.Notebook(right)
-        note.grid(row=0, column=0, sticky="nsew", padx=5, pady=5)
-        tab_log = ttk.Frame(note)
-        tab_actions = ttk.Frame(note)
-        tab_llm = ttk.Frame(note)
-        note.add(tab_log, text="Log")
-        note.add(tab_actions, text="Valid Actions")
-        note.add(tab_llm, text="LLM Stream")
-
-        self.log = scrolledtext.ScrolledText(tab_log, state="disabled")
-        self.log.pack(fill="both", expand=True)
-
-        # Configure text tags for different types of messages
-        self.log.tag_config("observation", foreground="#00BFFF", font=("Helvetica", 10))
-        self.log.tag_config("llm", foreground="#FFD700")
-
-        self.act_box = scrolledtext.ScrolledText(tab_actions, state="disabled")
-        self.act_box.pack(fill="both", expand=True)
-        self._last_actions_txt = ""  # cache for anti-jitter
-
-        # LLM streaming output box
-        self.llm_stream_box = scrolledtext.ScrolledText(tab_llm, state="disabled")
-        self.llm_stream_box.pack(fill="both", expand=True)
-
-        # browser‑state read‑out
-        self.state_var = tk.StringVar()
-        self.state_lbl = tk.Label(
-            right,
-            textvariable=self.state_var,
-            justify="left",
-            anchor="w",
-            font=("Consolas", 9),
-        )
-        self.state_lbl.grid(row=1, column=0, sticky="nsew", padx=5)
-
-        # control buttons
-        btns = tk.Frame(right)
-        btns.grid(row=2, column=0, padx=5, pady=5, sticky="nsew")
-        for i in range(2):
-            btns.columnconfigure(i, weight=1)
-
-        # ---------------------------------------------------------------
-        # _cmd_buttons already initialised above
-        # ---------------------------------------------------------------
-
-        # ── SCROLL CONTROLS BLOCK (step scroll + auto-scroll toggle) ----
-        scroll_block = tk.Frame(btns)
-        scroll_block.grid(row=0, column=0, columnspan=2, sticky="nsew")
-
-        # ── Left half: Press-Key control --------------------------------
-        pk_frame = tk.Frame(scroll_block)
-        pk_frame.grid(row=0, column=0, sticky="n")
-        # Entry for key character/code
-        self.press_key_var = tk.StringVar(value="")
-        # Button to execute press_key command
-        press_key_btn = ttk.Button(
-            pk_frame,
-            text="Press Key",
-            width=10,
-            command=lambda: self._handle_input(f"press_key {self.press_key_var.get()}"),
-        )
-        press_key_btn.grid(row=0, column=0, sticky="w")
-        # Entry placed to the right of the button
-        press_key_entry = tk.Entry(
-            pk_frame,
-            textvariable=self.press_key_var,
-            width=6,
-            justify="center",
-        )
-        press_key_entry.grid(row=0, column=1, sticky="w", padx=(4, 0))
-        # register for enable/disable logic
-        self._cmd_buttons[CMD_PRESS_KEY] = press_key_btn
-
-        # ── Right half: step scroll + toggle ---------------------------
-
         self.scroll_px_var = tk.StringVar(value="100")
-
-        step = tk.Frame(scroll_block)
-        step.grid(row=0, column=1, sticky="n", padx=(8, 0))
-        step.rowconfigure(1, weight=1)
+        px_entry = tk.Entry(
+            manual_scroll_frame,
+            textvariable=self.scroll_px_var,
+            width=8,
+        )
+        px_entry.grid(row=0, column=1, sticky="w", padx=2)
 
         def _step_pixels() -> str:
             val = self.scroll_px_var.get().strip()
             return val if val.isdigit() and int(val) > 0 else "100"
 
-        up_btn = ttk.Button(
-            step,
-            text="▲",
-            width=4,
+        scroll_up_btn = ttk.Button(
+            manual_scroll_frame,
+            text="▲ Scroll Up",
             command=lambda: self._handle_input(
                 CMD_SCROLL_UP.replace("*", _step_pixels()),
             ),
         )
-        up_btn.grid(row=0, column=0, sticky="ew")
+        scroll_up_btn.grid(row=0, column=2, sticky="ew", padx=2)
 
-        px_entry = tk.Entry(
-            step,
-            textvariable=self.scroll_px_var,
-            width=6,
-            justify="center",
-        )
-        px_entry.grid(row=1, column=0, sticky="ew", pady=2)
-
-        down_btn = ttk.Button(
-            step,
-            text="▼",
-            width=4,
+        scroll_down_btn = ttk.Button(
+            manual_scroll_frame,
+            text="▼ Scroll Down",
             command=lambda: self._handle_input(
                 CMD_SCROLL_DOWN.replace("*", _step_pixels()),
             ),
         )
-        down_btn.grid(row=2, column=0, sticky="ew")
+        scroll_down_btn.grid(row=0, column=3, sticky="ew", padx=2)
 
-        self._step_widgets = [up_btn, down_btn, px_entry]
+        # Auto-scroll controls
+        auto_scroll_frame = tk.Frame(scroll_frame)
+        auto_scroll_frame.pack(fill="x")
+        auto_scroll_frame.columnconfigure(0, weight=1)
+        auto_scroll_frame.columnconfigure(1, weight=1)
+        auto_scroll_frame.columnconfigure(2, weight=1)
 
-        # --- Three-position auto-scroll toggle -------------------------
-        toggle_frame = tk.Frame(scroll_block)
-        toggle_frame.grid(row=0, column=2, sticky="n", padx=(8, 0))
+        start_up_btn = ttk.Button(
+            auto_scroll_frame,
+            text="⏫ Start Up",
+            command=lambda: self._handle_input(CMD_START_SCROLL_UP),
+        )
+        start_up_btn.grid(row=0, column=0, sticky="ew", padx=2)
+        self._cmd_buttons[CMD_START_SCROLL_UP] = start_up_btn
 
-        scroll_block.columnconfigure(0, weight=1)  # keypad
-        scroll_block.columnconfigure(1, weight=1)  # step
-        scroll_block.columnconfigure(2, weight=1)  # toggle
+        stop_scroll_btn = ttk.Button(
+            auto_scroll_frame,
+            text="⏹ Stop",
+            command=lambda: self._handle_input(CMD_STOP_SCROLLING),
+        )
+        stop_scroll_btn.grid(row=0, column=1, sticky="ew", padx=2)
+        self._cmd_buttons[CMD_STOP_SCROLLING] = stop_scroll_btn
 
-        # Input field for auto-scroll speed (pixels per second)
+        start_down_btn = ttk.Button(
+            auto_scroll_frame,
+            text="⏬ Start Down",
+            command=lambda: self._handle_input(CMD_START_SCROLL_DOWN),
+        )
+        start_down_btn.grid(row=0, column=2, sticky="ew", padx=2)
+        self._cmd_buttons[CMD_START_SCROLL_DOWN] = start_down_btn
+
+        continue_btn = ttk.Button(
+            auto_scroll_frame,
+            text="▶ Continue",
+            command=lambda: self._handle_input(CMD_CONT_SCROLLING),
+        )
+        continue_btn.grid(
+            row=1,
+            column=0,
+            columnspan=3,
+            sticky="ew",
+            padx=2,
+            pady=(2, 0),
+        )
+        self._cmd_buttons[CMD_CONT_SCROLLING] = continue_btn
+
+        # Advanced auto-scroll toggle (3-position vertical slider)
+        toggle_frame = tk.Frame(scroll_frame)
+        toggle_frame.pack(fill="x", pady=(10, 0))
+
+        tk.Label(toggle_frame, text="Auto-scroll Toggle:").pack(side="left")
+
+        # Speed entry for auto-scroll
         self.scroll_speed_var = tk.StringVar(value="250")
-
         speed_entry = tk.Entry(
             toggle_frame,
             textvariable=self.scroll_speed_var,
             width=6,
             justify="center",
         )
-        # place speed entry to the right of scroll toggle and labels
-        speed_entry.grid(row=0, column=2, sticky="w", padx=(4, 0))
-
-        # IntVar: 0 = up, 1 = stop, 2 = down  (middle is default)
-        self._scroll_mode = tk.IntVar(value=1)
-        # Track last non-stop direction to flip on successive blank-clicks
-        self._last_scroll_dir: str | None = None  # 'up' or 'down'
-        # Pending slider state awaiting browser confirmation (0/1/2)
-        self._scroll_pending_target: int | None = None
-
-        self._scroll_toggle_guard = False  # re-entrancy flag
-        self._manual_stop_pending = False  # wait until worker confirms
+        speed_entry.pack(side="right", padx=(4, 0))
 
         def _on_scroll_toggle(val):
             if self._scroll_toggle_guard:
@@ -1151,8 +1135,11 @@ class ControlPanel(tk.Tk):
             self._scroll_pending_target = mode
 
         # horizontal slider with 3 notches
+        slider_frame = tk.Frame(toggle_frame)
+        slider_frame.pack(side="left", padx=(10, 0))
+
         self.scroll_toggle = tk.Scale(
-            toggle_frame,
+            slider_frame,
             from_=0,
             to=2,
             orient="vertical",
@@ -1161,74 +1148,295 @@ class ControlPanel(tk.Tk):
             variable=self._scroll_mode,
             command=_on_scroll_toggle,
         )
-        self.scroll_toggle.grid(row=0, column=0, sticky="ew")
-
-        # grid the speed entry just below slider and labels
-        speed_entry.grid(row=0, column=2, sticky="w", padx=(4, 0))
+        self.scroll_toggle.pack(side="left")
 
         # Label markers – placed to the right of the vertical slider
-        lbls = tk.Frame(toggle_frame)
-        lbls.grid(row=0, column=1, sticky="ns", padx=(4, 0))
+        lbls = tk.Frame(slider_frame)
+        lbls.pack(side="right", padx=(4, 0))
         for row_idx, txt in enumerate(["▲", "■", "▼"]):
             tk.Label(lbls, text=txt).grid(row=row_idx, column=0, sticky="n")
             lbls.rowconfigure(row_idx, weight=1)
 
-        # ----- Solve CAPTCHA manual trigger --------------------------- NEW
-        solve_btn = ttk.Button(
-            pk_frame,
-            text="Solve CAPTCHA",
+        # Add step widgets for proper disable logic
+        self._step_widgets = [speed_entry, self.scroll_toggle]
+
+        # ===================================================================
+        # SECTION 7: Security & CAPTCHA
+        # ===================================================================
+        security_frame = ttk.LabelFrame(
+            controls_frame,
+            text="Security & CAPTCHA",
+            padding="10",
+        )
+        security_frame.pack(fill="x", padx=5, pady=5)
+
+        solve_captcha_btn = ttk.Button(
+            security_frame,
+            text="🔓 Solve CAPTCHA",
             command=lambda: self._handle_input(CMD_SOLVE_CAPTCHA),
         )
-        # place below the press_key controls inside Press-Key frame
-        solve_btn.grid(row=1, column=0, columnspan=2, sticky="ew", pady=(6, 0))
-        # register for enable/disable refresh logic
-        self._cmd_buttons[CMD_SOLVE_CAPTCHA] = solve_btn
+        solve_captcha_btn.pack(fill="x", padx=2)
+        self._cmd_buttons[CMD_SOLVE_CAPTCHA] = solve_captcha_btn
 
-    # dynamic key-press button wrap
+        # ===================================================================
+        # SECTION 8: Dialog & Popup Management
+        # ===================================================================
+        dialog_frame = ttk.LabelFrame(
+            controls_frame,
+            text="Dialog & Popup Management",
+            padding="10",
+        )
+        dialog_frame.pack(fill="x", padx=5, pady=5)
+
+        # Dialog response row
+        dialog_response_frame = tk.Frame(dialog_frame)
+        dialog_response_frame.pack(fill="x", pady=(0, 5))
+        dialog_response_frame.columnconfigure(1, weight=1)
+
+        self.dialog_msg_var = tk.StringVar()
+        tk.Label(
+            dialog_response_frame,
+            textvariable=self.dialog_msg_var,
+            anchor="w",
+        ).grid(row=0, column=0, sticky="w")
+
+        self.dialog_input_var = tk.StringVar()
+        self.dialog_entry = tk.Entry(
+            dialog_response_frame,
+            textvariable=self.dialog_input_var,
+            width=24,
+        )
+        self.dialog_entry.grid(row=0, column=1, sticky="ew", padx=(6, 4))
+
+        self.dialog_accept_btn = ttk.Button(
+            dialog_response_frame,
+            text="Accept",
+            width=8,
+            command=self._accept_dialog,
+        )
+        self.dialog_accept_btn.grid(row=0, column=2, padx=2)
+
+        self.dialog_dismiss_btn = ttk.Button(
+            dialog_response_frame,
+            text="Dismiss",
+            width=8,
+            command=lambda: self._queue_command(CMD_DISMISS_DIALOG),
+        )
+        self.dialog_dismiss_btn.grid(row=0, column=3, padx=2)
+
+        # Start disabled
+        for b in (self.dialog_accept_btn, self.dialog_dismiss_btn):
+            b.configure(state="disabled")
+        self.dialog_entry.configure(state="disabled")
+
+        # Popup controls
+        popup_controls_frame = tk.Frame(dialog_frame)
+        popup_controls_frame.pack(fill="x")
+        popup_controls_frame.columnconfigure(0, weight=1)
+        popup_controls_frame.columnconfigure(1, weight=1)
+
+        close_popup_btn = ttk.Button(
+            popup_controls_frame,
+            text="Close Popup",
+            command=lambda: self._handle_input(CMD_CLOSE_POPUP),
+        )
+        close_popup_btn.grid(row=0, column=0, sticky="ew", padx=2)
+        self._cmd_buttons[CMD_CLOSE_POPUP] = close_popup_btn
+
+        # Add entry for selecting popup by name/identifier
+        popup_select_frame = tk.Frame(dialog_frame)
+        popup_select_frame.pack(fill="x", pady=(5, 0))
+        popup_select_frame.columnconfigure(1, weight=1)
+
+        tk.Label(popup_select_frame, text="Select Popup:").grid(
+            row=0,
+            column=0,
+            sticky="w",
+            padx=(0, 5),
+        )
+        self.popup_select_var = tk.StringVar()
+        popup_select_entry = tk.Entry(
+            popup_select_frame,
+            textvariable=self.popup_select_var,
+            width=20,
+        )
+        popup_select_entry.grid(row=0, column=1, sticky="ew", padx=2)
+
+        select_popup_btn = ttk.Button(
+            popup_select_frame,
+            text="Select",
+            command=lambda: self._handle_input(
+                f"select_popup {self.popup_select_var.get()}",
+            ),
+        )
+        select_popup_btn.grid(row=0, column=2, padx=2)
+        self._cmd_buttons[CMD_SELECT_POPUP] = select_popup_btn
+
+        # ===================================================================
+        # RIGHT PANEL →  Log, Actions, State (existing but improved)
+        # ===================================================================
+        self.right_panel = tk.Frame(main_paned)
+        main_paned.add(self.right_panel, stretch="always")
+        right = self.right_panel
+        right.rowconfigure(0, weight=1)
+        right.columnconfigure(0, weight=1)
+
+        # Log / Actions notebook
+        note = ttk.Notebook(right)
+        note.grid(row=0, column=0, sticky="nsew", padx=5, pady=5)
+        tab_log = ttk.Frame(note)
+        tab_actions = ttk.Frame(note)
+        tab_llm = ttk.Frame(note)
+        note.add(tab_log, text="Log")
+        note.add(tab_actions, text="Valid Actions")
+        note.add(tab_llm, text="LLM Stream")
+
+        # Log setup
+        self.log = scrolledtext.ScrolledText(tab_log, state="disabled")
+        self.log.pack(fill="both", expand=True)
+        self.log.tag_config("observation", foreground="#00BFFF", font=("Helvetica", 10))
+        self.log.tag_config("llm", foreground="#FFD700")
+
+        # Actions setup
+        self.act_box = scrolledtext.ScrolledText(tab_actions, state="disabled")
+        self.act_box.pack(fill="both", expand=True)
+        self._last_actions_txt = ""
+
+        # LLM stream setup
+        self.llm_stream_box = scrolledtext.ScrolledText(tab_llm, state="disabled")
+        self.llm_stream_box.pack(fill="both", expand=True)
+
+        # Browser state display
+        self.state_var = tk.StringVar()
+        self.state_lbl = tk.Label(
+            right,
+            textvariable=self.state_var,
+            justify="left",
+            anchor="w",
+            font=("Consolas", 9),
+        )
+        self.state_lbl.grid(row=1, column=0, sticky="nsew", padx=5, pady=5)
+
+        # ── top‑centre CAPTCHA label (hidden) ─────────────────────────────
+        self.captcha_lbl = tk.Label(
+            self,
+            text="🔒 Solving CAPTCHA…",
+            fg="orange red",
+            font=("Helvetica", 10, "bold"),
+            bg=self.cget("bg"),
+        )
+        self.captcha_lbl.place_forget()
+
+        # Initialize widget collections for enable/disable logic
+        self._arrow_button_widgets = []
+        self._modifier_button_widgets = []
+        self._key_button_widgets = []
+        self._element_buttons = []
+        self._tab_row_buttons = []
+
+        # Set up color scheme and styling
+        r, g, b = [c // 256 for c in self.winfo_rgb(self.cget("bg"))]
+        brightness = 0.299 * r + 0.587 * g + 0.114 * b
+        dark = brightness < 128
+
+        style = ttk.Style()
+        style.configure("TButton", anchor="center")
+
+        # Element button styling
+        fg_light, fg_dark = "#000000", "#ffffff"
+        bg_idle_light, bg_idle_dark = "#f0f0f0", "#3a3a3a"
+        bg_active_light, bg_active_dark = "#dcdcdc", "#505050"
+
+        style.configure(
+            "Element.TButton",
+            font=("Helvetica", 11),
+            anchor="w",
+            relief="flat",
+            padding=(2, 1),
+            foreground=fg_dark if dark else fg_light,
+            background=bg_idle_dark if dark else bg_idle_light,
+        )
+        style.map(
+            "Element.TButton",
+            background=[
+                ("active", bg_active_dark if dark else bg_active_light),
+                ("pressed", bg_active_dark if dark else bg_active_light),
+            ],
+            foreground=[("pressed", fg_dark if dark else fg_light)],
+        )
+
+        disabled_bg = "#2a2a2a"
+        active_bg = "#505050"
+        idle_bg = bg_idle_dark if dark else bg_idle_light
+        active_fg = fg_dark if dark else fg_light
+
+        style.map(
+            "Element.TButton",
+            foreground=[("disabled", "#888888"), ("!disabled", active_fg)],
+            background=[
+                ("disabled", disabled_bg),
+                ("active", active_bg),
+                ("pressed", active_bg),
+                ("!disabled", idle_bg),
+            ],
+        )
+
+        style.configure(
+            "TabRow.TButton",
+            font=("Helvetica", 10, "bold"),
+            padding=(4, 2),
+            foreground=active_fg,
+            background=idle_bg,
+            relief="flat",
+        )
+        style.map(
+            "TabRow.TButton",
+            foreground=[("disabled", "#888888"), ("!disabled", active_fg)],
+            background=[
+                ("disabled", disabled_bg),
+                ("active", active_bg),
+                ("pressed", active_bg),
+                ("!disabled", idle_bg),
+            ],
+        )
+
+        style.map(
+            "TButton",
+            foreground=[
+                ("disabled", "#888888"),
+                ("!disabled", "#ffffff"),
+            ],
+            background=[
+                ("disabled", "#2a2a2a"),
+                ("active", "#505050"),
+                ("!disabled", "#3a3a3a"),
+            ],
+        )
+
+        # Store references for later use
+        self._el_canvas = el_canvas
+        self._el_scroll = el_scroll
+
+    # Remove the old layout functions as they're no longer needed
     def _relayout_key_buttons(self):
-        # Evenly distribute key buttons in a single row
-        for widget in self.keyrow.winfo_children():
-            widget.grid_forget()
-        num_cols = len(self._key_button_widgets) or 1
-        for i, b in enumerate(self._key_button_widgets):
-            # one row: row 0, column i
-            b.grid(row=0, column=i, sticky="ew", padx=1, pady=1)
-
-        for c in range(num_cols):
-            self.keyrow.columnconfigure(c, weight=1)
+        pass  # No longer needed with new fixed layout
 
     def _relayout_arrow_buttons(self):
-        for widget in self.keyrow2.winfo_children():
-            widget.grid_forget()
-
-        width = self.keyrow2.winfo_width()
-        if width == 0:
-            self.after(100, self._relayout_arrow_buttons)
-            return
-
-        min_button_px = 120
-        num_cols = max(2, width // min_button_px)
-
-        for i, b in enumerate(self._arrow_button_widgets):
-            b.grid(row=i // num_cols, column=i % num_cols, sticky="ew", padx=1, pady=1)
-
-        for c in range(num_cols):
-            self.keyrow2.columnconfigure(c, weight=1)
-
-        # layout modifier buttons evenly on row 1
-        mod_count = len(self._modifier_button_widgets) or 1
-        for b in self._modifier_button_widgets:
-            b.grid_forget()
-        for c in range(mod_count):
-            self.keyrow2.columnconfigure(c, weight=1)
-        for i, b in enumerate(self._modifier_button_widgets):
-            b.grid(row=1, column=i, sticky="ew", padx=1, pady=1)
+        pass  # No longer needed with new fixed layout
 
     def _send_llm_command(self) -> None:
+        """Fetch text, detect selected Act/Observe radio, and forward to handler."""
         text = self.cmd_var.get().strip()
+        if not text:
+            return
+
+        mode_val = self._llm_mode.get() if self._llm_mode else "act"
+
+        # Clear entry early for snappy UX
         self.cmd_var.set("")
-        if text:
-            self._handle_input(text, from_llm_box=True)
+
+        # Forward to generic handler with explicit mode – no prefix hacks needed
+        self._handle_input(text, from_llm_box=True, mode=mode_val)
 
     # ---------- search / url helper ------------------------------------
     def _send_search(self) -> None:
@@ -1257,6 +1465,15 @@ class ControlPanel(tk.Tk):
         # send with real newline characters so the worker presses <Enter>
         self._handle_input(f"enter_text {decoded}")
         self.enter_var.set("")  # clear box
+
+    # ---------- press‑key helper ------------------------------------
+    def _send_press_key(self) -> None:
+        key = self.press_key_var.get().strip()
+        if not key:
+            self._log("⚠ Please enter a key to press")
+            return
+        self._handle_input(f"press_key {key}")
+        self.press_key_var.set("")  # clear box
 
     # ──────────────────────── TABS‑PANE HELPERS ────────────────────────
     def _exec_tab_cmd(self, prefix: str, title: str) -> None:
@@ -1410,7 +1627,8 @@ class ControlPanel(tk.Tk):
         # ----- Step-scroll widgets ------------------------------------ NEW
         auto = self.state.get("auto_scroll", None)
         for w in getattr(self, "_step_widgets", []):
-            w.configure(state="disabled" if auto else "normal")
+            if hasattr(w, "configure"):
+                w.configure(state="disabled" if auto else "normal")
 
     # ──────────────────────── ACTIONS‑PANE HELPER ───────────────────────
     def _refresh_actions_list(self) -> None:
@@ -1492,6 +1710,21 @@ class ControlPanel(tk.Tk):
                     self._scroll_pending_target = None
                     if self._manual_stop_pending and expected is None:
                         self._manual_stop_pending = False
+
+            # Update toggle position to match current auto-scroll state
+            current_auto = self.state.get("auto_scroll")
+            if current_auto == "up":
+                target_pos = 0
+            elif current_auto == "down":
+                target_pos = 2
+            else:
+                target_pos = 1  # stopped
+
+            # Only update if different to avoid triggering callback
+            if self._scroll_mode.get() != target_pos:
+                self._scroll_toggle_guard = True
+                self._scroll_mode.set(target_pos)
+                self._scroll_toggle_guard = False
 
         # Lazy-create CAPTCHA banner so we don't depend on call order
         if not hasattr(self, "captcha_lbl"):
@@ -1587,6 +1820,8 @@ class ControlPanel(tk.Tk):
             if self._worker:
                 self._worker.stop()
                 self._worker.join(timeout=0.5)
+            if self._controller:
+                self._controller.stop()
         except Exception:
             pass
         self.destroy()
@@ -1595,10 +1830,19 @@ class ControlPanel(tk.Tk):
         os._exit(0)
 
     # ─────────────────────── HIGH‑LEVEL INPUT HANDLER ───────────────────
-    def _handle_input(self, text: str, *, from_llm_box: bool = False) -> None:
+    def _handle_input(
+        self,
+        text: str,
+        *,
+        from_llm_box: bool = False,
+        mode: str | None = None,
+    ) -> None:
         try:
-            # Check if this is an observation request
-            is_observation = text.strip().startswith(("observe:", "?"))
+            # Determine observation/action based on explicit mode or legacy prefix
+            if mode is not None:
+                is_observation = mode == "observe"
+            else:
+                is_observation = text.strip().startswith(("observe:", "?"))
 
             if is_observation:
                 # Log observation requests with a different icon
@@ -1618,7 +1862,7 @@ class ControlPanel(tk.Tk):
                         return True
                 return False
 
-            # skip the fast-path when the text came from the LLM box or is an observation
+            # skip the fast-path when the text came from the LLM box or in observation mode
             if (
                 (not from_llm_box)
                 and (not is_observation)
@@ -1628,7 +1872,7 @@ class ControlPanel(tk.Tk):
                 return
 
             # hand off to background thread (non-blocking)
-            self._start_llm_thread(text)
+            self._start_llm_thread(text, is_observation=is_observation)
         except Exception:
             import traceback as _tb
 
@@ -1636,6 +1880,9 @@ class ControlPanel(tk.Tk):
 
     def set_worker(self, worker):
         self._worker = worker
+
+    def set_controller(self, controller):
+        self._controller = controller
 
     # ───────────────────────── PUBLIC PRIMITIVE API ─────────────────────
     def send_text_command(self, text: str) -> None:

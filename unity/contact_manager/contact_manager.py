@@ -1,4 +1,4 @@
-from typing import List, Dict, Optional, Callable, Any
+from typing import List, Dict, Optional, Callable, Any, Tuple
 import asyncio
 import requests
 import json
@@ -61,17 +61,12 @@ class ContactManager(BaseContactManager):
             )
 
         # ── immutable built-in columns ───────────────────────────────────
-        self._REQUIRED_COLUMNS: set[str] = {
-            "contact_id",
-            "first_name",
-            "surname",
-            "email_address",
-            "phone_number",
-            "whatsapp_number",
-            "description",
-            "bio",
-            "rolling_summary",
-        }
+        # Derive the required/built-in columns directly from the Contact model so
+        # that there is a single source-of-truth for field names across the
+        # code-base.  Any future change to the Contact schema will
+        # automatically propagate here.
+        self._BUILTIN_FIELDS: Tuple[str, ...] = tuple(Contact.model_fields.keys())
+        self._REQUIRED_COLUMNS: set[str] = set(self._BUILTIN_FIELDS)
 
         # ── schema-management internal tools (mirrors KnowledgeManager) ──
         self._schema_tools: Dict[str, Callable] = methods_to_tool_dict(
@@ -112,6 +107,178 @@ class ContactManager(BaseContactManager):
 
         # rolling activity inclusion flag
         self._rolling_summary_in_prompts = rolling_summary_in_prompts
+
+        # ── ensure an assistant contact with id 0 exists and is up-to-date ──
+        self._sync_assistant_contact()
+
+    # ──────────────────────────────────────────────────────────────────────
+    #  Assistant syncing helpers
+    # ──────────────────────────────────────────────────────────────────────
+
+    def _fetch_assistant_info(self) -> List[Dict[str, Any]]:
+        """Return the list of assistants configured for the current account.
+
+        The API is expected to return a JSON object with an ``info`` key
+        containing the assistant records.  If the request fails, an
+        exception is raised via ``_handle_exceptions`` so callers do not
+        silently proceed with incomplete data.
+        """
+        url = f"{os.environ['UNIFY_BASE_URL']}/assistant?phone=None&email=None"
+        headers = {"Authorization": f"Bearer {os.environ['UNIFY_KEY']}"}
+        response = requests.request("GET", url, headers=headers)
+        _handle_exceptions(response)
+        data = response.json()
+        return data.get("info", []) if isinstance(data, dict) else []
+
+    def _ensure_columns_exist(self, extra_fields: Dict[str, Any]) -> None:
+        """Create custom columns for *extra_fields* that are not yet present.
+
+        Only simple string columns are created for now – if richer typing is
+        required in future we can extend the heuristics.
+        """
+        existing_cols = self._get_columns()
+        for col in extra_fields:
+            if col in self._REQUIRED_COLUMNS or col in existing_cols:
+                continue
+            try:
+                # Default to string type for new assistant metadata columns
+                self._create_custom_column(
+                    column_name=col,
+                    column_type=ColumnType.str,
+                )
+            except Exception:
+                # Column may have been created concurrently – ignore
+                pass
+
+    def _sync_assistant_contact(self) -> None:
+        """Ensure the *current* assistant (id == 0 in this context) exists and is correct.
+
+        The assistant record is selected using the following precedence:
+
+        1. The globally initialised ``unity.ASSISTANT`` object – this is set
+           by :pyfunc:`unity.init` *after* validating that the requested
+           ``assistant_id`` exists via the Unify API.
+        2. Fallback to the *assistant_index* implied by the active context
+           (i.e. ``unify.get_active_context()['read']``) when the global
+           variable is ``None``.
+        3. If neither method yields a record or the API returns an empty list
+           (offline tests), a dummy placeholder assistant is created.
+        """
+
+        from .. import ASSISTANT as _GLOBAL_ASSISTANT  # local import to avoid cycles
+
+        assistants = self._fetch_assistant_info()
+
+        # 1) Prefer the assistant provided by unity.init
+        if _GLOBAL_ASSISTANT is not None:
+            selected = _GLOBAL_ASSISTANT
+
+        # 2) Otherwise map the active context (if numeric) onto the list index
+        else:
+            ctxs = unify.get_active_context()
+            read_ctx = ctxs.get("read")
+            try:
+                idx = int(read_ctx) if read_ctx is not None else 0
+            except (TypeError, ValueError):
+                idx = 0
+
+            selected = assistants[idx] if idx < len(assistants) else None
+
+        # 3) No assistant found – will create a dummy record
+
+        # ------------------------------------------------------------------
+        # Build the canonical assistant record (real or dummy)
+        # ------------------------------------------------------------------
+
+        if selected is not None:
+            a = selected
+            # Start with a dictionary that contains *all* builtin fields (except
+            # contact_id) set to None so we never forget to initialise a field if
+            # the Contact schema evolves.
+            base_fields = {
+                fld: None for fld in self._BUILTIN_FIELDS if fld != "contact_id"
+            }
+
+            # Map assistant API payload → Contact fields.  We still spell the
+            # Contact field names exactly *once* here, centralising the mapping
+            # logic in a single place.
+            base_fields.update(
+                {
+                    "first_name": a.get("first_name"),
+                    "surname": a.get("surname"),
+                    "email_address": a.get("email"),
+                    "phone_number": a.get("phone"),
+                    "whatsapp_number": a.get("phone"),
+                    "bio": a.get("about"),
+                    "rolling_summary": None,
+                },
+            )
+            # Everything else is stored verbatim as custom fields
+            mapped_keys = {"first_name", "surname", "email", "phone", "about"}
+        else:
+            # Dummy assistant when account has no assistants configured – again
+            # start with all builtin fields set to None and then populate the
+            # known ones so that we never miss a schema update.
+            base_fields = {
+                fld: None for fld in self._BUILTIN_FIELDS if fld != "contact_id"
+            }
+            base_fields.update(
+                {
+                    "first_name": "Unify",
+                    "surname": "Assistant",
+                    "email_address": "unify.assistant@unify.ai",
+                    "phone_number": "+10000000000",
+                    "whatsapp_number": "+10000000000",
+                    "bio": "Your helpful Unify AI assistant.",
+                    "rolling_summary": None,
+                },
+            )
+
+        # ------------------------------------------------------------------
+        # Retrieve contact_id == 0 (if any) and decide whether to create/update
+        # ------------------------------------------------------------------
+        existing_logs = unify.get_logs(
+            context=self._ctx,
+            filter="contact_id == 0",
+            limit=1,
+        )
+
+        if not existing_logs:
+            # Either the table is empty or contact_id 0 was never created.
+            # Use the standard helper which will assign contact_id == 0 when
+            # inserting the first contact into an empty table.  If the table
+            # already had contacts, fall back to a direct log with explicit id.
+            if not unify.get_logs(context=self._ctx):
+                self._create_contact(**base_fields)
+            else:
+                # Direct log insertion with explicit contact_id 0
+                unify.log(
+                    context=self._ctx,
+                    contact_id=0,
+                    **base_fields,
+                    new=True,
+                    mutable=True,
+                )
+            return  # nothing further to do
+
+        # A record exists – check if it matches and update if necessary
+        current = existing_logs[0]
+        mismatches: List[Dict[str, Any]] = []
+
+        def _needs_update(key: str, desired: Any) -> bool:
+            return current.entries.get(key) != desired
+
+        for field, value in base_fields.items():
+            if _needs_update(field, value):
+                mismatches.append({field: value})
+
+        if mismatches:
+            unify.update_logs(
+                logs=[current.id] * len(mismatches),
+                context=self._ctx,
+                entries=mismatches,
+                overwrite=True,
+            )
 
     # ──────────────────────────────────────────────────────────────────────
     #  Column helpers (single-table version of KnowledgeManager's helpers)
@@ -511,7 +678,6 @@ class ContactManager(BaseContactManager):
         email_address: Optional[str] = None,
         phone_number: Optional[str] = None,
         whatsapp_number: Optional[str] = None,
-        description: Optional[str] = None,
         bio: Optional[str] = None,
         rolling_summary: Optional[str] = None,
         custom_fields: Optional[Dict[str, ColumnType]] = None,
@@ -536,7 +702,7 @@ class ContactManager(BaseContactManager):
         whatsapp_number : str | None
             Contact's WhatsApp number. Can optionally start with '+' (only if explicitly
             mentioned by the user), but must otherwise contain only digits. Must be unique.
-        description : str | None
+        bio : str | None
             A free-form text description of the contact. Can contain any additional notes
             or information about the contact. May be None.
         custom_fields : Dict[str, ColumnType] | None
@@ -556,20 +722,23 @@ class ContactManager(BaseContactManager):
             (email / phone / WhatsApp) is violated.
         """
 
-        # Prune None values
+        # Build the contact dictionary directly from the arguments
         contact_details = {
             "first_name": first_name,
             "surname": surname,
             "email_address": email_address,
             "phone_number": phone_number,
             "whatsapp_number": whatsapp_number,
-            "description": description,
             "bio": bio,
             "rolling_summary": rolling_summary,
-            **(custom_fields if custom_fields is not None else {}),
         }
+
+        # Merge any custom fields provided by the caller
+        if custom_fields:
+            contact_details.update(custom_fields)
+
         assert any(
-            contact_details.values(),
+            v is not None for v in contact_details.values()
         ), "At least one contact detail must be provided."
 
         # If it's the first contact, create immediately
@@ -585,9 +754,17 @@ class ContactManager(BaseContactManager):
                 "details": {"contact_id": 0},
             }
 
-        # Verify uniqueness
+        # Verify uniqueness for contact fields that should be unique (emails,
+        # phone numbers, etc.).  We use a simple heuristic to consider any
+        # field ending in *_address or *_number as unique.
+        unique_fields = {
+            f
+            for f in Contact.model_fields
+            if f.endswith("_address") or f.endswith("_number")
+        }
+
         for key, value in contact_details.items():
-            if key in ["first_name", "surname"] or value is None:
+            if key not in unique_fields or value is None:
                 continue
             logs = unify.get_logs(
                 context=self._ctx,
@@ -618,7 +795,6 @@ class ContactManager(BaseContactManager):
         email_address: Optional[str] = None,
         phone_number: Optional[str] = None,
         whatsapp_number: Optional[str] = None,
-        description: Optional[str] = None,
         bio: Optional[str] = None,
         rolling_summary: Optional[str] = None,
         custom_fields: Optional[Dict[str, ColumnType]] = None,
@@ -645,7 +821,7 @@ class ContactManager(BaseContactManager):
         whatsapp_number : str | None
             Contact's WhatsApp number - can optionally start with '+' (only if explicitly
             mentioned by the user), but must otherwise contain only digits.
-        description : str | None
+        bio : str | None
             A free-form text description or notes about the contact.
         custom_fields : Dict[str, ColumnType] | None
             Additional contact information as key-value pairs, where keys are string column
@@ -663,27 +839,33 @@ class ContactManager(BaseContactManager):
             When no updatable field is provided, when contact_id does not exist,
             or when the new email/phone/WhatsApp value duplicates another record.
         """
-        # Prune None values
         contact_details = {
             "first_name": first_name,
             "surname": surname,
             "email_address": email_address,
             "phone_number": phone_number,
             "whatsapp_number": whatsapp_number,
-            "description": description,
-            **(custom_fields if custom_fields is not None else {}),
+            "bio": bio,
+            "rolling_summary": rolling_summary,
         }
+
+        if custom_fields:
+            contact_details.update(custom_fields)
+
         updates_to_apply = [{k: v} for k, v in contact_details.items() if v is not None]
         if not updates_to_apply:
             raise ValueError(
                 "At least one contact detail must be provided for an update.",
             )
 
+        unique_fields = {
+            f
+            for f in Contact.model_fields
+            if f.endswith("_address") or f.endswith("_number")
+        }
+
         for key, value in contact_details.items():
-            if (
-                key in ["email_address", "phone_number", "whatsapp_number"]
-                and value is not None
-            ):
+            if key in unique_fields and value is not None:
                 logs = unify.get_logs(
                     context=self._ctx,
                     filter=f"{key} == '{value}' and contact_id != {contact_id}",
@@ -889,24 +1071,3 @@ class ContactManager(BaseContactManager):
             )
 
         return [ok[i] for i in range(len(contacts))]
-
-    # ------------------------------------------------------------------ #
-    #  Reset helper (sandbox)                                            #
-    # ------------------------------------------------------------------ #
-    @staticmethod
-    def reset() -> None:
-        """
-        Remove every *Contacts* context belonging to the **current** Unify
-        project so that the next ContactManager instantiation creates a fresh
-        table.  This mirrors `EventBus.reset()` and is called by the sandbox
-        `activate_project` helper.
-        """
-        import unify
-
-        for ctx in list(unify.get_contexts()):
-            if ctx.endswith("/Contacts") or ctx == "Contacts":
-                try:
-                    unify.delete_context(ctx)
-                except Exception:
-                    # Best-effort – context may already be gone
-                    pass

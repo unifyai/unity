@@ -50,7 +50,7 @@ async def test_update_create_new_contact(
     cm, _ = contact_manager_scenario
     command = (
         "Add a new contact: Eve Adams, email eve@paradise.com, "
-        "phone 777-000-1111, description 'Digital nomad and writer'."
+        "phone 777-000-1111, bio 'Digital nomad and writer'."
     )
 
     handle = await cm.update(command)
@@ -64,7 +64,7 @@ async def test_update_create_new_contact(
             "first_name": "Eve",
             "surname": "Adams",
             "phone_number": "7770001111",
-            "description": "Digital nomad and writer",
+            "bio": "Digital nomad and writer",
         },
     )
 
@@ -242,10 +242,10 @@ async def test_update_stop_operation(
 @_handle_project
 @pytest.mark.eval
 @pytest.mark.asyncio
-async def test_update_add_description(
+async def test_update_add_bio(
     contact_manager_scenario: tuple[ContactManager, Dict[str, int]],
 ):
-    """Add or change the *description* field on an existing contact."""
+    """Add or change the *bio* field on an existing contact."""
     cm, _ = contact_manager_scenario
 
     # Pick Bob Johnson
@@ -254,7 +254,7 @@ async def test_update_add_description(
     bob_id = bob[0].contact_id
 
     handle = await cm.update(
-        f"Add a short description 'Long-time customer' to contact ID {bob_id}.",
+        f"Add a short bio 'Long-time customer' to contact ID {bob_id}.",
     )
     await handle.result()
 
@@ -262,5 +262,5 @@ async def test_update_add_description(
         cm,
         "contact_id",
         bob_id,
-        {"description": "Long-time customer"},
+        {"bio": "Long-time customer"},
     )

@@ -1635,22 +1635,3 @@ class TaskScheduler(BaseTaskScheduler):
                 exclude_fields=[self._VEC_TASK],
             )
         ]
-
-    # ------------------------------------------------------------------ #
-    #  Reset helper (sandbox)                                            #
-    # ------------------------------------------------------------------ #
-    @staticmethod
-    def reset() -> None:
-        """
-        Delete the `Tasks` context (and any namespaced variants) for the active
-        Unify project so that the next TaskScheduler instance starts with a
-        clean queue.
-        """
-        import unify
-
-        for ctx in list(unify.get_contexts()):
-            if ctx.endswith("/Tasks") or ctx == "Tasks":
-                try:
-                    unify.delete_context(ctx)
-                except Exception:
-                    pass

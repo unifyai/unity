@@ -97,6 +97,9 @@ def build_ask_prompt(
     list_columns = _tool_name(tools, "list_columns")
     nearest_search = _tool_name(tools, "nearest_column")
 
+    # Clarification helper (only present when the caller provided queues)
+    request_clar = _tool_name(tools, "request_clarification")
+
     # ------------------------------------------------------------------ #
     #  Usage snippets (standard search + custom-column examples)
     # ------------------------------------------------------------------ #
@@ -123,9 +126,13 @@ def build_ask_prompt(
         • Has any email (not None)
           `{search_name}(filter="email_address is not None")`
 
+        ─ Clarification ─
+        • Ambiguous request for "Alice" when multiple Alices exist – ask the user which one they mean
+          `{request_clar}(question="There are several contacts named Alice. Which one did you mean?")`
+
         ─ Semantic search ─
-        • Find contacts *similar* to "machine-learning expert" in the *description* field
-          `{nearest_search}(source='description', text='machine-learning expert')`
+        • Find contacts *similar* to "machine-learning expert" in the *bio* field
+          `{nearest_search}(source='bio', text='machine-learning expert')`
 
         ─ Custom columns ─
         • Inspect schema
@@ -147,6 +154,13 @@ def build_ask_prompt(
             ],
         )
 
+    # ─ Clarification guidance ─
+    clarification_guidance = (
+        f"If at any point you cannot uniquely identify a single contact (for example, multiple results match the user's description) **you must call the** `{request_clar}` **tool** to ask the user to clarify which contact they mean *before* you answer."
+        if request_clar
+        else ""
+    )
+
     activity_block = _rolling_activity_section() if include_activity else ""
 
     return "\n".join(
@@ -166,6 +180,7 @@ def build_ask_prompt(
             usage_examples if num_contacts >= 50 else "",
             "",
             guidance,
+            clarification_guidance,
             "",
             f"Current UTC time is {_now()}.",
         ],

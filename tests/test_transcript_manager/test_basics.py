@@ -127,3 +127,39 @@ async def test_get_messages():
     assert len(messages) == 0
     messages = tm._search_messages(filter=f"timestamp > '{start_time}'")
     assert len(messages) == 10
+
+
+# ────────────────────────────────────────────────────────────────────────────
+# 6.  Multiple receiver handling                                             #
+# ────────────────────────────────────────────────────────────────────────────
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+@_handle_project
+async def test_multiple_receivers():
+    """Ensure a single message can target multiple distinct receiver IDs."""
+    tm = TranscriptManager()
+
+    msg = Message(
+        medium="email",
+        sender_id=0,
+        receiver_ids=[1, 2],
+        timestamp=datetime.now(UTC),
+        content="Quarterly results and next-steps.",
+        exchange_id=4242,
+    )
+
+    # Log and flush to storage
+    tm.log_messages(msg)
+    tm.join_published()
+
+    # Retrieve the message back – simplest: list everything for this exchange
+    found = tm._search_messages(filter="exchange_id == 4242")
+    assert (
+        len(found) == 1
+    ), "Exactly one message should have been logged for exchange 4242"
+
+    m = found[0]
+    # Primary assertions ----------------------------------------------------
+    assert m.receiver_ids == [1, 2], "receiver_ids should preserve the full list"

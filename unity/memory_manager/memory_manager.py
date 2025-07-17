@@ -435,7 +435,7 @@ class MemoryManager(BaseMemoryManager):
         self._recent_messages.append(
             {
                 "sender_id": msg.sender_id,
-                "receiver_id": msg.receiver_id,
+                "receiver_ids": msg.receiver_ids,
                 "medium": msg.medium,
                 "timestamp": msg.timestamp.isoformat(),
                 "content": msg.content,
@@ -480,7 +480,7 @@ class MemoryManager(BaseMemoryManager):
                     assistant_id = 0
 
                 for msg in messages:
-                    for cid in (msg.get("sender_id"), msg.get("receiver_id")):
+                    for cid in (msg.get("sender_id"), msg.get("receiver_ids")):
                         if cid is None:
                             continue
                         if cid == assistant_id:
@@ -493,7 +493,7 @@ class MemoryManager(BaseMemoryManager):
                     sub_msgs = [
                         m
                         for m in messages
-                        if m.get("sender_id") == _cid or m.get("receiver_id") == _cid
+                        if m.get("sender_id") == _cid or m.get("receiver_ids") == _cid
                     ]
 
                     sub_blob = json.dumps(sub_msgs, indent=2)

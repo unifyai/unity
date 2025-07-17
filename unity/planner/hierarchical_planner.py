@@ -31,17 +31,8 @@ from unity.planner.base import (
     BasePlanner,
 )
 from unity.planner.action_provider import ActionProvider
-from unity.planner.prompt_builders import (
-    build_ask_prompt,
-    build_course_correction_prompt,
-    build_dynamic_implement_prompt,
-    build_exploration_prompt,
-    build_implementation_strategy_prompt,
-    build_initial_plan_prompt,
-    build_plan_surgery_prompt,
-    build_should_explore_prompt,
-    build_verification_prompt,
-)
+import unity.planner.prompt_builders as prompt_builders
+
 from unity.controller.controller import InvalidActionError
 
 logger = logging.getLogger(__name__)
@@ -467,7 +458,7 @@ class HierarchicalPlan(BaseActiveTask):
             f"Starting exploration for task: '{function_purpose}'...",
         )
         try:
-            research_prompt = build_exploration_prompt(
+            research_prompt = prompt_builders.build_exploration_prompt(
                 function_purpose=function_purpose,
                 overall_goal=self.goal,
                 tools=self.planner.tools,
@@ -1043,7 +1034,7 @@ class HierarchicalPlan(BaseActiveTask):
                 )
 
             context_log = "\n".join(f"- {log}" for log in self.action_log[-10:])
-            prompt = build_ask_prompt(
+            prompt = prompt_builders.build_ask_prompt(
                 goal=self.goal,
                 state=self._state.name,
                 call_stack=" -> ".join(self.call_stack) or "None",
@@ -1138,6 +1129,7 @@ class HierarchicalPlanner(BasePlanner):
             headless: Whether to run the browser in headless mode.
             max_escalations: Default max number of strategic replans for plans.
             max_local_retries: Default max number of tactical retries for plans.
+            timeout: Default timeout for plan execution.
         """
         super().__init__()
         self.function_manager = function_manager or FunctionManager()
@@ -1653,7 +1645,7 @@ class HierarchicalPlanner(BasePlanner):
                 else:
                     existing_functions = {}
 
-                prompt = build_initial_plan_prompt(
+                prompt = prompt_builders.build_initial_plan_prompt(
                     goal=goal,
                     tools=self.tools,
                     existing_functions=existing_functions,
@@ -1723,7 +1715,7 @@ class HierarchicalPlanner(BasePlanner):
         if not strategy_reason:
             strategy_reason = f"This is the first time the function '{function_name}' is being implemented. Please devise a clear, step-by-step plan to achieve its purpose: {docstring}"
 
-        strategy_prompt = build_implementation_strategy_prompt(
+        strategy_prompt = prompt_builders.build_implementation_strategy_prompt(
             goal=plan.goal,
             function_name=function_name,
             function_docstring=docstring,
@@ -1767,7 +1759,7 @@ class HierarchicalPlanner(BasePlanner):
             else "N/A (This is a top-level function call)"
         )
 
-        prompt = build_dynamic_implement_prompt(
+        prompt = prompt_builders.build_dynamic_implement_prompt(
             function_name=function_name,
             function_sig=func_sig,
             function_docstring=docstring,
@@ -1819,7 +1811,7 @@ class HierarchicalPlanner(BasePlanner):
         Returns:
             A VerificationAssessment object with the outcome.
         """
-        prompt = build_verification_prompt(
+        prompt = prompt_builders.build_verification_prompt(
             goal=plan.goal,
             function_name=function_name,
             function_docstring=function_docstring,
@@ -1853,7 +1845,7 @@ class HierarchicalPlanner(BasePlanner):
         Returns:
             The new, sanitized source code for the plan.
         """
-        prompt = build_plan_surgery_prompt(
+        prompt = prompt_builders.build_plan_surgery_prompt(
             current_code,
             request,
             tools=self.tools,
@@ -1880,7 +1872,7 @@ class HierarchicalPlanner(BasePlanner):
             "Describe current page.",
         )
 
-        prompt = build_course_correction_prompt(
+        prompt = prompt_builders.build_course_correction_prompt(
             old_code,
             new_code,
             current_state,

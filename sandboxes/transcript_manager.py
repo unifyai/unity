@@ -203,7 +203,7 @@ async def _main_async() -> None:
     if args.overwrite:
         ctxs = unify.get_contexts()
         for tbl in (
-            "Messages",
+            "Transcripts",
             "Contacts",
             "Traces",
         ):

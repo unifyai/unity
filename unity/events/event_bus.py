@@ -1159,7 +1159,18 @@ class EventBus:
         latest: Dict[str, dict] = {}
         for lg in rows:
             data = lg.entries.copy()
-            latest[data["subscription_id"]] = data
+            # Skip any log rows that are not actual subscription snapshots.
+            # These could include context metadata entries (e.g., __columns__)
+            # or other housekeeping logs which do not carry a `subscription_id`
+            # field.  Treating them as subscriptions would raise a KeyError and
+            # break EventBus initialisation.
+            sid = data.get("subscription_id")
+            if not sid:
+                # Safely ignore non-subscription rows to make hydration
+                # tolerant of mixed-purpose contexts.
+                continue
+
+            latest[sid] = data
 
         return {
             sid: Subscription(

@@ -324,6 +324,7 @@ class CommsAgent:
         self.tool_use_handles[handle_id] = {
             "handle": tool_use_handle,
             "query": action.query,
+            "client": unify_client,
         }
         self.handle_count += 1
 
@@ -372,8 +373,15 @@ class CommsAgent:
         else:
             # handle
             handle = self.tool_use_handles[action.handle_id]["handle"]
+            client = self.tool_use_handles[action.handle_id]["client"]
             if action.type == "ask":
                 await handle.ask(action.query)
+                self.events_queue.put_nowait(
+                    PhoneUtteranceEvent(
+                        role="System",
+                        content=f"This is the current status of the tool_use: {client.messages[-1]}. Formulate response by replacing the tool_use name with the appropriate analogy and verb.",
+                    ).to_dict(),
+                )
             elif action.type == "interject":
                 await handle.interject(action.query)
             elif action.type == "stop":
@@ -750,26 +758,26 @@ class CommsAgent:
                     if "phone" in event_name
                     else "sms_message" if "sms" in event_name else "whatsapp_message"
                 )
-                sender_id, receiver_id = "", ""
+                sender_id, receiver_ids = "", [""]
                 if medium == "phone_call":
                     if role == "Assistant":
                         sender_id = self.assistant_number
-                        receiver_id = self.user_phone_call_number
+                        receiver_ids = [self.user_phone_call_number]
                     else:
                         sender_id = self.user_phone_call_number
-                        receiver_id = self.assistant_number
+                        receiver_ids = [self.assistant_number]
                 else:
                     if "recieved" in event_name.lower():
                         sender_id = self.user_number
-                        receiver_id = self.assistant_number
+                        receiver_ids = [self.assistant_number]
                     else:
                         sender_id = self.assistant_number
-                        receiver_id = self.user_number
+                        receiver_ids = [self.user_number]
                 self.transcript_manager.log_messages(
                     Message(
                         medium=medium,
                         sender_id=sender_id,
-                        receiver_id=receiver_id,
+                        receiver_ids=receiver_ids,
                         timestamp=timestamp,
                         content=content,
                     ),

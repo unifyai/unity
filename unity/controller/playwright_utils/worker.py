@@ -31,6 +31,7 @@ from .vision_utils import (
     _fuse_elements,
     reset_stable_ids,
     _dedup,
+    _assign_stable_ids,
 )
 from .command_runner import CommandRunner, _safe_screenshot
 from .mirror import MirrorPage
@@ -151,7 +152,11 @@ class BrowserWorker(threading.Thread):
                     self.log(f"Failed to save annotated image: {e}")
 
             # Filter for interactive elements
-            return [e for e in result.get("parsed_content_list", [])]
+            return [
+                e
+                for e in result.get("parsed_content_list", [])
+                if e.get("interactivity", False)
+            ]
         except requests.exceptions.RequestException as e:
             self.log(f"OmniParser API error: {e}")
             return []
@@ -422,15 +427,12 @@ class BrowserWorker(threading.Thread):
                         )
                         match self.mode:
                             case "hybrid":
-                                # 1. Reset stable IDs since we want fresh sequential IDs.
-                                reset_stable_ids()
-
                                 # 2. Fuse the elements from both sources.
                                 fused_elements = _fuse_elements(
                                     vision_results,
                                     heuristic_elements,
                                     self.runner.active,
-                                    overlap_threshold=0.5,
+                                    overlap_threshold=0.3,
                                 )
 
                                 # 3. De-duplicate the fused list to remove overlapping boxes.
@@ -440,7 +442,6 @@ class BrowserWorker(threading.Thread):
                                 )
 
                             case "vision":
-                                reset_stable_ids()
                                 fused_elements = _fuse_elements(
                                     vision_results,
                                     [],
@@ -457,7 +458,10 @@ class BrowserWorker(threading.Thread):
                                     for h in heuristic_elements
                                 ]
 
-                        last_elements.sort(key=lambda e: e["id"])
+                        last_elements = _assign_stable_ids(last_elements)
+                        last_elements.sort(
+                            key=lambda e: e.get("id") or 9999,
+                        )  # Sort by the new stable ID
                     except Exception as exc:  # navigation in-flight
                         self.log(f"collect_elements skipped: {exc}")
                         time.sleep(0.05)  # brief pause, then continue loop

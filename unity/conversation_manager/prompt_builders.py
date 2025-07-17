@@ -58,9 +58,37 @@ def _build_tool_use_tasks_rules_section() -> str:
         "- Never start a new task with the ToolUse if the user is asking you about an existing task!",
         "- In case the user wants action on an existing handle, use the ToolUse handle action with the appropriate handle action type and the handle id for the handle to be manipulated, along with the corresponding query",
         "- When a task is launched successfully, you should inform the user that you have started the task",
+        "- If the user asks about the progress or reason of delay of an ongoing task, you should use the ToolUse handle action to get information, then formulate a natural language response of the in progress tool based on the Analogies section.",
         "- Never, ever, make up names or numbers!",
     ]
     return "\n".join([title, underline] + rules)
+
+
+def _build_analogies_prompt() -> str:
+    title = "Analogies for tool_use status:"
+    underline = "-" * len(title)
+    tool_analogies: dict[str, str] = {
+        "KnowledgeManager": "notepad",
+        "ContactManager": "contact list",
+        "TranscriptManager": "transcripts",
+        "TaskScheduler": "task list",
+        "CommsAgent": "conversation",
+    }
+    action_verbs: dict[str, str] = {
+        "ask": "checking",
+        "update": "updating",
+        "request": "requesting",
+        "send": "sending",
+    }
+
+    lines = [
+        "Format of in progress tool: '<TOOL>_<ACTION>'",
+        "TOOL Analogies:",
+        "\n".join(f"{tool}: {analogies}" for tool, analogies in tool_analogies.items()),
+        "ACTION Verbs:",
+        "\n".join(f"{action}: {verb}" for action, verb in action_verbs.items()),
+    ]
+    return "\n".join(lines)
 
 
 def _build_communication_rules_section() -> str:
@@ -176,6 +204,7 @@ def build_call_sys_prompt(
         _build_event_stream_section(),
         _build_agent_loop_section(),
         _build_tool_use_tasks_rules_section(),
+        _build_analogies_prompt(),
         _build_communication_rules_section(),
         (
             _build_task_context_section(task_context, is_call=True)
@@ -210,6 +239,7 @@ def build_non_call_sys_prompt(
         _build_event_stream_section(),
         _build_agent_loop_section(),
         _build_tool_use_tasks_rules_section(),
+        _build_analogies_prompt(),
         _build_communication_rules_section(),
         (
             _build_task_context_section(task_context, is_call=False)
@@ -255,7 +285,10 @@ def build_user_agent_prompt(
     lines = [
         f"Other than the task context (in system prompt) related to the call, this call purpose is: {call_purpose}",
         "",
+        _build_analogies_prompt(),
+        "",
         "Events Stream:",
+        "--------------",
         "** PAST EVENTS **",
         past_events_str.strip(),
         "** NEW EVENTS **",
