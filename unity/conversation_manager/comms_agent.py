@@ -110,7 +110,7 @@ class CommsAgent:
 
         # logging
         self.transcript_manager = None
-        self.redis = redis.Redis(host="localhost", port=6379, db=0)
+        self.redis = None
 
     def _build_enabled_tools_dict(self):
         from unity.common.llm_helpers import AsyncToolUseLoopHandle
@@ -186,7 +186,6 @@ class CommsAgent:
     async def get_bus_events(self):
         from unity.events.event_bus import EVENT_BUS
 
-        await EVENT_BUS._prefill_done.wait()
         bus_events = await EVENT_BUS.search(
             filter=f"event_type in {json.dumps(EVENT_TYPES)}",
             limit=self.conv_context_length,
@@ -644,8 +643,67 @@ class CommsAgent:
         for topic in topics:
             self.event_manager.topic_to_subs[topic].add(self)
 
+    def unsubscribe(self, topics):
+        if not self.event_manager:
+            raise Exception("Set an event manager first.")
+        for topic in topics:
+            self.event_manager.topic_to_subs[topic].remove(self)
+
     def set_event_manager(self, event_manager):
         self.event_manager = event_manager
+
+    def set_assistant_details(self, payload):
+        self.assistant_name = payload["assistant_name"]
+        self.assistant_age = payload["assistant_age"]
+        self.assistant_region = payload["assistant_region"]
+        self.assistant_about = payload["assistant_about"]
+        self.assistant_number = payload["assistant_number"]
+        self.user_name = payload["user_name"]
+        self.user_number = payload["user_number"]
+        self.user_phone_number = payload["user_phone_number"]
+
+    async def initialize_redis(self):
+        """Initialize Redis connection after server is ready"""
+        import socket
+
+        # Wait for Redis to be available
+        max_retries = 10
+        retry_count = 0
+
+        while retry_count < max_retries:
+            try:
+                # Check if Redis port is open
+                sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                sock.settimeout(2)
+                result = sock.connect_ex(("localhost", 6379))
+                sock.close()
+
+                if result == 0:
+                    # Try to connect to Redis
+                    test_redis = redis.Redis(host="localhost", port=6379, db=0)
+                    test_redis.ping()
+                    test_redis.close()
+
+                    # Redis is ready, initialize the connection
+                    self.redis = redis.Redis(host="localhost", port=6379, db=0)
+                    print("Redis connection initialized successfully")
+                    return
+                else:
+                    retry_count += 1
+                    print(
+                        f"Redis not ready yet, retrying... ({retry_count}/{max_retries})"
+                    )
+                    await asyncio.sleep(2)
+            except Exception as e:
+                retry_count += 1
+                print(
+                    f"Redis connection attempt {retry_count}/{max_retries} failed: {e}"
+                )
+                await asyncio.sleep(2)
+
+        print("Warning: Failed to initialize Redis connection after all retries")
+        # Initialize with None to avoid errors, but log the issue
+        self.redis = None
 
     def get_user_agent_prompt(self):
         return build_user_agent_prompt(
@@ -673,6 +731,7 @@ class CommsAgent:
                 print(f"Error terminating call process: {e}")
 
     def handle_logging(self, event: dict):
+        import unity
         from unity.transcript_manager.transcript_manager import TranscriptManager
         from unity.transcript_manager.types.message import Message
         from unity.events.event_bus import EVENT_BUS
@@ -730,6 +789,18 @@ class CommsAgent:
     def handle_event(self, event: dict):
         global ONGOING_CALL
         to = event.get("to")
+        if event["event"]["event_name"] == "StartupEvent":
+            # set assistant details
+            self.set_assistant_details(event["event"]["payload"])
+
+            # remove subscription for the startup topic
+            self.unsubscribe(["startup"])
+
+            # activate unify project
+            import unity
+
+            os.environ["UNIFY_KEY"] = event["event"]["payload"]["api_key"]
+            unity.init()
         if event["event"]["event_name"] == "PhoneCallEndedEvent":
             if self.call_proc:
                 self.call_proc.kill()

@@ -28,8 +28,6 @@ from ..events.manager_event_logging import (
     wrap_handle_with_logging,
 )
 
-API_KEY = os.environ["UNIFY_KEY"]
-
 
 class KnowledgeManager(BaseKnowledgeManager):
     def __init__(self, *, rolling_summary_in_prompts: bool = True) -> None:
@@ -399,7 +397,7 @@ class KnowledgeManager(BaseKnowledgeManager):
         proj = unify.active_project()
         ctx = self._ctx_for_table(table)
         url = f"{os.environ['UNIFY_BASE_URL']}/logs/fields?project={proj}&context={ctx}"
-        headers = {"Authorization": f"Bearer {API_KEY}"}
+        headers = {"Authorization": f"Bearer {os.environ.get('UNIFY_KEY')}"}
         response = requests.request("GET", url, headers=headers)
         _handle_exceptions(response)
         ret = response.json()
@@ -457,7 +455,7 @@ class KnowledgeManager(BaseKnowledgeManager):
         if columns is None:
             columns = {}
         url = f"{os.environ['UNIFY_BASE_URL']}/logs/fields"
-        headers = {"Authorization": f"Bearer {API_KEY}"}
+        headers = {"Authorization": f"Bearer {os.environ.get('UNIFY_KEY')}"}
         json_input = {"project": proj, "context": ctx, "fields": columns}
         response = requests.request("POST", url, json=json_input, headers=headers)
         _handle_exceptions(response)
@@ -523,7 +521,7 @@ class KnowledgeManager(BaseKnowledgeManager):
         old_name = f"{self._ctx}/{old_name}"
         new_name = f"{self._ctx}/{new_name}"
         url = f"{unify.BASE_URL}/project/{proj}/contexts/{old_name}/rename"
-        headers = {"Authorization": f"Bearer {API_KEY}"}
+        headers = {"Authorization": f"Bearer {os.environ.get('UNIFY_KEY')}"}
         json_input = {"name": new_name}
         response = requests.request("PATCH", url, json=json_input, headers=headers)
         _handle_exceptions(response)
@@ -592,7 +590,7 @@ class KnowledgeManager(BaseKnowledgeManager):
         proj = unify.active_project()
         ctx = self._ctx_for_table(table)
         url = f"{os.environ['UNIFY_BASE_URL']}/logs/fields"
-        headers = {"Authorization": f"Bearer {API_KEY}"}
+        headers = {"Authorization": f"Bearer {os.environ.get('UNIFY_KEY')}"}
         json_input = {
             "project": proj,
             "context": ctx,
@@ -630,7 +628,7 @@ class KnowledgeManager(BaseKnowledgeManager):
             Backend acknowledgement.
         """
         url = f"{os.environ['UNIFY_BASE_URL']}/logs/derived"
-        headers = {"Authorization": f"Bearer {API_KEY}"}
+        headers = {"Authorization": f"Bearer {os.environ.get('UNIFY_KEY')}"}
         equation = equation.replace("{", "{lg:")
         json_input = {
             "project": unify.active_project(),
@@ -674,7 +672,7 @@ class KnowledgeManager(BaseKnowledgeManager):
             )
 
         url = f"{os.environ['UNIFY_BASE_URL']}/logs?delete_empty_logs=True"
-        headers = {"Authorization": f"Bearer {API_KEY}"}
+        headers = {"Authorization": f"Bearer {os.environ.get('UNIFY_KEY')}"}
         json_input = {
             "project": unify.active_project(),
             "context": self._ctx_for_table(table),
@@ -713,7 +711,7 @@ class KnowledgeManager(BaseKnowledgeManager):
         proj = unify.active_project()
         ctx = self._ctx_for_table(table)
         url = f"{os.environ['UNIFY_BASE_URL']}/logs/rename_field"
-        headers = {"Authorization": f"Bearer {API_KEY}"}
+        headers = {"Authorization": f"Bearer {os.environ.get('UNIFY_KEY')}"}
         json_input = {
             "project": proj,
             "context": ctx,
@@ -1071,7 +1069,7 @@ class KnowledgeManager(BaseKnowledgeManager):
         # 4️⃣  Fire the REST request
         url = f"{os.environ['UNIFY_BASE_URL']}/logs/join"
         headers = {
-            "Authorization": f"Bearer {API_KEY}",
+            "Authorization": f"Bearer {os.environ.get('UNIFY_KEY')}",
             "Content-Type": "application/json",
         }
         payload: Dict[str, Any] = {

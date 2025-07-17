@@ -8,6 +8,7 @@ from unity.conversation_manager.events import *
 
 # Subscription IDs
 project_id = "responsive-city-458413-a2"
+startup_subscription_id = "unity-startup-sub"
 subscription_id = (
     "unity-"
     + (os.getenv("ASSISTANT_ID") if os.getenv("ASSISTANT_ID") else "default-assistant")
@@ -40,7 +41,48 @@ class CommsManager:
             thread = data["thread"]
             event = data["event"]
             print(f"Received message from {thread}: {message.data.decode('utf-8')}")
-            if thread in events_map:
+            if thread == "startup":
+                global subscription_id, startup_subscription_id
+
+                # acknowledge message and cancel startup subscription
+                message.ack()
+                self.subscribers[startup_subscription_id].cancel()
+                self.subscribers.pop(startup_subscription_id)
+
+                # subscribe to the assistant's subscription
+                os.environ["ASSISTANT_ID"] = event["assistant_id"]
+                subscription_id = (
+                    "unity-"
+                    + (
+                        os.getenv("ASSISTANT_ID")
+                        if os.getenv("ASSISTANT_ID")
+                        else "default-assistant"
+                    )
+                    + ("-staging" if os.getenv("STAGING") else "")
+                ) + "-sub"
+                self.subscribe_to_topic(subscription_id)
+
+                # publish
+                self.loop.call_soon_threadsafe(
+                    self.message_queue.put_nowait,
+                    {
+                        "topic": "startup",
+                        "to": "past",
+                        "event": StartupEvent(
+                            api_key=event["api_key"],
+                            assistant_id=event["assistant_id"],
+                            assistant_name=event["assistant_name"],
+                            assistant_age=event["assistant_age"],
+                            assistant_region=event["assistant_region"],
+                            assistant_about=event["assistant_about"],
+                            assistant_number=event["assistant_number"],
+                            user_name=event["user_name"],
+                            user_number=event["user_number"],
+                            user_phone_number=event["user_phone_number"],
+                        ).to_dict(),
+                    },
+                )
+            elif thread in events_map:
                 content = event["body"]
                 topic = ""
                 if thread == "email":
@@ -100,7 +142,8 @@ class CommsManager:
             print(f"Error processing message: {e}")
             message.nack()
 
-    async def subscribe_to_topic(self, subscription_id: str):
+    def subscribe_to_topic(self, subscription_id: str):
+        # async def subscribe_to_topic(self, subscription_id: str):
         """Subscribe to a specific PubSub topic and process messages."""
         try:
             # Let GCP libraries handle authentication automatically
@@ -128,8 +171,12 @@ class CommsManager:
 
     async def start(self):
         """Start all subscriptions and maintain connection to event manager."""
-        # Start subscription
-        await self.subscribe_to_topic(subscription_id)
+        if not os.getenv("ASSISTANT_ID"):
+            # Start the startup subscription
+            self.subscribe_to_topic(startup_subscription_id)
+        else:
+            # Start subscription
+            self.subscribe_to_topic(subscription_id)
 
         # Keep the connection alive
         try:
