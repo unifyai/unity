@@ -934,6 +934,7 @@ async def test_contact_manager_summary_contains_expected_companies(monkeypatch):
                     "person_name": f"Person{idx}",
                 },
             ),
+            blocking=True,
         )
 
     # Flush uploads & wait for the entire callback cascade ----------------
