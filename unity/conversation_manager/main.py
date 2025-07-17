@@ -116,9 +116,12 @@ class EventManager:
 
             await asyncio.sleep(30)  # Check every 30 seconds
             current_time = asyncio.get_event_loop().time()
-            if current_time - self.last_activity_time > self.INACTIVITY_TIMEOUT:
+            if os.getenv("UNIFY_KEY") and (
+                current_time - self.last_activity_time > self.INACTIVITY_TIMEOUT
+            ):
                 print(
-                    f"Inactivity timeout reached ({self.INACTIVITY_TIMEOUT}s), shutting down gracefully...",
+                    f"Inactivity timeout reached ({self.INACTIVITY_TIMEOUT}s), "
+                    "shutting down gracefully...",
                 )
                 await self.shutdown_gracefully()
                 break
@@ -208,8 +211,15 @@ async def main(
             os.getenv("USER_NUMBER", ""),
             os.getenv("USER_PHONE_NUMBER", ""),
             "tool_use",
+            "startup",
         ],
     )
+
+    # Initialize Redis connection (waits for Redis to be ready)
+    print("Initializing Redis connection...")
+    await user_agent.initialize_redis()
+    print("Redis connection initialized successfully")
+
     comms_manager = CommsManager(events_queue=event_manager.events_queue)
     event_manager_task = asyncio.create_task(event_manager.serve())
     asyncio.create_task(comms_manager.start())
