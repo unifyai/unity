@@ -71,12 +71,12 @@ class EventManager:
                 self.writers["call"].write((json.dumps(event) + "\n").encode("utf-8"))
                 await self.writers["call"].drain()
             elif event["topic"] == "startup":
-                self.topic_to_subs[
-                    event["event"]["payload"]["user_number"]
-                ] = self.topic_to_subs["tool_use"]
-                self.topic_to_subs[
-                    event["event"]["payload"]["user_phone_number"]
-                ] = self.topic_to_subs["tool_use"]
+                self.topic_to_subs[event["event"]["payload"]["user_number"]] = (
+                    self.topic_to_subs["tool_use"]
+                )
+                self.topic_to_subs[event["event"]["payload"]["user_phone_number"]] = (
+                    self.topic_to_subs["tool_use"]
+                )
             else:
                 for client in self.topic_to_subs[event["topic"]]:
                     client.handle_event(event)
