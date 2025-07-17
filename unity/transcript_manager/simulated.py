@@ -6,7 +6,7 @@ import json
 import os
 import threading
 import functools
-from typing import List, Optional, Union, Dict, Any
+from typing import List, Optional, Dict, Any
 
 import unify
 
@@ -251,111 +251,6 @@ class SimulatedTranscriptManager(BaseTranscriptManager):
                 call_id,
                 "TranscriptManager",
                 "ask",
-            )
-
-        return handle
-
-    # --------------------------------------------------------------------- #
-    # summarize                                                             #
-    # --------------------------------------------------------------------- #
-    @functools.wraps(BaseTranscriptManager.summarize, updated=())
-    async def summarize(
-        self,
-        *,
-        from_exchanges: Optional[Union[int, List[int]]] = None,
-        from_messages: Optional[Union[int, List[int]]] = None,
-        omit_messages: Optional[List[int]] = None,
-        guidance: Optional[str] = None,
-        parent_chat_context: list[dict] | None = None,
-        _return_reasoning_steps: bool = False,
-        _requests_clarification: bool = False,
-        clarification_up_q: asyncio.Queue[str] | None = None,
-        clarification_down_q: asyncio.Queue[str] | None = None,
-        log_events: bool = False,
-    ) -> SteerableToolHandle:
-        should_log = self._log_events or log_events
-        call_id = None
-
-        if should_log:
-            call_id = new_call_id()
-            await publish_manager_method_event(
-                call_id,
-                "TranscriptManager",
-                "summarize",
-                phase="incoming",
-                from_exchanges=from_exchanges,
-                from_messages=from_messages,
-                omit_messages=list(omit_messages or []),
-                guidance=guidance,
-            )
-
-        # Base prompt with dynamic disclaimers
-        instruction = build_simulated_method_prompt(
-            "summarize",
-            "",  # summarise does not need the original user text here
-            parent_chat_context=parent_chat_context,
-        )
-        if from_exchanges is None and from_messages is None:
-            raise ValueError(
-                "Either 'from_exchanges' or 'from_messages' must be provided.",
-            )
-        if isinstance(from_exchanges, int):
-            from_exchanges = [from_exchanges]
-        if isinstance(from_messages, int):
-            from_messages = [from_messages]
-
-        if _requests_clarification and (
-            not clarification_up_q or not clarification_down_q
-        ):
-            raise ValueError(
-                "Clarification queues must be provided when _requests_clarification is True",
-            )
-
-        if _requests_clarification:
-            try:
-                clarification_up_q.put_nowait(
-                    "Any special focus for this summary?",
-                )
-            except asyncio.QueueFull:
-                pass
-            try:
-                clar = await asyncio.wait_for(clarification_down_q.get(), timeout=60)
-            except asyncio.TimeoutError:
-                clar = None
-        else:
-            clar = None
-
-        prompt_parts = [instruction]
-        if from_exchanges:
-            prompt_parts.append(
-                f"\nSummarise imaginary exchange(s) with id(s): {from_exchanges}.",
-            )
-        if from_messages:
-            prompt_parts.append(
-                f"\nAlso include explicit message id(s): {from_messages}.",
-            )
-        if omit_messages:
-            prompt_parts.append(f"\nOmit message id(s): {omit_messages}.")
-        if guidance:
-            prompt_parts.append(f"Guidance: {guidance}")
-        if clar:
-            prompt_parts.append(f"User clarification: {clar}")
-
-        handle = _SimulatedTranscriptHandle(
-            self._llm,
-            "\n\n".join(prompt_parts),
-            _return_reasoning_steps=_return_reasoning_steps,
-            _requests_clarification=_requests_clarification,
-            clarification_up_q=clarification_up_q,
-            clarification_down_q=clarification_down_q,
-        )
-
-        if should_log and call_id is not None:
-            handle = wrap_handle_with_logging(
-                handle,
-                call_id,
-                "TranscriptManager",
-                "summarize",
             )
 
         return handle
