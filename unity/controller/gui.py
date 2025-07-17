@@ -22,6 +22,7 @@ import logging
 from pygments import highlight
 from pygments.formatters import HtmlFormatter
 from pygments.lexers import PythonLexer
+from pydantic import BaseModel, Field
 
 from .agent import (
     text_to_browser_action,
@@ -389,7 +390,41 @@ class ControlPanel(tk.Tk):
                         finally:
                             loop.close()
                         self._llm_stream_q.put("🔍 Observation succeeded")
-                        # Controller handles everything, no need for _llm_resp_q
+
+                        # Log observation result to GUI (schedule on main thread)
+                        def log_observation_result():
+                            # Clear animated line
+                            if self._llm_line_idx is not None:
+                                self.log.configure(state="normal")
+                                self.log.delete(
+                                    self._llm_line_idx,
+                                    f"{self._llm_line_idx} lineend",
+                                )
+                                self.log.configure(state="disabled")
+                                self._llm_line_idx = None
+
+                            # Display the observation result
+                            self.log.configure(state="normal")
+                            self.log.insert(
+                                "end",
+                                "🔍 Observation Result:\n",
+                                "observation",
+                            )
+                            # Format the result nicely
+                            result_text = str(result)
+                            # Indent multi-line results
+                            if "\n" in result_text:
+                                lines = result_text.split("\n")
+                                formatted_result = "\n".join(
+                                    f"   {line}" for line in lines
+                                )
+                                self.log.insert("end", formatted_result + "\n")
+                            else:
+                                self.log.insert("end", f"   {result_text}\n")
+                            self.log.configure(state="disabled")
+                            self.log.yview_moveto(1.0)
+
+                        self.after_idle(log_observation_result)
                     else:
                         # Fallback to direct call if controller not available
                         context = {
@@ -424,7 +459,41 @@ class ControlPanel(tk.Tk):
                         finally:
                             loop.close()
                         self._llm_stream_q.put("🛈 LLM call succeeded")
-                        # Controller handles everything, no need for _llm_resp_q
+
+                        # Log action result to GUI (schedule on main thread)
+                        def log_action_result():
+                            # Clear animated line
+                            if self._llm_line_idx is not None:
+                                self.log.configure(state="normal")
+                                self.log.delete(
+                                    self._llm_line_idx,
+                                    f"{self._llm_line_idx} lineend",
+                                )
+                                self.log.configure(state="disabled")
+                                self._llm_line_idx = None
+
+                            # Format and display action result
+                            # Controller.act returns str or list[str]
+                            if isinstance(result, str):
+                                cmds = [result] if result else []
+                            elif isinstance(result, list):
+                                cmds = result
+                            else:
+                                cmds = []
+
+                            # Process each command in sequence (similar to legacy path)
+                            for cmd in cmds:
+                                if cmd and cmd.startswith("click_button_"):
+                                    idx = cmd[len("click_button_") :].split("_", 1)[0]
+                                    cmd = f"click {idx}"
+                                line = f"↳ {cmd}" if cmd else "❗ No action selected"
+                                # log and queue
+                                self.log.configure(state="normal")
+                                self.log.insert("end", line + "\n")
+                                self.log.configure(state="disabled")
+                                self.log.yview_moveto(1.0)
+
+                        self.after_idle(log_action_result)
                     else:
                         # Fallback to direct call if controller not available
                         resp = text_to_browser_action(
@@ -445,8 +514,29 @@ class ControlPanel(tk.Tk):
                 )
                 import traceback as _tb
 
-                # Only use _llm_resp_q for backward compatibility when no controller
-                if not self._controller:
+                if self._controller:
+                    # Log error to GUI when using controller (schedule on main thread)
+                    def log_error():
+                        # Replace animated line with error
+                        if self._llm_line_idx is not None:
+                            self.log.configure(state="normal")
+                            self.log.delete(
+                                self._llm_line_idx,
+                                f"{self._llm_line_idx} lineend",
+                            )
+                            self.log.insert(
+                                self._llm_line_idx,
+                                "❗ LLM error – see traceback\n",
+                            )
+                            self.log.configure(state="disabled")
+                            self._llm_line_idx = None
+
+                        # Log the full traceback
+                        self._log_trace(_tb.format_exc())
+
+                    self.after_idle(log_error)
+                else:
+                    # Only use _llm_resp_q for backward compatibility when no controller
                     self._llm_resp_q.put(("err", _tb.format_exc()))
             finally:
                 # detach handler to avoid duplicate logs on next call
@@ -1093,6 +1183,94 @@ class ControlPanel(tk.Tk):
         # ===================================================================
         # SECTION 6: Scrolling Controls
         # ===================================================================
+
+        # ===================================================================
+        # SECTION 6.1: Scroll Until Visible
+        # ===================================================================
+        scroll_until_frame = ttk.LabelFrame(
+            controls_frame,
+            text="Scroll Until Visible",
+            padding="10",
+        )
+        scroll_until_frame.pack(fill="x", padx=5, pady=5)
+        scroll_until_frame.columnconfigure(1, weight=1)
+
+        # Element description row
+        tk.Label(scroll_until_frame, text="Element Description:").grid(
+            row=0,
+            column=0,
+            sticky="w",
+            padx=(0, 5),
+        )
+        self.scroll_element_var = tk.StringVar()
+        self.scroll_element_entry = tk.Entry(
+            scroll_until_frame,
+            textvariable=self.scroll_element_var,
+        )
+        self.scroll_element_entry.grid(row=0, column=1, sticky="ew", padx=2)
+        self.scroll_element_entry.bind(
+            "<Return>",
+            lambda _e: self._send_scroll_until_visible(),
+        )
+
+        # Direction and Max retries row
+        direction_retries_frame = tk.Frame(scroll_until_frame)
+        direction_retries_frame.grid(
+            row=1,
+            column=0,
+            columnspan=2,
+            sticky="ew",
+            pady=(5, 0),
+        )
+        direction_retries_frame.columnconfigure(2, weight=1)
+
+        # Direction selection
+        tk.Label(direction_retries_frame, text="Direction:").grid(
+            row=0,
+            column=0,
+            sticky="w",
+            padx=(0, 5),
+        )
+        self.scroll_direction_var = tk.StringVar(value="down")
+        rb_down = tk.Radiobutton(
+            direction_retries_frame,
+            text="Down",
+            variable=self.scroll_direction_var,
+            value="down",
+        )
+        rb_up = tk.Radiobutton(
+            direction_retries_frame,
+            text="Up",
+            variable=self.scroll_direction_var,
+            value="up",
+        )
+        rb_down.grid(row=0, column=1, padx=2)
+        rb_up.grid(row=0, column=2, padx=2)
+
+        # Max retries
+        tk.Label(direction_retries_frame, text="Max retries:").grid(
+            row=0,
+            column=3,
+            sticky="w",
+            padx=(10, 5),
+        )
+        self.scroll_max_retries_var = tk.StringVar(value="5")
+        max_retries_entry = tk.Entry(
+            direction_retries_frame,
+            textvariable=self.scroll_max_retries_var,
+            width=8,
+        )
+        max_retries_entry.grid(row=0, column=4, sticky="w", padx=2)
+        max_retries_entry.bind("<Return>", lambda _e: self._send_scroll_until_visible())
+
+        # Scroll until visible button
+        scroll_until_btn = ttk.Button(
+            scroll_until_frame,
+            text="🔍 Scroll Until Visible",
+            command=self._send_scroll_until_visible,
+        )
+        scroll_until_btn.grid(row=2, column=0, columnspan=2, sticky="ew", pady=(5, 0))
+
         scroll_frame = ttk.LabelFrame(
             controls_frame,
             text="Scrolling Controls",
@@ -1570,6 +1748,129 @@ class ControlPanel(tk.Tk):
             return
         self._handle_input(f"press_key {key}")
         self.press_key_var.set("")  # clear box
+
+    # ---------- scroll until visible helper --------------------------
+    def _send_scroll_until_visible(self) -> None:
+        """Trigger the scroll until visible functionality."""
+        element_desc = self.scroll_element_var.get().strip()
+        if not element_desc:
+            self._log("⚠ Please enter an element description")
+            return
+
+        direction = self.scroll_direction_var.get()
+        max_retries_str = self.scroll_max_retries_var.get().strip()
+
+        # Validate max_retries
+        try:
+            max_retries = int(max_retries_str)
+            if max_retries <= 0:
+                self._log("⚠ Max retries must be a positive integer")
+                return
+        except ValueError:
+            self._log("⚠ Max retries must be a valid positive integer")
+            return
+
+        # Start the scroll until visible process in a background thread
+        self._start_scroll_until_visible(element_desc, direction, max_retries)
+
+        # Clear the element description for next use
+        self.scroll_element_var.set("")
+
+    def _start_scroll_until_visible(
+        self,
+        element_description: str,
+        direction: str,
+        max_retries: int,
+    ) -> None:
+        """Start scroll until visible in a background thread."""
+        if self._llm_busy:
+            self._log("⚠ LLM still working – please wait")
+            return
+
+        self._llm_busy = True
+
+        # Show loader and disable entry
+        self.llm_loader.grid()
+        self.scroll_element_entry.configure(state="disabled")
+
+        # Log the action
+        self._log(
+            f"🔍 Scrolling until '{element_description}' is visible ({direction}, max {max_retries} retries)",
+        )
+
+        def _worker():
+            """Run scroll_until_visible in a thread."""
+            try:
+                if self._controller:
+                    import asyncio
+
+                    loop = asyncio.new_event_loop()
+                    asyncio.set_event_loop(loop)
+                    try:
+                        result = loop.run_until_complete(
+                            self._scroll_until_visible_impl(
+                                element_description,
+                                direction,
+                                max_retries,
+                            ),
+                        )
+                        self._log(f"✓ {result}")
+                    finally:
+                        loop.close()
+                else:
+                    self._log("❌ Controller not available for scroll until visible")
+            except Exception as exc:
+                import traceback as _tb
+
+                self._log(f"❌ Scroll until visible error: {exc}")
+                self._log_trace(_tb.format_exc())
+            finally:
+                # Reset UI state
+                def reset_ui():
+                    self._llm_busy = False
+                    self.llm_loader.grid_remove()
+                    self.scroll_element_entry.configure(state="normal")
+
+                self.after_idle(reset_ui)
+
+        threading.Thread(target=_worker, daemon=True).start()
+
+    async def _scroll_until_visible_impl(
+        self,
+        element_description: str,
+        direction: str = "down",
+        max_retries: int = 5,
+    ) -> str:
+        """
+        Implementation of scroll_until_visible that replicates ActionProvider's functionality
+        using controller's act and observe methods.
+        """
+
+        class ElementVisibility(BaseModel):
+            is_visible: bool = Field(
+                description="True if the element is visible on the screen, False otherwise.",
+            )
+            reason: str = Field(description="The reason for the visibility status.")
+
+        for i in range(max_retries):
+            # First, check if the element is already visible
+            visibility_status = await self._controller.observe(
+                f"Is '{element_description}' currently visible on the screen?",
+                response_format=ElementVisibility,
+            )
+
+            if visibility_status.is_visible:
+                return f"Success: Element '{element_description}' is now visible."
+
+            # If not visible, perform the scroll action
+            await self._controller.act(
+                f"Scroll {direction} slightly",
+                expectation=f"The page should scroll {direction}.",
+            )
+            await asyncio.sleep(1)
+
+        # If the loop finishes without finding the element, return a failure message
+        return f"Failure: Could not find element '{element_description}' after {max_retries} scrolls."
 
     # ──────────────────────── TABS‑PANE HELPERS ────────────────────────
     def _exec_tab_cmd(self, prefix: str, title: str) -> None:
