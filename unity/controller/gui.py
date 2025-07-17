@@ -138,7 +138,7 @@ class ControlPanel(tk.Tk):
         self.screenshot: bytes = b""
         self.tab_titles: list[str] = []
         self.history: list[dict] = []
-        self.state: dict[str, Any] = {}
+        self.state: BrowserState = BrowserState()
 
         # ── async LLM helper --------------------------------------------
         self._llm_resp_q: "queue.Queue[tuple[str,Any]]" = queue.Queue()
@@ -180,8 +180,9 @@ class ControlPanel(tk.Tk):
         )
         self._pending_text = ""
 
-        # model poller
-        self.after(50, self._poll_llm_resp)
+        # model poller - only poll llm_resp when no controller (backward compatibility)
+        if self._controller is None:
+            self.after(50, self._poll_llm_resp)
         self.after(50, self._poll_llm_stream)
 
         # If no update queue provided, subscribe to Redis browser_state
@@ -278,8 +279,9 @@ class ControlPanel(tk.Tk):
         is_observation: bool | None = None,
     ) -> None:
         """
-        Fire a daemon thread that calls `primitive_to_browser_action`
-        and drops (status, payload) tuples onto `_llm_resp_q`.
+        Fire a daemon thread that calls controller.act/observe if available,
+        or falls back to direct calls. Only uses _llm_resp_q for backward
+        compatibility when controller is not provided.
         """
         if self._llm_busy:
             self._log("⚠ LLM still working – please wait")
@@ -315,7 +317,17 @@ class ControlPanel(tk.Tk):
         tabs = list(self.tab_titles)
         buttons = [(i, lbl) for i, lbl, _ in self.elements]
         history = list(self.history)
-        state = dict(self.state)
+        state = self.state
+
+        # Get expectation and multi_step_mode for act mode
+        expectation = None
+        multi_step_mode = False
+        if not is_observation:
+            if hasattr(self, "expectation_var"):
+                expectation_text = self.expectation_var.get().strip()
+                expectation = expectation_text if expectation_text else None
+            if hasattr(self, "multi_step_var"):
+                multi_step_mode = self.multi_step_var.get()
 
         def _worker():
             """Run the LLM call inside a thread and forward *all* log records
@@ -376,6 +388,8 @@ class ControlPanel(tk.Tk):
                             )
                         finally:
                             loop.close()
+                        self._llm_stream_q.put("🔍 Observation succeeded")
+                        # Controller handles everything, no need for _llm_resp_q
                     else:
                         # Fallback to direct call if controller not available
                         context = {
@@ -389,9 +403,9 @@ class ControlPanel(tk.Tk):
                             context=context,
                             screenshots={"current_view": screenshot},
                         )
-                    self._llm_stream_q.put("🔍 Observation succeeded")
-                    # Package the observation result
-                    self._llm_resp_q.put(("observation", result))
+                        self._llm_stream_q.put("🔍 Observation succeeded")
+                        # Package the observation result for backward compatibility
+                        self._llm_resp_q.put(("observation", result))
                 else:
                     # Use Controller.act method for proper context and history management
                     if self._controller:
@@ -401,20 +415,16 @@ class ControlPanel(tk.Tk):
                         asyncio.set_event_loop(loop)
                         try:
                             result = loop.run_until_complete(
-                                self._controller.act(user_text, multi_step_mode=False),
+                                self._controller.act(
+                                    user_text,
+                                    expectation=expectation,
+                                    multi_step_mode=multi_step_mode,
+                                ),
                             )
-                            # Controller.act returns str or list[str], convert to expected format
-                            if isinstance(result, str):
-                                # Single command result
-                                resp = {"action": [result] if result else []}
-                            elif isinstance(result, list):
-                                # Multiple commands result
-                                resp = {"action": result}
-                            else:
-                                # Should not happen, but fallback
-                                resp = {"action": []}
                         finally:
                             loop.close()
+                        self._llm_stream_q.put("🛈 LLM call succeeded")
+                        # Controller handles everything, no need for _llm_resp_q
                     else:
                         # Fallback to direct call if controller not available
                         resp = text_to_browser_action(
@@ -424,24 +434,52 @@ class ControlPanel(tk.Tk):
                             buttons=buttons,
                             history=history,
                             state=state,
+                            multi_step_mode=multi_step_mode,
                         )
-                    self._llm_stream_q.put("🛈 LLM call succeeded")
-                    self._llm_resp_q.put(("ok", resp))
+                        self._llm_stream_q.put("🛈 LLM call succeeded")
+                        # Package the response for backward compatibility
+                        self._llm_resp_q.put(("ok", resp))
             except Exception as exc:
                 self._llm_stream_q.put(
                     f"❌ LLM error: {exc.__class__.__name__}: {exc}",
                 )
                 import traceback as _tb
 
-                self._llm_resp_q.put(("err", _tb.format_exc()))
+                # Only use _llm_resp_q for backward compatibility when no controller
+                if not self._controller:
+                    self._llm_resp_q.put(("err", _tb.format_exc()))
             finally:
                 # detach handler to avoid duplicate logs on next call
                 root_logger.removeHandler(qh)
 
+                # Reset UI state when using controller (since we don't use _llm_resp_q)
+                if self._controller:
+
+                    def reset_ui():
+                        self._llm_busy = False
+                        self.llm_entry.configure(state="normal")
+                        self.llm_loader.grid_remove()
+                        # Clear animated line
+                        if self._llm_line_idx is not None:
+                            self.log.configure(state="normal")
+                            self.log.delete(
+                                self._llm_line_idx,
+                                f"{self._llm_line_idx} lineend",
+                            )
+                            self.log.configure(state="disabled")
+                            self._llm_line_idx = None
+
+                    # Schedule UI reset on main thread
+                    self.after_idle(reset_ui)
+
         threading.Thread(target=_worker, daemon=True).start()
 
     def _poll_llm_resp(self):
-        """Check the response queue every 50 ms."""
+        """Check the response queue every 50 ms. Only used when controller is not provided."""
+        # Only poll when controller is not provided (backward compatibility)
+        if self._controller:
+            return
+
         try:
             while True:
                 status, payload = self._llm_resp_q.get_nowait()
@@ -557,6 +595,31 @@ class ControlPanel(tk.Tk):
         target.bind("<MouseWheel>", wheel, add=True)  # Win / macOS
         target.bind("<Button-4>", wheel, add=True)  # X11 up
         target.bind("<Button-5>", wheel, add=True)  # X11 down
+
+    # ---------- LLM mode handling helpers ----------------------------------
+    def _on_mode_change(self):
+        """Called when Act/Observe mode is changed."""
+        self._update_act_mode_widgets_visibility()
+
+    def _update_act_mode_widgets_visibility(self):
+        """Show/hide Act-mode specific widgets (expectation field and multi-step checkbox) based on current mode."""
+        mode = self._llm_mode.get() if self._llm_mode else "act"
+        if mode == "act":
+            # Show expectation field
+            if hasattr(self, "expectation_label"):
+                self.expectation_label.grid()
+                self.expectation_entry.grid()
+            # Show multi-step checkbox
+            if hasattr(self, "multi_step_checkbox"):
+                self.multi_step_checkbox.grid()
+        else:
+            # Hide expectation field
+            if hasattr(self, "expectation_label"):
+                self.expectation_label.grid_remove()
+                self.expectation_entry.grid_remove()
+            # Hide multi-step checkbox
+            if hasattr(self, "multi_step_checkbox"):
+                self.multi_step_checkbox.grid_remove()
 
     # ──────────────────────── WIDGET CONSTRUCTION ────────────────────────
     def _build_widgets(self) -> None:
@@ -962,7 +1025,7 @@ class ControlPanel(tk.Tk):
         llm_frame.pack(fill="x", padx=5, pady=5)
         llm_frame.columnconfigure(2, weight=1)
 
-        # Mode selection
+        # Mode selection row
         mode_frame = tk.Frame(llm_frame)
         mode_frame.grid(row=0, column=0, sticky="w", padx=(0, 10))
 
@@ -973,12 +1036,14 @@ class ControlPanel(tk.Tk):
             text="Act",
             variable=self._llm_mode,
             value="act",
+            command=self._on_mode_change,
         )
         rb_obs = tk.Radiobutton(
             mode_frame,
             text="Observe",
             variable=self._llm_mode,
             value="observe",
+            command=self._on_mode_change,
         )
         rb_act.pack(side="left", padx=(5, 0))
         rb_obs.pack(side="left", padx=(2, 0))
@@ -993,6 +1058,37 @@ class ControlPanel(tk.Tk):
         self.llm_entry = tk.Entry(llm_frame, textvariable=self.cmd_var)
         self.llm_entry.grid(row=0, column=2, sticky="ew", padx=2)
         self.llm_entry.bind("<Return>", lambda _e: self._send_llm_command())
+
+        # Expectation entry (only for Act mode)
+        expectation_frame = tk.Frame(llm_frame)
+        expectation_frame.grid(row=1, column=0, columnspan=3, sticky="ew", pady=(5, 0))
+        expectation_frame.columnconfigure(1, weight=1)
+
+        self.expectation_label = tk.Label(expectation_frame, text="Expectation:")
+        self.expectation_label.grid(row=0, column=0, sticky="w", padx=(0, 5))
+
+        self.expectation_var = tk.StringVar()
+        self.expectation_entry = tk.Entry(
+            expectation_frame,
+            textvariable=self.expectation_var,
+        )
+        self.expectation_entry.grid(row=0, column=1, sticky="ew", padx=2)
+        self.expectation_entry.bind("<Return>", lambda _e: self._send_llm_command())
+
+        # Multi-step mode checkbox (only for Act mode)
+        multi_step_frame = tk.Frame(llm_frame)
+        multi_step_frame.grid(row=2, column=0, columnspan=3, sticky="ew", pady=(5, 0))
+
+        self.multi_step_var = tk.BooleanVar(value=True)  # Default to checked
+        self.multi_step_checkbox = tk.Checkbutton(
+            multi_step_frame,
+            text="Multi-step mode",
+            variable=self.multi_step_var,
+        )
+        self.multi_step_checkbox.grid(row=0, column=0, sticky="w", padx=(0, 5))
+
+        # Initially set visibility based on default mode
+        self._update_act_mode_widgets_visibility()
 
         # ===================================================================
         # SECTION 6: Scrolling Controls
@@ -1625,7 +1721,7 @@ class ControlPanel(tk.Tk):
                 _Tooltip(btn, reason)
 
         # ----- Step-scroll widgets ------------------------------------ NEW
-        auto = self.state.get("auto_scroll", None)
+        auto = self.state.auto_scroll
         for w in getattr(self, "_step_widgets", []):
             if hasattr(w, "configure"):
                 w.configure(state="disabled" if auto else "normal")
@@ -1636,11 +1732,11 @@ class ControlPanel(tk.Tk):
         groups = list_available_actions(
             self.tab_titles,
             [(idx, label) for idx, label, _ in self.elements],
-            state=BrowserState(**self.state),
+            state=self.state,
         )
 
         # ---------- build text with ONLY currently valid actions ----------
-        valid = get_valid_actions(BrowserState(**self.state))
+        valid = get_valid_actions(self.state)
 
         def _is_ok(cmd: str) -> bool:
             for v in valid:
@@ -1688,15 +1784,15 @@ class ControlPanel(tk.Tk):
 
     # ───────────────────────── BROWSER‑STATE LABEL ───────────────────────
     def _refresh_state_label(self) -> None:
-        st = self.state or {}
+        st = self.state
         self.state_var.set(
-            f"url:         {st.get('url', '')[:60]}\n"
-            f"title:       {st.get('title', '')[:60]}\n"
-            f"scroll_y:    {st.get('scroll_y', 0)}\n"
-            f"auto_scroll: {st.get('auto_scroll', None)}\n"
-            f"scroll_speed: {st.get('scroll_speed', 250)}\n"
-            f"in_textbox:  {st.get('in_textbox', False)}\n"
-            f"captcha_pending: {st.get('captcha_pending', False)}",
+            f"url:         {st.url[:60]}\n"
+            f"title:       {st.title[:60]}\n"
+            f"scroll_y:    {st.scroll_y}\n"
+            f"auto_scroll: {st.auto_scroll}\n"
+            f"scroll_speed: {st.scroll_speed}\n"
+            f"in_textbox:  {st.in_textbox}\n"
+            f"captcha_pending: {st.captcha_pending}",
         )
 
         # sync the auto-scroll toggle --------------------------------
@@ -1705,14 +1801,14 @@ class ControlPanel(tk.Tk):
             if self._scroll_pending_target is not None:
                 mode_to_state = {0: "up", 1: None, 2: "down"}
                 expected = mode_to_state[self._scroll_pending_target]
-                if self.state.get("auto_scroll") == expected:
+                if self.state.auto_scroll == expected:
                     self.scroll_toggle.configure(state="normal")
                     self._scroll_pending_target = None
                     if self._manual_stop_pending and expected is None:
                         self._manual_stop_pending = False
 
             # Update toggle position to match current auto-scroll state
-            current_auto = self.state.get("auto_scroll")
+            current_auto = self.state.auto_scroll
             if current_auto == "up":
                 target_pos = 0
             elif current_auto == "down":
@@ -1738,21 +1834,21 @@ class ControlPanel(tk.Tk):
             self.captcha_lbl.place_forget()
 
         # Show or hide banner based on current flag
-        if st.get("captcha_pending", False):
+        if st.captcha_pending:
             self.captcha_lbl.place(relx=0.5, rely=0.0, y=6, anchor="n")
         else:
             self.captcha_lbl.place_forget()
 
     # ────────────────────── DIALOG BAR REFRESH ──────────────────────── NEW
     def _refresh_dialog_bar(self):
-        st = self.state or {}
-        has_dialog = st.get("dialog_open", False)
+        st = self.state
+        has_dialog = st.dialog_open
         if has_dialog:
-            self.dialog_msg_var.set(st.get("dialog_msg", "(no message)"))
+            self.dialog_msg_var.set(st.dialog_msg or "(no message)")
             self.dialog_accept_btn.configure(state="normal")
             self.dialog_dismiss_btn.configure(state="normal")
 
-            if st.get("dialog_type") == "prompt":
+            if st.dialog_type == "prompt":
                 self.dialog_entry.configure(state="normal")
             else:
                 self.dialog_entry.configure(state="disabled")
@@ -1765,7 +1861,7 @@ class ControlPanel(tk.Tk):
     # ────────────────────── ACCEPT DIALOG ACTION ─────────────────────── NEW
     def _accept_dialog(self):
         """Send the appropriate primitive based on current dialog type."""
-        if self.state.get("dialog_type") == "prompt":
+        if self.state.dialog_type == "prompt":
             text = self.dialog_input_var.get()
             self._queue_command(CMD_TYPE_DIALOG.replace("*", text))
         else:
@@ -1851,7 +1947,7 @@ class ControlPanel(tk.Tk):
                 self._log(f"> {text}")
 
             def _is_valid_primitive(cmd: str) -> bool:
-                valid = get_valid_actions(BrowserState(**self.state))
+                valid = get_valid_actions(self.state)
                 for pat in valid:
                     if cmd == pat:
                         return True
@@ -1883,6 +1979,11 @@ class ControlPanel(tk.Tk):
 
     def set_controller(self, controller):
         self._controller = controller
+        # Start/stop llm_resp polling based on controller availability
+        if controller is None:
+            # Start polling for backward compatibility
+            self.after(50, self._poll_llm_resp)
+        # If controller is provided, we don't need to poll llm_resp as controller handles everything
 
     # ───────────────────────── PUBLIC PRIMITIVE API ─────────────────────
     def send_text_command(self, text: str) -> None:
@@ -2005,7 +2106,13 @@ class ControlPanel(tk.Tk):
             self.elements = payload.get("elements", [])
             self.tab_titles = payload.get("tabs", [])
             self.history = payload.get("history", self.history)
-            self.state = payload.get("state", self.state)
+            state_data = payload.get("state", {})
+            if state_data:
+                # Convert dict to BrowserState object
+                if isinstance(state_data, dict):
+                    self.state = BrowserState(**state_data)
+                else:
+                    self.state = state_data
             img = payload.get("screenshot", b"")
             if img:
                 self.screenshot = img
@@ -2024,7 +2131,7 @@ class ControlPanel(tk.Tk):
             self._refresh_actions_list()
             self._refresh_state_label()
             self._refresh_enabled_controls(
-                get_valid_actions(BrowserState(**self.state)),
+                get_valid_actions(self.state),
             )
             self._refresh_dialog_bar()
 
