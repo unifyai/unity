@@ -29,7 +29,6 @@ class MemoryManager(BaseMemoryManager):
     Offline helper invoked by a scheduler every ~50 messages.
     """
 
-    # ─────────────────────────────  NEW CONSTANTS  ──────────────────────────
     _MANAGERS = {
         "ContactManager": "contact_manager",
         "TranscriptManager": "transcript_manager",
@@ -55,7 +54,7 @@ class MemoryManager(BaseMemoryManager):
     _ALL_TIME = {"all_time": None}
 
     # ────────────────────────────────────────────────────────────────────
-    #  NEW: hierarchy helpers so higher-level windows summarise the lower
+    #   hierarchy helpers so higher-level windows summarise the lower
     #       level rather than the raw ManagerMethod events
     # ────────────────────────────────────────────────────────────────────
     _TIME_ORDER = [
@@ -119,13 +118,13 @@ class MemoryManager(BaseMemoryManager):
         self._knowledge_manager = knowledge_manager or KnowledgeManager()
         self._task_scheduler = task_scheduler or TaskScheduler()
 
-        # ── NEW: Rolling-Activity context & subscriptions ─────────────────
+        # ── Rolling-Activity context & subscriptions ─────────────────
         self._rolling_ctx = self._ensure_rolling_context()
         # Serialise updates to the RollingActivity context to avoid race conditions
         self._rolling_lock = asyncio.Lock()
         asyncio.create_task(self._setup_rolling_callbacks())  # fire-and-forget
 
-        # ── NEW: real-time 50-message trigger -----------------------------------------
+        # ── real-time 50-message trigger -----------------------------------------
         self._CHUNK_SIZE: int = 50
         self._recent_messages: list[dict] = []
         self._messages_since_update: int = 0
@@ -396,7 +395,7 @@ class MemoryManager(BaseMemoryManager):
         # Wait until rolling-callbacks signalled readiness (max 5 s)
         await asyncio.wait_for(self._callbacks_ready.wait(), timeout=5)
 
-    # ───────────────────────────  NEW MESSAGE-BASED CALLBACKS  ───────────────────────────
+    # ───────────────────────────  MESSAGE-BASED CALLBACKS  ───────────────────────────
 
     async def _setup_message_callbacks(self) -> None:
         """Register a callback that fires *every* incoming `message` event.
@@ -539,7 +538,7 @@ class MemoryManager(BaseMemoryManager):
 
                 traceback.print_exc()
 
-    # ───────────────────────────  NEW HELPERS  ────────────────────────────
+    # ───────────────────────────  HELPERS  ────────────────────────────
     # 1. Context & schema ---------------------------------------------------
     def _ensure_rolling_context(self) -> str:
         """Create the `RollingActivity` context (idempotent) and return its name."""
@@ -737,19 +736,68 @@ class MemoryManager(BaseMemoryManager):
                 ]
                 summary = await _summarise(relevant)
             else:
+                # -----------------------  deterministic lineage  -----------------------
+                # Every *_hierarchical_summaries* event now carries the **row_id** of the
+                # lower-level RollingActivity snapshot it represents.  Using these ids removes
+                # the race where the child window used to look at “the most recent N” rows and
+                # could therefore pick up *newer* summaries written while it was waiting for the
+                # write-lock.
+
                 lower_col = f"{mgr_nick}/{lower_window}"
-                rows = unify.get_logs(
-                    context=self._rolling_ctx,
-                    sorting={"row_id": "descending"},
-                    limit=need * 5,  # generous buffer; we'll filter below
-                )
+
+                # 1.  Collect explicit row_ids from the triggering events (if present).
+                row_ids: list[int] = []
+                for ev in events:
+                    try:
+                        rid = int(ev.payload.get("row_id"))  # type: ignore[arg-type]
+                    except (ValueError, TypeError, AttributeError):
+                        rid = None
+                    if rid is not None:
+                        row_ids.append(rid)
+
                 collected: list[str] = []
-                for lg in rows:
-                    txt = lg.entries.get(lower_col)
-                    if txt:
+
+                # 2a. Fetch the *exact* rows referenced by the events.
+                if row_ids:
+                    for rid in row_ids:
+                        rows = unify.get_logs(
+                            context=self._rolling_ctx,
+                            filter=f"row_id == {rid}",
+                            limit=1,
+                        )
+                        if rows:
+                            txt = rows[0].entries.get(lower_col)
+                            if txt:
+                                collected.append(txt)
+
+                # 2b. If we still need more to reach the required `need` count
+                #     (because the callback only delivered the *latest* event),
+                #     back-fill by walking backwards from the current row_id.
+                if len(collected) < need:
+                    # Determine the highest row_id we already included so we
+                    # only look at *earlier* snapshots and therefore avoid the
+                    # original race condition.
+                    max_seen = max(row_ids) if row_ids else None
+
+                    extra_rows = unify.get_logs(
+                        context=self._rolling_ctx,
+                        sorting={"row_id": "descending"},
+                        limit=need * 5,  # generous buffer; we'll filter below
+                    )
+                    for lg in extra_rows:
+                        rid = lg.entries.get("row_id")
+                        if max_seen is not None and rid is not None and rid > max_seen:
+                            # newer than the latest row we already have → skip
+                            continue
+                        txt = lg.entries.get(lower_col)
+                        if not txt:
+                            continue
+                        if rid in row_ids:
+                            continue  # already have it
                         collected.append(txt)
-                    if len(collected) >= need:
-                        break
+                        if len(collected) >= need:
+                            break
+
                 summary = await _summarise(collected)
 
         # ---- 2.  persist --------------------------------------------------
@@ -761,7 +809,7 @@ class MemoryManager(BaseMemoryManager):
 
         base_payload[column] = summary
 
-        # ──────────────────────────  NEW: Pre-compute summaries  ────────────────
+        # ──────────────────────────  Pre-compute summaries  ────────────────
         base_payload[self._SUMMARY_TIME_COL] = self._build_activity_summary(
             base_payload,
             "time",
@@ -772,12 +820,25 @@ class MemoryManager(BaseMemoryManager):
         )
 
         # ------------------------------------------------------------------
+        # -----------------------  write new snapshot -----------------------
         unify.log(
             context=self._rolling_ctx,
             new=True,
             mutable=True,
             **base_payload,
         )
+
+        # Retrieve the *row_id* of the snapshot just written so that dependant
+        # windows know exactly which lower-level rows to aggregate.
+        try:
+            _last_row = unify.get_logs(
+                context=self._rolling_ctx,
+                sorting={"row_id": "descending"},
+                limit=1,
+            )[0]
+            new_row_id = _last_row.entries.get("row_id")
+        except Exception:
+            new_row_id = None
 
         # ---- 2b.  update global cache --------------------------------------
         # Keep the in-process snapshot in sync so prompt builders never have
@@ -797,6 +858,7 @@ class MemoryManager(BaseMemoryManager):
                 payload={
                     "manager": mgr_nick,  # e.g. "contact_manager"
                     "window": window,  # e.g. "past_10_interactions"
+                    "row_id": new_row_id,  # lineage id for deterministic roll-ups
                 },
             ),
         )
