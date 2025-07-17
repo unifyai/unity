@@ -564,7 +564,7 @@ class MemoryManager(BaseMemoryManager):
           are still triggered directly from *ManagerMethod* events.
 
         • All higher-level windows are now triggered from the new
-          `RollingSummary` event that each completed snapshot emits.
+          `_hierarchical_summaries` event that each completed snapshot emits.
           The callback fires once *ratio* (= how many lower-level
           summaries constitute this window) such events have arrived.
         """
@@ -615,7 +615,7 @@ class MemoryManager(BaseMemoryManager):
             for child, (parent, ratio) in self._COUNT_PARENT.items():
                 await _reg(
                     f"{nick}/{child}",
-                    event_type="RollingSummary",
+                    event_type="_hierarchical_summaries",
                     filter=(
                         f'evt.payload["manager"] == "{nick}" '
                         f'and evt.payload["window"] == "{parent}"'
@@ -629,7 +629,7 @@ class MemoryManager(BaseMemoryManager):
                     continue
                 await _reg(
                     f"{nick}/{child}",
-                    event_type="RollingSummary",
+                    event_type="_hierarchical_summaries",
                     filter=(
                         f'evt.payload["manager"] == "{nick}" '
                         f'and evt.payload["window"] == "{parent}"'
@@ -789,11 +789,11 @@ class MemoryManager(BaseMemoryManager):
             pass
 
         # ---- 3.  notify dependants ----------------------------------------
-        # Emit a *RollingSummary* event so higher-level windows trigger only
+        # Emit a *_hierarchical_summaries* event so higher-level windows trigger only
         # after the lower-level snapshot is fully written.
         await EVENT_BUS.publish(
             Event(
-                type="RollingSummary",
+                type="_hierarchical_summaries",
                 payload={
                     "manager": mgr_nick,  # e.g. "contact_manager"
                     "window": window,  # e.g. "past_10_interactions"
