@@ -914,7 +914,7 @@ class KnowledgeManager(BaseKnowledgeManager):
         """
         ctx = self._ctx_for_table(table)
         ctx_info = unify.get_context(ctx)
-        unique_column_name = ctx_info["unique_column_ids"]
+        unique_column_name = ctx_info["unique_column_ids"][0]
         unique_ids = sorted([int(k) for k in updates.keys()])
         log_ids: List[int] = sorted(
             unify.get_logs(
