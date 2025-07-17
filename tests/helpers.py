@@ -9,6 +9,62 @@ from os import sep
 from typing import Any, Callable
 from unity.events.event_bus import EVENT_BUS
 
+# --------------------------------------------------------------------------- #
+#  SHARED TEST HELPERS                                                        #
+# --------------------------------------------------------------------------- #
+
+from typing import List
+import asyncio
+
+
+@unify.traced
+def count_assistant_tool_calls(msgs: List[dict], tool_name: str) -> int:
+    """Return the number of *assistant* turns whose visible ``tool_calls``
+    reference *tool_name* (exact match).  Helper used by many tests to verify
+    how often a particular tool was requested.
+    """
+
+    return sum(
+        1
+        for m in msgs
+        if m.get("role") == "assistant"
+        and any(
+            tc.get("function", {}).get("name") == tool_name
+            for tc in (m.get("tool_calls") or [])
+        )
+    )
+
+
+@unify.traced
+async def _wait_for_tool_request(
+    client: "unify.AsyncUnify",
+    tool_name: str,
+    *,
+    timeout: float = 15.0,
+    poll: float = 0.05,
+) -> None:
+    """Poll *client.messages* until the assistant has issued **at least one**
+    visible tool call to *tool_name* or *timeout* seconds elapse.
+
+    This helper is meant to replace fragile ``asyncio.sleep`` calls that assume
+    the LLM will have scheduled a tool within an arbitrary time window.  It
+    deterministically blocks *only* until the relevant tool request is present
+    in the chat history (or raises ``TimeoutError`` otherwise).
+    """
+
+    import time as _time
+
+    start_ts = _time.perf_counter()
+    while _time.perf_counter() - start_ts < timeout:
+        msgs = client.messages or []  # unify may return None initially
+        if count_assistant_tool_calls(msgs, tool_name) >= 1:
+            return  # tool has been requested – safe to proceed
+        await asyncio.sleep(poll)
+
+    raise TimeoutError(
+        f"Timed out after {timeout}s waiting for assistant to request {tool_name!r}.",
+    )
+
 
 def _handle_project(
     test_fn: Callable | None = None,
