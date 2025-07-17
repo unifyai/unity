@@ -51,7 +51,6 @@ class MemoryManager(BaseMemoryManager):
         "past_120_interactions": 120,
         "past_520_interactions": 520,
     }
-    _ALL_TIME = {"all_time": None}
 
     # ────────────────────────────────────────────────────────────────────
     #   hierarchy helpers so higher-level windows summarise the lower
@@ -91,7 +90,7 @@ class MemoryManager(BaseMemoryManager):
 
     _tmp_cols = []
     for nick in _MANAGERS.values():
-        for window in list(_TIME_WINDOWS) + list(_COUNT_WINDOWS) + list(_ALL_TIME):
+        for window in list(_TIME_WINDOWS) + list(_COUNT_WINDOWS):
             _tmp_cols.append(f"{nick}/{window}")
 
     # ───────────────────────────  SUMMARY COLS  ───────────────────────────
@@ -899,11 +898,8 @@ class MemoryManager(BaseMemoryManager):
         windows: list[str] = (
             list(self._TIME_ORDER) if mode == "time" else list(self._COUNT_ORDER)
         )
-        windows.append("all_time")
 
         def _pretty(w: str) -> str:
-            if w == "all_time":
-                return "All Time"
             parts = w.split("_")
             return "Past " + " ".join(
                 p.capitalize() if not p.isdigit() else p for p in parts[1:]
