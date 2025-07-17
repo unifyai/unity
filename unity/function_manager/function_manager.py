@@ -7,7 +7,6 @@ import unify
 from ..common.embed_utils import EMBED_MODEL, ensure_vector_column
 from .types.function import Function
 from ..common.model_to_fields import model_to_fields
-from ..planner.action_provider import ActionProvider
 
 
 class FunctionManager(threading.Thread):
@@ -92,6 +91,12 @@ class FunctionManager(threading.Thread):
             "issubclass",
             "id",
         }
+
+        # Lazy import to avoid circular dependency: the ActionProvider is only
+        # imported when this property is accessed, which happens *after* both
+        # modules have finished initial loading.  This breaks the circular
+        # import chain between FunctionManager <-> planner package.
+        from unity.planner.action_provider import ActionProvider  # noqa: WPS433,E402
 
         action_provider_methods = {
             name
