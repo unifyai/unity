@@ -464,8 +464,6 @@ async def _run_manager_case(
 
     # Pretty helper (mirrors MemoryManager._build_activity_summary)
     def _pretty(w: str) -> str:
-        if w == "all_time":
-            return "All Time"
         # Special-case the single-interaction window so we keep the historic wording
         if w == "past_interaction":
             return "Past Interaction"
@@ -1086,8 +1084,6 @@ async def test_multiple_manager_methods_populate_rolling_activity(monkeypatch):
     }
 
     def _pretty(window: str) -> str:
-        if window == "all_time":
-            return "All Time"
         if window == "past_interaction":
             return "Past Interaction"
         if window.endswith("_interactions") and window in SMALL_COUNT_WINDOWS:
