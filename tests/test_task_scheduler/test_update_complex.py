@@ -80,9 +80,8 @@ def _next_weekday(dt: datetime, weekday: int) -> datetime:
 async def test_update_lower_priority_for_future_date(basic_task_scenario):
     ts, ids = basic_task_scenario
 
-    # create one scheduled next Monday with high priority
-    next_mon = "2035-06-16T09:00:00Z"
-    sched = Schedule(start_at=next_mon, prev_task=None, next_task=None)
+    # create one future scheduled task with high priority
+    sched = Schedule(start_at="2035-06-16T09:00:00Z", prev_task=None, next_task=None)
     ts._create_task(
         name="Send KPI report",
         description="Automated email of KPIs to leadership.",
