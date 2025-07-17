@@ -91,12 +91,25 @@ def _build_analogies_prompt() -> str:
     return "\n".join(lines)
 
 
-def _build_communication_rules_section() -> str:
+def _build_communication_rules_section(is_call: bool) -> str:
     """Build the Communication Rules section with a heading and underline."""
     title = "Communication Rules:"
     underline = "-" * len(title)
+    if is_call:
+        lines = [
+            "- You are on a call with the user and should be mainly replying through the phone, unless sending messages via other channels makes sense.",
+        ]
+    else:
+        lines = [
+            "- You are messaging with the user through the messaging channels (whatsapp, sms, email).",
+            "- Reply SMS messages through SMS channel, unless the user requested otherwise.",
+            "- Reply WhatsApp messages through WhatsApp channel, unless the user requested otherwise.",
+            "- Reply Email messages through Email channel, unless the user requested otherwise.",
+            "- Include the channel to use in the query and use ToolUseAction to send messages to the user.",
+            "- Don't call unless needed or requested by the user.",
+            "- If you need to ask questions, you should send a message with ToolUseAction.",
+        ]
     lines = [
-        "- You are on a call with the user and should be mainly replying through the phone, unless sending messages via other channels makes sense.",
         "- Provide natural-sounding responses; the user expects human-like interactions.",
         "- Avoid verbose or unnecessary messages; only communicate when needed.",
         "- Maintain human-like language, avoid robotic and verbose responses",
@@ -205,7 +218,7 @@ def build_call_sys_prompt(
         _build_agent_loop_section(),
         _build_tool_use_tasks_rules_section(),
         _build_analogies_prompt(),
-        _build_communication_rules_section(),
+        _build_communication_rules_section(is_call=True),
         (
             _build_task_context_section(task_context, is_call=True)
             if task_context is not None
@@ -240,7 +253,7 @@ def build_non_call_sys_prompt(
         _build_agent_loop_section(),
         _build_tool_use_tasks_rules_section(),
         _build_analogies_prompt(),
-        _build_communication_rules_section(),
+        _build_communication_rules_section(is_call=False),
         (
             _build_task_context_section(task_context, is_call=False)
             if task_context is not None
