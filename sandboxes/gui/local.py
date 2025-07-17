@@ -23,7 +23,6 @@ load_dotenv(override=True)
 def send_sms(message: str) -> None:
     # Publish an SMS received event for the user
     ev = {
-        "to": "pending",
         "topic": os.getenv("USER_PHONE_NUMBER"),
         "event": SMSMessageRecievedEvent(
             content=message,
@@ -37,7 +36,6 @@ def send_sms(message: str) -> None:
 def send_email(message: str) -> None:
     # Publish an Email received event for the user
     ev = {
-        "to": "pending",
         "topic": os.getenv("USER_PHONE_NUMBER"),
         "event": EmailRecievedEvent(
             content=message,
@@ -51,7 +49,6 @@ def send_email(message: str) -> None:
 def send_whatsapp(message: str) -> None:
     # Publish a WhatsApp received event for the user
     ev = {
-        "to": "pending",
         "topic": os.getenv("USER_PHONE_NUMBER"),
         "event": WhatsappMessageRecievedEvent(
             content=message,
