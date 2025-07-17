@@ -14,12 +14,12 @@ async def test_window_cache_is_faster():
     """When more than *window* events are published, the oldest should fall off."""
     window = 3
     bus = EventBus()
-    bus.set_window("message", window)
+    bus.set_window("Message", window)
 
     # Start from a known clean state for this type (harmless use of a private attr)
     bus._deques.setdefault(
-        "message",
-        bus._deques.get("message", deque(maxlen=window)),
+        "Message",
+        bus._deques.get("Message", deque(maxlen=window)),
     ).clear()
 
     # Publish window + 1 events with ascending timestamps
@@ -42,11 +42,11 @@ async def test_window_cache_is_faster():
         await bus.publish(evt, blocking=True)
 
     # Time fetching just from cache vs having to hit backend
-    await bus.search(filter="type == 'message'", limit=4)  # warm up
+    await bus.search(filter="type == 'Message'", limit=4)  # warm up
     t0 = dt.datetime.now(dt.UTC)
-    await bus.search(filter="type == 'message'", limit=3)
+    await bus.search(filter="type == 'Message'", limit=3)
     t1 = dt.datetime.now(dt.UTC)
-    await bus.search(filter="type == 'message'", limit=4)
+    await bus.search(filter="type == 'Message'", limit=4)
     t2 = dt.datetime.now(dt.UTC)
 
     cache_time = (t1 - t0).total_seconds()
