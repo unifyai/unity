@@ -10,6 +10,7 @@ import redis
 
 from .playwright_utils.worker import BrowserWorker
 from .agent import InvalidActionError, ask_llm, text_to_browser_action
+from .states import BrowserState
 from ..constants import LOGGER
 
 
@@ -242,7 +243,7 @@ class Controller(threading.Thread):
         action: str,
         expectation: Optional[str] = None,
         multi_step_mode: bool = False,
-        timeout: float = 10.0,
+        timeout: float = 1000.0,
     ) -> str:
         """
         Converts a natural-language instruction into a browser action, executes it,
@@ -266,6 +267,14 @@ class Controller(threading.Thread):
                 action_with_feedback = action
 
             try:
+                # Convert state dict to BrowserState object
+                state_data = self._observe_ctx.get("state", {})
+                state = (
+                    BrowserState(**state_data)
+                    if isinstance(state_data, dict)
+                    else state_data
+                )
+
                 cmd_payload = await asyncio.to_thread(
                     text_to_browser_action,
                     text=action_with_feedback,
@@ -273,7 +282,7 @@ class Controller(threading.Thread):
                     tabs=self._observe_ctx.get("tabs", []),
                     buttons=self._observe_ctx.get("elements", []),
                     history=self._observe_ctx.get("history", []),
-                    state=self._observe_ctx.get("state", {}),
+                    state=state,
                     multi_step_mode=multi_step_mode,
                 )
                 actions = cmd_payload.get("action")
