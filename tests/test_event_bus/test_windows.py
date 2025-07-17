@@ -32,7 +32,7 @@ async def test_window_cache_is_faster():
             payload=Message(
                 medium=random.choice(list(Medium)),
                 sender_id=random.randint(0, 10),
-                receiver_id=random.randint(0, 10),
+                receiver_ids=[random.randint(0, 10)],
                 timestamp=dt.datetime.now(dt.UTC).isoformat(),
                 content=f"{i}",
                 exchange_id=0,

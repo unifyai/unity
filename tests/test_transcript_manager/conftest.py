@@ -74,8 +74,7 @@ class ScenarioBuilder:
     def __init__(self) -> None:
         self.cm = ContactManager()
         self.tm = TranscriptManager()
-        for idx, c in enumerate(_CONTACTS):
-            _ID_BY_NAME[c["first_name"].lower()] = idx
+        # Mapping will be filled during contact creation (_seed_contacts)
 
     @classmethod
     async def create(cls) -> "ScenarioBuilder":
@@ -91,19 +90,34 @@ class ScenarioBuilder:
     # --------------------------------------------------------------------- #
     async def _seed_contacts(self) -> None:
         for idx, c in enumerate(_CONTACTS):
-            self.cm._create_contact(**c)
+            outcome = self.cm._create_contact(**c)
+            assigned_id = outcome["details"]["contact_id"]
+            _ID_BY_NAME[c["first_name"].lower()] = assigned_id
 
     # --------------------------------------------------------------------- #
     async def _seed_key_exchanges(self) -> None:
         now = datetime(2025, 4, 20, 15, 0, tzinfo=timezone.utc)
 
         # E0: first Dan–Julia phone call
+        dan_id = _ID_BY_NAME["dan"]
+        julia_id = _ID_BY_NAME["julia"]
+
         await self._log(
             0,
             "phone_call",
             [
-                (1, 2, now, "Hi Julia, it's Dan. Quick check-in about Q2 metrics."),
-                (2, 1, now + timedelta(seconds=30), "Sure Dan, ready when you are."),
+                (
+                    dan_id,
+                    julia_id,
+                    now,
+                    "Hi Julia, it's Dan. Quick check-in about Q2 metrics.",
+                ),
+                (
+                    julia_id,
+                    dan_id,
+                    now + timedelta(seconds=30),
+                    "Sure Dan, ready when you are.",
+                ),
             ],
         )
 
@@ -114,14 +128,14 @@ class ScenarioBuilder:
             "phone_call",
             [
                 (
-                    1,
-                    2,
+                    dan_id,
+                    julia_id,
                     later,
                     "Morning Julia – finalising the London event agenda today.",
                 ),
                 (
-                    2,
-                    1,
+                    julia_id,
+                    dan_id,
                     later + timedelta(seconds=45),
                     "Great. Let's confirm the speaker list and coffee budget.",
                 ),
@@ -129,22 +143,23 @@ class ScenarioBuilder:
         )
 
         # E2: Carlos interest e-mail
+        carlos_id = _ID_BY_NAME["carlos"]
         t_email = datetime(2025, 4, 21, 12, 0, tzinfo=timezone.utc)
         await self._log(
             2,
             "email",
             [
                 (
-                    0,
-                    1,
+                    carlos_id,
+                    dan_id,
                     t_email,
                     "Subject: Stapler bulk order\n\n"
                     "Hi Dan,\nI'm **interested in buying 200 units** of "
                     "your new stapler. Can you quote?\n\nThanks,\nCarlos",
                 ),
                 (
-                    1,
-                    0,
+                    dan_id,
+                    carlos_id,
                     t_email + timedelta(hours=2),
                     "Hi Carlos — sure, $4.50 per unit. See attached PDF.",
                 ),
@@ -152,14 +167,15 @@ class ScenarioBuilder:
         )
 
         # E3: Jimmy holiday WhatsApp
+        jimmy_id = _ID_BY_NAME["jimmy"]
         t_holiday = datetime(2025, 4, 22, 18, 10, tzinfo=timezone.utc)
         await self._log(
             3,
             "whatsapp_message",
             [
                 (
-                    3,
-                    1,
+                    jimmy_id,
+                    dan_id,
                     t_holiday,
                     "Heads-up Dan, I'll be **on holiday from 2025-05-15** "
                     "to 2025-05-30. Ping me before that if urgent.",
@@ -168,14 +184,15 @@ class ScenarioBuilder:
         )
 
         # E4: Anne passport excuse (WhatsApp)
+        anne_id = _ID_BY_NAME["anne"]
         t_excuse = datetime(2025, 4, 23, 9, 0, tzinfo=timezone.utc)
         await self._log(
             4,
             "whatsapp_message",
             [
                 (
-                    4,
-                    1,
+                    anne_id,
+                    dan_id,
                     t_excuse,
                     "Sorry Dan, I *can't join the Berlin trip because my "
                     "passport expired* last week.",

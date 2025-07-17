@@ -30,7 +30,7 @@ async def test_prefill_from_upstream_on_new_instance():
             payload=Message(
                 medium=random.choice(list(Medium)),
                 sender_id=random.randint(0, 10),
-                receiver_id=random.randint(0, 10),
+                receiver_ids=[random.randint(0, 10)],
                 timestamp=dt.datetime.now(dt.UTC),
                 content="hello",
                 exchange_id=0,

@@ -127,7 +127,7 @@ async def test_memory_manager_parse_transcript_for_updates(monkeypatch):
         Message(  # contact 1 → assistant (id 0)
             medium=Medium.SMS_MESSAGE,
             sender_id=1,
-            receiver_id=0,
+            receiver_ids=[0],
             timestamp=base_ts,
             content="Hi!",
             exchange_id=1,
@@ -135,7 +135,7 @@ async def test_memory_manager_parse_transcript_for_updates(monkeypatch):
         Message(  # assistant → contact 1
             medium=Medium.SMS_MESSAGE,
             sender_id=0,
-            receiver_id=1,
+            receiver_ids=[1],
             timestamp=base_ts + dt.timedelta(seconds=1),
             content="Hello!",
             exchange_id=1,
@@ -143,7 +143,7 @@ async def test_memory_manager_parse_transcript_for_updates(monkeypatch):
         Message(  # contact 2 → assistant (id 0)
             medium=Medium.SMS_MESSAGE,
             sender_id=2,
-            receiver_id=0,
+            receiver_ids=[0],
             timestamp=base_ts + dt.timedelta(seconds=2),
             content="Hey there!",
             exchange_id=2,

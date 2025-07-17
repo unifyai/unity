@@ -2,13 +2,16 @@ import os
 import json
 import asyncio
 import functools
-from typing import List, Dict, Optional, Union
+from typing import List, Dict, Optional, Union, Any
 
 import unify
 from ..common.embed_utils import EMBED_MODEL, ensure_vector_column
 from ..contact_manager.base import BaseContactManager
 from ..contact_manager.contact_manager import ContactManager
 from .types.message import Message
+
+# New: allow Contact objects to appear in messages
+from ..contact_manager.types.contact import Contact
 from ..common.model_to_fields import model_to_fields
 from ..common.llm_helpers import (
     start_async_tool_use_loop,
@@ -57,20 +60,20 @@ class TranscriptManager(BaseTranscriptManager):
         ), "read and write contexts must be the same when instantiating a TranscriptManager."
 
         if read_ctx:
-            self._messages_ctx = f"{read_ctx}/Messages"
+            self._transcripts_ctx = f"{read_ctx}/Transcripts"
         else:
-            self._messages_ctx = "Contacts"
+            self._transcripts_ctx = "Transcripts"
         ctxs = unify.get_contexts()
-        if self._messages_ctx not in ctxs:
+        if self._transcripts_ctx not in ctxs:
             unify.create_context(
-                self._messages_ctx,
+                self._transcripts_ctx,
                 unique_column_ids="message_id",
                 description="List of *all* timestamped messages sent between *all* contacts across *all* mediums.",
             )
             fields = model_to_fields(Message)
             unify.create_fields(
                 fields,
-                context=self._messages_ctx,
+                context=self._transcripts_ctx,
             )
 
         # ── Async logging (mirrors EventBus) ────────────────────────────────
@@ -180,36 +183,137 @@ class TranscriptManager(BaseTranscriptManager):
     # --------#
     def log_messages(
         self,
-        messages: Union[Union[Dict, Message], List[Union[Dict, Message]]],
+        messages: Union[
+            Union[Dict[str, Any], Message],
+            List[Union[Dict[str, Any], Message]],
+        ],
     ) -> None:
         """
         Insert one or more messages into the backing store.
+
+        This enhanced variant additionally accepts **Contact** objects in place
+        of numeric ``sender_id`` / ``receiver_ids``.  When such a Contact has
+        its ``contact_id`` set to the sentinel ``-1`` (meaning *not yet
+        persisted*) the contact is **created on-the-fly** via
+        :pyfunc:`ContactManager._create_contact` before the message is logged.
 
         Parameters
         ----------
         messages : dict | Message | list[dict | Message]
             One or more messages to log. Each message can be either:
-            - A dictionary whose keys conform to the
-              :class:`unity.transcript_manager.types.message.Message` schema
-              (``medium``, ``sender_id``, ``receiver_id``, ``timestamp``,
-              ``content``, ``exchange_id`` …)
-            - A Message object
-            - A list containing any combination of the above
+            - A dictionary following the
+              :class:`unity.transcript_manager.types.message.Message` schema –
+              where ``sender_id`` / ``receiver_ids`` may contain ``Contact``
+              objects instead of ints.
+            - A :class:`~unity.transcript_manager.types.message.Message` instance
+              whose *id* fields may likewise contain ``Contact`` objects.
+            - A list with any combination of the above.
         """
-        # Fast-return if nothing to log --------------------------------------
+
+        # ── 0. Early-exit on empty input ────────────────────────────────────
         if not messages:
             return
 
         if not isinstance(messages, list):
             messages = [messages]
 
-        msg_entries = [
-            msg.to_post_json() if isinstance(msg, Message) else msg for msg in messages
-        ]
-        messages = [
-            msg if isinstance(msg, Message) else Message(**msg) for msg in messages
-        ]
+        # ── 1. Helper to ensure we have a numeric contact-id ───────────────
+        # Derive the built-in (canonical) Contact fields *dynamically* from the
+        # `Contact` model itself – this avoids hard-coding and ensures there is
+        # exactly one source of truth across the code-base.
+        built_in_fields = set(Contact.model_fields.keys())
 
+        contact_cache: Dict[int, int] = {}
+
+        def _ensure_contact_id(c: Union[int, Contact]) -> int:
+            """Return an existing or newly-created **contact_id** for *c*."""
+
+            # Fast-path: already an int → nothing to do
+            if not isinstance(c, Contact):
+                if c is None:
+                    raise ValueError(
+                        "sender_id / receiver_ids cannot be None – either provide an int or a Contact instance.",
+                    )
+                return int(c)
+
+            # If the Contact already had a valid id – reuse it
+            if c.contact_id is not None and c.contact_id != -1:
+                return int(c.contact_id)
+
+            # Deduplicate identical Contact objects within the same call
+            obj_key = id(c)
+            if obj_key in contact_cache:
+                return contact_cache[obj_key]
+
+            # Build kwargs for _create_contact using *non-None* built-in fields
+            # detected directly from the `Contact` schema instead of hard-coding
+            # the field names.  This ensures any future additions to the
+            # Contact model automatically propagate here.
+
+            full_data = c.model_dump(exclude_none=True)  # include only defined fields
+
+            # Separate canonical Contact fields from any custom extras
+            create_kwargs: Dict[str, Any] = {
+                k: v
+                for k, v in full_data.items()
+                if k in built_in_fields and k != "contact_id"
+            }
+
+            # Capture any extra / custom fields present on the Contact
+            custom_fields = {
+                k: v
+                for k, v in c.model_dump().items()
+                if k not in built_in_fields and v is not None
+            }
+            if custom_fields:
+                create_kwargs["custom_fields"] = custom_fields
+
+            # Synchronously create the new contact
+            outcome = self._contact_manager._create_contact(**create_kwargs)
+            try:
+                new_cid = int(outcome["details"]["contact_id"])
+            except Exception:
+                # Fall back to best-effort id extraction / raise
+                raise RuntimeError(
+                    "Failed to extract contact_id from ContactManager outcome: "
+                    f"{outcome}",
+                )
+
+            # Update cache and the original Contact instance for consistency
+            contact_cache[obj_key] = new_cid
+            try:
+                c.contact_id = new_cid  # type: ignore[attr-defined]
+            except Exception:
+                pass  # read-only / frozen instance – safe to ignore
+
+            return new_cid
+
+        # ── 2. Normalise each input payload into Message objects ───────────
+        normalised_messages: List[Message] = []
+        for raw in messages:
+            # Convert to dict early so we can mutate fields easily
+            if isinstance(raw, Message):
+                payload: Dict[str, Any] = raw.model_dump(mode="python")
+            else:  # assume mapping
+                payload = dict(raw)
+
+            # Ensure required keys exist
+            if "receiver_ids" not in payload:
+                raise ValueError("Each message must include 'receiver_ids'.")
+
+            # Replace any Contact objects with their numeric ids
+            payload["sender_id"] = _ensure_contact_id(payload.get("sender_id"))
+            payload["receiver_ids"] = [
+                _ensure_contact_id(r) for r in payload.get("receiver_ids", [])
+            ]
+
+            # Re-instantiate Message model for validation
+            normalised_messages.append(Message(**payload))
+
+        # ── 3. Dump POST-ready JSON for each message ──────────────────────
+        msg_entries = [m.to_post_json() for m in normalised_messages]
+
+        # ── 4. Persist messages and publish EventBus notifications ───────
         from ..events.event_bus import EVENT_BUS, Event  # local import to avoid cycles
 
         async def _publish_message(msg: Message) -> None:
@@ -225,21 +329,22 @@ class TranscriptManager(BaseTranscriptManager):
                 # Defensive – never propagate EventBus issues to caller
                 pass
 
-        for entries, msg in zip(msg_entries, messages):
+        for entries, msg in zip(msg_entries, normalised_messages):
+            # Ensure correct creation order by performing contact creation *before*
+            # the logger call (already satisfied above).  Now we can log safely.
             self._logger.log_create(
                 project=unify.active_project(),
-                context=self._messages_ctx,
+                context=self._transcripts_ctx,
                 params={},
                 entries=entries,
             )
 
             try:
-                # If we're already inside an event-loop schedule the coroutine there …
+                # If we're inside an event-loop schedule the coroutine there …
                 loop = asyncio.get_running_loop()
                 loop.create_task(_publish_message(msg))
             except RuntimeError:
-                # … otherwise create a *temporary* loop to run it synchronously so the
-                # event doesn't get lost in purely synchronous contexts (e.g. tests).
+                # … otherwise create a *temporary* loop so the event isn't lost.
                 asyncio.run(_publish_message(msg))
 
     def join_published(self):
@@ -269,16 +374,16 @@ class TranscriptManager(BaseTranscriptManager):
         list[Message]
             Messages sorted by **ascending** cosine distance (best match first).
         """
-        ensure_vector_column(self._messages_ctx, self._MSG_EMB, "content")
+        ensure_vector_column(self._transcripts_ctx, self._MSG_EMB, "content")
         logs = unify.get_logs(
-            context=self._messages_ctx,
+            context=self._transcripts_ctx,
             sorting={
                 f"cosine({self._MSG_EMB}, embed('{text}', model='{EMBED_MODEL}'))": "ascending",
             },
             limit=k,
             exclude_fields=[
                 k
-                for k in unify.get_fields(context=self._messages_ctx).keys()
+                for k in unify.get_fields(context=self._transcripts_ctx).keys()
                 if k.endswith("_emb")
             ],
         )
@@ -287,29 +392,6 @@ class TranscriptManager(BaseTranscriptManager):
     # _nearest_summaries removed – summary functionality deprecated.
     def _nearest_summaries(self, *args, **kwargs):
         raise NotImplementedError("Summary functionality removed.")
-
-    # ------------------------------------------------------------------ #
-    #  Reset helper (sandbox)                                            #
-    # ------------------------------------------------------------------ #
-    @staticmethod
-    def reset() -> None:
-        """
-        Delete the `Messages` contexts (and any namespaced variants) for the
-        *current* Unify project so that a clean slate is created when a
-        new TranscriptManager is instantiated.
-        """
-        import unify
-
-        targets = [
-            ctx
-            for ctx in list(unify.get_contexts())
-            if ctx == "Messages" or ctx.endswith("/Messages")
-        ]
-        for ctx in targets:
-            try:
-                unify.delete_context(ctx)
-            except Exception:
-                pass
 
     def _search_messages(
         self,
@@ -339,14 +421,14 @@ class TranscriptManager(BaseTranscriptManager):
             Matching messages in creation order.
         """
         logs = unify.get_logs(
-            context=self._messages_ctx,
+            context=self._transcripts_ctx,
             filter=filter,
             offset=offset,
             limit=limit,
             sorting={"timestamp": "descending"},
             exclude_fields=[
                 k
-                for k in unify.get_fields(context=self._messages_ctx).keys()
+                for k in unify.get_fields(context=self._transcripts_ctx).keys()
                 if k.endswith("_emb")
             ],
         )

@@ -260,7 +260,7 @@ def _finalize_and_renumber_elements(
     for i, el in enumerate(elements):
         final_list.append(
             {
-                "id": i + 1,  # Assign a new, sequential ID
+                "id": el.get("id"),  # Assign a new, sequential ID
                 "label": el.get("label", ""),
                 "handle": el.get("handle"),
                 "bbox": el.get("bbox"),
@@ -286,6 +286,12 @@ _retired_ids: set[int] = set()
 
 
 def _assign_stable_ids(current: list[dict]) -> list[dict]:
+    """
+    Assigns stable IDs to elements across frames using a multi-pass strategy.
+    1. Match by ElementHandle (most reliable).
+    2. Match by Bounding Box Overlap (for vision-only elements).
+    3. Match by Label (least reliable fallback).
+    """
     global _last_frame, _next_id, _retired_ids
 
     if _last_frame is None:
@@ -295,43 +301,81 @@ def _assign_stable_ids(current: list[dict]) -> list[dict]:
         _last_frame = current
         return current
 
-    # ---- look-up tables from previous frame ----
-    by_handle = {el["handle"]: el for el in _last_frame if el.get("handle")}
-    by_label = [(el, el.get("label", "").lower()) for el in _last_frame]
+    # ---- Create look-up tables from the previous frame ----
+    # Elements that had a handle
+    prev_by_handle = {el["handle"]: el for el in _last_frame if el.get("handle")}
+    # Elements that were vision-only (no handle)
+    prev_vision_only = [el for el in _last_frame if not el.get("handle")]
+    # All elements from previous frame, for label matching
+    prev_by_label = [(el, el.get("label", "").lower()) for el in _last_frame]
 
-    def match(old_el, new_el):
-        return _overlap_ratio(old_el, new_el) >= 0.5
+    # --- Keep track of which IDs and previous elements have been used ---
+    taken_ids: set[int] = set()
+    used_prev_vision_elements = [False] * len(prev_vision_only)
 
-    taken: set[int] = set()
-
-    # 1️⃣  try to reuse ids
+    # === PASS 1: Match by ElementHandle (highest priority) ===
     for new_el in current:
-        reused = None
-
+        if new_el.get("id"):  # Already matched
+            continue
         h = new_el.get("handle")
-        if h and h in by_handle and match(by_handle[h], new_el):
-            reused = by_handle[h]["id"]
-        else:
-            lbl = new_el.get("label", "").lower()
-            for old_el, old_lbl in by_label:
-                if lbl == old_lbl and match(old_el, new_el):
-                    reused = old_el["id"]
+        if h and h in prev_by_handle:
+            reused_id = prev_by_handle[h]["id"]
+            if reused_id not in taken_ids:
+                new_el["id"] = reused_id
+                taken_ids.add(reused_id)
+
+    # === PASS 2: Match by BBox for Handle-less Elements (Vision-only) ===
+    for new_el in current:
+        if new_el.get("id") or new_el.get("handle"):
+            continue
+
+        best_match_idx = -1
+        best_overlap = 0.5  # Use a threshold to avoid spurious matches
+
+        for i, old_vision_el in enumerate(prev_vision_only):
+            if used_prev_vision_elements[i]:
+                continue
+
+            overlap = _overlap_ratio(old_vision_el, new_el)
+            if overlap > best_overlap:
+                best_overlap = overlap
+                best_match_idx = i
+
+        if best_match_idx != -1:
+            reused_id = prev_vision_only[best_match_idx]["id"]
+            if reused_id not in taken_ids:
+                new_el["id"] = reused_id
+                taken_ids.add(reused_id)
+                used_prev_vision_elements[best_match_idx] = True
+
+    # === PASS 3: Match by Label (fallback) ===
+    for new_el in current:
+        if new_el.get("id"):
+            continue
+
+        lbl = new_el.get("label", "").lower()
+        if not lbl:
+            continue
+
+        for old_el, old_lbl in prev_by_label:
+            if lbl == old_lbl:
+                reused_id = old_el["id"]
+                if reused_id not in taken_ids:
+                    new_el["id"] = reused_id
+                    taken_ids.add(reused_id)
                     break
 
-        if reused is not None and reused not in taken:
-            new_el["id"] = reused
-            taken.add(reused)
-        else:
-            # 2️⃣  assign a brand-new id, skipping any retired numbers
-            while _next_id in taken or _next_id in _retired_ids:
+    # === PASS 4: Assign new IDs to any remaining unmatched elements ===
+    for new_el in current:
+        if not new_el.get("id"):
+            while _next_id in taken_ids or _next_id in _retired_ids:
                 _next_id += 1
             new_el["id"] = _next_id
-            taken.add(_next_id)
-            _next_id += 1
+            taken_ids.add(_next_id)
 
-    # ids that existed in previous frame but not in this one → retire them
+    # ---- Retire any IDs that are no longer present ----
     prev_ids = {el["id"] for el in _last_frame}
-    missing = prev_ids - taken
+    missing = prev_ids - taken_ids
     _retired_ids.update(missing)
 
     _last_frame = current

@@ -654,70 +654,227 @@ class TranscriptGenerator:
 
         transcript: List[dict] = []
 
-        _name_to_id: dict[str, int] = {}
-        # Track the sender of the *previous* message so we can infer the receiver
-        last_sender_id: int | None = None
+        from unity.contact_manager.types.contact import Contact  # local import
 
-        def _normalise_msg(raw: dict) -> dict:
-            """Return a dict that satisfies TranscriptManager.log_messages schema."""
+        _name_to_contact: dict[str, Contact] = {}
+        # Track the Contact object of the previous message to infer receiver
+        last_sender_contact: Contact | None = None
 
-            nonlocal last_sender_id
+        # ------------------------------------------------------------------ #
+        #  New, simpler input format                                        #
+        # ------------------------------------------------------------------ #
 
-            sender_name = str(raw.get("sender", "User"))
+        from datetime import datetime, timedelta, timezone  # local import
 
-            # Reserve **contact-id 0** for the assistant / system so that
-            # downstream logic (e.g. MemoryManager updates) can continue to
-            # skip agent utterances.
-            if sender_name.lower() in {"assistant", "system", "agent", "bot"}:
-                sender_id = 0
-            else:
-                sender_id = _name_to_id.setdefault(sender_name, len(_name_to_id) + 1)
+        def _build_contact(
+            name: str,
+            medium: str,
+            details: dict[str, Any] | None,
+        ) -> Contact:  # type: ignore[valid-type]
+            """Return an existing Contact when the *first name* already exists.
 
-            # 1️⃣  Prefer an explicit receiver field if the LLM provided one
-            receiver_name = raw.get("receiver")
-            if receiver_name is not None:
-                receiver_id = _name_to_id.setdefault(
-                    receiver_name,
-                    len(_name_to_id) + 1,
+            • If exactly one stored contact matches the first name, reuse it.
+            • Otherwise create a *new* Contact instance (with contact_id = -1) so
+              TranscriptManager will persist it on first use.
+            """
+
+            # 1️⃣  Attempt to reuse an existing contact (sandbox rule: first names are unique)
+            try:
+                cm = self._tm._contact_manager  # ContactManager instance
+                existing = cm._search_contacts(
+                    filter=f"first_name == '{name.title()}'",
+                    limit=1,
                 )
-            # 2️⃣  Otherwise assume a simple back-and-forth → the receiver is the
-            #     previous sender (if any and different from the current sender)
-            elif last_sender_id is not None and last_sender_id != sender_id:
-                receiver_id = last_sender_id
-            # 3️⃣  Fallback – unknown receiver (e.g. first message)
-            else:
-                receiver_id = 0  # convention: assistant / unknown contact
+                if existing:
+                    return existing[0]
+            except Exception:
+                # Any backend/cycle issues → fall through to new contact generation
+                pass
 
-            # Update the *last* sender for the next call
-            last_sender_id = sender_id
+            # 2️⃣  No existing contact found → fabricate a new one
+            details = details or {}
+            base_kwargs: dict[str, Any] = {"first_name": name.title()}
 
-            return {
-                "medium": raw.get("medium", "sms_message"),
-                "sender_id": sender_id,
-                "receiver_id": receiver_id,
-                "timestamp": raw.get("timestamp"),
-                "content": raw.get("content", ""),
-                "exchange_id": raw.get("exchange_id", 0),
+            # Preserve any recognised fields the LLM provided
+            for fld in [
+                "surname",
+                "email_address",
+                "phone_number",
+                "whatsapp_number",
+                "description",
+                "bio",
+                "rolling_summary",
+            ]:
+                if fld in details:
+                    base_kwargs[fld] = details[fld]
+
+            # Derive a synthetic identifier if none was given
+            if "email_address" not in base_kwargs and "phone_number" not in base_kwargs:
+                slug = name.lower().replace(" ", ".")
+                idx = len(_name_to_contact) + 1
+                if medium == "email":
+                    base_kwargs["email_address"] = f"{slug}@example.com"
+                else:
+                    base_kwargs["phone_number"] = f"+155500{idx:04d}"
+
+            return Contact(**base_kwargs)
+
+        # Replace *create* helper so it accepts extra details
+        def _contact_for(name: str, medium: str, details: dict[str, Any] | None = None) -> Contact:  # type: ignore[valid-type]
+            if name not in _name_to_contact:
+                _name_to_contact[name] = _build_contact(name, medium, details)
+            return _name_to_contact[name]
+
+        def submit_conversation(
+            payload: dict,
+        ) -> str:  # noqa: C901 – complex but self-contained
+            """Parse the high-level *conversation* JSON coming from the LLM.
+
+            Expected schema (keys are case-sensitive):
+
+            {
+                "medium": "phone_call" | "sms_message" | "email" | "whatsapp_message" | "whatsapp_call",
+                "participants": {
+                    "Alice": {"phone_number": "+1…"},
+                    "Bob":   {"email_address": "bob@example.com"}
+                },
+                "conversation": [
+                    {"sender": "Alice", "content": "Hi Bob!"},
+                    {"sender": "Bob",   "content": "Hi Alice, great to hear from you."}
+                ]
             }
+            """
 
-        def log_messages(messages: list[dict]) -> str:
-            nonlocal transcript
-            transcript.extend(messages)
-            self._tm.log_messages([_normalise_msg(msg) for msg in messages])
+            nonlocal transcript, last_sender_contact
+
+            # Accept either a dict *object* or a JSON *string*
+            if isinstance(payload, str):
+                import json as _json
+
+                try:
+                    payload = _json.loads(payload)
+                except Exception as exc:
+                    raise ValueError(
+                        "submit_conversation: string payload must be valid JSON",
+                    ) from exc
+
+            if not isinstance(payload, dict):
+                raise ValueError(
+                    "submit_conversation expects a dict or JSON string argument",
+                )
+
+            medium = str(payload.get("medium", "sms_message"))
+            participants: dict[str, Any] = payload.get("participants", {}) or {}
+            convo_raw = payload.get("conversation", [])
+
+            # Support dict-format conversation {sender: message, ...} or list
+            if isinstance(convo_raw, dict):
+                convo_items = list(convo_raw.items())
+            else:
+                convo_items = convo_raw  # assume list-like
+
+            if not convo_items:
+                raise ValueError("'conversation' list cannot be empty")
+
+            # Build contacts early so receiver heuristics work reliably
+            for pname, pdetails in participants.items():
+                _contact_for(pname, medium, pdetails)
+
+            # Helper: extract (sender, content) from each entry while preserving order
+            def _iter_messages():
+                for entry in convo_items:
+                    if isinstance(entry, str):
+                        if ":" not in entry:
+                            continue  # skip malformed string
+                        sender, content = entry.split(":", 1)
+                        yield sender.strip(), content.strip()
+                    elif isinstance(entry, dict):
+                        if "sender" in entry and "content" in entry:
+                            yield str(entry["sender"]).strip(), str(
+                                entry["content"],
+                            ).strip()
+                        elif len(entry) == 1:
+                            sender, content = next(iter(entry.items()))
+                            yield str(sender).strip(), str(content).strip()
+                    # silently ignore anything else
+
+            # Start time now, increment by one second per message to maintain order
+            base_time = datetime.now(timezone.utc)
+
+            for idx, (sender_name, content) in enumerate(_iter_messages()):
+                sender_c = _contact_for(
+                    sender_name,
+                    medium,
+                    participants.get(sender_name),
+                )
+
+                # Decide receiver – alternate between last speaker and fallback to first other participant / Assistant
+                if last_sender_contact is not None and last_sender_contact != sender_c:
+                    receiver_c = last_sender_contact
+                else:
+                    # Avoid mutating _name_to_contact during iteration which would
+                    # raise `RuntimeError: dictionary changed size during iteration`.
+                    _others = [c for c in _name_to_contact.values() if c != sender_c]
+                    if _others:
+                        receiver_c = _others[0]
+                    else:
+                        receiver_c = _contact_for("Assistant", medium, {})
+
+                last_sender_contact = sender_c
+
+                timestamp = (base_time + timedelta(seconds=idx)).isoformat()
+
+                msg_dict = {
+                    "medium": medium,
+                    "sender_id": sender_c,
+                    "receiver_ids": [receiver_c],
+                    "timestamp": timestamp,
+                    "content": content,
+                    "exchange_id": 0,
+                }
+
+                # Persist via TranscriptManager and local transcript list
+                self._tm.log_messages([msg_dict])
+                transcript.append(
+                    {
+                        "sender": sender_name,
+                        "content": content,
+                        "timestamp": timestamp,
+                        "medium": medium,
+                    },
+                )
+
+            # Ensure EventBus subscribers run before returning
             self._tm.join_published()
-            return f"{len(messages)} messages logged"
+            return f"{len(transcript)} messages logged"
+
+        # ------------------------------------------------------------------ #
+        #  Prompt that guides the LLM                                       #
+        # ------------------------------------------------------------------ #
 
         prompt = (
-            description.strip()
-            + "\n\nGenerate chronological chat messages that fit the scenario above. "
-            f"If no guidance is given for the *length* of the chat (number of messages), then (and only then) we can assume {min_messages}-{max_messages} is suitable."
-            "Each dict **must** include 'timestamp' (ISO 8601), 'sender' and 'content'. "
-            f"Use the `log_messages` tool in batches of {batch_min}-{batch_max} messages until the full transcript is logged, then stop."
+            "You are a **Conversation Synthesis Assistant**. Your task is to invent a realistic conversation that fulfils the scenario description provided by the user. "
+            "When you are ready, call the `submit_conversation` tool *exactly once* with a single JSON argument following this structure:\n\n"
+            "{\n"
+            '  "medium": "phone_call|sms_message|email|whatsapp_message|whatsapp_call",\n'
+            '  "participants": {\n'
+            '      "Alice": { "phone_number": "+1555000001" },\n'
+            '      "Bob":   { "email_address": "bob@example.com" }\n'
+            "  },\n"
+            '  "conversation": [\n'
+            '      { "sender": "Alice", "content": "Hi Bob!" },\n'
+            '      { "sender": "Bob",   "content": "Hi Alice, great to hear from you." }\n'
+            "  ]\n"
+            "}\n\n"
+            f"If the scenario doesn't specify how long the chat should be, aim for roughly {min_messages}-{max_messages} messages. "
+            "Be concise – avoid unnecessary filler text. After you have called the tool, do **not** output anything else."
         )
+
+        prompt += f"The description is as follows:\n\n{description}."
 
         builder = ScenarioBuilder(
             description=prompt,
-            tools={"log_messages": log_messages},
+            tools={"submit_conversation": submit_conversation},
             endpoint=self._endpoint,
             traced=self._traced,
             stateful=self._stateful,
@@ -738,28 +895,10 @@ def activate_project(project_name: str, overwrite: bool = False) -> None:
     by EventBus) belong to that project.  Call this immediately after handling
     CLI arguments and before any manager instances are constructed.
     """
-    import unify
+    import unity
     from unity.events.event_bus import EVENT_BUS
 
     # Switch active project first
-    unify.activate(project_name, overwrite=overwrite)
-    # Rebuild EventBus under the new project so its contexts live in `project_name`
+    unity.init(project_name, overwrite=overwrite)
+    # Clears all contexts in the EventBus
     EVENT_BUS.reset()
-
-    # ── Also reset every domain manager so their tables are recreated in the new project ──
-    try:
-        from unity.contact_manager.contact_manager import ContactManager
-        from unity.transcript_manager.transcript_manager import TranscriptManager
-        from unity.knowledge_manager.knowledge_manager import KnowledgeManager
-        from unity.task_scheduler.task_scheduler import TaskScheduler
-        from unity.conductor.conductor import Conductor
-
-        ContactManager.reset()
-        TranscriptManager.reset()
-        KnowledgeManager.reset()
-        TaskScheduler.reset()
-        # Conductor.reset cascades but call for completeness
-        Conductor.reset()
-    except Exception:
-        # Defensive – sandbox should never hard-fail if any optional reset is missing
-        pass

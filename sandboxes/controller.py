@@ -1,5 +1,5 @@
 """
-Entry point.  GUI in main thread, BrowserWorker in background thread.
+Entry point.  GUI in main thread, Controller in background thread.
 No Playwright code touches the Tk thread.
 """
 
@@ -24,43 +24,101 @@ log = logging.getLogger("unity")
 load_dotenv()
 
 from unity.controller.gui import ControlPanel
+from unity.controller.controller import Controller
 from unity.controller.playwright_utils.worker import BrowserWorker
 
 
-def main() -> None:
+def main(use_controller: bool = True, debug: bool = True, mode: str = "hybrid") -> None:
 
-    # queue for user commands only (GUI → redis)
-    gui_to_browser_queue: queue.Queue[str] = queue.Queue(maxsize=50)
+    # queue for user commands only (GUI → backend)
+    gui_to_backend_queue: queue.Queue[str] = queue.Queue(maxsize=50)
 
-    # Start BrowserWorker (publishes browser_state on redis)
-    worker = BrowserWorker(
-        start_url="https://www.google.com/",
-        refresh_interval=0.4,
-        log=log.debug,
-    )
-    worker.start()
+    if use_controller:
+        # Use full Controller with act/observe capabilities and proper context management
+        log.debug(f"Starting with full Controller (mode={mode}, debug={debug})...")
+        controller = Controller(
+            session_connect_url=None,
+            headless=False,
+            mode=mode,
+            debug=debug,
+        )
+        controller.start()
 
-    # Redis publisher thread for commands
-    import redis, threading
+        # Redis publisher thread for commands - Controller listens on browser_command channel
+        import redis, threading
 
-    r = redis.Redis(host="localhost", port=6379, db=0)
+        r = redis.Redis(host="localhost", port=6379, db=0)
 
-    def _cmd_forwarder():
-        while True:
-            cmd = gui_to_browser_queue.get()
-            r.publish("browser_command", cmd)
+        def _cmd_forwarder():
+            while True:
+                cmd = gui_to_backend_queue.get()
+                # Commands go through redis to maintain compatibility with Controller's redis listener
+                r.publish("browser_command", cmd)
 
-    threading.Thread(target=_cmd_forwarder, daemon=True).start()
+        threading.Thread(target=_cmd_forwarder, daemon=True).start()
 
-    # launch Tk GUI (pulls browser_state directly from redis)
-    gui = ControlPanel(gui_to_browser_queue)
+        # launch Tk GUI (pulls browser_state directly from redis, sends commands via queue)
+        gui = ControlPanel(gui_to_backend_queue)
+        gui.set_controller(
+            controller,
+        )  # Give GUI access to Controller for act/observe calls
 
-    try:
-        gui.mainloop()
-    finally:
-        worker.stop()
-        worker.join(timeout=2)
+        try:
+            gui.mainloop()
+        finally:
+            controller.stop()
+            controller.join(timeout=2)
+
+    else:
+        # Use bare BrowserWorker for basic testing (no act/observe, potential context issues)
+        log.debug(f"Starting with basic BrowserWorker (debug={debug})...")
+        # queue for worker updates (worker → GUI)
+        worker_to_gui_queue: queue.Queue[dict] = queue.Queue(maxsize=50)
+
+        worker = BrowserWorker(
+            commands_queue=gui_to_backend_queue,
+            updates_queue=worker_to_gui_queue,
+            headless=False,
+            debug=debug,
+        )
+        worker.start()
+
+        # launch Tk GUI
+        gui = ControlPanel(gui_to_backend_queue, worker_to_gui_queue)
+        gui.set_worker(worker)
+
+        try:
+            gui.mainloop()
+        finally:
+            worker.stop()
+            worker.join(timeout=2)
 
 
 if __name__ == "__main__":
-    main()
+    import argparse
+
+    parser = argparse.ArgumentParser(
+        description="Unity Browser Controller Sandbox - Test browser automation with full Controller or basic BrowserWorker",
+    )
+    parser.add_argument(
+        "--use-basic-worker",
+        dest="use_controller",
+        action="store_false",
+        default=True,
+        help="Use basic BrowserWorker instead of full Controller (disables act/observe methods and may cause context issues)",
+    )
+    parser.add_argument(
+        "--debug",
+        type=bool,
+        default=True,
+        help="Enable debug mode (default: True)",
+    )
+    parser.add_argument(
+        "--mode",
+        choices=["hybrid", "vision", "heuristic"],
+        default="hybrid",
+        help="Controller mode: hybrid (default), vision, or heuristic",
+    )
+
+    args = parser.parse_args()
+    main(use_controller=args.use_controller, debug=args.debug, mode=args.mode)
