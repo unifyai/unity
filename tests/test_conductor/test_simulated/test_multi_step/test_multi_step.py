@@ -439,8 +439,8 @@ async def test_interleaved_tools(monkeypatch):
         "Include the latest contract template from the knowledge-base, "
         "tag every contact we currently have, "
         "and attach a short summary of the last email thread. "
-        "Set the due date two weeks from today, and schedule the task for next Monday. "
-        "Do not make a start on it yet.",
+        "Set the due date two weeks from today, and schedule the task for next Monday at 9:00AM. "
+        "Do not make a start on it yet. Do not request any clarifications, use your best judgement.",
     )
     await asyncio.wait_for(h.result(), timeout=120)
 
