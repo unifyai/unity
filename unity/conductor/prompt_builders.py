@@ -8,6 +8,7 @@ from typing import Dict, Callable
 from ..task_scheduler.types.task import Task
 from ..common.llm_helpers import SteerableToolHandle, class_api_overview
 from ..memory_manager.rolling_activity import get_rolling_activity
+from ..common.prompt_helpers import clarification_guidance
 
 # ───────────────────────────────────── helpers ─────────────────────────────────────
 
@@ -63,6 +64,7 @@ def build_ask_prompt(
     sig_json = json.dumps(_sig_dict(tools), indent=4)
 
     activity_block = _rolling_activity_section() if include_activity else ""
+    clar_section = clarification_guidance(tools)
 
     return "\n".join(
         [
@@ -81,6 +83,8 @@ def build_ask_prompt(
             class_api_overview(SteerableToolHandle),
             "",
             f"Current UTC time is {_now()}.",
+            clar_section,
+            "",
         ],
     )
 
@@ -94,6 +98,7 @@ def build_request_prompt(
     sig_json = json.dumps(_sig_dict(tools), indent=4)
 
     activity_block = _rolling_activity_section() if include_activity else ""
+    clar_section = clarification_guidance(tools)
 
     return "\n".join(
         [
@@ -118,5 +123,7 @@ def build_request_prompt(
             class_api_overview(SteerableToolHandle),
             "",
             f"Current UTC time is {_now()}.",
+            clar_section,
+            "",
         ],
     )
