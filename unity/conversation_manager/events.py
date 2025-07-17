@@ -4,6 +4,7 @@ from datetime import datetime, timezone
 from typing import Any, Dict, Type
 import base64
 
+
 class _EventRegistry(type):
     """Metaclass that keeps a registry mapping event class names to the class itself."""
 
@@ -260,14 +261,24 @@ class PhoneCallStopEvent(Event):
 
 
 class PhoneUtteranceEvent(Event):
-    def __init__(self, role: str, content: str, *, is_urgent: bool = True, audio: bytes | str | None = None, **kwargs):
+    def __init__(
+        self,
+        role: str,
+        content: str,
+        *,
+        is_urgent: bool = True,
+        audio: bytes | str | None = None,
+        **kwargs,
+    ):
         """Phone utterances are *always* urgent by default but allow override."""
         # Remove potential duplicates coming from deserialisation
         kwargs.pop("role", None)
         kwargs.pop("content", None)
         kwargs.pop("is_urgent", None)
         kwargs.pop("audio", None)
-        super().__init__(role=role, content=content, is_urgent=is_urgent, audio=audio, **kwargs)
+        super().__init__(
+            role=role, content=content, is_urgent=is_urgent, audio=audio, **kwargs
+        )
 
     def __str__(self):
         audio_info = " (audio available)" if self.audio else ""

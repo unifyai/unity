@@ -23,6 +23,7 @@ _last_connection_attempt = 0.0
 admin_headers = {"Authorization": f"Bearer {os.getenv('ORCHESTRA_ADMIN_KEY')}"}
 unity_comms_url = os.getenv("UNITY_COMMS_URL")
 
+
 def _combine_audio_frames_to_wav(frames: List[rtc.AudioFrame]) -> bytes | None:
     """Combines a list of AudioFrames into a single WAV-formatted byte string."""
     if not frames:
@@ -41,6 +42,7 @@ def _combine_audio_frames_to_wav(frames: List[rtc.AudioFrame]) -> bytes | None:
             for frame in frames:
                 wf.writeframes(frame.data)
         return wav_io.getvalue()
+
 
 async def _ensure_connection():
     """Ensure we have a connection to the event server with retry logic"""

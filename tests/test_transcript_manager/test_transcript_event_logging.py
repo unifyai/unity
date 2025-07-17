@@ -95,4 +95,6 @@ async def test_log_message_with_audio():
     # Assertions
     assert len(results) == 1, "Message was not found after logging"
     retrieved_message = results[0]
-    assert retrieved_message.audio == test_audio_gcs_uri, "Audio GCS URI was not persisted correctly"
+    assert (
+        retrieved_message.audio == test_audio_gcs_uri
+    ), "Audio GCS URI was not persisted correctly"

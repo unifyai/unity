@@ -43,7 +43,12 @@ from unity.conversation_manager.events import *
 from unity.conversation_manager.actions import AssistantOutput
 from unity.conversation_manager.utils import publish_event, close_connection, get_reader
 from unity.conversation_manager.events import *
-from unity.conversation_manager.utils import close_connection, get_reader, publish_event, _combine_audio_frames_to_wav
+from unity.conversation_manager.utils import (
+    close_connection,
+    get_reader,
+    publish_event,
+    _combine_audio_frames_to_wav,
+)
 
 events_queue = asyncio.Queue()
 chunk_queue = asyncio.Queue()
@@ -146,6 +151,7 @@ class Assistant(Agent):
         async for frame in audio_stream:
             self.last_assistant_audio_frames.append(frame)
             yield frame
+
 
 async def entrypoint(ctx: agents.JobContext):
     await ctx.connect()

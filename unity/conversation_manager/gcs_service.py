@@ -22,7 +22,9 @@ class GcsService:
         if not self.project_id:
             raise ValueError("Missing GCP project ID (ORCHESTRA_VERTEXAI_PROJECT)")
 
-        self.assistant_audio_bucket_name = os.getenv("UNITY_ASSISTANT_AUDIO_BUCKET_NAME")
+        self.assistant_audio_bucket_name = os.getenv(
+            "UNITY_ASSISTANT_AUDIO_BUCKET_NAME"
+        )
         if not self.assistant_audio_bucket_name:
             raise ValueError(
                 "Missing GCP assistant audio bucket name (UNITY_ASSISTANT_AUDIO_BUCKET_NAME)",

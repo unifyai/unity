@@ -637,7 +637,8 @@ class CommsAgent:
             message,
         )
 
-    async def wait_for_seconds_or_next_event(self, time: int): ...
+    async def wait_for_seconds_or_next_event(self, time: int):
+        ...
 
     def subscribe(self, topics):
         if not self.event_manager:
@@ -778,13 +779,17 @@ class CommsAgent:
                                 print(f"Failed to upload audio to GCS: {e}")
                                 audio_gcs_uri = None
                         except (base64.binascii.Error, ValueError):
-                            if audio_payload.startswith("gs://") or audio_payload.startswith("http"):
+                            if audio_payload.startswith(
+                                "gs://"
+                            ) or audio_payload.startswith("http"):
                                 audio_gcs_uri = audio_payload
 
                 medium = (
                     "phone_call"
                     if "phone" in event_name
-                    else "sms_message" if "sms" in event_name else "whatsapp_message"
+                    else "sms_message"
+                    if "sms" in event_name
+                    else "whatsapp_message"
                 )
                 sender_id, receiver_ids = "", [""]
                 if medium == "phone_call":
