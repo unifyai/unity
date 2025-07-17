@@ -30,7 +30,7 @@ async def test_publish():
     await bus.publish(event)
 
     # … and the event should now be in the per-type deque
-    assert event in bus._deques["message"]
+    assert event in bus._deques["Message"]
 
 
 @pytest.mark.asyncio
@@ -46,14 +46,14 @@ async def test_concurrent_publishes_lock_integrity():
     bus.set_default_window(200)
 
     # Clear any pre-existing state for determinism
-    for typ in ("message", "message_exchange_summary"):
+    for typ in "Message":
         bus._deques.setdefault(typ, deque(maxlen=window)).clear()
 
     base_ts = dt.datetime.now(dt.UTC)
     n_events = 100
     events: list[Event] = []
     publish_tasks = []
-    etype, payload_cls = "message", Message
+    etype, payload_cls = "Message", Message
 
     for i in range(n_events):
         evt = Event(
@@ -73,7 +73,7 @@ async def test_concurrent_publishes_lock_integrity():
 
     # Fetch back everything; limit well above what we sent
     latest = await bus.search(limit=window, grouped_by_type=True)
-    latest = latest["message"] + latest["message_exchange_summary"]
+    latest = latest["Message"]
 
     # Keep only the events we just published (ignore any older prefilled logs)
     our_ts = {e.timestamp for e in events}
