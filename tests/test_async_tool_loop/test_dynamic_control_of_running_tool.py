@@ -85,6 +85,36 @@ def _tool_results(msgs: List[dict], tool_name: str) -> int:
     return sum(1 for m in msgs if m["role"] == "tool" and m["name"] == tool_name)
 
 
+@unify.traced
+async def _wait_for_assistant_call_prefix(
+    client: "unify.AsyncUnify",
+    prefix: str,
+    *,
+    timeout: float = 15.0,
+    poll: float = 0.05,
+) -> None:
+    """Poll *client.messages* until the assistant has issued **at least one**
+    visible tool-call whose *function name* starts with *prefix* or *timeout*
+    seconds elapse.
+
+    This mirrors ``_wait_for_tool_request`` but matches by *prefix* which is
+    useful for helper functions such as ``pause_…`` / ``resume_…`` whose exact
+    suffix is dynamic (it contains the tool call ID).
+    """
+    import time as _time
+
+    start_ts = _time.perf_counter()
+    while _time.perf_counter() - start_ts < timeout:
+        msgs = client.messages or []  # unify may return None initially
+        if _assistant_calls_prefix(msgs, prefix) >= 1:
+            return  # helper has been requested – safe to proceed
+        await asyncio.sleep(poll)
+
+    raise TimeoutError(
+        f"Timed out after {timeout}s waiting for assistant to request a helper starting with {prefix!r}.",
+    )
+
+
 # --------------------------------------------------------------------------- #
 #  FIXTURE                                                                    #
 # --------------------------------------------------------------------------- #
@@ -262,10 +292,16 @@ async def test_functional_tool_pause_resume_helpers_called_once(client):
         timeout=1000,
     )
 
-    # trigger pause / resume via user turns
-    await asyncio.sleep(2)
+    # ── deterministically trigger pause / resume via user turns ───────────────
+    # Wait until the assistant has actually scheduled the tool so our
+    # *freeze* interjection occurs while the tool is running.
+    await _wait_for_tool_request(client, "pausable_fn")
     await h.interject("freeze")
-    await asyncio.sleep(2)
+
+    # Wait until the assistant has called the corresponding ``pause_…`` helper
+    # before sending the *unfreeze* command so we are sure the helper sequence
+    # is pause → resume (in that order).
+    await _wait_for_assistant_call_prefix(client, "pause")
     await h.interject("unfreeze")
 
     final = await h.result()
