@@ -250,7 +250,7 @@ async def test_knowledge_change_audit(monkeypatch):
 
     # 2️⃣ Conditional write + read
     usr_msg = (
-        "If it isn't recorded as six months, update it to six months and "
+        "If it isn't recorded as thirteen months, update it to thirteen months and "
         "create a task noting the previous value."
     )
     r2 = await cond.request(usr_msg, parent_chat_context=chat)
