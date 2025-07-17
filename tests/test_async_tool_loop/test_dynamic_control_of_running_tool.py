@@ -28,7 +28,9 @@ import json
 import pytest
 import unify
 from unity.common.llm_helpers import start_async_tool_use_loop
-from tests.helpers import _handle_project
+
+# Shared helpers
+from tests.helpers import _handle_project, _wait_for_tool_request
 
 
 # --------------------------------------------------------------------------- #
@@ -122,8 +124,8 @@ async def test_continue_does_not_duplicate_tool(client):
         tools={"slow": slow},
     )
 
-    # Interject after ~50 ms – tool still running
-    await asyncio.sleep(0.05)
+    # Wait deterministically until the `slow` tool has been requested.
+    await _wait_for_tool_request(client, "slow")
     await handle.interject(
         "Make sure you're still continuing to run the `slow` tool",
     )
@@ -157,7 +159,9 @@ async def test_stop_removes_tool_and_yields_no_result(client):
         interrupt_llm_with_interjections=False,
     )
 
-    await asyncio.sleep(0.05)  # tool in-flight
+    # Wait deterministically until the assistant has actually scheduled the
+    # `slow` tool so we know our interjection will hit *while* it is running.
+    await _wait_for_tool_request(client, "slow")
     await handle.interject(
         "Please stop that run right away, and inform the user that it has been stopped.",
     )

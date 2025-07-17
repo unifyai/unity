@@ -27,7 +27,7 @@ from typing import Any, List
 import pytest
 import unify
 from unity.common.llm_helpers import start_async_tool_use_loop
-from tests.helpers import _handle_project
+from tests.helpers import _handle_project, _wait_for_tool_request
 
 
 # --------------------------------------------------------------------------- #
@@ -123,8 +123,10 @@ async def test_interject_leads_to_second_tool_and_final_result():
         interrupt_llm_with_interjections=False,
     )
 
+    # --- wait until the assistant has scheduled the first echo call ---------
+    await _wait_for_tool_request(client, "echo")
+
     # --- inject clarification ------------------------------------------------
-    await asyncio.sleep(0.02)
     await handle.interject(
         "And also echo B please, the order of the echos doesn't matter."
         "Don't return until both have completed."
@@ -229,9 +231,11 @@ async def test_interjections_are_processed_and_loop_completes():
     )
 
     # Two quick interjections while the first tool is still running
-    await asyncio.sleep(0.01)
+    await _wait_for_tool_request(client, "echo")  # ensure first still noted
     await handle.interject("B please")
-    await asyncio.sleep(0.01)
+
+    # Wait for assistant to schedule second echo before next interjection
+    await _wait_for_tool_request(client, "echo")
     await handle.interject("C please")
 
     # Wait for the final assistant answer (we don't assert its exact content)
@@ -270,7 +274,8 @@ async def test_single_tool_result_is_inserted_before_interjection():
         interrupt_llm_with_interjections=False,
     )
 
-    await asyncio.sleep(0.15)  # tool should still be running
+    # Wait until the `slow` tool is actually running
+    await _wait_for_tool_request(client, "slow")
     await handle.interject("thanks!")
 
     await handle.result()  # wait for completion
@@ -308,7 +313,13 @@ async def test_parallel_tool_results_shift_interjection_down():
         interrupt_llm_with_interjections=False,
     )
 
-    await asyncio.sleep(0.1)  # `fast` done, `slow` still running
+    # Ensure at least one of the tools has finished (fast) while slow pending
+    # Wait for fast result
+    from tests.helpers import count_assistant_tool_calls  # local import to avoid cycle
+
+    await _wait_for_tool_request(client, "fast")
+    # short pause to allow fast to complete but not slow. No strict guarantee but acceptable.
+    await asyncio.sleep(0.05)
     await handle.interject("cheers!")
 
     await handle.result()
@@ -343,8 +354,8 @@ async def test_interjection_stops_ongoing_llm():
         {},
     )
 
-    # Wait just a tick and then interject
-    await asyncio.sleep(0.05)
+    # Wait until the assistant started generating before we interject
+    await asyncio.sleep(0.02)  # keep minimal wait as generate is immediate
     await handle.interject("Actually, make it about dolphins instead!")
     await handle.result()
 
