@@ -11,9 +11,6 @@ import unify
 EMBED_MODEL = "text-embedding-3-small"
 
 
-API_KEY = os.environ["UNIFY_KEY"]
-
-
 def ensure_vector_column(
     context: str,
     embed_column: str,
@@ -44,7 +41,7 @@ def ensure_vector_column(
             )
         # Create the derived vector column
         url = f"{os.environ['UNIFY_BASE_URL']}/logs/derived"
-        headers = {"Authorization": f"Bearer {API_KEY}"}
+        headers = {"Authorization": f"Bearer {os.environ.get('UNIFY_KEY')}"}
         expr = derived_expr
         json_input = {
             "project": unify.active_project(),
@@ -66,7 +63,7 @@ def ensure_vector_column(
     )
 
     url = f"{os.environ['UNIFY_BASE_URL']}/logs/derived"
-    headers = {"Authorization": f"Bearer {API_KEY}"}
+    headers = {"Authorization": f"Bearer {os.environ.get('UNIFY_KEY')}"}
     embed_expr = embed_expr.replace("{", "{lg:")
     json_input = {
         "project": unify.active_project(),

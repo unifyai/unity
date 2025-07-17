@@ -17,7 +17,6 @@ writer: asyncio.StreamWriter | None = None
 _connection_established = False
 _last_connection_attempt = 0.0
 admin_headers = {"Authorization": f"Bearer {os.getenv('ORCHESTRA_ADMIN_KEY')}"}
-headers = {"Authorization": f"Bearer {os.getenv('UNIFY_KEY')}"}
 unity_comms_url = os.getenv("UNITY_COMMS_URL")
 
 
@@ -207,7 +206,9 @@ async def check_conflict(
     async with aiohttp.ClientSession() as session:
         async with session.get(
             f"https://api.unify.ai/v0/credits",
-            headers=headers,
+            headers={
+                "Authorization": f"Bearer {os.environ.get('UNIFY_KEY')}",
+            },
         ) as response:
             if response.status != 200:
                 print(

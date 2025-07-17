@@ -186,7 +186,6 @@ class CommsAgent:
     async def get_bus_events(self):
         from unity.events.event_bus import EVENT_BUS
 
-        await EVENT_BUS._prefill_done.wait()
         bus_events = await EVENT_BUS.search(
             filter=f"event_type in {json.dumps(EVENT_TYPES)}",
             limit=self.conv_context_length,
@@ -214,21 +213,6 @@ class CommsAgent:
                 # print("comm agent got", new_event)
                 # continue
                 if new_event["payload"]["transient"]:
-                    continue
-                if new_event["event_name"] == "StartupEvent":
-                    # set assistant details
-                    self.set_assistant_details(new_event["payload"])
-
-                    # remove subscription for the startup topic
-                    self.unsubscribe(["startup"])
-
-                    # activate unify project
-                    import unify
-
-                    os.environ["UNIFY_KEY"] = new_event["payload"]["api_key"]
-                    if not unify.active_project():
-                        unify.activate("Assistants")
-
                     continue
                 if new_event["event_name"] == "PhoneCallInitiatedEvent":
                     global ONGOING_CALL
@@ -434,7 +418,7 @@ class CommsAgent:
 
     async def run(self):
         if self.past_events is None:
-            self.past_events = await self.get_bus_events()
+            self.past_events = []  # await self.get_bus_events()
 
         if self.call_mode:
             return await self.phone_call_llm_run()
@@ -744,7 +728,6 @@ class CommsAgent:
         from unity.transcript_manager.types.message import Message
         from unity.events.event_bus import EVENT_BUS
 
-        unity.init()
         if self.transcript_manager is None:
             self.transcript_manager = TranscriptManager()
 
@@ -798,6 +781,18 @@ class CommsAgent:
     def handle_event(self, event: dict):
         global ONGOING_CALL
         to = event.get("to")
+        if event["event"]["event_name"] == "StartupEvent":
+            # set assistant details
+            self.set_assistant_details(event["event"]["payload"])
+
+            # remove subscription for the startup topic
+            self.unsubscribe(["startup"])
+
+            # activate unify project
+            import unity
+
+            os.environ["UNIFY_KEY"] = event["event"]["payload"]["api_key"]
+            unity.init()
         if event["event"]["event_name"] == "PhoneCallEndedEvent":
             if self.call_proc:
                 self.call_proc.kill()
