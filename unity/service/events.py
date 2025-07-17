@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 from typing import Any, Dict, Type
+import base64
 
 
 class _EventRegistry(type):
@@ -44,6 +45,7 @@ class Event(metaclass=_EventRegistry):
         transient: bool = False,
         content: str | None = None,
         role: str | None = None,
+        audio: bytes | str | None = None,
     ):
         self.timestamp = self._parse_timestamp(timestamp)
         self.fmt_timestamp = self.timestamp.strftime("%Y-%m-%d %H:%M:%S")
@@ -51,14 +53,20 @@ class Event(metaclass=_EventRegistry):
         self.transient = transient
         self.content = content
         self.role = role
+        self.audio = audio
 
     def to_dict(self) -> dict[str, Any]:
+        audio_payload = self.audio
+        if isinstance(self.audio, bytes):
+            audio_payload = base64.b64encode(self.audio).decode("utf-8")
+
         payload = {
             "timestamp": self.timestamp.isoformat(),
             "is_urgent": self.is_urgent,
             "transient": self.transient,
             "content": self.content,
             "role": self.role,
+            "audio": audio_payload,
         }
         return {"event_name": self.__class__.__name__, "payload": payload}
 
@@ -194,16 +202,18 @@ class PhoneCallStopEvent(Event):
 
 
 class PhoneUtteranceEvent(Event):
-    def __init__(self, role: str, content: str, *, is_urgent: bool = True, **kwargs):
+    def __init__(self, role: str, content: str, *, is_urgent: bool = True, audio: bytes | str | None = None, **kwargs):
         """Phone utterances are *always* urgent by default but allow override."""
         # Remove potential duplicates coming from deserialisation
         kwargs.pop("role", None)
         kwargs.pop("content", None)
         kwargs.pop("is_urgent", None)
-        super().__init__(role=role, content=content, is_urgent=is_urgent, **kwargs)
+        kwargs.pop("audio", None)
+        super().__init__(role=role, content=content, is_urgent=is_urgent, audio=audio, **kwargs)
 
     def __str__(self):
-        return f'[Phone Utterance @ {self.fmt_timestamp}] {self.role}: "{self.content}"'
+        audio_info = " (audio available)" if self.audio else ""
+        return f'[Phone Utterance @ {self.fmt_timestamp}] {self.role}: "{self.content}"{audio_info}'
 
 
 class InterruptEvent(Event):
