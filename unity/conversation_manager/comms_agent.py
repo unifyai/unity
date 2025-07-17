@@ -22,7 +22,6 @@ from unity.conversation_manager.prompt_builders import (
     build_user_agent_prompt,
     build_action_prompt,
 )
-from unity.conversation_manager.gcs_service import GCS_SERVICE
 
 client = openai.AsyncOpenAI(api_key=os.environ["OPENAI_API_KEY"])
 
@@ -761,28 +760,25 @@ class CommsAgent:
                 timestamp = event_payload["timestamp"]
                 audio_payload = event_payload.get("audio")
 
-                audio_gcs_uri = None
-                if audio_payload and event_name == "PhoneUtteranceEvent":
+                audio = None
+                if audio_payload:
                     if isinstance(audio_payload, str):
                         try:
-                            audio_bytes = base64.b64decode(audio_payload)
-                            user_id_for_path = self.user_phone_call_number
-                            assistant_id_for_path = self.assistant_number
-                            try:
-                                audio_gcs_uri = GCS_SERVICE.upload_audio_file(
-                                    file_content=audio_bytes,
-                                    user_id=user_id_for_path,
-                                    assistant_id=assistant_id_for_path,
-                                    content_type="audio/wav",
-                                )
-                            except Exception as e:
-                                print(f"Failed to upload audio to GCS: {e}")
-                                audio_gcs_uri = None
+                            # It's base64 encoded by Event.to_dict()
+                            audio = base64.b64decode(audio_payload)
                         except (base64.binascii.Error, ValueError):
+                            # If it's already a URL (e.g. from an old system or direct GCS link), pass it through
                             if audio_payload.startswith(
                                 "gs://"
                             ) or audio_payload.startswith("http"):
-                                audio_gcs_uri = audio_payload
+                                audio = audio_payload
+                            else:
+                                print(
+                                    f"Warning: Could not decode audio payload for logging: {audio_payload[:50]}..."
+                                )
+                    elif isinstance(audio_payload, bytes):
+                        # Should not happen after JSON serialization, but handle defensively
+                        audio = audio_payload
 
                 medium = (
                     "phone_call"
@@ -813,7 +809,7 @@ class CommsAgent:
                         receiver_ids=receiver_ids,
                         timestamp=timestamp,
                         content=content,
-                        audio=audio_gcs_uri,
+                        audio=audio,
                     ),
                 )
         except Exception as e:

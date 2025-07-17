@@ -2,6 +2,7 @@ import os
 import json
 import asyncio
 import functools
+import base64
 from typing import List, Dict, Optional, Union, Any
 
 import unify
@@ -310,8 +311,14 @@ class TranscriptManager(BaseTranscriptManager):
             # Re-instantiate Message model for validation
             normalised_messages.append(Message(**payload))
 
-        # ── 3. Dump POST-ready JSON for each message ──────────────────────
-        msg_entries = [m.to_post_json() for m in normalised_messages]
+        # ── 3. Dump POST-ready JSON for each message, handling audio bytes ───
+        msg_entries = []
+        for m in normalised_messages:
+            entry = m.to_post_json()
+            # If audio field contains raw bytes, encode to base64 string
+            if isinstance(entry.get("audio"), bytes):
+                entry["audio"] = base64.b64encode(entry["audio"]).decode("utf-8")
+            msg_entries.append(entry)
 
         # ── 4. Persist messages and publish EventBus notifications ───────
         from ..events.event_bus import EVENT_BUS, Event  # local import to avoid cycles
