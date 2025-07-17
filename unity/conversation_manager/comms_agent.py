@@ -325,6 +325,7 @@ class CommsAgent:
         self.tool_use_handles[handle_id] = {
             "handle": tool_use_handle,
             "query": action.query,
+            "client": unify_client,
         }
         self.handle_count += 1
 
@@ -373,8 +374,15 @@ class CommsAgent:
         else:
             # handle
             handle = self.tool_use_handles[action.handle_id]["handle"]
+            client = self.tool_use_handles[action.handle_id]["client"]
             if action.type == "ask":
                 await handle.ask(action.query)
+                self.events_queue.put_nowait(
+                    PhoneUtteranceEvent(
+                        role="System",
+                        content=f"This is the current status of the tool_use: {client.messages[-1]}. Formulate response by replacing the tool_use name with the appropriate analogy and verb.",
+                    ).to_dict(),
+                )
             elif action.type == "interject":
                 await handle.interject(action.query)
             elif action.type == "stop":
