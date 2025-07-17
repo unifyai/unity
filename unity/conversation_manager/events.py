@@ -138,22 +138,25 @@ class StartupEvent(Event):
 
     def to_dict(self) -> dict[str, Any]:
         base_dict = super().to_dict()
-        base_dict["payload"].update({
-            "api_key": self.api_key,
-            "assistant_id": self.assistant_id,
-            "assistant_name": self.assistant_name,
-            "assistant_age": self.assistant_age,
-            "assistant_region": self.assistant_region,
-            "assistant_about": self.assistant_about,
-            "assistant_number": self.assistant_number,
-            "user_name": self.user_name,
-            "user_number": self.user_number,
-            "user_phone_number": self.user_phone_number
-        })
+        base_dict["payload"].update(
+            {
+                "api_key": self.api_key,
+                "assistant_id": self.assistant_id,
+                "assistant_name": self.assistant_name,
+                "assistant_age": self.assistant_age,
+                "assistant_region": self.assistant_region,
+                "assistant_about": self.assistant_about,
+                "assistant_number": self.assistant_number,
+                "user_name": self.user_name,
+                "user_number": self.user_number,
+                "user_phone_number": self.user_phone_number,
+            }
+        )
         return base_dict
 
     def __str__(self):
         return f"[Startup... @ {self.fmt_timestamp} for assistant {self.assistant_id}]"
+
 
 class _Message(Event):
     platform: str = ""

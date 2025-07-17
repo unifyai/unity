@@ -53,7 +53,11 @@ class CommsManager:
                 os.environ["ASSISTANT_ID"] = event["assistant_id"]
                 subscription_id = (
                     "unity-"
-                    + (os.getenv("ASSISTANT_ID") if os.getenv("ASSISTANT_ID") else "default-assistant")
+                    + (
+                        os.getenv("ASSISTANT_ID")
+                        if os.getenv("ASSISTANT_ID")
+                        else "default-assistant"
+                    )
                     + ("-staging" if os.getenv("STAGING") else "")
                 ) + "-sub"
                 self.subscribe_to_topic(subscription_id)
@@ -63,6 +67,7 @@ class CommsManager:
                     self.message_queue.put_nowait,
                     {
                         "topic": "startup",
+                        "to": "past",
                         "event": StartupEvent(
                             api_key=event["api_key"],
                             assistant_id=event["assistant_id"],
@@ -74,11 +79,10 @@ class CommsManager:
                             user_name=event["user_name"],
                             user_number=event["user_number"],
                             user_phone_number=event["user_phone_number"],
-                        ).to_dict()
+                        ).to_dict(),
                     },
                 )
-            # elif thread in events_map:
-            if thread in events_map:
+            elif thread in events_map:
                 content = event["body"]
                 topic = ""
                 if thread == "email":
@@ -139,7 +143,7 @@ class CommsManager:
             message.nack()
 
     def subscribe_to_topic(self, subscription_id: str):
-    # async def subscribe_to_topic(self, subscription_id: str):
+        # async def subscribe_to_topic(self, subscription_id: str):
         """Subscribe to a specific PubSub topic and process messages."""
         try:
             # Let GCP libraries handle authentication automatically
