@@ -245,10 +245,11 @@ async def test_functional_tool_pause_extends_wall_clock(client):
         timeout=300,
     )
 
+    # ── deterministically wait until the assistant has actually scheduled the
+    #    tool so our *hold* interjection reliably occurs while it is running.
+    await _wait_for_tool_request(client, "pausable_fn")
     t0 = time.perf_counter()
 
-    # let assistant schedule the tool, then pause for ~2 s
-    await asyncio.sleep(1.5)
     await outer.interject("hold")
     await asyncio.sleep(2.0)  # loop is paused here
     await outer.interject("go")
