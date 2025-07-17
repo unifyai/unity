@@ -266,8 +266,6 @@ async def test_interject_nested_handle(monkeypatch):
             client=inner_client,
             message="start",
             tools={"slow_topic": slow_topic},
-            max_steps=10,
-            timeout=120,
         )
 
     outer_tool.__name__ = "outer_tool"
