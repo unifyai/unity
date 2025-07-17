@@ -1,6 +1,7 @@
 from enum import StrEnum
 from pydantic import BaseModel, Field, model_validator
 from datetime import datetime
+from typing import Optional
 
 UNASSIGNED = -1
 
@@ -30,6 +31,10 @@ class Message(BaseModel):
     exchange_id: int | None = Field(
         default=None,
         description="ID of the conversation thread this message belongs to",
+    )
+    audio: Optional[str] = Field(
+        default=None,
+        description="URL to the audio file for this message (phone calls only)",
     )
 
     @model_validator(mode="before")

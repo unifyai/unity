@@ -4,6 +4,10 @@ import time
 import os
 import aiohttp
 import unify
+import io
+import wave
+from typing import List
+from livekit import rtc
 
 # Configuration
 EVENT_SERVER_HOST = "127.0.0.1"
@@ -19,6 +23,24 @@ _last_connection_attempt = 0.0
 admin_headers = {"Authorization": f"Bearer {os.getenv('ORCHESTRA_ADMIN_KEY')}"}
 unity_comms_url = os.getenv("UNITY_COMMS_URL")
 
+def _combine_audio_frames_to_wav(frames: List[rtc.AudioFrame]) -> bytes | None:
+    """Combines a list of AudioFrames into a single WAV-formatted byte string."""
+    if not frames:
+        return None
+
+    first_frame = frames[0]
+    sample_rate = first_frame.sample_rate
+    num_channels = first_frame.num_channels
+    sampwidth = 2  # int16
+
+    with io.BytesIO() as wav_io:
+        with wave.open(wav_io, "wb") as wf:
+            wf.setnchannels(num_channels)
+            wf.setsampwidth(sampwidth)
+            wf.setframerate(sample_rate)
+            for frame in frames:
+                wf.writeframes(frame.data)
+        return wav_io.getvalue()
 
 async def _ensure_connection():
     """Ensure we have a connection to the event server with retry logic"""

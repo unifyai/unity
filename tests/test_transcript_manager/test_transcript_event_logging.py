@@ -2,7 +2,11 @@ from __future__ import annotations
 
 import pytest
 
+import asyncio
+from datetime import datetime
+
 from unity.transcript_manager.transcript_manager import TranscriptManager
+from unity.transcript_manager.types.message import Message
 from unity.events.event_bus import EVENT_BUS
 from tests.helpers import _handle_project
 
@@ -54,3 +58,41 @@ async def test_managermethod_events_for_ask():
         isinstance(outgoing[0].payload.get("answer"), str)
         and outgoing[0].payload["answer"].strip()
     ), "Outgoing ask event should carry the assistant answer"
+
+
+# ───────────────────────  log_message() with audio logging  ──────────────────────
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+@_handle_project
+async def test_log_message_with_audio():
+    """
+    Verify that `log_message` correctly persists the `audio` field with a GCS URI.
+    """
+    tm = TranscriptManager()
+
+    test_audio_gcs_uri = "gs://my-test-bucket/audio/test.wav"
+    test_content = f"Test message with audio @ {datetime.now()}"
+
+    test_message = Message(
+        medium="phone_call",
+        sender_id=123,
+        receiver_id=456,
+        timestamp=datetime.now(),
+        content=test_content,
+        audio=test_audio_gcs_uri,
+    )
+
+    # Log the message and wait for it to be persisted
+    tm.log_message(test_message)
+    tm.join_published()
+    await asyncio.sleep(2)  # Allow time for backend to index
+
+    # Retrieve the message using the unique content as a filter
+    results = tm._search_messages(filter=f"content == '{test_content}'", limit=1)
+
+    # Assertions
+    assert len(results) == 1, "Message was not found after logging"
+    retrieved_message = results[0]
+    assert retrieved_message.audio == test_audio_gcs_uri, "Audio GCS URI was not persisted correctly"

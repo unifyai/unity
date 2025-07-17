@@ -4,6 +4,7 @@ import openai
 import os
 import redis
 import traceback
+import base64
 import unify
 from unity.common.llm_helpers import start_async_tool_use_loop, methods_to_tool_dict
 from unity.helpers import run_script, terminate_process
@@ -21,6 +22,7 @@ from unity.conversation_manager.prompt_builders import (
     build_user_agent_prompt,
     build_action_prompt,
 )
+from unity.conversation_manager.gcs_service import GCS_SERVICE
 
 client = openai.AsyncOpenAI(api_key=os.environ["OPENAI_API_KEY"])
 
@@ -750,10 +752,35 @@ class CommsAgent:
                 "WhatsappMessageRecievedEvent",
                 "SMSMessageRecievedEvent",
             ]:
+
+                event_payload = event["event"]["payload"]
                 event_name = event["event"]["event_name"]
-                role = event["event"]["payload"]["role"]
-                content = event["event"]["payload"]["content"]
-                timestamp = event["event"]["payload"]["timestamp"]
+                role = event_payload["role"]
+                content = event_payload["content"]
+                timestamp = event_payload["timestamp"]
+                audio_payload = event_payload.get("audio")
+
+                audio_gcs_uri = None
+                if audio_payload and event_name == "PhoneUtteranceEvent":
+                    if isinstance(audio_payload, str):
+                        try:
+                            audio_bytes = base64.b64decode(audio_payload)
+                            user_id_for_path = self.user_phone_call_number
+                            assistant_id_for_path = self.assistant_number
+                            try:
+                                audio_gcs_uri = GCS_SERVICE.upload_audio_file(
+                                    file_content=audio_bytes,
+                                    user_id=user_id_for_path,
+                                    assistant_id=assistant_id_for_path,
+                                    content_type="audio/wav",
+                                )
+                            except Exception as e:
+                                print(f"Failed to upload audio to GCS: {e}")
+                                audio_gcs_uri = None
+                        except (base64.binascii.Error, ValueError):
+                            if audio_payload.startswith("gs://") or audio_payload.startswith("http"):
+                                audio_gcs_uri = audio_payload
+
                 medium = (
                     "phone_call"
                     if "phone" in event_name
@@ -781,6 +808,7 @@ class CommsAgent:
                         receiver_ids=receiver_ids,
                         timestamp=timestamp,
                         content=content,
+                        audio=audio_gcs_uri,
                     ),
                 )
         except Exception as e:

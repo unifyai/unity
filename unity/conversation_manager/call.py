@@ -4,7 +4,7 @@ import os
 
 sys.path.append("..")
 import asyncio
-
+from typing import AsyncIterable, List
 from dotenv import load_dotenv
 
 from livekit import agents
@@ -21,8 +21,18 @@ from livekit.plugins import (
 if sys.platform == "darwin":
     from livekit.plugins import noise_cancellation
 from livekit.plugins.turn_detector.multilingual import MultilingualModel
-from livekit.agents import ChatContext, ChatMessage
-
+from livekit.agents import (
+    Agent,
+    AgentSession,
+    ChatMessage,
+    ChatContext,
+    FunctionTool,
+    ModelSettings,
+    RoomInputOptions,
+    llm,
+)
+from livekit import agents, rtc
+from livekit.agents.llm import AudioContent
 from livekit.agents import ModelSettings, llm, FunctionTool, Agent
 from typing import AsyncIterable
 from pydantic_core import from_json
@@ -32,6 +42,8 @@ load_dotenv()
 from unity.conversation_manager.events import *
 from unity.conversation_manager.actions import AssistantOutput
 from unity.conversation_manager.utils import publish_event, close_connection, get_reader
+from unity.conversation_manager.events import *
+from unity.conversation_manager.utils import close_connection, get_reader, publish_event, _combine_audio_frames_to_wav
 
 events_queue = asyncio.Queue()
 chunk_queue = asyncio.Queue()
@@ -71,6 +83,7 @@ class Assistant(Agent):
         # self.client = client
         self.current_tasks_status = None
         self.from_number = from_number
+        self.last_assistant_audio_frames: List[rtc.AudioFrame] = []
         super().__init__(instructions="", llm=openai.LLM(model="gpt-4o"))
 
     async def on_user_turn_completed(
@@ -80,6 +93,12 @@ class Assistant(Agent):
     ) -> None:
         # events_queue.put_nowait(PhoneUtteranceEvent(role="User", content=new_message.text_content))
         # we will handle this through the events manager
+        audio_frames: List[rtc.AudioFrame] = []
+        for content in new_message.content:
+            if isinstance(content, AudioContent):
+                audio_frames.extend(content.frame)
+
+        wav_bytes = _combine_audio_frames_to_wav(audio_frames)
         await publish_event(
             {
                 "topic": self.from_number,
@@ -87,6 +106,7 @@ class Assistant(Agent):
                 "event": PhoneUtteranceEvent(
                     role="User",
                     content=new_message.text_content,
+                    audio=wav_bytes,
                 ).to_dict(),
             },
         )
@@ -110,13 +130,22 @@ class Assistant(Agent):
         self,
         text: AsyncIterable[str],
         model_settings: ModelSettings,
-    ) -> AsyncIterable:
-        return Agent.default.tts_node(
+    ) -> AsyncIterable[rtc.AudioFrame]:
+        # 1. Clear any frames from the previous turn
+        self.last_assistant_audio_frames.clear()
+
+        # 2. Get the audio stream from the default TTS node
+        processed_text = process_structured_output(text)
+        audio_stream = Agent.default.tts_node(
             self,
-            process_structured_output(text),
+            processed_text,
             model_settings,
         )
 
+        # 3. Iterate over the stream, storing frames and yielding them to the caller
+        async for frame in audio_stream:
+            self.last_assistant_audio_frames.append(frame)
+            yield frame
 
 async def entrypoint(ctx: agents.JobContext):
     await ctx.connect()
@@ -250,6 +279,9 @@ async def entrypoint(ctx: agents.JobContext):
                 except:
                     assistant_res = {}
                 if assistant_res.get("phone_utterance"):
+                    assistant_audio_bytes = _combine_audio_frames_to_wav(
+                        session.agent.last_assistant_audio_frames,
+                    )
                     # send assistant response as an event to be added in past events
                     asyncio.create_task(
                         publish_event(
@@ -259,6 +291,7 @@ async def entrypoint(ctx: agents.JobContext):
                                 "event": PhoneUtteranceEvent(
                                     role="Assistant",
                                     content=assistant_res.get("phone_utterance"),
+                                    audio=assistant_audio_bytes,
                                 ).to_dict(),
                             },
                         ),
