@@ -480,21 +480,42 @@ class MemoryManager(BaseMemoryManager):
                     assistant_id = 0
 
                 for msg in messages:
-                    for cid in (msg.get("sender_id"), msg.get("receiver_ids")):
-                        if cid is None:
-                            continue
-                        if cid == assistant_id:
-                            continue  # skip assistant
-                        contact_ids.add(cid)
+                    # 1) sender -----------------------------------------------------
+                    sid = msg.get("sender_id")
+                    if isinstance(sid, int) and sid != assistant_id:
+                        contact_ids.add(sid)
+
+                    # 2) receiver(s) ----------------------------------------------
+                    rids = msg.get("receiver_ids")
+
+                    if rids is None:
+                        continue
+
+                    if isinstance(rids, int):
+                        if rids != assistant_id:
+                            contact_ids.add(rids)
+                    elif isinstance(rids, (list, tuple, set)):
+                        for rid in rids:
+                            if isinstance(rid, int) and rid != assistant_id:
+                                contact_ids.add(rid)
 
                 # Build per-contact tasks
                 for _cid in contact_ids:
                     # Filter transcript to messages involving *_cid*
-                    sub_msgs = [
-                        m
-                        for m in messages
-                        if m.get("sender_id") == _cid or m.get("receiver_ids") == _cid
-                    ]
+                    sub_msgs: list[dict] = []
+                    for m in messages:
+                        if m.get("sender_id") == _cid:
+                            sub_msgs.append(m)
+                            continue
+
+                        rids = m.get("receiver_ids")
+
+                        if isinstance(rids, int):
+                            if rids == _cid:
+                                sub_msgs.append(m)
+                        elif isinstance(rids, (list, tuple, set)):
+                            if _cid in rids:
+                                sub_msgs.append(m)
 
                     sub_blob = json.dumps(sub_msgs, indent=2)
 
