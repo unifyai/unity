@@ -30,7 +30,8 @@ import unify
 from unity.common.llm_helpers import start_async_tool_use_loop
 
 # Shared helpers
-from tests.helpers import _handle_project, _wait_for_tool_request
+from tests.helpers import _handle_project
+from tests.test_async_tool_loop.async_helpers import _wait_for_tool_request
 
 
 # --------------------------------------------------------------------------- #

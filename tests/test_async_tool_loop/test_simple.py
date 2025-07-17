@@ -28,6 +28,7 @@ import asyncio
 import os
 import time
 from tests.helpers import _handle_project
+from tests.test_async_tool_loop.async_helpers import _wait_for_tool_request
 import json
 
 import pytest
@@ -409,7 +410,11 @@ async def test_max_concurrent_limit_is_obeyed() -> None:  # noqa: D401
 
     client = new_client()
 
-    await llmh.start_async_tool_use_loop(
+    # Kick off the interactive loop *without* awaiting the final result yet so
+    # that we can synchronise on the **first** tool request and ensure all
+    # timing events are captured in the correct order.
+
+    handle = llmh.start_async_tool_use_loop(
         client=client,
         message=(
             "Invoke `limited` twice *concurrently* – once with 'one', once "
@@ -417,7 +422,16 @@ async def test_max_concurrent_limit_is_obeyed() -> None:  # noqa: D401
         ),
         tools=tools,
         prune_tool_duplicates=False,
-    ).result()
+    )
+
+    # Block until the assistant has actually *requested* at least one call to
+    # the `limited` tool.  This makes the test independent from model latency
+    # and guarantees that the event-log below reflects the real execution
+    # window of the tool.
+    await _wait_for_tool_request(client, "limited")
+
+    # Now wait for the whole loop to finish.
+    await handle.result()
 
     starts = [t for e, t in events if e == "start"]
     ends = [t for e, t in events if e == "end"]
@@ -427,13 +441,12 @@ async def test_max_concurrent_limit_is_obeyed() -> None:  # noqa: D401
         ends,
     ), "Mismatched start/end counts – tool never returned?"
 
-    # The LLM correctly requested two calls, but our concurrency logic
-    # correctly blocked the second one. The LLM then decided not to retry.
-    # Therefore, we expect exactly ONE successful invocation.
-    assert len(starts) == 1, (
-        f"Expected exactly one tool invocation because of the max_concurrent=1 limit, "
-        f"but got {len(starts)}."
-    )
+    # The model may decide to retry the second invocation *after* the first one
+    # completed.  What matters is that **no two calls** to the tool ever ran in
+    # parallel.  Therefore, we only check that at least one invocation
+    # happened and that the *peak* concurrency never exceeded 1.
+
+    assert len(starts) >= 1, "The tool was never invoked at all – test setup failed."
 
     # Verify the core requirement: that the peak concurrency never exceeded 1.
     timeline = sorted(events, key=lambda p: p[1])

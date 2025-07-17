@@ -27,7 +27,13 @@ from typing import Any, List
 import pytest
 import unify
 from unity.common.llm_helpers import start_async_tool_use_loop
-from tests.helpers import _handle_project, _wait_for_tool_request
+from tests.helpers import (
+    _handle_project,
+)
+from tests.test_async_tool_loop.async_helpers import (
+    _wait_for_tool_request,
+    _wait_for_tool_result,
+)
 
 
 # --------------------------------------------------------------------------- #
@@ -310,18 +316,23 @@ async def test_parallel_tool_results_shift_interjection_down():
             "then respond with ONLY the word DONE."
         ),
         {"fast": fast, "slow": slow},
-        interrupt_llm_with_interjections=False,
+        interrupt_llm_with_interjections=True,  # allow interjection to pre-empt
     )
 
-    # Ensure at least one of the tools has finished (fast) while slow pending
-    # Wait for fast result
-    from tests.helpers import count_assistant_tool_calls  # local import to avoid cycle
-
+    # 1. Wait until *both* tool calls have been offered to the model.
     await _wait_for_tool_request(client, "fast")
-    # short pause to allow fast to complete but not slow. No strict guarantee but acceptable.
-    await asyncio.sleep(0.05)
+    await _wait_for_tool_request(client, "slow")
+
+    # 2. Wait until the first two tool *results* (fast + slow placeholder)
+    #    are present so we can safely interject while the LLM is still busy
+    #    processing them but **before** it produces its final "DONE" reply.
+    await _wait_for_tool_result(client, min_results=2)
+
+    # 3. Fire the interjection which should interrupt the ongoing generation
+    #    and therefore be inserted *immediately* after the tool results.
     await handle.interject("cheers!")
 
+    # 4. Await normal completion of the loop and then validate order.
     await handle.result()
 
     msgs = client.messages
