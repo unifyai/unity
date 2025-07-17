@@ -243,7 +243,7 @@ class Controller(threading.Thread):
         action: str,
         expectation: Optional[str] = None,
         multi_step_mode: bool = False,
-        timeout: float = 1000.0,
+        timeout: float = 10.0,
     ) -> str:
         """
         Converts a natural-language instruction into a browser action, executes it,
