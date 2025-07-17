@@ -9,6 +9,7 @@ from typing import Dict, Callable, List
 from .types.contact import Contact
 from ..knowledge_manager.types import column_type_schema
 from ..memory_manager.rolling_activity import get_rolling_activity
+from ..common.prompt_helpers import clarification_guidance
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -155,11 +156,7 @@ def build_ask_prompt(
         )
 
     # ─ Clarification guidance ─
-    clarification_guidance = (
-        f"If at any point you cannot uniquely identify a single contact (for example, multiple results match the user's description) **you must call the** `{request_clar}` **tool** to ask the user to clarify which contact they mean *before* you answer."
-        if request_clar
-        else ""
-    )
+    clar_section = clarification_guidance(tools)
 
     activity_block = _rolling_activity_section() if include_activity else ""
 
@@ -180,7 +177,7 @@ def build_ask_prompt(
             usage_examples if num_contacts >= 50 else "",
             "",
             guidance,
-            clarification_guidance,
+            clar_section,
             "",
             f"Current UTC time is {_now()}.",
         ],
@@ -238,6 +235,7 @@ def build_update_prompt(
     ).strip()
 
     activity_block = _rolling_activity_section() if include_activity else ""
+    clar_section = clarification_guidance(tools)
 
     return "\n".join(
         [
@@ -265,6 +263,8 @@ def build_update_prompt(
             json.dumps(column_type_schema, indent=4),
             "",
             f"Current UTC time is {_now()}.",
+            clar_section,
+            "",
         ],
     )
 

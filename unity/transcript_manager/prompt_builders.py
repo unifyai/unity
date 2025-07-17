@@ -20,6 +20,7 @@ from typing import Callable, Dict
 from ..contact_manager.types.contact import Contact
 from .types.message import Message
 from ..memory_manager.rolling_activity import get_rolling_activity
+from ..common.prompt_helpers import clarification_guidance
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Internal helpers
@@ -134,6 +135,7 @@ def build_ask_prompt(
     ).strip()
 
     activity_block = _rolling_activity_section() if include_activity else ""
+    clar_section = clarification_guidance(tools)
 
     return "\n".join(
         [
@@ -155,6 +157,8 @@ def build_ask_prompt(
             f"Message  = {json.dumps(Message.model_json_schema(), indent=4)}",
             "",
             f"Current UTC time: {_now()}.",
+            clar_section,
+            "",
         ],
     )
 
