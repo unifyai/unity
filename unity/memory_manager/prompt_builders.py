@@ -39,7 +39,7 @@ def build_contact_update_prompt(
     guidance: Optional[str] = None,
 ) -> str:
     lines = [
-        _rolling_activity_section(),
+        get_broader_context(),
         "Your task is to create or amend contact records — names, phone numbers, emails, bios, etc. — whenever the **current transcript chunk reveals new or changed facts**.",
         "",
         'The transcript will rarely contain an explicit instruction such as *"please update the address book"*.  Instead you must listen for *any* statement that implies new contact information.  Examples include:',
@@ -69,7 +69,7 @@ def build_bio_prompt(
     guidance: Optional[str] = None,
 ) -> str:
     lines = [
-        _rolling_activity_section(),
+        get_broader_context(),
         "You are the **MemoryManager** responsible for the *bio* column for ONE contact.",
         "Input: the latest transcript chunk *plus* the current bio (if any).",
         "",
@@ -99,7 +99,7 @@ def build_rolling_prompt(
     guidance: Optional[str] = None,
 ) -> str:
     lines = [
-        _rolling_activity_section(),
+        get_broader_context(),
         "You are the **MemoryManager** refreshing the *rolling summary*",
         "for ONE contact.  Start from the previous rolling summary (if supplied).",
         "",
@@ -134,7 +134,7 @@ def build_knowledge_prompt(
     guidance: Optional[str] = None,
 ) -> str:
     lines = [
-        _rolling_activity_section(),
+        get_broader_context(),
         "You are the **MemoryManager** tasked with mining *long-term*",
         "knowledge from the latest transcript chunk.",
         "",
@@ -166,7 +166,7 @@ def build_task_prompt(
     guidance: Optional[str] = None,
 ) -> str:
     lines = [
-        _rolling_activity_section(),
+        get_broader_context(),
         "You are the **MemoryManager** tasked with updating the task list based on the latest transcript chunk.",
         "",
         "• Identify tasks that should be created, modified, cancelled or reordered.",
@@ -183,39 +183,3 @@ def build_task_prompt(
         "Current UTC time: " + _now(),
     ]
     return _with_guidance(lines, guidance)
-
-
-# ─────────────────────────────────────────────────────────────────────────────
-# Shared historic activity snippet (uses *lazy* import to avoid cycles)
-# ─────────────────────────────────────────────────────────────────────────────
-
-
-def _rolling_activity_section() -> str:
-    """Return a markdown summary of the agent's historic activity.
-
-    Reads the **process-wide** cached snapshot instead of querying the backend
-    via `MemoryManager().get_broader_context()` on every call.  Callers can
-    still rely on the helper to return an *empty string* when nothing useful
-    has been recorded yet.
-    """
-
-    try:
-        overview = get_broader_context()
-    except Exception:  # pragma: no cover – defensive guard
-        return ""
-
-    if not overview:
-        return ""
-
-    return "\n".join(
-        [
-            "Historic Activity Overview",
-            "---------------------------",
-            "Below is a summary of the agent's historic activity (tasks, contacts, knowledge, transcripts, etc.).",
-            "Some parts may be useful context for the current task while others might not – use your judgement.",
-            "",
-            overview,
-            "---------------------------",
-            "",
-        ],
-    )
