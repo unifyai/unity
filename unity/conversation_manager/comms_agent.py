@@ -736,7 +736,7 @@ class CommsAgent:
         from unity.transcript_manager.types.message import Message
         from unity.events.event_bus import EVENT_BUS
 
-        unity.init(os.environ.get("ASSISTANT_ID"))
+        unity.init(assistant_id=os.environ.get("ASSISTANT_ID"))
         if self.transcript_manager is None:
             self.transcript_manager = TranscriptManager()
 
