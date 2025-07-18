@@ -5,6 +5,7 @@
 import asyncio
 from collections import defaultdict
 from dotenv import load_dotenv
+from google.cloud import pubsub_v1
 import json
 import os
 import signal
@@ -126,6 +127,11 @@ class EventManager:
             if os.getenv("ASSISTANT_ID") and (
                 current_time - self.last_activity_time > self.INACTIVITY_TIMEOUT
             ):
+                publisher = pubsub_v1.PublisherClient()
+                publisher.publish(
+                    "projects/responsive-city-458413-a2/topics/test",
+                    f"{os.getenv('ASSISTANT_ID')}",
+                )
                 print(
                     f"Inactivity timeout reached ({self.INACTIVITY_TIMEOUT}s), "
                     "shutting down gracefully...",
