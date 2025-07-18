@@ -179,6 +179,8 @@ class MemoryManager(BaseMemoryManager):
     async def update_contact_bio(
         self,
         transcript: str,
+        *,
+        contact_id: int,
         latest_bio: Optional[str] = None,
         guidance: Optional[str] = None,
     ) -> str:
@@ -187,16 +189,25 @@ class MemoryManager(BaseMemoryManager):
         Caller assembles the correct transcript slice & resolves the contact_id.
         """
 
+        target_id = contact_id  # capture for closure
+
         async def set_bio(contact_id: int, bio: str) -> str:
+            """Update only the bio column for the supplied contact id.
+
+            The *cid* received via the tool-call takes precedence over the
+            *outer_contact_id* argument so existing prompts need no changes.
             """
-            Restricted helper – only touches the `bio` column.
-            """
+            final_id = contact_id or target_id
+            if final_id is None:
+                raise ValueError(
+                    "contact_id must be supplied either via the method argument or the tool call.",
+                )
             await asyncio.to_thread(
                 self._contact_manager._update_contact,
-                contact_id=contact_id,
+                contact_id=final_id,
                 custom_fields={"bio": bio},
             )
-            return f"Bio for contact with id {contact_id} successfully updated"
+            return f"Bio for contact with id {final_id} successfully updated"
 
         tools: Dict[str, Callable[..., Any]] = {
             "transcript_ask": self._transcript_manager.ask,
@@ -214,6 +225,7 @@ class MemoryManager(BaseMemoryManager):
         # Compose input blob
         user_blob = json.dumps(
             {
+                "contact_id": contact_id,
                 "latest_bio": latest_bio,
                 "transcript": transcript,
             },
@@ -236,6 +248,8 @@ class MemoryManager(BaseMemoryManager):
     async def update_contact_rolling_summary(
         self,
         transcript: str,
+        *,
+        contact_id: int,
         latest_rolling_summary: Optional[str] = None,
         guidance: Optional[str] = None,
     ) -> str:
@@ -243,14 +257,21 @@ class MemoryManager(BaseMemoryManager):
         Refresh the rolling_summary column for ONE contact.
         """
 
+        target_id = contact_id  # capture for closure
+
         async def set_rolling_summary(contact_id: int, rolling_summary: str) -> str:
+            final_id = contact_id or target_id
+            if final_id is None:
+                raise ValueError(
+                    "contact_id must be supplied either via the method argument or the tool call.",
+                )
             await asyncio.to_thread(
                 self._contact_manager._update_contact,
-                contact_id=contact_id,
+                contact_id=final_id,
                 custom_fields={"rolling_summary": rolling_summary},
             )
             return (
-                f"Rolling summary for contact with id {contact_id} successfully updated"
+                f"Rolling summary for contact with id {final_id} successfully updated"
             )
 
         tools: Dict[str, Callable[..., Any]] = {
@@ -268,6 +289,7 @@ class MemoryManager(BaseMemoryManager):
 
         user_blob = json.dumps(
             {
+                "contact_id": contact_id,
                 "latest_rolling_summary": latest_rolling_summary,
                 "transcript": transcript,
             },
@@ -499,29 +521,16 @@ class MemoryManager(BaseMemoryManager):
 
                 # Build per-contact tasks
                 for _cid in contact_ids:
-                    # Filter transcript to messages involving *_cid*
-                    sub_msgs: list[dict] = []
-                    for m in messages:
-                        if m.get("sender_id") == _cid:
-                            sub_msgs.append(m)
-                            continue
-
-                        rids = m.get("receiver_ids")
-
-                        if isinstance(rids, int):
-                            if rids == _cid:
-                                sub_msgs.append(m)
-                        elif isinstance(rids, (list, tuple, set)):
-                            if _cid in rids:
-                                sub_msgs.append(m)
-
-                    sub_blob = json.dumps(sub_msgs, indent=2)
-
                     global_tasks.extend(
                         [
-                            self.update_contact_bio(sub_blob, latest_bio=None),
+                            self.update_contact_bio(
+                                transcript_blob,
+                                contact_id=_cid,
+                                latest_bio=None,
+                            ),
                             self.update_contact_rolling_summary(
-                                sub_blob,
+                                transcript_blob,
+                                contact_id=_cid,
                                 latest_rolling_summary=None,
                             ),
                         ],
