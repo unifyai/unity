@@ -21,7 +21,7 @@ from .prompt_builders import (
 )
 from .base import BaseMemoryManager
 from ..events.event_bus import EVENT_BUS, Event
-from .rolling_activity import set_rolling_activity
+from .rolling_activity import set_broader_context
 
 
 class MemoryManager(BaseMemoryManager):
@@ -852,7 +852,7 @@ class MemoryManager(BaseMemoryManager):
         # Keep the in-process snapshot in sync so prompt builders never have
         # to query the backend after the initial bootstrap.
         try:
-            set_rolling_activity(base_payload[self._SUMMARY_TIME_COL])
+            set_broader_context(base_payload[self._SUMMARY_TIME_COL])
         except Exception:
             # Defensive guard – updating the cache must never break the caller.
             pass
@@ -967,9 +967,9 @@ class MemoryManager(BaseMemoryManager):
         return "\n".join(lines).strip()
 
     # ------------------------------------------------------------------ #
-    # 5  get_rolling_activity                                            #
+    # 5  get_broader_context                                            #
     # ------------------------------------------------------------------ #
-    def get_rolling_activity(self, mode: str = "time") -> str:
+    def get_broader_context(self, mode: str = "time") -> str:
         """
         Return the **latest** Rolling-Activity snapshot as a human-readable
         Markdown string.

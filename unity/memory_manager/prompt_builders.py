@@ -6,7 +6,7 @@ import inspect
 from datetime import datetime, timezone
 from typing import Callable, Dict, Optional
 
-from .rolling_activity import get_rolling_activity
+from .rolling_activity import get_broader_context
 
 
 # ── utils ───────────────────────────────────────────────────────────────
@@ -194,13 +194,13 @@ def _rolling_activity_section() -> str:
     """Return a markdown summary of the agent's historic activity.
 
     Reads the **process-wide** cached snapshot instead of querying the backend
-    via `MemoryManager().get_rolling_activity()` on every call.  Callers can
+    via `MemoryManager().get_broader_context()` on every call.  Callers can
     still rely on the helper to return an *empty string* when nothing useful
     has been recorded yet.
     """
 
     try:
-        overview = get_rolling_activity()
+        overview = get_broader_context()
     except Exception:  # pragma: no cover – defensive guard
         return ""
 
