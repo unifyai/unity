@@ -614,6 +614,7 @@ class ContactManager(BaseContactManager):
             loop_id=f"{self.__class__.__name__}.{self.ask.__name__}",
             parent_chat_context=parent_chat_context,
             tool_policy=lambda i, _: ("required", _) if i < 1 else ("auto", _),
+            preprocess_msgs=self._inject_broader_context,
         )
 
         # wrap the raw handle so *every* public method logs an event
@@ -716,6 +717,7 @@ class ContactManager(BaseContactManager):
             loop_id=f"{self.__class__.__name__}.{self.update.__name__}",
             parent_chat_context=parent_chat_context,
             tool_policy=lambda i, _: ("required", _) if i < 1 else ("auto", _),
+            preprocess_msgs=self._inject_broader_context,
         )
 
         handle = wrap_handle_with_logging(
@@ -1158,3 +1160,34 @@ class ContactManager(BaseContactManager):
             )
 
         return [ok[i] for i in range(len(contacts))]
+
+    @staticmethod
+    def _inject_broader_context(msgs: list[dict]) -> list[dict]:
+        """Replace the ``{broader_context}`` placeholder in *system* messages.
+
+        The helper is fed into ``start_async_tool_use_loop`` via the
+        ``preprocess_msgs`` parameter so that **every** LLM invocation sees a
+        *fresh* broader-context snippet pulled from ``MemoryManager`` just
+        before the request is dispatched.
+        """
+
+        import copy
+
+        from unity.memory_manager.memory_manager import (
+            MemoryManager,
+        )  # local to avoid cycles
+
+        patched = copy.deepcopy(msgs)
+
+        try:
+            broader_ctx = MemoryManager().get_broader_context()
+        except Exception:
+            broader_ctx = ""
+
+        for m in patched:
+            if m.get("role") == "system" and "{broader_context}" in (
+                m.get("content") or ""
+            ):
+                m["content"] = m["content"].replace("{broader_context}", broader_ctx)
+
+        return patched
