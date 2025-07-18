@@ -263,21 +263,29 @@ async def _main_async() -> None:
     # Show the full list of commands immediately so the user knows the options
     _explain_commands()
 
+    # Track latest generated transcript for subsequent maintenance commands
+    last_transcript: List[Dict[str, Any]] = []
+
     # Voice-mode greeting so behaviour matches other sandboxes
     if args.voice:
         _speak(
-            "Welcome to the Memory Manager sandbox. Describe your conversation scenario or choose a maintenance command. Press enter to start recording.",
+            "Welcome to the Memory Manager sandbox. Describe your conversation scenario or enter one of the maintenance commands. Type R and press Enter whenever you'd like to record a scenario description using your voice.",
         )
 
     while True:
         try:
             # Voice or text capture for the scenario / command prompt
             if args.voice:
-                audio = _record_until_enter()
-                prompt = _transcribe_deepgram(audio).strip()
-                if not prompt:
-                    continue
-                print(f"▶️  {prompt}")
+                # Offer the user a choice instead of immediately starting voice capture
+                prompt = input(
+                    "scenario/command (type 'r' then Enter to record voice)> ",
+                ).strip()
+                if prompt.lower() in {"r", "record"}:
+                    audio = _record_until_enter()
+                    prompt = _transcribe_deepgram(audio).strip()
+                    if not prompt:
+                        continue
+                    print(f"▶️  {prompt}")
             else:
                 prompt = input("scenario/command> ").strip()
         except (EOFError, KeyboardInterrupt):
