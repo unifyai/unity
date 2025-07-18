@@ -42,15 +42,15 @@ ENV UNIFY_KEY=${UNIFY_KEY}
 
 # Download the turn detector model files
 # Set memory-efficient environment variables for model loading
-ENV OMP_NUM_THREADS=1
-ENV MKL_NUM_THREADS=1
+# ENV OMP_NUM_THREADS=1
+# ENV MKL_NUM_THREADS=1
 RUN python unity/conversation_manager/call.py download-files
 
 # Set runtime environment variables for memory optimization
-ENV PYTHONUNBUFFERED=1
-ENV OMP_NUM_THREADS=1
-ENV MKL_NUM_THREADS=1
-ENV TOKENIZERS_PARALLELISM=false
+# ENV PYTHONUNBUFFERED=1
+# ENV OMP_NUM_THREADS=1
+# ENV MKL_NUM_THREADS=1
+# ENV TOKENIZERS_PARALLELISM=false
 
 # Expose the ports that the applications use
 EXPOSE 8000 6379
