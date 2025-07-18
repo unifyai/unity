@@ -197,3 +197,42 @@ def build_task_prompt(
         "Current UTC time: " + _now(),
     ]
     return _with_guidance(lines, guidance)
+
+
+def build_activity_events_summary_prompt(
+    guidance: Optional[str] = None,
+) -> str:
+    """Return a detailed system prompt for summarising a JSON array of events.
+
+    The prompt is used by MemoryManager when it needs to collapse many raw
+    ManagerMethod events or lower-level summaries into **one concise English
+    paragraph**.  The summary should capture the essence of the activity while
+    staying below ~50 words so it can be embedded in larger prompts without
+    noise.
+    """
+
+    lines: list[str] = [
+        get_broader_context(),
+        "",
+        "You will receive **only** a JSON array – each element representing an "
+        "event or pre-computed summary of recent manager activity.",
+        "",
+        "Your goal is to distil this array into **one plain-English paragraph** "
+        "(≈ 50 words, never exceeding 60) that communicates:",
+        "• What happened (high-level actions, state changes, notable decisions)",
+        "• Who/what was involved (manager names, key entities) – keep it brief",
+        "• Any important outcomes or follow-ups",
+        "",
+        "⚠️  Do **not** quote the JSON or enumerate every single entry.  Merge "
+        "related events, remove noise, and write in the third person.  Omit "
+        "trivia.  Return an **empty string** if the input conveys nothing of "
+        "lasting importance.",
+        "",
+        "Format requirements:",
+        "• Single paragraph, no bullet points, no markdown headers",
+        "• Do not mention these instructions or the word *JSON*",
+        "",
+        "Current UTC time: " + _now(),
+    ]
+
+    return _with_guidance(lines, guidance)
