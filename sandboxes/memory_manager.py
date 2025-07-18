@@ -6,11 +6,12 @@ Sandbox for **MemoryManager** maintenance tasks.
 Supports plain-text *or* voice capture of the initial transcript
 description via the ``--voice/-v`` flag (same UX as the other sandboxes).
 
-┌────────────── 9 accepted commands ──────────────┐
+┌────────────── 10 accepted commands ─────────────┐
 │ uc   –– update_contacts                         │
 │ ucb  –– update_contact_bio                      │
 │ ucrs –– update_contact_rolling_summary          │
 │ uk   –– update_knowledge                        │
+│ ut   –– update_tasks                           │
 │ cc        –– clear Contacts store               │
 │ ccb       –– clear Contact bios      (alias cc) │
 │ ccrs      –– clear Rolling summaries (alias cc) │
@@ -18,7 +19,7 @@ description via the ``--voice/-v`` flag (same UX as the other sandboxes).
 │ r         –– record scenario description (voice)│
 └─────────────────────────────────────────────────┘
 
-After typing **uc / ucb / ucrs / uk** you will be *asked* for the message
+After typing **uc / ucb / ucrs / uk / ut** you will be *asked* for the message
 **range** in a second prompt.  Use Python-slice style notation just like
 lists are indexed:
 
@@ -147,6 +148,7 @@ _CMD_ALIASES: dict[str, str] = {
     "update_contact_bio": "ucb",
     "update_contact_rolling_summary": "ucrs",
     "update_knowledge": "uk",
+    "update_tasks": "ut",
 }
 
 
@@ -478,7 +480,7 @@ async def _main_async() -> None:
         parts = prompt.split(maxsplit=1)
         cmd = _CMD_ALIASES.get(parts[0], parts[0])
 
-        if cmd in {"uc", "ucb", "ucrs", "uk"}:
+        if cmd in {"uc", "ucb", "ucrs", "uk", "ut"}:
             if not last_transcript:
                 print("⚠️  No transcript available yet – generate one first.")
                 continue
@@ -545,6 +547,8 @@ async def _main_async() -> None:
                             contact_id=cid_val,
                             guidance=guidance_txt,
                         )
+                elif cmd == "ut":
+                    result = await mm.update_tasks(chunk_txt, guidance=guidance_txt)
                 else:  # uk
                     result = await mm.update_knowledge(chunk_txt, guidance=guidance_txt)
 
