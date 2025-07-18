@@ -18,6 +18,7 @@ from .prompt_builders import (
     build_bio_prompt,
     build_rolling_prompt,
     build_knowledge_prompt,
+    build_activity_events_summary_prompt,
 )
 from .base import BaseMemoryManager
 from ..events.event_bus import EVENT_BUS, Event
@@ -694,10 +695,7 @@ class MemoryManager(BaseMemoryManager):
                 cache=json.loads(os.getenv("UNIFY_CACHE", "true")),
                 traced=json.loads(os.getenv("UNIFY_TRACED", "true")),
             )
-            llm.set_system_message(
-                "You are a concise assistant. Summarise the JSON array supplied "
-                "by the user in max. 50 words.",
-            )
+            llm.set_system_message(build_activity_events_summary_prompt())
             return (await llm.generate(json.dumps(items, indent=2))).strip()
 
         # ------------------------------------------------------------------
