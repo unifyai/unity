@@ -130,7 +130,6 @@ class EventManager:
                 publisher = pubsub_v1.PublisherClient()
                 publisher.publish(
                     "projects/responsive-city-458413-a2/topics/test",
-                    f"{os.getenv('ASSISTANT_ID')}",
                 )
                 print(
                     f"Inactivity timeout reached ({self.INACTIVITY_TIMEOUT}s), "
