@@ -794,7 +794,6 @@ class CommsAgent:
         if event["event"]["event_name"] == "StartupEvent":
             # set assistant details and set unify key
             self.set_assistant_details(event["event"]["payload"])
-            print("Assistant details set", self.assistant_number)
             os.environ["UNIFY_KEY"] = event["event"]["payload"]["api_key"]
 
         if event["event"]["event_name"] == "PhoneCallEndedEvent":
