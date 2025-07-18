@@ -123,7 +123,7 @@ class EventManager:
 
             await asyncio.sleep(30)  # Check every 30 seconds
             current_time = asyncio.get_event_loop().time()
-            if os.getenv("UNIFY_KEY") and (
+            if os.getenv("ASSISTANT_ID") and (
                 current_time - self.last_activity_time > self.INACTIVITY_TIMEOUT
             ):
                 print(
