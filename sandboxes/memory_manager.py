@@ -7,19 +7,25 @@ Supports plain-text *or* voice capture of the initial transcript
 description via the ``--voice/-v`` flag (same UX as the other sandboxes).
 
 ┌────────────── 8 accepted commands ──────────────┐
-│ uc  [X-Y] –– update_contacts  (no range → full) │
-│ ucb [X-Y] –– update_contact_bio                 │
-│ ucrs[X-Y] –– update_contact_rolling_summary     │
-│ uk  [X-Y] –– update_knowledge                   │
+│ uc   –– update_contacts                         │
+│ ucb  –– update_contact_bio                      │
+│ ucrs –– update_contact_rolling_summary          │
+│ uk   –– update_knowledge                        │
 │ cc        –– clear Contacts store               │
 │ ccb       –– clear Contact bios      (alias cc) │
 │ ccrs      –– clear Rolling summaries (alias cc) │
 │ ck        –– clear Knowledge store              │
 └─────────────────────────────────────────────────┘
 
-• *X* and *Y* are **inclusive**, 0-based indices into the transcript
-  (0 ≤ X ≤ Y < num_messages).  Omitting the range processes **all**
-  messages.
+After typing **uc / ucb / ucrs / uk** you will be *asked* for the message
+**range** in a second prompt.  Use Python-slice style notation just like
+lists are indexed:
+
+    0:10   –– messages 0 through 10 (inclusive)
+   -5:     –– the **last** 5 messages
+     4:    –– from 4 to the end
+
+Press ↵ with an empty response to process **all** messages.
 • Type **help** to show the table again, **quit/exit** to leave.
 
 After choosing any *u** command you can now add **extra guidance**
@@ -34,7 +40,6 @@ import os
 import argparse
 import asyncio
 import logging
-import re
 import sys
 from pathlib import Path
 from typing import List, Dict, Any
@@ -93,8 +98,47 @@ def _clear_knowledge() -> None:
         unify.delete_context(name)
 
 
-# Bare command or "cmd  X-Y"
-_RANGE_RE = re.compile(r"^(\d+)-(\d+)$")
+# ---------------------------------------------------------------------------
+#  Range-parsing helpers (slice-style "start:end")
+# ---------------------------------------------------------------------------
+
+
+def _parse_range(range_str: str, num_messages: int) -> tuple[int, int]:
+    """Return an **inclusive** (start, end) tuple based on *range_str*.
+
+    The accepted syntax mirrors Python slice notation but is easier:
+
+    "start:end"  – start *and/or* end may be omitted; negative indices
+    count from the end.  The *end* index is treated **inclusive** so
+    the intuitive "0:10" captures the first eleven messages just like
+    it did with the previous "0-10" syntax.
+    """
+
+    if ":" not in range_str:
+        # Single value → treat as one-element range
+        idx = int(range_str)
+        if idx < 0:
+            idx += num_messages
+        return idx, idx
+
+    left, right = range_str.split(":", 1)
+
+    def _to_idx(val: str | None, default: int) -> int:
+        if val is None or val == "":
+            return default
+        iv = int(val)
+        return iv + num_messages if iv < 0 else iv
+
+    start = _to_idx(left, 0)
+    end = _to_idx(right, num_messages - 1)
+
+    if not (0 <= start <= end < num_messages):
+        raise ValueError(
+            f"Indices must satisfy 0 ≤ start ≤ end < {num_messages} (got {start}:{end})",
+        )
+
+    return start, end
+
 
 # Map long-form command names to their short aliases for convenience
 _CMD_ALIASES: dict[str, str] = {
@@ -330,28 +374,31 @@ async def _main_async() -> None:
 
         # Functional uc/ucb/ucrs/uk commands --------------------------------
         parts = prompt.split(maxsplit=1)
-        cmd = parts[0]
-
-        # Translate any recognised long-form command into its short alias
-        cmd = _CMD_ALIASES.get(cmd, cmd)
+        cmd = _CMD_ALIASES.get(parts[0], parts[0])
 
         if cmd in {"uc", "ucb", "ucrs", "uk"}:
             if not last_transcript:
                 print("⚠️  No transcript available yet – generate one first.")
                 continue
 
+            # ─────────────── prompt for range ────────────────
             num_messages = len(last_transcript)
-            start, end = 0, num_messages - 1
-            if len(parts) == 2:
-                rng = parts[1].strip()
-                m = _RANGE_RE.match(rng)
-                if not m:
-                    print("⚠️  Range must be of the form X-Y (e.g. 4-18).")
-                    continue
-                start, end = map(int, m.groups())
-                if not (0 <= start <= end < num_messages):
-                    print(f"⚠️  Indices must satisfy 0 ≤ x ≤ y < {num_messages}.")
-                    continue
+            try:
+                range_input = input(
+                    f"Message range [start:end] (default: all {num_messages} messages)> ",
+                ).strip()
+            except (EOFError, KeyboardInterrupt):
+                print()  # newline for clean prompt
+                continue
+
+            try:
+                if range_input == "":
+                    start, end = 0, num_messages - 1
+                else:
+                    start, end = _parse_range(range_input, num_messages)
+            except ValueError as exc:
+                print(f"⚠️  {exc}")
+                continue
 
             chunk_txt = _chunk_to_text(last_transcript[start : end + 1])
 
@@ -367,7 +414,12 @@ async def _main_async() -> None:
                 if cmd == "uc":
                     result = await mm.update_contacts(chunk_txt, guidance=guidance_txt)
                 elif cmd in {"ucb", "ucrs"}:
-                    cid_str = input("Target contact_id> ").strip()
+                    cid_str = input(
+                        "Target contact_id (press Enter to cancel)> ",
+                    ).strip()
+                    if cid_str == "":
+                        print("⚠️  Command cancelled (no contact_id provided).")
+                        continue
                     try:
                         cid_val = int(cid_str)
                     except ValueError:
