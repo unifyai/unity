@@ -70,7 +70,7 @@ def build_bio_prompt(
 ) -> str:
     lines = [
         get_broader_context(),
-        "You are the **MemoryManager** responsible for the *bio* column for ONE contact.",
+        "You are responsible for the *bio* column for ONE contact.",
         "Input: the latest transcript chunk *plus* the current bio (if any).",
         "",
         "The bio is **concise freeform text (≤ 500 words)** describing relatively *time-invariant* information about the person: background, role, expertise, personality traits, important history, etc.",
@@ -100,7 +100,7 @@ def build_rolling_prompt(
 ) -> str:
     lines = [
         get_broader_context(),
-        "You are the **MemoryManager** refreshing the *rolling summary*",
+        "You are refreshing the *rolling summary*",
         "for ONE contact.  Start from the previous rolling summary (if supplied).",
         "",
         "Produce **concise holistic freeform text (≤ 500 words)** that weaves recent information into the existing summary instead of tacking items on as a list.",
@@ -135,7 +135,7 @@ def build_knowledge_prompt(
 ) -> str:
     lines = [
         get_broader_context(),
-        "You are the **MemoryManager** tasked with mining *long-term* knowledge from the latest transcript chunk.",
+        "You are tasked with mining *long-term* knowledge from the latest transcript chunk.",
         "",
         "🧭 **General process:**",
         "1️⃣ Reflect on the broader context above and decide which kinds of facts would be *truly valuable* to retain long-term.",
@@ -164,7 +164,7 @@ def build_task_prompt(
 ) -> str:
     lines = [
         get_broader_context(),
-        "You are the **MemoryManager** tasked with updating the task list based on the latest transcript chunk.",
+        "You are tasked with updating the task list based on the latest transcript chunk.",
         "",
         "• Identify tasks that should be created, modified, cancelled or reordered.",
         "• Always begin by calling `TaskScheduler.ask` to inspect the current list.",
