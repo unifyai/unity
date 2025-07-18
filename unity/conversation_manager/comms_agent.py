@@ -220,6 +220,7 @@ class CommsAgent:
                         self.call_purpose = new_event["payload"]["purpose"]
                         self.task_context = new_event["payload"]["task_context"]
                         target_number = new_event["payload"]["target_number"]
+                        print("call_requested", self.assistant_number)
                         if not self.start_local:
                             self.call_proc = run_script(
                                 "unity/conversation_manager/call.py",
@@ -793,6 +794,7 @@ class CommsAgent:
         if event["event"]["event_name"] == "StartupEvent":
             # set assistant details and set unify key
             self.set_assistant_details(event["event"]["payload"])
+            print("Assistant details set", self.assistant_number)
             os.environ["UNIFY_KEY"] = event["event"]["payload"]["api_key"]
 
         if event["event"]["event_name"] == "PhoneCallEndedEvent":
