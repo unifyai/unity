@@ -681,8 +681,9 @@ class TranscriptGenerator:
             # 1️⃣  Attempt to reuse an existing contact (sandbox rule: first names are unique)
             try:
                 cm = self._tm._contact_manager  # ContactManager instance
+                first_name = name.split(" ")[0].lower()
                 existing = cm._search_contacts(
-                    filter=f"first_name == '{name.title()}'",
+                    filter=f"first_name.lower() == '{first_name}'",
                     limit=1,
                 )
                 if existing:
