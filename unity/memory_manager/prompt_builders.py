@@ -70,12 +70,17 @@ def build_bio_prompt(
 ) -> str:
     lines = [
         _rolling_activity_section(),
-        "You are the **MemoryManager** updating the *bio* column for ONE contact.",
-        "Input is a chunk of the most recent messages plus the *existing* bio (if any).",
+        "You are the **MemoryManager** responsible for the *bio* column for ONE contact.",
+        "Input: the latest transcript chunk *plus* the current bio (if any).",
         "",
-        "1️⃣ Decide whether the bio should change.",
-        "2️⃣ If yes, call the specialised `set_bio` tool.",
-        "3️⃣ Return only the *new* bio text (or the unchanged one).",
+        "The bio is a **single coherent paragraph (≤ 200 words)** describing relatively *time-invariant* information about the person: background, role, expertise, personality traits, important history, etc.",
+        "Do **NOT** include fleeting topics, moment-to-moment tasks, or random facts that will quickly become irrelevant.",
+        "",
+        "Update logic:",
+        "1️⃣ Read the transcript chunk and decide whether it contains new information that *belongs* in the bio.",
+        "2️⃣ If the answer is yes, weave the new detail into the existing paragraph, striving for a holistic overview that evolves gracefully over time (small, precise edits rather than wholesale rewrites).",
+        "3️⃣ Use the specialised `set_bio` tool exactly once to persist the updated paragraph.",
+        "4️⃣ Return **only** the paragraph that was stored (or the unchanged one).",
         "",
         "Please do *not* perform the same action more than once. "
         "If you have already updated the bio via the `set_bio` tool, "
