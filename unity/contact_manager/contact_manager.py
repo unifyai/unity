@@ -125,7 +125,7 @@ class ContactManager(BaseContactManager):
         exception is raised via ``_handle_exceptions`` so callers do not
         silently proceed with incomplete data.
         """
-        url = f"{os.environ['UNIFY_BASE_URL']}/assistant?phone=None&email=None"
+        url = f"{os.environ['UNIFY_BASE_URL']}/assistant?"
         headers = {"Authorization": f"Bearer {os.environ['UNIFY_KEY']}"}
         response = requests.request("GET", url, headers=headers)
         _handle_exceptions(response)
