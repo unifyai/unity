@@ -110,6 +110,8 @@ class ContactManager(BaseContactManager):
 
         # ── ensure an assistant contact with id 0 exists and is up-to-date ──
         self._sync_assistant_contact()
+        # ── ensure a default *user* contact with id 1 exists and is up-to-date ──
+        self._sync_user_contact()
 
     # ──────────────────────────────────────────────────────────────────────
     #  Assistant syncing helpers
@@ -270,6 +272,99 @@ class ContactManager(BaseContactManager):
 
         for field, value in base_fields.items():
             if _needs_update(field, value):
+                mismatches.append({field: value})
+
+        if mismatches:
+            unify.update_logs(
+                logs=[current.id] * len(mismatches),
+                context=self._ctx,
+                entries=mismatches,
+                overwrite=True,
+            )
+
+    # ------------------------------------------------------------------
+    #  Default *user* contact helpers (contact_id == 1)
+    # ------------------------------------------------------------------
+    def _fetch_user_info(self) -> Dict[str, Any]:
+        """Return *simulated* information about the human user (contact_id == 1).
+
+        NOTE: This stub will be replaced by a real API request in the near
+        future.  Keep the payload structure identical so that the swap is a
+        simple implementation change.
+        """
+        return {
+            "first_name": "John",
+            "last_name": "Doe",
+            "email": "john.doe@email.com",
+        }
+
+    def _sync_user_contact(self) -> None:
+        """Ensure the default *user* (id == 1) contact exists and is correct."""
+        user_info = self._fetch_user_info()
+
+        # Build a dictionary covering _all_ builtin fields so schema changes
+        # automatically propagate here just like in _sync_assistant_contact.
+        base_fields: Dict[str, Any] = {
+            fld: None for fld in self._BUILTIN_FIELDS if fld != "contact_id"
+        }
+        base_fields.update(
+            {
+                "first_name": user_info.get("first_name"),
+                # Map provided *last_name* → Contact.surname
+                "surname": user_info.get("last_name"),
+                "email_address": user_info.get("email"),
+                # No phone numbers for the dummy user yet
+                "phone_number": None,
+                "whatsapp_number": None,
+                "bio": None,
+                "rolling_summary": None,
+            },
+        )
+
+        # Ensure any additional fields (not part of the built-ins) exist as
+        # custom columns so future API expansions are tolerated.
+        extra_fields = {
+            k: v
+            for k, v in user_info.items()
+            if k not in {"first_name", "last_name", "email"}
+        }
+        if extra_fields:
+            self._ensure_columns_exist(extra_fields)
+
+        # ------------------------------------------------------------------
+        # Create or update contact_id == 1
+        # ------------------------------------------------------------------
+        existing_logs = unify.get_logs(
+            context=self._ctx,
+            filter="contact_id == 1",
+            limit=1,
+        )
+
+        if not existing_logs:
+            # If the table has no contacts yet, _sync_assistant_contact should
+            # have created contact_id 0 already.  Nevertheless, handle the edge-
+            # case gracefully.
+            if not unify.get_logs(context=self._ctx):
+                # Table empty → make sure assistant gets id 0 first
+                self._create_contact(
+                    **{k: v for k, v in base_fields.items() if v is not None},
+                )
+                # Explicitly create user with id 1 afterwards
+            # Direct log insertion with explicit id = 1
+            unify.log(
+                context=self._ctx,
+                contact_id=1,
+                **base_fields,
+                new=True,
+                mutable=True,
+            )
+            return  # done
+
+        # Update existing record when discrepancies are found
+        current = existing_logs[0]
+        mismatches: List[Dict[str, Any]] = []
+        for field, value in base_fields.items():
+            if current.entries.get(field) != value:
                 mismatches.append({field: value})
 
         if mismatches:
