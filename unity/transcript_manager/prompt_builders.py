@@ -19,7 +19,7 @@ from typing import Callable, Dict
 # Schemas used in the prompt -------------------------------------------------
 from ..contact_manager.types.contact import Contact
 from .types.message import Message
-from ..memory_manager.rolling_activity import get_rolling_activity
+from ..memory_manager.rolling_activity import get_broader_context
 from ..common.prompt_helpers import clarification_guidance
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -48,7 +48,7 @@ def _rolling_activity_section() -> str:
     """Return a human-readable summary of historic agent activity using cache."""
 
     try:
-        overview = get_rolling_activity()
+        overview = get_broader_context()
     except Exception:  # pragma: no cover – safe fallback
         return ""
 

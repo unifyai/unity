@@ -7,7 +7,7 @@ from typing import Dict, Callable
 
 from ..task_scheduler.types.task import Task
 from ..common.llm_helpers import SteerableToolHandle, class_api_overview
-from ..memory_manager.rolling_activity import get_rolling_activity
+from ..memory_manager.rolling_activity import get_broader_context
 from ..common.prompt_helpers import clarification_guidance
 
 # ───────────────────────────────────── helpers ─────────────────────────────────────
@@ -32,7 +32,7 @@ def _rolling_activity_section() -> str:
     """Return a markdown summary of historic activity from cache."""
 
     try:
-        overview = get_rolling_activity()
+        overview = get_broader_context()
     except Exception:
         return ""
 

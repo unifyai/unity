@@ -445,7 +445,7 @@ async def _main_async() -> None:
             break
 
         if prompt.lower() in {"summary", "s"}:
-            overview = mm.get_rolling_activity()
+            overview = mm.get_broader_context()
             print("\n──────── Historic Activity ────────\n")
             print(overview or "<no activity yet>")
             print("\n──────────────────────────────────\n")
@@ -584,7 +584,7 @@ async def _main_async() -> None:
         EVENT_BUS.join_callbacks(cascade=True)
 
         # Show updated rolling activity -----------------------------------
-        overview = mm.get_rolling_activity()
+        overview = mm.get_broader_context()
         print("\n──────── Updated Historic Activity ────────\n")
         print(overview or "<no activity captured>")
         print("\n──────────────────────────────────────────\n")

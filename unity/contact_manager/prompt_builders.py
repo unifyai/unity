@@ -8,7 +8,7 @@ from typing import Dict, Callable, List
 
 from .types.contact import Contact
 from ..knowledge_manager.types import column_type_schema
-from ..memory_manager.rolling_activity import get_rolling_activity
+from ..memory_manager.rolling_activity import get_broader_context
 from ..common.prompt_helpers import clarification_guidance
 
 
@@ -58,7 +58,7 @@ def _rolling_activity_section() -> str:
     """
 
     try:
-        overview = get_rolling_activity()
+        overview = get_broader_context()
     except Exception:  # pragma: no cover – defensive
         return ""
 
