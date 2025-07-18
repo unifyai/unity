@@ -75,9 +75,9 @@ class EventManager:
                     self.topic_to_subs[event["event"]["payload"]["user_number"]] = (
                         self.topic_to_subs["tool_use"]
                     )
-                    self.topic_to_subs[event["event"]["payload"]["user_phone_number"]] = (
-                        self.topic_to_subs["tool_use"]
-                    )
+                    self.topic_to_subs[
+                        event["event"]["payload"]["user_phone_number"]
+                    ] = self.topic_to_subs["tool_use"]
                 for client in self.topic_to_subs[event["topic"]]:
                     client.handle_event(event)
 
