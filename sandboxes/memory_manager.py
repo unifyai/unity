@@ -361,11 +361,13 @@ async def _main_async() -> None:
                 elif cmd == "ucb":
                     result = await mm.update_contact_bio(
                         chunk_txt,
+                        contact_id=1,
                         guidance=guidance_txt,
                     )
                 elif cmd == "ucrs":
                     result = await mm.update_contact_rolling_summary(
                         chunk_txt,
+                        contact_id=1,
                         guidance=guidance_txt,
                     )
                 else:  # uk

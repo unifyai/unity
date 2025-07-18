@@ -92,6 +92,8 @@ class SimulatedMemoryManager(BaseMemoryManager):
     async def update_contact_bio(
         self,
         transcript: str,
+        *,
+        contact_id: int,
         latest_bio: Optional[str] = None,
         guidance: Optional[str] = None,
     ) -> str:
@@ -100,11 +102,17 @@ class SimulatedMemoryManager(BaseMemoryManager):
         """
 
         # --- scoped mutator --------------------------------------------------
+        target_id = contact_id
+
         async def set_bio(contact_id: int, bio: str) -> str:
-            # overlay for the test's benefit
-            self._overlays.setdefault(contact_id, {})["bio"] = bio
+            final_id = contact_id or target_id
+            if final_id is None:
+                raise ValueError(
+                    "contact_id must be provided either via argument or tool call.",
+                )
+            self._overlays.setdefault(final_id, {})["bio"] = bio
             handle = await self._contact_manager.update(
-                f"Please set the bio for contact id {contact_id} as follows:\n{bio}",
+                f"Please set the bio for contact id {final_id} as follows:\n{bio}",
             )
             return await handle.result()
 
@@ -118,6 +126,7 @@ class SimulatedMemoryManager(BaseMemoryManager):
 
         payload = json.dumps(
             {
+                "contact_id": contact_id,
                 "latest_bio": latest_bio,
                 "transcript": transcript,
             },
@@ -136,6 +145,8 @@ class SimulatedMemoryManager(BaseMemoryManager):
     async def update_contact_rolling_summary(
         self,
         transcript: str,
+        *,
+        contact_id: int,
         latest_rolling_summary: Optional[str] = None,
         guidance: Optional[str] = None,
     ) -> str:
@@ -143,12 +154,18 @@ class SimulatedMemoryManager(BaseMemoryManager):
         Generates a fresh ≤120-word rolling summary and stores it in RAM.
         """
 
+        # --- scoped mutator --------------------------------------------------
+        target_id = contact_id
+
         async def set_rolling_summary(contact_id: int, rolling_summary: str) -> str:
-            self._overlays.setdefault(contact_id, {})[
-                "rolling_summary"
-            ] = rolling_summary
+            final_id = contact_id or target_id
+            if final_id is None:
+                raise ValueError(
+                    "contact_id must be provided either via argument or tool call.",
+                )
+            self._overlays.setdefault(final_id, {})["rolling_summary"] = rolling_summary
             handle = await self._contact_manager.update(
-                f"Please set the bio for contact id {contact_id} as follows:\n{rolling_summary}",
+                f"Please set the bio for contact id {final_id} as follows:\n{rolling_summary}",
             )
             return await handle.result()
 
@@ -162,6 +179,7 @@ class SimulatedMemoryManager(BaseMemoryManager):
 
         payload = json.dumps(
             {
+                "contact_id": contact_id,
                 "latest_rolling_summary": latest_rolling_summary,
                 "transcript": transcript,
             },
