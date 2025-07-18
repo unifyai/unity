@@ -18,7 +18,7 @@ subscription_id = (
         "-staging"
         if (
             os.getenv("STAGING")
-            and "default-assistant" not in os.getenv("ASSISTANT_ID")
+            and "default-assistant" not in os.getenv("ASSISTANT_ID", "")
         )
         else ""
     )
