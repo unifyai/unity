@@ -193,6 +193,7 @@ class Conductor(BaseConductor):
             loop_id=f"{self.__class__.__name__}.{self.ask.__name__}",
             parent_chat_context=parent_chat_context,
             log_steps=_log_tool_steps,
+            preprocess_msgs=self._inject_broader_context,
             tool_policy=lambda i, _: ("required", _) if i < 1 else ("auto", _),
         )
 
@@ -274,6 +275,7 @@ class Conductor(BaseConductor):
             loop_id=f"{self.__class__.__name__}.{self.request.__name__}",
             parent_chat_context=parent_chat_context,
             log_steps=_log_tool_steps,
+            preprocess_msgs=self._inject_broader_context,
             tool_policy=lambda i, _: ("required", _) if i < 1 else ("auto", _),
         )
 
@@ -294,3 +296,33 @@ class Conductor(BaseConductor):
             handle.result = _wrapped_result
 
         return handle
+
+    # ────────────────────────────────────────────────────────────────────
+    # Broader context helper
+    # ────────────────────────────────────────────────────────────────────
+
+    @staticmethod
+    def _inject_broader_context(msgs: list[dict]) -> list[dict]:
+        """Replace `{broader_context}` placeholders inside *system* messages with
+        the latest summary from `MemoryManager` before each LLM call."""
+
+        import copy
+
+        from unity.memory_manager.memory_manager import (
+            MemoryManager,
+        )  # local import to avoid cycles
+
+        patched = copy.deepcopy(msgs)
+
+        try:
+            broader_ctx = MemoryManager().get_broader_context()
+        except Exception:
+            broader_ctx = ""
+
+        for m in patched:
+            if m.get("role") == "system" and "{broader_context}" in (
+                m.get("content") or ""
+            ):
+                m["content"] = m["content"].replace("{broader_context}", broader_ctx)
+
+        return patched

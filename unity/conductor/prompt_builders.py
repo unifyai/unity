@@ -63,7 +63,7 @@ def build_ask_prompt(
     """Dynamic **system** prompt for `Conductor.ask`."""
     sig_json = json.dumps(_sig_dict(tools), indent=4)
 
-    activity_block = _rolling_activity_section() if include_activity else ""
+    activity_block = "{broader_context}" if include_activity else ""
     clar_section = clarification_guidance(tools)
 
     return "\n".join(
@@ -97,7 +97,7 @@ def build_request_prompt(
     """Dynamic **system** prompt for `Conductor.request`."""
     sig_json = json.dumps(_sig_dict(tools), indent=4)
 
-    activity_block = _rolling_activity_section() if include_activity else ""
+    activity_block = "{broader_context}" if include_activity else ""
     clar_section = clarification_guidance(tools)
 
     return "\n".join(
