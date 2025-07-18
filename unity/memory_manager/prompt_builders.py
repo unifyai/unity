@@ -40,6 +40,7 @@ def build_contact_update_prompt(
 ) -> str:
     lines = [
         get_broader_context(),
+        "",
         "Your task is to create or amend contact records — names, phone numbers, emails, bios, etc. — whenever the **current transcript chunk reveals new or changed facts**.",
         "",
         'The transcript will rarely contain an explicit instruction such as *"please update the address book"*.  Instead you must listen for *any* statement that implies new contact information.  Examples include:',
@@ -59,6 +60,8 @@ def build_contact_update_prompt(
         "Tools (name → argspec):",
         json.dumps(_sig_dict(tools), indent=4),
         "",
+        "Read through the broader context for orientation, especially in cases where you're not sure whether a new person should actually be treated as a contact.",
+        "",
         "Current UTC time: " + _now(),
     ]
     return _with_guidance(lines, guidance)
@@ -70,6 +73,7 @@ def build_bio_prompt(
 ) -> str:
     lines = [
         get_broader_context(),
+        "",
         "You are responsible for the *bio* column for ONE contact.",
         "Input: the latest transcript chunk *plus* the current bio (if any).",
         "",
@@ -89,6 +93,8 @@ def build_bio_prompt(
         "Tools (name → argspec):",
         json.dumps(_sig_dict(tools), indent=4),
         "",
+        "Read through the broader context for orientation, especially in cases where you're not sure what should be updated in the bio (if anything).",
+        "",
         "Current UTC time: " + _now(),
     ]
     return _with_guidance(lines, guidance)
@@ -100,6 +106,7 @@ def build_rolling_prompt(
 ) -> str:
     lines = [
         get_broader_context(),
+        "",
         "You are refreshing the *rolling summary*",
         "for ONE contact.  Start from the previous rolling summary (if supplied).",
         "",
@@ -124,6 +131,8 @@ def build_rolling_prompt(
         "Tools (name → argspec):",
         json.dumps(_sig_dict(tools), indent=4),
         "",
+        "Read through the broader context for orientation, especially in cases where you're not sure what should be updated in the summary (if anything).",
+        "",
         "Current UTC time: " + _now(),
     ]
     return _with_guidance(lines, guidance)
@@ -135,6 +144,7 @@ def build_knowledge_prompt(
 ) -> str:
     lines = [
         get_broader_context(),
+        "",
         "You are tasked with mining *long-term* knowledge from the latest transcript chunk.",
         "",
         "🧭 **General process:**",
@@ -164,6 +174,7 @@ def build_task_prompt(
 ) -> str:
     lines = [
         get_broader_context(),
+        "",
         "You are responsible for maintaining the *task schedule* in light of the **latest transcript chunk**.",
         "",
         "🧭 **General process:**",
