@@ -96,6 +96,14 @@ def _clear_knowledge() -> None:
 # Bare command or "cmd  X-Y"
 _RANGE_RE = re.compile(r"^(\d+)-(\d+)$")
 
+# Map long-form command names to their short aliases for convenience
+_CMD_ALIASES: dict[str, str] = {
+    "update_contacts": "uc",
+    "update_contact_bio": "ucb",
+    "update_contact_rolling_summary": "ucrs",
+    "update_knowledge": "uk",
+}
+
 
 def _explain_commands() -> None:
     print(__doc__.split("Text-only sandbox")[0].rstrip())
@@ -247,9 +255,13 @@ async def _main_async() -> None:
     # ── Interactive REPL ------------------------------------------------------
     print(
         "\nMemoryManager sandbox – enter a conversation *description* to generate "
-        "and log synthetic messages.  Type 'summary' to display the latest "
-        "rolling-activity overview or 'quit' to exit.\n",
+        "and log synthetic messages, *or* type one of the maintenance commands "
+        "below.  Type 'summary' to display the latest rolling-activity overview "
+        "or 'quit' to exit.\n",
     )
+
+    # Show the full list of commands immediately so the user knows the options
+    _explain_commands()
 
     # Voice-mode greeting so behaviour matches other sandboxes
     if args.voice:
@@ -267,7 +279,7 @@ async def _main_async() -> None:
                     continue
                 print(f"▶️  {prompt}")
             else:
-                prompt = input("scenario> ").strip()
+                prompt = input("scenario/command> ").strip()
         except (EOFError, KeyboardInterrupt):
             print("\nExiting…")
             break
@@ -311,6 +323,10 @@ async def _main_async() -> None:
         # Functional uc/ucb/ucrs/uk commands --------------------------------
         parts = prompt.split(maxsplit=1)
         cmd = parts[0]
+
+        # Translate any recognised long-form command into its short alias
+        cmd = _CMD_ALIASES.get(cmd, cmd)
+
         if cmd in {"uc", "ucb", "ucrs", "uk"}:
             if not last_transcript:
                 print("⚠️  No transcript available yet – generate one first.")
