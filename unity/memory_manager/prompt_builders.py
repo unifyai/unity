@@ -40,12 +40,18 @@ def build_contact_update_prompt(
 ) -> str:
     lines = [
         _rolling_activity_section(),
-        "Your task is to *create or amend contact records — names, phone "
-        "numbers, emails, etc. — after reading a 50-message transcript chunk.",
+        "Your task is to create or amend contact records — names, phone numbers, emails, bios, etc. — whenever the **current transcript chunk reveals new or changed facts**.",
         "",
-        "Work **only** via the tools below.  First figure out what changed,",
-        "then call the appropriate update tool(s). Finally return a short",
-        "human-readable summary of what you did.",
+        'The transcript will rarely contain an explicit instruction such as *"please update the address book"*.  Instead you must listen for *any* statement that implies new contact information.  Examples include:',
+        "• A participant casually mentioning a new phone number or email address.",
+        "• Someone referring to a person we have never seen before, even without any contact details.",
+        "",
+        "When you detect such information, you should:",
+        "1️⃣ Create a **new** contact entry if it does not yet exist, even if all you have is a first name plus a short descriptive bio.",
+        "2️⃣ Amend the **existing** contact if we already have a record but the information has changed or been extended.",
+        "",
+        "Work **only** via the tools given.  First figure out what changed (if anything), then call the appropriate update tool(s).",
+        "Finally return a short human-readable summary of what you did.",
         "Please do *not* perform the same action more than once. "
         "If you have updated/added a contact already via the `ContactManager` update method, "
         "then you do not need to do this again!"
@@ -65,7 +71,7 @@ def build_bio_prompt(
     lines = [
         _rolling_activity_section(),
         "You are the **MemoryManager** updating the *bio* column for ONE contact.",
-        "Input is the last 50 messages plus the *existing* bio (if any).",
+        "Input is a chunk of the most recent messages plus the *existing* bio (if any).",
         "",
         "1️⃣ Decide whether the bio should change.",
         "2️⃣ If yes, call the specialised `set_bio` tool.",
@@ -89,7 +95,7 @@ def build_rolling_prompt(
 ) -> str:
     lines = [
         _rolling_activity_section(),
-        "You are the **MemoryManager** refreshing the 50-message *rolling summary*",
+        "You are the **MemoryManager** refreshing the *rolling summary*",
         "for ONE contact.  Start from the previous rolling summary (if supplied).",
         "",
         "Produce a concise, up-to-date summary **<= 120 words** capturing:",
@@ -119,7 +125,7 @@ def build_knowledge_prompt(
     lines = [
         _rolling_activity_section(),
         "You are the **MemoryManager** tasked with mining *long-term*",
-        "knowledge from the latest 50-message transcript chunk.",
+        "knowledge from the latest transcript chunk.",
         "",
         "• Identify *reusable* facts about people, projects, company",
         "  processes, requirements, or domain knowledge.",
@@ -150,7 +156,7 @@ def build_task_prompt(
 ) -> str:
     lines = [
         _rolling_activity_section(),
-        "You are the **MemoryManager** tasked with updating the task list based on the latest 50-message transcript chunk.",
+        "You are the **MemoryManager** tasked with updating the task list based on the latest transcript chunk.",
         "",
         "• Identify tasks that should be created, modified, cancelled or reordered.",
         "• Always begin by calling `TaskScheduler.ask` to inspect the current list.",
