@@ -341,22 +341,14 @@ class ContactManager(BaseContactManager):
         )
 
         if not existing_logs:
-            # If the table has no contacts yet, _sync_assistant_contact should
-            # have created contact_id 0 already.  Nevertheless, handle the edge-
-            # case gracefully.
-            if not unify.get_logs(context=self._ctx):
-                # Table empty → make sure assistant gets id 0 first
-                self._create_contact(
-                    **{k: v for k, v in base_fields.items() if v is not None},
-                )
-                # Explicitly create user with id 1 afterwards
-            # Direct log insertion with explicit id = 1
-            unify.log(
-                context=self._ctx,
-                contact_id=1,
-                **base_fields,
-                new=True,
-                mutable=True,
+            # No user contact yet → create it.  We *do not* supply a
+            # `contact_id` so that Unify allocates the next auto-incremented
+            # value.  Provided the assistant was inserted first this will be
+            # **1** as desired.  If the table was initially empty the
+            # assistant sync ensures id 0 is reserved before we reach here.
+
+            self._create_contact(
+                **{k: v for k, v in base_fields.items() if v is not None},
             )
             return  # done
 
