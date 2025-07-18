@@ -898,7 +898,9 @@ def activate_project(project_name: str, overwrite: bool = False) -> None:
     import unity
     from unity.events.event_bus import EVENT_BUS
 
-    # Switch active project first
-    unity.init(project_name, overwrite=overwrite)
+    unity.init(
+        project_name,
+        overwrite=("contexts" if overwrite else False),
+    )
     # Clears all contexts in the EventBus
     EVENT_BUS.reset()
