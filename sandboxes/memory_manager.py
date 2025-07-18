@@ -207,6 +207,22 @@ async def _main_async() -> None:
         action="store_true",
         help="Disable automatic memory updates triggered by message chunks (MemoryManager._setup_message_callbacks).",
     )
+    # ------------------------------------------------------------------
+    # NEW: Custom window / chunk configuration via JSON file
+    # ------------------------------------------------------------------
+    parser.add_argument(
+        "--windows_config",
+        "-w",
+        metavar="PATH",
+        type=str,
+        help=(
+            "Path to a JSON file that overrides the default rolling-activity "
+            "time/count windows and/or the transcript chunk size. Structure: "
+            '{\n  "time_windows": { "past_day": 86400, ... },\n  "count_windows": { "past_interaction": 1, ... },\n  "chunk_size": 25\n}. '
+            "Units: time windows are *seconds*; count windows are raw integers. "
+            "See tests/test_memory/_patch_memory_manager_windows for examples."
+        ),
+    )
     args = parser.parse_args()
 
     # Unify context
@@ -239,6 +255,75 @@ async def _main_async() -> None:
     if args.manual_updates:
         setattr(MemoryManager, "_setup_message_callbacks", _noop)  # type: ignore[arg-type]
 
+    # ─────────────────── apply custom windows / chunk size ────────────────────
+    def _apply_custom_windows(cfg: dict[str, Any]) -> None:  # noqa: D401 – helper name
+        """Patch *class-level* window constants on MemoryManager.
+
+        The helper rebuilds the auxiliary *_ORDER* and *_PARENT* sequences so that
+        internal hierarchy calculations remain consistent with the overrides.
+        """
+
+        cls = MemoryManager
+
+        # ---- 1.  Time-based windows -------------------------------------
+        time_windows = cfg.get("time_windows")
+        if isinstance(time_windows, dict) and time_windows:
+            cls._TIME_WINDOWS = time_windows  # type: ignore[attr-defined]
+            # Sort by ascending duration for deterministic parent mapping
+            cls._TIME_ORDER = sorted(time_windows, key=time_windows.get)  # type: ignore[attr-defined]
+
+            cls._TIME_PARENT = {}  # type: ignore[attr-defined]
+            for i in range(1, len(cls._TIME_ORDER)):  # type: ignore[attr-defined]
+                child, parent = cls._TIME_ORDER[i], cls._TIME_ORDER[i - 1]  # type: ignore[attr-defined]
+                cls._TIME_PARENT[child] = (
+                    parent,
+                    time_windows[child] // time_windows[parent],
+                )  # type: ignore[attr-defined]
+
+        # ---- 2.  Count-based windows ------------------------------------
+        count_windows = cfg.get("count_windows")
+        if isinstance(count_windows, dict) and count_windows:
+            cls._COUNT_WINDOWS = count_windows  # type: ignore[attr-defined]
+            cls._COUNT_ORDER = sorted(count_windows, key=count_windows.get)  # type: ignore[attr-defined]
+
+            cls._COUNT_PARENT = {}  # type: ignore[attr-defined]
+            for i in range(1, len(cls._COUNT_ORDER)):  # type: ignore[attr-defined]
+                child, parent = cls._COUNT_ORDER[i], cls._COUNT_ORDER[i - 1]  # type: ignore[attr-defined]
+                cls._COUNT_PARENT[child] = (
+                    parent,
+                    count_windows[child] // count_windows[parent],
+                )  # type: ignore[attr-defined]
+
+        # ---- 3.  Rolling column list needs refresh so new windows appear
+        _cols: list[str] = []
+        for nick in cls._MANAGERS.values():  # type: ignore[attr-defined]
+            for window in list(cls._TIME_WINDOWS) + list(cls._COUNT_WINDOWS):  # type: ignore[attr-defined]
+                _cols.append(f"{nick}/{window}")
+        _cols.extend([cls._SUMMARY_TIME_COL, cls._SUMMARY_COUNT_COL])  # type: ignore[attr-defined]
+        cls._ROLLING_COLUMNS = tuple(_cols)  # type: ignore[attr-defined]
+
+    # Read JSON config (only when automatic summaries/updates are enabled)
+    _custom_chunk_size: int | None = None
+    if args.windows_config and not (args.manual_summaries and args.manual_updates):
+        try:
+            import json, pathlib
+
+            cfg_path = pathlib.Path(args.windows_config).expanduser()
+            if cfg_path.is_file():
+                with cfg_path.open("r", encoding="utf-8") as fp:
+                    cfg_json = json.load(fp)
+                _apply_custom_windows(cfg_json)
+                _custom_chunk_size = cfg_json.get("chunk_size")
+                LG.info(
+                    "[config] Applied custom windows from %s%s",
+                    cfg_path,
+                    f" (chunk_size={_custom_chunk_size})" if _custom_chunk_size else "",
+                )
+            else:
+                LG.warning("[config] JSON file %s not found – ignoring", cfg_path)
+        except Exception as exc:
+            LG.error("[config] Failed to parse windows_config: %s", exc)
+
     # Helper to create a fresh, patched MemoryManager instance --------------
     def _create_mm() -> MemoryManager:
         inst = MemoryManager()
@@ -246,6 +331,16 @@ async def _main_async() -> None:
             inst._CHUNK_SIZE = int(os.getenv("MM_CHUNK_SIZE", "10"))  # type: ignore[attr-defined]
         except Exception:
             pass
+        # Override via JSON config (only when automatic updates are active)
+        if _custom_chunk_size and not args.manual_updates:
+            try:
+                inst._CHUNK_SIZE = int(_custom_chunk_size)  # type: ignore[attr-defined]
+            except Exception:
+                LG.warning(
+                    "[config] Invalid chunk_size (%s) – must be int; keeping %s",
+                    _custom_chunk_size,
+                    inst._CHUNK_SIZE,
+                )
         return inst
 
     mm = _create_mm()
