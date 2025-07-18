@@ -46,77 +46,55 @@ def get_broader_context() -> str:  # noqa: D401 – imperative helper name
             return _BROADER_CONTEXT
 
         # -------- lazy imports to avoid circular dependencies -------------
-        try:
-            from unity.contact_manager.contact_manager import (
-                ContactManager,
-            )  # noqa: WPS433  – runtime import
-        except Exception:  # pragma: no cover – defensive fallback
-            ContactManager = None  # type: ignore[assignment]
+        from unity.contact_manager.contact_manager import (
+            ContactManager,
+        )  # noqa: WPS433  – runtime import
 
         # ------------------------------------------------------------------
         # 1.  Gather assistant & user bios (robust to missing data) ---------
-        assistant_name = "Unknown Assistant"
-        assistant_bio = ""
-        user_name = "Unknown User"
-        user_bio = ""
+        cm = ContactManager()
 
-        try:
-            if ContactManager is not None:
-                cm = ContactManager()
+        # assistant ------------------------------------------------
+        assist = cm._search_contacts(filter="contact_id == 0", limit=1)
+        assert assist
+        a = assist[0]
+        assistant_name = " ".join(p for p in [a.first_name, a.surname] if p).strip()
+        assistant_bio = a.bio
 
-                # assistant ------------------------------------------------
-                assist = cm._search_contacts(filter="contact_id == 0", limit=1)
-                if assist:
-                    a = assist[0]
-                    assistant_name = (
-                        " ".join(p for p in [a.first_name, a.surname] if p).strip()
-                        or assistant_name
-                    )
-                    assistant_bio = a.bio or ""
-
-                # user -----------------------------------------------------
-                user = cm._search_contacts(filter="contact_id == 1", limit=1)
-                if user:
-                    u = user[0]
-                    user_name = (
-                        " ".join(p for p in [u.first_name, u.surname] if p).strip()
-                        or user_name
-                    )
-                    user_bio = u.bio or ""
-        except Exception:  # pragma: no cover – tolerate offline tests
-            pass
+        # user -----------------------------------------------------
+        user = cm._search_contacts(filter="contact_id == 1", limit=1)
+        u = user[0]
+        user_name = " ".join(p for p in [u.first_name, u.surname] if p).strip()
+        user_bio = u.bio
 
         # ------------------------------------------------------------------
         # 2.  Retrieve recent activity (may be empty) -----------------------
-        try:
-            recent_activity = get_broader_context()
-        except Exception:  # pragma: no cover – defensive
-            recent_activity = ""
+        recent_activity = get_broader_context()
 
         # ------------------------------------------------------------------
         # 3.  Build Markdown snippet ---------------------------------------
         parts: list[str] = []
 
-        parts.append("# Assistant")
-        parts.append(f"**{assistant_name}**")
-        if assistant_bio:
-            parts.append(assistant_bio)
+        parts.append(f"You are a personal assistant named {assistant_name}.")
+        parts.append(f"You work directly for {user_name}.")
+        parts.append("\nA bit about yourself:")
+        parts.append(assistant_bio)
+        parts.append(f"\nA bit about {user_name}, who you assist:")
+        parts.append(user_bio)
 
-        parts.append("")
-        parts.append("# User")
-        parts.append(f"**{user_name}**")
-        if user_bio:
-            parts.append(user_bio)
-
-        parts.append("")
-        parts.append("# Relationship")
         parts.append(
-            f"{assistant_name.split(' ')[0] if assistant_name else 'The assistant'} is assisting {user_name}.",
+            f"\nYour activity logs explain broadly what you've been working on and how you've been assisting {user_name}.",
+        )
+        parts.append(
+            "Please pay attention to these logs; always consider this broader context when deciding which actions are most appropriate to take.",
+        )
+        parts.append(
+            "Sometimes the broader context is not relevant, but sometimes it can assist in reading between the lines for the current user intent.",
         )
 
         if recent_activity:
             parts.append("")
-            parts.append("# Recent Activity")
+            parts.append("# Activity Logs")
             parts.append(recent_activity)
 
         _BROADER_CONTEXT = "\n".join(parts).strip()
