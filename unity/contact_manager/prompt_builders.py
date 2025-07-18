@@ -8,7 +8,6 @@ from typing import Dict, Callable, List
 
 from .types.contact import Contact
 from ..knowledge_manager.types import column_type_schema
-from ..memory_manager.rolling_activity import get_broader_context
 from ..common.prompt_helpers import clarification_guidance
 
 
@@ -48,34 +47,6 @@ def _tool_name(tools: Dict[str, Callable], needle: str) -> str | None:
     """
     needle = needle.lower()
     return next((n for n in tools if needle in n.lower()), None)
-
-
-def _rolling_activity_section() -> str:
-    """Return a human-readable summary of historic agent activity.
-
-    Uses the **process-wide** in-memory cache instead of hitting the backend
-    on every invocation.
-    """
-
-    try:
-        overview = get_broader_context()
-    except Exception:  # pragma: no cover – defensive
-        return ""
-
-    if not overview:
-        return ""
-
-    return "\n".join(
-        [
-            "Historic Activity Overview",
-            "---------------------------",
-            "Below is a summary of the agent's historic activity (tasks, contacts, knowledge, transcripts, etc.).",
-            "Some parts may be useful context for the current task while others might not – use your judgement.",
-            "",
-            overview,
-            "",
-        ],
-    )
 
 
 def build_ask_prompt(
@@ -158,7 +129,7 @@ def build_ask_prompt(
     # ─ Clarification guidance ─
     clar_section = clarification_guidance(tools)
 
-    activity_block = _rolling_activity_section() if include_activity else ""
+    activity_block = "{broader_context}" if include_activity else ""
 
     return "\n".join(
         [
@@ -234,7 +205,7 @@ def build_update_prompt(
     """,
     ).strip()
 
-    activity_block = _rolling_activity_section() if include_activity else ""
+    activity_block = "{broader_context}" if include_activity else ""
     clar_section = clarification_guidance(tools)
 
     return "\n".join(
