@@ -213,7 +213,7 @@ class CommandRunner:
             self.log(f"Executing click on: '{label.strip()}'")
             handle.click()
             # It's good practice to wait for the page to potentially settle after a click
-            self.active.wait_for_load_state("domcontentloaded", timeout=5000)
+            self.active.wait_for_load_state("domcontentloaded", timeout=20000)
             self.log(f"Successfully clicked element {element_id}")
         except Exception as e:
             # This can happen if the page navigates or the element becomes stale
