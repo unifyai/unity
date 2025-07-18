@@ -53,5 +53,5 @@ python start.py &
 MAIN_PID=$!
 echo "Main application started with PID: $MAIN_PID"
 
-# Wait for both processes
-wait $MAIN_PID $REDIS_PID
+# Wait for main processes
+wait $MAIN_PID
