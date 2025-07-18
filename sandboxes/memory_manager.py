@@ -6,7 +6,7 @@ Sandbox for **MemoryManager** maintenance tasks.
 Supports plain-text *or* voice capture of the initial transcript
 description via the ``--voice/-v`` flag (same UX as the other sandboxes).
 
-┌────────────── 8 accepted commands ──────────────┐
+┌────────────── 9 accepted commands ──────────────┐
 │ uc   –– update_contacts                         │
 │ ucb  –– update_contact_bio                      │
 │ ucrs –– update_contact_rolling_summary          │
@@ -15,6 +15,7 @@ description via the ``--voice/-v`` flag (same UX as the other sandboxes).
 │ ccb       –– clear Contact bios      (alias cc) │
 │ ccrs      –– clear Rolling summaries (alias cc) │
 │ ck        –– clear Knowledge store              │
+│ r         –– record scenario description (voice)│
 └─────────────────────────────────────────────────┘
 
 After typing **uc / ucb / ucrs / uk** you will be *asked* for the message
@@ -322,7 +323,7 @@ async def _main_async() -> None:
             if args.voice:
                 # Offer the user a choice instead of immediately starting voice capture
                 prompt = input(
-                    "scenario/command (type 'r' then Enter to record voice)> ",
+                    "scenario/command (see command list above)> ",
                 ).strip()
                 if prompt.lower() in {"r", "record"}:
                     audio = _record_until_enter()
@@ -331,7 +332,9 @@ async def _main_async() -> None:
                         continue
                     print(f"▶️  {prompt}")
             else:
-                prompt = input("scenario/command> ").strip()
+                prompt = input(
+                    "scenario/command (see command list above)> ",
+                ).strip()
         except (EOFError, KeyboardInterrupt):
             print("\nExiting…")
             break
@@ -385,10 +388,15 @@ async def _main_async() -> None:
             num_messages = len(last_transcript)
             try:
                 range_input = input(
-                    f"Message range [start:end] (default: all {num_messages} messages)> ",
+                    f"Message range [start:end] (default: all {num_messages} messages, 'b' to go back)> ",
                 ).strip()
             except (EOFError, KeyboardInterrupt):
                 print()  # newline for clean prompt
+                continue
+
+            # Allow user to go back to the main prompt
+            if range_input.lower() in {"b", "back"}:
+                print("↩️  Returning to main menu…")
                 continue
 
             try:
