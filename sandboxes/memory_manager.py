@@ -318,6 +318,10 @@ async def _main_async() -> None:
         )
 
     while True:
+        # Reprint the command list so it's always visible just before the prompt
+        print()
+        _explain_commands()
+        print()
         try:
             # Voice or text capture for the scenario / command prompt
             if args.voice:
