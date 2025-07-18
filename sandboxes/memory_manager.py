@@ -358,18 +358,26 @@ async def _main_async() -> None:
             try:
                 if cmd == "uc":
                     result = await mm.update_contacts(chunk_txt, guidance=guidance_txt)
-                elif cmd == "ucb":
-                    result = await mm.update_contact_bio(
-                        chunk_txt,
-                        contact_id=1,
-                        guidance=guidance_txt,
-                    )
-                elif cmd == "ucrs":
-                    result = await mm.update_contact_rolling_summary(
-                        chunk_txt,
-                        contact_id=1,
-                        guidance=guidance_txt,
-                    )
+                elif cmd in {"ucb", "ucrs"}:
+                    cid_str = input("Target contact_id> ").strip()
+                    try:
+                        cid_val = int(cid_str)
+                    except ValueError:
+                        print("⚠️  contact_id must be a valid integer.")
+                        continue
+
+                    if cmd == "ucb":
+                        result = await mm.update_contact_bio(
+                            chunk_txt,
+                            contact_id=cid_val,
+                            guidance=guidance_txt,
+                        )
+                    else:  # ucrs
+                        result = await mm.update_contact_rolling_summary(
+                            chunk_txt,
+                            contact_id=cid_val,
+                            guidance=guidance_txt,
+                        )
                 else:  # uk
                     result = await mm.update_knowledge(chunk_txt, guidance=guidance_txt)
 
