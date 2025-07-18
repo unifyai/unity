@@ -60,7 +60,7 @@ def build_contact_update_prompt(
         "Tools (name → argspec):",
         json.dumps(_sig_dict(tools), indent=4),
         "",
-        "Read through the broader context for orientation, especially in cases where you're not sure whether a new person should actually be treated as a contact.",
+        "Read through the broader context of your role and recent activity for orientation, especially in cases where you're not sure whether a new person should actually be treated as a contact.",
         "",
         "Current UTC time: " + _now(),
     ]
@@ -93,7 +93,7 @@ def build_bio_prompt(
         "Tools (name → argspec):",
         json.dumps(_sig_dict(tools), indent=4),
         "",
-        "Read through the broader context for orientation, especially in cases where you're not sure what should be updated in the bio (if anything).",
+        "Read through the broader context of your role and recent activity for orientation, especially in cases where you're not sure what should be updated in the bio (if anything).",
         "",
         "Current UTC time: " + _now(),
     ]
@@ -131,7 +131,7 @@ def build_rolling_prompt(
         "Tools (name → argspec):",
         json.dumps(_sig_dict(tools), indent=4),
         "",
-        "Read through the broader context for orientation, especially in cases where you're not sure what should be updated in the summary (if anything).",
+        "Read through the broader context of your role and recent activity for orientation, especially in cases where you're not sure what should be updated in the summary (if anything).",
         "",
         "Current UTC time: " + _now(),
     ]
@@ -148,7 +148,7 @@ def build_knowledge_prompt(
         "You are tasked with mining *long-term* knowledge from the latest transcript chunk.",
         "",
         "🧭 **General process:**",
-        "1️⃣ Reflect on the broader context above and decide which kinds of facts would be *truly valuable* to retain long-term.",
+        "1️⃣ Reflect on the broader context of your role and recent activity above and decide which kinds of facts would be *truly valuable* to retain long-term.",
         "2️⃣ Read the transcript chunk and pick out any pieces of information that fit those criteria.  It is acceptable if **none** are found.",
         "3️⃣ For *each* candidate fact:",
         "   • Call `KnowledgeManager.ask` to check whether this fact (or an equivalent) already exists in the knowledge store.",
@@ -178,7 +178,7 @@ def build_task_prompt(
         "You are responsible for maintaining the *task schedule* in light of the **latest transcript chunk**.",
         "",
         "🧭 **General process:**",
-        "1️⃣ Reflect on the broader context above and decide whether the conversation requests or implies new tasks or any changes to the existing tasks.",
+        "1️⃣ Reflect on the broader context of your role and recent activity above and decide whether the conversation requests or implies new tasks or any changes to the existing tasks.",
         "2️⃣ Always begin by calling `TaskScheduler.ask` to retrieve the **current** task list.",
         "3️⃣ For each required change:",
         "   • Create a **new** task if it does not yet exist.",
@@ -231,6 +231,8 @@ def build_activity_events_summary_prompt(
         "Format requirements:",
         "• Single paragraph, no bullet points, no markdown headers",
         "• Do not mention these instructions or the word *JSON*",
+        "",
+        "Read through the broader context of your role and recent activity for orientation, especially in cases where you're not sure which aspects should be emphasized in the summary.",
         "",
         "Current UTC time: " + _now(),
     ]
