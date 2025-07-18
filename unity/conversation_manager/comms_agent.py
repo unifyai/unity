@@ -220,6 +220,7 @@ class CommsAgent:
                         self.call_purpose = new_event["payload"]["purpose"]
                         self.task_context = new_event["payload"]["task_context"]
                         target_number = new_event["payload"]["target_number"]
+                        print("call_requested", self.assistant_number)
                         if not self.start_local:
                             self.call_proc = run_script(
                                 "unity/conversation_manager/call.py",
