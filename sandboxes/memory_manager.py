@@ -71,10 +71,23 @@ LG = logging.getLogger("memory_manager_sandbox")
 # ═════════════════════════════════ transcript seeding ═══════════════════════
 
 
-async def _build_transcript(description: str) -> List[Dict[str, Any]]:
-    """Generate a synthetic transcript via the shared TranscriptGenerator."""
+async def _build_transcript(
+    description: str,
+    *,
+    delay_per_message: float = 0.0,
+) -> List[Dict[str, Any]]:
+    """Generate a synthetic transcript via the shared TranscriptGenerator.
+
+    The optional *delay_per_message* argument allows callers to throttle the
+    rate at which each message is logged so that EventBus subscribers fire in
+    real-time, making it easier to observe behaviour when certain thresholds
+    are crossed.
+    """
     generator = TranscriptGenerator()
-    return await generator.generate(description)
+    return await generator.generate(
+        description,
+        delay_per_message=delay_per_message,
+    )
 
 
 # ═════════════════════════════════ helper utilities ═════════════════════════
@@ -223,6 +236,22 @@ async def _main_async() -> None:
             '{\n  "time_windows": { "past_day": 86400, ... },\n  "count_windows": { "past_interaction": 1, ... },\n  "chunk_size": 25\n}. '
             "Units: time windows are *seconds*; count windows are raw integers. "
             "See tests/test_memory/_patch_memory_manager_windows for examples."
+        ),
+    )
+
+    # ──────────────────────────────────────────────────────────────────
+    # Optional: throttle message logging so callbacks can be observed
+    # ──────────────────────────────────────────────────────────────────
+    parser.add_argument(
+        "--stagger_seconds",
+        "-s",
+        type=float,
+        default=0.0,
+        metavar="SECONDS",
+        help=(
+            "Delay SECONDS between each TranscriptManager.log_messages() call "
+            "when seeding the synthetic transcript. Set to 0 for immediate "
+            "logging (default).",
         ),
     )
     args = parser.parse_args()
@@ -568,7 +597,10 @@ async def _main_async() -> None:
         if args.voice:
             _speak("Sure thing, building your custom scenario now.")
         try:
-            transcript = await _build_transcript(prompt)
+            transcript = await _build_transcript(
+                prompt,
+                delay_per_message=args.stagger_seconds,
+            )
             if args.voice:
                 _speak("All done, your custom scenario is built and ready to go.")
         except Exception as exc:

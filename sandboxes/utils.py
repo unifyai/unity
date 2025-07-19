@@ -643,6 +643,7 @@ class TranscriptGenerator:
         max_messages: int = 60,
         batch_min: int = 3,
         batch_max: int = 8,
+        delay_per_message: float = 0.0,
     ) -> List[dict]:
         """Return a synthetic transcript matching *description*.
 
@@ -836,6 +837,11 @@ class TranscriptGenerator:
 
                 # Persist via TranscriptManager and local transcript list
                 self._tm.log_messages([msg_dict])
+                # Optional stagger to visualise real-time callbacks
+                if delay_per_message > 0:
+                    import time  # local to avoid unnecessary global import at top
+
+                    time.sleep(delay_per_message)
                 transcript.append(
                     {
                         "sender": sender_name,
