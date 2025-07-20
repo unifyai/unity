@@ -56,6 +56,7 @@ def build_contact_update_prompt(
         "Please do *not* perform the same action more than once. "
         "If you have updated/added a contact already via the `ContactManager` update method, "
         "then you do not need to do this again!"
+        "🔒  If the transcript chunk contains a `manager_method` event from the ConversationManager indicating this operation is already in progress or completed, treat it as handled and **do not** perform it again.",
         "",
         "Tools (name → argspec):",
         json.dumps(_sig_dict(tools), indent=4),
@@ -89,6 +90,7 @@ def build_bio_prompt(
         "Please do *not* perform the same action more than once. "
         "If you have already updated the bio via the `set_bio` tool, "
         "then you do not need to do this again!"
+        "🔒  If the transcript chunk contains a `manager_method` event from the ConversationManager indicating this operation is already in progress or completed, treat it as handled and **do not** perform it again.",
         "",
         "Tools (name → argspec):",
         json.dumps(_sig_dict(tools), indent=4),
@@ -127,6 +129,7 @@ def build_rolling_prompt(
         "Please do *not* perform the same action more than once. "
         "If you have already updated the rolling summary via the `set_rolling_summary` tool, "
         "then you do not need to do this again!"
+        "🔒  If the transcript chunk contains a `manager_method` event from the ConversationManager indicating this operation is already in progress or completed, treat it as handled and **do not** perform it again.",
         "",
         "Tools (name → argspec):",
         json.dumps(_sig_dict(tools), indent=4),
@@ -157,6 +160,7 @@ def build_knowledge_prompt(
         "   • Finally, add the new fact with `KnowledgeManager.update`.",
         "",
         "🚫 **Avoid redundant actions:** If you have already asked, refactored, or updated during this turn you do **NOT** need to repeat the same tool call.",
+        "🔒  If the transcript chunk contains a `manager_method` event from the ConversationManager indicating this operation is already in progress or completed, treat it as handled and **do not** perform it again.",
         "",
         "Return a short, human-readable summary of what you stored; if nothing was stored, just return 'no-op'.",
         "",
@@ -188,6 +192,7 @@ def build_task_prompt(
         "   • Perform these adjustments via **a single** `TaskScheduler.update` call whenever possible.",
         "",
         "🚫 **Avoid redundant actions:** If you have already inspected or updated the task list during this turn you do **NOT** need to repeat the same tool call.",
+        "🔒  If the transcript chunk contains a `manager_method` event from the ConversationManager indicating this operation is already in progress or completed, treat it as handled and **do not** perform it again.",
         "",
         "Return a short, human-readable summary of what you changed; if nothing required updating, just return 'no-op'.",
         "",
