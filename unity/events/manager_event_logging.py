@@ -27,6 +27,8 @@ async def publish_manager_method_event(  # noqa: D401 – imperative name
     call_id: str,
     manager_name: str,
     method_name: str,
+    *,
+    source: str | None = None,
     **payload: Any,
 ) -> None:
     """
@@ -39,6 +41,7 @@ async def publish_manager_method_event(  # noqa: D401 – imperative name
             payload={
                 "manager": manager_name,
                 "method": method_name,
+                **({"source": source} if source is not None else {}),
                 **payload,
             },
         ),
