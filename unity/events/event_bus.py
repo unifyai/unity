@@ -290,6 +290,14 @@ class EventBus:
         # Manual per-event-type row_id counters (initialised during hydration)
         self._next_row_ids: Dict[str, int] = {}
 
+        # ---------------- Pinning support ----------------
+        # Call-IDs (typically tool handles) that are currently **open** and whose
+        # related events must stay resident regardless of the window size.
+        self._pinned_call_ids: Set[str] = set()
+        # Declarative auto-pin/unpin rules (see `register_auto_pin`).
+        # Each entry is a dict with keys: event_type, open_pred, close_pred, key_fn
+        self._auto_pin_rules: list[dict[str, Any]] = []
+
         # Track pending callback futures so we can await their completion
         self._callback_futures: Set[asyncio.Future] = set()
         # Monotonically increasing sequence number for callback tasks –
@@ -357,12 +365,15 @@ class EventBus:
                 limit=window_size,
                 sorting={"timestamp": "descending"},
             )
-            dq: Deque[Event] = deque(maxlen=window_size)
+            dq: Deque[Event] = deque()
             for log in reversed(raw_logs):
                 if not log.entries:
                     continue
                 dq.append(self._row_to_event(log.entries, default_type=etype))
             self._deques[etype] = dq
+            # Enforce window limits post-load
+            async with self._lock:
+                self._trim_window(etype)
 
         tasks = [
             _prefill_one(
@@ -428,6 +439,81 @@ class EventBus:
         except RuntimeError:
             pass
 
+        # ------------------------------------------------------------------
+        #  Pinning helpers
+        # ------------------------------------------------------------------
+
+    def _trim_window(self, event_type: str) -> None:
+        """Internal: trim *unpinned* events to fit the configured window for *event_type*.  Must be called with `self._lock` held."""
+        dq = self._deques.get(event_type)
+        if not dq:
+            return
+        window = self._window_sizes.get(event_type, self._default_window)
+        pinned = self._pinned_call_ids
+        # Quick exit when total unpinned already within the limit
+        unpinned = sum(1 for ev in dq if ev.calling_id not in pinned)
+        if unpinned <= window:
+            return
+        # Remove oldest unpinned events until within window
+        while unpinned > window:
+            for ev in dq:
+                if ev.calling_id in pinned:
+                    continue
+                dq.remove(ev)
+                unpinned -= 1
+                break
+            else:
+                # All remaining events are pinned
+                break
+
+    # ------------------------------------------------------------------
+    #  Public pin/unpin API
+    # ------------------------------------------------------------------
+
+    def pin_call_id(self, call_id: str) -> None:
+        """Pin all events whose `calling_id` equals *call_id* until `unpin_call_id` is invoked."""
+        self._pinned_call_ids.add(call_id)
+
+    def unpin_call_id(self, call_id: str) -> None:
+        """Remove previously set pin for *call_id* and run window-trimming immediately."""
+        if call_id in self._pinned_call_ids:
+            self._pinned_call_ids.discard(call_id)
+            # We do not synchronously trim here to avoid deadlocks with running
+            # event-loops.  The very next call to `publish` or `set_window` will
+            # invoke `_trim_window` and enforce the window guarantees.
+
+    def register_auto_pin(
+        self,
+        *,
+        event_type: str | None,
+        open_predicate: Callable[["Event"], bool],
+        close_predicate: Callable[["Event"], bool],
+        key_fn: Callable[["Event"], str] | None = None,
+    ) -> None:
+        """Register *open*/*close* predicates which automatically manage pins.
+
+        Parameters
+        ----------
+        event_type : str | None
+            Restrict the rule to a single event-type.  ``None`` means it applies to *all* types.
+        open_predicate : Callable[[Event], bool]
+            Evaluated on every published event.  If *True*, the pin represented by ``key_fn(evt)`` is set.
+        close_predicate : Callable[[Event], bool]
+            If *True*, the pin is removed.
+        key_fn : Callable[[Event], str], optional
+            Function that extracts the *pin key* from the event. Defaults to the ``calling_id`` field.
+        """
+        if key_fn is None:
+            key_fn = lambda e: e.calling_id  # noqa: E731
+        self._auto_pin_rules.append(
+            {
+                "event_type": event_type,
+                "open_pred": open_predicate,
+                "close_pred": close_predicate,
+                "key_fn": key_fn,
+            },
+        )
+
     # ------------------------------------------------------------------
     def _load_subscriptions(self) -> None:
         """Synchronously rebuild the in-memory subscription map."""
@@ -461,6 +547,15 @@ class EventBus:
         self._lazy_start_hydration_if_needed()
         # Guarantee that local row_id counters are initialised before use
         await self._ensure_ready()
+        # --- Auto pin/unpin evaluation *before* we acquire the deque lock ---
+        for _rule in self._auto_pin_rules:
+            if _rule["event_type"] is None or _rule["event_type"] == event.type:
+                key = _rule["key_fn"](event)
+                if _rule["close_pred"](event):
+                    self.unpin_call_id(key)
+                elif _rule["open_pred"](event):
+                    self.pin_call_id(key)
+
         if event.type not in self._specific_ctxs:
             self.register_event_types(event.type)
         window = self._window_sizes[event.type]
@@ -474,8 +569,8 @@ class EventBus:
 
             dq = self._deques.setdefault(event.type, deque())
             dq.append(event)
-            while len(dq) > window:
-                dq.popleft()
+            # Honour pinning – only trim *unpinned* events
+            self._trim_window(event.type)
 
         # Uniform serialisation – reuse the robust helper already implemented
         # on the Event model to avoid maintaining a second custom walker.
@@ -739,9 +834,10 @@ class EventBus:
         self._window_sizes[event_type] = new_size
 
         old_dq: Deque[Event] = self._deques.get(event_type, deque())
-        # Re-hydrate deque with new maxlen (keeps newest → oldest order intact)
-        new_dq: Deque[Event] = deque(old_dq, maxlen=new_size)
+        # Re-hydrate deque (no automatic maxlen – manual trimming honours pins)
+        new_dq: Deque[Event] = deque(old_dq)
         self._deques[event_type] = new_dq
+        self._trim_window(event_type)
 
     # ------------------------------------------------------------------
     async def register_callback(
