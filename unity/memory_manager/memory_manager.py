@@ -128,11 +128,33 @@ class MemoryManager(BaseMemoryManager):
         self._CHUNK_SIZE: int = 50
         self._recent_messages: list[dict] = []
         self._messages_since_update: int = 0
+
         # Serialise overlap between concurrent chunk updates
         self._chunk_lock = asyncio.Lock()
 
         # Fire-and-forget setup of the message counter callback
         asyncio.create_task(self._setup_message_callbacks())
+
+        # ── Auto-pin & explicit-call callbacks ------------------------------------
+        # 1.  Automatically pin the *calling_id* for the lifetime of any explicit
+        #     tool invocation coming from ConversationManager so the related
+        #     ManagerMethod events are never trimmed before completion.
+        EVENT_BUS.register_auto_pin(
+            event_type="ManagerMethod",
+            open_predicate=lambda e: (
+                e.payload.get("source") == "ConversationManager"
+                and e.payload.get("phase") == "incoming"
+            ),
+            close_predicate=lambda e: (
+                e.payload.get("source") == "ConversationManager"
+                and e.payload.get("phase") == "outgoing"
+            ),
+            key_fn=lambda e: e.calling_id,
+        )
+
+        # 2.  Listen to those explicit ManagerMethod events so they are included
+        #     in the 50-message rolling window given to the LLM.
+        asyncio.create_task(self._setup_explicit_call_callbacks())
 
     # ------------------------------------------------------------------ #
     # 1  update_contacts                                                 #
@@ -412,6 +434,7 @@ class MemoryManager(BaseMemoryManager):
         await asyncio.gather(
             self._setup_rolling_callbacks(),
             self._setup_message_callbacks(),
+            self._setup_explicit_call_callbacks(),
         )
 
         # Wait until rolling-callbacks signalled readiness (max 5 s)
@@ -440,6 +463,68 @@ class MemoryManager(BaseMemoryManager):
             # works via manual scheduling even when the callback cannot be installed.
             pass
 
+    # ------------------------------------------------------------------
+    # NEW: capture *explicit* ManagerMethod invocations coming from the
+    #       ConversationManager so the passive 50-message chunk has full
+    #       context.
+    # ------------------------------------------------------------------
+
+    async def _setup_explicit_call_callbacks(self) -> None:
+        """Register a callback for ManagerMethod events tagged with
+        `source == "ConversationManager"` (incoming & outgoing)."""
+
+        async def _cb(events):  # noqa: ANN001 – imposed by EventBus
+            await self._on_new_explicit_call(events[0])
+
+        try:
+            await EVENT_BUS.register_callback(
+                event_type="ManagerMethod",
+                callback=_cb,
+                filter='evt.payload.get("source") == "ConversationManager"',
+                every_n=1,
+            )
+        except Exception:  # pragma: no cover – defensive
+            pass
+
+    # ------------------------------------------------------------------
+    async def _on_new_explicit_call(self, evt: Event) -> None:
+        """Append explicit ManagerMethod events to the rolling window."""
+
+        # Keep the data lightweight & JSON-serialisable
+        self._recent_messages.append(
+            {
+                "kind": "manager_method",
+                "data": {
+                    **(
+                        evt.payload.model_dump(mode="json")
+                        if hasattr(evt.payload, "model_dump")
+                        else evt.payload
+                    ),
+                    "timestamp": evt.timestamp.isoformat(),
+                    "calling_id": evt.calling_id,
+                },
+            },
+        )
+
+        self._messages_since_update += 1
+        if self._messages_since_update >= self._CHUNK_SIZE:
+            await self._flush_recent_items()
+
+    # ------------------------------------------------------------------
+    async def _flush_recent_items(self) -> None:
+        """Helper that triggers chunk processing & resets local counters."""
+
+        self._messages_since_update = 0
+        items = self._recent_messages.copy()
+        self._recent_messages.clear()
+
+        # Launch the chunk processing asynchronously so we don't block EventBus
+        asyncio.create_task(self._process_message_chunk(items))
+
+    # ------------------------------------------------------------------
+    # Override the original message-handler so it stores the unified format
+    # ------------------------------------------------------------------
+
     async def _on_new_message(self, evt: Event) -> None:
         """Collect messages and trigger memory updates every *CHUNK_SIZE* messages."""
 
@@ -452,29 +537,24 @@ class MemoryManager(BaseMemoryManager):
 
         msg = evt.payload
 
-        # Append a lightweight dict – keeps everything JSON-serialisable
+        # Append a typed record so downstream code can distinguish items
         self._recent_messages.append(
             {
-                "sender_id": msg.sender_id,
-                "receiver_ids": msg.receiver_ids,
-                "medium": msg.medium,
-                "timestamp": msg.timestamp.isoformat(),
-                "content": msg.content,
+                "kind": "message",
+                "data": {
+                    "sender_id": msg.sender_id,
+                    "receiver_ids": msg.receiver_ids,
+                    "medium": msg.medium,
+                    "timestamp": msg.timestamp.isoformat(),
+                    "content": msg.content,
+                },
             },
         )
 
         self._messages_since_update += 1
 
-        if self._messages_since_update < self._CHUNK_SIZE:
-            return  # not enough yet
-
-        # Reset counters *before* kicking off heavy work so the next chunk can start
-        self._messages_since_update = 0
-        transcript_msgs = self._recent_messages.copy()
-        self._recent_messages.clear()
-
-        # Launch the chunk processing asynchronously so we don't block EventBus
-        asyncio.create_task(self._process_message_chunk(transcript_msgs))
+        if self._messages_since_update >= self._CHUNK_SIZE:
+            await self._flush_recent_items()
 
     async def _process_message_chunk(self, messages: list[dict]) -> None:
         """Run the full suite of memory updates for one 50-message chunk."""
@@ -500,14 +580,19 @@ class MemoryManager(BaseMemoryManager):
                 except ValueError:
                     assistant_id = 0
 
-                for msg in messages:
+                for item in messages:
+                    if item.get("kind") != "message":
+                        continue  # ignore manager-method items for contact updates
+
+                    md = item.get("data", {})
+
                     # 1) sender -----------------------------------------------------
-                    sid = msg.get("sender_id")
+                    sid = md.get("sender_id")
                     if isinstance(sid, int) and sid != assistant_id:
                         contact_ids.add(sid)
 
                     # 2) receiver(s) ----------------------------------------------
-                    rids = msg.get("receiver_ids")
+                    rids = md.get("receiver_ids")
 
                     if rids is None:
                         continue
