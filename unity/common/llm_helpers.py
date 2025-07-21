@@ -750,17 +750,33 @@ async def _async_tool_use_loop_inner(
 
         start_len = len(patched)
 
-        client._messages = patched
+        # ------------------------------------------------------------------
+        # Some ``AsyncUnify`` implementations (the real one) keep their chat
+        # transcript in a **private** attribute ``_messages`` which is what
+        # ``.generate`` reads from, while lightweight test doubles (e.g.
+        # ``SpyAsyncUnify`` in the test-suite) expose only a public
+        # ``messages`` list.  To remain compatible with *both* variants we
+        # detect the attribute that is actually consumed by the downstream
+        # ``generate`` call and patch **that** for the duration of the call.
+        # ------------------------------------------------------------------
+        target_attr = "_messages" if hasattr(client, "_messages") else "messages"
+
+        original_container = getattr(client, target_attr)
+        setattr(client, target_attr, patched)
         try:
             result = await _maybe_await(client.generate(**gen_kwargs))
 
             # Append any new messages the LLM produced back to canonical log
-            if len(client.messages) > start_len:
-                original_msgs.extend(copy.deepcopy(client.messages[start_len:]))
+            current_msgs = getattr(client, target_attr)
+            if len(current_msgs) > start_len:
+                original_msgs.extend(copy.deepcopy(current_msgs[start_len:]))
 
             return result
         finally:
-            client._messages = original_msgs  # restore canonical history
+            # Always restore the canonical chat log so the outer loop remains
+            # consistent irrespective of whether we patched `_messages` or
+            # `messages`.
+            setattr(client, target_attr, original_container)
 
     # ── small helper: add completion tool message pair ──────────────
     async def _emit_completion_pair(result: str, call_id: str) -> dict:
