@@ -1,55 +1,62 @@
-from typing import Any, Type, Optional
-from .controller import Controller
+from typing import Any, Type
 from unity.common.llm_helpers import (
     SteerableToolHandle,
 )
 from unity.planner.tool_loop_planner import ToolLoopPlanner
+from .browser_backends import (
+    BrowserBackend,
+    LegacyBrowserBackend,
+    MagnitudeBrowserBackend,
+)
 
 
 class Browser:
     """
     Encapsulates all browser-related capabilities, from simple actions
-    to complex, multi-step operations and session recording.
+    to complex, multi-step operations and session recording. This class uses
+    a strategy pattern to delegate to a specific backend implementation
+    ('legacy' or 'magnitude') based on the selected mode.
     """
 
     def __init__(
         self,
-        session_connect_url: str | None = None,
-        headless: bool = False,
-        mode: str = "heuristic",
+        mode: str = "legacy",
+        **kwargs,
     ):
-        self.controller = Controller(
-            session_connect_url=session_connect_url,
-            headless=headless,
-            mode=mode,
-        )
-        if not self.controller.is_alive():
-            self.controller.start()
-
-    async def act(
-        self,
-        instruction: str,
-        expectation: Optional[str] = None,
-        multi_step_mode: bool = True,
-    ) -> str:
         """
-        Executes a single, high-level action in the browser.
-        e.g., "Click the 'Login' button", "Type 'hello world' in the search bar"
+        Initializes the Browser with a specific backend strategy.
 
+        Args:
+            mode (str): The backend to use. Can be 'legacy' or 'magnitude'.
+            **kwargs: Arguments to pass to the backend constructor (e.g., headless, session_connect_url, controller_mode).
         """
-        return await self.controller.act(
-            instruction,
-            expectation=expectation,
-            multi_step_mode=multi_step_mode,
-        )
+
+        if mode == "legacy":
+            self.backend: BrowserBackend = LegacyBrowserBackend(**kwargs)
+        elif mode == "magnitude":
+            self.backend: BrowserBackend = MagnitudeBrowserBackend(**kwargs)
+        else:
+            raise ValueError(
+                f"Unknown browser mode: '{mode}'. Must be 'legacy' or 'magnitude'.",
+            )
+
+    async def act(self, instruction: str, expectation: str = "") -> str:
+        """Executes a single, high-level action by delegating to the active backend."""
+        return await self.backend.act(instruction, expectation)
 
     async def observe(self, query: str, response_format: Type = str) -> Any:
-        """
-        Asks a question about the current state of the browser page.
-        e.g., "What is the title of the page?", "Is there a button with the text 'Submit'?"
-        """
-        return await self.controller.observe(query, response_format)
+        """Asks a question by delegating to the active backend."""
+        return await self.backend.observe(query, response_format)
 
+    async def get_screenshot(self) -> str:
+        """Gets a screenshot by delegating to the active backend."""
+        return await self.backend.get_screenshot()
+
+    def stop(self):
+        """Shuts down the underlying backend."""
+        self.backend.stop()
+
+    # --- Placeholders for other planned methods ---
     async def multi_step(self, description: str) -> SteerableToolHandle:
         """
         Performs a complex, sequential browser task using a dedicated sub-agent.
@@ -61,8 +68,6 @@ class Browser:
         )
         active_task_handle = await sub_planner.execute(description)
         return active_task_handle
-
-    # --- Placeholders for other planned methods ---
 
     async def reason(self, query: str) -> str:
         """
