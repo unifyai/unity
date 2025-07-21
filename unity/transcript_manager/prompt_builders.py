@@ -19,7 +19,8 @@ from typing import Callable, Dict
 # Schemas used in the prompt -------------------------------------------------
 from ..contact_manager.types.contact import Contact
 from .types.message import Message
-from ..memory_manager.rolling_activity import get_rolling_activity
+from ..memory_manager.rolling_activity import get_broader_context
+from ..common.prompt_helpers import clarification_guidance
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Internal helpers
@@ -47,7 +48,7 @@ def _rolling_activity_section() -> str:
     """Return a human-readable summary of historic agent activity using cache."""
 
     try:
-        overview = get_rolling_activity()
+        overview = get_broader_context()
     except Exception:  # pragma: no cover – safe fallback
         return ""
 
@@ -133,7 +134,8 @@ def build_ask_prompt(
     """,
     ).strip()
 
-    activity_block = _rolling_activity_section() if include_activity else ""
+    activity_block = "{broader_context}" if include_activity else ""
+    clar_section = clarification_guidance(tools)
 
     return "\n".join(
         [
@@ -155,6 +157,8 @@ def build_ask_prompt(
             f"Message  = {json.dumps(Message.model_json_schema(), indent=4)}",
             "",
             f"Current UTC time: {_now()}.",
+            clar_section,
+            "",
         ],
     )
 

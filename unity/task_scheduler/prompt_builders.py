@@ -6,7 +6,8 @@ from datetime import datetime, timezone
 from typing import Dict, Callable
 
 from .types.task import Task
-from ..memory_manager.rolling_activity import get_rolling_activity
+from ..memory_manager.rolling_activity import get_broader_context
+from ..common.prompt_helpers import clarification_guidance
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Internal helpers
@@ -32,7 +33,7 @@ def _rolling_activity_section() -> str:
     """Return a markdown summary of the agent's historic activity from cache."""
 
     try:
-        overview = get_rolling_activity()
+        overview = get_broader_context()
     except Exception:  # pragma: no cover
         return ""
 
@@ -70,7 +71,8 @@ def build_ask_prompt(
     """
     sig_json = json.dumps(_sig_dict(tools), indent=4)
 
-    activity_block = _rolling_activity_section() if include_activity else ""
+    activity_block = "{broader_context}" if include_activity else ""
+    clar_section = clarification_guidance(tools)
 
     return "\n".join(
         [
@@ -89,6 +91,8 @@ def build_ask_prompt(
             json.dumps(Task.model_json_schema(), indent=4),
             "",
             f"Current UTC time is {_now()}.",
+            clar_section,
+            "",
         ],
     )
 
@@ -103,7 +107,8 @@ def build_update_prompt(
     """
     sig_json = json.dumps(_sig_dict(tools), indent=4)
 
-    activity_block = _rolling_activity_section() if include_activity else ""
+    activity_block = "{broader_context}" if include_activity else ""
+    clar_section = clarification_guidance(tools)
 
     return "\n".join(
         [
@@ -131,6 +136,8 @@ def build_update_prompt(
             json.dumps(Task.model_json_schema(), indent=4),
             "",
             f"Current UTC time is {_now()}.",
+            clar_section,
+            "",
         ],
     )
 

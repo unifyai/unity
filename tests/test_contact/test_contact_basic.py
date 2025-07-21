@@ -13,13 +13,16 @@ def test_create_contact():
         bio="A bit of a loser",
     )
 
-    # Exclude the auto-synced assistant (contact_id == 0)
-    user_contacts = [c for c in contact_manager._search_contacts() if c.contact_id != 0]
+    # Exclude both the built-in assistant (id 0) *and* the default user (id 1)
+    user_contacts = [
+        c for c in contact_manager._search_contacts() if c.contact_id not in {0, 1}
+    ]
 
     assert len(user_contacts) == 1, "Exactly one user contact should have been created"
     contact = user_contacts[0]
 
-    assert contact.contact_id == 1
+    # ID should be **greater** than 1 because 0 = assistant, 1 = default user
+    assert contact.contact_id > 1
     assert contact.first_name == "Dan"
     assert contact.bio == "A bit of a loser"
     # Remaining built-in fields should default to None
@@ -41,7 +44,9 @@ def test_update_contact():
     )
 
     # check (exclude assistant)
-    user_contacts = [c for c in contact_manager._search_contacts() if c.contact_id != 0]
+    user_contacts = [
+        c for c in contact_manager._search_contacts() if c.contact_id not in (0, 1)
+    ]
     assert len(user_contacts) == 1
     contact = user_contacts[0]
     assert contact.first_name == "Dan"
@@ -53,7 +58,9 @@ def test_update_contact():
         bio="He's alright",
     )
 
-    user_contacts = [c for c in contact_manager._search_contacts() if c.contact_id != 0]
+    user_contacts = [
+        c for c in contact_manager._search_contacts() if c.contact_id not in (0, 1)
+    ]
     assert len(user_contacts) == 1
     contact = user_contacts[0]
     assert contact.first_name == "Daniel"
@@ -69,7 +76,9 @@ def test_create_contacts():
     contact_manager._create_contact(
         first_name="Dan",
     )
-    user_contacts = [c for c in contact_manager._search_contacts() if c.contact_id != 0]
+    user_contacts = [
+        c for c in contact_manager._search_contacts() if c.contact_id not in (0, 1)
+    ]
     assert len(user_contacts) == 1
     contact = user_contacts[0]
     assert contact.first_name == "Dan"
@@ -78,14 +87,15 @@ def test_create_contacts():
     contact_manager._create_contact(
         first_name="Tom",
     )
-    user_contacts = [c for c in contact_manager._search_contacts() if c.contact_id != 0]
+    user_contacts = [
+        c for c in contact_manager._search_contacts() if c.contact_id not in (0, 1)
+    ]
     assert len(user_contacts) == 2
     tom_contact = next(c for c in user_contacts if c.first_name == "Tom")
     dan_contact = next(c for c in user_contacts if c.first_name == "Dan")
 
     # ensure IDs are unique and not 0
-    assert tom_contact.contact_id != dan_contact.contact_id
-    assert tom_contact.contact_id != 0 and dan_contact.contact_id != 0
+    assert tom_contact.contact_id not in {0, 1} and dan_contact.contact_id not in {0, 1}
     assert tom_contact.surname is None
     assert tom_contact.bio is None
     assert tom_contact.email_address is None

@@ -7,7 +7,8 @@ from typing import Dict, Callable
 
 from ..task_scheduler.types.task import Task
 from ..common.llm_helpers import SteerableToolHandle, class_api_overview
-from ..memory_manager.rolling_activity import get_rolling_activity
+from ..memory_manager.rolling_activity import get_broader_context
+from ..common.prompt_helpers import clarification_guidance
 
 # ───────────────────────────────────── helpers ─────────────────────────────────────
 
@@ -31,7 +32,7 @@ def _rolling_activity_section() -> str:
     """Return a markdown summary of historic activity from cache."""
 
     try:
-        overview = get_rolling_activity()
+        overview = get_broader_context()
     except Exception:
         return ""
 
@@ -62,7 +63,8 @@ def build_ask_prompt(
     """Dynamic **system** prompt for `Conductor.ask`."""
     sig_json = json.dumps(_sig_dict(tools), indent=4)
 
-    activity_block = _rolling_activity_section() if include_activity else ""
+    activity_block = "{broader_context}" if include_activity else ""
+    clar_section = clarification_guidance(tools)
 
     return "\n".join(
         [
@@ -81,6 +83,8 @@ def build_ask_prompt(
             class_api_overview(SteerableToolHandle),
             "",
             f"Current UTC time is {_now()}.",
+            clar_section,
+            "",
         ],
     )
 
@@ -93,7 +97,8 @@ def build_request_prompt(
     """Dynamic **system** prompt for `Conductor.request`."""
     sig_json = json.dumps(_sig_dict(tools), indent=4)
 
-    activity_block = _rolling_activity_section() if include_activity else ""
+    activity_block = "{broader_context}" if include_activity else ""
+    clar_section = clarification_guidance(tools)
 
     return "\n".join(
         [
@@ -118,5 +123,7 @@ def build_request_prompt(
             class_api_overview(SteerableToolHandle),
             "",
             f"Current UTC time is {_now()}.",
+            clar_section,
+            "",
         ],
     )

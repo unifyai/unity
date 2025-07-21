@@ -6,20 +6,28 @@ Sandbox for **MemoryManager** maintenance tasks.
 Supports plain-text *or* voice capture of the initial transcript
 description via the ``--voice/-v`` flag (same UX as the other sandboxes).
 
-┌────────────── 8 accepted commands ──────────────┐
-│ uc  [X-Y] –– update_contacts  (no range → full) │
-│ ucb [X-Y] –– update_contact_bio                 │
-│ ucrs[X-Y] –– update_contact_rolling_summary     │
-│ uk  [X-Y] –– update_knowledge                   │
+┌────────────── 10 accepted commands ─────────────┐
+│ uc   –– update_contacts                         │
+│ ucb  –– update_contact_bio                      │
+│ ucrs –– update_contact_rolling_summary          │
+│ uk   –– update_knowledge                        │
+│ ut   –– update_tasks                           │
 │ cc        –– clear Contacts store               │
 │ ccb       –– clear Contact bios      (alias cc) │
 │ ccrs      –– clear Rolling summaries (alias cc) │
 │ ck        –– clear Knowledge store              │
+│ r         –– record scenario description (voice)│
 └─────────────────────────────────────────────────┘
 
-• *X* and *Y* are **inclusive**, 0-based indices into the transcript
-  (0 ≤ X ≤ Y < num_messages).  Omitting the range processes **all**
-  messages.
+After typing **uc / ucb / ucrs / uk / ut** you will be *asked* for the message
+**range** in a second prompt.  Use Python-slice style notation just like
+lists are indexed:
+
+    0:10   –– messages 0 through 10 (inclusive)
+   -5:     –– the **last** 5 messages
+     4:    –– from 4 to the end
+
+Press ↵ with an empty response to process **all** messages.
 • Type **help** to show the table again, **quit/exit** to leave.
 
 After choosing any *u** command you can now add **extra guidance**
@@ -34,7 +42,6 @@ import os
 import argparse
 import asyncio
 import logging
-import re
 import sys
 from pathlib import Path
 from typing import List, Dict, Any
@@ -64,10 +71,23 @@ LG = logging.getLogger("memory_manager_sandbox")
 # ═════════════════════════════════ transcript seeding ═══════════════════════
 
 
-async def _build_transcript(description: str) -> List[Dict[str, Any]]:
-    """Generate a synthetic transcript via the shared TranscriptGenerator."""
+async def _build_transcript(
+    description: str,
+    *,
+    delay_per_message: float = 0.0,
+) -> List[Dict[str, Any]]:
+    """Generate a synthetic transcript via the shared TranscriptGenerator.
+
+    The optional *delay_per_message* argument allows callers to throttle the
+    rate at which each message is logged so that EventBus subscribers fire in
+    real-time, making it easier to observe behaviour when certain thresholds
+    are crossed.
+    """
     generator = TranscriptGenerator()
-    return await generator.generate(description)
+    return await generator.generate(
+        description,
+        delay_per_message=delay_per_message,
+    )
 
 
 # ═════════════════════════════════ helper utilities ═════════════════════════
@@ -93,8 +113,56 @@ def _clear_knowledge() -> None:
         unify.delete_context(name)
 
 
-# Bare command or "cmd  X-Y"
-_RANGE_RE = re.compile(r"^(\d+)-(\d+)$")
+# ---------------------------------------------------------------------------
+#  Range-parsing helpers (slice-style "start:end")
+# ---------------------------------------------------------------------------
+
+
+def _parse_range(range_str: str, num_messages: int) -> tuple[int, int]:
+    """Return an **inclusive** (start, end) tuple based on *range_str*.
+
+    The accepted syntax mirrors Python slice notation but is easier:
+
+    "start:end"  – start *and/or* end may be omitted; negative indices
+    count from the end.  The *end* index is treated **inclusive** so
+    the intuitive "0:10" captures the first eleven messages just like
+    it did with the previous "0-10" syntax.
+    """
+
+    if ":" not in range_str:
+        # Single value → treat as one-element range
+        idx = int(range_str)
+        if idx < 0:
+            idx += num_messages
+        return idx, idx
+
+    left, right = range_str.split(":", 1)
+
+    def _to_idx(val: str | None, default: int) -> int:
+        if val is None or val == "":
+            return default
+        iv = int(val)
+        return iv + num_messages if iv < 0 else iv
+
+    start = _to_idx(left, 0)
+    end = _to_idx(right, num_messages - 1)
+
+    if not (0 <= start <= end < num_messages):
+        raise ValueError(
+            f"Indices must satisfy 0 ≤ start ≤ end < {num_messages} (got {start}:{end})",
+        )
+
+    return start, end
+
+
+# Map long-form command names to their short aliases for convenience
+_CMD_ALIASES: dict[str, str] = {
+    "update_contacts": "uc",
+    "update_contact_bio": "ucb",
+    "update_contact_rolling_summary": "ucrs",
+    "update_knowledge": "uk",
+    "update_tasks": "ut",
+}
 
 
 def _explain_commands() -> None:
@@ -154,6 +222,38 @@ async def _main_async() -> None:
         action="store_true",
         help="Disable automatic memory updates triggered by message chunks (MemoryManager._setup_message_callbacks).",
     )
+    # ------------------------------------------------------------------
+    # NEW: Custom window / chunk configuration via JSON file
+    # ------------------------------------------------------------------
+    parser.add_argument(
+        "--windows_config",
+        "-w",
+        metavar="PATH",
+        type=str,
+        help=(
+            "Path to a JSON file that overrides the default rolling-activity "
+            "time/count windows and/or the transcript chunk size. Structure: "
+            '{\n  "time_windows": { "past_day": 86400, ... },\n  "count_windows": { "past_interaction": 1, ... },\n  "chunk_size": 25\n}. '
+            "Units: time windows are *seconds*; count windows are raw integers. "
+            "See tests/test_memory/_patch_memory_manager_windows for examples."
+        ),
+    )
+
+    # ──────────────────────────────────────────────────────────────────
+    # Optional: throttle message logging so callbacks can be observed
+    # ──────────────────────────────────────────────────────────────────
+    parser.add_argument(
+        "--stagger_seconds",
+        "-s",
+        type=float,
+        default=0.0,
+        metavar="SECONDS",
+        help=(
+            "Delay SECONDS between each TranscriptManager.log_messages() call "
+            "when seeding the synthetic transcript. Set to 0 for immediate "
+            "logging (default).",
+        ),
+    )
     args = parser.parse_args()
 
     # Unify context
@@ -186,6 +286,75 @@ async def _main_async() -> None:
     if args.manual_updates:
         setattr(MemoryManager, "_setup_message_callbacks", _noop)  # type: ignore[arg-type]
 
+    # ─────────────────── apply custom windows / chunk size ────────────────────
+    def _apply_custom_windows(cfg: dict[str, Any]) -> None:  # noqa: D401 – helper name
+        """Patch *class-level* window constants on MemoryManager.
+
+        The helper rebuilds the auxiliary *_ORDER* and *_PARENT* sequences so that
+        internal hierarchy calculations remain consistent with the overrides.
+        """
+
+        cls = MemoryManager
+
+        # ---- 1.  Time-based windows -------------------------------------
+        time_windows = cfg.get("time_windows")
+        if isinstance(time_windows, dict) and time_windows:
+            cls._TIME_WINDOWS = time_windows  # type: ignore[attr-defined]
+            # Sort by ascending duration for deterministic parent mapping
+            cls._TIME_ORDER = sorted(time_windows, key=time_windows.get)  # type: ignore[attr-defined]
+
+            cls._TIME_PARENT = {}  # type: ignore[attr-defined]
+            for i in range(1, len(cls._TIME_ORDER)):  # type: ignore[attr-defined]
+                child, parent = cls._TIME_ORDER[i], cls._TIME_ORDER[i - 1]  # type: ignore[attr-defined]
+                cls._TIME_PARENT[child] = (
+                    parent,
+                    time_windows[child] // time_windows[parent],
+                )  # type: ignore[attr-defined]
+
+        # ---- 2.  Count-based windows ------------------------------------
+        count_windows = cfg.get("count_windows")
+        if isinstance(count_windows, dict) and count_windows:
+            cls._COUNT_WINDOWS = count_windows  # type: ignore[attr-defined]
+            cls._COUNT_ORDER = sorted(count_windows, key=count_windows.get)  # type: ignore[attr-defined]
+
+            cls._COUNT_PARENT = {}  # type: ignore[attr-defined]
+            for i in range(1, len(cls._COUNT_ORDER)):  # type: ignore[attr-defined]
+                child, parent = cls._COUNT_ORDER[i], cls._COUNT_ORDER[i - 1]  # type: ignore[attr-defined]
+                cls._COUNT_PARENT[child] = (
+                    parent,
+                    count_windows[child] // count_windows[parent],
+                )  # type: ignore[attr-defined]
+
+        # ---- 3.  Rolling column list needs refresh so new windows appear
+        _cols: list[str] = []
+        for nick in cls._MANAGERS.values():  # type: ignore[attr-defined]
+            for window in list(cls._TIME_WINDOWS) + list(cls._COUNT_WINDOWS):  # type: ignore[attr-defined]
+                _cols.append(f"{nick}/{window}")
+        _cols.extend([cls._SUMMARY_TIME_COL, cls._SUMMARY_COUNT_COL])  # type: ignore[attr-defined]
+        cls._ROLLING_COLUMNS = tuple(_cols)  # type: ignore[attr-defined]
+
+    # Read JSON config (only when automatic summaries/updates are enabled)
+    _custom_chunk_size: int | None = None
+    if args.windows_config and not (args.manual_summaries and args.manual_updates):
+        try:
+            import json, pathlib
+
+            cfg_path = pathlib.Path(args.windows_config).expanduser()
+            if cfg_path.is_file():
+                with cfg_path.open("r", encoding="utf-8") as fp:
+                    cfg_json = json.load(fp)
+                _apply_custom_windows(cfg_json)
+                _custom_chunk_size = cfg_json.get("chunk_size")
+                LG.info(
+                    "[config] Applied custom windows from %s%s",
+                    cfg_path,
+                    f" (chunk_size={_custom_chunk_size})" if _custom_chunk_size else "",
+                )
+            else:
+                LG.warning("[config] JSON file %s not found – ignoring", cfg_path)
+        except Exception as exc:
+            LG.error("[config] Failed to parse windows_config: %s", exc)
+
     # Helper to create a fresh, patched MemoryManager instance --------------
     def _create_mm() -> MemoryManager:
         inst = MemoryManager()
@@ -193,6 +362,16 @@ async def _main_async() -> None:
             inst._CHUNK_SIZE = int(os.getenv("MM_CHUNK_SIZE", "10"))  # type: ignore[attr-defined]
         except Exception:
             pass
+        # Override via JSON config (only when automatic updates are active)
+        if _custom_chunk_size and not args.manual_updates:
+            try:
+                inst._CHUNK_SIZE = int(_custom_chunk_size)  # type: ignore[attr-defined]
+            except Exception:
+                LG.warning(
+                    "[config] Invalid chunk_size (%s) – must be int; keeping %s",
+                    _custom_chunk_size,
+                    inst._CHUNK_SIZE,
+                )
         return inst
 
     mm = _create_mm()
@@ -247,27 +426,45 @@ async def _main_async() -> None:
     # ── Interactive REPL ------------------------------------------------------
     print(
         "\nMemoryManager sandbox – enter a conversation *description* to generate "
-        "and log synthetic messages.  Type 'summary' to display the latest "
-        "rolling-activity overview or 'quit' to exit.\n",
+        "and log synthetic messages, *or* type one of the maintenance commands "
+        "below.  Type 'summary' to display the latest rolling-activity overview "
+        "or 'quit' to exit.\n",
     )
+
+    # Show the full list of commands immediately so the user knows the options
+    _explain_commands()
+
+    # Track latest generated transcript for subsequent maintenance commands
+    last_transcript: List[Dict[str, Any]] = []
 
     # Voice-mode greeting so behaviour matches other sandboxes
     if args.voice:
         _speak(
-            "Welcome to the Memory Manager sandbox. Describe your conversation scenario or choose a maintenance command. Press enter to start recording.",
+            "Welcome to the Memory Manager sandbox. Describe your conversation scenario or enter one of the maintenance commands. Type R and press Enter whenever you'd like to record a scenario description using your voice.",
         )
 
     while True:
+        # Reprint the command list so it's always visible just before the prompt
+        print()
+        _explain_commands()
+        print()
         try:
             # Voice or text capture for the scenario / command prompt
             if args.voice:
-                audio = _record_until_enter()
-                prompt = _transcribe_deepgram(audio).strip()
-                if not prompt:
-                    continue
-                print(f"▶️  {prompt}")
+                # Offer the user a choice instead of immediately starting voice capture
+                prompt = input(
+                    "scenario/command (see command list above)> ",
+                ).strip()
+                if prompt.lower() in {"r", "record"}:
+                    audio = _record_until_enter()
+                    prompt = _transcribe_deepgram(audio).strip()
+                    if not prompt:
+                        continue
+                    print(f"▶️  {prompt}")
             else:
-                prompt = input("scenario> ").strip()
+                prompt = input(
+                    "scenario/command (see command list above)> ",
+                ).strip()
         except (EOFError, KeyboardInterrupt):
             print("\nExiting…")
             break
@@ -279,7 +476,7 @@ async def _main_async() -> None:
             break
 
         if prompt.lower() in {"summary", "s"}:
-            overview = mm.get_rolling_activity()
+            overview = mm.get_broader_context()
             print("\n──────── Historic Activity ────────\n")
             print(overview or "<no activity yet>")
             print("\n──────────────────────────────────\n")
@@ -310,24 +507,36 @@ async def _main_async() -> None:
 
         # Functional uc/ucb/ucrs/uk commands --------------------------------
         parts = prompt.split(maxsplit=1)
-        cmd = parts[0]
-        if cmd in {"uc", "ucb", "ucrs", "uk"}:
+        cmd = _CMD_ALIASES.get(parts[0], parts[0])
+
+        if cmd in {"uc", "ucb", "ucrs", "uk", "ut"}:
             if not last_transcript:
                 print("⚠️  No transcript available yet – generate one first.")
                 continue
 
+            # ─────────────── prompt for range ────────────────
             num_messages = len(last_transcript)
-            start, end = 0, num_messages - 1
-            if len(parts) == 2:
-                rng = parts[1].strip()
-                m = _RANGE_RE.match(rng)
-                if not m:
-                    print("⚠️  Range must be of the form X-Y (e.g. 4-18).")
-                    continue
-                start, end = map(int, m.groups())
-                if not (0 <= start <= end < num_messages):
-                    print(f"⚠️  Indices must satisfy 0 ≤ x ≤ y < {num_messages}.")
-                    continue
+            try:
+                range_input = input(
+                    f"Message range [start:end] (default: all {num_messages} messages, 'b' to go back)> ",
+                ).strip()
+            except (EOFError, KeyboardInterrupt):
+                print()  # newline for clean prompt
+                continue
+
+            # Allow user to go back to the main prompt
+            if range_input.lower() in {"b", "back"}:
+                print("↩️  Returning to main menu…")
+                continue
+
+            try:
+                if range_input == "":
+                    start, end = 0, num_messages - 1
+                else:
+                    start, end = _parse_range(range_input, num_messages)
+            except ValueError as exc:
+                print(f"⚠️  {exc}")
+                continue
 
             chunk_txt = _chunk_to_text(last_transcript[start : end + 1])
 
@@ -342,16 +551,33 @@ async def _main_async() -> None:
             try:
                 if cmd == "uc":
                     result = await mm.update_contacts(chunk_txt, guidance=guidance_txt)
-                elif cmd == "ucb":
-                    result = await mm.update_contact_bio(
-                        chunk_txt,
-                        guidance=guidance_txt,
-                    )
-                elif cmd == "ucrs":
-                    result = await mm.update_contact_rolling_summary(
-                        chunk_txt,
-                        guidance=guidance_txt,
-                    )
+                elif cmd in {"ucb", "ucrs"}:
+                    cid_str = input(
+                        "Target contact_id (press Enter to cancel)> ",
+                    ).strip()
+                    if cid_str == "":
+                        print("⚠️  Command cancelled (no contact_id provided).")
+                        continue
+                    try:
+                        cid_val = int(cid_str)
+                    except ValueError:
+                        print("⚠️  contact_id must be a valid integer.")
+                        continue
+
+                    if cmd == "ucb":
+                        result = await mm.update_contact_bio(
+                            chunk_txt,
+                            contact_id=cid_val,
+                            guidance=guidance_txt,
+                        )
+                    else:  # ucrs
+                        result = await mm.update_contact_rolling_summary(
+                            chunk_txt,
+                            contact_id=cid_val,
+                            guidance=guidance_txt,
+                        )
+                elif cmd == "ut":
+                    result = await mm.update_tasks(chunk_txt, guidance=guidance_txt)
                 else:  # uk
                     result = await mm.update_knowledge(chunk_txt, guidance=guidance_txt)
 
@@ -371,7 +597,10 @@ async def _main_async() -> None:
         if args.voice:
             _speak("Sure thing, building your custom scenario now.")
         try:
-            transcript = await _build_transcript(prompt)
+            transcript = await _build_transcript(
+                prompt,
+                delay_per_message=args.stagger_seconds,
+            )
             if args.voice:
                 _speak("All done, your custom scenario is built and ready to go.")
         except Exception as exc:
@@ -391,7 +620,7 @@ async def _main_async() -> None:
         EVENT_BUS.join_callbacks(cascade=True)
 
         # Show updated rolling activity -----------------------------------
-        overview = mm.get_rolling_activity()
+        overview = mm.get_broader_context()
         print("\n──────── Updated Historic Activity ────────\n")
         print(overview or "<no activity captured>")
         print("\n──────────────────────────────────────────\n")

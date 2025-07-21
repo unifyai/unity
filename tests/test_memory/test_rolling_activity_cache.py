@@ -4,12 +4,12 @@ from __future__ import annotations
 
 Verifies that:
 
-1. The first call to ``get_rolling_activity`` lazy-initialises the cache by
-   calling **exactly once** into ``MemoryManager.get_rolling_activity``.
+1. The first call to ``get_broader_context`` lazy-initialises the cache by
+   calling **exactly once** into ``MemoryManager.get_broader_context``.
 2. Subsequent reads return the cached value without further backend calls.
-3. ``set_rolling_activity`` atomically updates the cached snapshot and all
+3. ``set_broader_context`` atomically updates the cached snapshot and all
    future reads reflect the new value **without** invoking
-   ``MemoryManager.get_rolling_activity`` again.
+   ``MemoryManager.get_broader_context`` again.
 """
 
 import importlib
@@ -41,7 +41,7 @@ async def test_global_rolling_activity_cache(monkeypatch):
     call_counter = {"count": 0}
 
     class _StubMemoryManager:  # noqa: D401 – simple stub
-        def get_rolling_activity(self):  # noqa: D401 – match real API
+        def get_broader_context(self):  # noqa: D401 – match real API
             call_counter["count"] += 1
             return "INITIAL"
 
@@ -53,21 +53,21 @@ async def test_global_rolling_activity_cache(monkeypatch):
     # ------------------------------------------------------------------
     # 2.  First access → invokes patched getter exactly once
     # ------------------------------------------------------------------
-    first = ra.get_rolling_activity()
+    first = ra.get_broader_context()
     assert first == "INITIAL"
     assert call_counter["count"] == 1, "Initialisation should call MemoryManager once"
 
     # ------------------------------------------------------------------
     # 3.  Second access → returns cached value without extra calls
     # ------------------------------------------------------------------
-    second = ra.get_rolling_activity()
+    second = ra.get_broader_context()
     assert second == "INITIAL"
     assert call_counter["count"] == 1, "Subsequent reads must use cache"
 
     # ------------------------------------------------------------------
-    # 4.  Update cache via set_rolling_activity → future reads reflect change
+    # 4.  Update cache via set_broader_context → future reads reflect change
     # ------------------------------------------------------------------
-    ra.set_rolling_activity("UPDATED")
-    updated = ra.get_rolling_activity()
+    ra.set_broader_context("UPDATED")
+    updated = ra.get_broader_context()
     assert updated == "UPDATED", "Cache should reflect latest written value"
     assert call_counter["count"] == 1, "Setter must not trigger extra backend calls"

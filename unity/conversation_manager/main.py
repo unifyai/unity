@@ -70,14 +70,14 @@ class EventManager:
                 # like gen
                 self.writers["call"].write((json.dumps(event) + "\n").encode("utf-8"))
                 await self.writers["call"].drain()
-            elif event["topic"] == "startup":
-                self.topic_to_subs[event["event"]["payload"]["user_number"]] = (
-                    self.topic_to_subs["tool_use"]
-                )
-                self.topic_to_subs[event["event"]["payload"]["user_phone_number"]] = (
-                    self.topic_to_subs["tool_use"]
-                )
             else:
+                if event["topic"] == "startup":
+                    self.topic_to_subs[event["event"]["payload"]["user_number"]] = (
+                        self.topic_to_subs["tool_use"]
+                    )
+                    self.topic_to_subs[
+                        event["event"]["payload"]["user_phone_number"]
+                    ] = self.topic_to_subs["tool_use"]
                 for client in self.topic_to_subs[event["topic"]]:
                     client.handle_event(event)
 
@@ -123,7 +123,7 @@ class EventManager:
 
             await asyncio.sleep(30)  # Check every 30 seconds
             current_time = asyncio.get_event_loop().time()
-            if os.getenv("UNIFY_KEY") and (
+            if os.getenv("ASSISTANT_ID") and (
                 current_time - self.last_activity_time > self.INACTIVITY_TIMEOUT
             ):
                 print(

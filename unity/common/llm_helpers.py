@@ -546,6 +546,7 @@ async def _async_tool_use_loop_inner(
     tool_policy: Optional[
         Callable[[int, Dict[str, Callable]], Tuple[str, Dict[str, Callable]]]
     ] = None,
+    preprocess_msgs: Optional[Callable[[list[dict]], list[dict]]] = None,
 ) -> str:
     r"""
     Orchestrate an *interactive* "function-calling" dialogue between an LLM
@@ -728,6 +729,38 @@ async def _async_tool_use_loop_inner(
                     },
                 ),
             )
+
+    # ── helper: call `client.generate` with optional preprocessing ──
+    async def _generate_with_preprocess(**gen_kwargs):
+        if preprocess_msgs is None:
+            return await _maybe_await(client.generate(**gen_kwargs))
+
+        import copy
+
+        original_msgs = client.messages  # reference to canonical log
+        msgs_copy = copy.deepcopy(original_msgs)
+
+        try:
+            patched = preprocess_msgs(msgs_copy) or msgs_copy
+        except Exception as exc:  # resilience – don't fail the loop
+            LOGGER.error(
+                f"preprocess_msgs raised {exc!r}; using original messages.",
+            )
+            patched = msgs_copy
+
+        start_len = len(patched)
+
+        client._messages = patched
+        try:
+            result = await _maybe_await(client.generate(**gen_kwargs))
+
+            # Append any new messages the LLM produced back to canonical log
+            if len(client.messages) > start_len:
+                original_msgs.extend(copy.deepcopy(client.messages[start_len:]))
+
+            return result
+        finally:
+            client._messages = original_msgs  # restore canonical history
 
     # ── small helper: add completion tool message pair ──────────────
     async def _emit_completion_pair(result: str, call_id: str) -> dict:
@@ -1616,13 +1649,11 @@ async def _async_tool_use_loop_inner(
                 # ––––– new *pre-emptive* mode ––––––––––––––––––––––––––––
                 # ➊ start the LLM step …
                 llm_task = asyncio.create_task(
-                    _maybe_await(
-                        client.generate(
-                            return_full_completion=True,
-                            tools=tmp_tools,
-                            tool_choice=tool_choice_mode,
-                            stateful=True,
-                        ),
+                    _generate_with_preprocess(
+                        return_full_completion=True,
+                        tools=tmp_tools,
+                        tool_choice=tool_choice_mode,
+                        stateful=True,
                     ),
                     name="LLMGenerate",
                 )
@@ -1698,13 +1729,11 @@ async def _async_tool_use_loop_inner(
             else:
                 # ––––– legacy *blocking* mode ––––––––––––––––––––––––––––
                 try:
-                    await _maybe_await(
-                        client.generate(
-                            return_full_completion=True,
-                            tools=tmp_tools,
-                            tool_choice=tool_choice_mode,
-                            stateful=True,
-                        ),
+                    await _generate_with_preprocess(
+                        return_full_completion=True,
+                        tools=tmp_tools,
+                        tool_choice=tool_choice_mode,
+                        stateful=True,
                     )
                 except Exception:
                     raise Exception(
@@ -2514,6 +2543,7 @@ def start_async_tool_use_loop(
     tool_policy: Optional[
         Callable[[int, Dict[str, Callable]], Tuple[str, Dict[str, Callable]]]
     ] = None,
+    preprocess_msgs: Optional[Callable[[list[dict]], list[dict]]] = None,
 ) -> AsyncToolUseLoopHandle:
     """
     Kick off `_async_tool_use_loop_inner` in its own task and give the caller
@@ -2544,6 +2574,7 @@ def start_async_tool_use_loop(
             raise_on_limit=raise_on_limit,
             include_class_in_dynamic_tool_names=include_class_in_dynamic_tool_names,
             tool_policy=tool_policy,
+            preprocess_msgs=preprocess_msgs,
         ),
         name="ToolUseLoop",
     )

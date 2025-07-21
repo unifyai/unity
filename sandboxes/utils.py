@@ -643,6 +643,7 @@ class TranscriptGenerator:
         max_messages: int = 60,
         batch_min: int = 3,
         batch_max: int = 8,
+        delay_per_message: float = 0.0,
     ) -> List[dict]:
         """Return a synthetic transcript matching *description*.
 
@@ -681,8 +682,9 @@ class TranscriptGenerator:
             # 1️⃣  Attempt to reuse an existing contact (sandbox rule: first names are unique)
             try:
                 cm = self._tm._contact_manager  # ContactManager instance
+                first_name = name.split(" ")[0].lower()
                 existing = cm._search_contacts(
-                    filter=f"first_name == '{name.title()}'",
+                    filter=f"first_name.lower() == '{first_name}'",
                     limit=1,
                 )
                 if existing:
@@ -835,6 +837,11 @@ class TranscriptGenerator:
 
                 # Persist via TranscriptManager and local transcript list
                 self._tm.log_messages([msg_dict])
+                # Optional stagger to visualise real-time callbacks
+                if delay_per_message > 0:
+                    import time  # local to avoid unnecessary global import at top
+
+                    time.sleep(delay_per_message)
                 transcript.append(
                     {
                         "sender": sender_name,
@@ -898,7 +905,9 @@ def activate_project(project_name: str, overwrite: bool = False) -> None:
     import unity
     from unity.events.event_bus import EVENT_BUS
 
-    # Switch active project first
-    unity.init(project_name, overwrite=overwrite)
+    unity.init(
+        project_name,
+        overwrite=("contexts" if overwrite else False),
+    )
     # Clears all contexts in the EventBus
     EVENT_BUS.reset()

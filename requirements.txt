@@ -30,3 +30,10 @@ textual-dev>=1.2.0
 twilio>=8.0.0
 uvicorn[standard]>=0.24.0
 hypothesis>=6.135.29
+
+websockify
+sounddevice
+soundfile
+numpy
+opencv-python
+pygobject==3.50.0

@@ -98,7 +98,11 @@ async def test_mm_update_contact_bio_calls_inner_helpers(monkeypatch):
     mm = SimulatedMemoryManager("Bio refresh demo.")
     latest_bio = "Dana Fox – Marketing Lead, NYC."
     transcript = _build_transcript("BTW – Dana just moved to Berlin.")
-    new_bio = await mm.update_contact_bio(transcript, latest_bio=latest_bio)
+    new_bio = await mm.update_contact_bio(
+        transcript,
+        contact_id=1,
+        latest_bio=latest_bio,
+    )
 
     # check ------------------------------------------------------------------
     assert isinstance(new_bio, str) and new_bio.strip()
@@ -133,6 +137,7 @@ async def test_mm_update_contact_rolling_summary_invocations(monkeypatch):
 
     new_summary = await mm.update_contact_rolling_summary(
         transcript,
+        contact_id=1,
         latest_rolling_summary=prev_summary,
     )
 

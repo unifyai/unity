@@ -23,12 +23,27 @@ class ActionProvider:
     Each public method is a tool that the planner can incorporate into its generated code.
     """
 
-    def __init__(self, session_connect_url: str | None = None, headless: bool = False):
-        self.browser = Browser(
-            session_connect_url=session_connect_url,
-            headless=headless,
-            mode="hybrid",
-        )
+    def __init__(
+        self,
+        session_connect_url: str | None = None,
+        headless: bool = False,
+        browser_mode: str = "legacy",
+        controller_mode: str = "hybrid",
+    ):
+
+        browser_kwargs = {
+            "legacy": {
+                "session_connect_url": session_connect_url,
+                "headless": headless,
+                "controller_mode": controller_mode,
+            },
+            "magnitude": {
+                "headless": headless,
+            },
+        }
+        self.browser = Browser(mode=browser_mode, **browser_kwargs[browser_mode])
+        self._setup_browser_methods()
+
         self.contact_manager = ContactManager()
         self.transcript_manager = TranscriptManager(
             contact_manager=self.contact_manager,
@@ -38,6 +53,30 @@ class ActionProvider:
         from unity.task_scheduler.task_scheduler import TaskScheduler
 
         self.task_scheduler = TaskScheduler()
+
+    def _setup_browser_methods(self):
+        """Setup browser methods with proper docstrings."""
+        act_doc = self.browser.backend.act.__doc__
+        observe_doc = self.browser.backend.observe.__doc__
+
+        async def browser_act_wrapper(instruction: str, expectation: str) -> str:
+            return await self.browser.act(
+                instruction,
+                expectation=expectation,
+                multi_step_mode=True,
+            )
+
+        async def browser_observe_wrapper(
+            query: str,
+            response_format: Any = str,
+        ) -> Any:
+            return await self.browser.observe(query, response_format=response_format)
+
+        browser_act_wrapper.__doc__ = act_doc
+        browser_observe_wrapper.__doc__ = observe_doc
+
+        self.browser_act = browser_act_wrapper
+        self.browser_observe = browser_observe_wrapper
 
     # --- Communication Actions ---
 
@@ -106,70 +145,6 @@ class ActionProvider:
         )
 
     # --- Browser Actions ---
-    async def browser_act(self, instruction: str, expectation: str) -> str:
-        """
-        Performs a **single, high-level action** in the browser and verifies its outcome.
-
-        This tool functions by looking at the screen; it **does not have access to the underlying HTML or DOM**. Therefore, instructions must describe elements based on their **visible text or position**, not by HTML attributes like `id`, `class`, or `aria-label`.
-
-        Args:
-            instruction (str): A single, natural-language command. Describe the element to interact with
-                            based on its visible properties.
-            expectation (str): A clear, verifiable description of what the page should look like *after*
-                            the action is successfully completed.
-
-        Examples:
-            # ✅ Good Example (Using Visible Text)
-            - instruction: "Click the 'Login' button"
-            expectation: "The page should now show a password field."
-
-            # ✅ Good Example (Using Visible Text)
-            - instruction: "Type 'hello world' into the search bar"
-            expectation: "The search bar should contain the text 'hello world'."
-
-            # ❌ Bad Example (Using HTML Attributes)
-            - instruction: "Click the button with id 'submit-btn'"
-            # This will fail because the tool cannot see HTML IDs.
-
-            # ❌ Bad Example (Using ARIA Labels)
-            - instruction: "Click the image with 'logo' in the aria-label"
-            # This will fail because the tool cannot see aria-labels.
-
-            # ❌ Bad Example (Chained Actions)
-            - instruction: "Click the login button and then enter 'my_user' into the username field."
-        """
-        return await self.browser.act(
-            instruction,
-            expectation=expectation,
-            multi_step_mode=True,
-        )
-
-    async def browser_observe(self, query: str, response_format: Any = str) -> Any:
-        """
-        Analyzes a screenshot of the current browser page to answer a question.
-
-        This tool functions like a person looking at the screen; it **does not have access to the underlying HTML or DOM structure**. It can only answer questions about what is currently visible. Use it for read-only operations to gather information without changing the page state.
-
-        **✅ Good Queries (What you can see):**
-        - "What is the title of the page?"
-        - "List the text on all visible buttons."
-        - "Is the text 'Welcome back, user!' visible on the screen?"
-        - "Transcribe the text from the paragraph under the 'About Us' heading."
-        - "What is the phone number displayed at the top of the page?"
-
-        **❌ Bad Queries (Requires HTML/DOM access):**
-        - Avoid asking for non-visible information.
-        - **Do not ask for HTML attributes** like `href`, `src`, or `alt` text (e.g., "What is the URL of the main product image?" or "Get the alt text for the logo.").
-        - **Do not ask about HTML tags** (e.g., "Find all the `<h1>` tags.").
-        - Avoid asking the tool to interpret meaning. Instead of "Does this image look professional?", ask "Describe the image in the center of the page."
-        - Avoid multi-step queries. Instead of "Find the contact link and tell me the email," break it into separate steps.
-
-        Args:
-            query: The natural-language question to ask about what is visible on the page.
-            response_format: Optional. A Pydantic model to structure the output. The LLM will return a JSON object matching the model.
-        """
-        return await self.browser.observe(query, response_format=response_format)
-
     # async def browser_multi_step(self, description: str) -> SteerableToolHandle:
     #     """
     #     Performs a complex, sequential browser task that may require multiple steps.

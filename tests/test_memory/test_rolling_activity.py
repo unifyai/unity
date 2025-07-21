@@ -1,5 +1,5 @@
 """
-Simple unit test for `MemoryManager.get_rolling_activity`.
+Simple unit test for `MemoryManager.get_broader_context`.
 
 Ensures that when **no** activity has been recorded yet, the helper
 returns an *empty* string – callers can then safely omit the Historic
@@ -24,8 +24,8 @@ import random
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_get_rolling_activity_empty(monkeypatch):
-    """`get_rolling_activity` should return an empty string with no logs."""
+async def test_get_broader_context_empty(monkeypatch):
+    """`get_broader_context` should return an empty string with no logs."""
 
     from unity.memory_manager.memory_manager import MemoryManager
 
@@ -49,7 +49,7 @@ async def test_get_rolling_activity_empty(monkeypatch):
     mm = MemoryManager()
 
     assert (
-        mm.get_rolling_activity() == ""
+        mm.get_broader_context() == ""
     ), "Expected empty string when no activity logged"
 
 
@@ -443,7 +443,7 @@ async def _run_manager_case(
     EVENT_BUS.join_callbacks(cascade=True)
 
     # Build summary (interaction mode) – should be non-empty
-    summary = mm.get_rolling_activity(mode="interaction")
+    summary = mm.get_broader_context(mode="interaction")
     assert (
         summary.strip()
     ), f"Expected non-empty summary for {case_id} after {n_calls} call(s)"
@@ -464,8 +464,6 @@ async def _run_manager_case(
 
     # Pretty helper (mirrors MemoryManager._build_activity_summary)
     def _pretty(w: str) -> str:
-        if w == "all_time":
-            return "All Time"
         # Special-case the single-interaction window so we keep the historic wording
         if w == "past_interaction":
             return "Past Interaction"
@@ -531,7 +529,7 @@ async def _run_manager_case(
             if n_calls >= thresh:
                 active_time.append(w)
 
-    time_summary = mm.get_rolling_activity(mode="time")
+    time_summary = mm.get_broader_context(mode="time")
     expected_time_headings = {expected_title} | {
         f"## {_pretty(w)}" for w in active_time
     }
@@ -798,7 +796,7 @@ async def _assert_time_based_headings_for_manager(
     EVENT_BUS.join_callbacks(cascade=True)
 
     # Retrieve the *time-based* rolling activity summary --------------------
-    summary = mm.get_rolling_activity(mode="time")
+    summary = mm.get_broader_context(mode="time")
 
     # Determine which windows should have triggered given total_days
     triggered_windows = [
@@ -944,7 +942,7 @@ async def test_contact_manager_summary_contains_expected_companies(monkeypatch):
     # ------------------------------------------------------------------
     #  3.  Fetch the interaction-based rolling activity summary
     # ------------------------------------------------------------------
-    summary = mm.get_rolling_activity(mode="interaction")
+    summary = mm.get_broader_context(mode="interaction")
 
     # Helper: extract the line immediately following a given heading -----
     import re
@@ -968,11 +966,11 @@ async def test_contact_manager_summary_contains_expected_companies(monkeypatch):
 
     # 8-interaction summary must mention **only** the first company --------
     assert (
-        "Accounting Ltd." in body_8
-    ), "Expected 'Accounting Ltd.' in 8-interaction summary"
+        "Banks Are Us." in body_8
+    ), "Expected 'Banks Are Us.' in 8-interaction summary"
     assert (
-        "Banks Are Us." not in body_8
-    ), "Did not expect 'Banks Are Us.' in 8-interaction summary"
+        "Accounting Ltd." not in body_8
+    ), "Did not expect 'Accounting Ltd.' in 8-interaction summary"
 
     # 16-interaction summary must mention *both* companies -----------------
     assert "Accounting Ltd." in body_16 and "Banks Are Us." in body_16, (
@@ -1071,7 +1069,7 @@ async def test_multiple_manager_methods_populate_rolling_activity(monkeypatch):
     # 3.  Choose summary mode *deterministically* from RNG and fetch text
     # ------------------------------------------------------------------
     mode = rng.choice(["interaction", "time"])
-    summary = mm.get_rolling_activity(mode=mode)
+    summary = mm.get_broader_context(mode=mode)
 
     assert summary.strip(), "Expected non-empty rolling activity summary"
 
@@ -1086,8 +1084,6 @@ async def test_multiple_manager_methods_populate_rolling_activity(monkeypatch):
     }
 
     def _pretty(window: str) -> str:
-        if window == "all_time":
-            return "All Time"
         if window == "past_interaction":
             return "Past Interaction"
         if window.endswith("_interactions") and window in SMALL_COUNT_WINDOWS:

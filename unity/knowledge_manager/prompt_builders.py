@@ -7,7 +7,8 @@ from datetime import datetime, timezone
 from typing import Callable, Dict
 
 from .types import column_type_schema
-from ..memory_manager.rolling_activity import get_rolling_activity
+from ..memory_manager.rolling_activity import get_broader_context
+from ..common.prompt_helpers import clarification_guidance
 
 # ────────────────────────────────────────────────────────────────────────────
 # helpers
@@ -32,7 +33,7 @@ def _rolling_activity_section() -> str:
     """Return a markdown summary of the agent's historic activity from cache."""
 
     try:
-        overview = get_rolling_activity()
+        overview = get_broader_context()
     except Exception:  # pragma: no cover
         return ""
 
@@ -132,7 +133,7 @@ def build_refactor_prompt(
         """,
     ).strip()
 
-    activity_block = _rolling_activity_section() if include_activity else ""
+    activity_block = "{broader_context}" if include_activity else ""
     return activity_block + "\n\n" + base_prompt
 
 
@@ -177,17 +178,18 @@ def build_update_prompt(
         6. Search again to verify everything was stored or updated correctly.
         7. Reply with a short natural-language confirmation of what was stored.
 
-        If anything is ambiguous, call `request_clarification` **before** writing.
         Do **not** hallucinate data.
         """,
     ).strip()
 
-    activity_block = _rolling_activity_section() if include_activity else ""
+    activity_block = "{broader_context}" if include_activity else ""
+    clar_section = clarification_guidance(tools)
 
     return "\n".join(
         [
             activity_block,
             core_instructions,
+            clar_section,
             "",
             "Tools (name → argspec)",
             "---------------------",
@@ -234,16 +236,18 @@ def build_ask_prompt(
         5. Aggregate results into a concise answer covering every fact.
         6. Double-check nothing is missing; if so, repeat the search/refactor.
 
-        Call `request_clarification` whenever uncertain.
+        Do **not** hallucinate data.
         """,
     ).strip()
 
-    activity_block = _rolling_activity_section() if include_activity else ""
+    activity_block = "{broader_context}" if include_activity else ""
+    clar_section = clarification_guidance(tools)
 
     return "\n".join(
         [
             activity_block,
             core_instructions,
+            clar_section,
             "",
             "Tools (name → argspec)",
             "---------------------",

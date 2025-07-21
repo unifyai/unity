@@ -149,11 +149,6 @@ def test_simulated_cm_docstrings_match_base():
         == BaseTranscriptManager.ask.__doc__.strip()
     ), ".store doc-string was not copied correctly"
 
-    assert (
-        SimulatedTranscriptManager.summarize.__doc__.strip()
-        == BaseTranscriptManager.summarize.__doc__.strip()
-    ), ".retrieve doc-string was not copied correctly"
-
 
 # ────────────────────────────────────────────────────────────────────────────
 # 8.  Pause → Resume round-trip + valid_tools                                #

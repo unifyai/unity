@@ -8,11 +8,20 @@ from unity.conversation_manager.events import *
 
 # Subscription IDs
 project_id = "responsive-city-458413-a2"
-startup_subscription_id = "unity-startup-sub"
+startup_subscription_id = (
+    "unity-startup" + ("-staging" if os.getenv("STAGING") else "") + "-sub"
+)
 subscription_id = (
     "unity-"
     + (os.getenv("ASSISTANT_ID") if os.getenv("ASSISTANT_ID") else "default-assistant")
-    + ("-staging" if os.getenv("STAGING") else "")
+    + (
+        "-staging"
+        if (
+            os.getenv("STAGING")
+            and "default-assistant" not in os.getenv("ASSISTANT_ID", "")
+        )
+        else ""
+    )
 ) + "-sub"
 
 # Map subscription IDs to their corresponding event types

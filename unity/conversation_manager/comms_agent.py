@@ -110,6 +110,7 @@ class CommsAgent:
         self.start_local = start_local
 
         # logging
+        self.loop = asyncio.get_event_loop()
         self.transcript_manager = None
         self.redis = None
 
@@ -182,6 +183,12 @@ class CommsAgent:
                         self._inner_send_whatsapp,
                     ]
 
+            elif tool == "browser":
+                from unity.planner.hierarchical_planner import HierarchicalPlanner
+
+                planner = HierarchicalPlanner()
+                tools_list += [planner.execute]
+
         self.enabled_tools = methods_to_tool_dict(*tools_list)
 
     async def get_bus_events(self):
@@ -221,6 +228,7 @@ class CommsAgent:
                         self.call_purpose = new_event["payload"]["purpose"]
                         self.task_context = new_event["payload"]["task_context"]
                         target_number = new_event["payload"]["target_number"]
+                        print("call_requested", self.assistant_number)
                         if not self.start_local:
                             self.call_proc = run_script(
                                 "unity/conversation_manager/call.py",
@@ -693,13 +701,13 @@ class CommsAgent:
                 else:
                     retry_count += 1
                     print(
-                        f"Redis not ready yet, retrying... ({retry_count}/{max_retries})"
+                        f"Redis not ready yet, retrying... ({retry_count}/{max_retries})",
                     )
                     await asyncio.sleep(2)
             except Exception as e:
                 retry_count += 1
                 print(
-                    f"Redis connection attempt {retry_count}/{max_retries} failed: {e}"
+                    f"Redis connection attempt {retry_count}/{max_retries} failed: {e}",
                 )
                 await asyncio.sleep(2)
 
@@ -738,13 +746,13 @@ class CommsAgent:
         from unity.transcript_manager.types.message import Message
         from unity.events.event_bus import EVENT_BUS
 
-        unity.init()
+        unity.init(assistant_id=os.environ.get("ASSISTANT_ID"))
         if self.transcript_manager is None:
             self.transcript_manager = TranscriptManager()
 
         try:
             bus_event = Event.from_dict(event["event"]).to_bus_event()
-            asyncio.run(EVENT_BUS.publish(bus_event))
+            self.loop.create_task(EVENT_BUS.publish(bus_event))
             if event["event"]["event_name"] in [
                 "PhoneUtteranceEvent",
                 "WhatsappMessageSentEvent",

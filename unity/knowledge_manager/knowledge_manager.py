@@ -190,6 +190,7 @@ class KnowledgeManager(BaseKnowledgeManager):
             loop_id=f"{self.__class__.__name__}.{self.refactor.__name__}",
             parent_chat_context=parent_chat_context,
             tool_policy=self._look_first_tool_policy,
+            preprocess_msgs=self._inject_broader_context,
         )
 
         # ── 3.  Add logging wrapper so every handle-interaction is traced ─
@@ -280,6 +281,7 @@ class KnowledgeManager(BaseKnowledgeManager):
             loop_id=f"{self.__class__.__name__}.{self.update.__name__}",
             parent_chat_context=parent_chat_context,
             tool_policy=self._look_first_tool_policy,
+            preprocess_msgs=self._inject_broader_context,
         )
 
         # ── 3a.  Add logging wrapper  ─────────────────────────────────────
@@ -368,6 +370,7 @@ class KnowledgeManager(BaseKnowledgeManager):
             loop_id=f"{self.__class__.__name__}.{self.ask.__name__}",
             parent_chat_context=parent_chat_context,
             tool_policy=lambda i, _: ("required", _) if i < 1 else ("auto", _),
+            preprocess_msgs=self._inject_broader_context,
         )
 
         # ── 3a.  Add logging wrapper  ─────────────────────────────────────
@@ -914,7 +917,7 @@ class KnowledgeManager(BaseKnowledgeManager):
         """
         ctx = self._ctx_for_table(table)
         ctx_info = unify.get_context(ctx)
-        unique_column_name = ctx_info["unique_column_ids"]
+        unique_column_name = ctx_info["unique_column_ids"][0]
         unique_ids = sorted([int(k) for k in updates.keys()])
         log_ids: List[int] = sorted(
             unify.get_logs(
@@ -1384,3 +1387,33 @@ class KnowledgeManager(BaseKnowledgeManager):
             pass
 
         return rows
+
+    # ────────────────────────────────────────────────────────────────────
+    # Broader context helper
+    # ────────────────────────────────────────────────────────────────────
+
+    @staticmethod
+    def _inject_broader_context(msgs: list[dict]) -> list[dict]:
+        """Replace the `{broader_context}` placeholder inside *system* messages
+        with a fresh snapshot from `MemoryManager` right before the LLM call."""
+
+        import copy
+
+        from unity.memory_manager.memory_manager import (
+            MemoryManager,
+        )  # local import to avoid cycles
+
+        patched = copy.deepcopy(msgs)
+
+        try:
+            broader_ctx = MemoryManager().get_broader_context()
+        except Exception:
+            broader_ctx = ""
+
+        for m in patched:
+            if m.get("role") == "system" and "{broader_context}" in (
+                m.get("content") or ""
+            ):
+                m["content"] = m["content"].replace("{broader_context}", broader_ctx)
+
+        return patched

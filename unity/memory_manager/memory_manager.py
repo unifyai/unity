@@ -18,10 +18,11 @@ from .prompt_builders import (
     build_bio_prompt,
     build_rolling_prompt,
     build_knowledge_prompt,
+    build_activity_events_summary_prompt,
 )
 from .base import BaseMemoryManager
 from ..events.event_bus import EVENT_BUS, Event
-from .rolling_activity import set_rolling_activity
+from .rolling_activity import set_broader_context
 
 
 class MemoryManager(BaseMemoryManager):
@@ -29,7 +30,6 @@ class MemoryManager(BaseMemoryManager):
     Offline helper invoked by a scheduler every ~50 messages.
     """
 
-    # ─────────────────────────────  NEW CONSTANTS  ──────────────────────────
     _MANAGERS = {
         "ContactManager": "contact_manager",
         "TranscriptManager": "transcript_manager",
@@ -52,10 +52,9 @@ class MemoryManager(BaseMemoryManager):
         "past_120_interactions": 120,
         "past_520_interactions": 520,
     }
-    _ALL_TIME = {"all_time": None}
 
     # ────────────────────────────────────────────────────────────────────
-    #  NEW: hierarchy helpers so higher-level windows summarise the lower
+    #   hierarchy helpers so higher-level windows summarise the lower
     #       level rather than the raw ManagerMethod events
     # ────────────────────────────────────────────────────────────────────
     _TIME_ORDER = [
@@ -92,7 +91,7 @@ class MemoryManager(BaseMemoryManager):
 
     _tmp_cols = []
     for nick in _MANAGERS.values():
-        for window in list(_TIME_WINDOWS) + list(_COUNT_WINDOWS) + list(_ALL_TIME):
+        for window in list(_TIME_WINDOWS) + list(_COUNT_WINDOWS):
             _tmp_cols.append(f"{nick}/{window}")
 
     # ───────────────────────────  SUMMARY COLS  ───────────────────────────
@@ -119,21 +118,43 @@ class MemoryManager(BaseMemoryManager):
         self._knowledge_manager = knowledge_manager or KnowledgeManager()
         self._task_scheduler = task_scheduler or TaskScheduler()
 
-        # ── NEW: Rolling-Activity context & subscriptions ─────────────────
+        # ── Rolling-Activity context & subscriptions ─────────────────
         self._rolling_ctx = self._ensure_rolling_context()
         # Serialise updates to the RollingActivity context to avoid race conditions
         self._rolling_lock = asyncio.Lock()
         asyncio.create_task(self._setup_rolling_callbacks())  # fire-and-forget
 
-        # ── NEW: real-time 50-message trigger -----------------------------------------
+        # ── real-time 50-message trigger -----------------------------------------
         self._CHUNK_SIZE: int = 50
         self._recent_messages: list[dict] = []
         self._messages_since_update: int = 0
+
         # Serialise overlap between concurrent chunk updates
         self._chunk_lock = asyncio.Lock()
 
         # Fire-and-forget setup of the message counter callback
         asyncio.create_task(self._setup_message_callbacks())
+
+        # ── Auto-pin & explicit-call callbacks ------------------------------------
+        # 1.  Automatically pin the *calling_id* for the lifetime of any explicit
+        #     tool invocation coming from ConversationManager so the related
+        #     ManagerMethod events are never trimmed before completion.
+        EVENT_BUS.register_auto_pin(
+            event_type="ManagerMethod",
+            open_predicate=lambda e: (
+                e.payload.get("source") == "ConversationManager"
+                and e.payload.get("phase") == "incoming"
+            ),
+            close_predicate=lambda e: (
+                e.payload.get("source") == "ConversationManager"
+                and e.payload.get("phase") == "outgoing"
+            ),
+            key_fn=lambda e: e.calling_id,
+        )
+
+        # 2.  Listen to those explicit ManagerMethod events so they are included
+        #     in the 50-message rolling window given to the LLM.
+        asyncio.create_task(self._setup_explicit_call_callbacks())
 
     # ------------------------------------------------------------------ #
     # 1  update_contacts                                                 #
@@ -181,6 +202,8 @@ class MemoryManager(BaseMemoryManager):
     async def update_contact_bio(
         self,
         transcript: str,
+        *,
+        contact_id: int,
         latest_bio: Optional[str] = None,
         guidance: Optional[str] = None,
     ) -> str:
@@ -189,16 +212,25 @@ class MemoryManager(BaseMemoryManager):
         Caller assembles the correct transcript slice & resolves the contact_id.
         """
 
+        target_id = contact_id  # capture for closure
+
         async def set_bio(contact_id: int, bio: str) -> str:
+            """Update only the bio column for the supplied contact id.
+
+            The *cid* received via the tool-call takes precedence over the
+            *outer_contact_id* argument so existing prompts need no changes.
             """
-            Restricted helper – only touches the `bio` column.
-            """
+            final_id = contact_id or target_id
+            if final_id is None:
+                raise ValueError(
+                    "contact_id must be supplied either via the method argument or the tool call.",
+                )
             await asyncio.to_thread(
                 self._contact_manager._update_contact,
-                contact_id=contact_id,
+                contact_id=final_id,
                 custom_fields={"bio": bio},
             )
-            return f"Bio for contact with id {contact_id} successfully updated"
+            return f"Bio for contact with id {final_id} successfully updated"
 
         tools: Dict[str, Callable[..., Any]] = {
             "transcript_ask": self._transcript_manager.ask,
@@ -216,6 +248,7 @@ class MemoryManager(BaseMemoryManager):
         # Compose input blob
         user_blob = json.dumps(
             {
+                "contact_id": contact_id,
                 "latest_bio": latest_bio,
                 "transcript": transcript,
             },
@@ -238,6 +271,8 @@ class MemoryManager(BaseMemoryManager):
     async def update_contact_rolling_summary(
         self,
         transcript: str,
+        *,
+        contact_id: int,
         latest_rolling_summary: Optional[str] = None,
         guidance: Optional[str] = None,
     ) -> str:
@@ -245,14 +280,21 @@ class MemoryManager(BaseMemoryManager):
         Refresh the rolling_summary column for ONE contact.
         """
 
+        target_id = contact_id  # capture for closure
+
         async def set_rolling_summary(contact_id: int, rolling_summary: str) -> str:
+            final_id = contact_id or target_id
+            if final_id is None:
+                raise ValueError(
+                    "contact_id must be supplied either via the method argument or the tool call.",
+                )
             await asyncio.to_thread(
                 self._contact_manager._update_contact,
-                contact_id=contact_id,
+                contact_id=final_id,
                 custom_fields={"rolling_summary": rolling_summary},
             )
             return (
-                f"Rolling summary for contact with id {contact_id} successfully updated"
+                f"Rolling summary for contact with id {final_id} successfully updated"
             )
 
         tools: Dict[str, Callable[..., Any]] = {
@@ -270,6 +312,7 @@ class MemoryManager(BaseMemoryManager):
 
         user_blob = json.dumps(
             {
+                "contact_id": contact_id,
                 "latest_rolling_summary": latest_rolling_summary,
                 "transcript": transcript,
             },
@@ -391,12 +434,13 @@ class MemoryManager(BaseMemoryManager):
         await asyncio.gather(
             self._setup_rolling_callbacks(),
             self._setup_message_callbacks(),
+            self._setup_explicit_call_callbacks(),
         )
 
         # Wait until rolling-callbacks signalled readiness (max 5 s)
         await asyncio.wait_for(self._callbacks_ready.wait(), timeout=5)
 
-    # ───────────────────────────  NEW MESSAGE-BASED CALLBACKS  ───────────────────────────
+    # ───────────────────────────  MESSAGE-BASED CALLBACKS  ───────────────────────────
 
     async def _setup_message_callbacks(self) -> None:
         """Register a callback that fires *every* incoming `message` event.
@@ -419,6 +463,68 @@ class MemoryManager(BaseMemoryManager):
             # works via manual scheduling even when the callback cannot be installed.
             pass
 
+    # ------------------------------------------------------------------
+    # NEW: capture *explicit* ManagerMethod invocations coming from the
+    #       ConversationManager so the passive 50-message chunk has full
+    #       context.
+    # ------------------------------------------------------------------
+
+    async def _setup_explicit_call_callbacks(self) -> None:
+        """Register a callback for ManagerMethod events tagged with
+        `source == "ConversationManager"` (incoming & outgoing)."""
+
+        async def _cb(events):  # noqa: ANN001 – imposed by EventBus
+            await self._on_new_explicit_call(events[0])
+
+        try:
+            await EVENT_BUS.register_callback(
+                event_type="ManagerMethod",
+                callback=_cb,
+                filter='evt.payload.get("source") == "ConversationManager"',
+                every_n=1,
+            )
+        except Exception:  # pragma: no cover – defensive
+            pass
+
+    # ------------------------------------------------------------------
+    async def _on_new_explicit_call(self, evt: Event) -> None:
+        """Append explicit ManagerMethod events to the rolling window."""
+
+        # Keep the data lightweight & JSON-serialisable
+        self._recent_messages.append(
+            {
+                "kind": "manager_method",
+                "data": {
+                    **(
+                        evt.payload.model_dump(mode="json")
+                        if hasattr(evt.payload, "model_dump")
+                        else evt.payload
+                    ),
+                    "timestamp": evt.timestamp.isoformat(),
+                    "calling_id": evt.calling_id,
+                },
+            },
+        )
+
+        self._messages_since_update += 1
+        if self._messages_since_update >= self._CHUNK_SIZE:
+            await self._flush_recent_items()
+
+    # ------------------------------------------------------------------
+    async def _flush_recent_items(self) -> None:
+        """Helper that triggers chunk processing & resets local counters."""
+
+        self._messages_since_update = 0
+        items = self._recent_messages.copy()
+        self._recent_messages.clear()
+
+        # Launch the chunk processing asynchronously so we don't block EventBus
+        asyncio.create_task(self._process_message_chunk(items))
+
+    # ------------------------------------------------------------------
+    # Override the original message-handler so it stores the unified format
+    # ------------------------------------------------------------------
+
     async def _on_new_message(self, evt: Event) -> None:
         """Collect messages and trigger memory updates every *CHUNK_SIZE* messages."""
 
@@ -431,29 +537,24 @@ class MemoryManager(BaseMemoryManager):
 
         msg = evt.payload
 
-        # Append a lightweight dict – keeps everything JSON-serialisable
+        # Append a typed record so downstream code can distinguish items
         self._recent_messages.append(
             {
-                "sender_id": msg.sender_id,
-                "receiver_ids": msg.receiver_ids,
-                "medium": msg.medium,
-                "timestamp": msg.timestamp.isoformat(),
-                "content": msg.content,
+                "kind": "message",
+                "data": {
+                    "sender_id": msg.sender_id,
+                    "receiver_ids": msg.receiver_ids,
+                    "medium": msg.medium,
+                    "timestamp": msg.timestamp.isoformat(),
+                    "content": msg.content,
+                },
             },
         )
 
         self._messages_since_update += 1
 
-        if self._messages_since_update < self._CHUNK_SIZE:
-            return  # not enough yet
-
-        # Reset counters *before* kicking off heavy work so the next chunk can start
-        self._messages_since_update = 0
-        transcript_msgs = self._recent_messages.copy()
-        self._recent_messages.clear()
-
-        # Launch the chunk processing asynchronously so we don't block EventBus
-        asyncio.create_task(self._process_message_chunk(transcript_msgs))
+        if self._messages_since_update >= self._CHUNK_SIZE:
+            await self._flush_recent_items()
 
     async def _process_message_chunk(self, messages: list[dict]) -> None:
         """Run the full suite of memory updates for one 50-message chunk."""
@@ -479,14 +580,19 @@ class MemoryManager(BaseMemoryManager):
                 except ValueError:
                     assistant_id = 0
 
-                for msg in messages:
+                for item in messages:
+                    if item.get("kind") != "message":
+                        continue  # ignore manager-method items for contact updates
+
+                    md = item.get("data", {})
+
                     # 1) sender -----------------------------------------------------
-                    sid = msg.get("sender_id")
+                    sid = md.get("sender_id")
                     if isinstance(sid, int) and sid != assistant_id:
                         contact_ids.add(sid)
 
                     # 2) receiver(s) ----------------------------------------------
-                    rids = msg.get("receiver_ids")
+                    rids = md.get("receiver_ids")
 
                     if rids is None:
                         continue
@@ -501,29 +607,16 @@ class MemoryManager(BaseMemoryManager):
 
                 # Build per-contact tasks
                 for _cid in contact_ids:
-                    # Filter transcript to messages involving *_cid*
-                    sub_msgs: list[dict] = []
-                    for m in messages:
-                        if m.get("sender_id") == _cid:
-                            sub_msgs.append(m)
-                            continue
-
-                        rids = m.get("receiver_ids")
-
-                        if isinstance(rids, int):
-                            if rids == _cid:
-                                sub_msgs.append(m)
-                        elif isinstance(rids, (list, tuple, set)):
-                            if _cid in rids:
-                                sub_msgs.append(m)
-
-                    sub_blob = json.dumps(sub_msgs, indent=2)
-
                     global_tasks.extend(
                         [
-                            self.update_contact_bio(sub_blob, latest_bio=None),
+                            self.update_contact_bio(
+                                transcript_blob,
+                                contact_id=_cid,
+                                latest_bio=None,
+                            ),
                             self.update_contact_rolling_summary(
-                                sub_blob,
+                                transcript_blob,
+                                contact_id=_cid,
                                 latest_rolling_summary=None,
                             ),
                         ],
@@ -539,7 +632,7 @@ class MemoryManager(BaseMemoryManager):
 
                 traceback.print_exc()
 
-    # ───────────────────────────  NEW HELPERS  ────────────────────────────
+    # ───────────────────────────  HELPERS  ────────────────────────────
     # 1. Context & schema ---------------------------------------------------
     def _ensure_rolling_context(self) -> str:
         """Create the `RollingActivity` context (idempotent) and return its name."""
@@ -687,10 +780,7 @@ class MemoryManager(BaseMemoryManager):
                 cache=json.loads(os.getenv("UNIFY_CACHE", "true")),
                 traced=json.loads(os.getenv("UNIFY_TRACED", "true")),
             )
-            llm.set_system_message(
-                "You are a concise assistant. Summarise the JSON array supplied "
-                "by the user in max. 50 words.",
-            )
+            llm.set_system_message(build_activity_events_summary_prompt())
             return (await llm.generate(json.dumps(items, indent=2))).strip()
 
         # ------------------------------------------------------------------
@@ -737,19 +827,68 @@ class MemoryManager(BaseMemoryManager):
                 ]
                 summary = await _summarise(relevant)
             else:
+                # -----------------------  deterministic lineage  -----------------------
+                # Every *_hierarchical_summaries* event now carries the **row_id** of the
+                # lower-level RollingActivity snapshot it represents.  Using these ids removes
+                # the race where the child window used to look at “the most recent N” rows and
+                # could therefore pick up *newer* summaries written while it was waiting for the
+                # write-lock.
+
                 lower_col = f"{mgr_nick}/{lower_window}"
-                rows = unify.get_logs(
-                    context=self._rolling_ctx,
-                    sorting={"row_id": "descending"},
-                    limit=need * 5,  # generous buffer; we'll filter below
-                )
+
+                # 1.  Collect explicit row_ids from the triggering events (if present).
+                row_ids: list[int] = []
+                for ev in events:
+                    try:
+                        rid = int(ev.payload.get("row_id"))  # type: ignore[arg-type]
+                    except (ValueError, TypeError, AttributeError):
+                        rid = None
+                    if rid is not None:
+                        row_ids.append(rid)
+
                 collected: list[str] = []
-                for lg in rows:
-                    txt = lg.entries.get(lower_col)
-                    if txt:
+
+                # 2a. Fetch the *exact* rows referenced by the events.
+                if row_ids:
+                    for rid in row_ids:
+                        rows = unify.get_logs(
+                            context=self._rolling_ctx,
+                            filter=f"row_id == {rid}",
+                            limit=1,
+                        )
+                        if rows:
+                            txt = rows[0].entries.get(lower_col)
+                            if txt:
+                                collected.append(txt)
+
+                # 2b. If we still need more to reach the required `need` count
+                #     (because the callback only delivered the *latest* event),
+                #     back-fill by walking backwards from the current row_id.
+                if len(collected) < need:
+                    # Determine the highest row_id we already included so we
+                    # only look at *earlier* snapshots and therefore avoid the
+                    # original race condition.
+                    max_seen = max(row_ids) if row_ids else None
+
+                    extra_rows = unify.get_logs(
+                        context=self._rolling_ctx,
+                        sorting={"row_id": "descending"},
+                        limit=need * 5,  # generous buffer; we'll filter below
+                    )
+                    for lg in extra_rows:
+                        rid = lg.entries.get("row_id")
+                        if max_seen is not None and rid is not None and rid > max_seen:
+                            # newer than the latest row we already have → skip
+                            continue
+                        txt = lg.entries.get(lower_col)
+                        if not txt:
+                            continue
+                        if rid in row_ids:
+                            continue  # already have it
                         collected.append(txt)
-                    if len(collected) >= need:
-                        break
+                        if len(collected) >= need:
+                            break
+
                 summary = await _summarise(collected)
 
         # ---- 2.  persist --------------------------------------------------
@@ -761,7 +900,7 @@ class MemoryManager(BaseMemoryManager):
 
         base_payload[column] = summary
 
-        # ──────────────────────────  NEW: Pre-compute summaries  ────────────────
+        # ──────────────────────────  Pre-compute summaries  ────────────────
         base_payload[self._SUMMARY_TIME_COL] = self._build_activity_summary(
             base_payload,
             "time",
@@ -772,6 +911,7 @@ class MemoryManager(BaseMemoryManager):
         )
 
         # ------------------------------------------------------------------
+        # -----------------------  write new snapshot -----------------------
         unify.log(
             context=self._rolling_ctx,
             new=True,
@@ -779,11 +919,23 @@ class MemoryManager(BaseMemoryManager):
             **base_payload,
         )
 
+        # Retrieve the *row_id* of the snapshot just written so that dependant
+        # windows know exactly which lower-level rows to aggregate.
+        try:
+            _last_row = unify.get_logs(
+                context=self._rolling_ctx,
+                sorting={"row_id": "descending"},
+                limit=1,
+            )[0]
+            new_row_id = _last_row.entries.get("row_id")
+        except Exception:
+            new_row_id = None
+
         # ---- 2b.  update global cache --------------------------------------
         # Keep the in-process snapshot in sync so prompt builders never have
         # to query the backend after the initial bootstrap.
         try:
-            set_rolling_activity(base_payload[self._SUMMARY_TIME_COL])
+            set_broader_context(base_payload[self._SUMMARY_TIME_COL])
         except Exception:
             # Defensive guard – updating the cache must never break the caller.
             pass
@@ -797,6 +949,7 @@ class MemoryManager(BaseMemoryManager):
                 payload={
                     "manager": mgr_nick,  # e.g. "contact_manager"
                     "window": window,  # e.g. "past_10_interactions"
+                    "row_id": new_row_id,  # lineage id for deterministic roll-ups
                 },
             ),
         )
@@ -837,11 +990,8 @@ class MemoryManager(BaseMemoryManager):
         windows: list[str] = (
             list(self._TIME_ORDER) if mode == "time" else list(self._COUNT_ORDER)
         )
-        windows.append("all_time")
 
         def _pretty(w: str) -> str:
-            if w == "all_time":
-                return "All Time"
             parts = w.split("_")
             return "Past " + " ".join(
                 p.capitalize() if not p.isdigit() else p for p in parts[1:]
@@ -900,9 +1050,9 @@ class MemoryManager(BaseMemoryManager):
         return "\n".join(lines).strip()
 
     # ------------------------------------------------------------------ #
-    # 5  get_rolling_activity                                            #
+    # 5  get_broader_context                                            #
     # ------------------------------------------------------------------ #
-    def get_rolling_activity(self, mode: str = "time") -> str:
+    def get_broader_context(self, mode: str = "time") -> str:
         """
         Return the **latest** Rolling-Activity snapshot as a human-readable
         Markdown string.

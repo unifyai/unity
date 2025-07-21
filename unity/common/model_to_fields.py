@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import date, datetime, time
 from typing import Any, Mapping, Sequence, Union, get_args, get_origin
+from types import UnionType  # Python 3.10+
 from pydantic import BaseModel
 
 from ..knowledge_manager.types import ColumnType
@@ -15,67 +16,94 @@ def model_to_fields(model: type[BaseModel]) -> dict[str, dict[str, Any]]:
 
     Rules implemented
     -----------------
-    • Skip any field whose name ends with ``_id``.
-    • Infer the closest ``ColumnType`` from the type annotation (one-level deep).
+    • Recursively infer the closest ``ColumnType`` from the type annotation –
+      even for deeply nested generics.
       Unwraps ``Optional[X]`` / ``Union[X, None]`` automatically.
     • Pull the human-readable description from ``Field(..., description=...)``.
       Omit the key when no description was supplied.
 
     Examples
     --------
-    >>> fields_dict = model_to_unify_fields(Contact)
+    >>> fields_dict = model_to_fields(Contact)
     >>> unify.create_fields(fields_dict, context=ctx)
     """
     fields_source = model.model_fields
 
-    def map_python_type(py_t: Any) -> str:
+    def infer_column_type(py_t: Any) -> str:
         """
-        Map a (possibly-parameterised) Python type to our ColumnType label.
-        """
-        origin = get_origin(py_t) or py_t
+        Recursively map an arbitrary (possibly deeply-nested) Python type
+        annotation to the closest ``ColumnType`` label.
 
-        # Containers ----------------------------------------------------------
-        if isinstance(origin, type) and issubclass(origin, BaseModel):
+        The rules are:
+        • ``BaseModel`` subclasses and ``Mapping``/``dict`` → ``dict``
+        • Any ``Sequence`` (list, tuple, set, …) → ``list``
+        • Primitive scalars → their matching scalar type
+        • ``Union``/``|`` types are flattened – if all non-None variants resolve
+          to the *same* ``ColumnType`` that label is used, otherwise we fall
+          back to ``str``.
+        • Anything unknown falls back to ``str``.
+        """
+
+        origin = get_origin(py_t)
+
+        # ---- Optional / Union handling ------------------------------------
+        if origin in (
+            Union,
+            UnionType,
+        ):  # handles both ``typing.Union`` and ``|`` syntax
+            non_none_args = [
+                arg for arg in get_args(py_t) if arg is not type(None)
+            ]  # noqa: E721
+            if not non_none_args:
+                return ColumnType.str
+
+            resolved = {infer_column_type(arg) for arg in non_none_args}
+            return resolved.pop() if len(resolved) == 1 else ColumnType.str
+
+        # ---- Container types ----------------------------------------------
+        origin_or_self = origin or py_t
+
+        if isinstance(origin_or_self, type) and issubclass(origin_or_self, BaseModel):
             return ColumnType.dict
-        if origin in (dict, Mapping):
+        if origin_or_self in (dict, Mapping):
             return ColumnType.dict
-        if origin in (list, tuple, set, Sequence):
+        if origin_or_self in (list, tuple, set, Sequence):
             return ColumnType.list
 
-        # Scalars -------------------------------------------------------------
-        if origin is str:
+        # ---- Scalar primitives -------------------------------------------
+        if origin_or_self is str:
             return ColumnType.str
-        if origin is int:
+        if origin_or_self is int:
             return ColumnType.int
-        if origin is float:
+        if origin_or_self is float:
             return ColumnType.float
-        if origin is bool:
+        if origin_or_self is bool:
             return ColumnType.bool
-        if origin is datetime:
+        if origin_or_self is datetime:
             return ColumnType.datetime
-        if origin is date:
+        if origin_or_self is date:
             return ColumnType.date
-        if origin is time:
+        if origin_or_self is time:
             return ColumnType.time
 
-        # Fallback
+        # ---- Recursive inspection of type arguments -----------------------
+        # For generics like ``List[Foo]`` we've already classified via the
+        # container check. For anything else we inspect the first generic
+        # parameter (if there is one) hoping it gives a more specific hint.
+        for arg in get_args(py_t):
+            nested_type = infer_column_type(arg)
+            if nested_type != ColumnType.str:
+                return nested_type
+
+        # ---- Fallback ------------------------------------------------------
         return ColumnType.str
 
     unify_fields: dict[str, dict[str, Any]] = {}
 
     for name, field in fields_source.items():
-        if name.endswith("_id"):
-            continue  # special-case IDs → omit
 
-        # Unwrap Optional / Union[..., None]
         annotation = field.annotation
-        origin = get_origin(annotation)
-        if origin is Union:
-            non_none = [t for t in get_args(annotation) if t is not type(None)]
-            if non_none:  # keep first surviving alternative
-                annotation = non_none[0]
-
-        column_type = map_python_type(annotation)
+        column_type = infer_column_type(annotation)
 
         entry: dict[str, Any] = {"type": column_type, "mutable": True}
         if getattr(field, "description", None):

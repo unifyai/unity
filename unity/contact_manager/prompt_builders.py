@@ -8,7 +8,7 @@ from typing import Dict, Callable, List
 
 from .types.contact import Contact
 from ..knowledge_manager.types import column_type_schema
-from ..memory_manager.rolling_activity import get_rolling_activity
+from ..common.prompt_helpers import clarification_guidance
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -47,34 +47,6 @@ def _tool_name(tools: Dict[str, Callable], needle: str) -> str | None:
     """
     needle = needle.lower()
     return next((n for n in tools if needle in n.lower()), None)
-
-
-def _rolling_activity_section() -> str:
-    """Return a human-readable summary of historic agent activity.
-
-    Uses the **process-wide** in-memory cache instead of hitting the backend
-    on every invocation.
-    """
-
-    try:
-        overview = get_rolling_activity()
-    except Exception:  # pragma: no cover – defensive
-        return ""
-
-    if not overview:
-        return ""
-
-    return "\n".join(
-        [
-            "Historic Activity Overview",
-            "---------------------------",
-            "Below is a summary of the agent's historic activity (tasks, contacts, knowledge, transcripts, etc.).",
-            "Some parts may be useful context for the current task while others might not – use your judgement.",
-            "",
-            overview,
-            "",
-        ],
-    )
 
 
 def build_ask_prompt(
@@ -155,13 +127,9 @@ def build_ask_prompt(
         )
 
     # ─ Clarification guidance ─
-    clarification_guidance = (
-        f"If at any point you cannot uniquely identify a single contact (for example, multiple results match the user's description) **you must call the** `{request_clar}` **tool** to ask the user to clarify which contact they mean *before* you answer."
-        if request_clar
-        else ""
-    )
+    clar_section = clarification_guidance(tools)
 
-    activity_block = _rolling_activity_section() if include_activity else ""
+    activity_block = "{broader_context}" if include_activity else ""
 
     return "\n".join(
         [
@@ -180,7 +148,7 @@ def build_ask_prompt(
             usage_examples if num_contacts >= 50 else "",
             "",
             guidance,
-            clarification_guidance,
+            clar_section,
             "",
             f"Current UTC time is {_now()}.",
         ],
@@ -237,7 +205,8 @@ def build_update_prompt(
     """,
     ).strip()
 
-    activity_block = _rolling_activity_section() if include_activity else ""
+    activity_block = "{broader_context}" if include_activity else ""
+    clar_section = clarification_guidance(tools)
 
     return "\n".join(
         [
@@ -265,6 +234,8 @@ def build_update_prompt(
             json.dumps(column_type_schema, indent=4),
             "",
             f"Current UTC time is {_now()}.",
+            clar_section,
+            "",
         ],
     )
 

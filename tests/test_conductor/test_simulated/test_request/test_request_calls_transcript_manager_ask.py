@@ -30,4 +30,4 @@ async def test_request_calls_transcript_manager_ask(monkeypatch):
     )
     await asyncio.wait_for(handle.result(), timeout=60)
 
-    assert calls["count"] > 1, "TranscriptManager.ask should be invoked once."
+    assert calls["count"] >= 1, "TranscriptManager.ask should be invoked at least once."
