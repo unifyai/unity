@@ -150,7 +150,7 @@ class StartupEvent(Event):
                 "user_name": self.user_name,
                 "user_number": self.user_number,
                 "user_phone_number": self.user_phone_number,
-            }
+            },
         )
         return base_dict
 
