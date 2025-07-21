@@ -1,5 +1,6 @@
 import asyncio
 import datetime as dt
+import functools
 from typing import Dict
 
 import pytest
@@ -59,10 +60,18 @@ def _make_mm(monkeypatch, kb_counter: Dict[str, int]):
     )
 
     mm = MemoryManager(
-        contact_manager=SimulatedContactManager(description="prompt-shield"),
-        transcript_manager=SimulatedTranscriptManager(description="prompt-shield"),
-        knowledge_manager=SimulatedKnowledgeManager(description="prompt-shield"),
-        task_scheduler=SimulatedTaskScheduler(description="prompt-shield"),
+        contact_manager=SimulatedContactManager(
+            description="Assume the contact list starts out **totally empty**",
+        ),
+        transcript_manager=SimulatedTranscriptManager(
+            description="Assume the transcripts start out **totally empty**",
+        ),
+        knowledge_manager=SimulatedKnowledgeManager(
+            description="Assume the knowledge base starts out **totally empty**",
+        ),
+        task_scheduler=SimulatedTaskScheduler(
+            description="Assume the task list starts out **totally empty**",
+        ),
     )
 
     # Shrink chunk size so tests run quickly
@@ -83,14 +92,18 @@ async def test_prompt_shield_blocks_duplicate_kb_update(monkeypatch):
     # Track how many times the *passive* MemoryManager.update_knowledge helper fires
     mm_kb_counter: Dict[str, int] = {"calls": 0}
 
+    # Preserve the original coroutine so we can delegate after incrementing our counter
+    original_mm_update_knowledge = MemoryManager.update_knowledge
+
+    @functools.wraps(original_mm_update_knowledge)
     async def _stub_mm_update_knowledge(
         self,
         *args,
         **kwargs,
     ):  # noqa: D401 – imperative helper
         mm_kb_counter["calls"] += 1
-        # We do **not** call the original heavy implementation – returning quickly is sufficient
-        return "noop"
+        # Delegate to the real implementation so KnowledgeManager.update is still invoked
+        return await original_mm_update_knowledge(self, *args, **kwargs)
 
     monkeypatch.setattr(
         MemoryManager,
@@ -158,7 +171,7 @@ async def test_prompt_shield_blocks_duplicate_kb_update(monkeypatch):
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_prompt_shield_allows_kb_update_when_irrelevant_explicit_call(
+async def test_prompt_shield_allows_km_update_when_irrelevant_explicit_call(
     monkeypatch,
 ):
     kb_counter: Dict[str, int] = {"calls": 0}
@@ -166,9 +179,14 @@ async def test_prompt_shield_allows_kb_update_when_irrelevant_explicit_call(
     mm_kb_counter: Dict[str, int] = {"calls": 0}
 
     # Patch the coroutine to increment our counter while remaining lightweight
+    # Preserve the original coroutine so we can delegate after incrementing our counter
+    original_mm_update_knowledge = MemoryManager.update_knowledge
+
+    @functools.wraps(original_mm_update_knowledge)
     async def _stub_mm_update_knowledge(self, *args, **kwargs):  # noqa: D401
         mm_kb_counter["calls"] += 1
-        return "noop"
+        # Delegate to the real implementation so KnowledgeManager.update is still invoked
+        return await original_mm_update_knowledge(self, *args, **kwargs)
 
     monkeypatch.setattr(
         MemoryManager,
@@ -188,7 +206,7 @@ async def test_prompt_shield_allows_kb_update_when_irrelevant_explicit_call(
         sender_id=1,
         receiver_ids=[0],
         timestamp=ts_base,
-        content="Please remember this knowledge fact.",
+        content="Please remember this import fact: the office is *always* closed on a Friday",
         exchange_id=1,
     )
     await EVENT_BUS.publish(Event(type="Message", payload=msg))
