@@ -257,6 +257,8 @@ class Subscription(BaseModel):
 
 
 class EventBus:
+    _LOGGER = unify.AsyncLoggerManager(name="EventBus", num_consumers=16)
+
     def __init__(self):
 
         # private attributes
@@ -286,7 +288,6 @@ class EventBus:
         self._specific_ctxs = {
             ctx.split("/")[-1]: ctx for ctx in ctxs if ctx != self._callbacks_ctx
         }
-        self._logger = unify.AsyncLoggerManager(name="EventBus")
         # Manual per-event-type row_id counters (initialised during hydration)
         self._next_row_ids: Dict[str, int] = {}
 
@@ -330,6 +331,10 @@ class EventBus:
         else:
             self._prefill_task = loop.create_task(self._async_initial_hydration())
 
+    @classmethod
+    def _get_logger(cls) -> unify.AsyncLoggerManager:
+        return cls._LOGGER
+
     # ------------------------------------------------------------------
     # New *non-blocking* hydration helpers
     # ------------------------------------------------------------------
@@ -348,7 +353,7 @@ class EventBus:
             # Never leave waiters hanging – remember the error and continue.
             self._prefill_exc = exc
             try:
-                self._logger.error("EventBus – initial hydration failed: %r", exc)
+                self._get_logger().error("EventBus – initial hydration failed: %r", exc)
             except Exception:
                 # Logger might not be fully ready; ignore.
                 pass
@@ -581,7 +586,7 @@ class EventBus:
         )
 
         # Log to global event table
-        self._logger.log_create(
+        self._get_logger().log_create(
             project=unify.active_project(),
             context=self._global_ctx,
             params={},
@@ -597,7 +602,7 @@ class EventBus:
         )
 
         # Log to specific event table
-        self._logger.log_create(
+        self._get_logger().log_create(
             project=unify.active_project(),
             context=self._specific_ctxs[event.type],
             params={},
@@ -616,11 +621,11 @@ class EventBus:
 
         # maybe block until published, if sync mode
         if blocking:
-            self._logger.join()
+            self._get_logger().join()
 
     def join_published(self):
         """Ensures all published events have been uploaded"""
-        self._logger.join()
+        self._get_logger().join()
 
     async def search(
         self,
@@ -910,7 +915,7 @@ class EventBus:
     # ------------------------------------------------------------------
     def _persist_subscription_state(self, sub: Subscription) -> None:
         """Append current state to the callbacks context for durability."""
-        self._logger.log_create(
+        self._get_logger().log_create(
             project=unify.active_project(),
             context=self._callbacks_ctx,
             params={},
@@ -1044,6 +1049,8 @@ class EventBus:
             pass
 
         # 3. Re-initialise this *same* instance
+        self._get_logger().clear_queue()  # *IMPORTANT* This will IMPACT all instances of EventBus
+        self._get_logger().join()
         type(self).__init__(self)
 
     # ------------------------------------------------------------------
