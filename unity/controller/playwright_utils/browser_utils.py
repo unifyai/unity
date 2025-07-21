@@ -241,7 +241,7 @@ def launch_persistent(pw, headless: bool = False) -> BrowserContext:
             "--disable-features=IsolateOrigins,site-per-process",
             "--use-fake-ui-for-media-stream",
         ],
-        permissions=["microphone", "camera"],
+        permissions=["microphone"],
     )
     # ── mask navigator.webdriver in every new page ──────────────────
     ctx.add_init_script(
