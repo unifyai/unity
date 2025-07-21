@@ -181,6 +181,12 @@ class CommsAgent:
                         self._inner_send_whatsapp,
                     ]
 
+            elif tool == "browser":
+                from unity.planner.hierarchical_planner import HierarchicalPlanner
+
+                planner = HierarchicalPlanner()
+                tools_list += [planner.execute]
+
         self.enabled_tools = methods_to_tool_dict(*tools_list)
 
     async def get_bus_events(self):
@@ -692,13 +698,13 @@ class CommsAgent:
                 else:
                     retry_count += 1
                     print(
-                        f"Redis not ready yet, retrying... ({retry_count}/{max_retries})"
+                        f"Redis not ready yet, retrying... ({retry_count}/{max_retries})",
                     )
                     await asyncio.sleep(2)
             except Exception as e:
                 retry_count += 1
                 print(
-                    f"Redis connection attempt {retry_count}/{max_retries} failed: {e}"
+                    f"Redis connection attempt {retry_count}/{max_retries} failed: {e}",
                 )
                 await asyncio.sleep(2)
 
