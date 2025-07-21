@@ -109,6 +109,7 @@ class CommsAgent:
         self.start_local = start_local
 
         # logging
+        self.loop = asyncio.get_event_loop()
         self.transcript_manager = None
         self.redis = None
 
@@ -749,7 +750,7 @@ class CommsAgent:
 
         try:
             bus_event = Event.from_dict(event["event"]).to_bus_event()
-            asyncio.run(EVENT_BUS.publish(bus_event))
+            self.loop.create_task(EVENT_BUS.publish(bus_event))
             if event["event"]["event_name"] in [
                 "PhoneUtteranceEvent",
                 "WhatsappMessageSentEvent",
