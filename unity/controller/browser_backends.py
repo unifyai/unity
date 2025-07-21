@@ -280,8 +280,29 @@ class MagnitudeBrowserBackend(BrowserBackend):
     async def act(self, instruction: str, expectation: str = "") -> str:
         """
         Executes a high-level browser task using the Magnitude BrowserAgent.
-        The agent can handle multi-step sequences and autonomously decides on the
-        necessary clicks, scrolls, and typing to achieve the goal.
+
+        This tool is **autonomous and can perform multiple steps** (e.g., typing, clicking, scrolling) to achieve the goal described in the instruction. It operates based on a visual understanding of the page. The agent will return successfully only if it believes the task is complete.
+
+        Args:
+            instruction (str): A high-level, natural-language command describing the desired outcome.
+            expectation (str): (Optional) A description of the expected state after the action, which helps the agent confirm success.
+
+        Examples:
+            # ✅ Good Example (Multi-Step Task)
+            - instruction: "Log into the account using username 'testuser' and password 'password123'."
+            # The agent will find the fields, type, and click the login button.
+
+            # ✅ Good Example (Vague Goal, Agent figures it out)
+            - instruction: "Find the cheapest blue t-shirt on the page and add it to the cart."
+            # The agent will visually scan, find the item, and click the corresponding 'Add to Cart' button.
+
+            # ✅ Good Example (Combining Action and Verification)
+            - instruction: "Click the 'Promotions' link in the navigation bar."
+            - expectation: "The page should show a heading titled 'Current Promotions'."
+
+            # ❌ Bad Example (Too low-level)
+            # Avoid breaking down simple actions. Let the agent handle it.
+            - instruction: "Move the mouse to coordinate 250, 400, then click."
         """
         task_desc = f"{instruction}. {expectation}".strip()
         response = await self._request("POST", "/act", {"task": task_desc})
@@ -289,9 +310,22 @@ class MagnitudeBrowserBackend(BrowserBackend):
 
     async def observe(self, query: str, response_format: Any = str) -> Any:
         """
-        Extracts structured information from the page using the Magnitude BrowserAgent.
-        The agent uses a vision-language model to analyze the page content and screenshot.
-        Can return structured data if a Pydantic model is provided in `response_format`.
+        Extracts structured information from the current page using the Magnitude BrowserAgent.
+
+        The agent uses a vision-language model to analyze the page content and screenshot, allowing it to understand context and structure. It can return complex, nested data if a Pydantic model is provided.
+
+        **✅ Good Queries (Leveraging Structure and Vision):**
+        - "List all the user comments on the page, including the author and the comment text." (Requires a Pydantic model for the response format).
+        - "Extract the product name, price, and rating for every item shown."
+        - "What is the shipping address displayed in the order summary?"
+
+        **❌ Bad Queries (HTML/DOM Specific):**
+        - "Get the href attribute of the 'About Us' link."
+        # Instead, ask: "What is the destination URL of the 'About Us' link?" The agent can often infer this by navigating and checking the URL.
+
+        Args:
+            query: The natural-language instruction for what to extract.
+            response_format: Optional. A Pydantic model to structure the output.
         """
         payload = {"instructions": query}
         if inspect.isclass(response_format) and issubclass(response_format, BaseModel):
