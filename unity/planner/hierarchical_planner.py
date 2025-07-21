@@ -745,12 +745,20 @@ class HierarchicalPlan(BaseActiveTask):
             self.plan_source_code = ast.unparse(final_tree)
 
             self.function_source_map.clear()
-            for name, node in old_defs.items():
+            fresh_tree = ast.parse(self.plan_source_code)
+            for node in ast.walk(fresh_tree):
                 if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
-                    self.function_source_map[name] = ast.get_source_segment(
-                        self.plan_source_code,
-                        node,
-                    )
+                    try:
+                        self.function_source_map[node.name] = ast.get_source_segment(
+                            self.plan_source_code,
+                            node,
+                        )
+                    except Exception as e:
+                        logger.error(
+                            f"Failed to get source segment for '{node.name}': {e}",
+                            exc_info=True,
+                        )
+                        raise e
 
             exec(
                 compile(self.plan_source_code, "<string>", "exec"),
