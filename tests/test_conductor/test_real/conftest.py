@@ -71,24 +71,24 @@ class ConductorScenarioBuilder:
         self.id_maps: Dict[str, Dict[str, Any]] = {"contacts": {}, "tasks": {}}
 
     @classmethod
-    async def create(cls) -> Tuple[Conductor, Dict[str, Dict[str, Any]]]:
+    def create(cls) -> Tuple[Conductor, Dict[str, Dict[str, Any]]]:
         """Factory method to build and seed the full scenario."""
         self = cls()
-        await self._seed_contacts()
-        await self._seed_transcripts()
-        await self._seed_tasks()
-        await self._seed_knowledge()
+        self._seed_contacts()
+        self._seed_transcripts()
+        self._seed_tasks()
+        self._seed_knowledge()
         return self.conductor, self.id_maps
 
-    async def _seed_contacts(self):
+    def _seed_contacts(self):
         """Seed contacts and populate the ID map."""
         for contact_data in _CONTACTS_DATA:
-            result = await asyncio.to_thread(self.cm._create_contact, **contact_data)
+            result = self.cm._create_contact(**contact_data)
             contact_id = result["details"]["contact_id"]
             name_key = contact_data["first_name"].lower()
             self.id_maps["contacts"][name_key] = contact_id
 
-    async def _seed_transcripts(self):
+    def _seed_transcripts(self):
         """Seed a meaningful transcript exchange."""
         cid = self.id_maps["contacts"]
         now = datetime(2025, 4, 20, 15, 0, tzinfo=timezone.utc)
@@ -117,26 +117,24 @@ class ConductorScenarioBuilder:
             ).to_post_json()
             for s, r, ts, txt in messages
         ]
-        await asyncio.to_thread(self.tm.log_messages, log_entries)
+        self.tm.log_messages(log_entries)
 
-    async def _seed_tasks(self):
+    def _seed_tasks(self):
         """Seed tasks and populate the ID map."""
         for task_data in _TASKS_DATA:
-            result = await asyncio.to_thread(self.ts._create_task, **task_data)
+            result = self.ts._create_task(**task_data)
             task_id = result["details"]["task_id"]
             name_key = task_data["name"].lower().replace(" ", "_")
             self.id_maps["tasks"][name_key] = task_id
 
-    async def _seed_knowledge(self):
+    def _seed_knowledge(self):
         """Seed the knowledge manager with some facts."""
-        await asyncio.to_thread(
-            self.km._create_table,
+        self.km._create_table(
             name="CompanyInfo",
             columns={"company_name": "str", "hq_location": "str"},
             description="Basic info about companies.",
         )
-        await asyncio.to_thread(
-            self.km._add_rows,
+        self.km._add_rows(
             table="CompanyInfo",
             rows=[{"company_name": "GlobalCorp", "hq_location": "London"}],
         )
@@ -152,7 +150,6 @@ def event_loop():
 
 @pytest.fixture(scope="session")
 def conductor_scenario(
-    event_loop: asyncio.AbstractEventLoop,
     request: pytest.FixtureRequest,
 ) -> Generator[Tuple[Conductor, Dict[str, Any]], None, None]:
     """
@@ -174,7 +171,7 @@ def conductor_scenario(
         print("\nSeeding REAL CONDUCTOR scenario...")
         builder = ConductorScenarioBuilder()
 
-        conductor, id_maps = event_loop.run_until_complete(builder.create())
+        conductor, id_maps = builder.create()
 
         for ctx in unify.get_contexts(prefix=context_prefix):
             commit_info = unify.commit_context(
