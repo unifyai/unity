@@ -11,6 +11,7 @@ import signal
 import traceback
 from unity.conversation_manager.comms_agent import CommsAgent
 from unity.conversation_manager.comms_manager import CommsManager
+from unity.constants import ASYNCIO_DEBUG
 
 load_dotenv()
 
@@ -267,4 +268,5 @@ if __name__ == "__main__":
             start_local=args.start_local,
             enabled_tools=args.enabled_tools,
         ),
+        debug=ASYNCIO_DEBUG,
     )
