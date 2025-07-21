@@ -1,4 +1,5 @@
 import asyncio
+import functools
 from pydantic import Field
 import os
 import unify
@@ -55,28 +56,22 @@ class ActionProvider:
         self.task_scheduler = TaskScheduler()
 
     def _setup_browser_methods(self):
-        """Setup browser methods with proper docstrings."""
-        act_doc = self.browser.backend.act.__doc__
-        observe_doc = self.browser.backend.observe.__doc__
+        """Dynamically create tool methods and assign backend docstrings."""
+        methods_to_proxy = {
+            "browser_act": self.browser.backend.act,
+            "browser_observe": self.browser.backend.observe,
+            "browser_navigate": self.browser.backend.navigate,
+        }
 
-        async def browser_act_wrapper(instruction: str, expectation: str) -> str:
-            return await self.browser.act(
-                instruction,
-                expectation=expectation,
-                multi_step_mode=True,
-            )
+        for method_name, backend_method in methods_to_proxy.items():
+            # Create a simple wrapper that preserves the backend method's behavior and docstring
+            @functools.wraps(backend_method)
+            async def wrapper(*args, _backend_method=backend_method, **kwargs):
+                return await _backend_method(*args, **kwargs)
 
-        async def browser_observe_wrapper(
-            query: str,
-            response_format: Any = str,
-        ) -> Any:
-            return await self.browser.observe(query, response_format=response_format)
-
-        browser_act_wrapper.__doc__ = act_doc
-        browser_observe_wrapper.__doc__ = observe_doc
-
-        self.browser_act = browser_act_wrapper
-        self.browser_observe = browser_observe_wrapper
+            # Preserve the original docstring
+            wrapper.__doc__ = backend_method.__doc__
+            setattr(self, method_name, wrapper)
 
     # --- Communication Actions ---
 
