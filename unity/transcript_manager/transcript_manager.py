@@ -28,6 +28,7 @@ from .base import BaseTranscriptManager
 
 
 class TranscriptManager(BaseTranscriptManager):
+    _LOGGER = unify.AsyncLoggerManager(name="TranscriptManager", num_consumers=16)
 
     # Vector embedding column names
     _MSG_EMB = "_content_emb"
@@ -79,8 +80,11 @@ class TranscriptManager(BaseTranscriptManager):
         # ── Async logging (mirrors EventBus) ────────────────────────────────
         # Using a dedicated logger means log_create() returns immediately,
         # leaving the actual network I/O to an internal worker thread.
-        self._logger = unify.AsyncLoggerManager()
         self._rolling_summary_in_prompts = rolling_summary_in_prompts
+
+    @classmethod
+    def _get_logger(cls) -> unify.AsyncLoggerManager:
+        return cls._LOGGER
 
     # Public #
     # -------#
@@ -333,7 +337,7 @@ class TranscriptManager(BaseTranscriptManager):
         for entries, msg in zip(msg_entries, normalised_messages):
             # Ensure correct creation order by performing contact creation *before*
             # the logger call (already satisfied above).  Now we can log safely.
-            self._logger.log_create(
+            self._get_logger().log_create(
                 project=unify.active_project(),
                 context=self._transcripts_ctx,
                 params={},
@@ -349,7 +353,7 @@ class TranscriptManager(BaseTranscriptManager):
                 asyncio.run(_publish_message(msg))
 
     def join_published(self):
-        self._logger.join()
+        self._get_logger().join()
 
     # ────────────────────────────────────────────────────────────────────
     # Broader context helper
