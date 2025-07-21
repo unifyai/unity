@@ -239,10 +239,9 @@ def launch_persistent(pw, headless: bool = False) -> BrowserContext:
         args=[
             "--disable-blink-features=AutomationControlled",
             "--disable-features=IsolateOrigins,site-per-process",
-            # "--use-fake-ui-for-media-stream",
-            # "--use-fake-device-for-media-stream",
+            "--use-fake-ui-for-media-stream",
         ],
-        # permissions=["microphone", "camera"],
+        permissions=["microphone", "camera"],
     )
     # ── mask navigator.webdriver in every new page ──────────────────
     ctx.add_init_script(

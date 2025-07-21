@@ -181,6 +181,12 @@ class CommsAgent:
                         self._inner_send_whatsapp,
                     ]
 
+            elif tool == "browser":
+                from unity.planner.hierarchical_planner import HierarchicalPlanner
+
+                planner = HierarchicalPlanner()
+                tools_list += [planner.execute]
+
         self.enabled_tools = methods_to_tool_dict(*tools_list)
 
     async def get_bus_events(self):
