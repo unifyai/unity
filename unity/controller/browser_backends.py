@@ -372,22 +372,32 @@ class MagnitudeBrowserBackend(BrowserBackend):
 
     def stop(self):
         """Stops the Node.js service subprocess."""
-        if self.process and self.process.poll() is None:
-            print(
-                f"🛑 Stopping Magnitude BrowserAgent service (PID: {self.process.pid})...",
-            )
-            if sys.platform != "win32":
-                import signal
+        with MagnitudeBrowserBackend._lock:
+            if (
+                MagnitudeBrowserBackend._process
+                and MagnitudeBrowserBackend._process.poll() is None
+            ):
+                print(
+                    f"🐍 PYTHON: Explicitly calling stop() on MagnitudeBrowserBackend. PID: {MagnitudeBrowserBackend._process.pid}",
+                )
+                print(
+                    f"🛑 Stopping Magnitude BrowserAgent service (PID: {MagnitudeBrowserBackend._process.pid})...",
+                )
+                if sys.platform != "win32":
+                    import signal
+
+                    try:
+                        os.killpg(
+                            os.getpgid(MagnitudeBrowserBackend._process.pid),
+                            signal.SIGTERM,
+                        )
+                    except ProcessLookupError:
+                        pass
+                else:
+                    MagnitudeBrowserBackend._process.terminate()
 
                 try:
-                    os.killpg(os.getpgid(self.process.pid), signal.SIGTERM)
-                except ProcessLookupError:
-                    pass
-            else:
-                self.process.terminate()
-
-            try:
-                self.process.wait(timeout=5)
-            except subprocess.TimeoutExpired:
+                    MagnitudeBrowserBackend._process.wait(timeout=5)
+                except subprocess.TimeoutExpired:
                 self.process.kill()
             self.process = None
