@@ -63,8 +63,14 @@ class Browser:
         Use this for high-level goals like "Log into my account" or "Find the latest blog post and summarize it."
         Returns a handle to the sub-agent that will execute the task.
         """
+        # This method currently only works with the legacy backend
+        if not isinstance(self.backend, LegacyBrowserBackend):
+            raise NotImplementedError(
+                "multi_step method is only supported with the legacy browser backend.",
+            )
+
         sub_planner = ToolLoopPlanner(
-            controller=self.controller,
+            controller=self.backend.controller,
         )
         active_task_handle = await sub_planner.execute(description)
         return active_task_handle
@@ -92,9 +98,3 @@ class Browser:
     def seed(self, state: Any):
         # TODO: Implement logic to reset the browser to a specific state
         print("Seeding browser state...")
-
-    def stop(self):
-        """Shuts down the underlying controller."""
-        if self.controller.is_alive():
-            self.controller.stop()
-            self.controller.join(timeout=5.0)
