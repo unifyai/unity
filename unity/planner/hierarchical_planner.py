@@ -14,8 +14,8 @@ import logging
 import sys
 import textwrap
 import traceback
-from typing import Any, Callable, Dict, List, Optional, Tuple
-
+from typing import Any, Callable, Dict, List, Optional, Tuple, Set
+import typing
 import pydantic
 import unify
 from pydantic import BaseModel, Field
@@ -1308,6 +1308,14 @@ class HierarchicalPlanner(BasePlanner):
             "pydantic": pydantic,
             "BaseModel": BaseModel,
             "Field": Field,
+            "typing": typing,
+            "Any": Any,
+            "Callable": Callable,
+            "Dict": Dict,
+            "List": List,
+            "Optional": Optional,
+            "Tuple": Tuple,
+            "Set": Set,
         }
 
     async def _prepare_execution_environment(self, plan: HierarchicalPlan):
