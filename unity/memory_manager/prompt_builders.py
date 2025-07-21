@@ -6,7 +6,7 @@ import inspect
 from datetime import datetime, timezone
 from typing import Callable, Dict, Optional
 
-from .rolling_activity import get_broader_context
+from .broader_context import get_broader_context
 
 
 # ── utils ───────────────────────────────────────────────────────────────

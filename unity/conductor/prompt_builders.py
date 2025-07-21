@@ -7,7 +7,7 @@ from typing import Dict, Callable
 
 from ..task_scheduler.types.task import Task
 from ..common.llm_helpers import SteerableToolHandle, class_api_overview
-from ..memory_manager.rolling_activity import get_broader_context
+from ..memory_manager.broader_context import get_broader_context
 from ..common.prompt_helpers import clarification_guidance
 
 # ───────────────────────────────────── helpers ─────────────────────────────────────
