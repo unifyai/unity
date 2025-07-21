@@ -187,8 +187,8 @@ def conductor_scenario(
         builder = ConductorScenarioBuilder()
         conductor, id_maps = builder.conductor, builder.id_maps
         # Manually populate id_maps by searching, since we didn't run create()
-        for name, contact_id in builder.cm._search_contacts(return_ids_only=False):
-            id_maps["contacts"][name] = contact_id
+        for contact in builder.cm._search_contacts():
+            id_maps["contacts"][contact.first_name] = contact.contact_id
         # ... similar logic for tasks if needed ...
 
     # Yield the fully configured Conductor and ID maps
