@@ -1,7 +1,10 @@
 import inspect
+import os
 import subprocess
+import sys
 import time
 import atexit
+import threading
 from abc import ABC, abstractmethod
 from typing import Any
 
@@ -10,7 +13,6 @@ import requests
 from pydantic import BaseModel
 
 from .controller import Controller
-from ..planner.hierarchical_planner import ReplanFromParentException
 
 
 class BrowserAgentError(Exception):
@@ -47,8 +49,8 @@ class LegacyBrowserBackend(BrowserBackend):
     An implementation that uses the original, Controller-based browser stack.
     """
 
-    def __init__(self, **kwargs):
-        self.controller = Controller(**kwargs)
+    def __init__(self, controller_mode: str = "hybrid", **kwargs):
+        self.controller = Controller(mode=controller_mode, **kwargs)
         if not self.controller.is_alive():
             self.controller.start()
 
@@ -132,42 +134,120 @@ class MagnitudeBrowserBackend(BrowserBackend):
     ):
         self.agent_base_url = agent_server_url
         self.process = None
+        self._detected_port = None
 
-        service_path = "../agent-service"
-        command = ["npx", "ts-node", f"{service_path}/src/index.ts"]
+        current_dir = os.path.dirname(os.path.abspath(__file__))
+        service_path = os.path.abspath(
+            os.path.join(current_dir, "..", "..", "agent-service"),
+        )
+        script_path = os.path.join(service_path, "src", "index.ts")
+
+        if not os.path.exists(script_path):
+            raise FileNotFoundError(
+                f"Could not find agent service script at expected path: {script_path}",
+            )
+
+        command = ["npx", "ts-node", script_path]
         if headless:
             command.append("--headless")
+
+        env = os.environ.copy()
 
         self.process = subprocess.Popen(
             command,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             text=True,
+            cwd=service_path,
+            env=env,
+            preexec_fn=os.setsid if sys.platform != "win32" else None,
         )
+
         print(
             f"🚀 Starting Magnitude BrowserAgent service (PID: {self.process.pid})...",
         )
 
+        self._start_output_readers()
         atexit.register(self.stop)
-
         self._wait_for_service()
+
+    def _start_output_readers(self):
+        """Start threads to read stdout/stderr to prevent buffer blocking."""
+
+        def read_output(pipe, prefix):
+            for line in iter(pipe.readline, ""):
+                if line:
+                    print(f"[{prefix}] {line.strip()}")
+                    if "listening on http://localhost:" in line:
+                        import re
+
+                        match = re.search(r"http://localhost:(\d+)", line)
+                        if match:
+                            self._detected_port = match.group(1)
+                            self.agent_base_url = (
+                                f"http://localhost:{self._detected_port}"
+                            )
+                            print(
+                                f"✨ Detected service running on port {self._detected_port}",
+                            )
+            pipe.close()
+
+        stdout_thread = threading.Thread(
+            target=read_output,
+            args=(self.process.stdout, "Magnitude"),
+            daemon=True,
+        )
+        stderr_thread = threading.Thread(
+            target=read_output,
+            args=(self.process.stderr, "Magnitude-ERR"),
+            daemon=True,
+        )
+        stdout_thread.start()
+        stderr_thread.start()
 
     def _wait_for_service(self, timeout: int = 30):
         """Pings the /health endpoint until the service is ready or timeout."""
         start_time = time.time()
+        last_error = None
+
+        time.sleep(2)
+
+        while self._detected_port is None and time.time() - start_time < 5:
+            time.sleep(0.5)
+
         while time.time() - start_time < timeout:
             try:
-                response = requests.get(f"{self.agent_base_url}/health")
+                response = requests.get(f"{self.agent_base_url}/health", timeout=5)
                 if response.status_code == 200:
                     print("✅ Magnitude service is healthy and ready.")
                     return
-            except requests.exceptions.ConnectionError:
+                elif response.status_code == 503:
+                    print("⏳ Service is initializing...")
+                    time.sleep(1)
+                    continue
+            except requests.exceptions.ConnectionError as e:
+                last_error = str(e)
+                time.sleep(1)
+            except Exception as e:
+                last_error = str(e)
+                print(f"Health check error: {e}")
                 time.sleep(1)
 
-        stderr_output = self.process.stderr.read() if self.process.stderr else "N/A"
-        raise RuntimeError(
-            f"Magnitude service failed to start within {timeout} seconds. Error: {stderr_output}",
-        )
+        if self.process.poll() is not None:
+            error_message = (
+                f"Magnitude service process terminated with code {self.process.poll()}.\n"
+                f"Last error: {last_error}\n"
+            )
+        else:
+            error_message = (
+                f"Magnitude service failed to become healthy within {timeout} seconds.\n"
+                f"Process is still running but not responding.\n"
+                f"Last error: {last_error}\n"
+                f"Detected port: {self._detected_port}\n"
+                f"Using URL: {self.agent_base_url}\n"
+            )
+
+        raise RuntimeError(error_message)
 
     async def _request(
         self,
@@ -180,6 +260,10 @@ class MagnitudeBrowserBackend(BrowserBackend):
             async with session.request(method, url, json=payload, timeout=300) as resp:
                 if resp.status >= 400:
                     try:
+                        from ..planner.hierarchical_planner import (
+                            ReplanFromParentException,
+                        )
+
                         error_data = await resp.json()
                         error_type = error_data.get("error", "unknown_http_error")
                         message = error_data.get("message", "No error message.")
@@ -230,6 +314,18 @@ class MagnitudeBrowserBackend(BrowserBackend):
             print(
                 f"🛑 Stopping Magnitude BrowserAgent service (PID: {self.process.pid})...",
             )
-            self.process.terminate()
-            self.process.wait(timeout=5)
+            if sys.platform != "win32":
+                import signal
+
+                try:
+                    os.killpg(os.getpgid(self.process.pid), signal.SIGTERM)
+                except ProcessLookupError:
+                    pass
+            else:
+                self.process.terminate()
+
+            try:
+                self.process.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                self.process.kill()
             self.process = None
