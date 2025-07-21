@@ -34,6 +34,7 @@ from unity.planner.action_provider import ActionProvider
 import unity.planner.prompt_builders as prompt_builders
 
 from unity.controller.controller import InvalidActionError
+from unity.controller.browser_backends import BrowserAgentError
 
 logger = logging.getLogger(__name__)
 
@@ -1118,6 +1119,7 @@ class HierarchicalPlanner(BasePlanner):
         max_escalations: Optional[int] = None,
         max_local_retries: Optional[int] = None,
         timeout: Optional[int] = 300,
+        browser_mode: str = "magnitude",
     ):
         """
         Initializes the HierarchicalPlanner.
@@ -1130,12 +1132,14 @@ class HierarchicalPlanner(BasePlanner):
             max_escalations: Default max number of strategic replans for plans.
             max_local_retries: Default max number of tactical retries for plans.
             timeout: Default timeout for plan execution.
+            browser_mode: The browser mode to use. Can be "legacy" or "magnitude".
         """
         super().__init__()
         self.function_manager = function_manager or FunctionManager()
         self.action_provider = ActionProvider(
             session_connect_url=session_connect_url,
             headless=headless,
+            browser_mode=browser_mode,
         )
         self.tools = {
             name: attr
@@ -1442,7 +1446,7 @@ class HierarchicalPlanner(BasePlanner):
                             FatalVerificationError,
                         ):
                             raise
-                        except Exception as e:
+                        except (BrowserAgentError, Exception) as e:
                             logger.error(
                                 f"Function '{func_name}' failed: {e}",
                                 exc_info=True,
@@ -1463,6 +1467,7 @@ class HierarchicalPlanner(BasePlanner):
                     raise ReplanFromParentException(
                         f"Function '{func_name}' failed after multiple retries.",
                         reason=last_error_traceback,
+                        # TODO: failed_interaction ?
                     )
                 finally:
                     if plan.call_stack:
@@ -1512,7 +1517,7 @@ class HierarchicalPlanner(BasePlanner):
         )
         final_screenshot = None
         if "action_provider.browser" in plan.plan_source_code:
-            final_screenshot = self.action_provider.browser.controller._last_shot
+            final_screenshot = await self.action_provider.browser.get_screenshot()
         assessment = await self._check_state_against_goal(
             plan,
             fn.__name__,
@@ -1706,7 +1711,7 @@ class HierarchicalPlanner(BasePlanner):
                 "Analyze the current page and provide a structured summary of its content.",
                 response_format=PageAnalysis,
             )
-            browser_screenshot = self.action_provider.browser.controller._last_shot
+            browser_screenshot = await self.action_provider.browser.get_screenshot()
         else:
             browser_state = None
             browser_screenshot = None
