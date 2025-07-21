@@ -692,13 +692,13 @@ class CommsAgent:
                 else:
                     retry_count += 1
                     print(
-                        f"Redis not ready yet, retrying... ({retry_count}/{max_retries})"
+                        f"Redis not ready yet, retrying... ({retry_count}/{max_retries})",
                     )
                     await asyncio.sleep(2)
             except Exception as e:
                 retry_count += 1
                 print(
-                    f"Redis connection attempt {retry_count}/{max_retries} failed: {e}"
+                    f"Redis connection attempt {retry_count}/{max_retries} failed: {e}",
                 )
                 await asyncio.sleep(2)
 
