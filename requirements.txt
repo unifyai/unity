@@ -37,3 +37,4 @@ soundfile
 numpy
 opencv-python
 pygobject==3.50.0
+viztracer>=1.0.4
