@@ -9,39 +9,46 @@ const args = process.argv.slice(2);
 const isHeadless = args.includes('--headless');
 
 // --- JSON Schema to Zod Conversion Utility ---
-function jsonSchemaToZod(schema: any): ZodTypeAny {
-  switch (schema.type) {
-    case 'string':
-      if (schema.enum) {
-        return z.enum(schema.enum);
-      }
-      return z.string();
-    case 'number':
-      return z.number();
-    case 'integer':
-      return z.number().int();
-    case 'boolean':
-      return z.boolean();
-    case 'null':
-      return z.null();
-    case 'array':
-      if (!schema.items) {
-        throw new Error('Array schema must have an "items" property.');
-      }
-      return z.array(jsonSchemaToZod(schema.items));
-    case 'object':
+function jsonSchemaToZod(schema: any, definitions: any = {}): ZodTypeAny {
+  if (schema.$ref) {
+    const refPath = schema.$ref.split('/');
+    const defName = refPath.pop();
+    const resolvedSchema = definitions[defName];
+    if (!resolvedSchema) {
+      throw new Error(`Could not resolve schema reference: ${schema.$ref}`);
+    }
+    return jsonSchemaToZod(resolvedSchema, definitions);
+  }
+
+  const typeMap: { [key: string]: () => ZodTypeAny } = {
+    string: () => (schema.enum ? z.enum(schema.enum) : z.string()),
+    number: () => z.number(),
+    integer: () => z.number().int(),
+    boolean: () => z.boolean(),
+    null: () => z.null(),
+    array: () => {
+      if (!schema.items) throw new Error('Array schema must have "items".');
+      return z.array(jsonSchemaToZod(schema.items, definitions));
+    },
+    object: () => {
       const shape: { [key: string]: ZodTypeAny } = {};
       if (schema.properties) {
         for (const key in schema.properties) {
-          const propSchema = jsonSchemaToZod(schema.properties[key]);
+          const propSchema = jsonSchemaToZod(schema.properties[key], definitions);
           const isRequired = schema.required?.includes(key);
           shape[key] = isRequired ? propSchema : propSchema.optional();
         }
       }
       return z.object(shape);
-    default:
-      throw new Error(`Unsupported schema type: ${schema.type}`);
+    },
+  };
+
+  const zodTypeBuilder = typeMap[schema.type];
+  if (zodTypeBuilder) {
+    return zodTypeBuilder();
   }
+
+  throw new Error(`Unsupported schema type: ${schema.type}`);
 }
 
 const app = express();
@@ -82,13 +89,6 @@ const isAgentReady = (req: Request, res: Response, next: Function) => {
 
 // --- API Endpoints ---
 
-app.get('/health', (_req, res) => {
-  if (browserAgent) {
-    res.status(200).json({ status: 'ready' });
-  } else {
-    res.status(503).json({ status: 'initializing' });
-  }
-});
 
 app.post('/nav', isAgentReady, async (req: Request, res: Response) => {
   const { url } = req.body;
@@ -118,7 +118,8 @@ app.post('/extract', isAgentReady, async (req: Request, res: Response) => {
     return res.status(400).json({ error: 'bad_request', message: 'Extraction instructions are required.' });
   }
   try {
-    const zodSchema = schema ? jsonSchemaToZod(schema) : z.string();
+    const zodSchema = schema ? jsonSchemaToZod(schema, schema.$defs || {}) : z.string();
+
     const data = await browserAgent!.extract(instructions, zodSchema);
     res.json({ data });
   } catch (err) {
