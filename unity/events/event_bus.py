@@ -1050,24 +1050,23 @@ class EventBus:
     def join_callbacks(
         self,
         *,
-        cascade: bool = False,
+        cascade: bool = True,
     ) -> None:  # noqa: D401 – imperative name
         """Block until callback tasks have finished.
 
         Parameters
         ----------
         cascade : bool, default False
-            If *False* (default) the behaviour is identical to the historic
-            implementation: only tasks that were already pending at the time
+            If *False* only tasks that were already pending at the time
             of invocation are awaited – tasks spawned later are ignored.
 
-            If *True* the method also waits for **all** tasks that share the
-            *root sequence* of those initial callbacks, i.e. any descendants
-            spawned *indirectly* by them.  Unrelated new activity triggered
-            by fresh, external events (and thus carrying a higher root-seq)
-            is **not** awaited, preventing deadlocks under high throughput
-            while still guaranteeing that entire cascades (e.g. the rolling
-            summary hierarchy) have settled before returning."""
+            If *True* (default) the method also waits for **all** tasks that
+            share the *root sequence* of those initial callbacks, i.e. any
+            descendants spawned *indirectly* by them.  Unrelated new activity
+            triggered by fresh, external events (and thus carrying a higher
+            root-seq) is **not** awaited, preventing deadlocks under high
+            throughput while still guaranteeing that entire cascades (e.g. the
+            rolling summary hierarchy) have settled before returning."""
 
         async def _helper():  # inner coroutine – former implementation
             # Snapshot the highest sequence number currently assigned so that
