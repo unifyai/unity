@@ -533,18 +533,19 @@ def build_verification_prompt(
 
         ---
         ### Assessment Task
-        Based on the function's purpose and the execution log, provide your assessment as a single JSON object.
+        Based on the function's purpose and the execution log, provide your assessment.
         - **Be pragmatic:** If the function's purpose is to gather data (like search results), and the log shows that the data was successfully retrieved, this should be considered a success (`ok`). The function does not need to perform extra analysis unless explicitly asked.
-        **Compare the Result to the Goal**: Do not just check if the function *did something*. Check if the *outcome* of the function satisfies the requirements of the overall goal.
+        - **Compare the Result to the Goal**: Do not just check if the function *did something*. Check if the *outcome* of the function satisfies the requirements of the overall goal.
 
-        **Response Schema:**
-        `{{"status": "...", "reason": "..."}}`
-
-        **Valid Statuses:**
+        **Valid Status Values:**
         - `ok`: The function's purpose was fully and correctly achieved.
         - `reimplement_local`: A tactical error occurred. The goal is correct, but the actions were wrong. The function needs to be re-written.
         - `replan_parent`: A strategic error occurred. The function itself is flawed or was called at the wrong time. The parent function needs to be replanned.
         - `fatal_error`: An unrecoverable error occurred that prevents any further progress.
+
+        **Your Response:**
+        - status: Choose one of the valid status values above
+        - reason: Provide a clear, concise explanation for your assessment
         """,
     )
 

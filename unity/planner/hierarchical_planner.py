@@ -1823,21 +1823,28 @@ class HierarchicalPlanner(BasePlanner):
             interactions=interactions,
             has_browser_screenshot=screenshot is not None,
         )
-        response_str = await llm_call(
-            self.verification_client,
-            prompt,
-            screenshot=screenshot,
-        )
+
+        self.verification_client.set_response_format(VerificationAssessment)
+
         try:
-            clean_response = (
-                response_str.strip().replace("```json", "").replace("```", "")
+            response_str = await llm_call(
+                self.verification_client,
+                prompt,
+                screenshot=screenshot,
             )
-            return VerificationAssessment(**json.loads(clean_response))
-        except (json.JSONDecodeError, TypeError):
+            assessment = VerificationAssessment.model_validate_json(response_str)
+            return assessment
+        except Exception as e:
+            logger.error(
+                f"Failed to parse verification assessment: {e}. Raw response: {response_str if 'response_str' in locals() else 'N/A'}",
+                exc_info=True,
+            )
             return VerificationAssessment(
                 status="fatal_error",
-                reason="LLM provided malformed JSON assessment.",
+                reason=f"LLM provided malformed assessment: {str(e)}",
             )
+        finally:
+            self.verification_client.reset_response_format()
 
     async def _perform_plan_surgery(self, current_code: str, request: str) -> str:
         """
