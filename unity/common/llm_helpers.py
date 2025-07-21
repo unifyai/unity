@@ -750,7 +750,7 @@ async def _async_tool_use_loop_inner(
 
         start_len = len(patched)
 
-        client.messages = patched
+        client._messages = patched
         try:
             result = await _maybe_await(client.generate(**gen_kwargs))
 
@@ -760,7 +760,7 @@ async def _async_tool_use_loop_inner(
 
             return result
         finally:
-            client.messages = original_msgs  # restore canonical history
+            client._messages = original_msgs  # restore canonical history
 
     # ── small helper: add completion tool message pair ──────────────
     async def _emit_completion_pair(result: str, call_id: str) -> dict:
