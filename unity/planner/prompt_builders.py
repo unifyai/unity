@@ -63,13 +63,13 @@ def _build_rules_and_examples_prompt(
         """\n
         ---
         ### Strategic Principles for Web Automation
-        To create a robust plan, always consider these heuristics:
-        1.  **Observe Before You Act**: Before attempting to click or type, use `browser_observe` to confirm the element is present and to get its precise text or description. You cannot act on what you cannot see.
-        2.  **The Scroll Heuristic**: If an element is not immediately visible, it may be off-screen. The most common reason for this is needing to scroll. Your plan should include steps to scroll down the page to find elements.
-        3.  **Specificity is Key**: When using `browser_act`, be as specific as possible. Instead of "click the button," prefer "click the 'Sign In' button with a blue background."
+        To create a robust and efficient plan, follow these core principles:
+        1.  **Trust the Agent's Autonomy**: The `browser_act` tool is autonomous. Give it high-level goals. Instead of writing separate steps for "click username field", "type username", "click password field", "type password", and "click login", you should create a single step: `await action_provider.browser_act("Log in with username 'test' and password 'pass123'")`. The agent will handle the intermediate steps.
+        2.  **Combine Action and Verification**: Use the `expectation` parameter in `browser_act` to tell the agent what success looks like. This is more efficient than a separate `browser_observe` call. For example: `await action_provider.browser_act("Click the 'Add to Cart' button", expectation="The cart icon should show '1' item")`.
+        3.  **Use `browser_observe` for Complex Data**: When you need to extract structured data (like a list of products, table contents, or form fields), use `browser_observe` with a Pydantic `response_format`. This is the best way to gather context before acting on complex pages.
+        4.  **Describe Visually**: All browser tools operate on what is *visible*. Describe elements by their text, color, or relative position (e.g., "the blue 'Save' button at the bottom of the form"), not by HTML attributes.
         ---
-
-    """,
+        """,
     )
     if is_dynamic_implement:
         instructions_and_rules = textwrap.dedent(
@@ -79,7 +79,7 @@ def _build_rules_and_examples_prompt(
             3.  **Decorators & Docstrings:** Every **function** you define MUST include docstrings which include the function's purpose, its arguments, and its return value.
             4.  **Async All The Way**: All helper functions you define MUST be `async def`.
             5.  **Await Keyword**: All `action_provider` methods that are asynchronous MUST be called with the `await` keyword.
-            6.  **Structured Output**: For `observe` or `reason` calls that expect a structured answer (e.g., yes/no, a list of items), you MUST define a Pydantic `BaseModel` and pass it to the `response_format` argument to ensure reliable, parsable output.
+            6.  **Structured Output**: For `observe` or `reason` calls that expect a structured answer (e.g., yes/no, a list of items), you MUST define a Pydantic `BaseModel` and pass it to the `response_format` argument to ensure reliable, parsable output. **CRITICAL: Always define Pydantic models INSIDE the function where they are used, NOT at the module level, to avoid forward reference issues.**
             7.  **Robust Error Handling**: Proactively use `try...except` blocks to handle potential **unexpected** failures (e.g., an element not being found) with informative error messages. However, **DO NOT** wrap calls to stubbed functions in a `try...except` block. Let `NotImplementedError` propagate.
             """,
         )
@@ -94,7 +94,7 @@ def _build_rules_and_examples_prompt(
             6.  **Decorators & Docstrings:** Every **function** you define MUST include docstrings which include the function's purpose, its arguments, and its return value.
             7.  **Async All The Way**: All helper functions you define MUST be `async def`.
             8.  **Await Keyword**: All `action_provider` methods that are asynchronous MUST be called with the `await` keyword.
-            9.  **Structured Output**: For `observe` or `reason` calls that expect a structured answer (e.g., yes/no, a list of items), you MUST define a Pydantic `BaseModel` and pass it to the `response_format` argument to ensure reliable, parsable output.
+            9.  **Structured Output**: For `observe` or `reason` calls that expect a structured answer (e.g., yes/no, a list of items), you MUST define a Pydantic `BaseModel` and pass it to the `response_format` argument to ensure reliable, parsable output. **CRITICAL: Always define Pydantic models INSIDE the function where they are used, NOT at the module level, to avoid forward reference issues.**
             10.  **Robust Error Handling**: Proactively use `try...except` blocks to handle potential **unexpected** failures (e.g., an element not being found) with informative error messages. However, **DO NOT** wrap calls to stubbed functions in a `try...except` block. Let `NotImplementedError` propagate.
             """,
         )
@@ -179,7 +179,7 @@ def _build_rules_and_examples_prompt(
         @verify
         async def check_unify_blog():
             # The browser object can be used directly from the action_provider
-            await action_provider.browser_act("Navigate to unify.ai")
+            await action_provider.browser_navigate("https://unify.ai")
             await action_provider.browser_act("Click the 'Blog' link in the main navigation")
             blog_title = await action_provider.browser_observe("What is the title of the first blog post?")
             return blog_title
@@ -192,7 +192,7 @@ def _build_rules_and_examples_prompt(
         @verify
         async def login_to_portal():
             # This part is simple and can be implemented directly.
-            await action_provider.browser_act("Navigate to [https://portal.example.com/login](https://portal.example.com/login)")
+            await action_provider.browser_navigate("https://portal.example.com/login")
             await action_provider.browser_act("Enter 'user@example.com' into the email field")
             await action_provider.browser_act("Click the 'Next' button")
 
@@ -450,11 +450,13 @@ def build_dynamic_implement_prompt(
 
     return textwrap.dedent(
         f"""
-        You are an expert Python programmer. Your task is to **only**write the implementation for the function `{function_name}` and nothing else.
+        You are an expert Python programmer. Your task is to **only** write the implementation for the function `{function_name}` and nothing else.
 
         **CRITICAL RULES:**
         1.  Your response MUST contain ONLY the Python code for the function `{function_name}`.
         2.  **START FROM THE CURRENT STATE**: You are implementing a single step in a larger plan. Analyze the `Current Browser State` and provided screenshot carefully. Your code **MUST NOT** repeat steps that have already been completed. Your logic must begin from the state shown.
+        3.  **SELF-CONTAINED**: Your function must be completely self-contained. Do NOT reference any variables, classes, or functions that are defined outside of this function (except for built-ins and `action_provider`). If you need Pydantic models, define them INSIDE this function.
+        4.  **NO IMPORTS**: Do not use import statements. Do not try to import from fictional modules.
 
         **Your Task:** Implement the function `{function_name}` to achieve the following purpose.
         **Function's Purpose:** "{function_docstring}"
