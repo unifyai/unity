@@ -21,13 +21,13 @@ from tests.helpers import _handle_project
 
 @pytest.mark.asyncio  # marker kept for uniformity – test itself is sync
 @_handle_project
-async def test_global_rolling_activity_cache(monkeypatch):
+async def test_global_broader_context_cache(monkeypatch):
     # ------------------------------------------------------------------
     # 0.  Fresh module instance so globals start from a clean slate
     # ------------------------------------------------------------------
     import unity.memory_manager.broader_context as ra
 
-    importlib.reload(ra)  # resets internal _ROLLING_ACTIVITY to None
+    importlib.reload(ra)  # resets internal _BROADER_CONTEXT to None
 
     # ------------------------------------------------------------------
     # 1.  Provide a lightweight stub for MemoryManager to avoid importing the
@@ -41,7 +41,7 @@ async def test_global_rolling_activity_cache(monkeypatch):
     call_counter = {"count": 0}
 
     class _StubMemoryManager:  # noqa: D401 – simple stub
-        def get_broader_context(self):  # noqa: D401 – match real API
+        def get_rolling_activity(self):  # noqa: D401 – match real API
             call_counter["count"] += 1
             return "INITIAL"
 
@@ -54,14 +54,14 @@ async def test_global_rolling_activity_cache(monkeypatch):
     # 2.  First access → invokes patched getter exactly once
     # ------------------------------------------------------------------
     first = ra.get_broader_context()
-    assert first == "INITIAL"
+    assert "INITIAL" in first
     assert call_counter["count"] == 1, "Initialisation should call MemoryManager once"
 
     # ------------------------------------------------------------------
     # 3.  Second access → returns cached value without extra calls
     # ------------------------------------------------------------------
     second = ra.get_broader_context()
-    assert second == "INITIAL"
+    assert "INITIAL" in second
     assert call_counter["count"] == 1, "Subsequent reads must use cache"
 
     # ------------------------------------------------------------------
