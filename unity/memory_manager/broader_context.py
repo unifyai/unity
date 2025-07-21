@@ -62,13 +62,13 @@ def get_broader_context() -> str:  # noqa: D401 – imperative helper name
         assert assist
         a = assist[0]
         assistant_name = " ".join(p for p in [a.first_name, a.surname] if p).strip()
-        assistant_bio = a.bio
+        assistant_bio = a.bio if a.bio else ""
 
         # user -----------------------------------------------------
         user = cm._search_contacts(filter="contact_id == 1", limit=1)
         u = user[0]
         user_name = " ".join(p for p in [u.first_name, u.surname] if p).strip()
-        user_bio = u.bio
+        user_bio = u.bio if u.bio else ""
 
         # ------------------------------------------------------------------
         # 2.  Retrieve recent activity (may be empty) -----------------------
