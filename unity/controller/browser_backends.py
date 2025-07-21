@@ -40,6 +40,10 @@ class BrowserBackend(ABC):
         """Get a base64 encoded screenshot of the current page."""
 
     @abstractmethod
+    async def navigate(self, url: str) -> str:
+        """Navigate the browser to a specific URL."""
+
+    @abstractmethod
     def stop(self):
         """Cleanly shut down the backend."""
 
@@ -120,6 +124,12 @@ class LegacyBrowserBackend(BrowserBackend):
 
     async def get_screenshot(self) -> str:
         return self.controller._last_shot
+
+    async def navigate(self, url: str) -> str:
+        return await self.controller.act(
+            f"Navigate to {url}",
+            expectation=f"The browser is on the page with URL '{url}'",
+        )
 
     def stop(self):
         self.controller.stop()
@@ -341,6 +351,24 @@ class MagnitudeBrowserBackend(BrowserBackend):
     async def get_screenshot(self) -> str:
         response = await self._request("GET", "/screenshot")
         return response.get("screenshot")
+
+    async def navigate(self, url: str) -> str:
+        """Navigates the browser using the dedicated /nav endpoint."""
+        print(f"🐍 PYTHON: Navigating to URL: {url}")
+
+        max_retries = 3
+        for attempt in range(max_retries):
+            try:
+                response = await self._request("POST", "/nav", {"url": url})
+                return response.get("status", "success")
+            except BrowserAgentError as e:
+                if "Target page" in str(e) and attempt < max_retries - 1:
+                    print(
+                        f"⚠️ Navigation failed due to closed page, retrying (attempt {attempt + 1}/{max_retries})...",
+                    )
+                    await asyncio.sleep(2)
+                    continue
+                raise
 
     def stop(self):
         """Stops the Node.js service subprocess."""
