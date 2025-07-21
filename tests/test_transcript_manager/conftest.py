@@ -10,7 +10,7 @@ from datetime import timedelta
 from typing import List, Dict, Any
 import pytest
 import os
-import asyncio
+import pytest_asyncio
 import unify
 from unity.contact_manager.contact_manager import ContactManager
 from unity.transcript_manager.transcript_manager import TranscriptManager
@@ -261,21 +261,10 @@ class ScenarioBuilder:
 
 
 # --------------------------------------------------------------------------- #
-#  AsyncIO event loop (session-scoped)
-# --------------------------------------------------------------------------- #
-@pytest.fixture(scope="session")
-def event_loop():
-    """A dedicated loop for the whole session – avoids 'event loop is closed'."""
-    loop = asyncio.get_event_loop_policy().new_event_loop()
-    yield loop
-    loop.close()
-
-
-# --------------------------------------------------------------------------- #
 #  VERSIONED SCENARIO FIXTURE
 # --------------------------------------------------------------------------- #
-@pytest.fixture(scope="session")
-def tm_scenario(event_loop: asyncio.AbstractEventLoop, request: pytest.FixtureRequest):
+@pytest_asyncio.fixture(scope="session")
+async def tm_scenario(request: pytest.FixtureRequest):
     """
     Create (and later clean up) a versioned context so that *all* tests share the
     same seeded data.
@@ -324,7 +313,7 @@ def tm_scenario(event_loop: asyncio.AbstractEventLoop, request: pytest.FixtureRe
     # --- One-time setup (per session) ---
     if not SCENARIO_COMMIT_HASHES:
         print("Seeding transcript manager scenario...")
-        event_loop.run_until_complete(sb.create())
+        await sb.create()
 
         def commit_context_and_store(ctx):
             commit_info = unify.commit_context(

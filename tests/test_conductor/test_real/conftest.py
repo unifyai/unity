@@ -1,7 +1,6 @@
 # tests/test_conductor/test_real/conftest.py
 from __future__ import annotations
 
-import asyncio
 import os
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, Tuple, Generator
@@ -138,14 +137,6 @@ class ConductorScenarioBuilder:
             table="CompanyInfo",
             rows=[{"company_name": "GlobalCorp", "hq_location": "London"}],
         )
-
-
-@pytest.fixture(scope="session")
-def event_loop():
-    """A dedicated loop for the whole session to avoid 'event loop is closed'."""
-    loop = asyncio.get_event_loop_policy().new_event_loop()
-    yield loop
-    loop.close()
 
 
 @pytest.fixture(scope="session")
