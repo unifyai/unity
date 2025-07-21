@@ -22,7 +22,7 @@ from .prompt_builders import (
 )
 from .base import BaseMemoryManager
 from ..events.event_bus import EVENT_BUS, Event
-from .rolling_activity import set_broader_context
+from .broader_context import set_broader_context
 
 
 class MemoryManager(BaseMemoryManager):
@@ -1052,7 +1052,7 @@ class MemoryManager(BaseMemoryManager):
     # ------------------------------------------------------------------ #
     # 5  get_broader_context                                            #
     # ------------------------------------------------------------------ #
-    def get_broader_context(self, mode: str = "time") -> str:
+    def get_rolling_activity(self, mode: str = "time") -> str:
         """
         Return the **latest** Rolling-Activity snapshot as a human-readable
         Markdown string.

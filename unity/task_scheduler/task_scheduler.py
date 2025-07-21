@@ -1656,7 +1656,7 @@ class TaskScheduler(BaseTaskScheduler):
         patched = copy.deepcopy(msgs)
 
         try:
-            broader_ctx = MemoryManager().get_broader_context()
+            broader_ctx = MemoryManager().get_rolling_activity()
         except Exception:
             broader_ctx = ""
 

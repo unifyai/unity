@@ -49,7 +49,7 @@ async def test_get_broader_context_empty(monkeypatch):
     mm = MemoryManager()
 
     assert (
-        mm.get_broader_context() == ""
+        mm.get_rolling_activity() == ""
     ), "Expected empty string when no activity logged"
 
 
@@ -443,7 +443,7 @@ async def _run_manager_case(
     EVENT_BUS.join_callbacks(cascade=True)
 
     # Build summary (interaction mode) – should be non-empty
-    summary = mm.get_broader_context(mode="interaction")
+    summary = mm.get_rolling_activity(mode="interaction")
     assert (
         summary.strip()
     ), f"Expected non-empty summary for {case_id} after {n_calls} call(s)"
@@ -529,7 +529,7 @@ async def _run_manager_case(
             if n_calls >= thresh:
                 active_time.append(w)
 
-    time_summary = mm.get_broader_context(mode="time")
+    time_summary = mm.get_rolling_activity(mode="time")
     expected_time_headings = {expected_title} | {
         f"## {_pretty(w)}" for w in active_time
     }
@@ -796,7 +796,7 @@ async def _assert_time_based_headings_for_manager(
     EVENT_BUS.join_callbacks(cascade=True)
 
     # Retrieve the *time-based* rolling activity summary --------------------
-    summary = mm.get_broader_context(mode="time")
+    summary = mm.get_rolling_activity(mode="time")
 
     # Determine which windows should have triggered given total_days
     triggered_windows = [
@@ -942,7 +942,7 @@ async def test_contact_manager_summary_contains_expected_companies(monkeypatch):
     # ------------------------------------------------------------------
     #  3.  Fetch the interaction-based rolling activity summary
     # ------------------------------------------------------------------
-    summary = mm.get_broader_context(mode="interaction")
+    summary = mm.get_rolling_activity(mode="interaction")
 
     # Helper: extract the line immediately following a given heading -----
     import re
@@ -1069,7 +1069,7 @@ async def test_multiple_manager_methods_populate_rolling_activity(monkeypatch):
     # 3.  Choose summary mode *deterministically* from RNG and fetch text
     # ------------------------------------------------------------------
     mode = rng.choice(["interaction", "time"])
-    summary = mm.get_broader_context(mode=mode)
+    summary = mm.get_rolling_activity(mode=mode)
 
     assert summary.strip(), "Expected non-empty rolling activity summary"
 

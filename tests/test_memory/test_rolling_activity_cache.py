@@ -25,7 +25,7 @@ async def test_global_rolling_activity_cache(monkeypatch):
     # ------------------------------------------------------------------
     # 0.  Fresh module instance so globals start from a clean slate
     # ------------------------------------------------------------------
-    import unity.memory_manager.rolling_activity as ra
+    import unity.memory_manager.broader_context as ra
 
     importlib.reload(ra)  # resets internal _ROLLING_ACTIVITY to None
 

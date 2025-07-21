@@ -7,7 +7,7 @@ from datetime import datetime, timezone
 from typing import Callable, Dict
 
 from .types import column_type_schema
-from ..memory_manager.rolling_activity import get_broader_context
+from ..memory_manager.broader_context import get_broader_context
 from ..common.prompt_helpers import clarification_guidance
 
 # ────────────────────────────────────────────────────────────────────────────

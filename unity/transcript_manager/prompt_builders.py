@@ -19,7 +19,7 @@ from typing import Callable, Dict
 # Schemas used in the prompt -------------------------------------------------
 from ..contact_manager.types.contact import Contact
 from .types.message import Message
-from ..memory_manager.rolling_activity import get_broader_context
+from ..memory_manager.broader_context import get_broader_context
 from ..common.prompt_helpers import clarification_guidance
 
 # ─────────────────────────────────────────────────────────────────────────────

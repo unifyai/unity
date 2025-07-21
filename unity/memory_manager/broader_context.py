@@ -49,6 +49,9 @@ def get_broader_context() -> str:  # noqa: D401 – imperative helper name
         from unity.contact_manager.contact_manager import (
             ContactManager,
         )  # noqa: WPS433  – runtime import
+        from unity.memory_manager.memory_manager import (
+            MemoryManager,
+        )  # noqa: WPS433  – runtime import
 
         # ------------------------------------------------------------------
         # 1.  Gather assistant & user bios (robust to missing data) ---------
@@ -69,7 +72,7 @@ def get_broader_context() -> str:  # noqa: D401 – imperative helper name
 
         # ------------------------------------------------------------------
         # 2.  Retrieve recent activity (may be empty) -----------------------
-        recent_activity = get_broader_context()
+        recent_activity = MemoryManager().get_rolling_activity()
 
         # ------------------------------------------------------------------
         # 3.  Build Markdown snippet ---------------------------------------
