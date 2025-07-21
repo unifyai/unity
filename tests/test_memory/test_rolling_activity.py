@@ -438,9 +438,9 @@ async def _run_manager_case(
         await handle.result()
 
     # Flush events & *all* callbacks, including nested cascades triggered by
-    # lower-level summaries, using the new `cascade=True` flag.
+    # lower-level summaries
     EVENT_BUS.join_published()
-    EVENT_BUS.join_callbacks(cascade=True)
+    EVENT_BUS.join_callbacks()
 
     # Build summary (interaction mode) – should be non-empty
     summary = mm.get_rolling_activity(mode="interaction")
@@ -793,7 +793,7 @@ async def _assert_time_based_headings_for_manager(
 
     # Flush logger & wait for all cascading callbacks -----------------------
     EVENT_BUS.join_published()
-    EVENT_BUS.join_callbacks(cascade=True)
+    EVENT_BUS.join_callbacks()
 
     # Retrieve the *time-based* rolling activity summary --------------------
     summary = mm.get_rolling_activity(mode="time")
@@ -937,7 +937,7 @@ async def test_contact_manager_summary_contains_expected_companies(monkeypatch):
 
     # Flush uploads & wait for the entire callback cascade ----------------
     EVENT_BUS.join_published()
-    EVENT_BUS.join_callbacks(cascade=True)
+    EVENT_BUS.join_callbacks()
 
     # ------------------------------------------------------------------
     #  3.  Fetch the interaction-based rolling activity summary
@@ -1063,7 +1063,7 @@ async def test_multiple_manager_methods_populate_rolling_activity(monkeypatch):
 
     # Flush uploads & wait for entire callback cascade ------------------
     EVENT_BUS.join_published()
-    EVENT_BUS.join_callbacks(cascade=True)
+    EVENT_BUS.join_callbacks()
 
     # ------------------------------------------------------------------
     # 3.  Choose summary mode *deterministically* from RNG and fetch text

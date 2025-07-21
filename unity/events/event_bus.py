@@ -46,7 +46,7 @@ __all__ = ["Event", "EventBus", "Subscription", "EVENT_BUS"]
 # Context-variable to track the *root* sequence number of a callback cascade.
 # Every time EventBus schedules a callback it checks whether we are currently
 # inside another callback; if yes, the descendant inherits the same root-seq
-# so that join_callbacks(cascade=True) can await the complete cascade while
+# so that join_callbacks() can await the complete cascade while
 # still ignoring unrelated new activity.
 # ---------------------------------------------------------------------------
 

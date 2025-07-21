@@ -617,7 +617,7 @@ async def _main_async() -> None:
         from unity.events.event_bus import EVENT_BUS
 
         EVENT_BUS.join_published()
-        EVENT_BUS.join_callbacks(cascade=True)
+        EVENT_BUS.join_callbacks()
 
         # Show updated rolling activity -----------------------------------
         overview = mm.get_rolling_activity()
