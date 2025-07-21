@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import pytest
+import pytest_asyncio
 from typing import List, Dict, Tuple, Any
 import os
 import functools
@@ -140,16 +141,8 @@ class ScenarioBuilderContacts:
                 )
 
 
-@pytest.fixture(scope="session")
-def event_loop():
-    loop = asyncio.get_event_loop_policy().new_event_loop()
-    yield loop
-    loop.close()
-
-
-@pytest.fixture(scope="session")
-def contact_scenario(
-    event_loop: asyncio.AbstractEventLoop,
+@pytest_asyncio.fixture(scope="session")
+async def contact_scenario(
     request: pytest.FixtureRequest,
 ) -> Tuple[ContactManager, Dict[str, int]]:
     """
@@ -209,9 +202,7 @@ def contact_scenario(
 
     if not SCENARIO_COMMIT_HASHES:
         print("Seeding contact manager scenario...")
-        event_loop.run_until_complete(
-            builder.create(),
-        )
+        await builder.create()
 
         def commit_context_and_store(ctx):
             commit_info = unify.commit_context(
