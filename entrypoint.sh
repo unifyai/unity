@@ -57,12 +57,20 @@ echo "Redis started with PID: $REDIS_PID"
 
 
 
+
+xdg-desktop-portal &
+xdg-desktop-portal-gtk &  # or -gtk, depending on your compositor
+
+
+# Set up for virtual audio
 export XDG_RUNTIME_DIR=/tmp/runtime-root
 mkdir -p $XDG_RUNTIME_DIR
 chmod 700 $XDG_RUNTIME_DIR
 
-DBUS_ADDRESS=$(dbus-daemon --session --print-address --fork)
-export DBUS_SESSION_BUS_ADDRESS=$DBUS_ADDRESS
+mkdir -p /run/dbus
+dbus-daemon --system --fork
+eval "$(dbus-launch)"
+export DBUS_SESSION_BUS_ADDRESS
 
 pipewire &
 pipewire-pulse &
