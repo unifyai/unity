@@ -102,14 +102,14 @@ async def test_join_callbacks_ignores_future_callbacks() -> None:
 
 
 # --------------------------------------------------------------------------- #
-# 3. cascade=True waits for descendant callbacks                              #
+# 3. waits for descendant callbacks (due to cascade=True)                     #
 # --------------------------------------------------------------------------- #
 
 
 @pytest.mark.asyncio
 @_handle_project
 async def test_join_callbacks_waits_for_cascade() -> None:
-    """join_callbacks(cascade=True) must wait for callbacks spawned *within* other
+    """join_callbacks() must wait for callbacks spawned *within* other
     callbacks (same root-sequence) but still ignore unrelated fresh activity."""
 
     bus = EventBus()
@@ -153,11 +153,11 @@ async def test_join_callbacks_waits_for_cascade() -> None:
     bus.join_published()
 
     # ----------------------------------------------------------------------
-    #  Invoke join_callbacks(cascade=True) in a background thread
+    #  Invoke join_callbacks() in a background thread
     # ----------------------------------------------------------------------
 
     join_task = asyncio.create_task(
-        asyncio.to_thread(bus.join_callbacks, cascade=True),
+        asyncio.to_thread(bus.join_callbacks),
     )
 
     # Allow some time for the callbacks to start; join should *not* have
