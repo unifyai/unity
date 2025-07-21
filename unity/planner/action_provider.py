@@ -23,12 +23,25 @@ class ActionProvider:
     Each public method is a tool that the planner can incorporate into its generated code.
     """
 
-    def __init__(self, session_connect_url: str | None = None, headless: bool = False):
-        self.browser = Browser(
-            session_connect_url=session_connect_url,
-            headless=headless,
-            mode="hybrid",
-        )
+    def __init__(
+        self,
+        session_connect_url: str | None = None,
+        headless: bool = False,
+        browser_mode: str = "legacy",
+        controller_mode: str = "hybrid",
+    ):
+
+        browser_kwargs = {
+            "legacy": {
+                "session_connect_url": session_connect_url,
+                "headless": headless,
+                "controller_mode": controller_mode,
+            },
+            "magnitude": {
+                "headless": headless,
+            },
+        }
+        self.browser = Browser(mode=browser_mode, **browser_kwargs[browser_mode])
         self.contact_manager = ContactManager()
         self.transcript_manager = TranscriptManager(
             contact_manager=self.contact_manager,
