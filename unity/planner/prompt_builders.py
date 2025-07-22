@@ -90,7 +90,9 @@ def _build_rules_and_examples_prompt(
             2.  **Entry Point:** For a full plan, the main entry point MUST be `async def main_plan()`.
             3.  **No Imports:** You **MUST NOT** use any `import`/ `__import__` statements in your code. All standard library imports(eg: `asyncio`, `re`, `pydantic`) are already present within the execution environment so you can use them directly.
             4.  **Decomposition:** Break down complex problems into smaller, logical, self-contained `async def` helper functions.
-            5.  **Defer Complex Steps**: For any step that requires knowing what a webpage looks like (e.g., finding an element, extracting specific data, clicking a non-obvious button), you **MUST** create a descriptive helper function stubbed with `raise NotImplementedError`. This allows the agent to implement that step later when it can see the page.
+            5.  **Confidence-Based Stubbing**: Your primary goal is to create a robust plan.
+                * **If a step is simple and you are highly confident** about how to perform it (e.g., `browser_navigate("https://google.com")`, `browser_act("Type 'reports' into the search bar")`), implement it directly.
+                * **If a step is ambiguous or requires seeing the page first**, you **MUST** create a descriptive helper function stubbed with `raise NotImplementedError`. This is critical for actions like finding and applying non-standard filters, extracting data from a unique table layout, or navigating a custom multi-step form.
             6.  **Decorators & Docstrings:** Every **function** you define MUST include docstrings which include the function's purpose, its arguments, and its return value.
             7.  **Async All The Way**: All helper functions you define MUST be `async def`.
             8.  **Await Keyword**: All `action_provider` methods that are asynchronous MUST be called with the `await` keyword.
@@ -191,16 +193,15 @@ def _build_rules_and_examples_prompt(
         ```python
         @verify
         async def login_to_portal():
-            # This part is simple and can be implemented directly.
+            # This part is simple and can be implemented directly because login forms are standard.
             await action_provider.browser_navigate("https://portal.example.com/login")
-            await action_provider.browser_act("Enter 'user@example.com' into the email field")
-            await action_provider.browser_act("Click the 'Next' button")
+            await action_provider.browser_act("Log in with username 'user@example.com' and password 'password123'")
 
         @verify
         async def scrape_user_dashboard():
-            # This is a complex step that requires seeing the dashboard page first.
-            # Therefore, we correctly stub it out.
-            raise NotImplementedError("Implement logic to find and extract data from the user dashboard.")
+            # This is a complex step. The structure of the dashboard is unknown.
+            # Therefore, we correctly stub it out to be implemented later, once the page is visible.
+            raise NotImplementedError("Implement logic to find and extract key metrics from the user dashboard after logging in.")
 
         @verify
         async def main_plan():
