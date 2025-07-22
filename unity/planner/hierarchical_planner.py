@@ -655,19 +655,55 @@ class HierarchicalPlan(BaseActiveTask):
 
     async def _handle_dynamic_implementation(self, function_name: str, **kwargs):
         """
-        Orchestrates the dynamic implementation of a stub function.
+        Orchestrates the dynamic implementation of a stub function based on the LLM's decision.
 
         Args:
             function_name: The name of the function to implement.
             **kwargs: Additional context for implementation (e.g., replan reason).
         """
-        new_code = await self.planner._dynamic_implement(
+        decision = await self.planner._dynamic_implement(
             plan=self,
             function_name=function_name,
             **kwargs,
         )
-        self._update_plan_with_new_code(function_name, new_code)
-        self.action_log.append(f"Implemented function: {function_name}")
+
+        if decision.action == "implement_function":
+            self.action_log.append(
+                f"Decision: Implementing function '{function_name}'. Reason: {decision.reason}",
+            )
+            self._update_plan_with_new_code(function_name, decision.code)
+
+        elif decision.action == "skip_function":
+            self.action_log.append(
+                f"Decision: Skipping function '{function_name}'. Reason: {decision.reason}",
+            )
+            self.skipped_functions.add(function_name)
+
+        elif decision.action == "replan_parent":
+            self.action_log.append(
+                f"Decision: Escalating to replan parent of '{function_name}'. Reason: {decision.reason}",
+            )
+
+            try:
+                current_index = self.call_stack.index(function_name)
+                if current_index > 0:
+                    parent_function_name = self.call_stack[current_index - 1]
+                    self.action_log.append(
+                        f"Now attempting to replan '{parent_function_name}'...",
+                    )
+                    await self._handle_dynamic_implementation(
+                        parent_function_name,
+                        is_strategic_replan=True,
+                        replan_reason=decision.reason,
+                    )
+                else:
+                    raise FatalVerificationError(
+                        f"Cannot replan parent of '{function_name}' as it is a top-level function. Reason: {decision.reason}",
+                    )
+            except ValueError:
+                raise FatalVerificationError(
+                    f"Could not find function '{function_name}' in the current call stack: {self.call_stack}",
+                )
 
     def _get_unimplemented_function_name(self) -> str:
         """
@@ -1484,11 +1520,33 @@ class HierarchicalPlanner(BasePlanner):
                                 exc_info=True,
                             )
                             last_error_traceback = traceback.format_exc()
+                            try:
+                                logger.info(
+                                    f"Performing failure analysis for '{func_name}'...",
+                                )
+                                page_analysis = await self.action_provider.browser.observe(
+                                    "Analyze the current page state to help debug a failure. Provide a structured summary of visible headings, links, and interactive elements.",
+                                    response_format=PageAnalysis,
+                                )
+                                visual_context = f"**Current Page Analysis:**\n{page_analysis.model_dump_json(indent=2)}"
+                                logger.info(
+                                    f"Failure analysis complete. Visual context captured.",
+                                )
+                            except Exception as analysis_exc:
+                                logger.warning(
+                                    f"Could not perform visual failure analysis: {analysis_exc}",
+                                )
+                                visual_context = (
+                                    "Could not retrieve page state for analysis."
+                                )
+
                             replan_reason = (
                                 f"The function '{func_name}' failed with an unexpected code error. "
-                                f"Analyze the following traceback and rewrite the function to fix the bug.\n\n"
-                                f"**Traceback:**\n{traceback.format_exc()}"
+                                f"Analyze the following traceback AND the current page state to fix the bug.\n\n"
+                                f"**Traceback:**\n{traceback.format_exc()}\n\n"
+                                f"**Visual Context from Browser:**\n{visual_context}"
                             )
+
                             await plan._handle_dynamic_implementation(
                                 func_name,
                                 replan_reason=replan_reason,
