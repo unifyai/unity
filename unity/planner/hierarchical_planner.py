@@ -430,6 +430,12 @@ class HierarchicalPlan(BaseActiveTask):
             self._is_complete = True
             self._completion_event.set()
 
+    def _set_state(self, new_state: _HierarchicalPlanState):
+        """Sets the plan state and logs the transition."""
+        old_state = self._state
+        self._state = new_state
+        self.action_log.append(f"STATE CHANGE: {old_state.name} -> {new_state.name}")
+
     async def _initialize_and_run(self):
         """
         Manages the entire lifecycle of the plan from initialization to completion.
@@ -440,7 +446,7 @@ class HierarchicalPlan(BaseActiveTask):
                 await self._perform_exploration()
 
             if not self._is_complete:
-                self._state = _HierarchicalPlanState.RUNNING
+                self._set_state(_HierarchicalPlanState.RUNNING)
 
             if self.plan_source_code is None:
                 self.action_log.append("Generating new plan from goal...")
@@ -456,14 +462,14 @@ class HierarchicalPlan(BaseActiveTask):
             await self._start_main_execution_loop()
         except Exception as e:
             logger.error(f"Plan initialization failed: {e}", exc_info=True)
-            self._state = _HierarchicalPlanState.ERROR
+            self._set_state(_HierarchicalPlanState.ERROR)
             self._set_final_result(f"ERROR: Plan initialization failed: {e}")
 
     async def _perform_exploration(self, function_purpose: str):
         """
         Runs an interactive conversational loop to gather information for a specific function.
         """
-        self._state = _HierarchicalPlanState.EXPLORING
+        self._set_state(_HierarchicalPlanState.EXPLORING)
         self.action_log.append(
             f"Starting exploration for task: '{function_purpose}'...",
         )
@@ -499,7 +505,7 @@ class HierarchicalPlan(BaseActiveTask):
             )
             return None
         finally:
-            self._state = _HierarchicalPlanState.RUNNING
+            self._set_state(_HierarchicalPlanState.RUNNING)
 
     def _create_main_loop_iterator(self):
         """
@@ -547,7 +553,7 @@ class HierarchicalPlan(BaseActiveTask):
             try:
                 main_coro = next(plan_iterator)
                 result = await main_coro
-                self._state = _HierarchicalPlanState.COMPLETED
+                self._set_state(_HierarchicalPlanState.COMPLETED)
                 self.action_log.append(f"Plan completed. Result: {result}")
                 self._set_final_result(f"Plan completed. Result: {result}")
                 return {
@@ -556,7 +562,7 @@ class HierarchicalPlan(BaseActiveTask):
                     "force_stop": True,
                 }
             except StopIteration:
-                self._state = _HierarchicalPlanState.COMPLETED
+                self._set_state(_HierarchicalPlanState.COMPLETED)
                 self.action_log.append("Plan finished.")
                 self._set_final_result("Plan finished.")
                 return {
@@ -569,6 +575,7 @@ class HierarchicalPlan(BaseActiveTask):
                     function_name = self._get_unimplemented_function_name()
                     await self._handle_dynamic_implementation(function_name)
                     plan_iterator = self._create_main_loop_iterator()
+                    self.action_log.append(f"Restarting main execution loop after implementing '{function_name}'")
                     return {
                         "status": "in_progress",
                         "message": f"Implemented {function_name}, retrying.",
@@ -578,7 +585,7 @@ class HierarchicalPlan(BaseActiveTask):
                         f"Failed to implement stub function: {e}",
                         exc_info=True,
                     )
-                    self._state = _HierarchicalPlanState.ERROR
+                    self._set_state(_HierarchicalPlanState.ERROR)
                     self.action_log.append(
                         f"ERROR: Failed during dynamic implementation: {e}",
                     )
@@ -602,7 +609,7 @@ class HierarchicalPlan(BaseActiveTask):
                     raise RuntimeError("Could not determine a function to replan.")
 
                 if self.escalation_count > self.MAX_ESCALATIONS:
-                    self._state = _HierarchicalPlanState.PAUSED_FOR_ESCALATION
+                    self._set_state(_HierarchicalPlanState.PAUSED_FOR_ESCALATION)
                     err_msg = f"ESCALATION LIMIT: Max escalations ({self.MAX_ESCALATIONS}) reached. Pausing for intervention. Final reason: {e.reason}"
                     self.action_log.append(err_msg)
                     await self.clarification_up_q.put(err_msg)
@@ -626,7 +633,7 @@ class HierarchicalPlan(BaseActiveTask):
                 }
             except Exception as e:
                 logger.error(f"Plan step execution failed: {e}", exc_info=True)
-                self._state = _HierarchicalPlanState.ERROR
+                self._set_state(_HierarchicalPlanState.ERROR)
                 self.action_log.append(f"ERROR: Plan execution failed: {e}")
                 self._set_final_result(f"ERROR: Plan execution failed: {e}")
                 return {"status": "error", "message": str(e), "force_stop": True}
@@ -661,6 +668,11 @@ class HierarchicalPlan(BaseActiveTask):
             function_name: The name of the function to implement.
             **kwargs: Additional context for implementation (e.g., replan reason).
         """
+        reason = kwargs.get("replan_reason", "First-time implementation from NotImplementedError.")
+        self.action_log.append(
+            f"IMPLEMENTATION CONTEXT for '{function_name}': {reason}"
+        )
+        
         decision = await self.planner._dynamic_implement(
             plan=self,
             function_name=function_name,
@@ -743,6 +755,7 @@ class HierarchicalPlan(BaseActiveTask):
             function_name: The name of the function to replace or add.
             new_code: The full source code of the new function implementation.
         """
+        self.action_log.append(f"Updating implementation of '{function_name}'")
         keys_to_remove = {
             key for key in self.completed_functions if key[0] == function_name
         }
@@ -834,7 +847,7 @@ class HierarchicalPlan(BaseActiveTask):
 
         original_source_code = self.plan_source_code
         self.action_log.append(f"Modification requested: '{modification_request}'")
-        self._state = _HierarchicalPlanState.PAUSED_FOR_MODIFICATION
+        self._set_state(_HierarchicalPlanState.PAUSED_FOR_MODIFICATION)
 
         if self._execution_task and not self._execution_task.done():
             self._execution_task.cancel()
@@ -886,7 +899,7 @@ class HierarchicalPlan(BaseActiveTask):
 
             self.escalation_count = 0
             self._is_complete = False
-            self._state = _HierarchicalPlanState.RUNNING
+            self._set_state(_HierarchicalPlanState.RUNNING)
             self._execution_task = asyncio.create_task(self._initialize_and_run())
 
             return "Failed to modify the plan. Rolled back to previous version and resumed."
@@ -1026,7 +1039,7 @@ class HierarchicalPlan(BaseActiveTask):
             A status message.
         """
         if not self._is_complete:
-            self._state = _HierarchicalPlanState.STOPPED
+            self._set_state(_HierarchicalPlanState.STOPPED)
             result_str = "Plan was stopped."
             if self.main_loop_handle and not self.main_loop_handle.done():
                 self.main_loop_handle.stop()
@@ -1046,7 +1059,7 @@ class HierarchicalPlan(BaseActiveTask):
             A status message.
         """
         if self._state == _HierarchicalPlanState.RUNNING:
-            self._state = _HierarchicalPlanState.PAUSED
+            self._set_state(_HierarchicalPlanState.PAUSED)
             if self.main_loop_handle:
                 self.main_loop_handle.pause()
             self.action_log.append("Plan paused by user.")
@@ -1061,7 +1074,7 @@ class HierarchicalPlan(BaseActiveTask):
             A status message.
         """
         if self._state == _HierarchicalPlanState.PAUSED:
-            self._state = _HierarchicalPlanState.RUNNING
+            self._set_state(_HierarchicalPlanState.RUNNING)
             if self.main_loop_handle:
                 self.main_loop_handle.resume()
             self.action_log.append("Plan resumed by user.")
@@ -1461,10 +1474,18 @@ class HierarchicalPlanner(BasePlanner):
                     logger.info(
                         f"CACHE HIT: Skipping already completed call to '{func_name}' with args {args}, {kwargs}",
                     )
+                    plan.action_log.append(
+                        f"CACHE HIT: Skipping function '{func_name}' (already completed)."
+                    )
                     return
                 logger.info(
                     f"CACHE MISS: Proceeding with execution for '{func_name}'.",
                 )
+                
+                args_repr = [repr(a) for a in args]
+                kwargs_repr = [f"{k}={v!r}" for k, v in kwargs.items()]
+                all_args = ", ".join(args_repr + kwargs_repr)
+                plan.action_log.append(f"-> Entering '{func_name}' with args: ({all_args})") 
                 plan.call_stack.append(func_name)
                 plan.interaction_stack.append([])
                 logger.info(f"VERIFY: Entering '{func_name}'")
@@ -1495,6 +1516,9 @@ class HierarchicalPlanner(BasePlanner):
                             logger.warning(
                                 f"Caught InvalidActionError in '{func_name}'. Forcing local reimplementation.",
                             )
+                            plan.action_log.append(
+                                f"INVALID ACTION ERROR in '{func_name}': {str(e)}"
+                            )
                             replan_reason = (
                                 f"The function failed because it tried to execute an invalid browser action. "
                                 f"The instruction it gave resulted in the error: '{e}'.\n\n"
@@ -1520,6 +1544,16 @@ class HierarchicalPlanner(BasePlanner):
                                 exc_info=True,
                             )
                             last_error_traceback = traceback.format_exc()
+                            
+                            error_details = {
+                                "error_type": type(e).__name__,
+                                "error_message": str(e),
+                                "attempt": i + 1,
+                                "traceback": last_error_traceback
+                            }
+                            plan.action_log.append(
+                                f"TOOL ERROR in '{func_name}': {json.dumps(error_details, indent=2)}"
+                            )
                             try:
                                 logger.info(
                                     f"Performing failure analysis for '{func_name}'...",
@@ -1561,7 +1595,9 @@ class HierarchicalPlanner(BasePlanner):
                     )
                 finally:
                     if plan.call_stack:
-                        plan.call_stack.pop()
+                        exiting_func = plan.call_stack.pop()
+                        exit_status = "completed" if func_name in plan.completed_functions else "failed"
+                        plan.action_log.append(f"<- Exiting '{exiting_func}' (status={exit_status})")
                     if plan.interaction_stack:
                         plan.interaction_stack.pop()
 
@@ -1605,6 +1641,11 @@ class HierarchicalPlanner(BasePlanner):
             f"   - Purpose: {fn.__doc__ or 'N/A'}\n"
             f"   - Interactions:\n{json.dumps(all_interactions, indent=4)}",
         )
+        interactions_str = json.dumps(all_interactions, indent=2)
+        plan.action_log.append(
+            f"VERIFICATION EVIDENCE for '{fn.__name__}':\n{interactions_str}"
+        )
+        
         final_screenshot = None
         if "action_provider.browser" in plan.plan_source_code:
             final_screenshot = await self.action_provider.browser.get_screenshot()
@@ -1796,6 +1837,7 @@ class HierarchicalPlanner(BasePlanner):
                 "Analyze the current page and provide a structured summary of its content.",
                 response_format=PageAnalysis,
             )
+            plan.action_log.append(f"Browser State during dynamic implementation: {browser_state}")
             browser_screenshot = await self.action_provider.browser.get_screenshot()
 
         docstring = (
@@ -1848,6 +1890,7 @@ class HierarchicalPlanner(BasePlanner):
                     .replace("```", "")
                     .strip(),
                 )
+            logger.info(f"IMPLEMENTATION DECISION: {decision}")
             return decision
         finally:
             self.implementation_client.reset_response_format()
