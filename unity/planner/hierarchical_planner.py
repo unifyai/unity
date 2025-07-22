@@ -418,6 +418,7 @@ class HierarchicalPlan(BaseActiveTask):
         self.clarification_up_q = clarification_up_q or asyncio.Queue()
         self.clarification_down_q = clarification_down_q or asyncio.Queue()
         self.completed_functions: set = set()
+        self.skipped_functions: set = set()
         self._execution_task = asyncio.create_task(self._initialize_and_run())
         self.MAX_ESCALATIONS = max_escalations
         self.MAX_LOCAL_RETRIES = max_local_retries
@@ -1403,6 +1404,13 @@ class HierarchicalPlanner(BasePlanner):
             async def wrapper(*args, **kwargs):
                 """The wrapper that performs verification and correction."""
                 func_name = fn.__name__
+                if func_name in plan.skipped_functions:
+                    plan.action_log.append(
+                        f"SKIPPING function '{func_name}' as per previous decision.",
+                    )
+                    plan.skipped_functions.remove(func_name)
+                    return
+
                 current_fn = plan.execution_namespace[func_name]
                 try:
                     sig = inspect.signature(current_fn)
