@@ -729,67 +729,6 @@ def build_should_explore_prompt(goal: str) -> str:
     )
 
 
-def build_implementation_strategy_prompt(
-    goal: str,
-    function_name: str,
-    function_docstring: str | None,
-    failure_reason: str,
-    browser_state: str | None,
-    has_browser_screenshot: bool,
-    failed_interactions: Optional[list],
-    *,
-    tools: Dict[str, Callable],
-) -> str:
-    """Builds a prompt to devise a new, FOCUSED strategy for a single failed function."""
-
-    browser_context_section = (
-        f"**Current Browser State:**\n{browser_state}" if browser_state else ""
-    )
-    if has_browser_screenshot:
-        browser_context_section += """
-        **Current Browser View (Screenshot):**
-        An image of the current browser page has been provided. Analyze it carefully to inform your new implementation.
-        """
-    interaction_log_section = ""
-    if failed_interactions:
-        interactions_log = "\n".join(
-            f"- {kind}: {act} -> {obs}" for kind, act, obs in failed_interactions
-        )
-        interaction_log_section = textwrap.dedent(
-            f"""
-            **Log of Failed Attempt:**
-            Here are the actions that were taken in the last attempt. You should use this to inform your new strategy.
-            ```
-            {interactions_log}
-            ```
-            """,
-        )
-    tool_reference = _build_tool_signatures(tools)
-    return textwrap.dedent(
-        f"""
-        You are a tactical debugging agent. The function `{function_name}` has failed. Your task is to analyze the failure and devise a new, specific, step-by-step plan to successfully implement **only the logic for this function**.
-
-        **Function to Fix:** `{function_name}`
-        **Purpose of this Function:** {function_docstring or 'No docstring provided.'}
-        **(Context) This function is one step in the Overall Goal:** "{goal}"
-
-        **CRITICAL: Reason for Failure:** "{failure_reason}"
-
-        {interaction_log_section}
-        {browser_context_section}
-
-        ---
-        ### Available Tools
-        {tool_reference}
-        ---
-        ### Your Task
-        Based on the failure reason and current state, devise a new, focused strategy for **only the function `{function_name}`**. Do not create steps for other parts of the plan that have already succeeded.
-
-        Respond with ONLY the JSON object matching the requested schema.
-        """,
-    )
-
-
 def build_ask_prompt(
     goal: str,
     state: str,
