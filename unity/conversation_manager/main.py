@@ -63,7 +63,7 @@ class EventManager:
             self.last_activity_time = asyncio.get_event_loop().time()
 
             if event["topic"] == "ping":
-                print("ping")
+                print("ping received - keeping event manager alive")
                 continue
             elif event["topic"] == "call_process":
                 print("recieved call event")
@@ -124,9 +124,7 @@ class EventManager:
 
             await asyncio.sleep(30)  # Check every 30 seconds
             current_time = asyncio.get_event_loop().time()
-            if os.getenv("ASSISTANT_ID") and (
-                current_time - self.last_activity_time > self.INACTIVITY_TIMEOUT
-            ):
+            if current_time - self.last_activity_time > self.INACTIVITY_TIMEOUT:
                 print(
                     f"Inactivity timeout reached ({self.INACTIVITY_TIMEOUT}s), "
                     "shutting down gracefully...",

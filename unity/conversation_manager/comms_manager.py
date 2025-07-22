@@ -184,6 +184,8 @@ class CommsManager:
         if not os.getenv("ASSISTANT_ID"):
             # Start the startup subscription
             self.subscribe_to_topic(startup_subscription_id)
+            # Start ping mechanism for idle containers
+            asyncio.create_task(self.send_pings())
         else:
             # Start subscription
             self.subscribe_to_topic(subscription_id)
@@ -197,6 +199,30 @@ class CommsManager:
             # Cleanup subscriptions
             for future in self.subscribers.values():
                 future.cancel()
+
+    async def send_pings(self):
+        """Send periodic pings to keep the event manager alive while waiting for startup."""
+        print("Starting ping mechanism for idle container...")
+        while True:
+            try:
+                # Send ping to event manager
+                self.loop.call_soon_threadsafe(
+                    self.message_queue.put_nowait,
+                    {"topic": "ping", "event": {"type": "keepalive"}},
+                )
+
+                # Wait 30 seconds before next ping (half the inactivity timeout)
+                await asyncio.sleep(30)
+
+                # Check if we've received a startup message (indicated by ASSISTANT_ID being set)
+                current_assistant_id = os.getenv("ASSISTANT_ID")
+                if current_assistant_id:
+                    print("Startup received, stopping ping mechanism")
+                    break
+
+            except Exception as e:
+                print(f"Error in ping mechanism: {e}")
+                await asyncio.sleep(30)  # Continue trying
 
 
 async def main():
