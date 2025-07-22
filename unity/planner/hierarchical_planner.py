@@ -709,8 +709,23 @@ class HierarchicalPlan(BaseActiveTask):
                         replan_reason=decision.reason,
                     )
                 else:
-                    raise FatalVerificationError(
-                        f"Cannot replan parent of '{function_name}' as it is a top-level function. Reason: {decision.reason}",
+                    self.action_log.append(f"Preparing a trace summary for full strategic replan of '{function_name}'...")
+                    
+                    full_trace = "\n".join(self.action_log)
+                    summary_prompt = prompt_builders.build_trace_summary_prompt(
+                        goal=self.goal,
+                        action_log=full_trace,
+                    )
+                    trace_summary = await llm_call(
+                        self.planner.summarization_client, summary_prompt
+                    )
+                    logger.info(f"TRACE SUMMARY:\n{trace_summary}")
+                    self.action_log.append(f"TRACE SUMMARY:\n{trace_summary}")
+                    
+                    await self._handle_dynamic_implementation(
+                        function_name,
+                        is_strategic_replan=True,
+                        replan_reason=trace_summary,
                     )
             except ValueError:
                 raise FatalVerificationError(
@@ -1224,6 +1239,7 @@ class HierarchicalPlanner(BasePlanner):
         self.implementation_client: unify.AsyncUnify = unify.AsyncUnify(
             "o4-mini@openai",
         )
+        self.summarization_client: unify.AsyncUnify = unify.AsyncUnify("o4-mini@openai")
         self.modification_client: unify.AsyncUnify = unify.AsyncUnify("o4-mini@openai")
         self.exploration_client: unify.AsyncUnify = unify.AsyncUnify("o4-mini@openai")
         self.ask_client: unify.AsyncUnify = unify.AsyncUnify("gpt-4o-mini@openai")

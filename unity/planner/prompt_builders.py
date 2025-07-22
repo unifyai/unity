@@ -767,3 +767,39 @@ def build_ask_prompt(
         **Answer:**
     """,
     )
+
+
+def build_trace_summary_prompt(
+    goal: str,
+    action_log: str,
+) -> str:
+    """
+    Builds the prompt for the Trace Summary LLM.
+
+    Args:
+        goal: The original high-level goal of the plan.
+        action_log: The detailed execution trace from plan.action_log.
+
+    Returns:
+        The complete prompt string for the summarization call.
+    """
+    return textwrap.dedent(
+        f"""
+        You are an expert debugging analyst for an autonomous web agent.
+        The following is a detailed action log from a failed plan execution. Your task is to read the entire trace and produce a concise, high-level summary of the strategic error.
+
+        **Original Goal:** "{goal}"
+
+        **Execution Trace / Action Log:**
+        ```
+        {action_log}
+        ```
+
+        **Your Analysis Task:**
+        1.  Identify the root cause of the failure. Do not focus on the final error message, but on the sequence of events that led to it.
+        2.  Explain the flaw in the plan's original strategy (e.g., "The plan incorrectly assumed X," or "The plan failed to perform step Y before Z").
+        3.  Provide a clear, actionable recommendation for a new strategy that would avoid this failure.
+
+        Respond with only the summary of your analysis. This summary will be used to rewrite the entire plan from scratch.
+        """
+    )
