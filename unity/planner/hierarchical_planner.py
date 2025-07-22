@@ -96,6 +96,25 @@ class PageAnalysis(BaseModel):
     )
 
 
+class ImplementationDecision(BaseModel):
+    """A structured decision for how to proceed with a function implementation."""
+
+    action: typing.Literal["implement_function", "replan_parent", "skip_function"] = (
+        Field(
+            ...,
+            description="The chosen action: 'implement_function' to provide new code, 'replan_parent' to escalate the failure, or 'skip_function' to bypass the current step.",
+        )
+    )
+    code: Optional[str] = Field(
+        None,
+        description="The Python code for the function. Required if action is 'implement_function'.",
+    )
+    reason: str = Field(
+        ...,
+        description="A concise justification for the chosen action. If replanning the parent, this reason will be passed up.",
+    )
+
+
 class _HierarchicalPlanState(enum.Enum):
     """Manages the detailed lifecycle state of a hierarchical plan."""
 
@@ -1418,7 +1437,7 @@ class HierarchicalPlanner(BasePlanner):
                 logger.info(f"VERIFY: Entering '{func_name}'")
                 try:
                     last_error_traceback = ""
-                    for _ in range(plan.MAX_LOCAL_RETRIES):
+                    for i in range(plan.MAX_LOCAL_RETRIES):
                         try:
                             current_fn_for_execution = plan.execution_namespace[
                                 func_name
@@ -1464,7 +1483,7 @@ class HierarchicalPlanner(BasePlanner):
                             raise
                         except (BrowserAgentError, Exception) as e:
                             logger.error(
-                                f"Function '{func_name}' failed: {e}",
+                                f"Function '{func_name}' failed on attempt {i+1}: {e}",
                                 exc_info=True,
                             )
                             last_error_traceback = traceback.format_exc()
@@ -1701,9 +1720,9 @@ class HierarchicalPlanner(BasePlanner):
         plan: HierarchicalPlan,
         function_name: str,
         **kwargs,
-    ) -> str:
+    ) -> ImplementationDecision:
         """
-        Generates and returns the implementation for a stub function.
+        Generates and returns an ImplementationDecision for a stub function in a single LLM call.
 
         Args:
             plan: The active plan instance.
@@ -1711,76 +1730,38 @@ class HierarchicalPlanner(BasePlanner):
             **kwargs: Additional context for the implementation prompt.
 
         Returns:
-            The sanitized source code for the new function implementation.
+            An ImplementationDecision indicating the action to take.
         """
         is_browser_task = "action_provider.browser" in plan.plan_source_code
         replan_reason = kwargs.get("replan_reason")
-        failed_interactions = kwargs.get("failed_interactions")
         browser_state = None
-        new_strategy = None
-        docstring = (
-            inspect.getdoc(plan.execution_namespace[function_name])
-            or "No docstring provided."
-        )
+        browser_screenshot = None
         if is_browser_task:
             browser_state = await self.action_provider.browser.observe(
                 "Analyze the current page and provide a structured summary of its content.",
                 response_format=PageAnalysis,
             )
             browser_screenshot = await self.action_provider.browser.get_screenshot()
-        else:
-            browser_state = None
-            browser_screenshot = None
 
-        strategy_reason = replan_reason
-        if not strategy_reason:
-            strategy_reason = f"This is the first time the function '{function_name}' is being implemented. Please devise a clear, step-by-step plan to achieve its purpose: {docstring}"
-
-        strategy_prompt = prompt_builders.build_implementation_strategy_prompt(
-            goal=plan.goal,
-            function_name=function_name,
-            function_docstring=docstring,
-            failure_reason=strategy_reason,
-            failed_interactions=failed_interactions,
-            browser_state=browser_state,
-            has_browser_screenshot=browser_screenshot is not None,
-            tools=self.tools,
+        docstring = (
+            inspect.getdoc(plan.execution_namespace[function_name])
+            or "No docstring provided."
         )
-        self.implementation_client.set_response_format(ImplementationStrategy)
-        strategy_response_raw = await llm_call(
-            self.implementation_client,
-            strategy_prompt,
-            screenshot=browser_screenshot,
-        )
-        new_strategy = ImplementationStrategy.model_validate_json(
-            strategy_response_raw,
-        )
-        self.implementation_client.reset_response_format()
-        plan.action_log.append(
-            f"Devised new strategy for '{function_name}': {new_strategy.rationale}",
-        )
-
-        replan_context = ""
-        if kwargs.get("is_strategic_replan") and replan_reason:
-            replan_context = textwrap.dedent(
-                f"""
-            **REPLANNING NOTE:** The previous attempt failed. Analyze the error traceback below and devise a new, more robust implementation.
-
-            **Failure Traceback:**
-            ```
-            {replan_reason}
-            ```
-            """,
-            )
-
         func_sig = inspect.signature(plan.execution_namespace[function_name])
         parent_code = (
             plan.function_source_map.get(plan.call_stack[-2], "")
             if len(plan.call_stack) > 1
             else "N/A (This is a top-level function call)"
         )
+        full_plan_source = plan.plan_source_code or ""
+        call_stack = plan.call_stack
+        replan_context = replan_reason
+        if not replan_context:
+            replan_context = f"This is the first time the function '{function_name}' is being implemented. The function was defined as a stub with 'raise NotImplementedError' and now needs to be implemented to achieve its purpose: {docstring}"
 
         prompt = prompt_builders.build_dynamic_implement_prompt(
+            full_plan_source=full_plan_source,
+            call_stack=call_stack,
             function_name=function_name,
             function_sig=func_sig,
             function_docstring=docstring,
@@ -1788,28 +1769,33 @@ class HierarchicalPlanner(BasePlanner):
             browser_state=browser_state,
             has_browser_screenshot=browser_screenshot is not None,
             replan_context=replan_context,
-            implementation_strategy=new_strategy,
+            implementation_strategy=None,
             tools=self.tools,
         )
-        code = await llm_call(
-            self.implementation_client,
-            prompt,
-            screenshot=browser_screenshot,
-        )
+        self.implementation_client.set_response_format(ImplementationDecision)
 
         try:
-            sanitized_code = self._sanitize_code(
-                code.strip().replace("```python", "").replace("```", "").strip(),
+            response_str = await llm_call(
+                self.implementation_client,
+                prompt,
+                screenshot=browser_screenshot,
             )
-            logger.debug(
-                f"LLM response for dynamic implementation of '{function_name}':\n\n--- LLM RAW RESPONSE START ---\n{code}\n--- LLM RAW RESPONSE END ---\n\n",
-            )
-            return sanitized_code
-        except SyntaxError as e:
-            logger.error(
-                f"Syntax error implementing '{function_name}'. Reason: {e}\nProblematic Code:\n---\n{code}\n---",
-            )
-            raise
+            decision = ImplementationDecision.model_validate_json(response_str)
+
+            if decision.action == "implement_function":
+                if not decision.code:
+                    raise ValueError(
+                        "Action 'implement_function' requires the 'code' field.",
+                    )
+                decision.code = self._sanitize_code(
+                    decision.code.strip()
+                    .replace("```python", "")
+                    .replace("```", "")
+                    .strip(),
+                )
+            return decision
+        finally:
+            self.implementation_client.reset_response_format()
 
     async def _check_state_against_goal(
         self,

@@ -370,6 +370,8 @@ def build_initial_plan_prompt(
 
 
 def build_dynamic_implement_prompt(
+    full_plan_source: str,
+    call_stack: list[str],
     function_name: str,
     function_sig: inspect.Signature,
     function_docstring: str,
@@ -388,6 +390,8 @@ def build_dynamic_implement_prompt(
     instructions and state if the `browser_state` argument is provided.
 
     Args:
+        full_plan_source: The full source code of the plan.
+        call_stack: The current function call stack.
         function_name: The name of the function to implement.
         function_sig: The signature of the function to implement.
         function_docstring: The docstring of the function to implement.
@@ -439,7 +443,27 @@ def build_dynamic_implement_prompt(
             ---
             """,
         )
-    strategy_instruction = "Analyze the function's purpose and the available tools to decide on the best implementation strategy."
+    call_stack_str = " -> ".join(call_stack)
+    context_section = textwrap.dedent(
+        f"""
+    ---
+    ### Full Plan Analysis
+    You have access to the entire plan and the current call stack for complete strategic context.
+
+    **Current Call Stack:**
+    `{call_stack_str}`
+
+    **Full Plan Source Code:**
+    ```python
+    {full_plan_source}
+    ```
+    ---
+    """,
+    )
+
+    strategy_instruction = (
+        "Your task is to analyze the situation and decide on the best course of action."
+    )
     tool_usage_instruction = "Use the `action_provider` global object to interact with the environment. Available tools and their handle APIs have been described in the rules below."
     rules_and_examples = _build_rules_and_examples_prompt(
         tools,
@@ -450,30 +474,27 @@ def build_dynamic_implement_prompt(
 
     return textwrap.dedent(
         f"""
-        You are an expert Python programmer. Your task is to **only** write the implementation for the function `{function_name}` and nothing else.
+        You are an expert Python programmer and a master strategist. Your task is to analyze the state of a running plan and decide the best course of action for the function `{function_name}`.
 
-        **CRITICAL RULES:**
-        1.  Your response MUST contain ONLY the Python code for the function `{function_name}`.
-        2.  **START FROM THE CURRENT STATE**: You are implementing a single step in a larger plan. Analyze the `Current Browser State` and provided screenshot carefully. Your code **MUST NOT** repeat steps that have already been completed. Your logic must begin from the state shown.
-        3.  **SELF-CONTAINED**: Your function must be completely self-contained. Do NOT reference any variables, classes, or functions that are defined outside of this function (except for built-ins and `action_provider`). If you need Pydantic models, define them INSIDE this function.
-        4.  **NO IMPORTS**: Do not use import statements. Do not try to import from fictional modules.
+        **CRITICAL: You must choose one of three actions:**
+        1.  **`implement_function`**: Write the Python code for `{function_name}`. Choose this if the function's goal is achievable from the current browser state.
+        2.  **`skip_function`**: Bypass this function entirely. Choose this if you observe that the function's goal is **already completed** or is now **irrelevant**. For example, skip a "log in" function if you are already logged in.
+        3.  **`replan_parent`**: Escalate the failure to the calling function. Choose this if the current function is **impossible to implement** because of a mistake made in a *previous* step. For example, if the goal is "apply filters" but the page has no filter controls, the error lies with the parent function that navigated to the wrong page or failed to get to the right state.
 
-        **Your Task:** Implement the function `{function_name}` to achieve the following purpose.
-        **Function's Purpose:** "{function_docstring}"
-        **Function to Implement:** `async def {function_name}{function_sig}`
+        {context_section}
+
+        ### Situation Analysis
+        **Function to Address:** `async def {function_name}{function_sig}`
+        **Purpose of this Function:** "{function_docstring}"
+        **Current Browser State:**
+        {browser_state or "No browser state available."}
+        A screenshot of the current browser page has been provided. **Use it as the primary source of truth.**
 
         {failure_analysis_section}
         {strategy_section}
-
-        ### Situation Analysis
-        **Parent Function (for context):**
-        ```python
-        {parent_code}
-        ```
-        {browser_context_section}
         {rules_and_examples}
 
-        Begin your response now. Your response must start immediately with the code.
+        Respond with ONLY the JSON object matching the `ImplementationDecision` schema.
         """,
     )
 
