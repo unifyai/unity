@@ -73,7 +73,7 @@ def _build_rules_and_examples_prompt(
     )
     if is_dynamic_implement:
         instructions_and_rules = textwrap.dedent(
-            f"""
+            """
             1.  **Single Code Block:** Your entire response MUST be a single, valid Python code block.
             2.  **No Imports:** You **MUST NOT** use any `import`/ `__import__` statements in your code. All standard library imports(eg: `asyncio`, `re`, `pydantic`) are already present within the execution environment so you can use them directly.
             3.  **Decorators & Docstrings:** Every **function** you define MUST include docstrings which include the function's purpose, its arguments, and its return value.
@@ -85,7 +85,7 @@ def _build_rules_and_examples_prompt(
         )
     else:
         instructions_and_rules = textwrap.dedent(
-            f"""
+            """
             1.  **Single Code Block:** Your entire response MUST be a single, valid Python code block.
             2.  **Entry Point:** For a full plan, the main entry point MUST be `async def main_plan()`.
             3.  **No Imports:** You **MUST NOT** use any `import`/ `__import__` statements in your code. All standard library imports(eg: `asyncio`, `re`, `pydantic`) are already present within the execution environment so you can use them directly.
@@ -126,8 +126,8 @@ def _build_rules_and_examples_prompt(
         ---
         ### Usage Examples
 
-        **Using a Handle-Based Tool (like sending a message or making a call):**
-
+        **Using a Handle-Based Tool (like sending a message or making a call)**
+        This example demonstrates how to use the `send_sms_message` tool to send a message.
         # Example 1: Sending a message
         ```python
         @verify
@@ -141,6 +141,7 @@ def _build_rules_and_examples_prompt(
         ```
 
         # Example 2: Making an Interactive Phone Call
+        This example demonstrates how to use the `start_call` tool to make an interactive phone call.
         ```python
         @verify
         async def make_appointment_followup_call():
@@ -176,118 +177,76 @@ def _build_rules_and_examples_prompt(
             return analysis
         ```
 
-        **Simple Browser Interaction:**
-        ```python
-        @verify
-        async def check_unify_blog():
-            # The browser object can be used directly from the action_provider
-            await action_provider.browser_navigate("https://unify.ai")
-            await action_provider.browser_act("Click the 'Blog' link in the main navigation")
-            blog_title = await action_provider.browser_observe("What is the title of the first blog post?")
-            return blog_title
-        ```
-
-        **Multiple Steps with Stubs & Dynamic Implementation:**
-        This example shows the correct way to structure a plan that defers a complex step.
+        **Browser Automation Example**
+        This example demonstrates how to combine navigation, observation with Pydantic models, and confidence-based stubbing to create a robust, multi-step web automation plan.
 
         ```python
+        # This function is implemented directly because navigating and searching are simple, high-confidence actions.
         @verify
-        async def login_to_portal():
-            # This part is simple and can be implemented directly because login forms are standard.
-            await action_provider.browser_navigate("https://portal.example.com/login")
-            await action_provider.browser_act("Log in with username 'user@example.com' and password 'password123'")
+        async def search_for_product() -> str:
+            \"\"\"Navigates to an e-commerce site and searches for a specific product.\"\"\"
+            print("Navigating to store and searching for 'blue sneakers'.")
+            await action_provider.browser_navigate("https://fakestore.example.com")
+            await action_provider.browser_act(
+                "Type 'blue sneakers' into the search bar and click the search button",
+                expectation="The page should show a list of products related to 'blue sneakers'."
+            )
+            print("Search complete.")
+            return "Successfully searched for products."
 
+        # This function is a STUB. The layout of the search results page is unknown,
+        # so we must wait until we can see it before we can reliably implement the extraction logic.
+        # This is a perfect example of "Confidence-Based Stubbing".
         @verify
-        async def scrape_user_dashboard():
-            # This is a complex step. The structure of the dashboard is unknown.
-            # Therefore, we correctly stub it out to be implemented later, once the page is visible.
-            raise NotImplementedError("Implement logic to find and extract key metrics from the user dashboard after logging in.")
+        async def find_and_select_top_rated_product() -> str:
+            \"\"\"
+            Analyzes the product list, finds the product with the highest rating, and navigates to its page.
+            \"\"\"
+            raise NotImplementedError("Implement logic to find the highest-rated product and get its URL.")
+
+        # This is another STUB. The product details page layout is also unknown.
+        @verify
+        async def extract_product_price_and_reviews(product_url: str) -> dict:
+            \"\"\"
+            Given a product URL, this function navigates to the page and extracts the price and review count.
+            \"\"\"
+            # Note: A Pydantic model would be defined here during dynamic implementation, like this:
+            # class ProductDetails(BaseModel):
+            #     price: float
+            #     review_count: int
+            #
+            # await action_provider.browser_navigate(product_url)
+            # details = await action_provider.browser_observe(
+            #     "Extract the price and number of reviews for this product.",
+            #     response_format=ProductDetails
+            # )
+            # return details.dict()
+            raise NotImplementedError("Implement logic to extract price and review count from the product page.")
+
 
         @verify
         async def main_plan():
-            # In the main plan, we call the functions in order.
-            # Notice there is NO try...except block here.
-            # The planner is designed to automatically catch the NotImplementedError from
-            # scrape_user_dashboard, implement that function, and then resume the plan.
-            await login_to_portal()
-            dashboard_data = await scrape_user_dashboard()
-            return dashboard_data
+            \"\"\"
+        Main plan to find the price of the top-rated blue sneakers.
+            \"\"\"
+            # Step 1: Perform the search. This is a concrete, implemented step.
+            await search_for_product()
+
+            # Step 2: Find the specific product URL. This function is a stub and will be
+            # implemented dynamically by the planner once it sees the search results page.
+            top_product_url = await find_and_select_top_rated_product()
+
+            # Step 3: Extract details from that product's page. This is also a stub.
+            # The planner will implement it after navigating to top_product_url.
+            product_info = await extract_product_price_and_reviews(top_product_url)
+
+            print(f"Final Info Found: {{product_info}}")
+            return f"The top-rated product costs {{product_info['price']}} and has {{product_info['review_count']}} reviews."
+
         ```
 
-        **Using Structured Outputs:**
-        ```python
-        # Example 1: Extract product information from a search results page
-        class ProductInfo(BaseModel):
-            name: str = Field(description="The product name as displayed")
-            price: str = Field(description="The price shown, including currency symbol")
-            in_stock: bool = Field(description="Whether the item shows as available")
-
-        class SearchResults(BaseModel):
-            products: list[ProductInfo] = Field(description="List of visible products")
-            total_count: str = Field(description="Total number of results shown on page")
-
-        @verify
-        async def extract_search_results():
-            # Observe the page to extract structured product data
-            results = await action_provider.browser_observe(
-                "List all visible products on this search results page with their prices and availability status. Also note the total result count.",
-                response_format=SearchResults
-            )
-
-            # Now we can process the data programmatically
-            affordable_products = []
-            for p in results.products:
-                try:
-                    # Remove $ and commas, then convert to float
-                    price_value = float(p.price.replace("$", "").replace(",", "").strip())
-                    if price_value < 50:
-                        affordable_products.append(p)
-                except ValueError:
-                    # Skip products with unparseable prices
-                    pass
-            return results
-
-        # Example 2: Navigate through a multi-step form by reading visible labels
-        class FormField(BaseModel):
-            label: str = Field(description="The visible label text for this form field")
-            field_type: str = Field(description="Type of input: 'text', 'dropdown', 'checkbox', etc.")
-            is_required: bool = Field(description="Whether the field shows a required indicator like * or 'required'")
-
-        class FormAnalysis(BaseModel):
-            page_title: str = Field(description="The form's title or heading")
-            fields: list[FormField] = Field(description="All visible form fields")
-            submit_button_text: str = Field(description="Text on the submit button")
-
-        @verify
-        async def fill_checkout_form():
-            # First, analyze what's on the form
-            form_info = await action_provider.browser_observe(
-                "Analyze this form page. What is the title, what fields are visible, and what does the submit button say?",
-                response_format=FormAnalysis
-            )
-
-            # Use the structured data to interact with specific fields
-            for field in form_info.fields:
-                if field.is_required and field.field_type == "text":
-                    if "email" in field.label.lower():
-                        await action_provider.browser_act(
-                            f"Click on the text field labeled '{{field.label}}' and type 'user@example.com'",
-                            "The email field should now contain 'user@example.com'"
-                        )
-                    elif "name" in field.label.lower():
-                        await action_provider.browser_act(
-                            f"Click on the text field labeled '{{field.label}}' and type 'John Doe'",
-                            "The name field should now contain 'John Doe'"
-                        )
-
-            # Submit using the exact button text we observed
-            await action_provider.browser_act(
-                f"Click the '{{form_info.submit_button_text}}' button",
-                "The form should be submitted and we should see a confirmation page"
-            )
-        ```
-
-        **Generic Reasoning:**
+        **Generic Reasoning Example**
+        This example demonstrates how to use the `reason` tool for analysis and structured extraction.
         ```python
         class Summary(BaseModel):
             one_sentence_summary: str = Field(description="A single sentence that captures the main point.")
@@ -301,7 +260,7 @@ def _build_rules_and_examples_prompt(
                 context=article_text,
                 response_format=Summary
             )
-            print(f"Summary: result.one_sentence_summary")
+            print(f"Summary: {{result.one_sentence_summary}}")
             return result.key_topics
         ```
     """,
@@ -801,5 +760,5 @@ def build_trace_summary_prompt(
         3.  Provide a clear, actionable recommendation for a new strategy that would avoid this failure.
 
         Respond with only the summary of your analysis. This summary will be used to rewrite the entire plan from scratch.
-        """
+        """,
     )
