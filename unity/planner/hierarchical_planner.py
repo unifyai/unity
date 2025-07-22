@@ -417,7 +417,7 @@ class HierarchicalPlan(BaseActiveTask):
         self._final_result_str: Optional[str] = None
         self.clarification_up_q = clarification_up_q or asyncio.Queue()
         self.clarification_down_q = clarification_down_q or asyncio.Queue()
-        self.completed_functions: set = set()
+        self.completed_functions: dict = {}
         self.skipped_functions: set = set()
         self._execution_task = asyncio.create_task(self._initialize_and_run())
         self.MAX_ESCALATIONS = max_escalations
@@ -575,7 +575,9 @@ class HierarchicalPlan(BaseActiveTask):
                     function_name = self._get_unimplemented_function_name()
                     await self._handle_dynamic_implementation(function_name)
                     plan_iterator = self._create_main_loop_iterator()
-                    self.action_log.append(f"Restarting main execution loop after implementing '{function_name}'")
+                    self.action_log.append(
+                        f"Restarting main execution loop after implementing '{function_name}'",
+                    )
                     return {
                         "status": "in_progress",
                         "message": f"Implemented {function_name}, retrying.",
@@ -668,11 +670,14 @@ class HierarchicalPlan(BaseActiveTask):
             function_name: The name of the function to implement.
             **kwargs: Additional context for implementation (e.g., replan reason).
         """
-        reason = kwargs.get("replan_reason", "First-time implementation from NotImplementedError.")
-        self.action_log.append(
-            f"IMPLEMENTATION CONTEXT for '{function_name}': {reason}"
+        reason = kwargs.get(
+            "replan_reason",
+            "First-time implementation from NotImplementedError.",
         )
-        
+        self.action_log.append(
+            f"IMPLEMENTATION CONTEXT for '{function_name}': {reason}",
+        )
+
         decision = await self.planner._dynamic_implement(
             plan=self,
             function_name=function_name,
@@ -709,19 +714,22 @@ class HierarchicalPlan(BaseActiveTask):
                         replan_reason=decision.reason,
                     )
                 else:
-                    self.action_log.append(f"Preparing a trace summary for full strategic replan of '{function_name}'...")
-                    
+                    self.action_log.append(
+                        f"Preparing a trace summary for full strategic replan of '{function_name}'...",
+                    )
+
                     full_trace = "\n".join(self.action_log)
                     summary_prompt = prompt_builders.build_trace_summary_prompt(
                         goal=self.goal,
                         action_log=full_trace,
                     )
                     trace_summary = await llm_call(
-                        self.planner.summarization_client, summary_prompt
+                        self.planner.summarization_client,
+                        summary_prompt,
                     )
                     logger.info(f"TRACE SUMMARY:\n{trace_summary}")
                     self.action_log.append(f"TRACE SUMMARY:\n{trace_summary}")
-                    
+
                     await self._handle_dynamic_implementation(
                         function_name,
                         is_strategic_replan=True,
@@ -771,11 +779,11 @@ class HierarchicalPlan(BaseActiveTask):
             new_code: The full source code of the new function implementation.
         """
         self.action_log.append(f"Updating implementation of '{function_name}'")
-        keys_to_remove = {
+        keys_to_remove = [
             key for key in self.completed_functions if key[0] == function_name
-        }
+        ]
         for key in keys_to_remove:
-            self.completed_functions.remove(key)
+            self.completed_functions.pop(key, None)
         if keys_to_remove:
             logger.info(
                 f"CACHE INVALIDATE: Removed {len(keys_to_remove)} cache entries for '{function_name}'.",
@@ -1486,22 +1494,23 @@ class HierarchicalPlanner(BasePlanner):
                     cache_key = (func_name, str(args), str(kwargs))
 
                 if cache_key in plan.completed_functions:
-
                     logger.info(
-                        f"CACHE HIT: Skipping already completed call to '{func_name}' with args {args}, {kwargs}",
+                        f"CACHE HIT: Returning cached result for '{func_name}' with args {args}, {kwargs}",
                     )
                     plan.action_log.append(
-                        f"CACHE HIT: Skipping function '{func_name}' (already completed)."
+                        f"CACHE HIT: Returning cached result for '{func_name}'.",
                     )
-                    return
+                    return plan.completed_functions[cache_key]
                 logger.info(
                     f"CACHE MISS: Proceeding with execution for '{func_name}'.",
                 )
-                
+
                 args_repr = [repr(a) for a in args]
                 kwargs_repr = [f"{k}={v!r}" for k, v in kwargs.items()]
                 all_args = ", ".join(args_repr + kwargs_repr)
-                plan.action_log.append(f"-> Entering '{func_name}' with args: ({all_args})") 
+                plan.action_log.append(
+                    f"-> Entering '{func_name}' with args: ({all_args})",
+                )
                 plan.call_stack.append(func_name)
                 plan.interaction_stack.append([])
                 logger.info(f"VERIFY: Entering '{func_name}'")
@@ -1533,7 +1542,7 @@ class HierarchicalPlanner(BasePlanner):
                                 f"Caught InvalidActionError in '{func_name}'. Forcing local reimplementation.",
                             )
                             plan.action_log.append(
-                                f"INVALID ACTION ERROR in '{func_name}': {str(e)}"
+                                f"INVALID ACTION ERROR in '{func_name}': {str(e)}",
                             )
                             replan_reason = (
                                 f"The function failed because it tried to execute an invalid browser action. "
@@ -1560,15 +1569,15 @@ class HierarchicalPlanner(BasePlanner):
                                 exc_info=True,
                             )
                             last_error_traceback = traceback.format_exc()
-                            
+
                             error_details = {
                                 "error_type": type(e).__name__,
                                 "error_message": str(e),
                                 "attempt": i + 1,
-                                "traceback": last_error_traceback
+                                "traceback": last_error_traceback,
                             }
                             plan.action_log.append(
-                                f"TOOL ERROR in '{func_name}': {json.dumps(error_details, indent=2)}"
+                                f"TOOL ERROR in '{func_name}': {json.dumps(error_details, indent=2)}",
                             )
                             try:
                                 logger.info(
@@ -1612,8 +1621,16 @@ class HierarchicalPlanner(BasePlanner):
                 finally:
                     if plan.call_stack:
                         exiting_func = plan.call_stack.pop()
-                        exit_status = "completed" if func_name in plan.completed_functions else "failed"
-                        plan.action_log.append(f"<- Exiting '{exiting_func}' (status={exit_status})")
+                        exit_status = (
+                            "completed"
+                            if any(
+                                key[0] == func_name for key in plan.completed_functions
+                            )
+                            else "failed"
+                        )
+                        plan.action_log.append(
+                            f"<- Exiting '{exiting_func}' (status={exit_status})",
+                        )
                     if plan.interaction_stack:
                         plan.interaction_stack.pop()
 
@@ -1659,9 +1676,9 @@ class HierarchicalPlanner(BasePlanner):
         )
         interactions_str = json.dumps(all_interactions, indent=2)
         plan.action_log.append(
-            f"VERIFICATION EVIDENCE for '{fn.__name__}':\n{interactions_str}"
+            f"VERIFICATION EVIDENCE for '{fn.__name__}':\n{interactions_str}",
         )
-        
+
         final_screenshot = None
         if "action_provider.browser" in plan.plan_source_code:
             final_screenshot = await self.action_provider.browser.get_screenshot()
@@ -1688,9 +1705,9 @@ class HierarchicalPlanner(BasePlanner):
             except (TypeError, ValueError):
                 cache_key = (fn.__name__, str(args), str(kwargs))
 
-            plan.completed_functions.add(cache_key)
+            plan.completed_functions[cache_key] = result
             logger.info(
-                f"CACHE ADD: Added call to '{fn.__name__}' to completed functions cache.",
+                f"CACHE ADD: Stored result for '{fn.__name__}' in cache.",
             )
 
             if len(plan.interaction_stack) > 1:
@@ -1853,7 +1870,9 @@ class HierarchicalPlanner(BasePlanner):
                 "Analyze the current page and provide a structured summary of its content.",
                 response_format=PageAnalysis,
             )
-            plan.action_log.append(f"Browser State during dynamic implementation: {browser_state}")
+            plan.action_log.append(
+                f"Browser State during dynamic implementation: {browser_state}",
+            )
             browser_screenshot = await self.action_provider.browser.get_screenshot()
 
         docstring = (
