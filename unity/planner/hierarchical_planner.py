@@ -71,17 +71,6 @@ class VerificationAssessment(BaseModel):
     reason: str = Field(..., description="A concise explanation for the status.")
 
 
-class ImplementationStrategy(BaseModel):
-    """A structured plan for implementing a function."""
-
-    rationale: str = Field(
-        description="A brief explanation of the chosen approach based on the current context.",
-    )
-    steps: List[str] = Field(
-        description="A detailed, step-by-step natural language plan for the implementation.",
-    )
-
-
 class PageAnalysis(BaseModel):
     page_title: str = Field(description="The title of the current page.")
     url: str = Field(description="The current URL.")
