@@ -7,8 +7,10 @@ import asyncio
 
 from dotenv import load_dotenv
 
-from livekit import agents
+from livekit import agents, rtc
+from livekit.agents import utils, tokenize, tts, stt
 from livekit.agents import AgentSession, Agent, RoomInputOptions
+from livekit.agents.log import logger
 from livekit.plugins import (
     openai,
     cartesia,
@@ -26,6 +28,8 @@ from livekit.agents import ChatContext, ChatMessage
 from livekit.agents import ModelSettings, llm, FunctionTool, Agent
 from typing import AsyncIterable
 from pydantic_core import from_json
+import sounddevice as sd
+import numpy as np
 
 load_dotenv()
 
@@ -36,6 +40,40 @@ from unity.conversation_manager.utils import publish_event, close_connection, ge
 events_queue = asyncio.Queue()
 chunk_queue = asyncio.Queue()
 current_running_response: asyncio.Task = None
+
+
+async def audio_from_meet_mic():
+    def float32_to_int16(audio):
+        return (audio * 32767).astype(np.int16)
+
+    q = asyncio.Queue()
+
+    def callback(indata, frames, time, status):
+        if status:
+            print("Input stream status:", status)
+        # Push audio chunk to queue
+        q.put_nowait(indata.copy())
+
+    stream = sd.InputStream(
+        channels=1,
+        samplerate=16000,
+        dtype="float32",
+        blocksize=1024,
+        callback=callback,
+        # device=None  # Ensure system default is set to `meet_mic`
+    )
+
+    with stream:
+        while True:
+            data = await q.get()
+            # Convert to AudioFrame
+            frame = rtc.AudioFrame(
+                data=float32_to_int16(data).tobytes(),
+                sample_rate=16000,
+                num_channels=1,
+                samples_per_channel=data.shape[0],
+            )
+            yield frame
 
 
 async def process_structured_output(
@@ -65,12 +103,19 @@ async def process_structured_output(
 
 
 class Assistant(Agent):
-    def __init__(self, from_number: str = "", to_number: str = "") -> None:
+    def __init__(
+        self,
+        from_number: str = "",
+        to_number: str = "",
+        meet_id: str = None,
+    ) -> None:
         self.past_events = []
         self.new_events = []
         # self.client = client
         self.current_tasks_status = None
         self.from_number = from_number
+        self.meet_id = meet_id
+        self.is_meet_call = meet_id is not None
         super().__init__(instructions="", llm=openai.LLM(model="gpt-4o"))
 
     async def on_user_turn_completed(
@@ -111,11 +156,102 @@ class Assistant(Agent):
         text: AsyncIterable[str],
         model_settings: ModelSettings,
     ) -> AsyncIterable:
-        return Agent.default.tts_node(
-            self,
-            process_structured_output(text),
-            model_settings,
-        )
+        activity = self._get_activity_or_raise()
+        assert activity.tts is not None, "tts_node called but no TTS node is available"
+
+        wrapped_tts = activity.tts
+
+        if not activity.tts.capabilities.streaming:
+            wrapped_tts = tts.StreamAdapter(
+                tts=wrapped_tts,
+                sentence_tokenizer=tokenize.basic.SentenceTokenizer(),
+            )
+
+        # agent_stream = None
+        # if self.is_meet_call:
+        #     agent_stream = sd.OutputStream(
+        #         samplerate=24000,
+        #         channels=1,
+        #         dtype="float32",
+        #         callback=output_callback,
+        #         blocksize=1024,  # matches frame.data chunk size
+        #         # device=None — use default output
+        #     )
+        #     agent_stream.start()
+
+        async with wrapped_tts.stream() as stream:
+
+            async def _forward_input():
+                async for chunk in process_structured_output(text):
+                    stream.push_text(chunk)
+
+                stream.end_input()
+
+            forward_task = asyncio.create_task(_forward_input())
+            try:
+                collected = []
+                async for ev in stream:
+                    if not self.is_meet_call:
+                        yield ev.frame
+                        continue
+
+                    collected.append(ev.frame.data)
+                    # data = np.frombuffer(ev.frame.data, dtype=np.int16)
+                    # data = data.astype(np.float32) / 32767.0
+                    # # data = upsample_to_virtual_mic(data, in_rate=24000)
+                    # if data.ndim == 1:
+                    #     data = np.expand_dims(data, axis=1)
+                    # audio_buffer.append(data)
+
+                # todo: collect whole sentence for now
+                if self.is_meet_call:
+                    await asyncio.to_thread(
+                        sd.play,
+                        np.concatenate(collected),
+                        24000,
+                        # device=virtual_sink,
+                    )
+                    await asyncio.to_thread(sd.wait)
+
+            finally:
+                await utils.aio.cancel_and_wait(forward_task)
+                # if agent_stream:
+                #     agent_stream.stop()
+                #     agent_stream.close()
+
+    async def stt_node(
+        self,
+        audio: AsyncIterable[rtc.AudioFrame],
+        model_settings,
+    ):
+        activity = self._get_activity_or_raise()
+        assert activity.stt is not None, "stt_node called but no STT node is available"
+
+        wrapped_stt = activity.stt
+
+        if not activity.stt.capabilities.streaming:
+            if not activity.vad:
+                raise RuntimeError(
+                    f"The STT ({activity.stt.label}) does not support streaming, add a VAD to the AgentTask/VoiceAgent to enable streaming"  # noqa: E501
+                    "Or manually wrap your STT in a stt.StreamAdapter",
+                )
+
+            wrapped_stt = stt.StreamAdapter(stt=wrapped_stt, vad=activity.vad)
+
+        async with wrapped_stt.stream() as stream:
+
+            @utils.log_exceptions(logger=logger)
+            async def _forward_input():
+                user_audio = audio_from_meet_mic() if self.is_meet_call else audio
+                async for frame in user_audio:
+                    stream.push_frame(frame)
+
+            forward_task = asyncio.create_task(_forward_input())
+            try:
+                async for event in stream:
+                    yield event
+            finally:
+                await utils.aio.cancel_and_wait(forward_task)
 
 
 async def entrypoint(ctx: agents.JobContext):

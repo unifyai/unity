@@ -1,6 +1,4 @@
-import asyncio
 import functools
-from pydantic import Field
 import os
 import unify
 from typing import Any
@@ -154,63 +152,63 @@ class ActionProvider:
     #     return self.browser.start_recording()
 
     # TODO: move this to the FM
-    async def scroll_until_visible(
-        self,
-        element_description: str,
-        direction: str = "down",
-        max_retries: int = 5,
-    ) -> str:
-        """
-        Scrolls the page in a specified direction until a target element is visible.
+    # async def scroll_until_visible(
+    #     self,
+    #     element_description: str,
+    #     direction: str = "down",
+    #     max_retries: int = 5,
+    # ) -> str:
+    #     """
+    #     Scrolls the page in a specified direction until a target element is visible.
 
-        This is a robust tool for finding elements that may be off-screen. It is generally
-        preferable to writing manual scroll loops in a plan.
+    #     This is a robust tool for finding elements that may be off-screen. It is generally
+    #     preferable to writing manual scroll loops in a plan.
 
-        Args:
-            element_description (str): A clear, natural-language description of the target
-                                     element to find (e.g., "the 'Submit' button",
-                                     "the footer section containing 'About Us'").
-            direction (str, optional): The direction to scroll. Can be "down" or "up".
-                                     Defaults to "down".
-            max_retries (int, optional): The maximum number of times to scroll before giving up.
-                                       Defaults to 5.
+    #     Args:
+    #         element_description (str): A clear, natural-language description of the target
+    #                                  element to find (e.g., "the 'Submit' button",
+    #                                  "the footer section containing 'About Us'").
+    #         direction (str, optional): The direction to scroll. Can be "down" or "up".
+    #                                  Defaults to "down".
+    #         max_retries (int, optional): The maximum number of times to scroll before giving up.
+    #                                    Defaults to 5.
 
-        Returns:
-            str: A status message indicating success or failure.
+    #     Returns:
+    #         str: A status message indicating success or failure.
 
-        Example:
-            await action_provider.scroll_until_visible(
-                element_description="the 'Terms of Service' link in the footer"
-            )
-        """
+    #     Example:
+    #         await action_provider.scroll_until_visible(
+    #             element_description="the 'Terms of Service' link in the footer"
+    #         )
+    #     """
 
-        class ElementVisibility(BaseModel):
-            is_visible: bool = Field(
-                description="True if the element is visible on the screen, False otherwise.",
-            )
-            reason: str = Field(description="The reason for the visibility status.")
+    #     class ElementVisibility(BaseModel):
+    #         is_visible: bool = Field(
+    #             description="True if the element is visible on the screen, False otherwise.",
+    #         )
+    #         reason: str = Field(description="The reason for the visibility status.")
 
-        for i in range(max_retries):
-            # First, check if the element is already visible.
-            visibility_status = await self.browser.observe(
-                f"Is'{element_description}' currently visible on the screen?",
-                response_format=ElementVisibility,
-            )
+    #     for i in range(max_retries):
+    #         # First, check if the element is already visible.
+    #         visibility_status = await self.browser.observe(
+    #             f"Is'{element_description}' currently visible on the screen?",
+    #             response_format=ElementVisibility,
+    #         )
 
-            if visibility_status.is_visible:
-                print(f"Success: Element '{element_description}' is now visible.")
-                return f"Success: Element '{element_description}' is now visible."
+    #         if visibility_status.is_visible:
+    #             print(f"Success: Element '{element_description}' is now visible.")
+    #             return f"Success: Element '{element_description}' is now visible."
 
-            print(f"Continue scrolling. Reason: {visibility_status.reason}")
-            # If not visible, perform the scroll action.
-            await self.browser.act(
-                f"Scroll {direction} slightly",
-                expectation=f"The page should scroll {direction}.",
-            )
-            await asyncio.sleep(1)
+    #         print(f"Continue scrolling. Reason: {visibility_status.reason}")
+    #         # If not visible, perform the scroll action.
+    #         await self.browser.act(
+    #             f"Scroll {direction} slightly",
+    #             expectation=f"The page should scroll {direction}.",
+    #         )
+    #         await asyncio.sleep(1)
 
-        # If the loop finishes without finding the element, return a failure message.
-        return f"Failure: Could not find element '{element_description}' after {max_retries} scrolls."
+    #     # If the loop finishes without finding the element, return a failure message.
+    #     return f"Failure: Could not find element '{element_description}' after {max_retries} scrolls."
 
     # --- Generic Reasoning Action ---
     async def reason(

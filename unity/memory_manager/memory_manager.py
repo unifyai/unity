@@ -25,6 +25,27 @@ from ..events.event_bus import EVENT_BUS, Event
 from .broader_context import set_broader_context
 
 
+# ---------------------------------------------------------------------------
+#  Environment toggle helpers
+# ---------------------------------------------------------------------------
+
+
+def _env_flag(
+    var_name: str,
+    default: bool = True,
+) -> bool:  # noqa: D401 – imperative helper name
+    """Return *True* if the environment variable *var_name* is set to a truthy
+    value (case-insensitive ``true, 1, yes, y``).  Missing variables fall back
+    to *default* so existing behaviour remains unchanged when the variable is
+    absent.
+    """
+
+    val = os.getenv(var_name)
+    if val is None:
+        return default
+    return val.strip().lower() in {"1", "true", "yes", "y"}
+
+
 class MemoryManager(BaseMemoryManager):
     """
     Offline helper invoked by a scheduler every ~50 messages.
@@ -118,43 +139,65 @@ class MemoryManager(BaseMemoryManager):
         self._knowledge_manager = knowledge_manager or KnowledgeManager()
         self._task_scheduler = task_scheduler or TaskScheduler()
 
-        # ── Rolling-Activity context & subscriptions ─────────────────
-        self._rolling_ctx = self._ensure_rolling_context()
-        # Serialise updates to the RollingActivity context to avoid race conditions
-        self._rolling_lock = asyncio.Lock()
-        asyncio.create_task(self._setup_rolling_callbacks())  # fire-and-forget
+        # ── Environment-controlled callback registration -------------------------
 
-        # ── real-time 50-message trigger -----------------------------------------
+        #  Determine which groups of callbacks should be active based on
+        #  environment variables (defaults = enabled for full backward compatibility).
+        self._register_summary_callbacks: bool = _env_flag(
+            "REGISTER_SUMMARY_CALLBACKS",
+            True,
+        )
+        self._register_update_callbacks: bool = _env_flag(
+            "REGISTER_UPDATE_CALLBACKS",
+            True,
+        )
+
+        # ── Rolling-Activity context & subscriptions (summaries) ────────────────
+        self._rolling_ctx = self._ensure_rolling_context()
+        self._rolling_lock = asyncio.Lock()
+
+        # Expose a readiness Event so external callers/tests can await summary callbacks
+        self._callbacks_ready = asyncio.Event()
+
+        if self._register_summary_callbacks:
+            # Fire-and-forget registration of summary callbacks
+            asyncio.create_task(self._setup_rolling_callbacks())
+        else:
+            # No summary callbacks -> consider the system *ready* immediately
+            self._callbacks_ready.set()
+
+        # ── real-time 50-message trigger (update callbacks) --------------------
         self._CHUNK_SIZE: int = 50
         self._recent_messages: list[dict] = []
         self._messages_since_update: int = 0
 
-        # Serialise overlap between concurrent chunk updates
         self._chunk_lock = asyncio.Lock()
 
-        # Fire-and-forget setup of the message counter callback
-        asyncio.create_task(self._setup_message_callbacks())
+        if self._register_update_callbacks:
+            # Fire-and-forget setup of message counter and explicit-call callbacks
+            asyncio.create_task(self._setup_message_callbacks())
 
-        # ── Auto-pin & explicit-call callbacks ------------------------------------
-        # 1.  Automatically pin the *calling_id* for the lifetime of any explicit
-        #     tool invocation coming from ConversationManager so the related
-        #     ManagerMethod events are never trimmed before completion.
-        EVENT_BUS.register_auto_pin(
-            event_type="ManagerMethod",
-            open_predicate=lambda e: (
-                e.payload.get("source") == "ConversationManager"
-                and e.payload.get("phase") == "incoming"
-            ),
-            close_predicate=lambda e: (
-                e.payload.get("source") == "ConversationManager"
-                and e.payload.get("phase") == "outgoing"
-            ),
-            key_fn=lambda e: e.calling_id,
-        )
+            # 1.  Automatically pin the *calling_id* for the lifetime of any explicit
+            #     tool invocation coming from ConversationManager so the related
+            #     ManagerMethod events are never trimmed before completion.
+            EVENT_BUS.register_auto_pin(
+                event_type="ManagerMethod",
+                open_predicate=lambda e: (
+                    e.payload.get("source") == "ConversationManager"
+                    and e.payload.get("phase") == "incoming"
+                ),
+                close_predicate=lambda e: (
+                    e.payload.get("source") == "ConversationManager"
+                    and e.payload.get("phase") == "outgoing"
+                ),
+                key_fn=lambda e: e.calling_id,
+            )
 
-        # 2.  Listen to those explicit ManagerMethod events so they are included
-        #     in the 50-message rolling window given to the LLM.
-        asyncio.create_task(self._setup_explicit_call_callbacks())
+            # 2.  Listen to those explicit ManagerMethod events so they are included
+            #     in the 50-message rolling window given to the LLM.
+            asyncio.create_task(self._setup_explicit_call_callbacks())
+
+        # If update callbacks are disabled  no-op for message processing
 
     # ------------------------------------------------------------------ #
     # 1  update_contacts                                                 #
@@ -424,20 +467,32 @@ class MemoryManager(BaseMemoryManager):
         # 1. Reset the global EventBus singleton (clears callbacks & logs)
         EVENT_BUS.reset()
 
-        # 2. Re-establish rolling-activity subscriptions *synchronously*
-        #    so callers can rely on them right after this coroutine returns.
-        #    We create a new readiness Event to avoid races with any still-
-        #    pending tasks from a previous incarnation.
+        # Re-create readiness Event and schedule callback registrations according
+        # to the current environment flags so callers can rely on them right after
+        # this coroutine returns.
 
         self._callbacks_ready = asyncio.Event()
-        # Register both rolling-activity *and* message-based callbacks concurrently
-        await asyncio.gather(
-            self._setup_rolling_callbacks(),
-            self._setup_message_callbacks(),
-            self._setup_explicit_call_callbacks(),
-        )
 
-        # Wait until rolling-callbacks signalled readiness (max 5 s)
+        tasks: list[asyncio.Task] = []
+
+        if self._register_summary_callbacks:
+            tasks.append(asyncio.create_task(self._setup_rolling_callbacks()))
+        else:
+            # Summary callbacks disabled – consider ready instantly
+            self._callbacks_ready.set()
+
+        if self._register_update_callbacks:
+            tasks.extend(
+                [
+                    asyncio.create_task(self._setup_message_callbacks()),
+                    asyncio.create_task(self._setup_explicit_call_callbacks()),
+                ],
+            )
+
+        if tasks:
+            await asyncio.gather(*tasks)
+
+        # Wait for summary callbacks (if any) to signal readiness – timeout safeguards
         await asyncio.wait_for(self._callbacks_ready.wait(), timeout=5)
 
     # ───────────────────────────  MESSAGE-BASED CALLBACKS  ───────────────────────────
@@ -518,8 +573,7 @@ class MemoryManager(BaseMemoryManager):
         items = self._recent_messages.copy()
         self._recent_messages.clear()
 
-        # Launch the chunk processing asynchronously so we don't block EventBus
-        asyncio.create_task(self._process_message_chunk(items))
+        await self._process_message_chunk(items)
 
     # ------------------------------------------------------------------
     # Override the original message-handler so it stores the unified format

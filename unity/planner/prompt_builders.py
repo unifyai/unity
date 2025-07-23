@@ -73,7 +73,7 @@ def _build_rules_and_examples_prompt(
     )
     if is_dynamic_implement:
         instructions_and_rules = textwrap.dedent(
-            f"""
+            """
             1.  **Single Code Block:** Your entire response MUST be a single, valid Python code block.
             2.  **No Imports:** You **MUST NOT** use any `import`/ `__import__` statements in your code. All standard library imports(eg: `asyncio`, `re`, `pydantic`) are already present within the execution environment so you can use them directly.
             3.  **Decorators & Docstrings:** Every **function** you define MUST include docstrings which include the function's purpose, its arguments, and its return value.
@@ -85,12 +85,14 @@ def _build_rules_and_examples_prompt(
         )
     else:
         instructions_and_rules = textwrap.dedent(
-            f"""
+            """
             1.  **Single Code Block:** Your entire response MUST be a single, valid Python code block.
             2.  **Entry Point:** For a full plan, the main entry point MUST be `async def main_plan()`.
             3.  **No Imports:** You **MUST NOT** use any `import`/ `__import__` statements in your code. All standard library imports(eg: `asyncio`, `re`, `pydantic`) are already present within the execution environment so you can use them directly.
             4.  **Decomposition:** Break down complex problems into smaller, logical, self-contained `async def` helper functions.
-            5.  **Defer Complex Steps**: For any step that requires knowing what a webpage looks like (e.g., finding an element, extracting specific data, clicking a non-obvious button), you **MUST** create a descriptive helper function stubbed with `raise NotImplementedError`. This allows the agent to implement that step later when it can see the page.
+            5.  **Confidence-Based Stubbing**: Your primary goal is to create a robust plan.
+                * **If a step is simple and you are highly confident** about how to perform it (e.g., `browser_navigate("https://google.com")`, `browser_act("Type 'reports' into the search bar")`), implement it directly.
+                * **If a step is ambiguous or requires seeing the page first**, you **MUST** create a descriptive helper function stubbed with `raise NotImplementedError`. This is critical for actions like finding and applying non-standard filters, extracting data from a unique table layout, or navigating a custom multi-step form.
             6.  **Decorators & Docstrings:** Every **function** you define MUST include docstrings which include the function's purpose, its arguments, and its return value.
             7.  **Async All The Way**: All helper functions you define MUST be `async def`.
             8.  **Await Keyword**: All `action_provider` methods that are asynchronous MUST be called with the `await` keyword.
@@ -124,8 +126,8 @@ def _build_rules_and_examples_prompt(
         ---
         ### Usage Examples
 
-        **Using a Handle-Based Tool (like sending a message or making a call):**
-
+        **Using a Handle-Based Tool (like sending a message or making a call)**
+        This example demonstrates how to use the `send_sms_message` tool to send a message.
         # Example 1: Sending a message
         ```python
         @verify
@@ -139,6 +141,7 @@ def _build_rules_and_examples_prompt(
         ```
 
         # Example 2: Making an Interactive Phone Call
+        This example demonstrates how to use the `start_call` tool to make an interactive phone call.
         ```python
         @verify
         async def make_appointment_followup_call():
@@ -174,119 +177,76 @@ def _build_rules_and_examples_prompt(
             return analysis
         ```
 
-        **Simple Browser Interaction:**
-        ```python
-        @verify
-        async def check_unify_blog():
-            # The browser object can be used directly from the action_provider
-            await action_provider.browser_navigate("https://unify.ai")
-            await action_provider.browser_act("Click the 'Blog' link in the main navigation")
-            blog_title = await action_provider.browser_observe("What is the title of the first blog post?")
-            return blog_title
-        ```
-
-        **Multiple Steps with Stubs & Dynamic Implementation:**
-        This example shows the correct way to structure a plan that defers a complex step.
+        **Browser Automation Example**
+        This example demonstrates how to combine navigation, observation with Pydantic models, and confidence-based stubbing to create a robust, multi-step web automation plan.
 
         ```python
+        # This function is implemented directly because navigating and searching are simple, high-confidence actions.
         @verify
-        async def login_to_portal():
-            # This part is simple and can be implemented directly.
-            await action_provider.browser_navigate("https://portal.example.com/login")
-            await action_provider.browser_act("Enter 'user@example.com' into the email field")
-            await action_provider.browser_act("Click the 'Next' button")
+        async def search_for_product() -> str:
+            \"\"\"Navigates to an e-commerce site and searches for a specific product.\"\"\"
+            print("Navigating to store and searching for 'blue sneakers'.")
+            await action_provider.browser_navigate("https://fakestore.example.com")
+            await action_provider.browser_act(
+                "Type 'blue sneakers' into the search bar and click the search button",
+                expectation="The page should show a list of products related to 'blue sneakers'."
+            )
+            print("Search complete.")
+            return "Successfully searched for products."
 
+        # This function is a STUB. The layout of the search results page is unknown,
+        # so we must wait until we can see it before we can reliably implement the extraction logic.
+        # This is a perfect example of "Confidence-Based Stubbing".
         @verify
-        async def scrape_user_dashboard():
-            # This is a complex step that requires seeing the dashboard page first.
-            # Therefore, we correctly stub it out.
-            raise NotImplementedError("Implement logic to find and extract data from the user dashboard.")
+        async def find_and_select_top_rated_product() -> str:
+            \"\"\"
+            Analyzes the product list, finds the product with the highest rating, and navigates to its page.
+            \"\"\"
+            raise NotImplementedError("Implement logic to find the highest-rated product and get its URL.")
+
+        # This is another STUB. The product details page layout is also unknown.
+        @verify
+        async def extract_product_price_and_reviews(product_url: str) -> dict:
+            \"\"\"
+            Given a product URL, this function navigates to the page and extracts the price and review count.
+            \"\"\"
+            # Note: A Pydantic model would be defined here during dynamic implementation, like this:
+            # class ProductDetails(BaseModel):
+            #     price: float
+            #     review_count: int
+            #
+            # await action_provider.browser_navigate(product_url)
+            # details = await action_provider.browser_observe(
+            #     "Extract the price and number of reviews for this product.",
+            #     response_format=ProductDetails
+            # )
+            # return details.dict()
+            raise NotImplementedError("Implement logic to extract price and review count from the product page.")
+
 
         @verify
         async def main_plan():
-            # In the main plan, we call the functions in order.
-            # Notice there is NO try...except block here.
-            # The planner is designed to automatically catch the NotImplementedError from
-            # scrape_user_dashboard, implement that function, and then resume the plan.
-            await login_to_portal()
-            dashboard_data = await scrape_user_dashboard()
-            return dashboard_data
+            \"\"\"
+        Main plan to find the price of the top-rated blue sneakers.
+            \"\"\"
+            # Step 1: Perform the search. This is a concrete, implemented step.
+            await search_for_product()
+
+            # Step 2: Find the specific product URL. This function is a stub and will be
+            # implemented dynamically by the planner once it sees the search results page.
+            top_product_url = await find_and_select_top_rated_product()
+
+            # Step 3: Extract details from that product's page. This is also a stub.
+            # The planner will implement it after navigating to top_product_url.
+            product_info = await extract_product_price_and_reviews(top_product_url)
+
+            print(f"Final Info Found: {{product_info}}")
+            return f"The top-rated product costs {{product_info['price']}} and has {{product_info['review_count']}} reviews."
+
         ```
 
-        **Using Structured Outputs:**
-        ```python
-        # Example 1: Extract product information from a search results page
-        class ProductInfo(BaseModel):
-            name: str = Field(description="The product name as displayed")
-            price: str = Field(description="The price shown, including currency symbol")
-            in_stock: bool = Field(description="Whether the item shows as available")
-
-        class SearchResults(BaseModel):
-            products: list[ProductInfo] = Field(description="List of visible products")
-            total_count: str = Field(description="Total number of results shown on page")
-
-        @verify
-        async def extract_search_results():
-            # Observe the page to extract structured product data
-            results = await action_provider.browser_observe(
-                "List all visible products on this search results page with their prices and availability status. Also note the total result count.",
-                response_format=SearchResults
-            )
-
-            # Now we can process the data programmatically
-            affordable_products = []
-            for p in results.products:
-                try:
-                    # Remove $ and commas, then convert to float
-                    price_value = float(p.price.replace("$", "").replace(",", "").strip())
-                    if price_value < 50:
-                        affordable_products.append(p)
-                except ValueError:
-                    # Skip products with unparseable prices
-                    pass
-            return results
-
-        # Example 2: Navigate through a multi-step form by reading visible labels
-        class FormField(BaseModel):
-            label: str = Field(description="The visible label text for this form field")
-            field_type: str = Field(description="Type of input: 'text', 'dropdown', 'checkbox', etc.")
-            is_required: bool = Field(description="Whether the field shows a required indicator like * or 'required'")
-
-        class FormAnalysis(BaseModel):
-            page_title: str = Field(description="The form's title or heading")
-            fields: list[FormField] = Field(description="All visible form fields")
-            submit_button_text: str = Field(description="Text on the submit button")
-
-        @verify
-        async def fill_checkout_form():
-            # First, analyze what's on the form
-            form_info = await action_provider.browser_observe(
-                "Analyze this form page. What is the title, what fields are visible, and what does the submit button say?",
-                response_format=FormAnalysis
-            )
-
-            # Use the structured data to interact with specific fields
-            for field in form_info.fields:
-                if field.is_required and field.field_type == "text":
-                    if "email" in field.label.lower():
-                        await action_provider.browser_act(
-                            f"Click on the text field labeled '{{field.label}}' and type 'user@example.com'",
-                            "The email field should now contain 'user@example.com'"
-                        )
-                    elif "name" in field.label.lower():
-                        await action_provider.browser_act(
-                            f"Click on the text field labeled '{{field.label}}' and type 'John Doe'",
-                            "The name field should now contain 'John Doe'"
-                        )
-
-            # Submit using the exact button text we observed
-            await action_provider.browser_act(
-                f"Click the '{{form_info.submit_button_text}}' button",
-                "The form should be submitted and we should see a confirmation page"
-            )
-        ```
-
-        **Generic Reasoning:**
+        **Generic Reasoning Example**
+        This example demonstrates how to use the `reason` tool for analysis and structured extraction.
         ```python
         class Summary(BaseModel):
             one_sentence_summary: str = Field(description="A single sentence that captures the main point.")
@@ -300,7 +260,7 @@ def _build_rules_and_examples_prompt(
                 context=article_text,
                 response_format=Summary
             )
-            print(f"Summary: result.one_sentence_summary")
+            print(f"Summary: {{result.one_sentence_summary}}")
             return result.key_topics
         ```
     """,
@@ -370,6 +330,8 @@ def build_initial_plan_prompt(
 
 
 def build_dynamic_implement_prompt(
+    full_plan_source: str,
+    call_stack: list[str],
     function_name: str,
     function_sig: inspect.Signature,
     function_docstring: str,
@@ -388,6 +350,8 @@ def build_dynamic_implement_prompt(
     instructions and state if the `browser_state` argument is provided.
 
     Args:
+        full_plan_source: The full source code of the plan.
+        call_stack: The current function call stack.
         function_name: The name of the function to implement.
         function_sig: The signature of the function to implement.
         function_docstring: The docstring of the function to implement.
@@ -439,7 +403,27 @@ def build_dynamic_implement_prompt(
             ---
             """,
         )
-    strategy_instruction = "Analyze the function's purpose and the available tools to decide on the best implementation strategy."
+    call_stack_str = " -> ".join(call_stack)
+    context_section = textwrap.dedent(
+        f"""
+    ---
+    ### Full Plan Analysis
+    You have access to the entire plan and the current call stack for complete strategic context.
+
+    **Current Call Stack:**
+    `{call_stack_str}`
+
+    **Full Plan Source Code:**
+    ```python
+    {full_plan_source}
+    ```
+    ---
+    """,
+    )
+
+    strategy_instruction = (
+        "Your task is to analyze the situation and decide on the best course of action."
+    )
     tool_usage_instruction = "Use the `action_provider` global object to interact with the environment. Available tools and their handle APIs have been described in the rules below."
     rules_and_examples = _build_rules_and_examples_prompt(
         tools,
@@ -450,30 +434,27 @@ def build_dynamic_implement_prompt(
 
     return textwrap.dedent(
         f"""
-        You are an expert Python programmer. Your task is to **only** write the implementation for the function `{function_name}` and nothing else.
+        You are an expert Python programmer and a master strategist. Your task is to analyze the state of a running plan and decide the best course of action for the function `{function_name}`.
 
-        **CRITICAL RULES:**
-        1.  Your response MUST contain ONLY the Python code for the function `{function_name}`.
-        2.  **START FROM THE CURRENT STATE**: You are implementing a single step in a larger plan. Analyze the `Current Browser State` and provided screenshot carefully. Your code **MUST NOT** repeat steps that have already been completed. Your logic must begin from the state shown.
-        3.  **SELF-CONTAINED**: Your function must be completely self-contained. Do NOT reference any variables, classes, or functions that are defined outside of this function (except for built-ins and `action_provider`). If you need Pydantic models, define them INSIDE this function.
-        4.  **NO IMPORTS**: Do not use import statements. Do not try to import from fictional modules.
+        **CRITICAL: You must choose one of three actions:**
+        1.  **`implement_function`**: Write the Python code for `{function_name}`. Choose this if the function's goal is achievable from the current browser state.
+        2.  **`skip_function`**: Bypass this function entirely. Choose this if you observe that the function's goal is **already completed** or is now **irrelevant**. For example, skip a "log in" function if you are already logged in.
+        3.  **`replan_parent`**: Escalate the failure to the calling function. Choose this if the current function is **impossible to implement** because of a mistake made in a *previous* step. For example, if the goal is "apply filters" but the page has no filter controls, the error lies with the parent function that navigated to the wrong page or failed to get to the right state.
 
-        **Your Task:** Implement the function `{function_name}` to achieve the following purpose.
-        **Function's Purpose:** "{function_docstring}"
-        **Function to Implement:** `async def {function_name}{function_sig}`
+        {context_section}
+
+        ### Situation Analysis
+        **Function to Address:** `async def {function_name}{function_sig}`
+        **Purpose of this Function:** "{function_docstring}"
+        **Current Browser State:**
+        {browser_state or "No browser state available."}
+        A screenshot of the current browser page has been provided. **Use it as the primary source of truth.**
 
         {failure_analysis_section}
         {strategy_section}
-
-        ### Situation Analysis
-        **Parent Function (for context):**
-        ```python
-        {parent_code}
-        ```
-        {browser_context_section}
         {rules_and_examples}
 
-        Begin your response now. Your response must start immediately with the code.
+        Respond with ONLY the JSON object matching the `ImplementationDecision` schema.
         """,
     )
 
@@ -708,67 +689,6 @@ def build_should_explore_prompt(goal: str) -> str:
     )
 
 
-def build_implementation_strategy_prompt(
-    goal: str,
-    function_name: str,
-    function_docstring: str | None,
-    failure_reason: str,
-    browser_state: str | None,
-    has_browser_screenshot: bool,
-    failed_interactions: Optional[list],
-    *,
-    tools: Dict[str, Callable],
-) -> str:
-    """Builds a prompt to devise a new, FOCUSED strategy for a single failed function."""
-
-    browser_context_section = (
-        f"**Current Browser State:**\n{browser_state}" if browser_state else ""
-    )
-    if has_browser_screenshot:
-        browser_context_section += """
-        **Current Browser View (Screenshot):**
-        An image of the current browser page has been provided. Analyze it carefully to inform your new implementation.
-        """
-    interaction_log_section = ""
-    if failed_interactions:
-        interactions_log = "\n".join(
-            f"- {kind}: {act} -> {obs}" for kind, act, obs in failed_interactions
-        )
-        interaction_log_section = textwrap.dedent(
-            f"""
-            **Log of Failed Attempt:**
-            Here are the actions that were taken in the last attempt. You should use this to inform your new strategy.
-            ```
-            {interactions_log}
-            ```
-            """,
-        )
-    tool_reference = _build_tool_signatures(tools)
-    return textwrap.dedent(
-        f"""
-        You are a tactical debugging agent. The function `{function_name}` has failed. Your task is to analyze the failure and devise a new, specific, step-by-step plan to successfully implement **only the logic for this function**.
-
-        **Function to Fix:** `{function_name}`
-        **Purpose of this Function:** {function_docstring or 'No docstring provided.'}
-        **(Context) This function is one step in the Overall Goal:** "{goal}"
-
-        **CRITICAL: Reason for Failure:** "{failure_reason}"
-
-        {interaction_log_section}
-        {browser_context_section}
-
-        ---
-        ### Available Tools
-        {tool_reference}
-        ---
-        ### Your Task
-        Based on the failure reason and current state, devise a new, focused strategy for **only the function `{function_name}`**. Do not create steps for other parts of the plan that have already succeeded.
-
-        Respond with ONLY the JSON object matching the requested schema.
-        """,
-    )
-
-
 def build_ask_prompt(
     goal: str,
     state: str,
@@ -805,4 +725,40 @@ def build_ask_prompt(
         **Question:** "{question}"
         **Answer:**
     """,
+    )
+
+
+def build_trace_summary_prompt(
+    goal: str,
+    action_log: str,
+) -> str:
+    """
+    Builds the prompt for the Trace Summary LLM.
+
+    Args:
+        goal: The original high-level goal of the plan.
+        action_log: The detailed execution trace from plan.action_log.
+
+    Returns:
+        The complete prompt string for the summarization call.
+    """
+    return textwrap.dedent(
+        f"""
+        You are an expert debugging analyst for an autonomous web agent.
+        The following is a detailed action log from a failed plan execution. Your task is to read the entire trace and produce a concise, high-level summary of the strategic error.
+
+        **Original Goal:** "{goal}"
+
+        **Execution Trace / Action Log:**
+        ```
+        {action_log}
+        ```
+
+        **Your Analysis Task:**
+        1.  Identify the root cause of the failure. Do not focus on the final error message, but on the sequence of events that led to it.
+        2.  Explain the flaw in the plan's original strategy (e.g., "The plan incorrectly assumed X," or "The plan failed to perform step Y before Z").
+        3.  Provide a clear, actionable recommendation for a new strategy that would avoid this failure.
+
+        Respond with only the summary of your analysis. This summary will be used to rewrite the entire plan from scratch.
+        """,
     )
