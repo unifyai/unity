@@ -68,6 +68,7 @@ def _build_rules_and_examples_prompt(
         2.  **Combine Action and Verification**: Use the `expectation` parameter in `browser_act` to tell the agent what success looks like. This is more efficient than a separate `browser_observe` call. For example: `await action_provider.browser_act("Click the 'Add to Cart' button", expectation="The cart icon should show '1' item")`.
         3.  **Use `browser_observe` for Complex Data**: When you need to extract structured data (like a list of products, table contents, or form fields), use `browser_observe` with a Pydantic `response_format`. This is the best way to gather context before acting on complex pages.
         4.  **Describe Visually**: All browser tools operate on what is *visible*. Describe elements by their text, color, or relative position (e.g., "the blue 'Save' button at the bottom of the form"), not by HTML attributes.
+        5.  **Use Fallback Capabilities**: If a website's interactive feature (e.g., a "Convert" button, a "Sort" dropdown) fails or doesn't meet your needs, don't give up. Instead, consider if you can achieve the goal using a more fundamental tool. For instance, if you can observe the raw data, you can often use `action_provider.reason` to perform the necessary calculation, transformation, or analysis yourself.
         ---
         """,
     )
@@ -80,7 +81,7 @@ def _build_rules_and_examples_prompt(
             4.  **Async All The Way**: All helper functions you define MUST be `async def`.
             5.  **Await Keyword**: All `action_provider` methods that are asynchronous MUST be called with the `await` keyword.
             6.  **Structured Output**: For `observe` or `reason` calls that expect a structured answer (e.g., yes/no, a list of items), you MUST define a Pydantic `BaseModel` and pass it to the `response_format` argument to ensure reliable, parsable output. **CRITICAL: Always define Pydantic models INSIDE the function where they are used, NOT at the module level, to avoid forward reference issues.**
-            7.  **Robust Error Handling**: Proactively use `try...except` blocks to handle potential **unexpected** failures (e.g., an element not being found) with informative error messages. However, **DO NOT** wrap calls to stubbed functions in a `try...except` block. Let `NotImplementedError` propagate.
+            7. **Robust Error Handling**: Proactively use `try...except` blocks to handle potential **unexpected** failures (e.g., an element not being found) with informative error messages. However, **DO NOT** wrap calls to stubbed functions in a `try...except` block. Let `NotImplementedError` propagate. This is important because the agent will implement the stubbed function dynamically.
             """,
         )
     else:
@@ -97,7 +98,7 @@ def _build_rules_and_examples_prompt(
             7.  **Async All The Way**: All helper functions you define MUST be `async def`.
             8.  **Await Keyword**: All `action_provider` methods that are asynchronous MUST be called with the `await` keyword.
             9.  **Structured Output**: For `observe` or `reason` calls that expect a structured answer (e.g., yes/no, a list of items), you MUST define a Pydantic `BaseModel` and pass it to the `response_format` argument to ensure reliable, parsable output. **CRITICAL: Always define Pydantic models INSIDE the function where they are used, NOT at the module level, to avoid forward reference issues.**
-            10.  **Robust Error Handling**: Proactively use `try...except` blocks to handle potential **unexpected** failures (e.g., an element not being found) with informative error messages. However, **DO NOT** wrap calls to stubbed functions in a `try...except` block. Let `NotImplementedError` propagate.
+            10. **Robust Error Handling**: Proactively use `try...except` blocks to handle potential **unexpected** failures (e.g., an element not being found) with informative error messages. However, **DO NOT** wrap calls to stubbed functions in a `try...except` block. Let `NotImplementedError` propagate. This is important because the agent will implement the stubbed function dynamically.
             """,
         )
     return textwrap.dedent(
@@ -227,17 +228,27 @@ def _build_rules_and_examples_prompt(
         @verify
         async def main_plan():
             \"\"\"
-        Main plan to find the price of the top-rated blue sneakers.
+            Main plan to find the price of the top-rated blue sneakers.
             \"\"\"
             # Step 1: Perform the search. This is a concrete, implemented step.
             await search_for_product()
 
             # Step 2: Find the specific product URL. This function is a stub and will be
-            # implemented dynamically by the planner once it sees the search results page.
+            # implemented dynamically by the agent once it sees the search results page.
+            # CRITICAL: Never wrap a stubbed function in a try-except block.
+            # The NotImplementedError MUST be allowed to propagate to the agent.
+            #
+            # WRONG:
+            # try:
+            #     top_product_url = await find_and_select_top_rated_product()
+            # except Exception:
+            #     # This prevents the agent from implementing the stub. Do not do this.
+            #     return "Failed"
+            #
+            # CORRECT:
             top_product_url = await find_and_select_top_rated_product()
 
             # Step 3: Extract details from that product's page. This is also a stub.
-            # The planner will implement it after navigating to top_product_url.
             product_info = await extract_product_price_and_reviews(top_product_url)
 
             print(f"Final Info Found: {{product_info}}")
@@ -245,23 +256,61 @@ def _build_rules_and_examples_prompt(
 
         ```
 
-        **Generic Reasoning Example**
-        This example demonstrates how to use the `reason` tool for analysis and structured extraction.
+        **Fallback Strategy Example (using `reason` tool)**
+        This example demonstrates how to create a robust function that first attempts to use a website's feature, but has a fallback plan to use the `reason` tool if the feature fails.
         ```python
-        class Summary(BaseModel):
-            one_sentence_summary: str = Field(description="A single sentence that captures the main point.")
-            key_topics: list[str] = Field(description="A list of the main topics discussed.")
-
         @verify
-        async def summarize_article(article_text: str):
-            # Use the reason tool for analysis and structured extraction.
-            result = await action_provider.reason(
-                request="Summarize the provided article, extracting key topics.",
-                context=article_text,
-                response_format=Summary
-            )
-            print(f"Summary: {{result.one_sentence_summary}}")
-            return result.key_topics
+        async def get_price_in_euros(product_price_usd: float) -> float:
+            \"\"\"
+            Ensures the product price is available in Euros.
+
+            This function demonstrates a fallback strategy. It first attempts to use
+            the website's built-in currency converter. If that fails, it falls back
+            to using the `reason` tool to perform the conversion manually.
+            \"\"\"
+            print(f"Attempting to convert price: ${{product_price_usd}}")
+
+            # --- Primary Approach: Use the website's feature ---
+            try:
+                await action_provider.browser_act(
+                    "Click the currency selector and choose 'EUR'",
+                    expectation="The price should now be displayed in Euros (€)."
+                )
+
+                class PriceInfo(pydantic.BaseModel):
+                    price_eur: float = pydantic.Field(description="The price in Euros.")
+
+                observed_price = await action_provider.browser_observe(
+                    "What is the product price in Euros?",
+                    response_format=PriceInfo
+                )
+                print("Successfully converted price using the website's feature.")
+                return observed_price.price_eur
+
+            except Exception as e:
+                print(f"Website's currency converter failed: ${{e}}. Attempting fallback.")
+
+                # --- Fallback Approach: Use the `reason` tool ---
+                try:
+                    class ConversionResult(pydantic.BaseModel):
+                        price_in_euros: float
+
+                    # Assume a general exchange rate for the purpose of the task
+                    conversion_request = (
+                        f"Convert ${{product_price_usd}} USD to Euros. "
+                        f"Assume an exchange rate of 1 USD = 0.92 EUR. "
+                        f"Provide only the final numeric value."
+                    )
+
+                    result = await action_provider.reason(
+                        request=conversion_request,
+                        context=f"The price is ${{product_price_usd}} dollars.",
+                        response_format=ConversionResult
+                    )
+                    print("Successfully converted price using the `reason` tool.")
+                    return result.price_in_euros
+                except Exception as reason_e:
+                    raise ValueError(f"Both website interaction and manual reasoning failed. Error: ${{reason_e}}")
         ```
     """,
     )
