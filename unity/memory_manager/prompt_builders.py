@@ -86,7 +86,7 @@ def build_bio_prompt(
         "2️⃣ Read the transcript chunk and decide whether it contains new information that *belongs* in the bio.",
         "3️⃣ If the answer is yes, weave the new detail into the existing text, striving for a holistic overview that evolves gracefully over time (small, precise edits rather than wholesale rewrites).",
         "4️⃣ Use the specialised `set_bio` tool exactly once to persist the updated text.",
-        "5️⃣ Return **only** the text that was stored (or the unchanged one).",
+        "5️⃣ Finally, once you've (maybe) called the relevant update tool, then respond with your full **rationale** for the updates you did (or did not) make .",
         "",
         "Please do *not* perform the same action more than once. "
         "If you have already updated the bio via the `set_bio` tool, and it didn't result in any errors, "
