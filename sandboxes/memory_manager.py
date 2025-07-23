@@ -39,6 +39,7 @@ with the microphone; otherwise just type it.
 from __future__ import annotations
 
 import os
+import re
 import argparse
 import asyncio
 import logging
@@ -163,6 +164,17 @@ _CMD_ALIASES: dict[str, str] = {
     "update_knowledge": "uk",
     "update_tasks": "ut",
 }
+
+# ---------------------------------------------------------------------------
+#  Helper: strip ANSI control sequences (e.g. arrow-key escapes)
+# ---------------------------------------------------------------------------
+
+_ANSI_RE = re.compile(r"\x1B\[[0-?]*[ -/]*[@-~]")
+
+
+def _strip_ansi(text: str) -> str:
+    """Return *text* with all ANSI control sequences removed."""
+    return _ANSI_RE.sub("", text)
 
 
 def _explain_commands() -> None:
@@ -437,9 +449,10 @@ async def _main_async() -> None:
             # Voice or text capture for the scenario / command prompt
             if args.voice:
                 # Offer the user a choice instead of immediately starting voice capture
-                prompt = input(
+                raw_prompt = input(
                     "scenario/command (see command list above)> ",
-                ).strip()
+                )
+                prompt = _strip_ansi(raw_prompt).strip()
                 if prompt.lower() in {"r", "record"}:
                     audio = _record_until_enter()
                     prompt = _transcribe_deepgram(audio).strip()
@@ -447,9 +460,10 @@ async def _main_async() -> None:
                         continue
                     print(f"▶️  {prompt}")
             else:
-                prompt = input(
+                raw_prompt = input(
                     "scenario/command (see command list above)> ",
-                ).strip()
+                )
+                prompt = _strip_ansi(raw_prompt).strip()
         except (EOFError, KeyboardInterrupt):
             print("\nExiting…")
             break
@@ -577,41 +591,13 @@ async def _main_async() -> None:
             continue  # back to REPL
 
         # ------------------------------------------------------------------
-        #  Scenario generation branch (default)
+        #  Invalid command handling – no silent fall-through to scenario mode
         # ------------------------------------------------------------------
 
-        # Otherwise treat the input as a new transcript scenario description.
-        print("[generate] Building synthetic transcript – this can take a moment…")
-        if args.voice:
-            _speak("Sure thing, building your custom scenario now.")
-        try:
-            transcript = await _build_transcript(
-                prompt,
-                delay_per_message=args.stagger_seconds,
-            )
-            if args.voice:
-                _speak("All done, your custom scenario is built and ready to go.")
-        except Exception as exc:
-            LG.error("Transcript generation failed: %s", exc, exc_info=True)
-            print(f"❌  Failed to generate transcript: {exc}")
-            continue
-
-        print(f"[log] Ingesting {len(transcript)} messages …")
-
-        # Save as latest for manual commands
-        last_transcript = transcript
-
-        # Give EventBus a chance to upload + process subscriptions --------
-        from unity.events.event_bus import EVENT_BUS
-
-        EVENT_BUS.join_published()
-        EVENT_BUS.join_callbacks()
-
-        # Show updated rolling activity -----------------------------------
-        overview = mm.get_rolling_activity()
-        print("\n──────── Updated Historic Activity ────────\n")
-        print(overview or "<no activity captured>")
-        print("\n──────────────────────────────────────────\n")
+        print(
+            f"⚠️  Unrecognised command: '{prompt}'. Type 'help' to view available commands.",
+        )
+        continue  # back to REPL
 
     print("Goodbye! 👋")
 
