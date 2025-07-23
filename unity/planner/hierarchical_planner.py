@@ -1126,10 +1126,16 @@ class HierarchicalPlan(BaseActiveTask):
             return "Cannot ask: plan is not in a suitable state."
 
         try:
-            async with self.planner.coms_manager.start_browser_session() as browser_handle:
-                browser_context = await browser_handle.observe(
-                    "Summarize the current page.",
+            try:
+                browser_context = await self.planner.action_provider.browser.observe(
+                    "Analyze the current page state and provide a structured summary of visible headings, links, and interactive elements.",
+                    response_format=PageAnalysis,
                 )
+            except Exception as e:
+                logger.warning(
+                    f"Could not get browser state: {e}. No browser state will be available during ask",
+                )
+                browser_context = None
 
             context_log = "\n".join(f"- {log}" for log in self.action_log[-10:])
             prompt = prompt_builders.build_ask_prompt(
@@ -1865,84 +1871,107 @@ class HierarchicalPlanner(BasePlanner):
         **kwargs,
     ) -> ImplementationDecision:
         """
-        Generates and returns an ImplementationDecision for a stub function in a single LLM call.
-
-        Args:
-            plan: The active plan instance.
-            function_name: The name of the function to implement.
-            **kwargs: Additional context for the implementation prompt.
-
-        Returns:
-            An ImplementationDecision indicating the action to take.
+        Generates and returns an ImplementationDecision for a stub function.
+        Includes a retry loop to handle LLM-generated syntax errors.
         """
         is_browser_task = "action_provider.browser" in plan.plan_source_code
-        replan_reason = kwargs.get("replan_reason")
-        browser_state = None
-        browser_screenshot = None
-        if is_browser_task:
-            browser_state = await self.action_provider.browser.observe(
-                "Analyze the current page and provide a structured summary of its content.",
-                response_format=PageAnalysis,
+        
+        max_retries = 3
+        last_syntax_error = ""
+
+        for attempt in range(max_retries):
+            replan_reason = kwargs.get(
+                "replan_reason",
+                "First-time implementation from NotImplementedError.",
             )
-            plan.action_log.append(
-                f"Browser State during dynamic implementation: {browser_state}",
-            )
-            browser_screenshot = await self.action_provider.browser.get_screenshot()
-
-        docstring = (
-            inspect.getdoc(plan.execution_namespace[function_name])
-            or "No docstring provided."
-        )
-        func_sig = inspect.signature(plan.execution_namespace[function_name])
-        parent_code = (
-            plan.function_source_map.get(plan.call_stack[-2], "")
-            if len(plan.call_stack) > 1
-            else "N/A (This is a top-level function call)"
-        )
-        full_plan_source = plan.plan_source_code or ""
-        call_stack = plan.call_stack
-        replan_context = replan_reason
-        if not replan_context:
-            replan_context = f"This is the first time the function '{function_name}' is being implemented. The function was defined as a stub with 'raise NotImplementedError' and now needs to be implemented to achieve its purpose: {docstring}"
-
-        prompt = prompt_builders.build_dynamic_implement_prompt(
-            full_plan_source=full_plan_source,
-            call_stack=call_stack,
-            function_name=function_name,
-            function_sig=func_sig,
-            function_docstring=docstring,
-            parent_code=parent_code,
-            browser_state=browser_state,
-            has_browser_screenshot=browser_screenshot is not None,
-            replan_context=replan_context,
-            implementation_strategy=None,
-            tools=self.tools,
-        )
-        self.implementation_client.set_response_format(ImplementationDecision)
-
-        try:
-            response_str = await llm_call(
-                self.implementation_client,
-                prompt,
-                screenshot=browser_screenshot,
-            )
-            decision = ImplementationDecision.model_validate_json(response_str)
-
-            if decision.action == "implement_function":
-                if not decision.code:
-                    raise ValueError(
-                        "Action 'implement_function' requires the 'code' field.",
-                    )
-                decision.code = self._sanitize_code(
-                    decision.code.strip()
-                    .replace("```python", "")
-                    .replace("```", "")
-                    .strip(),
+            if last_syntax_error:
+                replan_reason += (
+                    "\n\nCRITICAL: Your previous attempt to generate code failed with a "
+                    f"SyntaxError. You MUST fix this error. Details:\n{last_syntax_error}"
                 )
-            logger.info(f"IMPLEMENTATION DECISION: {decision}")
-            return decision
-        finally:
-            self.implementation_client.reset_response_format()
+
+            browser_state = None
+            browser_screenshot = None
+            if is_browser_task:
+                try:
+                    browser_state = await self.action_provider.browser.observe(
+                        "Analyze the current page and provide a structured summary of its content.",
+                        response_format=PageAnalysis,
+                    )
+                except Exception as e:
+                    logger.warning(
+                        f"Could not get browser state: {e}. No browser state will be available during reimplementation of {function_name}",
+                    )
+                    browser_state = None
+
+                plan.action_log.append(
+                    f"Browser State during dynamic implementation: {browser_state}",
+                )
+                browser_screenshot = await self.action_provider.browser.get_screenshot()
+
+            docstring = (
+                inspect.getdoc(plan.execution_namespace[function_name])
+                or "No docstring provided."
+            )
+            func_sig = inspect.signature(plan.execution_namespace[function_name])
+            parent_code = (
+                plan.function_source_map.get(plan.call_stack[-2], "")
+                if len(plan.call_stack) > 1
+                else "N/A (This is a top-level function call)"
+            )
+
+            prompt = prompt_builders.build_dynamic_implement_prompt(
+                full_plan_source=plan.plan_source_code or "",
+                call_stack=plan.call_stack,
+                function_name=function_name,
+                function_sig=func_sig,
+                function_docstring=docstring,
+                parent_code=parent_code,
+                browser_state=browser_state,
+                has_browser_screenshot=browser_screenshot is not None,
+                replan_context=replan_reason,
+                tools=self.tools,
+            )
+            self.implementation_client.set_response_format(ImplementationDecision)
+
+            try:
+                response_str = await llm_call(
+                    self.implementation_client,
+                    prompt,
+                    screenshot=browser_screenshot,
+                )
+                decision = ImplementationDecision.model_validate_json(response_str)
+
+                if decision.action == "implement_function":
+                    if not decision.code:
+                        raise ValueError(
+                            "Action 'implement_function' requires the 'code' field.",
+                        )
+                    
+                    try:
+                        clean_code = (
+                            decision.code.strip()
+                            .replace("```python", "")
+                            .replace("```", "")
+                            .strip()
+                        )
+                        decision.code = self._sanitize_code(clean_code)
+                        logger.info(f"IMPLEMENTATION DECISION: {decision}")
+                        return decision
+                    except SyntaxError as e:
+                        last_syntax_error = f"Invalid Python code provided.\nError: {e}\nProblematic Code Snippet:\n---\n{decision.code}\n---"
+                        logger.error(f"Attempt {attempt + 1} failed: {last_syntax_error}")
+                        if attempt == max_retries - 1:
+                            raise e
+                        continue
+                
+                logger.info(f"IMPLEMENTATION DECISION: {decision}")
+                return decision
+
+            finally:
+                self.implementation_client.reset_response_format()
+
+        raise RuntimeError("Failed to generate a valid implementation after multiple retries.")
 
     async def _check_state_against_goal(
         self,
@@ -2035,9 +2064,15 @@ class HierarchicalPlanner(BasePlanner):
         Returns:
             A sanitized Python script for course correction, or None if not needed.
         """
-        current_state = await self.action_provider.browser.observe(
-            "Describe current page.",
-        )
+        try:
+            current_state = await self.action_provider.browser.observe(
+                "Describe current page.",
+            )
+        except Exception as e:
+            logger.warning(
+                f"Could not get browser state: {e}. No browser state will be available during course correction",
+            )
+            current_state = None
 
         prompt = prompt_builders.build_course_correction_prompt(
             old_code,
