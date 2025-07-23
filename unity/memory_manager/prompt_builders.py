@@ -122,10 +122,11 @@ def build_rolling_prompt(
         "Balance *recency* with *importance*: trivial chit-chat from moments ago should not eclipse significant developments from earlier in the conversation (e.g. a job change announced yesterday).  Use judgement to keep the most relevant and durable points visible while still reflecting genuinely new events.",
         "",
         "Update logic:",
+        "1️⃣ First read the existing rolling summary (if any) to understand what we already know about this contact's recent activity.",
         "1️⃣ Decide whether the transcript chunk introduces information that deserves to replace or adjust part of the existing summary.",
         "2️⃣ If yes, edit the text to integrate the change smoothly, preserving valuable prior context.",
         "3️⃣ Use `set_rolling_summary` exactly once to persist the new text.",
-        "4️⃣ Finally, return the text you stored.",
+        "4️⃣ Finally, once you've (maybe) called the relevant update tool, then respond with your full **rationale** for the updates you did (or did not) make .",
         "",
         "Please do *not* perform the same action more than once. "
         "If you have already updated the rolling summary via the `set_rolling_summary` tool, "
