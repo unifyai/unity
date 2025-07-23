@@ -1246,13 +1246,17 @@ class HierarchicalPlanner(BasePlanner):
 
         self.main_loop_client: unify.AsyncUnify = unify.AsyncUnify("gpt-4o-mini@openai")
         self.plan_generation_client: unify.AsyncUnify = unify.AsyncUnify(
-            "o4-mini@openai",
+            "gemini-2.5-pro@vertex-ai",
         )
-        self.verification_client: unify.AsyncUnify = unify.AsyncUnify("o4-mini@openai")
+        self.verification_client: unify.AsyncUnify = unify.AsyncUnify(
+            "gemini-2.5-pro@vertex-ai",
+        )
         self.implementation_client: unify.AsyncUnify = unify.AsyncUnify(
-            "o4-mini@openai",
+            "gemini-2.5-pro@vertex-ai",
         )
-        self.summarization_client: unify.AsyncUnify = unify.AsyncUnify("o4-mini@openai")
+        self.summarization_client: unify.AsyncUnify = unify.AsyncUnify(
+            "gemini-2.5-pro@vertex-ai",
+        )
         self.modification_client: unify.AsyncUnify = unify.AsyncUnify("o4-mini@openai")
         self.exploration_client: unify.AsyncUnify = unify.AsyncUnify("o4-mini@openai")
         self.ask_client: unify.AsyncUnify = unify.AsyncUnify("gpt-4o-mini@openai")
