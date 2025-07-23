@@ -78,9 +78,16 @@ wireplumber &
 sleep 2
 
 # Create the virtual sink/mic
-pactl load-module module-null-sink sink_name=virtual_sink sink_properties=device.description="Virtual_Sink"
-pactl load-module module-remap-source master=virtual_sink.monitor source_name=virtual_mic
-pactl set-default-source virtual_mic
+# One for capturing Meet participant audio
+pactl load-module module-null-sink sink_name=meet_sink
+pactl load-module module-remap-source master=meet_sink.monitor source_name=meet_mic
+
+# One for agent TTS (only goes to Meet, not to agent itself)
+pactl load-module module-null-sink sink_name=agent_sink
+pactl load-module module-remap-source master=agent_sink.monitor source_name=agent_mic
+
+pactl set-default-source meet_mic
+pactl set-default-sink agent_sink
 
 bash device.sh &
 BROWSER_PID=$!
