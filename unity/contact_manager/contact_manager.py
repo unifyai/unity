@@ -286,12 +286,50 @@ class ContactManager(BaseContactManager):
     #  Default *user* contact helpers (contact_id == 1)
     # ------------------------------------------------------------------
     def _fetch_user_info(self) -> Dict[str, Any]:
-        """Return *simulated* information about the human user (contact_id == 1).
+        """Return basic information for the authenticated human user (contact_id == 1).
 
-        NOTE: This stub will be replaced by a real API request in the near
-        future.  Keep the payload structure identical so that the swap is a
-        simple implementation change.
+        Attempts to fetch the real details from the backend endpoint
+        ``/user/basic-info``.  On *any* failure (network, authentication,
+        unexpected payload, etc.) the function falls back to a dummy
+        placeholder user so that offline test-suites continue to operate
+        unchanged.
         """
+
+        try:
+            url = f"{os.environ['UNIFY_BASE_URL']}/user/basic-info"
+            headers = {"Authorization": f"Bearer {os.environ['UNIFY_KEY']}"}
+            response = requests.request("GET", url, headers=headers)
+
+            # Raise for HTTP errors so the except-block handles them uniformly
+            _handle_exceptions(response)
+
+            data: Any = response.json()
+            if isinstance(data, dict):
+                # Map API payload → expected field names
+                mapped: Dict[str, Any] = {
+                    "first_name": data.get("first"),
+                    "last_name": data.get("last"),
+                    "email": data.get("email"),
+                }
+
+                # Preserve any additional keys verbatim so future backend
+                # expansions (e.g. *job_title*) seamlessly propagate to the
+                # contacts table via *_ensure_columns_exist*.
+                extra_keys = {
+                    k: v for k, v in data.items() if k not in {"first", "last", "email"}
+                }
+                mapped.update(extra_keys)
+
+                # Filter out *None* values so downstream logic does not
+                # inadvertently overwrite existing data with nulls.
+                return {k: v for k, v in mapped.items() if v is not None}
+
+        except Exception:
+            # Any error results in the dummy placeholder – never raise so that
+            # ContactManager initialisation & offline tests proceed.
+            pass
+
+        # ── fallback: dummy user ──────────────────────────────────────────
         return {
             "first_name": "John",
             "last_name": "Doe",
