@@ -39,6 +39,7 @@ with the microphone; otherwise just type it.
 from __future__ import annotations
 
 import os
+import re
 import argparse
 import asyncio
 import logging
@@ -163,6 +164,17 @@ _CMD_ALIASES: dict[str, str] = {
     "update_knowledge": "uk",
     "update_tasks": "ut",
 }
+
+# ---------------------------------------------------------------------------
+#  Helper: strip ANSI control sequences (e.g. arrow-key escapes)
+# ---------------------------------------------------------------------------
+
+_ANSI_RE = re.compile(r"\x1B\[[0-?]*[ -/]*[@-~]")
+
+
+def _strip_ansi(text: str) -> str:
+    """Return *text* with all ANSI control sequences removed."""
+    return _ANSI_RE.sub("", text)
 
 
 def _explain_commands() -> None:
@@ -450,6 +462,7 @@ async def _main_async() -> None:
                 prompt = input(
                     "scenario/command (see command list above)> ",
                 ).strip()
+            prompt = _strip_ansi(prompt).strip()
         except (EOFError, KeyboardInterrupt):
             print("\nExiting…")
             break
