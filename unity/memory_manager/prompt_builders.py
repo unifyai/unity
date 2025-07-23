@@ -82,15 +82,16 @@ def build_bio_prompt(
         "Do **NOT** include fleeting topics, moment-to-moment tasks, or random facts that will quickly become irrelevant.",
         "",
         "Update logic:",
-        "1️⃣ Read the transcript chunk and decide whether it contains new information that *belongs* in the bio.",
-        "2️⃣ If the answer is yes, weave the new detail into the existing text, striving for a holistic overview that evolves gracefully over time (small, precise edits rather than wholesale rewrites).",
-        "3️⃣ Use the specialised `set_bio` tool exactly once to persist the updated text.",
-        "4️⃣ Return **only** the text that was stored (or the unchanged one).",
+        "1️⃣ First read the existing bio (if any) to understand what we already know about this contact.",
+        "2️⃣ Read the transcript chunk and decide whether it contains new information that *belongs* in the bio.",
+        "3️⃣ If the answer is yes, weave the new detail into the existing text, striving for a holistic overview that evolves gracefully over time (small, precise edits rather than wholesale rewrites).",
+        "4️⃣ Use the specialised `set_bio` tool exactly once to persist the updated text.",
+        "5️⃣ Return **only** the text that was stored (or the unchanged one).",
         "",
         "Please do *not* perform the same action more than once. "
-        "If you have already updated the bio via the `set_bio` tool, "
+        "If you have already updated the bio via the `set_bio` tool, and it didn't result in any errors, "
         "then you do not need to do this again!"
-        "🔒  If the transcript chunk contains a `manager_method` event from the ConversationManager indicating this operation is already in progress or completed, treat it as handled and **do not** perform it again.",
+        "🔒  If the transcript chunk contains a `manager_method` event from the ConversationManager indicating this exact operation is already in progress or completed, treat it as handled and **do not** perform it again.",
         "",
         "Tools (name → argspec):",
         json.dumps(_sig_dict(tools), indent=4),

@@ -258,11 +258,7 @@ class MemoryManager(BaseMemoryManager):
         target_id = contact_id  # capture for closure
 
         async def set_bio(contact_id: int, bio: str) -> str:
-            """Update only the bio column for the supplied contact id.
-
-            The *cid* received via the tool-call takes precedence over the
-            *outer_contact_id* argument so existing prompts need no changes.
-            """
+            """Update only the bio column for the supplied contact id."""
             final_id = contact_id or target_id
             if final_id is None:
                 raise ValueError(
@@ -276,8 +272,6 @@ class MemoryManager(BaseMemoryManager):
             return f"Bio for contact with id {final_id} successfully updated"
 
         tools: Dict[str, Callable[..., Any]] = {
-            "transcript_ask": self._transcript_manager.ask,
-            "contact_ask": self._contact_manager.ask,
             "set_bio": set_bio,
         }
 
@@ -292,7 +286,7 @@ class MemoryManager(BaseMemoryManager):
         user_blob = json.dumps(
             {
                 "contact_id": contact_id,
-                "latest_bio": latest_bio,
+                "latest_bio (to maybe update)": latest_bio,
                 "transcript": transcript,
             },
             indent=2,
@@ -303,7 +297,6 @@ class MemoryManager(BaseMemoryManager):
             user_blob,
             tools,
             loop_id="MemoryManager.update_contact_bio",
-            tool_policy=lambda i, _: ("required", _) if i < 1 else ("auto", _),
         )
 
         return await handle.result()
