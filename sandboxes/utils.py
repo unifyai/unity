@@ -836,7 +836,7 @@ class TranscriptGenerator:
                 }
 
                 # Persist via TranscriptManager and local transcript list
-                self._tm.log_messages([msg_dict])
+                self._tm.log_messages([msg_dict], synchronous=True)
                 # Optional stagger to visualise real-time callbacks
                 if delay_per_message > 0:
                     import time  # local to avoid unnecessary global import at top
@@ -851,8 +851,6 @@ class TranscriptGenerator:
                     },
                 )
 
-            # Ensure EventBus subscribers run before returning
-            self._tm.join_published()
             return f"{len(transcript)} messages logged"
 
         # ------------------------------------------------------------------ #
