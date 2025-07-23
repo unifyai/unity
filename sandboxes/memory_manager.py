@@ -408,33 +408,6 @@ async def _main_async() -> None:
             _name_to_contact[name] = _create_contact(name, medium)
         return _name_to_contact[name]
 
-    def _normalise_msg(raw: dict) -> dict:
-        nonlocal last_sender_contact
-
-        sender_name = str(raw.get("sender", "User"))
-        medium = raw.get("medium", "sms_message")
-
-        sender_c = _contact_for(sender_name, medium)
-
-        receiver_name = raw.get("receiver")
-        if receiver_name is not None:
-            receiver_c = _contact_for(receiver_name, medium)
-        elif last_sender_contact is not None and last_sender_contact != sender_c:
-            receiver_c = last_sender_contact
-        else:
-            receiver_c = _contact_for("Assistant", medium)
-
-        last_sender_contact = sender_c
-
-        return {
-            "medium": medium,
-            "sender_id": sender_c,
-            "receiver_ids": [receiver_c],
-            "timestamp": raw.get("timestamp"),
-            "content": raw.get("content", ""),
-            "exchange_id": raw.get("exchange_id", 0),
-        }
-
     # ── Interactive REPL ------------------------------------------------------
     print(
         "\nMemoryManager sandbox – enter a conversation *description* to generate "
