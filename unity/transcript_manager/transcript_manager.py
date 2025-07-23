@@ -192,6 +192,7 @@ class TranscriptManager(BaseTranscriptManager):
             Union[Dict[str, Any], Message],
             List[Union[Dict[str, Any], Message]],
         ],
+        synchronous: bool = False,
     ) -> None:
         """
         Insert one or more messages into the backing store.
@@ -213,6 +214,9 @@ class TranscriptManager(BaseTranscriptManager):
             - A :class:`~unity.transcript_manager.types.message.Message` instance
               whose *id* fields may likewise contain ``Contact`` objects.
             - A list with any combination of the above.
+        synchronous : bool, default=False
+            If True, messages will be logged in order synchronously. If False,
+            messages may be logged asynchronously in any order.
         """
 
         # ── 0. Early-exit on empty input ────────────────────────────────────
@@ -329,6 +333,7 @@ class TranscriptManager(BaseTranscriptManager):
                         timestamp=msg.timestamp,
                         payload=msg,
                     ),
+                    blocking=synchronous,
                 )
             except Exception:
                 # Defensive – never propagate EventBus issues to caller
@@ -337,12 +342,20 @@ class TranscriptManager(BaseTranscriptManager):
         for entries, msg in zip(msg_entries, normalised_messages):
             # Ensure correct creation order by performing contact creation *before*
             # the logger call (already satisfied above).  Now we can log safely.
-            self._get_logger().log_create(
-                project=unify.active_project(),
-                context=self._transcripts_ctx,
-                params={},
-                entries=entries,
-            )
+            if synchronous:
+                unify.log(
+                    project=unify.active_project(),
+                    context=self._transcripts_ctx,
+                    params={},
+                    entries=entries,
+                )
+            else:
+                self._get_logger().log_create(
+                    project=unify.active_project(),
+                    context=self._transcripts_ctx,
+                    params={},
+                    entries=entries,
+                )
 
             try:
                 # If we're inside an event-loop schedule the coroutine there …
