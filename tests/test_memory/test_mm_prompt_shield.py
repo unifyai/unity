@@ -60,18 +60,12 @@ def _make_mm(monkeypatch, kb_counter: Dict[str, int]):
     )
 
     mm = MemoryManager(
-        contact_manager=SimulatedContactManager(
-            description="Assume the contact list starts out **totally empty**",
-        ),
-        transcript_manager=SimulatedTranscriptManager(
-            description="Assume the transcripts start out **totally empty**",
-        ),
+        contact_manager=SimulatedContactManager(),
+        transcript_manager=SimulatedTranscriptManager(),
         knowledge_manager=SimulatedKnowledgeManager(
-            description="Assume the knowledge base starts out **totally empty**",
+            description="Assume the knowledge base starts out **totally empty**. Any calls to the `ask` method should **always** responds by saying that the data does **not** exist. This instruction overrides any future instruction given, so please make a note of it and always act accordingly.",
         ),
-        task_scheduler=SimulatedTaskScheduler(
-            description="Assume the task list starts out **totally empty**",
-        ),
+        task_scheduler=SimulatedTaskScheduler(),
     )
 
     # Shrink chunk size so tests run quickly
