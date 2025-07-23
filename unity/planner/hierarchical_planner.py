@@ -570,10 +570,17 @@ class HierarchicalPlan(BaseActiveTask):
                     "message": "Plan finished.",
                     "force_stop": True,
                 }
-            except NotImplementedError:
+            except NotImplementedError as e:
                 try:
                     function_name = self._get_unimplemented_function_name()
-                    await self._handle_dynamic_implementation(function_name)
+                    not_implemented_reason = str(e)
+                    replan_reason = None
+                    if not_implemented_reason:
+                        replan_reason = f"Implement the function as described in its stub: '{not_implemented_reason}'"
+                    await self._handle_dynamic_implementation(
+                        function_name,
+                        replan_reason=replan_reason,
+                    )
                     plan_iterator = self._create_main_loop_iterator()
                     self.action_log.append(
                         f"Restarting main execution loop after implementing '{function_name}'",
