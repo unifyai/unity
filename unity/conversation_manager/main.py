@@ -174,7 +174,7 @@ class EventManager:
 def signal_handler(signum, frame):
     """Handle shutdown signals gracefully"""
     print(
-        datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        datetime.now().strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
         + " - [MAIN.PY] Received signal "
         + str(signum)
         + ", shutting down gracefully..."

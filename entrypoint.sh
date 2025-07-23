@@ -9,7 +9,7 @@ MAIN_PID=""
 
 # Function to handle graceful shutdown
 cleanup() {
-    echo "$(date '+%Y-%m-%d %H:%M:%S') - [ENTRYPOINT] Received shutdown signal, cleaning up..."
+    echo "$(date '+%Y-%m-%d %H:%M:%S.%3N') - [ENTRYPOINT] Received shutdown signal, cleaning up..."
 
     # Stop the main application
     if [ ! -z "$MAIN_PID" ]; then
