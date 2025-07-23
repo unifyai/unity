@@ -256,6 +256,18 @@ async def _main_async() -> None:
     )
     args = parser.parse_args()
 
+    # Voice feedback helper
+    voice_enabled = args.voice
+
+    def _maybe_speak(message: str) -> None:  # noqa: D401 – helper
+        """Vocalise *message* when --voice mode is active."""
+        if voice_enabled:
+            try:
+                _speak(str(message))
+            except Exception:
+                # TTS should never break core sandbox functionality
+                LG.warning("[voice] Failed to speak feedback.")
+
     # Unify context
     activate_project(args.project_name, args.overwrite)
     unify.set_trace_context("Traces")
@@ -497,12 +509,14 @@ async def _main_async() -> None:
             mm = _create_mm()
             tm = mm._transcript_manager
             print("✅ Contacts store cleared.")
+            _maybe_speak("Contacts store cleared.")
             continue
         if lower == "ck":
             _clear_knowledge()
             mm = _create_mm()
             tm = mm._transcript_manager
             print("✅ Knowledge store cleared.")
+            _maybe_speak("Knowledge store cleared.")
             continue
 
         # Functional uc/ucb/ucrs/uk commands --------------------------------
@@ -582,6 +596,7 @@ async def _main_async() -> None:
                     result = await mm.update_knowledge(chunk_txt, guidance=guidance_txt)
 
                 print(f"→ {result}")
+                _maybe_speak(result)
             except Exception as exc:
                 LG.error("Error during MemoryManager call: %s", exc, exc_info=True)
                 print(f"❌  {exc}")
