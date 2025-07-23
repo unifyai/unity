@@ -6,7 +6,7 @@ Sandbox for **MemoryManager** maintenance tasks.
 Supports plain-text *or* voice capture of the initial transcript
 description via the ``--voice/-v`` flag (same UX as the other sandboxes).
 
-┌────────────── 10 accepted commands ─────────────┐
+┌────────────── 11 accepted commands ─────────────┐
 │ uc   –– update_contacts                         │
 │ ucb  –– update_contact_bio                      │
 │ ucrs –– update_contact_rolling_summary          │
@@ -16,7 +16,8 @@ description via the ``--voice/-v`` flag (same UX as the other sandboxes).
 │ ccb       –– clear Contact bios      (alias cc) │
 │ ccrs      –– clear Rolling summaries (alias cc) │
 │ ck        –– clear Knowledge store              │
-│ r         –– record scenario description (voice)│
+│ nt   –– new_transcript {description}            │
+│ ntv  –– new_transcript_vocally (voice only)     │
 └─────────────────────────────────────────────────┘
 
 After typing **uc / ucb / ucrs / uk / ut** you will be *asked* for the message
@@ -422,10 +423,9 @@ async def _main_async() -> None:
 
     # ── Interactive REPL ------------------------------------------------------
     print(
-        "\nMemoryManager sandbox – enter a conversation *description* to generate "
-        "and log synthetic messages, *or* type one of the maintenance commands "
-        "below.  Type 'summary' to display the latest rolling-activity overview "
-        "or 'quit' to exit.\n",
+        "\nMemoryManager sandbox – use 'nt {description}' to generate and log synthetic "
+        "messages, *or* type one of the maintenance commands below.  Type 'summary' "
+        "to display the latest rolling-activity overview or 'quit' to exit.\n",
     )
 
     # Show the full list of commands immediately so the user knows the options
@@ -437,7 +437,7 @@ async def _main_async() -> None:
     # Voice-mode greeting so behaviour matches other sandboxes
     if args.voice:
         _speak(
-            "Welcome to the Memory Manager sandbox. Describe your conversation scenario or enter one of the maintenance commands. Type R and press Enter whenever you'd like to record a scenario description using your voice.",
+            "Welcome to the Memory Manager sandbox. Use the command 'N-T-V' to record a new transcript vocally, or type commands and descriptions directly.",
         )
 
     while True:
@@ -448,16 +448,9 @@ async def _main_async() -> None:
         try:
             # Voice or text capture for the scenario / command prompt
             if args.voice:
-                # Offer the user a choice instead of immediately starting voice capture
                 prompt = input(
                     "scenario/command (see command list above)> ",
                 ).strip()
-                if prompt.lower() in {"r", "record"}:
-                    audio = _record_until_enter()
-                    prompt = _transcribe_deepgram(audio).strip()
-                    if not prompt:
-                        continue
-                    print(f"▶️  {prompt}")
             else:
                 prompt = input(
                     "scenario/command (see command list above)> ",
@@ -590,41 +583,99 @@ async def _main_async() -> None:
             continue  # back to REPL
 
         # ------------------------------------------------------------------
-        #  Scenario generation branch (default)
+        #  New transcript creation commands (nt / ntv)
         # ------------------------------------------------------------------
 
-        # Otherwise treat the input as a new transcript scenario description.
-        print("[generate] Building synthetic transcript – this can take a moment…")
-        if args.voice:
-            _speak("Sure thing, building your custom scenario now.")
-        try:
-            transcript = await _build_transcript(
-                prompt,
-                delay_per_message=args.stagger_seconds,
-            )
+        # Refresh cmd / args for easier handling (ignore _CMD_ALIASES mapping)
+        cmd_lower = parts[0].lower()
+        remainder = parts[1] if len(parts) > 1 else ""
+
+        if cmd_lower in {"nt", "new_transcript"}:
+            description = remainder.strip()
+            if not description:
+                print("⚠️  Please provide a description after 'nt'.")
+                continue
+
+            # Build + ingest transcript
+            print("[generate] Building synthetic transcript – this can take a moment…")
             if args.voice:
-                _speak("All done, your custom scenario is built and ready to go.")
-        except Exception as exc:
-            LG.error("Transcript generation failed: %s", exc, exc_info=True)
-            print(f"❌  Failed to generate transcript: {exc}")
-            continue
+                _speak("Sure thing, building your custom scenario now.")
+            try:
+                transcript = await _build_transcript(
+                    description,
+                    delay_per_message=args.stagger_seconds,
+                )
+                if args.voice:
+                    _speak("All done, your custom scenario is built and ready to go.")
+            except Exception as exc:
+                LG.error("Transcript generation failed: %s", exc, exc_info=True)
+                print(f"❌  Failed to generate transcript: {exc}")
+                continue
 
-        print(f"[log] Ingesting {len(transcript)} messages …")
+            print(f"[log] Ingesting {len(transcript)} messages …")
+            last_transcript = transcript
 
-        # Save as latest for manual commands
-        last_transcript = transcript
+            from unity.events.event_bus import EVENT_BUS
 
-        # Give EventBus a chance to upload + process subscriptions --------
-        from unity.events.event_bus import EVENT_BUS
+            EVENT_BUS.join_published()
+            EVENT_BUS.join_callbacks()
 
-        EVENT_BUS.join_published()
-        EVENT_BUS.join_callbacks()
+            overview = mm.get_rolling_activity()
+            print("\n──────── Updated Historic Activity ────────\n")
+            print(overview or "<no activity captured>")
+            print("\n──────────────────────────────────────────\n")
+            continue  # back to REPL
 
-        # Show updated rolling activity -----------------------------------
-        overview = mm.get_rolling_activity()
-        print("\n──────── Updated Historic Activity ────────\n")
-        print(overview or "<no activity captured>")
-        print("\n──────────────────────────────────────────\n")
+        if cmd_lower in {"ntv", "new_transcript_vocally"}:
+            if not args.voice:
+                print(
+                    "⚠️  Voice mode not enabled – restart with --voice or use 'nt' instead.",
+                )
+                continue
+
+            print("🎙️  Recording – press Enter to stop …")
+            audio = _record_until_enter()
+            description = _transcribe_deepgram(audio).strip()
+            if not description:
+                print("⚠️  Transcription was empty – please try again.")
+                continue
+            print(f"▶️  {description}")
+
+            # Re-use nt path by building transcript
+            try:
+                transcript = await _build_transcript(
+                    description,
+                    delay_per_message=args.stagger_seconds,
+                )
+                if args.voice:
+                    _speak("All done, your custom scenario is built and ready to go.")
+            except Exception as exc:
+                LG.error("Transcript generation failed: %s", exc, exc_info=True)
+                print(f"❌  Failed to generate transcript: {exc}")
+                continue
+
+            print(f"[log] Ingesting {len(transcript)} messages …")
+            last_transcript = transcript
+
+            from unity.events.event_bus import EVENT_BUS
+
+            EVENT_BUS.join_published()
+            EVENT_BUS.join_callbacks()
+
+            overview = mm.get_rolling_activity()
+            print("\n──────── Updated Historic Activity ────────\n")
+            print(overview or "<no activity captured>")
+            print("\n──────────────────────────────────────────\n")
+            continue  # back to REPL
+
+        # ------------------------------------------------------------------
+        #  Fallback: unrecognised command
+        # ------------------------------------------------------------------
+
+        print(
+            f"⚠️  Unrecognised command: '{prompt}'. Type 'help' to view available commands.",
+        )
+        continue
 
     print("Goodbye! 👋")
 
