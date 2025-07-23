@@ -981,6 +981,7 @@ class HierarchicalPlan(BaseActiveTask):
                 self,
                 function_name="course_correction",
                 function_docstring=f"Align state for new plan: {new_plan_code[:200]}...",
+                function_source_code=sanitized_script,
                 interactions=interactions,
             )
             if assessment.status != "ok":
@@ -1702,8 +1703,10 @@ class HierarchicalPlanner(BasePlanner):
             plan,
             fn.__name__,
             fn.__doc__,
+            function_source_code=func_source,
             interactions=interactions_for_this_step,
             screenshot=final_screenshot,
+            function_return_value=result,
         )
         logger.info(
             f"🕵️ VERIFICATION ASSESSMENT for '{fn.__name__}': {assessment.model_dump_json(indent=2)}",
@@ -1946,8 +1949,10 @@ class HierarchicalPlanner(BasePlanner):
         plan: HierarchicalPlan,
         function_name: str,
         function_docstring: str | None,
+        function_source_code: str | None,
         interactions: list,
         screenshot: bytes | str | None = None,
+        function_return_value: Any = None,
     ) -> VerificationAssessment:
         """
         Uses an LLM to assess if a function's execution achieved its goal.
@@ -1956,7 +1961,9 @@ class HierarchicalPlanner(BasePlanner):
             plan: The active plan instance.
             function_name: The name of the function being verified.
             function_docstring: The docstring of the function.
+            function_source_code: The source code of the function.
             interactions: A log of interactions that occurred.
+            function_return_value: The return value of the function.
             screenshot: The screenshot of the current state of the browser.
 
         Returns:
@@ -1966,8 +1973,10 @@ class HierarchicalPlanner(BasePlanner):
             goal=plan.goal,
             function_name=function_name,
             function_docstring=function_docstring,
+            function_source_code=function_source_code,
             interactions=interactions,
             has_browser_screenshot=screenshot is not None,
+            function_return_value=function_return_value,
         )
 
         self.verification_client.set_response_format(VerificationAssessment)

@@ -463,8 +463,10 @@ def build_verification_prompt(
     goal: str,
     function_name: str,
     function_docstring: str | None,
+    function_source_code: str | None,
     interactions: list,
     has_browser_screenshot: bool,
+    function_return_value: Any | None,
 ) -> str:
     """
     Builds the prompt for verifying a function's execution.
@@ -473,7 +475,8 @@ def build_verification_prompt(
         goal: The overall user goal.
         function_name: The name of the function being verified.
         function_docstring: The docstring of the function.
-        interactions: A log of `act` and `observe` calls made.
+        function_source_code: The source code of the function.
+        interactions: A log of tool interactions made.
         has_browser_screenshot: Whether a screenshot of the browser is provided.
 
     Returns:
@@ -502,21 +505,39 @@ def build_verification_prompt(
             - Use both the interaction log and the screenshot to make your assessment.
             """,
         )
+    return_value_log = f"The function returned the following value:\n```\n{repr(function_return_value)}\n```"
+
+    source_code_section = f"""
+---
+### Function Source Code
+The full source code of the function that was just executed is provided below. Analyze it to understand its internal logic.
+```python
+{function_source_code or "Source code not available."}
+```
+"""
+
     return textwrap.dedent(
         f"""
         You are a meticulous verification agent. Your task is to assess if the executed actions successfully achieved the function's intended purpose and have made **meaningful and accurate progress** toward the **Overall User Goal**.
 
         **Overall User Goal:** "{goal}"
         **Function Under Review:** `{function_name}`
-        **Purpose of this function:** {function_docstring or 'No docstring provided.'}
+        **Purpose of this function (Intent):** {function_docstring or 'No docstring provided.'}
 
+        {source_code_section}
         {screenshot_context_section}
-        **Execution Log (Primitives Used):**
+
+        **Execution Log (Tool Interactions):**
         {interactions_log}
+
+        **Function Return Value:**
+        {return_value_log}
 
         ---
         ### Assessment Task
-        Based on the function's purpose and the execution log, provide your assessment.
+        Based on the function's purpose (intent), its source code (implementation), its return value, and the execution log, provide your assessment.
+        - **Compare Intent vs. Implementation**: Does the source code correctly implement the logic described in the function's purpose?
+        - **Trust the Return Value**: The `Function Return Value` is a critical piece of evidence. If the function was supposed to filter a list, check if the returned list is correctly filtered according to the source code.
         - **Be pragmatic:** If the function's purpose is to gather data (like search results), and the log shows that the data was successfully retrieved, this should be considered a success (`ok`). The function does not need to perform extra analysis unless explicitly asked.
         - **Compare the Result to the Goal**: Do not just check if the function *did something*. Check if the *outcome* of the function satisfies the requirements of the overall goal.
 
