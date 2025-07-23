@@ -312,14 +312,6 @@ class ContactManager(BaseContactManager):
                     "email": data.get("email"),
                 }
 
-                # Preserve any additional keys verbatim so future backend
-                # expansions (e.g. *job_title*) seamlessly propagate to the
-                # contacts table via *_ensure_columns_exist*.
-                extra_keys = {
-                    k: v for k, v in data.items() if k not in {"first", "last", "email"}
-                }
-                mapped.update(extra_keys)
-
                 # Filter out *None* values so downstream logic does not
                 # inadvertently overwrite existing data with nulls.
                 return {k: v for k, v in mapped.items() if v is not None}
