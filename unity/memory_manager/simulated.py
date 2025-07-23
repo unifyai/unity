@@ -94,11 +94,13 @@ class SimulatedMemoryManager(BaseMemoryManager):
         transcript: str,
         *,
         contact_id: int,
-        latest_bio: Optional[str] = None,
         guidance: Optional[str] = None,
     ) -> str:
         """
         Fabricates a new bio (or keeps the old one) and stores it in RAM.
+
+        The method now **fetches** the latest bio for the given contact id so
+        callers are not required to provide it explicitly.
         """
 
         # --- scoped mutator --------------------------------------------------
@@ -124,10 +126,20 @@ class SimulatedMemoryManager(BaseMemoryManager):
 
         self._llm.set_system_message(pb.build_bio_prompt(tools, guidance=guidance))
 
+        # Retrieve the latest bio for the contact from the (simulated) backend
+        try:
+            contacts = self._contact_manager._search_contacts(
+                filter=f"contact_id == {contact_id}",
+                limit=1,
+            )
+            latest_bio_val = contacts[0].bio if contacts else None
+        except Exception:
+            latest_bio_val = None
+
         payload = json.dumps(
             {
                 "contact_id": contact_id,
-                "latest_bio": latest_bio,
+                "latest_bio": latest_bio_val,
                 "transcript": transcript,
             },
             indent=2,

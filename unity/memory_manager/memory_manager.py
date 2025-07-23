@@ -247,13 +247,9 @@ class MemoryManager(BaseMemoryManager):
         transcript: str,
         *,
         contact_id: int,
-        latest_bio: Optional[str] = None,
         guidance: Optional[str] = None,
     ) -> str:
-        """
-        Refresh the *bio* column for ONE contact.
-        Caller assembles the correct transcript slice & resolves the contact_id.
-        """
+        """Refresh the *bio* column for the given contact."""
 
         target_id = contact_id  # capture for closure
 
@@ -282,11 +278,27 @@ class MemoryManager(BaseMemoryManager):
         )
         llm.set_system_message(build_bio_prompt(tools, guidance))
 
-        # Compose input blob
+        # ------------------------------------------------------------------
+        # Retrieve the *current* bio from the backend so the LLM always sees
+        # the latest state without relying on the caller to supply it.
+        # We perform the lookup in a background thread because the underlying
+        # implementation is synchronous and may hit the network.
+        try:
+            contacts = await asyncio.to_thread(
+                self._contact_manager._search_contacts,
+                filter=f"contact_id == {contact_id}",
+                limit=1,
+            )
+            latest_bio_val = contacts[0].bio if contacts else None
+        except Exception:
+            latest_bio_val = None  # Fallback – treat as unknown
+
+        # Compose input blob given to the tool loop – we *always* include the
+        # latest bio so the LLM can determine whether an update is needed.
         user_blob = json.dumps(
             {
                 "contact_id": contact_id,
-                "latest_bio (to maybe update)": latest_bio,
+                "latest_bio (to maybe update)": latest_bio_val,
                 "transcript": transcript,
             },
             indent=2,
@@ -659,7 +671,6 @@ class MemoryManager(BaseMemoryManager):
                             self.update_contact_bio(
                                 transcript_blob,
                                 contact_id=_cid,
-                                latest_bio=None,
                             ),
                             self.update_contact_rolling_summary(
                                 transcript_blob,

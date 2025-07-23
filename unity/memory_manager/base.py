@@ -23,8 +23,8 @@ class BaseMemoryManager(ABC):
     async def update_contact_bio(
         self,
         transcript: str,
+        *,
         contact_id: int,
-        latest_bio: Optional[str] = None,
         guidance: Optional[str] = None,
     ) -> str: ...
 
