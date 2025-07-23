@@ -153,17 +153,8 @@ class PlanSanitizer(ast.NodeTransformer):
     """
     AST transformer to enforce security and correctness of plan code.
 
-    1. Disallows `import` and `import from` statements.
-    2. Ensures every `async def` function is decorated with `@verify`.
+    Ensures every `async def` function is decorated with `@verify`.
     """
-
-    def visit_Import(self, node: ast.Import) -> Any:
-        """Removes all `import <module>` statements."""
-        return None
-
-    def visit_ImportFrom(self, node: ast.ImportFrom) -> Any:
-        """Removes all `from <module> import ...` statements."""
-        return None
 
     def visit_AsyncFunctionDef(
         self,
@@ -1875,7 +1866,7 @@ class HierarchicalPlanner(BasePlanner):
         Includes a retry loop to handle LLM-generated syntax errors.
         """
         is_browser_task = "action_provider.browser" in plan.plan_source_code
-        
+
         max_retries = 3
         last_syntax_error = ""
 
@@ -1947,7 +1938,7 @@ class HierarchicalPlanner(BasePlanner):
                         raise ValueError(
                             "Action 'implement_function' requires the 'code' field.",
                         )
-                    
+
                     try:
                         clean_code = (
                             decision.code.strip()
@@ -1960,18 +1951,22 @@ class HierarchicalPlanner(BasePlanner):
                         return decision
                     except SyntaxError as e:
                         last_syntax_error = f"Invalid Python code provided.\nError: {e}\nProblematic Code Snippet:\n---\n{decision.code}\n---"
-                        logger.error(f"Attempt {attempt + 1} failed: {last_syntax_error}")
+                        logger.error(
+                            f"Attempt {attempt + 1} failed: {last_syntax_error}",
+                        )
                         if attempt == max_retries - 1:
                             raise e
                         continue
-                
+
                 logger.info(f"IMPLEMENTATION DECISION: {decision}")
                 return decision
 
             finally:
                 self.implementation_client.reset_response_format()
 
-        raise RuntimeError("Failed to generate a valid implementation after multiple retries.")
+        raise RuntimeError(
+            "Failed to generate a valid implementation after multiple retries.",
+        )
 
     async def _check_state_against_goal(
         self,
