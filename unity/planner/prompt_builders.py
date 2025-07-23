@@ -76,7 +76,7 @@ def _build_rules_and_examples_prompt(
         instructions_and_rules = textwrap.dedent(
             """
             1.  **Single Code Block:** Your entire response MUST be a single, valid Python code block.
-            2.  **No Imports:** You **MUST NOT** use any `import`/ `__import__` statements in your code. All standard library imports(eg: `asyncio`, `re`, `pydantic`) are already present within the execution environment so you can use them directly.
+            2.  **Manage Your Imports**: You are free to import any standard Python library (e.g., `typing`, `re`, `json`, `datetime`, `collections`). Write standard, self-contained Python code with proper imports at the top.
             3.  **Decorators & Docstrings:** Every **function** you define MUST include docstrings which include the function's purpose, its arguments, and its return value.
             4.  **Async All The Way**: All helper functions you define MUST be `async def`.
             5.  **Await Keyword**: All `action_provider` methods that are asynchronous MUST be called with the `await` keyword.
@@ -89,7 +89,7 @@ def _build_rules_and_examples_prompt(
             """
             1.  **Single Code Block:** Your entire response MUST be a single, valid Python code block.
             2.  **Entry Point:** For a full plan, the main entry point MUST be `async def main_plan()`.
-            3.  **No Imports:** You **MUST NOT** use any `import`/ `__import__` statements in your code. All standard library imports(eg: `asyncio`, `re`, `pydantic`) are already present within the execution environment so you can use them directly.
+            3.  **Manage Your Imports**: You are free to import any standard Python library (e.g., `typing`, `re`, `json`, `datetime`, `collections`). Write standard, self-contained Python code with proper imports at the top.
             4.  **Decomposition:** Break down complex problems into smaller, logical, self-contained `async def` helper functions.
             5.  **Confidence-Based Stubbing**: Your primary goal is to create a robust plan.
                 * **If a step is simple and you are highly confident** about how to perform it (e.g., `browser_navigate("https://google.com")`, `browser_act("Type 'reports' into the search bar")`), implement it directly.
@@ -144,6 +144,7 @@ def _build_rules_and_examples_prompt(
         # Example 2: Making an Interactive Phone Call
         This example demonstrates how to use the `start_call` tool to make an interactive phone call.
         ```python
+        from pydantic import BaseModel, Field
         @verify
         async def make_appointment_followup_call():
             # Note: start_call is synchronous and returns a Call handle immediately
@@ -182,6 +183,8 @@ def _build_rules_and_examples_prompt(
         This example demonstrates how to combine navigation, observation with Pydantic models, and confidence-based stubbing to create a robust, multi-step web automation plan.
 
         ```python
+        from pydantic import BaseModel, Field
+
         # This function is implemented directly because navigating and searching are simple, high-confidence actions.
         @verify
         async def search_for_product() -> str:
@@ -259,6 +262,7 @@ def _build_rules_and_examples_prompt(
         **Fallback Strategy Example (using `reason` tool)**
         This example demonstrates how to create a robust function that first attempts to use a website's feature, but has a fallback plan to use the `reason` tool if the feature fails.
         ```python
+        from pydantic import BaseModel, Field
         @verify
         async def get_price_in_euros(product_price_usd: float) -> float:
             \"\"\"
@@ -277,8 +281,8 @@ def _build_rules_and_examples_prompt(
                     expectation="The price should now be displayed in Euros (€)."
                 )
 
-                class PriceInfo(pydantic.BaseModel):
-                    price_eur: float = pydantic.Field(description="The price in Euros.")
+                class PriceInfo(BaseModel):
+                    price_eur: float = Field(description="The price in Euros.")
 
                 observed_price = await action_provider.browser_observe(
                     "What is the product price in Euros?",
@@ -292,7 +296,7 @@ def _build_rules_and_examples_prompt(
 
                 # --- Fallback Approach: Use the `reason` tool ---
                 try:
-                    class ConversionResult(pydantic.BaseModel):
+                    class ConversionResult(BaseModel):
                         price_in_euros: float
 
                     # Assume a general exchange rate for the purpose of the task
