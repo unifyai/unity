@@ -31,8 +31,8 @@ class BaseMemoryManager(ABC):
     async def update_contact_rolling_summary(
         self,
         transcript: str,
+        *,
         contact_id: int,
-        latest_rolling_summary: Optional[str] = None,
         guidance: Optional[str] = None,
     ) -> str: ...
 

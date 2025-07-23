@@ -159,11 +159,13 @@ class SimulatedMemoryManager(BaseMemoryManager):
         transcript: str,
         *,
         contact_id: int,
-        latest_rolling_summary: Optional[str] = None,
         guidance: Optional[str] = None,
     ) -> str:
         """
         Generates a fresh ≤120-word rolling summary and stores it in RAM.
+
+        The method now fetches the current rolling summary automatically so
+        callers don’t need to provide it explicitly.
         """
 
         # --- scoped mutator --------------------------------------------------
@@ -189,10 +191,20 @@ class SimulatedMemoryManager(BaseMemoryManager):
 
         self._llm.set_system_message(pb.build_rolling_prompt(tools, guidance=guidance))
 
+        # Retrieve the latest rolling summary to seed the LLM with up-to-date info
+        try:
+            contacts = self._contact_manager._search_contacts(
+                filter=f"contact_id == {contact_id}",
+                limit=1,
+            )
+            latest_summary_val = contacts[0].rolling_summary if contacts else None
+        except Exception:
+            latest_summary_val = None
+
         payload = json.dumps(
             {
                 "contact_id": contact_id,
-                "latest_rolling_summary": latest_rolling_summary,
+                "latest_rolling_summary": latest_summary_val,
                 "transcript": transcript,
             },
             indent=2,

@@ -321,12 +321,9 @@ class MemoryManager(BaseMemoryManager):
         transcript: str,
         *,
         contact_id: int,
-        latest_rolling_summary: Optional[str] = None,
         guidance: Optional[str] = None,
     ) -> str:
-        """
-        Refresh the rolling_summary column for ONE contact.
-        """
+        """Refresh the *rolling_summary* column for the given contact."""
 
         target_id = contact_id  # capture for closure
 
@@ -358,10 +355,23 @@ class MemoryManager(BaseMemoryManager):
         )
         llm.set_system_message(build_rolling_prompt(tools, guidance))
 
+        # ------------------------------------------------------------------
+        # Retrieve the *current* rolling summary from the backend so the LLM
+        # always has the freshest context and callers do not need to supply it.
+        try:
+            contacts = await asyncio.to_thread(
+                self._contact_manager._search_contacts,
+                filter=f"contact_id == {contact_id}",
+                limit=1,
+            )
+            latest_summary_val = contacts[0].rolling_summary if contacts else None
+        except Exception:
+            latest_summary_val = None  # best-effort fallback
+
         user_blob = json.dumps(
             {
                 "contact_id": contact_id,
-                "latest_rolling_summary": latest_rolling_summary,
+                "latest_rolling_summary (to maybe update)": latest_summary_val,
                 "transcript": transcript,
             },
             indent=2,
@@ -675,7 +685,6 @@ class MemoryManager(BaseMemoryManager):
                             self.update_contact_rolling_summary(
                                 transcript_blob,
                                 contact_id=_cid,
-                                latest_rolling_summary=None,
                             ),
                         ],
                     )
