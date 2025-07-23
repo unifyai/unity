@@ -232,9 +232,6 @@ async def test_prompt_shield_allows_km_update_when_irrelevant_explicit_call(
     EVENT_BUS.join_published()
     EVENT_BUS.join_callbacks()
 
-    # Wait for chunk processing
-    await asyncio.sleep(0.2)
-
     # We expect the MemoryManager.update_knowledge helper itself to have run exactly once
     assert (
         mm_kb_counter["calls"] >= 1

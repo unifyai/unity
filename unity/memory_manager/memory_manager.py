@@ -518,8 +518,7 @@ class MemoryManager(BaseMemoryManager):
         items = self._recent_messages.copy()
         self._recent_messages.clear()
 
-        # Launch the chunk processing asynchronously so we don't block EventBus
-        asyncio.create_task(self._process_message_chunk(items))
+        await self._process_message_chunk(items)
 
     # ------------------------------------------------------------------
     # Override the original message-handler so it stores the unified format
