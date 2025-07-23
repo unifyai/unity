@@ -109,15 +109,8 @@ async def test_guidance_is_propagated(
     method = getattr(mm, method_name)
 
     # call signatures differ slightly; pack kwargs accordingly
-    if method_name == "update_contact_bio":
-        await method(transcript, contact_id=1, latest_bio="Old bio.", guidance=guidance)
-    elif method_name == "update_contact_rolling_summary":
-        await method(
-            transcript,
-            contact_id=1,
-            latest_rolling_summary="Old summary.",
-            guidance=guidance,
-        )
+    if method_name in {"update_contact_bio", "update_contact_rolling_summary"}:
+        await method(transcript, contact_id=1, guidance=guidance)
     else:
         await method(transcript, guidance=guidance)
 
