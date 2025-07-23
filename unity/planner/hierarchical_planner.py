@@ -1626,6 +1626,17 @@ class HierarchicalPlanner(BasePlanner):
                         # TODO: failed_interaction ?
                     )
                 finally:
+                    completed_successfully = any(
+                        key[0] == func_name for key in plan.completed_functions
+                    )
+                    if completed_successfully and len(plan.interaction_stack) > 1:
+                        child_interactions = plan.interaction_stack[-1]
+                        parent_interactions = plan.interaction_stack[-2]
+                        parent_interactions.extend(child_interactions)
+                        logger.debug(
+                            f"Aggregated {len(child_interactions)} interactions from '{func_name}' to its parent.",
+                        )
+
                     if plan.call_stack:
                         exiting_func = plan.call_stack.pop()
                         exit_status = (
@@ -1673,15 +1684,13 @@ class HierarchicalPlanner(BasePlanner):
                 f"Awaiting it now to recover.",
             )
             result = await result
-        all_interactions = [
-            item for sublist in plan.interaction_stack for item in sublist
-        ]
+        interactions_for_this_step = plan.interaction_stack[-1]
         logger.info(
             f"🕵️ VERIFICATION INPUT for '{fn.__name__}':\n"
             f"   - Purpose: {fn.__doc__ or 'N/A'}\n"
-            f"   - Interactions:\n{json.dumps(all_interactions, indent=4)}",
+            f"   - Interactions:\n{json.dumps(interactions_for_this_step, indent=4)}",
         )
-        interactions_str = json.dumps(all_interactions, indent=2)
+        interactions_str = json.dumps(interactions_for_this_step, indent=2)
         plan.action_log.append(
             f"VERIFICATION EVIDENCE for '{fn.__name__}':\n{interactions_str}",
         )
@@ -1693,7 +1702,7 @@ class HierarchicalPlanner(BasePlanner):
             plan,
             fn.__name__,
             fn.__doc__,
-            all_interactions,
+            interactions=interactions_for_this_step,
             screenshot=final_screenshot,
         )
         logger.info(
@@ -1716,11 +1725,6 @@ class HierarchicalPlanner(BasePlanner):
             logger.info(
                 f"CACHE ADD: Stored result for '{fn.__name__}' in cache.",
             )
-
-            if len(plan.interaction_stack) > 1:
-                child_interactions = plan.interaction_stack[-1]
-                parent_interactions = plan.interaction_stack[-2]
-                parent_interactions.extend(child_interactions)
 
             if func_source and self.function_manager and fn.__name__ != "main_plan":
                 try:
