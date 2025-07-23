@@ -295,31 +295,43 @@ class ContactManager(BaseContactManager):
         unchanged.
         """
 
-        try:
-            url = f"{os.environ['UNIFY_BASE_URL']}/user/basic-info"
-            headers = {"Authorization": f"Bearer {os.environ['UNIFY_KEY']}"}
-            response = requests.request("GET", url, headers=headers)
+        user_info: Dict[str, Any] = {}
 
-            # Raise for HTTP errors so the except-block handles them uniformly
-            _handle_exceptions(response)
+        url = f"{os.environ['UNIFY_BASE_URL']}/user/basic-info"
+        headers = {"Authorization": f"Bearer {os.environ['UNIFY_KEY']}"}
+        response = requests.request("GET", url, headers=headers)
 
-            data: Any = response.json()
-            if isinstance(data, dict):
-                # Map API payload → expected field names
-                mapped: Dict[str, Any] = {
-                    "first_name": data.get("first"),
-                    "last_name": data.get("last"),
-                    "email": data.get("email"),
-                }
+        # Raise for HTTP errors so the except-block handles them uniformly
+        _handle_exceptions(response)
 
-                # Filter out *None* values so downstream logic does not
-                # inadvertently overwrite existing data with nulls.
-                return {k: v for k, v in mapped.items() if v is not None}
+        data: Any = response.json()
+        if isinstance(data, dict):
+            # Map API payload → expected field names
+            mapped: Dict[str, Any] = {
+                "first_name": data.get("first"),
+                "last_name": data.get("last"),
+                "email": data.get("email"),
+            }
 
-        except Exception:
-            # Any error results in the dummy placeholder – never raise so that
-            # ContactManager initialisation & offline tests proceed.
-            pass
+            # Filter out *None* values so downstream logic does not
+            # inadvertently overwrite existing data with nulls.
+            user_info.update({k: v for k, v in mapped.items() if v is not None})
+
+        from .. import ASSISTANT
+
+        phone = ASSISTANT.get("user_phone")
+        whatsapp = ASSISTANT.get("user_whatsapp_number")
+        mapped_extra: Dict[str, Any] = {
+            "phone_number": phone,
+            "whatsapp_number": whatsapp,
+        }
+        user_info.update(
+            {k: v for k, v in mapped_extra.items() if v is not None},
+        )
+
+        # If we managed to retrieve *any* real data, return it.
+        if user_info:
+            return user_info
 
         # ── fallback: dummy user ──────────────────────────────────────────
         return {
@@ -343,9 +355,8 @@ class ContactManager(BaseContactManager):
                 # Map provided *last_name* → Contact.surname
                 "surname": user_info.get("last_name"),
                 "email_address": user_info.get("email"),
-                # No phone numbers for the dummy user yet
-                "phone_number": None,
-                "whatsapp_number": None,
+                "phone_number": user_info.get("phone_number"),
+                "whatsapp_number": user_info.get("whatsapp_number"),
                 "bio": None,
                 "rolling_summary": None,
             },
@@ -356,7 +367,14 @@ class ContactManager(BaseContactManager):
         extra_fields = {
             k: v
             for k, v in user_info.items()
-            if k not in {"first_name", "last_name", "email"}
+            if k
+            not in {
+                "first_name",
+                "last_name",
+                "email",
+                "phone_number",
+                "whatsapp_number",
+            }
         }
         if extra_fields:
             self._ensure_columns_exist(extra_fields)
