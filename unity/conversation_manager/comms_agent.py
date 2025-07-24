@@ -25,6 +25,20 @@ from unity.conversation_manager.prompt_builders import (
 client = openai.AsyncOpenAI(api_key=os.environ["OPENAI_API_KEY"])
 
 ONGOING_CALL = False
+DEFAULT_ASSISTANT_PAYLOAD = {
+    "user_id": "default-user",
+    "created_at": datetime.now().isoformat(),
+    "updated_at": datetime.now().isoformat(),
+    "last_name": "",
+    "weekly_limit": None,
+    "max_parallel": None,
+    "profile_photo": None,
+    "country": None,
+    "voice_id": None,
+    "create_infra": True,
+    "tts_provider": "elevenlabs",
+    "user_last_name": "",
+}
 
 
 # new events to add:
@@ -803,9 +817,26 @@ class CommsAgent:
         from unity.events.event_bus import EVENT_BUS
 
         try:
-            unity.init(assistant_id=int(
-                os.environ.get("ASSISTANT_ID", "0").replace("default-assistant-", "")
-            ))
+            assistant_id = os.environ.get("ASSISTANT_ID", "0")
+            unity.init(
+                assistant_id=int(assistant_id.replace("default-assistant-", "")),
+                default_assistant={
+                    **DEFAULT_ASSISTANT_PAYLOAD,
+                    "agent_id": assistant_id,
+                    "first_name": self.assistant_name,
+                    "age": self.assistant_age,
+                    "region": self.assistant_region,
+                    "about": self.assistant_about,
+                    "email": self.assistant_email,
+                    "user_phone": self.user_number,
+                    "user_whatsapp_number": self.user_phone_call_number,
+                    "phone": self.assistant_number,
+                    "assistant_whatsapp_number": self.assistant_number,
+                    "api_key": os.environ.get("UNIFY_KEY"),
+                    "user_first_name": self.user_name,
+                    "user_email": self.user_email
+                },
+            )
         except Exception as e:
             print(f"Error initializing unity: {e}")
             traceback.print_exc()

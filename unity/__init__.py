@@ -36,6 +36,7 @@ def init(
     project_name: str = "Assistants",
     assistant_id: int = 0,
     overwrite: bool = False,
+    default_assistant: dict | None = None,
 ) -> None:  # noqa: D401 – imperative name
     """Initialise the *unity* runtime.
 
@@ -60,12 +61,15 @@ def init(
     assistants = _list_all_assistants()
 
     if assistants:
-        if not (0 <= assistant_id < len(assistants)):
-            raise ValueError(
-                f"assistant_id {assistant_id} out of range – "
-                f"{len(assistants)} assistants available.",
-            )
-        ASSISTANT = assistants[assistant_id]
+        if not default_assistant:
+            if not (0 <= assistant_id < len(assistants)):
+                raise ValueError(
+                    f"assistant_id {assistant_id} out of range – "
+                    f"{len(assistants)} assistants available.",
+                )
+            ASSISTANT = assistants[assistant_id]
+        else:
+            ASSISTANT = default_assistant
     else:
         # No assistants returned (offline / stub environment) – leave None.
         ASSISTANT = None
