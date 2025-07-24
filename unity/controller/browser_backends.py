@@ -12,7 +12,7 @@ import contextlib
 
 import aiohttp
 import requests
-from pydantic import BaseModel
+from pydantic import BaseModel, PydanticUserError
 import asyncio
 
 from .controller import Controller
@@ -350,9 +350,17 @@ class MagnitudeBrowserBackend(BrowserBackend):
             query: The natural-language instruction for what to extract.
             response_format: Optional. A Pydantic model to structure the output.
         """
+
+        def _safe_model_json_schema(model: type[BaseModel]):
+            try:
+                return model.model_json_schema()
+            except PydanticUserError:
+                model.model_rebuild()
+                return model.model_json_schema()
+
         payload = {"instructions": query}
         if inspect.isclass(response_format) and issubclass(response_format, BaseModel):
-            payload["schema"] = response_format.model_json_schema()
+            payload["schema"] = _safe_model_json_schema(response_format)
 
         response = await self._request("POST", "/extract", payload)
         data = response.get("data")
