@@ -369,7 +369,17 @@ class MemoryManager(BaseMemoryManager):
         guidance: Optional[str] = None,
     ) -> str:
         """Refresh the *bio* column for the given contact."""
+        # Ensure the assistant writes about itself in **second person**.
+        assistant_extra = (
+            "IMPORTANT: This bio belongs to the assistant itself (contact_id 0). Always use **second-person** pronouns ('you') when describing the assistant. Never refer to the assistant in the third person."  # noqa: E501
+            if contact_id == 0
+            else None
+        )
 
+        # Merge any caller-supplied guidance with our assistant-specific rule.
+        combined_guidance: Optional[str] = (
+            "\n".join(g for g in (guidance, assistant_extra) if g) or None
+        )
         target_id = contact_id  # capture for closure
 
         async def set_bio(contact_id: int, bio: str) -> str:
@@ -420,7 +430,7 @@ class MemoryManager(BaseMemoryManager):
             else str(contact_id)
         )
         llm.set_system_message(
-            build_bio_prompt(tools, guidance, contact_identifier=identifier),
+            build_bio_prompt(tools, combined_guidance, contact_identifier=identifier),
         )
 
         # ------------------------------------------------------------------
@@ -469,6 +479,16 @@ class MemoryManager(BaseMemoryManager):
     ) -> str:
         """Refresh the *rolling_summary* column for the given contact."""
 
+        # Ensure the assistant's rolling summary uses **second person**.
+        assistant_extra = (
+            "IMPORTANT: This rolling summary belongs to the assistant itself (contact_id 0). Always use **second-person** pronouns ('you') when describing the assistant. Never refer to the assistant in the third person."  # noqa: E501
+            if contact_id == 0
+            else None
+        )
+
+        combined_guidance: Optional[str] = (
+            "\n".join(g for g in (guidance, assistant_extra) if g) or None
+        )
         target_id = contact_id  # capture for closure
 
         async def set_rolling_summary(contact_id: int, rolling_summary: str) -> str:
@@ -497,7 +517,7 @@ class MemoryManager(BaseMemoryManager):
             cache=json.loads(os.getenv("UNIFY_CACHE", "true")),
             traced=json.loads(os.getenv("UNIFY_TRACED", "true")),
         )
-        llm.set_system_message(build_rolling_prompt(tools, guidance))
+        llm.set_system_message(build_rolling_prompt(tools, combined_guidance))
 
         # ------------------------------------------------------------------
         # Retrieve the *current* rolling summary from the backend so the LLM
