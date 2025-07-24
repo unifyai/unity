@@ -71,11 +71,23 @@ def build_contact_update_prompt(
 def build_bio_prompt(
     tools: Dict[str, Callable],
     guidance: Optional[str] = None,
+    *,
+    contact_identifier: Optional[str] = None,
 ) -> str:
     lines = [
         get_broader_context(),
         "",
-        "You are responsible for the *bio* column for ONE contact.",
+    ]
+
+    # Provide the model with an unambiguous identifier so it knows *who* it is updating
+    if contact_identifier:
+        lines.append(
+            f"You are updating the *bio* for contact **{contact_identifier}**.",
+        )
+    else:
+        lines.append("You are responsible for the *bio* column for ONE contact.")
+
+    lines += [
         "Input: the latest transcript chunk *plus* the current bio (if any).",
         "",
         "The bio is **concise freeform text (≤ 500 words)** describing relatively *time-invariant* information about the person: background, role, expertise, personality traits, important history, etc.",

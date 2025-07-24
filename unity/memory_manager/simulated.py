@@ -124,26 +124,49 @@ class SimulatedMemoryManager(BaseMemoryManager):
             "set_bio": set_bio,
         }
 
-        self._llm.set_system_message(pb.build_bio_prompt(tools, guidance=guidance))
-
-        # Retrieve the latest bio for the contact from the (simulated) backend
+        # Retrieve contact info for clearer context
         try:
             contacts = self._contact_manager._search_contacts(
                 filter=f"contact_id == {contact_id}",
                 limit=1,
             )
-            latest_bio_val = contacts[0].bio if contacts else None
+            if contacts:
+                c0 = contacts[0]
+                latest_bio_val = c0.bio
+                contact_name_val = (
+                    " ".join(p for p in [c0.first_name, c0.surname] if p).strip()
+                    or None
+                )
+            else:
+                latest_bio_val = None
+                contact_name_val = None
         except Exception:
             latest_bio_val = None
+            contact_name_val = None
 
-        payload = json.dumps(
-            {
-                "contact_id": contact_id,
-                "latest_bio": latest_bio_val,
-                "transcript": transcript,
-            },
-            indent=2,
+        identifier = (
+            f"{contact_name_val} (id {contact_id})"
+            if contact_name_val
+            else str(contact_id)
         )
+
+        self._llm.set_system_message(
+            pb.build_bio_prompt(
+                tools,
+                guidance=guidance,
+                contact_identifier=identifier,
+            ),
+        )
+
+        payload_dict = {
+            "contact_id": contact_id,
+            "latest_bio": latest_bio_val,
+            "transcript": transcript,
+        }
+        if contact_name_val is not None:
+            payload_dict["contact_name"] = contact_name_val
+
+        payload = json.dumps(payload_dict, indent=2)
 
         handle = start_async_tool_use_loop(
             self._llm,
