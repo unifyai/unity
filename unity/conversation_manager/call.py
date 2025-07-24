@@ -114,6 +114,8 @@ class Assistant(Agent):
         # self.client = client
         self.current_tasks_status = None
         self.from_number = from_number
+
+        # meet conference
         self.meet_id = meet_id
         self.is_meet_call = meet_id is not None
         super().__init__(instructions="", llm=openai.LLM(model="gpt-4o"))
@@ -167,18 +169,6 @@ class Assistant(Agent):
                 sentence_tokenizer=tokenize.basic.SentenceTokenizer(),
             )
 
-        # agent_stream = None
-        # if self.is_meet_call:
-        #     agent_stream = sd.OutputStream(
-        #         samplerate=24000,
-        #         channels=1,
-        #         dtype="float32",
-        #         callback=output_callback,
-        #         blocksize=1024,  # matches frame.data chunk size
-        #         # device=None — use default output
-        #     )
-        #     agent_stream.start()
-
         async with wrapped_tts.stream() as stream:
 
             async def _forward_input():
@@ -196,12 +186,6 @@ class Assistant(Agent):
                         continue
 
                     collected.append(ev.frame.data)
-                    # data = np.frombuffer(ev.frame.data, dtype=np.int16)
-                    # data = data.astype(np.float32) / 32767.0
-                    # # data = upsample_to_virtual_mic(data, in_rate=24000)
-                    # if data.ndim == 1:
-                    #     data = np.expand_dims(data, axis=1)
-                    # audio_buffer.append(data)
 
                 # todo: collect whole sentence for now
                 if self.is_meet_call:
@@ -209,15 +193,11 @@ class Assistant(Agent):
                         sd.play,
                         np.concatenate(collected),
                         24000,
-                        # device=virtual_sink,
                     )
                     await asyncio.to_thread(sd.wait)
 
             finally:
                 await utils.aio.cancel_and_wait(forward_task)
-                # if agent_stream:
-                #     agent_stream.stop()
-                #     agent_stream.close()
 
     async def stt_node(
         self,
@@ -262,6 +242,9 @@ async def entrypoint(ctx: agents.JobContext):
     tts_provider = os.environ.get("TTS_PROVIDER", "cartesia")
     voice_id = os.environ.get("VOICE_ID", "")
     # to_number = os.environ.get("CALL_TO_NUMBER", "")
+
+    # meet conference
+    meet_id = os.environ.get("MEET_ID", "")
 
     session = AgentSession(
         stt=deepgram.STT(model="nova-3", language="multi"),
@@ -344,7 +327,7 @@ async def entrypoint(ctx: agents.JobContext):
 
     await session.start(
         room=ctx.room,
-        agent=Assistant(from_number=from_number),
+        agent=Assistant(from_number=from_number, meet_id=meet_id if meet_id else None),
         room_input_options=RoomInputOptions(
             # LiveKit Cloud enhanced noise cancellation
             # - If self-hosting, omit this parameter
@@ -460,6 +443,8 @@ if __name__ == "__main__":
     tts_provider = "cartesia"
     voice_id = ""
     outbound = ""
+    meet_id = ""
+
     if len(sys.argv) > 6:
         # Remove phone numbers from sys.argv to prevent them from being passed to agents.cli
         from_number = sys.argv[2]
@@ -467,16 +452,18 @@ if __name__ == "__main__":
         tts_provider = sys.argv[4] if sys.argv[4] != "None" else "cartesia"
         voice_id = sys.argv[5]
         outbound = sys.argv[6] if sys.argv[6] != "None" else ""
+        meet_id = sys.argv[7] if sys.argv[7] != "None" else ""
         sys.argv = sys.argv[:2]  # Keep only script name and "dev" command
 
     # Store phone numbers in environment variables to be accessed by entrypoint
     os.environ["CALL_FROM_NUMBER"] = from_number
     os.environ["TTS_PROVIDER"] = tts_provider
+    os.environ["MEET_ID"] = meet_id
     if voice_id != "None":
         os.environ["VOICE_ID"] = voice_id
     # os.environ["CALL_TO_NUMBER"] = to_number
 
-    agent_name = f"unity_{assistant_number}"
+    agent_name = f"unity_{assistant_number}" if meet_id == "" else meet_id
     agents.cli.run_app(
         agents.WorkerOptions(
             entrypoint_fnc=entrypoint,
