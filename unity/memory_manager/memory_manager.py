@@ -124,6 +124,83 @@ class MemoryManager(BaseMemoryManager):
     _ROLLING_COLUMNS = tuple(_tmp_cols)
     del _tmp_cols
 
+    # ------------------------------------------------------------------ #
+    #  Shared helper: convert Message / event dicts to plain-text transcript
+    # ------------------------------------------------------------------ #
+
+    @staticmethod
+    def build_plain_transcript(
+        messages: list[dict],
+        contact_manager: Optional["ContactManager"] = None,
+    ) -> str:
+        """Return a *plain-text* transcript for a list of event dicts.
+
+        Each *message* item may come in two shapes:
+
+        1. Raw EventBus payloads produced by the live system::
+
+               {
+                   "kind": "message",
+                   "data": {"sender_id": 7, "content": "Hi"}
+               }
+
+        2. Simplified sandbox entries::
+
+               {"sender": "Daniel Lenton", "content": "Hi"}
+
+        Numeric ``sender_id`` values are looked up via *contact_manager* so we
+        can embed the full name (first + surname) instead of just the id.
+        """
+
+        # Local import to avoid a heavyweight dependency at import-time
+        from unity.contact_manager.contact_manager import (
+            ContactManager as _CM,
+        )  # noqa: WPS433
+
+        cm = contact_manager or _CM()
+
+        name_cache: dict[int, str] = {}
+
+        def _name_for_cid(cid: int) -> str:  # noqa: D401 – helper
+            if cid in name_cache:
+                return name_cache[cid]
+            try:
+                recs = cm._search_contacts(filter=f"contact_id == {cid}", limit=1)
+                if recs:
+                    rec = recs[0]
+                    full = " ".join(
+                        p for p in [rec.first_name, rec.surname] if p
+                    ).strip()
+                    if not full:
+                        full = (rec.first_name or "").strip()
+                    if full:
+                        name_cache[cid] = full
+                        return full
+            except Exception:
+                pass  # graceful fallback
+            name_cache[cid] = str(cid)
+            return name_cache[cid]
+
+        lines: list[str] = []
+        for it in messages:
+            # Shape (1): Event dict with kind == "message"
+            if "kind" in it:
+                if it.get("kind") != "message":
+                    continue
+                data = it.get("data", {})
+                sender_val = data.get("sender_id")
+                content_val = data.get("content", "")
+                if sender_val is None:
+                    continue
+                sender_name = _name_for_cid(int(sender_val))
+            else:  # Shape (2) – already simplified dict
+                sender_name = str(it.get("sender"))
+                content_val = str(it.get("content", ""))
+
+            lines.append(f"{sender_name}: {content_val}")
+
+        return "\n".join(lines)
+
     # ---------------------------------------------------------------------- #
     def __init__(
         self,
@@ -758,13 +835,16 @@ class MemoryManager(BaseMemoryManager):
         # Serialise – prevent concurrent chunks from interleaving updates
         async with self._chunk_lock:
             try:
-                transcript_blob = json.dumps(messages, indent=2)
+                plain_transcript = self.build_plain_transcript(
+                    messages,
+                    contact_manager=self._contact_manager,
+                )
 
                 # ── 1. Global, transcript-level updates (run *concurrently*) ────────
                 global_tasks = [
-                    self.update_contacts(transcript_blob),
-                    self.update_knowledge(transcript_blob),
-                    self.update_tasks(transcript_blob),
+                    self.update_contacts(plain_transcript),
+                    self.update_knowledge(plain_transcript),
+                    self.update_tasks(plain_transcript),
                 ]
 
                 # ── 2. Per-contact updates (bio & rolling summary) ──────────────────
@@ -806,11 +886,11 @@ class MemoryManager(BaseMemoryManager):
                     global_tasks.extend(
                         [
                             self.update_contact_bio(
-                                transcript_blob,
+                                plain_transcript,
                                 contact_id=_cid,
                             ),
                             self.update_contact_rolling_summary(
-                                transcript_blob,
+                                plain_transcript,
                                 contact_id=_cid,
                             ),
                         ],
