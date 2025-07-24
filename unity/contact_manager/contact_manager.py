@@ -245,6 +245,11 @@ class ContactManager(BaseContactManager):
             limit=1,
         )
 
+        # If the assistant contact already exists **leave it untouched** – never
+        # overwrite any backend-curated fields on initialisation.
+        if existing_logs:
+            return  # Contact is present – nothing to sync.
+
         if not existing_logs:
             # Either the table is empty or contact_id 0 was never created.
             # Use the standard helper which will assign contact_id == 0 when
@@ -262,25 +267,6 @@ class ContactManager(BaseContactManager):
                     mutable=True,
                 )
             return  # nothing further to do
-
-        # A record exists – check if it matches and update if necessary
-        current = existing_logs[0]
-        mismatches: List[Dict[str, Any]] = []
-
-        def _needs_update(key: str, desired: Any) -> bool:
-            return current.entries.get(key) != desired
-
-        for field, value in base_fields.items():
-            if _needs_update(field, value):
-                mismatches.append({field: value})
-
-        if mismatches:
-            unify.update_logs(
-                logs=[current.id] * len(mismatches),
-                context=self._ctx,
-                entries=mismatches,
-                overwrite=True,
-            )
 
     # ------------------------------------------------------------------
     #  Default *user* contact helpers (contact_id == 1)
@@ -392,6 +378,11 @@ class ContactManager(BaseContactManager):
             limit=1,
         )
 
+        # If the user contact already exists **leave it untouched** – protect all
+        # backend data from accidental resets during ContactManager construction.
+        if existing_logs:
+            return  # Contact is present – nothing to sync.
+
         if not existing_logs:
             # No user contact yet → create it.  We *do not* supply a
             # `contact_id` so that Unify allocates the next auto-incremented
@@ -403,21 +394,6 @@ class ContactManager(BaseContactManager):
                 **{k: v for k, v in base_fields.items() if v is not None},
             )
             return  # done
-
-        # Update existing record when discrepancies are found
-        current = existing_logs[0]
-        mismatches: List[Dict[str, Any]] = []
-        for field, value in base_fields.items():
-            if current.entries.get(field) != value:
-                mismatches.append({field: value})
-
-        if mismatches:
-            unify.update_logs(
-                logs=[current.id] * len(mismatches),
-                context=self._ctx,
-                entries=mismatches,
-                overwrite=True,
-            )
 
     # ──────────────────────────────────────────────────────────────────────
     #  Column helpers (single-table version of KnowledgeManager's helpers)
