@@ -44,14 +44,15 @@ headers = {"Authorization": f"Bearer {os.getenv('ORCHESTRA_ADMIN_KEY')}"}
 async def _send_whatsapp_message_via_number(
     to_number: str,
     message: str,
+    reply_to_user: bool = False,
 ) -> str:
     """
     Send a WhatsApp message using the WhatsApp Business API.
 
     Args:
-        from_number: The sender's phone number
         to_number: The recipient's phone number
         message: The message content to send
+        reply_to_user: `True` if replying to user's message. `False` if starting a new conversation.
 
     Returns:
         str: The response from the WhatsApp API
@@ -139,14 +140,20 @@ async def _send_whatsapp_message_via_number(
     # no conflict, or numbers reassigned. proceed to send message
     print(f"Sending WhatsApp message from {from_number} to {to_number}: {message}")
     async with aiohttp.ClientSession() as session:
+        send_endpoint = "send-text" if reply_to_user else "send-greeting"
+        json_payload = {
+            "from": from_number,
+            "to": to_number,
+            "body": message,
+        }
+        if not reply_to_user:
+            json_payload["user_name"] = os.getenv("USER_NAME")
+            json_payload["agent_name"] = os.getenv("ASSISTANT_NAME")
+
         async with session.post(
-            f"{os.getenv('UNITY_COMMS_URL')}/whatsapp/send-text",
+            f"{os.getenv('UNITY_COMMS_URL')}/whatsapp/{send_endpoint}",
             headers=headers,
-            json={
-                "from": from_number,
-                "to": to_number,
-                "body": message,
-            },
+            json=json_payload,
         ) as response:
             response.raise_for_status()
             response_text = await response.text()

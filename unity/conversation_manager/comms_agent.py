@@ -611,17 +611,19 @@ class CommsAgent:
             message,
         )
 
-    async def _inner_send_whatsapp(self, message: str):
+    async def _inner_send_whatsapp(self, message: str, reply_to_user: bool = False):
         """
         Sends a WhatsApp message from the assistant's number to the user's number.
 
         Args:
             message (str): The message content to be sent via WhatsApp.
+            reply_to_user (bool): `True` if replying to user's message. `False` if starting a new conversation.
         """
         await _send_whatsapp_message_via_number(
             # self.assistant_number,
             self.user_number,
             message,
+            reply_to_user,
         )
 
     # outer communications
@@ -678,18 +680,25 @@ class CommsAgent:
             message,
         )
 
-    async def _outer_send_whatsapp(self, to_number: str, message: str):
+    async def _outer_send_whatsapp(
+        self,
+        to_number: str,
+        message: str,
+        reply_to_user: bool = False,
+    ):
         """
         Sends a WhatsApp message from the assistant's number to the user's number.
 
         Args:
             to_number (str): The number to send the WhatsApp message to prefixed with +.
             message (str): The message content to be sent via WhatsApp.
+            reply_to_user (bool): `True` if replying to user's message. `False` if starting a new conversation.
         """
         await _send_whatsapp_message_via_number(
             # self.assistant_number,
             to_number,
             message,
+            reply_to_user,
         )
 
     async def wait_for_seconds_or_next_event(self, time: int): ...
