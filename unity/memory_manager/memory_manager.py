@@ -4,6 +4,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import functools
 from typing import Optional, Callable, Dict, Any
 
 import unify
@@ -223,6 +224,7 @@ class MemoryManager(BaseMemoryManager):
         # implementation in a background thread.  The *ask* helpers are still
         # exposed unmodified so the LLM can read the current state.
 
+        @functools.wraps(self._contact_manager._create_contact, updated=())
         async def _safe_create_contact(**kwargs):
             # Reject attempts to touch forbidden fields
             for forbidden in ("bio", "rolling_summary"):
@@ -250,6 +252,7 @@ class MemoryManager(BaseMemoryManager):
                 **cleaned_kwargs,
             )
 
+        @functools.wraps(self._contact_manager._update_contact, updated=())
         async def _safe_update_contact(**kwargs):
             # Reject forbidden field modifications
             for forbidden in ("bio", "rolling_summary"):
@@ -276,6 +279,36 @@ class MemoryManager(BaseMemoryManager):
                 **cleaned_kwargs,
             )
 
+        # ────────────────────────────────────────────────────────────────
+        #   Patch wrapper *signatures* & *docstrings* so the LLM sees a
+        #   cleaned-up schema that hides now-forbidden parameters.
+        # ----------------------------------------------------------------
+        from inspect import Signature, Parameter, signature as _sig  # type: ignore
+        from unity.common.llm_helpers import _strip_hidden_params_from_doc
+
+        _FORBIDDEN = {"bio", "rolling_summary", "custom_fields"}
+
+        def _prune_wrapper(_wrapper, _original):
+            """Reuse *original* metadata but remove forbidden params."""
+            orig_sig = _sig(_original)
+            # Keep parameter **order** but drop any forbidden names
+            new_params = [
+                p.replace()  # shallow copy
+                for p in orig_sig.parameters.values()
+                if p.name not in _FORBIDDEN
+            ]
+            _wrapper.__signature__ = Signature(parameters=new_params)
+
+            orig_doc = _original.__doc__ or ""
+            _wrapper.__doc__ = (
+                _strip_hidden_params_from_doc(orig_doc, _FORBIDDEN)
+                + "\n\nNOTE: Disregard any mention of the 'bio', "
+                "'rolling_summary', or 'custom_fields' arguments, which have all been removed."
+            )
+
+        _prune_wrapper(_safe_create_contact, self._contact_manager._create_contact)
+        _prune_wrapper(_safe_update_contact, self._contact_manager._update_contact)
+
         # Base read-only helpers ------------------------------------------------
         tools: Dict[str, Callable[..., Any]] = {
             "contact_ask": self._contact_manager.ask,
@@ -299,7 +332,11 @@ class MemoryManager(BaseMemoryManager):
             transcript,
             tools,
             loop_id="MemoryManager.update_contacts",
-            tool_policy=lambda i, _: ("required", _) if i < 2 else ("auto", _),
+            tool_policy=lambda i, _: (
+                ("required", {"contact_ask": self._contact_manager.ask})
+                if i < 1
+                else ("auto", _)
+            ),
         )
 
         return await handle.result()  # a plain str
