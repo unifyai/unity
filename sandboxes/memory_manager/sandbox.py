@@ -8,8 +8,8 @@ description via the ``--voice/-v`` flag (same UX as the other sandboxes).
 
 ┌────────────── 11 accepted commands ─────────────┐
 │ uc   –– update_contacts                         │
-│ ucb  –– update_contact_bio                      │
-│ ucrs –– update_contact_rolling_summary          │
+│ ucb {contact_id}  –– update_contact_bio                      │
+│ ucrs {contact_id} –– update_contact_rolling_summary          │
 │ uk   –– update_knowledge                        │
 │ ut   –– update_tasks                           │
 │ cc        –– clear Contacts store               │
@@ -519,6 +519,24 @@ async def _main_async() -> None:
         cmd = _CMD_ALIASES.get(parts[0], parts[0])
 
         if cmd in {"uc", "ucb", "ucrs", "uk", "ut"}:
+            # --------------------------------------------------------------
+            # NEW: Extract contact_id for contact-specific commands (ucb/ucrs)
+            # The user must now invoke these commands as "ucb {contact_id}"
+            # or "ucrs {contact_id}" so we parse the integer immediately.
+            # --------------------------------------------------------------
+            contact_id_val: int | None = None
+            if cmd in {"ucb", "ucrs"}:
+                if len(parts) < 2 or not parts[1].strip():
+                    print(
+                        "⚠️  Please provide a contact_id after the command, e.g. 'ucb 42'.",
+                    )
+                    continue
+                try:
+                    contact_id_val = int(parts[1].split()[0])
+                except ValueError:
+                    print("⚠️  contact_id must be a valid integer.")
+                    continue
+
             # ------------------------------------------------------------------
             # 1️⃣  Ensure we have a *local* copy of the transcript to work with
             # ------------------------------------------------------------------
@@ -624,28 +642,17 @@ async def _main_async() -> None:
                 if cmd == "uc":
                     result = await mm.update_contacts(chunk_txt, guidance=guidance_txt)
                 elif cmd in {"ucb", "ucrs"}:
-                    cid_str = input(
-                        "Target contact_id (press Enter to cancel)> ",
-                    ).strip()
-                    if cid_str == "":
-                        print("⚠️  Command cancelled (no contact_id provided).")
-                        continue
-                    try:
-                        cid_val = int(cid_str)
-                    except ValueError:
-                        print("⚠️  contact_id must be a valid integer.")
-                        continue
-
+                    # contact_id_val was parsed earlier – guaranteed to be int
                     if cmd == "ucb":
                         result = await mm.update_contact_bio(
                             chunk_txt,
-                            contact_id=cid_val,
+                            contact_id=contact_id_val,  # type: ignore[arg-type]
                             guidance=guidance_txt,
                         )
                     else:  # ucrs
                         result = await mm.update_contact_rolling_summary(
                             chunk_txt,
-                            contact_id=cid_val,
+                            contact_id=contact_id_val,  # type: ignore[arg-type]
                             guidance=guidance_txt,
                         )
                 elif cmd == "ut":
