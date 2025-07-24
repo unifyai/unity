@@ -118,6 +118,17 @@ class SimulatedMemoryManager(BaseMemoryManager):
             )
             return await handle.result()
 
+        # ------------------------------------------------------------------
+        # Ensure the assistant (contact_id 0) is always described in 2nd person
+        assistant_extra = (
+            "IMPORTANT: This bio belongs to the assistant itself (contact_id 0). Always use **second-person** pronouns ('you') when describing the assistant. Never refer in the third person."  # noqa: E501
+            if contact_id == 0
+            else None
+        )
+        combined_guidance: Optional[str] = (
+            "\n".join(g for g in (guidance, assistant_extra) if g) or None
+        )
+
         tools: Dict[str, Callable[..., Any]] = {
             "transcript_ask": self._transcript_manager.ask,
             "contact_ask": self._contact_manager.ask,
@@ -153,7 +164,7 @@ class SimulatedMemoryManager(BaseMemoryManager):
         self._llm.set_system_message(
             pb.build_bio_prompt(
                 tools,
-                guidance=guidance,
+                guidance=combined_guidance,
                 contact_identifier=identifier,
             ),
         )
@@ -212,7 +223,19 @@ class SimulatedMemoryManager(BaseMemoryManager):
             "set_rolling_summary": set_rolling_summary,
         }
 
-        self._llm.set_system_message(pb.build_rolling_prompt(tools, guidance=guidance))
+        # Ensure assistant summaries are second-person
+        assistant_extra = (
+            "IMPORTANT: This rolling summary belongs to the assistant itself (contact_id 0). Always use **second-person** pronouns ('you') when describing the assistant. Never refer in the third person."  # noqa: E501
+            if contact_id == 0
+            else None
+        )
+        combined_guidance: Optional[str] = (
+            "\n".join(g for g in (guidance, assistant_extra) if g) or None
+        )
+
+        self._llm.set_system_message(
+            pb.build_rolling_prompt(tools, guidance=combined_guidance),
+        )
 
         # Retrieve the latest rolling summary to seed the LLM with up-to-date info
         try:
