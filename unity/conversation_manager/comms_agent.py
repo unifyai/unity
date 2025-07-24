@@ -731,7 +731,7 @@ class CommsAgent:
     def set_event_manager(self, event_manager):
         self.event_manager = event_manager
 
-    def set_assistant_details(self, payload):
+    def set_details(self, payload):
         self.assistant_name = payload["assistant_name"]
         self.assistant_age = payload["assistant_age"]
         self.assistant_region = payload["assistant_region"]
@@ -740,6 +740,10 @@ class CommsAgent:
         self.user_name = payload["user_name"]
         self.user_number = payload["user_number"]
         self.user_phone_call_number = payload["user_phone_number"]
+        self.user_email = payload["user_email"]
+        os.environ["UNIFY_KEY"] = payload["api_key"]
+        os.environ["USER_NAME"] = self.user_name
+        os.environ["USER_EMAIL"] = self.user_email
 
     async def initialize_redis(self):
         """Initialize Redis connection after server is ready"""
@@ -893,9 +897,7 @@ class CommsAgent:
         global ONGOING_CALL
         to = event.get("to")
         if event["event"]["event_name"] == "StartupEvent":
-            # set assistant details and set unify key
-            self.set_assistant_details(event["event"]["payload"])
-            os.environ["UNIFY_KEY"] = event["event"]["payload"]["api_key"]
+            self.set_details(event["event"]["payload"])
 
         if event["event"]["event_name"] == "PhoneCallEndedEvent":
             if self.meet_browser:
