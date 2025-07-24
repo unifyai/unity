@@ -236,7 +236,7 @@ async def _main_async() -> None:
         help="Disable automatic memory updates triggered by message chunks (MemoryManager._setup_message_callbacks).",
     )
     # ------------------------------------------------------------------
-    # NEW: Custom window / chunk configuration via JSON file
+    # Custom window / chunk configuration via JSON file
     # ------------------------------------------------------------------
     parser.add_argument(
         "--windows_config",
@@ -503,8 +503,70 @@ async def _main_async() -> None:
         cmd = _CMD_ALIASES.get(parts[0], parts[0])
 
         if cmd in {"uc", "ucb", "ucrs", "uk", "ut"}:
+            # ------------------------------------------------------------------
+            # 1️⃣  Ensure we have a *local* copy of the transcript to work with
+            # ------------------------------------------------------------------
+
+            # If the in-memory `last_transcript` list is still empty we try to
+            # lazily load *existing* messages from the backend so users can run
+            # maintenance commands right after opening a project that already
+            # contains data – no need to generate a fresh synthetic transcript
+            # first.
+
             if not last_transcript:
-                print("⚠️  No transcript available yet – generate one first.")
+                try:
+                    # Fetch **all** messages in chronological order.  The internal
+                    # helper returns newest → oldest so we reverse it afterwards.
+                    backend_msgs = list(reversed(tm._search_messages(limit=1000)))
+
+                    # Build a cache mapping contact_id -> first name so that
+                    # the transcript always uses *names* instead of numeric ids
+                    contact_name_cache: dict[int, str] = {}
+
+                    def _name_for_contact(cid: int) -> str:  # noqa: D401 – helper
+                        """Return the *first name* for contact *cid* or fallback to str(cid)."""
+                        if cid in contact_name_cache:
+                            return contact_name_cache[cid]
+                        try:
+                            records = mm._contact_manager._search_contacts(  # type: ignore[attr-defined]
+                                filter=f"contact_id == {cid}",
+                                limit=1,
+                            )
+                            if records:
+                                # Prefer first_name; fallback to combined name fields
+                                rec = records[0]
+                                name = (rec.first_name or "").strip() or (
+                                    " ".join(
+                                        p for p in [rec.first_name, rec.surname] if p
+                                    ).strip()
+                                )
+                                if name:
+                                    contact_name_cache[cid] = name.split(" ")[0]
+                                    return contact_name_cache[cid]
+                        except Exception:
+                            # Any backend issue – fall through to numeric id
+                            pass
+                        contact_name_cache[cid] = str(cid)
+                        return contact_name_cache[cid]
+
+                    # Convert Message objects → dicts matching the local
+                    # TranscriptGenerator schema expected by _chunk_to_text.
+                    last_transcript = [
+                        {
+                            "sender": _name_for_contact(m.sender_id),
+                            "content": m.content,
+                            "timestamp": m.timestamp.isoformat(),
+                            "medium": m.medium,
+                        }
+                        for m in backend_msgs
+                    ]
+                except Exception:
+                    # Any error (e.g. no context yet) – fall back to the original
+                    # behaviour so we do not block the command with an exception.
+                    last_transcript = []
+
+            if not last_transcript:
+                print("⚠️  No transcript available yet – generate or import one first.")
                 continue
 
             # ─────────────── prompt for range ────────────────
@@ -633,7 +695,6 @@ async def _main_async() -> None:
                 )
                 continue
 
-            print("🎙️  Recording – press Enter to stop …")
             audio = _record_until_enter()
             description = _transcribe_deepgram(audio).strip()
             if not description:
