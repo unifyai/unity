@@ -834,7 +834,7 @@ class CommsAgent:
                     "assistant_whatsapp_number": self.assistant_number,
                     "api_key": os.environ.get("UNIFY_KEY"),
                     "user_first_name": self.user_name,
-                    "user_email": self.user_email
+                    "user_email": self.user_email,
                 },
             )
         except Exception as e:
