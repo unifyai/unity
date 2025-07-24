@@ -399,24 +399,37 @@ class Call(SteerableToolHandle):
         self.call_ask_status = asyncio.Event()
         self.call_ask_status.set()
 
-        async def do_call():
-            await _start_call(
-                os.getenv("ASSISTANT_NUMBER"),
-                phone_number,
-                purpose,
-                task_context,
-            )
-            # give time to start call and complete greeting
-            await asyncio.sleep(20)
-            self.call_ready.set()
-
-        asyncio.create_task(do_call())
-
         self.redis = redis.Redis(host="localhost", port=6379, db=0).pubsub()
         self.redis.subscribe("local_chat")
         self.chat = []
 
         self.status = "initiated"
+
+    async def _start_call_task(self):
+        """Internal helper: perform the call start then mark ready."""
+        await _start_call(
+            os.getenv("ASSISTANT_NUMBER"),
+            self.phone_number,
+            self.purpose,
+            self.task_context,
+        )
+        # give time to start call and complete greeting
+        await asyncio.sleep(20)
+        self.call_ready.set()
+        self.status = "started"
+
+    @classmethod
+    async def create(
+        cls,
+        phone_number: str,
+        purpose: str,
+        task_context: Dict[str, str] = None,
+        tools=None,
+    ) -> "Call":
+        """Async factory for Call: constructs and schedules the call immediately."""
+        instance = cls(phone_number, purpose, task_context, tools)
+        await instance._start_call_task()
+        return instance
 
     def _get_update_from_redis(self):
         import json, ast
