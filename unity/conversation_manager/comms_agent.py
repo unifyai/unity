@@ -99,6 +99,10 @@ class CommsAgent:
         self.outer_comms_enabled = outer_comms_enabled
         self.pending_calls = []
 
+        # meet conference
+        self.meet_id = None
+        self.meet_browser = None
+
         # conductor
         self.conductor = None
         self.tool_use_handles = None
@@ -227,6 +231,8 @@ class CommsAgent:
                         self.call_purpose = new_event["payload"]["purpose"]
                         self.task_context = new_event["payload"]["task_context"]
                         target_number = new_event["payload"]["target_number"]
+                        self.meet_id = new_event["payload"]["meet_id"]
+
                         print("call_requested", self.assistant_number)
                         if not self.start_local:
                             self.call_proc = run_script(
@@ -249,6 +255,7 @@ class CommsAgent:
                                     else "None"
                                 ),
                                 "--outbound" if new_event.get("outbound") else "None",
+                                self.meet_id if self.meet_id else "None",
                             )
                         else:
                             self.call_proc = run_script(
@@ -259,9 +266,51 @@ class CommsAgent:
                                 "cartesia",
                                 "None",
                                 "None",
+                                self.meet_id if self.meet_id else "None",
                             )
                         self.call_mode = True
                         ONGOING_CALL = True
+
+                        # Join meet conference programatically
+                        if self.meet_id:
+                            from unity.controller.controller import Controller
+
+                            self.meet_browser = Controller()
+                            self.meet_browser.start()
+
+                            # Join meet
+                            await self.meet_browser.act(
+                                f"Go to the page: https://meet.google.com/{self.meet_id}",
+                            )
+
+                            # Enter name
+                            await asyncio.sleep(1)
+                            await self.meet_browser.act(
+                                "Click 'your name' textbox",
+                            )
+                            await self.meet_browser.act(
+                                f"Enter your name as {self.assistant_name}",
+                            )
+
+                            # Set agent mic
+                            await self.meet_browser.act(
+                                "Click on microphone default",
+                            )
+                            await asyncio.sleep(1)
+                            await self.meet_browser.act(
+                                "Select 'agent_sink.monitor'",
+                            )
+
+                            # Set user speaker
+                            await self.meet_browser.act(
+                                "Click on speaker default",
+                            )
+                            await asyncio.sleep(1)
+                            await self.meet_browser.act("Select 'meet_sink'")
+
+                            # Join meet
+                            await self.meet_browser.act("Click the 'Join' button")
+
                         continue
                     else:
                         # append initated phone call and failed
@@ -804,6 +853,11 @@ class CommsAgent:
             os.environ["UNIFY_KEY"] = event["event"]["payload"]["api_key"]
 
         if event["event"]["event_name"] == "PhoneCallEndedEvent":
+            if self.meet_browser:
+                self.meet_browser.stop()
+                self.meet_browser = None
+                self.meet_id = None
+
             if self.call_proc:
                 self.call_proc.kill()
                 self.call_proc.wait()
@@ -814,6 +868,7 @@ class CommsAgent:
                 # check for queued calls
                 if self.pending_calls:
                     next_call_event = self.pending_calls.pop(0)
+                    # todo: fix for meet call events
                     asyncio.create_task(
                         _start_call(
                             self.assistant_number,

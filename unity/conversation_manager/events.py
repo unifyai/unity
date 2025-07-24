@@ -216,16 +216,19 @@ class PhoneCallInitiatedEvent(Event):
         purpose: str = None,
         task_context: Dict[str, str] = None,
         target_number: str = None,
+        meet_id: str = None,
         **kwargs,
     ):
         kwargs.pop("content", None)
         kwargs.pop("purpose", None)
         kwargs.pop("task_context", None)
         kwargs.pop("target_number", None)
+        kwargs.pop("meet_id", None)
 
         self.purpose = purpose if purpose else "general"
         self.task_context = task_context
         self.target_number = target_number
+        self.meet_id = meet_id
         super().__init__(**kwargs)
 
     def to_dict(self) -> dict[str, Any]:
@@ -235,12 +238,13 @@ class PhoneCallInitiatedEvent(Event):
                 "purpose": self.purpose,
                 "task_context": self.task_context,
                 "target_number": self.target_number,
+                "meet_id": self.meet_id,
             },
         )
         return base_dict
 
     def __str__(self):
-        return f"[Phone Call Initiated... to {self.target_number} @ {self.fmt_timestamp} for purpose {self.purpose} with task context {self.task_context}]"
+        return f"[Phone Call Initiated... to {self.target_number} {'(Meet: ' + self.meet_id + ')' if self.meet_id else ''} @ {self.fmt_timestamp} for purpose {self.purpose} with task context {self.task_context}]"
 
 
 class PhoneCallEndedEvent(Event):

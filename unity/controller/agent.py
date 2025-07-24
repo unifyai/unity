@@ -863,6 +863,8 @@ def text_to_browser_action(
                 ret += " (please also include the *non-negative* speed (pixels/second) such that '<start_scrolling_up/start_scrolling_down> <speed>')"
             elif a in ("press_key"):
                 ret += " (please also include a *single* character or digit to press such that '<press_key> <char/digit>')"
+            elif a in ("click_button"):
+                ret += " (please also include the *number* of the button to click such that '<click_button> <number>'"
             return ret
 
         lines += [_format_action(a) for a in valid_actions]
