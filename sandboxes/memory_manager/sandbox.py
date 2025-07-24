@@ -8,8 +8,8 @@ description via the ``--voice/-v`` flag (same UX as the other sandboxes).
 
 ┌────────────── 11 accepted commands ─────────────┐
 │ uc   –– update_contacts                         │
-│ ucb {contact_id}  –– update_contact_bio                      │
-│ ucrs {contact_id} –– update_contact_rolling_summary          │
+│ ucb {contact_id[, …]}  –– update_contact_bio                      │
+│ ucrs {contact_id[, …]} –– update_contact_rolling_summary          │
 │ uk   –– update_knowledge                        │
 │ ut   –– update_tasks                           │
 │ cc        –– clear Contacts store               │
@@ -519,22 +519,27 @@ async def _main_async() -> None:
         cmd = _CMD_ALIASES.get(parts[0], parts[0])
 
         if cmd in {"uc", "ucb", "ucrs", "uk", "ut"}:
-            # --------------------------------------------------------------
             # NEW: Extract contact_id for contact-specific commands (ucb/ucrs)
-            # The user must now invoke these commands as "ucb {contact_id}"
-            # or "ucrs {contact_id}" so we parse the integer immediately.
-            # --------------------------------------------------------------
-            contact_id_val: int | None = None
+            # The user can now supply **one or many** comma-separated ids, e.g. "ucb 0,1,2".
+            contact_id_vals: list[int] = []
             if cmd in {"ucb", "ucrs"}:
                 if len(parts) < 2 or not parts[1].strip():
                     print(
-                        "⚠️  Please provide a contact_id after the command, e.g. 'ucb 42'.",
+                        "⚠️  Please provide one or more contact_id(s) after the command, e.g. 'ucb 42' or 'ucb 1,2,3'.",
                     )
                     continue
+
                 try:
-                    contact_id_val = int(parts[1].split()[0])
+                    ids_token = parts[1].split()[0]  # first whitespace-separated token
+                    contact_id_vals = [
+                        int(tok) for tok in ids_token.split(",") if tok.strip()
+                    ]
                 except ValueError:
-                    print("⚠️  contact_id must be a valid integer.")
+                    print("⚠️  contact_id(s) must be valid integers, comma-separated.")
+                    continue
+
+                if not contact_id_vals:
+                    print("⚠️  No valid contact_id(s) provided.")
                     continue
 
             # ------------------------------------------------------------------
@@ -643,19 +648,24 @@ async def _main_async() -> None:
                 if cmd == "uc":
                     result = await mm.update_contacts(chunk_txt, guidance=guidance_txt)
                 elif cmd in {"ucb", "ucrs"}:
-                    # contact_id_val was parsed earlier – guaranteed to be int
-                    if cmd == "ucb":
-                        result = await mm.update_contact_bio(
-                            chunk_txt,
-                            contact_id=contact_id_val,  # type: ignore[arg-type]
-                            guidance=guidance_txt,
-                        )
-                    else:  # ucrs
-                        result = await mm.update_contact_rolling_summary(
-                            chunk_txt,
-                            contact_id=contact_id_val,  # type: ignore[arg-type]
-                            guidance=guidance_txt,
-                        )
+                    # Iterate over each supplied contact id sequentially
+                    results: list[str] = []
+                    for cid in contact_id_vals:
+                        if cmd == "ucb":
+                            res = await mm.update_contact_bio(
+                                chunk_txt,
+                                contact_id=cid,
+                                guidance=guidance_txt,
+                            )
+                        else:  # ucrs
+                            res = await mm.update_contact_rolling_summary(
+                                chunk_txt,
+                                contact_id=cid,
+                                guidance=guidance_txt,
+                            )
+                        results.append(f"{cid}: {res}")
+
+                    result = "; ".join(results)
                 elif cmd == "ut":
                     result = await mm.update_tasks(chunk_txt, guidance=guidance_txt)
                 else:  # uk
