@@ -803,7 +803,9 @@ class CommsAgent:
         from unity.events.event_bus import EVENT_BUS
 
         try:
-            unity.init(assistant_id=int(os.environ.get("ASSISTANT_ID", 0)))
+            unity.init(assistant_id=int(
+                os.environ.get("ASSISTANT_ID", "0").replace("default-assistant-", "")
+            ))
         except Exception as e:
             print(f"Error initializing unity: {e}")
             traceback.print_exc()
