@@ -7,7 +7,7 @@ import asyncio
 
 from dotenv import load_dotenv
 
-from livekit import agents, rtc
+from livekit import agents, rtc, api
 from livekit.agents import utils, tokenize, tts, stt
 from livekit.agents import AgentSession, Agent, RoomInputOptions
 from livekit.agents.log import logger
@@ -245,6 +245,8 @@ async def entrypoint(ctx: agents.JobContext):
 
     # meet conference
     meet_id = os.environ.get("MEET_ID", "")
+    meet_token = None
+    meet_user_room = None
 
     session = AgentSession(
         stt=deepgram.STT(model="nova-3", language="multi"),
@@ -281,6 +283,11 @@ async def entrypoint(ctx: agents.JobContext):
                 print("All tasks cancelled successfully")
             except Exception as e:
                 print(f"Error during task cancellation: {e}")
+
+        if meet_user_room:
+            await meet_user_room.disconnect()
+            meet_user_room = None
+            meet_token = None
 
         # Close the connection gracefully
         try:
@@ -324,6 +331,27 @@ async def entrypoint(ctx: agents.JobContext):
         asyncio.create_task(end_call())
 
     ctx.room.on("participant_disconnected", on_participant_disconnected)
+
+    if meet_id:
+        meet_token = (
+            api.AccessToken(
+                api_key=os.environ.get("LIVEKIT_API_KEY"),
+                api_secret=os.environ.get("LIVEKIT_API_SECRET"),
+            )
+            .with_identity("meet-user")
+            .with_grants(api.VideoGrants(room_join=True, room=meet_id))
+            .with_room_config(
+                api.RoomConfiguration(
+                    agents=[api.RoomAgentDispatch(agent_name=meet_id)],
+                ),
+            )
+            .to_jwt()
+        )
+        meet_user_room = rtc.Room()
+        await meet_user_room.connect(
+            url=os.environ.get("LIVEKIT_URL"),
+            token=meet_token,
+        )
 
     await session.start(
         room=ctx.room,
