@@ -212,13 +212,59 @@ class MemoryManager(BaseMemoryManager):
         and persist them.  Returns a short description of what changed.
         """
 
-        # ─ 1.  Build live tool-set
-        tools = methods_to_tool_dict(
-            self._contact_manager.ask,
-            self._contact_manager.update,  # full-power update allowed here
-            self._transcript_manager.ask,
-            include_class_name=False,
-        )
+        # ─ 1.  Build **restricted** live tool-set  ──────────────────────────
+        # Guardrails:
+        #   • Disallow creation of *new* columns via custom_fields
+        #   • Disallow any modification of the `bio` or `rolling_summary` fields
+        #
+        # We therefore expose *thin* wrappers around the low-level synchronous
+        # helpers (`_create_contact` / `_update_contact`) that validate the
+        # supplied keyword arguments **before** delegating to the real
+        # implementation in a background thread.  The *ask* helpers are still
+        # exposed unmodified so the LLM can read the current state.
+
+        async def _safe_create_contact(**kwargs):
+            # Reject attempts to touch forbidden fields
+            for forbidden in ("bio", "rolling_summary"):
+                if kwargs.get(forbidden) is not None:
+                    raise ValueError(
+                        "MemoryManager.update_contacts – creation of contacts must not set 'bio' or 'rolling_summary'.",
+                    )
+            # Reject custom_fields entirely to avoid implicit column creation
+            if kwargs.get("custom_fields"):
+                raise ValueError(
+                    "MemoryManager.update_contacts – creation of custom columns is not allowed.",
+                )
+            return await asyncio.to_thread(
+                self._contact_manager._create_contact,
+                **kwargs,
+            )
+
+        async def _safe_update_contact(**kwargs):
+            # Reject forbidden field modifications
+            for forbidden in ("bio", "rolling_summary"):
+                if kwargs.get(forbidden) is not None:
+                    raise ValueError(
+                        "MemoryManager.update_contacts – modification of 'bio' or 'rolling_summary' is not allowed.",
+                    )
+            # Reject custom_fields to prevent new columns
+            if kwargs.get("custom_fields"):
+                raise ValueError(
+                    "MemoryManager.update_contacts – modification involving custom columns is not allowed.",
+                )
+            return await asyncio.to_thread(
+                self._contact_manager._update_contact,
+                **kwargs,
+            )
+
+        # Base read-only helpers ------------------------------------------------
+        tools: Dict[str, Callable[..., Any]] = {
+            "contact_ask": self._contact_manager.ask,
+            "transcript_ask": self._transcript_manager.ask,
+            # Restricted mutation helpers
+            "create_contact": _safe_create_contact,
+            "update_contact": _safe_update_contact,
+        }
 
         # ─ 2.  LLM client
         llm = unify.AsyncUnify(
