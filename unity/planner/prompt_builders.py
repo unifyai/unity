@@ -68,6 +68,7 @@ def _build_rules_and_examples_prompt(
         2.  **Combine Action and Verification**: Use the `expectation` parameter in `browser_act` to tell the agent what success looks like. This is more efficient than a separate `browser_observe` call. For example: `await action_provider.browser_act("Click the 'Add to Cart' button", expectation="The cart icon should show '1' item")`.
         3.  **Use `browser_observe` for Complex Data**: When you need to extract structured data (like a list of products, table contents, or form fields), use `browser_observe` with a Pydantic `response_format`. This is the best way to gather context before acting on complex pages.
         4.  **Describe Visually**: All browser tools operate on what is *visible*. Describe elements by their text, color, or relative position (e.g., "the blue 'Save' button at the bottom of the form"), not by HTML attributes.
+        5.  **Use Fallback Capabilities**: If a website's interactive feature (e.g., a "Convert" button, a "Sort" dropdown) fails or doesn't meet your needs, don't give up. Instead, consider if you can achieve the goal using a more fundamental tool. For instance, if you can observe the raw data, you can often use `action_provider.reason` to perform the necessary calculation, transformation, or analysis yourself.
         ---
         """,
     )
@@ -75,12 +76,12 @@ def _build_rules_and_examples_prompt(
         instructions_and_rules = textwrap.dedent(
             """
             1.  **Single Code Block:** Your entire response MUST be a single, valid Python code block.
-            2.  **No Imports:** You **MUST NOT** use any `import`/ `__import__` statements in your code. All standard library imports(eg: `asyncio`, `re`, `pydantic`) are already present within the execution environment so you can use them directly.
+            2.  **Manage Your Imports**: You are free to import any standard Python library (e.g., `typing`, `re`, `json`, `datetime`, `collections`). Write standard, self-contained Python code with proper imports at the top.
             3.  **Decorators & Docstrings:** Every **function** you define MUST include docstrings which include the function's purpose, its arguments, and its return value.
             4.  **Async All The Way**: All helper functions you define MUST be `async def`.
             5.  **Await Keyword**: All `action_provider` methods that are asynchronous MUST be called with the `await` keyword.
             6.  **Structured Output**: For `observe` or `reason` calls that expect a structured answer (e.g., yes/no, a list of items), you MUST define a Pydantic `BaseModel` and pass it to the `response_format` argument to ensure reliable, parsable output. **CRITICAL: Always define Pydantic models INSIDE the function where they are used, NOT at the module level, to avoid forward reference issues.**
-            7.  **Robust Error Handling**: Proactively use `try...except` blocks to handle potential **unexpected** failures (e.g., an element not being found) with informative error messages. However, **DO NOT** wrap calls to stubbed functions in a `try...except` block. Let `NotImplementedError` propagate.
+            7. **Robust Error Handling**: Proactively use `try...except` blocks to handle potential **unexpected** failures (e.g., an element not being found) with informative error messages. However, **DO NOT** wrap calls to stubbed functions in a `try...except` block. Let `NotImplementedError` propagate. This is important because the agent will implement the stubbed function dynamically.
             """,
         )
     else:
@@ -88,7 +89,7 @@ def _build_rules_and_examples_prompt(
             """
             1.  **Single Code Block:** Your entire response MUST be a single, valid Python code block.
             2.  **Entry Point:** For a full plan, the main entry point MUST be `async def main_plan()`.
-            3.  **No Imports:** You **MUST NOT** use any `import`/ `__import__` statements in your code. All standard library imports(eg: `asyncio`, `re`, `pydantic`) are already present within the execution environment so you can use them directly.
+            3.  **Manage Your Imports**: You are free to import any standard Python library (e.g., `typing`, `re`, `json`, `datetime`, `collections`). Write standard, self-contained Python code with proper imports at the top.
             4.  **Decomposition:** Break down complex problems into smaller, logical, self-contained `async def` helper functions.
             5.  **Confidence-Based Stubbing**: Your primary goal is to create a robust plan.
                 * **If a step is simple and you are highly confident** about how to perform it (e.g., `browser_navigate("https://google.com")`, `browser_act("Type 'reports' into the search bar")`), implement it directly.
@@ -97,7 +98,7 @@ def _build_rules_and_examples_prompt(
             7.  **Async All The Way**: All helper functions you define MUST be `async def`.
             8.  **Await Keyword**: All `action_provider` methods that are asynchronous MUST be called with the `await` keyword.
             9.  **Structured Output**: For `observe` or `reason` calls that expect a structured answer (e.g., yes/no, a list of items), you MUST define a Pydantic `BaseModel` and pass it to the `response_format` argument to ensure reliable, parsable output. **CRITICAL: Always define Pydantic models INSIDE the function where they are used, NOT at the module level, to avoid forward reference issues.**
-            10.  **Robust Error Handling**: Proactively use `try...except` blocks to handle potential **unexpected** failures (e.g., an element not being found) with informative error messages. However, **DO NOT** wrap calls to stubbed functions in a `try...except` block. Let `NotImplementedError` propagate.
+            10. **Robust Error Handling**: Proactively use `try...except` blocks to handle potential **unexpected** failures (e.g., an element not being found) with informative error messages. However, **DO NOT** wrap calls to stubbed functions in a `try...except` block. Let `NotImplementedError` propagate. This is important because the agent will implement the stubbed function dynamically.
             """,
         )
     return textwrap.dedent(
@@ -143,6 +144,7 @@ def _build_rules_and_examples_prompt(
         # Example 2: Making an Interactive Phone Call
         This example demonstrates how to use the `start_call` tool to make an interactive phone call.
         ```python
+        from pydantic import BaseModel, Field
         @verify
         async def make_appointment_followup_call():
             # Note: start_call is synchronous and returns a Call handle immediately
@@ -181,6 +183,8 @@ def _build_rules_and_examples_prompt(
         This example demonstrates how to combine navigation, observation with Pydantic models, and confidence-based stubbing to create a robust, multi-step web automation plan.
 
         ```python
+        from pydantic import BaseModel, Field
+
         # This function is implemented directly because navigating and searching are simple, high-confidence actions.
         @verify
         async def search_for_product() -> str:
@@ -227,17 +231,27 @@ def _build_rules_and_examples_prompt(
         @verify
         async def main_plan():
             \"\"\"
-        Main plan to find the price of the top-rated blue sneakers.
+            Main plan to find the price of the top-rated blue sneakers.
             \"\"\"
             # Step 1: Perform the search. This is a concrete, implemented step.
             await search_for_product()
 
             # Step 2: Find the specific product URL. This function is a stub and will be
-            # implemented dynamically by the planner once it sees the search results page.
+            # implemented dynamically by the agent once it sees the search results page.
+            # CRITICAL: Never wrap a stubbed function in a try-except block.
+            # The NotImplementedError MUST be allowed to propagate to the agent.
+            #
+            # WRONG:
+            # try:
+            #     top_product_url = await find_and_select_top_rated_product()
+            # except Exception:
+            #     # This prevents the agent from implementing the stub. Do not do this.
+            #     return "Failed"
+            #
+            # CORRECT:
             top_product_url = await find_and_select_top_rated_product()
 
             # Step 3: Extract details from that product's page. This is also a stub.
-            # The planner will implement it after navigating to top_product_url.
             product_info = await extract_product_price_and_reviews(top_product_url)
 
             print(f"Final Info Found: {{product_info}}")
@@ -245,23 +259,62 @@ def _build_rules_and_examples_prompt(
 
         ```
 
-        **Generic Reasoning Example**
-        This example demonstrates how to use the `reason` tool for analysis and structured extraction.
+        **Fallback Strategy Example (using `reason` tool)**
+        This example demonstrates how to create a robust function that first attempts to use a website's feature, but has a fallback plan to use the `reason` tool if the feature fails.
         ```python
-        class Summary(BaseModel):
-            one_sentence_summary: str = Field(description="A single sentence that captures the main point.")
-            key_topics: list[str] = Field(description="A list of the main topics discussed.")
-
+        from pydantic import BaseModel, Field
         @verify
-        async def summarize_article(article_text: str):
-            # Use the reason tool for analysis and structured extraction.
-            result = await action_provider.reason(
-                request="Summarize the provided article, extracting key topics.",
-                context=article_text,
-                response_format=Summary
-            )
-            print(f"Summary: {{result.one_sentence_summary}}")
-            return result.key_topics
+        async def get_price_in_euros(product_price_usd: float) -> float:
+            \"\"\"
+            Ensures the product price is available in Euros.
+
+            This function demonstrates a fallback strategy. It first attempts to use
+            the website's built-in currency converter. If that fails, it falls back
+            to using the `reason` tool to perform the conversion manually.
+            \"\"\"
+            print(f"Attempting to convert price: ${{product_price_usd}}")
+
+            # --- Primary Approach: Use the website's feature ---
+            try:
+                await action_provider.browser_act(
+                    "Click the currency selector and choose 'EUR'",
+                    expectation="The price should now be displayed in Euros (€)."
+                )
+
+                class PriceInfo(BaseModel):
+                    price_eur: float = Field(description="The price in Euros.")
+
+                observed_price = await action_provider.browser_observe(
+                    "What is the product price in Euros?",
+                    response_format=PriceInfo
+                )
+                print("Successfully converted price using the website's feature.")
+                return observed_price.price_eur
+
+            except Exception as e:
+                print(f"Website's currency converter failed: ${{e}}. Attempting fallback.")
+
+                # --- Fallback Approach: Use the `reason` tool ---
+                try:
+                    class ConversionResult(BaseModel):
+                        price_in_euros: float
+
+                    # Assume a general exchange rate for the purpose of the task
+                    conversion_request = (
+                        f"Convert ${{product_price_usd}} USD to Euros. "
+                        f"Assume an exchange rate of 1 USD = 0.92 EUR. "
+                        f"Provide only the final numeric value."
+                    )
+
+                    result = await action_provider.reason(
+                        request=conversion_request,
+                        context=f"The price is ${{product_price_usd}} dollars.",
+                        response_format=ConversionResult
+                    )
+                    print("Successfully converted price using the `reason` tool.")
+                    return result.price_in_euros
+                except Exception as reason_e:
+                    raise ValueError(f"Both website interaction and manual reasoning failed. Error: ${{reason_e}}")
         ```
     """,
     )
@@ -463,8 +516,10 @@ def build_verification_prompt(
     goal: str,
     function_name: str,
     function_docstring: str | None,
+    function_source_code: str | None,
     interactions: list,
     has_browser_screenshot: bool,
+    function_return_value: Any | None,
 ) -> str:
     """
     Builds the prompt for verifying a function's execution.
@@ -473,7 +528,8 @@ def build_verification_prompt(
         goal: The overall user goal.
         function_name: The name of the function being verified.
         function_docstring: The docstring of the function.
-        interactions: A log of `act` and `observe` calls made.
+        function_source_code: The source code of the function.
+        interactions: A log of tool interactions made.
         has_browser_screenshot: Whether a screenshot of the browser is provided.
 
     Returns:
@@ -502,21 +558,39 @@ def build_verification_prompt(
             - Use both the interaction log and the screenshot to make your assessment.
             """,
         )
+    return_value_log = f"The function returned the following value:\n```\n{repr(function_return_value)}\n```"
+
+    source_code_section = f"""
+---
+### Function Source Code
+The full source code of the function that was just executed is provided below. Analyze it to understand its internal logic.
+```python
+{function_source_code or "Source code not available."}
+```
+"""
+
     return textwrap.dedent(
         f"""
         You are a meticulous verification agent. Your task is to assess if the executed actions successfully achieved the function's intended purpose and have made **meaningful and accurate progress** toward the **Overall User Goal**.
 
         **Overall User Goal:** "{goal}"
         **Function Under Review:** `{function_name}`
-        **Purpose of this function:** {function_docstring or 'No docstring provided.'}
+        **Purpose of this function (Intent):** {function_docstring or 'No docstring provided.'}
 
+        {source_code_section}
         {screenshot_context_section}
-        **Execution Log (Primitives Used):**
+
+        **Execution Log (Tool Interactions):**
         {interactions_log}
+
+        **Function Return Value:**
+        {return_value_log}
 
         ---
         ### Assessment Task
-        Based on the function's purpose and the execution log, provide your assessment.
+        Based on the function's purpose (intent), its source code (implementation), its return value, and the execution log, provide your assessment.
+        - **Compare Intent vs. Implementation**: Does the source code correctly implement the logic described in the function's purpose?
+        - **Trust the Return Value**: The `Function Return Value` is a critical piece of evidence. If the function was supposed to filter a list, check if the returned list is correctly filtered according to the source code.
         - **Be pragmatic:** If the function's purpose is to gather data (like search results), and the log shows that the data was successfully retrieved, this should be considered a success (`ok`). The function does not need to perform extra analysis unless explicitly asked.
         - **Compare the Result to the Goal**: Do not just check if the function *did something*. Check if the *outcome* of the function satisfies the requirements of the overall goal.
 

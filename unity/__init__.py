@@ -19,7 +19,7 @@ def _list_all_assistants() -> list[dict]:
     is returned so that offline test-suites continue to operate.
     """
     try:
-        url = f"{os.environ['UNIFY_BASE_URL']}/assistant?phone=None&email=None"
+        url = f"{os.environ['UNIFY_BASE_URL']}/assistant"
         headers = {"Authorization": f"Bearer {os.environ['UNIFY_KEY']}"}
         response = requests.request("GET", url, headers=headers)
         _handle_exceptions(response)

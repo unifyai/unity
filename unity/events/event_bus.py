@@ -331,6 +331,23 @@ class EventBus:
         else:
             self._prefill_task = loop.create_task(self._async_initial_hydration())
 
+    # ------------------------------------------------------------------
+    # Public readonly state helpers
+    # ------------------------------------------------------------------
+
+    @property
+    def initialized(self) -> bool:
+        """Return *True* once the background hydration launched from the
+        constructor has finished (successfully **or** with an error).
+
+        This provides a lightweight, synchronous way for callers to check
+        whether the EventBus is ready without having to `await` the private
+        `_ensure_ready()` coroutine.  It simply reflects the completion state
+        of the internal `_prefill_done` event.
+        """
+
+        return self._prefill_done.is_set()
+
     @classmethod
     def _get_logger(cls) -> unify.AsyncLoggerManager:
         return cls._LOGGER
@@ -409,7 +426,7 @@ class EventBus:
         self._subscriptions = self._rows_to_subscriptions(rows)
 
     # ------------------------------------------------------------------
-    async def _ensure_ready(self) -> None:
+    async def join_initialization(self) -> None:
         """
         Await background hydration (lazy-started if not running yet).
         Call this at the top of any *public* coroutine that needs the
@@ -551,7 +568,7 @@ class EventBus:
     async def publish(self, event: Event, *, blocking: bool = False) -> None:
         self._lazy_start_hydration_if_needed()
         # Guarantee that local row_id counters are initialised before use
-        await self._ensure_ready()
+        await self.join_initialization()
         # --- Auto pin/unpin evaluation *before* we acquire the deque lock ---
         for _rule in self._auto_pin_rules:
             if _rule["event_type"] is None or _rule["event_type"] == event.type:
@@ -635,7 +652,7 @@ class EventBus:
         limit: Union[int, Dict[str, int]] = 100,
         grouped_by_type: bool = False,
     ) -> Union[List[Event], Dict[str, List[Event]]]:
-        await self._ensure_ready()
+        await self.join_initialization()
         """
         Return events that satisfy *filter*, applying *offset*/**limit** rules as
         follows
@@ -854,7 +871,7 @@ class EventBus:
         every_n: Optional[int] = None,
         every_seconds: Optional[int] = None,
     ) -> str:
-        await self._ensure_ready()
+        await self.join_initialization()
         """
         Register *callback* to be fired either every **N** matching events
         or after **X** seconds have elapsed since the previous trigger.

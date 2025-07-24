@@ -10,6 +10,7 @@ const isHeadless = args.includes('--headless');
 
 // --- JSON Schema to Zod Conversion Utility ---
 function jsonSchemaToZod(schema: any, definitions: any = {}): ZodTypeAny {
+  // Handle schema references ($ref)
   if (schema.$ref) {
     const refPath = schema.$ref.split('/');
     const defName = refPath.pop();
@@ -20,18 +21,184 @@ function jsonSchemaToZod(schema: any, definitions: any = {}): ZodTypeAny {
     return jsonSchemaToZod(resolvedSchema, definitions);
   }
 
+  // Handle const (Literal types)
+  if ('const' in schema) {
+    return z.literal(schema.const);
+  }
+
+  // Handle enum as a special case
+  if (schema.enum && Array.isArray(schema.enum)) {
+    if (schema.enum.length === 1) {
+      return z.literal(schema.enum[0]);
+    }
+    // For string enums
+    if (schema.enum.every((val: any) => typeof val === 'string')) {
+      return z.enum(schema.enum as [string, ...string[]]);
+    }
+    // For mixed enums, use union of literals
+    const literals = schema.enum.map((val: any) => z.literal(val));
+    return z.union(literals as [ZodTypeAny, ZodTypeAny, ...ZodTypeAny[]]);
+  }
+
+  // Handle anyOf (unions like Type | None)
+  if (schema.anyOf && Array.isArray(schema.anyOf)) {
+    const unionTypes = schema.anyOf.map((subSchema: any) =>
+      jsonSchemaToZod(subSchema, definitions)
+    );
+    return z.union(unionTypes as [ZodTypeAny, ZodTypeAny, ...ZodTypeAny[]]);
+  }
+
+  // Handle oneOf (discriminated unions)
+  if (schema.oneOf && Array.isArray(schema.oneOf)) {
+    const unionTypes = schema.oneOf.map((subSchema: any) =>
+      jsonSchemaToZod(subSchema, definitions)
+    );
+    return z.union(unionTypes as [ZodTypeAny, ZodTypeAny, ...ZodTypeAny[]]);
+  }
+
+  // Handle allOf (model inheritance/composition)
+  if (schema.allOf && Array.isArray(schema.allOf)) {
+    let result: ZodTypeAny | null = null;
+
+    for (const subSchema of schema.allOf) {
+      const zodSchema = jsonSchemaToZod(subSchema, definitions);
+
+      if (!result) {
+        result = zodSchema;
+      } else if (result instanceof z.ZodObject && zodSchema instanceof z.ZodObject) {
+        // Merge objects
+        result = result.merge(zodSchema);
+      } else {
+        // For non-objects, intersection
+        result = result.and(zodSchema);
+      }
+    }
+
+    return result || z.object({});
+  }
+
+  // Handle type arrays (e.g., type: ["string", "null"])
+  if (Array.isArray(schema.type)) {
+    const unionTypes = schema.type.map((type: string) =>
+      jsonSchemaToZod({ ...schema, type }, definitions)
+    );
+    return z.union(unionTypes as [ZodTypeAny, ZodTypeAny, ...ZodTypeAny[]]);
+  }
+
+  // Handle tuple types
+  if (schema.type === 'array' && schema.prefixItems) {
+    const tupleItems = schema.prefixItems.map((itemSchema: any) =>
+      jsonSchemaToZod(itemSchema, definitions)
+    );
+    return z.tuple(tupleItems as [ZodTypeAny, ...ZodTypeAny[]]);
+  }
+
+  // Enhanced type handlers with validation constraints
   const typeMap: { [key: string]: () => ZodTypeAny } = {
-    string: () => (schema.enum ? z.enum(schema.enum) : z.string()),
-    number: () => z.number(),
-    integer: () => z.number().int(),
+    string: () => {
+      let zodString = z.string();
+
+      // Apply string constraints
+      if (schema.minLength !== undefined) zodString = zodString.min(schema.minLength);
+      if (schema.maxLength !== undefined) zodString = zodString.max(schema.maxLength);
+      if (schema.pattern) zodString = zodString.regex(new RegExp(schema.pattern));
+
+      // Handle format constraints
+      if (schema.format) {
+        switch (schema.format) {
+          case 'email': zodString = zodString.email(); break;
+          case 'uuid': zodString = zodString.uuid(); break;
+          case 'uri': zodString = zodString.url(); break;
+          case 'url': zodString = zodString.url(); break;
+          case 'date': zodString = zodString.regex(/^\d{4}-\d{2}-\d{2}$/); break;
+          case 'date-time': zodString = zodString.datetime(); break;
+          case 'time': zodString = zodString.regex(/^\d{2}:\d{2}:\d{2}$/); break;
+          case 'ipv4': zodString = zodString.ip({ version: 'v4' }); break;
+          case 'ipv6': zodString = zodString.ip({ version: 'v6' }); break;
+          // Add more formats as needed
+        }
+      }
+
+      return zodString;
+    },
+
+    number: () => {
+      let zodNumber = z.number();
+
+      // Apply numeric constraints
+      if (schema.minimum !== undefined) {
+        zodNumber = schema.exclusiveMinimum === true
+          ? zodNumber.gt(schema.minimum)
+          : zodNumber.gte(schema.minimum);
+      }
+      if (schema.maximum !== undefined) {
+        zodNumber = schema.exclusiveMaximum === true
+          ? zodNumber.lt(schema.maximum)
+          : zodNumber.lte(schema.maximum);
+      }
+      if (schema.multipleOf !== undefined) {
+        zodNumber = zodNumber.multipleOf(schema.multipleOf);
+      }
+
+      return zodNumber;
+    },
+
+    integer: () => {
+      let zodInt = z.number().int();
+
+      // Apply integer constraints (same as number)
+      if (schema.minimum !== undefined) {
+        zodInt = schema.exclusiveMinimum === true
+          ? zodInt.gt(schema.minimum)
+          : zodInt.gte(schema.minimum);
+      }
+      if (schema.maximum !== undefined) {
+        zodInt = schema.exclusiveMaximum === true
+          ? zodInt.lt(schema.maximum)
+          : zodInt.lte(schema.maximum);
+      }
+      if (schema.multipleOf !== undefined) {
+        zodInt = zodInt.multipleOf(schema.multipleOf);
+      }
+
+      return zodInt;
+    },
+
     boolean: () => z.boolean(),
     null: () => z.null(),
     array: () => {
-      if (!schema.items) throw new Error('Array schema must have "items".');
-      return z.array(jsonSchemaToZod(schema.items, definitions));
+      // Handle tuple types (fixed-length arrays)
+      if (schema.prefixItems) {
+        const tupleItems = schema.prefixItems.map((itemSchema: any) =>
+          jsonSchemaToZod(itemSchema, definitions)
+        );
+        return z.tuple(tupleItems as [ZodTypeAny, ...ZodTypeAny[]]);
+      }
+
+      if (!schema.items) {
+        // Array of any
+        return z.array(z.any());
+      }
+
+      let zodArray = z.array(jsonSchemaToZod(schema.items, definitions));
+
+      // Apply array constraints
+      if (schema.minItems !== undefined) zodArray = zodArray.min(schema.minItems);
+      if (schema.maxItems !== undefined) zodArray = zodArray.max(schema.maxItems);
+      if (schema.uniqueItems === true) {
+        // Note: Zod doesn't have built-in unique validation, but we can add a custom refinement
+        return zodArray.refine(
+          (items) => new Set(items).size === items.length,
+          { message: "Array must contain unique items" }
+        );
+      }
+
+      return zodArray;
     },
+
     object: () => {
       const shape: { [key: string]: ZodTypeAny } = {};
+      // Handle properties
       if (schema.properties) {
         for (const key in schema.properties) {
           const propSchema = jsonSchemaToZod(schema.properties[key], definitions);
@@ -39,16 +206,77 @@ function jsonSchemaToZod(schema: any, definitions: any = {}): ZodTypeAny {
           shape[key] = isRequired ? propSchema : propSchema.optional();
         }
       }
-      return z.object(shape);
+
+      let zodObject: ZodTypeAny = z.object(shape);
+
+      // Handle additionalProperties (for Dict types)
+      if (schema.additionalProperties === false) {
+        zodObject = (zodObject as z.ZodObject<any>).strict();
+      } else if (schema.additionalProperties === true) {
+        zodObject = (zodObject as z.ZodObject<any>).catchall(z.any());
+      } else if (schema.additionalProperties && typeof schema.additionalProperties === 'object') {
+        zodObject = (zodObject as z.ZodObject<any>).catchall(
+          jsonSchemaToZod(schema.additionalProperties, definitions)
+        );
+      }
+
+      // Handle patternProperties
+      if (schema.patternProperties) {
+        // Note: Zod doesn't directly support pattern properties,
+        // but we can use catchall with refinement
+        for (const pattern in schema.patternProperties) {
+          const regex = new RegExp(pattern);
+          const valueSchema = jsonSchemaToZod(schema.patternProperties[pattern], definitions);
+
+          zodObject = (zodObject as z.ZodObject<any>).catchall(z.any()).refine(
+            (obj) => {
+              for (const key in obj) {
+                if (regex.test(key) && !(key in shape)) {
+                  try {
+                    valueSchema.parse(obj[key]);
+                  } catch {
+                    return false;
+                  }
+                }
+              }
+              return true;
+            },
+            { message: `Pattern properties must match schema for pattern: ${pattern}` }
+          );
+        }
+      }
+
+      // Handle minProperties/maxProperties
+      if (schema.minProperties !== undefined) {
+        zodObject = zodObject.refine(
+          (obj: any) => Object.keys(obj).length >= schema.minProperties,
+          { message: `Object must have at least ${schema.minProperties} properties` }
+        );
+      }
+      if (schema.maxProperties !== undefined) {
+        zodObject = zodObject.refine(
+          (obj: any) => Object.keys(obj).length <= schema.maxProperties,
+          { message: `Object must have at most ${schema.maxProperties} properties` }
+        );
+      }
+
+      return zodObject;
     },
   };
 
-  const zodTypeBuilder = typeMap[schema.type];
-  if (zodTypeBuilder) {
-    return zodTypeBuilder();
+  // Handle type-specific logic
+  if (schema.type && typeMap[schema.type]) {
+    return typeMap[schema.type]();
   }
 
-  throw new Error(`Unsupported schema type: ${schema.type}`);
+  // Handle schema without explicit type but with properties (common in some generators)
+  if (schema.properties && !schema.type) {
+    return typeMap.object();
+  }
+
+  // If we get here, it's an unsupported schema
+  console.warn('Unsupported schema:', JSON.stringify(schema, null, 2));
+  throw new Error(`Unsupported schema type: ${schema.type || 'unknown'}`);
 }
 
 const app = express();

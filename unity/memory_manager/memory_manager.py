@@ -247,22 +247,14 @@ class MemoryManager(BaseMemoryManager):
         transcript: str,
         *,
         contact_id: int,
-        latest_bio: Optional[str] = None,
         guidance: Optional[str] = None,
     ) -> str:
-        """
-        Refresh the *bio* column for ONE contact.
-        Caller assembles the correct transcript slice & resolves the contact_id.
-        """
+        """Refresh the *bio* column for the given contact."""
 
         target_id = contact_id  # capture for closure
 
         async def set_bio(contact_id: int, bio: str) -> str:
-            """Update only the bio column for the supplied contact id.
-
-            The *cid* received via the tool-call takes precedence over the
-            *outer_contact_id* argument so existing prompts need no changes.
-            """
+            """Update only the bio column for the supplied contact id."""
             final_id = contact_id or target_id
             if final_id is None:
                 raise ValueError(
@@ -276,8 +268,6 @@ class MemoryManager(BaseMemoryManager):
             return f"Bio for contact with id {final_id} successfully updated"
 
         tools: Dict[str, Callable[..., Any]] = {
-            "transcript_ask": self._transcript_manager.ask,
-            "contact_ask": self._contact_manager.ask,
             "set_bio": set_bio,
         }
 
@@ -288,11 +278,27 @@ class MemoryManager(BaseMemoryManager):
         )
         llm.set_system_message(build_bio_prompt(tools, guidance))
 
-        # Compose input blob
+        # ------------------------------------------------------------------
+        # Retrieve the *current* bio from the backend so the LLM always sees
+        # the latest state without relying on the caller to supply it.
+        # We perform the lookup in a background thread because the underlying
+        # implementation is synchronous and may hit the network.
+        try:
+            contacts = await asyncio.to_thread(
+                self._contact_manager._search_contacts,
+                filter=f"contact_id == {contact_id}",
+                limit=1,
+            )
+            latest_bio_val = contacts[0].bio if contacts else None
+        except Exception:
+            latest_bio_val = None  # Fallback – treat as unknown
+
+        # Compose input blob given to the tool loop – we *always* include the
+        # latest bio so the LLM can determine whether an update is needed.
         user_blob = json.dumps(
             {
                 "contact_id": contact_id,
-                "latest_bio": latest_bio,
+                "latest_bio (to maybe update)": latest_bio_val,
                 "transcript": transcript,
             },
             indent=2,
@@ -303,7 +309,6 @@ class MemoryManager(BaseMemoryManager):
             user_blob,
             tools,
             loop_id="MemoryManager.update_contact_bio",
-            tool_policy=lambda i, _: ("required", _) if i < 1 else ("auto", _),
         )
 
         return await handle.result()
@@ -316,12 +321,9 @@ class MemoryManager(BaseMemoryManager):
         transcript: str,
         *,
         contact_id: int,
-        latest_rolling_summary: Optional[str] = None,
         guidance: Optional[str] = None,
     ) -> str:
-        """
-        Refresh the rolling_summary column for ONE contact.
-        """
+        """Refresh the *rolling_summary* column for the given contact."""
 
         target_id = contact_id  # capture for closure
 
@@ -353,10 +355,23 @@ class MemoryManager(BaseMemoryManager):
         )
         llm.set_system_message(build_rolling_prompt(tools, guidance))
 
+        # ------------------------------------------------------------------
+        # Retrieve the *current* rolling summary from the backend so the LLM
+        # always has the freshest context and callers do not need to supply it.
+        try:
+            contacts = await asyncio.to_thread(
+                self._contact_manager._search_contacts,
+                filter=f"contact_id == {contact_id}",
+                limit=1,
+            )
+            latest_summary_val = contacts[0].rolling_summary if contacts else None
+        except Exception:
+            latest_summary_val = None  # best-effort fallback
+
         user_blob = json.dumps(
             {
                 "contact_id": contact_id,
-                "latest_rolling_summary": latest_rolling_summary,
+                "latest_rolling_summary (to maybe update)": latest_summary_val,
                 "transcript": transcript,
             },
             indent=2,
@@ -666,12 +681,10 @@ class MemoryManager(BaseMemoryManager):
                             self.update_contact_bio(
                                 transcript_blob,
                                 contact_id=_cid,
-                                latest_bio=None,
                             ),
                             self.update_contact_rolling_summary(
                                 transcript_blob,
                                 contact_id=_cid,
-                                latest_rolling_summary=None,
                             ),
                         ],
                     )

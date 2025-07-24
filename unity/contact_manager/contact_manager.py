@@ -286,12 +286,54 @@ class ContactManager(BaseContactManager):
     #  Default *user* contact helpers (contact_id == 1)
     # ------------------------------------------------------------------
     def _fetch_user_info(self) -> Dict[str, Any]:
-        """Return *simulated* information about the human user (contact_id == 1).
+        """Return basic information for the authenticated human user (contact_id == 1).
 
-        NOTE: This stub will be replaced by a real API request in the near
-        future.  Keep the payload structure identical so that the swap is a
-        simple implementation change.
+        Attempts to fetch the real details from the backend endpoint
+        ``/user/basic-info``.  On *any* failure (network, authentication,
+        unexpected payload, etc.) the function falls back to a dummy
+        placeholder user so that offline test-suites continue to operate
+        unchanged.
         """
+
+        user_info: Dict[str, Any] = {}
+
+        url = f"{os.environ['UNIFY_BASE_URL']}/user/basic-info"
+        headers = {"Authorization": f"Bearer {os.environ['UNIFY_KEY']}"}
+        response = requests.request("GET", url, headers=headers)
+
+        # Raise for HTTP errors so the except-block handles them uniformly
+        _handle_exceptions(response)
+
+        data: Any = response.json()
+        if isinstance(data, dict):
+            # Map API payload → expected field names
+            mapped: Dict[str, Any] = {
+                "first_name": data.get("first"),
+                "last_name": data.get("last"),
+                "email": data.get("email"),
+            }
+
+            # Filter out *None* values so downstream logic does not
+            # inadvertently overwrite existing data with nulls.
+            user_info.update({k: v for k, v in mapped.items() if v is not None})
+
+        from .. import ASSISTANT
+
+        phone = ASSISTANT.get("user_phone")
+        whatsapp = ASSISTANT.get("user_whatsapp_number")
+        mapped_extra: Dict[str, Any] = {
+            "phone_number": phone,
+            "whatsapp_number": whatsapp,
+        }
+        user_info.update(
+            {k: v for k, v in mapped_extra.items() if v is not None},
+        )
+
+        # If we managed to retrieve *any* real data, return it.
+        if user_info:
+            return user_info
+
+        # ── fallback: dummy user ──────────────────────────────────────────
         return {
             "first_name": "John",
             "last_name": "Doe",
@@ -313,9 +355,8 @@ class ContactManager(BaseContactManager):
                 # Map provided *last_name* → Contact.surname
                 "surname": user_info.get("last_name"),
                 "email_address": user_info.get("email"),
-                # No phone numbers for the dummy user yet
-                "phone_number": None,
-                "whatsapp_number": None,
+                "phone_number": user_info.get("phone_number"),
+                "whatsapp_number": user_info.get("whatsapp_number"),
                 "bio": None,
                 "rolling_summary": None,
             },
@@ -326,7 +367,14 @@ class ContactManager(BaseContactManager):
         extra_fields = {
             k: v
             for k, v in user_info.items()
-            if k not in {"first_name", "last_name", "email"}
+            if k
+            not in {
+                "first_name",
+                "last_name",
+                "email",
+                "phone_number",
+                "whatsapp_number",
+            }
         }
         if extra_fields:
             self._ensure_columns_exist(extra_fields)
