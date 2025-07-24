@@ -68,41 +68,31 @@ class ContactManager(BaseContactManager):
         self._BUILTIN_FIELDS: Tuple[str, ...] = tuple(Contact.model_fields.keys())
         self._REQUIRED_COLUMNS: set[str] = set(self._BUILTIN_FIELDS)
 
-        # ── schema-management internal tools (mirrors KnowledgeManager) ──
-        self._schema_tools: Dict[str, Callable] = methods_to_tool_dict(
-            self._create_custom_column,
-            self._delete_custom_column,
-            self._list_columns,
-            include_class_name=False,
-        )
-
         # ── public tool dictionaries ─────────────────────────────────────
         # ask-side tools are read-only, so they never change
         self._ask_tools: Dict[str, Callable] = {
             **methods_to_tool_dict(
+                self._list_columns,
                 self._search_contacts,
                 self._nearest_contacts,
                 include_class_name=False,
             ),
-            **self._schema_tools,
         }
 
-        # Choose atomic or batched mutation helpers
-        _mutation_fns = [
-            self._create_contact,
-            self._create_contacts,
-            self._update_contact,
-            self._update_contacts,
-            self._search_contacts,
-            self._nearest_contacts,
-        ]
-
+        # update-side tools are can read and write
         self._update_tools: Dict[str, Callable] = {
             **methods_to_tool_dict(
-                *_mutation_fns,
+                self._list_columns,
+                self._search_contacts,
+                self._nearest_contacts,
+                self._create_contact,
+                self._create_contacts,
+                self._update_contact,
+                self._update_contacts,
+                self._create_custom_column,
+                self._delete_custom_column,
                 include_class_name=False,
             ),
-            **self._schema_tools,
         }
 
         # rolling activity inclusion flag
