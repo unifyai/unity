@@ -30,11 +30,12 @@ textual-dev>=1.2.0
 twilio>=8.0.0
 uvicorn[standard]>=0.24.0
 hypothesis>=6.135.29
+viztracer>=1.0.4
 
+# Virtual devices and remote browser setup
 websockify
 sounddevice
 soundfile
 numpy
 opencv-python
 pygobject==3.50.0
-viztracer>=1.0.4

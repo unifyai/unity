@@ -25,12 +25,10 @@ RUN apt-get update && apt-get install -y \
     && rm -rf /var/lib/apt/lists/*
 
 
-
-
+# Virtual devices and remote browser setup
 # Set environment variables
 ENV DEBIAN_FRONTEND=noninteractive
 ENV DISPLAY=:99
-
 
 # Install system dependencies
 RUN apt-get update && apt-get install -y \
@@ -90,7 +88,6 @@ RUN mkdir -p /opt/novnc && \
     unzip master.zip && \
     mv noVNC-master/* /opt/novnc && \
     rm -rf master.zip noVNC-master
-
 
 
 # Copy requirements file
