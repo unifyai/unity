@@ -344,11 +344,17 @@ class ContactManager(BaseContactManager):
         """Ensure the default *user* (id == 1) contact exists and is correct."""
         user_info = self._fetch_user_info()
 
-        # Build a dictionary covering _all_ builtin fields so schema changes
-        # automatically propagate here just like in _sync_assistant_contact.
+        # Build defaults for *all* built-in fields (except the primary key)
         base_fields: Dict[str, Any] = {
-            fld: None for fld in self._BUILTIN_FIELDS if fld != "contact_id"
+            fld: None
+            for fld in self._BUILTIN_FIELDS
+            if fld not in {"contact_id", "bio", "rolling_summary"}
         }
+
+        # Merge in the real user metadata that we discovered.  Crucially we
+        # *omit* the ``bio`` and ``rolling_summary`` keys so any manually
+        # curated text is **preserved** rather than being reset to ``None``
+        # every time a new ContactManager instance is created.
         base_fields.update(
             {
                 "first_name": user_info.get("first_name"),
@@ -357,8 +363,6 @@ class ContactManager(BaseContactManager):
                 "email_address": user_info.get("email"),
                 "phone_number": user_info.get("phone_number"),
                 "whatsapp_number": user_info.get("whatsapp_number"),
-                "bio": None,
-                "rolling_summary": None,
             },
         )
 
