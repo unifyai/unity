@@ -80,22 +80,23 @@ def get_broader_context() -> str:  # noqa: D401 – imperative helper name
 
         parts.append(f"You are a personal assistant named {assistant_name}.")
         parts.append(f"You work directly for {user_name}.")
-        parts.append("\nA bit about yourself:")
-        parts.append(assistant_bio)
-        parts.append(f"\nA bit about {user_name}, who you assist:")
-        parts.append(user_bio)
-
-        parts.append(
-            f"\nYour activity logs explain broadly what you've been working on and how you've been assisting {user_name}.",
-        )
-        parts.append(
-            "Please pay attention to these logs; always consider this broader context when deciding which actions are most appropriate to take.",
-        )
-        parts.append(
-            "Sometimes the broader context is not relevant, but sometimes it can assist in reading between the lines for the current user intent.",
-        )
+        if assistant_bio:
+            parts.append("\nA bit about yourself:")
+            parts.append(assistant_bio)
+        if user_bio:
+            parts.append(f"\nA bit about {user_name}, who you assist:")
+            parts.append(user_bio)
 
         if recent_activity:
+            parts.append(
+                f"\nYour activity logs explain broadly what you've been working on and how you've been assisting {user_name}.",
+            )
+            parts.append(
+                "Please pay attention to these logs; always consider this broader context when deciding which actions are most appropriate to take.",
+            )
+            parts.append(
+                "Sometimes the broader context is not relevant, but sometimes it can assist in reading between the lines for the current user intent.",
+            )
             parts.append("")
             parts.append("# Activity Logs")
             parts.append(recent_activity)
