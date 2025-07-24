@@ -815,29 +815,31 @@ class CommsAgent:
 
     def handle_logging(self, event: dict):
         import unity
+        from unity import ASSISTANT
         from unity.transcript_manager.transcript_manager import TranscriptManager
         from unity.transcript_manager.types.message import Message
         from unity.events.event_bus import EVENT_BUS
 
         try:
-            assistant_id = os.environ.get("ASSISTANT_ID", "0")
-            unity.init(
-                assistant_id=int(assistant_id.replace("default-assistant-", "")),
-                default_assistant={
-                    **DEFAULT_ASSISTANT_PAYLOAD,
-                    "agent_id": assistant_id,
-                    "first_name": self.assistant_name,
-                    "age": self.assistant_age,
-                    "region": self.assistant_region,
-                    "about": self.assistant_about,
-                    "phone": self.assistant_number,
-                    "email": self.assistant_email,
-                    "user_phone": self.user_number,
-                    "user_whatsapp_number": self.user_phone_call_number,
-                    "assistant_whatsapp_number": self.assistant_number,
-                    "api_key": os.environ.get("UNIFY_KEY"),
-                },
-            )
+            if not ASSISTANT:
+                assistant_id = os.environ.get("ASSISTANT_ID", "0")
+                unity.init(
+                    assistant_id=int(assistant_id.replace("default-assistant-", "")),
+                    default_assistant={
+                        **DEFAULT_ASSISTANT_PAYLOAD,
+                        "agent_id": assistant_id,
+                        "first_name": self.assistant_name,
+                        "age": self.assistant_age,
+                        "region": self.assistant_region,
+                        "about": self.assistant_about,
+                        "phone": self.assistant_number,
+                        "email": self.assistant_email,
+                        "user_phone": self.user_number,
+                        "user_whatsapp_number": self.user_phone_call_number,
+                        "assistant_whatsapp_number": self.assistant_number,
+                        "api_key": os.environ.get("UNIFY_KEY"),
+                    },
+                )
         except Exception as e:
             print(f"Error initializing unity: {e}")
             traceback.print_exc()
