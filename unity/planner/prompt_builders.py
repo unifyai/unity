@@ -76,12 +76,17 @@ def _build_rules_and_examples_prompt(
         instructions_and_rules = textwrap.dedent(
             """
             1.  **Single Code Block:** Your entire response MUST be a single, valid Python code block.
-            2.  **Manage Your Imports**: You are free to import any standard Python library (e.g., `typing`, `re`, `json`, `datetime`, `collections`). Write standard, self-contained Python code with proper imports at the top.
+            2.  **Manage Your Imports**: You are free to import any standard Python library (e.g., `typing`, `re`, `json`, `datetime`, `collections`). Write standard, self-contained Python code with proper imports directly inside the functions that use them.
             3.  **Decorators & Docstrings:** Every **function** you define MUST include docstrings which include the function's purpose, its arguments, and its return value.
             4.  **Async All The Way**: All helper functions you define MUST be `async def`.
             5.  **Await Keyword**: All `action_provider` methods that are asynchronous MUST be called with the `await` keyword.
-            6.  **Structured Output**: For `observe` or `reason` calls that expect a structured answer (e.g., yes/no, a list of items), you MUST define a Pydantic `BaseModel` and pass it to the `response_format` argument to ensure reliable, parsable output. **CRITICAL: Always define Pydantic models INSIDE the function where they are used, NOT at the module level, to avoid forward reference issues.**
-            7. **Robust Error Handling**: Proactively use `try...except` blocks to handle potential **unexpected** failures (e.g., an element not being found) with informative error messages. However, **DO NOT** wrap calls to stubbed functions in a `try...except` block. Let `NotImplementedError` propagate. This is important because the agent will implement the stubbed function dynamically.
+            6.  **Structured Output with Pydantic (MUST Follow Rules):**
+                -  **For `observe` or `reason` calls that expect a structured answer (e.g., yes/no, a list of items), you MUST define a Pydantic `BaseModel` and pass it to the `response_format` argument to ensure reliable, parsable output.**
+                -  **Define Models Locally**: To ensure the function is self-contained, all Pydantic `BaseModel` classes **MUST** be defined **inside** the function where they are used.
+                -  **Rebuild After Definition**: Immediately after defining your Pydantic classes, you **MUST** call `<OuterModel>.model_rebuild()` on the final, top-level model you will pass to `response_format`. This is critical to prevent schema resolution errors.
+                -  **Use Modern Type Hints**: Prefer built-in types like `list[MyModel]` over `typing.List[MyModel]` where possible to simplify code.
+            7.  **Robust Error Handling**: Proactively use `try...except` blocks to handle potential **unexpected** failures (e.g., an element not being found) with informative error messages. However, **DO NOT** wrap calls to stubbed functions in a `try...except` block. Let `NotImplementedError` propagate. This is important because the agent will implement the stubbed function dynamically.
+            8.  **CRITICAL - NO ACTION PROVIDER STUBS**: The `action_provider` object is globally available in the execution environment. Do NOT define, stub, or create a class for `ActionProvider` or any of its methods. Do NOT add type hints like `action_provider: ActionProvider`. Use the `action_provider` object directly as if it were already imported and available.
             """,
         )
     else:
@@ -89,7 +94,7 @@ def _build_rules_and_examples_prompt(
             """
             1.  **Single Code Block:** Your entire response MUST be a single, valid Python code block.
             2.  **Entry Point:** For a full plan, the main entry point MUST be `async def main_plan()`.
-            3.  **Manage Your Imports**: You are free to import any standard Python library (e.g., `typing`, `re`, `json`, `datetime`, `collections`). Write standard, self-contained Python code with proper imports at the top.
+            3.  **Manage Your Imports**: You are free to import any standard Python library (e.g., `typing`, `re`, `json`, `datetime`, `collections`). Write standard, self-contained Python code with proper imports directly inside the functions that use them.
             4.  **Decomposition:** Break down complex problems into smaller, logical, self-contained `async def` helper functions.
             5.  **Confidence-Based Stubbing**: Your primary goal is to create a robust plan.
                 * **If a step is simple and you are highly confident** about how to perform it (e.g., `browser_navigate("https://google.com")`, `browser_act("Type 'reports' into the search bar")`), implement it directly.
@@ -97,8 +102,13 @@ def _build_rules_and_examples_prompt(
             6.  **Decorators & Docstrings:** Every **function** you define MUST include docstrings which include the function's purpose, its arguments, and its return value.
             7.  **Async All The Way**: All helper functions you define MUST be `async def`.
             8.  **Await Keyword**: All `action_provider` methods that are asynchronous MUST be called with the `await` keyword.
-            9.  **Structured Output**: For `observe` or `reason` calls that expect a structured answer (e.g., yes/no, a list of items), you MUST define a Pydantic `BaseModel` and pass it to the `response_format` argument to ensure reliable, parsable output. **CRITICAL: Always define Pydantic models INSIDE the function where they are used, NOT at the module level, to avoid forward reference issues.**
+            9.  **Structured Output with Pydantic (MUST Follow Rules):**
+                -  **For `observe` or `reason` calls that expect a structured answer (e.g., yes/no, a list of items), you MUST define a Pydantic `BaseModel` and pass it to the `response_format` argument to ensure reliable, parsable output.**
+                -  **Define Models Locally**: To ensure the function is self-contained, all Pydantic `BaseModel` classes **MUST** be defined **inside** the function where they are used.
+                -  **Rebuild After Definition**: Immediately after defining your Pydantic classes, you **MUST** call `<OuterModel>.model_rebuild()` on the final, top-level model you will pass to `response_format`. This is critical to prevent schema resolution errors.
+                -  **Use Modern Type Hints**: Prefer built-in types like `list[MyModel]` over `typing.List[MyModel]` where possible to simplify code.
             10. **Robust Error Handling**: Proactively use `try...except` blocks to handle potential **unexpected** failures (e.g., an element not being found) with informative error messages. However, **DO NOT** wrap calls to stubbed functions in a `try...except` block. Let `NotImplementedError` propagate. This is important because the agent will implement the stubbed function dynamically.
+            11. **CRITICAL - NO ACTION PROVIDER STUBS**: The `action_provider` object is globally available in the execution environment. Do NOT define, stub, or create a class for `ActionProvider` or any of its methods. Do NOT add type hints like `action_provider: ActionProvider`. Use the `action_provider` object directly as if it were already imported and available.
             """,
         )
     return textwrap.dedent(
@@ -144,9 +154,10 @@ def _build_rules_and_examples_prompt(
         # Example 2: Making an Interactive Phone Call
         This example demonstrates how to use the `start_call` tool to make an interactive phone call.
         ```python
-        from pydantic import BaseModel, Field
         @verify
         async def make_appointment_followup_call():
+            from pydantic import BaseModel, Field
+
             # Note: start_call is synchronous and returns a Call handle immediately
             call_handle = action_provider.start_call(
                 phone_number="+1234567890",
@@ -183,8 +194,6 @@ def _build_rules_and_examples_prompt(
         This example demonstrates how to combine navigation, observation with Pydantic models, and confidence-based stubbing to create a robust, multi-step web automation plan.
 
         ```python
-        from pydantic import BaseModel, Field
-
         # This function is implemented directly because navigating and searching are simple, high-confidence actions.
         @verify
         async def search_for_product() -> str:
@@ -215,6 +224,7 @@ def _build_rules_and_examples_prompt(
             Given a product URL, this function navigates to the page and extracts the price and review count.
             \"\"\"
             # Note: A Pydantic model would be defined here during dynamic implementation, like this:
+            # from pydantic import BaseModel, Field
             # class ProductDetails(BaseModel):
             #     price: float
             #     review_count: int
@@ -262,7 +272,6 @@ def _build_rules_and_examples_prompt(
         **Fallback Strategy Example (using `reason` tool)**
         This example demonstrates how to create a robust function that first attempts to use a website's feature, but has a fallback plan to use the `reason` tool if the feature fails.
         ```python
-        from pydantic import BaseModel, Field
         @verify
         async def get_price_in_euros(product_price_usd: float) -> float:
             \"\"\"
@@ -272,6 +281,7 @@ def _build_rules_and_examples_prompt(
             the website's built-in currency converter. If that fails, it falls back
             to using the `reason` tool to perform the conversion manually.
             \"\"\"
+            from pydantic import BaseModel, Field
             print(f"Attempting to convert price: ${{product_price_usd}}")
 
             # --- Primary Approach: Use the website's feature ---
