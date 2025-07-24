@@ -368,6 +368,82 @@ class TranscriptManager(BaseTranscriptManager):
     def join_published(self):
         self._get_logger().join()
 
+    # ------------------------------------------------------------------ #
+    #  Shared helper – convert event/message payloads to plain-text
+    # ------------------------------------------------------------------ #
+
+    @staticmethod
+    def build_plain_transcript(
+        messages: list[dict],
+        *,
+        contact_manager: Optional["ContactManager"] = None,
+    ) -> str:
+        """Return a plain-text transcript (`Full Name: content`) for *messages*.
+
+        Accepts two input shapes:
+
+        1. Raw EventBus events::
+
+               {"kind": "message", "data": {"sender_id": 3, "content": "Hi"}}
+
+        2. Simplified sandbox dicts::
+
+               {"sender": "Daniel Lenton", "content": "Hi"}
+
+        An optional *contact_manager* can be supplied; otherwise a fresh
+        `ContactManager` is constructed lazily.  Numeric sender_ids are
+        resolved to *full* names (first + surname when available).
+        """
+
+        # Local import avoids widening module dependencies at import-time
+        from unity.contact_manager.contact_manager import (
+            ContactManager as _CM,
+        )  # noqa: WPS433
+
+        cm = contact_manager or _CM()
+
+        name_cache: dict[int, str] = {}
+
+        def _name_for_cid(cid: int) -> str:  # noqa: D401 – helper
+            if cid in name_cache:
+                return name_cache[cid]
+            try:
+                recs = cm._search_contacts(filter=f"contact_id == {cid}", limit=1)
+                if recs:
+                    rec = recs[0]
+                    full = " ".join(
+                        p for p in [rec.first_name, rec.surname] if p
+                    ).strip()
+                    if not full:
+                        full = (rec.first_name or "").strip()
+                    if full:
+                        name_cache[cid] = full
+                        return full
+            except Exception:
+                pass
+            name_cache[cid] = str(cid)
+            return name_cache[cid]
+
+        lines: list[str] = []
+        for itm in messages:
+            # Shape 1 – live EventBus message
+            if "kind" in itm:
+                if itm.get("kind") != "message":
+                    continue
+                data = itm.get("data", {})
+                sender_val = data.get("sender_id")
+                content_val = data.get("content", "")
+                if sender_val is None:
+                    continue
+                sender_name = _name_for_cid(int(sender_val))
+            else:  # Shape 2 – sandbox simplified dict
+                sender_name = str(itm.get("sender"))
+                content_val = str(itm.get("content", ""))
+
+            lines.append(f"{sender_name}: {content_val}")
+
+        return "\n".join(lines)
+
     # ────────────────────────────────────────────────────────────────────
     # Broader context helper
     # ────────────────────────────────────────────────────────────────────
