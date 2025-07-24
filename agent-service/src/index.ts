@@ -4,6 +4,7 @@ import { z, ZodTypeAny, ZodAny } from 'zod';
 import dotenv from 'dotenv';
 dotenv.config();
 
+const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 // --- Helper to parse command-line arguments ---
 const args = process.argv.slice(2);
 const isHeadless = args.includes('--headless');
@@ -191,14 +192,31 @@ app.post('/extract', isAgentReady, async (req: Request, res: Response) => {
   if (!instructions) {
     return res.status(400).json({ error: 'bad_request', message: 'Extraction instructions are required.' });
   }
-  try {
-    const zodSchema = schema ? jsonSchemaToZod(schema) : z.string();
+  const maxRetries = 3;
+  let lastError: unknown;
 
-    const data = await browserAgent!.extract(instructions, zodSchema);
-    res.json({ data });
-  } catch (err) {
-    handleAgentError(err, res);
+  for (let attempt = 1; attempt <= maxRetries; attempt++) {
+    try {
+      const zodSchema = schema ? jsonSchemaToZod(schema) : z.string();
+      const data = await browserAgent!.extract(instructions, zodSchema);
+      // If successful, send the response and exit the loop
+      return res.json({ data });
+    } catch (err: unknown) {
+      lastError = err;
+      // Check if the error is related to the LLM returning invalid JSON
+      if (err instanceof Error && err.message.includes('HTTP body is not JSON')) {
+        console.warn(`Attempt ${attempt} failed with a transient error. Retrying in ${attempt}s...`);
+        await sleep(attempt * 1000); // Wait a bit longer each time
+      } else {
+        // If it's a different error, fail immediately
+        return handleAgentError(err, res);
+      }
+    }
   }
+
+  // If all retries failed, handle the last recorded error
+  console.error(`All ${maxRetries} retries failed for the extract request.`);
+  handleAgentError(lastError, res);
 });
 
 app.get('/screenshot', isAgentReady, async (_req: Request, res: Response) => {
