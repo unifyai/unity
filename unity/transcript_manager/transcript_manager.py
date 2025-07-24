@@ -346,8 +346,8 @@ class TranscriptManager(BaseTranscriptManager):
                 unify.log(
                     project=unify.active_project(),
                     context=self._transcripts_ctx,
+                    **entries,
                     params={},
-                    entries=entries,
                 )
             else:
                 self._get_logger().log_create(
