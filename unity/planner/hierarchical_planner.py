@@ -1394,6 +1394,7 @@ class HierarchicalPlanner(BasePlanner):
                 "staticmethod",
                 "__build_class__",
                 "__name__",
+                "__import__",
             ]
             if __builtins__.get(k) is not None
         }
