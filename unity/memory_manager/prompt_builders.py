@@ -18,6 +18,48 @@ def _now() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
 
 
+# ---------------------------------------------------------------------------
+# Helper to retrieve the assistant's full name (contact_id == 0) so prompts
+# can mention it explicitly when instructing the model to switch to
+# second-person language.  Implemented lazily to avoid heavy imports / cycles.
+# ---------------------------------------------------------------------------
+
+
+def _assistant_name() -> str:
+    # 1) Prefer the globally initialised assistant record populated by
+    #    `unity.init` (avoids unnecessary database look-ups and possible
+    #    circular imports).
+    try:
+        from unity import ASSISTANT  # noqa: WPS433 – local import
+
+        if ASSISTANT is not None:
+            first = ASSISTANT.get("first_name") or ""
+            last = ASSISTANT.get("surname") or ASSISTANT.get("last_name") or ""
+            name = f"{first} {last}".strip()
+            if name:
+                return name
+    except Exception:
+        # Silent fall-through to backup strategy
+        pass
+
+    # 2) Fallback: query ContactManager (may hit a stub in offline tests)
+    try:
+        from unity.contact_manager.contact_manager import ContactManager  # noqa: WPS433
+
+        cm = ContactManager()
+        assist = cm._search_contacts(filter="contact_id == 0", limit=1)
+        if assist:
+            a = assist[0]
+            name = " ".join(p for p in [a.first_name, a.surname] if p).strip()
+            if name:
+                return name
+    except Exception:
+        pass
+
+    # 3) Last resort generic label
+    return "the assistant"
+
+
 # ── three tiny builders (one per public method) ─────────────────────────
 def _with_guidance(lines: list[str], guidance: Optional[str]) -> str:
     """
@@ -80,6 +122,17 @@ def build_bio_prompt(
     ]
 
     # Provide the model with an unambiguous identifier so it knows *who* it is updating
+
+    # ── assistant reference rule ───────────────────────────────────────────
+    # The assistant (contact_id == 0, typically named <first last>) must ALWAYS
+    # be referred to in **second person** so that subsequent prompts shown to
+    # the assistant remain unambiguous.
+    assistant_full = _assistant_name()
+    lines.append(
+        f"IMPORTANT: Whenever you mention the assistant, {assistant_full}, in this bio, address them using second-person pronouns – e.g. 'you', 'your' – rather than their name or third-person forms.",
+    )
+    lines.append("")
+
     if contact_identifier:
         lines.append(
             f"You are updating the *bio* for contact **{contact_identifier}**.",
@@ -124,6 +177,8 @@ def build_rolling_prompt(
         "",
         "You are refreshing the *rolling summary*",
         "for ONE contact.  Start from the previous rolling summary (if supplied).",
+        "",
+        f"IMPORTANT: Whenever you mention the assistant, {_assistant_name()}, inside this summary, refer to them with second-person pronouns ('you', 'your') – never in the third person or by name.",
         "",
         "Produce **concise holistic freeform text (≤ 500 words)** that weaves recent information into the existing summary instead of tacking items on as a list.",
         "The summary should capture:",
