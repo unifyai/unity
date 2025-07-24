@@ -628,14 +628,15 @@ async def _main_async() -> None:
                 print(f"⚠️  {exc}")
                 continue
 
-            chunk_txt = _chunk_to_text(last_transcript[start : end + 1])
-
             # Optional guidance -------------------------------------------
             guidance_txt: str | None = None
             yn = input("Add guidance for this run? [y/N] ").strip().lower()
             if yn in {"y", "yes"}:
                 guidance_txt = input("Guidance> ").strip()
                 guidance_txt = guidance_txt or None
+
+            # Heavy processing only after all user inputs are collected
+            chunk_txt = _chunk_to_text(last_transcript[start : end + 1])
 
             print(f"[{cmd}] Running on messages {start}-{end} …")
             try:
