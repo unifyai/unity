@@ -235,9 +235,19 @@ class MemoryManager(BaseMemoryManager):
                 raise ValueError(
                     "MemoryManager.update_contacts – creation of custom columns is not allowed.",
                 )
+
+            # ── Strip *internal* helper parameters that the underlying ContactManager
+            #    implementation is unaware of (e.g. parent_chat_context, clarification queues…)
+            import inspect  # local import to avoid polluting module namespace
+
+            allowed = set(
+                inspect.signature(self._contact_manager._create_contact).parameters,
+            )
+            cleaned_kwargs = {k: v for k, v in kwargs.items() if k in allowed}
+
             return await asyncio.to_thread(
                 self._contact_manager._create_contact,
-                **kwargs,
+                **cleaned_kwargs,
             )
 
         async def _safe_update_contact(**kwargs):
@@ -252,9 +262,18 @@ class MemoryManager(BaseMemoryManager):
                 raise ValueError(
                     "MemoryManager.update_contacts – modification involving custom columns is not allowed.",
                 )
+
+            # Same hidden-arg stripping logic as for _safe_create_contact
+            import inspect  # local import
+
+            allowed = set(
+                inspect.signature(self._contact_manager._update_contact).parameters,
+            )
+            cleaned_kwargs = {k: v for k, v in kwargs.items() if k in allowed}
+
             return await asyncio.to_thread(
                 self._contact_manager._update_contact,
-                **kwargs,
+                **cleaned_kwargs,
             )
 
         # Base read-only helpers ------------------------------------------------
