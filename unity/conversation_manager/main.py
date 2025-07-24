@@ -4,6 +4,7 @@
 # urgent event is sent, and cancel any running llm calls
 import asyncio
 from collections import defaultdict
+from datetime import datetime
 from dotenv import load_dotenv
 import json
 import os
@@ -172,7 +173,12 @@ class EventManager:
 
 def signal_handler(signum, frame):
     """Handle shutdown signals gracefully"""
-    print(f"Received signal {signum}, shutting down gracefully...")
+    print(
+        datetime.now().strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
+        + " - [MAIN.PY] Received signal "
+        + str(signum)
+        + ", shutting down gracefully..."
+    )
 
     # Clean up any running call processes
     global user_agent
