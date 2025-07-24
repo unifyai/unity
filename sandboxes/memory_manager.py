@@ -236,7 +236,7 @@ async def _main_async() -> None:
         help="Disable automatic memory updates triggered by message chunks (MemoryManager._setup_message_callbacks).",
     )
     # ------------------------------------------------------------------
-    # NEW: Custom window / chunk configuration via JSON file
+    # Custom window / chunk configuration via JSON file
     # ------------------------------------------------------------------
     parser.add_argument(
         "--windows_config",
@@ -519,11 +519,41 @@ async def _main_async() -> None:
                     # helper returns newest → oldest so we reverse it afterwards.
                     backend_msgs = list(reversed(tm._search_messages(limit=1000)))
 
+                    # Build a cache mapping contact_id -> first name so that
+                    # the transcript always uses *names* instead of numeric ids
+                    contact_name_cache: dict[int, str] = {}
+
+                    def _name_for_contact(cid: int) -> str:  # noqa: D401 – helper
+                        """Return the *first name* for contact *cid* or fallback to str(cid)."""
+                        if cid in contact_name_cache:
+                            return contact_name_cache[cid]
+                        try:
+                            records = mm._contact_manager._search_contacts(  # type: ignore[attr-defined]
+                                filter=f"contact_id == {cid}",
+                                limit=1,
+                            )
+                            if records:
+                                # Prefer first_name; fallback to combined name fields
+                                rec = records[0]
+                                name = (rec.first_name or "").strip() or (
+                                    " ".join(
+                                        p for p in [rec.first_name, rec.surname] if p
+                                    ).strip()
+                                )
+                                if name:
+                                    contact_name_cache[cid] = name.split(" ")[0]
+                                    return contact_name_cache[cid]
+                        except Exception:
+                            # Any backend issue – fall through to numeric id
+                            pass
+                        contact_name_cache[cid] = str(cid)
+                        return contact_name_cache[cid]
+
                     # Convert Message objects → dicts matching the local
                     # TranscriptGenerator schema expected by _chunk_to_text.
                     last_transcript = [
                         {
-                            "sender": str(m.sender_id),
+                            "sender": _name_for_contact(m.sender_id),
                             "content": m.content,
                             "timestamp": m.timestamp.isoformat(),
                             "medium": m.medium,
