@@ -54,13 +54,9 @@ REDIS_PID=$!
 echo "Redis started with PID: $REDIS_PID"
 
 
-
-
-
-
+# Virtual devices and remote browser setup
 xdg-desktop-portal &
 xdg-desktop-portal-gtk &  # or -gtk, depending on your compositor
-
 
 # Set up for virtual audio
 export XDG_RUNTIME_DIR=/tmp/runtime-root
@@ -78,11 +74,11 @@ wireplumber &
 sleep 2
 
 # Create the virtual sink/mic
-# One for capturing Meet participant audio
+# 1. For capturing Meet participant audio
 pactl load-module module-null-sink sink_name=meet_sink
 pactl load-module module-remap-source master=meet_sink.monitor source_name=meet_mic
 
-# One for agent TTS (only goes to Meet, not to agent itself)
+# 2. For agent TTS (only goes to Meet, not to agent itself)
 pactl load-module module-null-sink sink_name=agent_sink
 pactl load-module module-remap-source master=agent_sink.monitor source_name=agent_mic
 
@@ -91,7 +87,6 @@ pactl set-default-sink agent_sink
 
 bash device.sh &
 BROWSER_PID=$!
-
 
 
 # Start the main application in parallel
