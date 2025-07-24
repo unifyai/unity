@@ -633,7 +633,6 @@ async def _main_async() -> None:
                 )
                 continue
 
-            print("🎙️  Recording – press Enter to stop …")
             audio = _record_until_enter()
             description = _transcribe_deepgram(audio).strip()
             if not description:
