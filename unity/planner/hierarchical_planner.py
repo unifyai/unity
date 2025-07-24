@@ -280,7 +280,7 @@ class _SteerableToolHandleProxy:
 class _ActionProviderProxy:
     """
     A generic proxy that wraps the real ActionProvider to intercept all tool
-    calls and log them for the @verify decorator. Itcorrectly
+    calls and log them for the @verify decorator. It correctly
     handles both synchronous and asynchronous tools and ensures that handles
     returned by tools are also proxied to log subsequent interactions.
     """
@@ -768,15 +768,43 @@ class HierarchicalPlan(BaseActiveTask):
             return None
         return None
 
+    def _get_node_key(self, node: ast.AST) -> Optional[tuple]:
+        """
+        Generates a unique, comparable key for a top-level AST node.
+
+        This key is used to identify and replace nodes during a code merge.
+        - Definitions (functions, classes) are keyed by type and name.
+        - Imports are keyed by their full string representation.
+        - Global assignments are keyed by the variable name.
+        - Other nodes (like module-level docstrings) are keyed by their content.
+        """
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            return ("def", node.name)
+        elif isinstance(node, ast.ClassDef):
+            return ("class", node.name)
+        elif isinstance(node, (ast.Import, ast.ImportFrom)):
+            return ("import", ast.unparse(node))
+        elif isinstance(node, ast.Assign):
+            if len(node.targets) == 1 and isinstance(node.targets[0], ast.Name):
+                return ("assign", node.targets[0].id)
+        return ("other", ast.unparse(node))
+
     def _update_plan_with_new_code(self, function_name: str, new_code: str):
         """
-        Updates the plan's source code with a new function implementation using AST.
+        Updates the plan's source code with a new function implementation using a
+        generic, lossless AST merge strategy.
+
+        This function merges all top-level statements, including
+        functions, classes, imports, and global assignments, ensuring that the
+        new code is seamlessly integrated without losing existing code.
 
         Args:
             function_name: The name of the function to replace or add.
             new_code: The full source code of the new function implementation.
         """
-        self.action_log.append(f"Updating implementation of '{function_name}'")
+        self.action_log.append(
+            f"Updating implementation of '{function_name}' using robust merge.",
+        )
         keys_to_remove = [
             key for key in self.completed_functions if key[0] == function_name
         ]
@@ -791,53 +819,33 @@ class HierarchicalPlan(BaseActiveTask):
             old_tree = ast.parse(self.plan_source_code or "pass")
             new_tree = ast.parse(textwrap.dedent(new_code))
 
-            old_defs = {
-                node.name: node
-                for node in old_tree.body
-                if isinstance(
-                    node,
-                    (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef),
-                )
-            }
+            final_nodes = {}
 
-            new_defs = {
-                node.name: node
-                for node in new_tree.body
-                if isinstance(
-                    node,
-                    (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef),
-                )
-            }
+            for node in old_tree.body:
+                key = self._get_node_key(node)
+                if key:
+                    final_nodes[key] = node
 
-            if function_name not in new_defs:
-                raise ValueError(
-                    f"The new code block from the LLM does not contain the required "
-                    f"function '{function_name}'.",
-                )
+            for node in new_tree.body:
+                key = self._get_node_key(node)
+                if key:
+                    final_nodes[key] = node
 
-            old_defs.update(new_defs)
-
-            final_body = list(old_defs.values())
-            final_tree = ast.Module(body=final_body, type_ignores=[])
+            final_tree = ast.Module(body=list(final_nodes.values()), type_ignores=[])
             ast.fix_missing_locations(final_tree)
 
             self.plan_source_code = ast.unparse(final_tree)
-
+            refreshed_tree = ast.parse(self.plan_source_code)
             self.function_source_map.clear()
-            fresh_tree = ast.parse(self.plan_source_code)
-            for node in ast.walk(fresh_tree):
-                if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
-                    try:
-                        self.function_source_map[node.name] = ast.get_source_segment(
-                            self.plan_source_code,
-                            node,
-                        )
-                    except Exception as e:
-                        logger.error(
-                            f"Failed to get source segment for '{node.name}': {e}",
-                            exc_info=True,
-                        )
-                        raise e
+            for node in refreshed_tree.body:
+                if isinstance(
+                    node,
+                    (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef),
+                ):
+                    self.function_source_map[node.name] = ast.get_source_segment(
+                        self.plan_source_code,
+                        node,
+                    )
 
             exec(
                 compile(self.plan_source_code, "<string>", "exec"),
@@ -845,7 +853,7 @@ class HierarchicalPlan(BaseActiveTask):
             )
         except (SyntaxError, ValueError, RuntimeError) as e:
             logger.error(
-                f"AST-based code update for '{function_name}' failed: {e}",
+                f"Robust AST-based code update for '{function_name}' failed: {e}",
                 exc_info=True,
             )
             raise
