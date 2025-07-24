@@ -56,7 +56,8 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from unity.memory_manager.memory_manager import MemoryManager  # type: ignore[attr-defined]
+from unity.transcript_manager.transcript_manager import TranscriptManager  # helper
+from unity.memory_manager.memory_manager import MemoryManager  # original manager
 from sandboxes.utils import (
     TranscriptGenerator,
     record_until_enter as _record_until_enter,
@@ -97,7 +98,7 @@ async def _build_transcript(
 
 def _chunk_to_text(messages: List[Dict[str, Any]]) -> str:
     """Convert *messages* slice → plain-text using shared helper."""
-    return MemoryManager.build_plain_transcript(messages)
+    return TranscriptManager.build_plain_transcript(messages)
 
 
 def _clear_contacts() -> None:

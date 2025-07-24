@@ -133,73 +133,13 @@ class MemoryManager(BaseMemoryManager):
         messages: list[dict],
         contact_manager: Optional["ContactManager"] = None,
     ) -> str:
-        """Return a *plain-text* transcript for a list of event dicts.
+        """Delegate to `TranscriptManager.build_plain_transcript` to avoid duplication."""
 
-        Each *message* item may come in two shapes:
+        from unity.transcript_manager.transcript_manager import (
+            TranscriptManager as _TM,
+        )
 
-        1. Raw EventBus payloads produced by the live system::
-
-               {
-                   "kind": "message",
-                   "data": {"sender_id": 7, "content": "Hi"}
-               }
-
-        2. Simplified sandbox entries::
-
-               {"sender": "Daniel Lenton", "content": "Hi"}
-
-        Numeric ``sender_id`` values are looked up via *contact_manager* so we
-        can embed the full name (first + surname) instead of just the id.
-        """
-
-        # Local import to avoid a heavyweight dependency at import-time
-        from unity.contact_manager.contact_manager import (
-            ContactManager as _CM,
-        )  # noqa: WPS433
-
-        cm = contact_manager or _CM()
-
-        name_cache: dict[int, str] = {}
-
-        def _name_for_cid(cid: int) -> str:  # noqa: D401 – helper
-            if cid in name_cache:
-                return name_cache[cid]
-            try:
-                recs = cm._search_contacts(filter=f"contact_id == {cid}", limit=1)
-                if recs:
-                    rec = recs[0]
-                    full = " ".join(
-                        p for p in [rec.first_name, rec.surname] if p
-                    ).strip()
-                    if not full:
-                        full = (rec.first_name or "").strip()
-                    if full:
-                        name_cache[cid] = full
-                        return full
-            except Exception:
-                pass  # graceful fallback
-            name_cache[cid] = str(cid)
-            return name_cache[cid]
-
-        lines: list[str] = []
-        for it in messages:
-            # Shape (1): Event dict with kind == "message"
-            if "kind" in it:
-                if it.get("kind") != "message":
-                    continue
-                data = it.get("data", {})
-                sender_val = data.get("sender_id")
-                content_val = data.get("content", "")
-                if sender_val is None:
-                    continue
-                sender_name = _name_for_cid(int(sender_val))
-            else:  # Shape (2) – already simplified dict
-                sender_name = str(it.get("sender"))
-                content_val = str(it.get("content", ""))
-
-            lines.append(f"{sender_name}: {content_val}")
-
-        return "\n".join(lines)
+        return _TM.build_plain_transcript(messages, contact_manager=contact_manager)
 
     # ---------------------------------------------------------------------- #
     def __init__(
