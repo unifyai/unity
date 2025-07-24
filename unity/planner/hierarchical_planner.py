@@ -594,14 +594,22 @@ class HierarchicalPlan(BaseActiveTask):
                     )
                     return {"status": "error", "message": str(e), "force_stop": True}
             except ReplanFromParentException as e:
+                if self.call_stack:
+                    failed_function = self.call_stack.pop()
+                    self.action_log.append(
+                        f"Popping failed function '{failed_function}' from call stack before replan.",
+                    )
+                if self.interaction_stack:
+                    self.interaction_stack.pop()
+
                 self.escalation_count += 1
                 self.action_log.append(
                     f"Escalation ({self.escalation_count}/{self.MAX_ESCALATIONS}): {e}",
                 )
 
                 parent_to_replan = None
-                if len(self.call_stack) > 1:
-                    parent_to_replan = self.call_stack[-2]
+                if len(self.call_stack) > 0:
+                    parent_to_replan = self.call_stack[-1]
                 else:
                     parent_to_replan = self._get_main_function_name()
 
@@ -1640,28 +1648,25 @@ class HierarchicalPlanner(BasePlanner):
                     completed_successfully = any(
                         key[0] == func_name for key in plan.completed_functions
                     )
-                    if completed_successfully and len(plan.interaction_stack) > 1:
-                        child_interactions = plan.interaction_stack[-1]
-                        parent_interactions = plan.interaction_stack[-2]
-                        parent_interactions.extend(child_interactions)
-                        logger.debug(
-                            f"Aggregated {len(child_interactions)} interactions from '{func_name}' to its parent.",
-                        )
 
-                    if plan.call_stack:
-                        exiting_func = plan.call_stack.pop()
-                        exit_status = (
-                            "completed"
-                            if any(
-                                key[0] == func_name for key in plan.completed_functions
+                    if completed_successfully:
+                        if len(plan.interaction_stack) > 1:
+                            child_interactions = plan.interaction_stack.pop()
+                            parent_interactions = plan.interaction_stack[-1]
+                            parent_interactions.extend(child_interactions)
+                            logger.debug(
+                                f"Aggregated {len(child_interactions)} interactions from '{func_name}' to its parent.",
                             )
-                            else "failed"
-                        )
-                        plan.action_log.append(
-                            f"<- Exiting '{exiting_func}' (status={exit_status})",
-                        )
-                    if plan.interaction_stack:
-                        plan.interaction_stack.pop()
+                        elif plan.interaction_stack:
+                            plan.interaction_stack.pop()
+
+                        if plan.call_stack:
+                            plan.call_stack.pop()
+
+                    exit_status = "completed" if completed_successfully else "failed"
+                    plan.action_log.append(
+                        f"<- Exiting '{func_name}' (status={exit_status})",
+                    )
 
             return wrapper
 
