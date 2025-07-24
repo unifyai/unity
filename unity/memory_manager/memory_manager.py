@@ -378,7 +378,33 @@ class MemoryManager(BaseMemoryManager):
             cache=json.loads(os.getenv("UNIFY_CACHE", "true")),
             traced=json.loads(os.getenv("UNIFY_TRACED", "true")),
         )
-        llm.set_system_message(build_bio_prompt(tools, guidance))
+        try:
+            contacts = await asyncio.to_thread(
+                self._contact_manager._search_contacts,
+                filter=f"contact_id == {contact_id}",
+                limit=1,
+            )
+            if contacts:
+                c0 = contacts[0]
+                latest_bio_val = c0.bio
+                contact_name_val = (
+                    " ".join(p for p in [c0.first_name, c0.surname] if p).strip()
+                    or None
+                )
+            else:
+                latest_bio_val = None
+                contact_name_val = None
+        except Exception:
+            latest_bio_val = None  # Fallback – treat as unknown
+            contact_name_val = None
+        identifier = (
+            f"{contact_name_val} (id {contact_id})"
+            if contact_name_val
+            else str(contact_id)
+        )
+        llm.set_system_message(
+            build_bio_prompt(tools, guidance, contact_identifier=identifier),
+        )
 
         # ------------------------------------------------------------------
         # Retrieve the *current* bio from the backend so the LLM always sees
@@ -393,18 +419,17 @@ class MemoryManager(BaseMemoryManager):
             )
             latest_bio_val = contacts[0].bio if contacts else None
         except Exception:
-            latest_bio_val = None  # Fallback – treat as unknown
+            latest_bio_val = None  # best-effort fallback
 
-        # Compose input blob given to the tool loop – we *always* include the
-        # latest bio so the LLM can determine whether an update is needed.
-        user_blob = json.dumps(
-            {
-                "contact_id": contact_id,
-                "latest_bio (to maybe update)": latest_bio_val,
-                "transcript": transcript,
-            },
-            indent=2,
-        )
+        user_payload = {
+            "contact_id": contact_id,
+            "latest_bio (to maybe update)": latest_bio_val,
+            "transcript": transcript,
+        }
+        if contact_name_val is not None:
+            user_payload["contact_name"] = contact_name_val
+
+        user_blob = json.dumps(user_payload, indent=2)
 
         handle = start_async_tool_use_loop(
             llm,
