@@ -657,6 +657,9 @@ class TranscriptGenerator:
 
         from unity.contact_manager.types.contact import Contact  # local import
 
+        # Cache of *first_name → Contact* so repeated references to the same
+        # person (even if the LLM adds/changes a surname) always map to the
+        # same Contact instance.
         _name_to_contact: dict[str, Contact] = {}
         # Track the Contact object of the previous message to infer receiver
         last_sender_contact: Contact | None = None
@@ -683,12 +686,22 @@ class TranscriptGenerator:
             try:
                 cm = self._tm._contact_manager  # ContactManager instance
                 first_name = name.split(" ")[0].lower()
-                existing = cm._search_contacts(
+
+                # Attempt 1: exact case-insensitive match
+                match = cm._search_contacts(
                     filter=f"first_name.lower() == '{first_name}'",
                     limit=1,
                 )
-                if existing:
-                    return existing[0]
+
+                # Attempt 2: prefix match (e.g. 'dan' → 'daniel') if nothing found
+                if not match:
+                    match = cm._search_contacts(
+                        filter=f"first_name.lower().startswith('{first_name}')",
+                        limit=1,
+                    )
+
+                if match:
+                    return match[0]
             except Exception:
                 # Any backend/cycle issues → fall through to new contact generation
                 pass
@@ -730,10 +743,15 @@ class TranscriptGenerator:
             return Contact(**base_kwargs)
 
         # Replace *create* helper so it accepts extra details
-        def _contact_for(name: str, medium: str, details: dict[str, Any] | None = None) -> Contact:  # type: ignore[valid-type]
-            if name not in _name_to_contact:
-                _name_to_contact[name] = _build_contact(name, medium, details)
-            return _name_to_contact[name]
+        def _contact_for(
+            name: str,
+            medium: str,
+            details: dict[str, Any] | None = None,
+        ) -> Contact:  # type: ignore[valid-type]
+            key = name.split(" ")[0].lower()
+            if key not in _name_to_contact:
+                _name_to_contact[key] = _build_contact(name, medium, details)
+            return _name_to_contact[key]
 
         def submit_conversation(
             payload: dict,
@@ -885,6 +903,30 @@ class TranscriptGenerator:
             f"If the scenario doesn't specify how long the chat should be, aim for roughly {min_messages}-{max_messages} messages. "
             "Be concise – avoid unnecessary filler text. After you have called the tool, do **not** output anything else."
         )
+
+        # ------------------------------------------------------------------ #
+        #  Inject existing contacts to discourage hallucinated surnames       #
+        # ------------------------------------------------------------------ #
+
+        try:
+            cm = self._tm._contact_manager  # type: ignore[attr-defined]
+            existing = cm._search_contacts(limit=1000)
+        except Exception:
+            existing = []  # graceful fallback
+
+        if existing:
+            lines = []
+            for c in existing:
+                full = " ".join(p for p in [c.first_name, c.surname] if p)
+                lines.append(f"• {full.strip()}")
+
+            contact_block = (
+                "\nExisting contacts (first names are unique):\n"
+                + "\n".join(lines)
+                + "\nAlways assume any participant whose first name appears in this list is the SAME person. "
+                "Do NOT invent a different surname for them – reuse the exact full name provided (or omit the surname if unclear).\n"
+            )
+            prompt += contact_block
 
         prompt += f"The description is as follows:\n\n{description}."
 

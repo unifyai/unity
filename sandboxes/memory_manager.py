@@ -435,9 +435,10 @@ async def _main_async() -> None:
         return Contact(**kwargs)
 
     def _contact_for(name: str, medium: str) -> Contact:
-        if name not in _name_to_contact:
-            _name_to_contact[name] = _create_contact(name, medium)
-        return _name_to_contact[name]
+        key = name.split(" ")[0].lower()
+        if key not in _name_to_contact:
+            _name_to_contact[key] = _create_contact(name, medium)
+        return _name_to_contact[key]
 
     # ── Interactive REPL ------------------------------------------------------
     print(
