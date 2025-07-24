@@ -224,6 +224,9 @@ class MemoryManager(BaseMemoryManager):
         self,
         transcript: str,
         guidance: Optional[str] = None,
+        *,
+        update_bios: bool = True,
+        update_rolling_summaries: bool = True,
     ) -> str:
         """
         Scan the transcript, identify *new* contacts or modified details,
@@ -240,6 +243,10 @@ class MemoryManager(BaseMemoryManager):
         # supplied keyword arguments **before** delegating to the real
         # implementation in a background thread.  The *ask* helpers are still
         # exposed unmodified so the LLM can read the current state.
+
+        # Track ids of contacts that are *newly* created during this tool loop so
+        # we can optionally follow up with bio / rolling-summary updates.
+        new_contact_ids: list[int] = []
 
         @functools.wraps(self._contact_manager._create_contact, updated=())
         async def _safe_create_contact(**kwargs):
@@ -264,10 +271,25 @@ class MemoryManager(BaseMemoryManager):
             )
             cleaned_kwargs = {k: v for k, v in kwargs.items() if k in allowed}
 
-            return await asyncio.to_thread(
+            outcome = await asyncio.to_thread(
                 self._contact_manager._create_contact,
                 **cleaned_kwargs,
             )
+
+            # -------------------  capture newly assigned id -------------------
+            try:
+                contact_id = (
+                    outcome.get("details", {}).get("contact_id")  # type: ignore[assignment]
+                    if isinstance(outcome, dict)
+                    else None
+                )
+                if isinstance(contact_id, int):
+                    new_contact_ids.append(contact_id)
+            except Exception:
+                # Defensive – never let a parsing error break the caller.
+                pass
+
+            return outcome
 
         @functools.wraps(self._contact_manager._update_contact, updated=())
         async def _safe_update_contact(**kwargs):
@@ -356,7 +378,40 @@ class MemoryManager(BaseMemoryManager):
             ),
         )
 
-        return await handle.result()  # a plain str
+        result_str = await handle.result()  # plain str returned by LLM
+
+        # ------------------------------------------------------------------
+        # Follow-up: for every *new* contact created during this call, refresh
+        # their bio and/or rolling summary using the same transcript chunk.
+        # ------------------------------------------------------------------
+        if new_contact_ids and (update_bios or update_rolling_summaries):
+            follow_up_tasks: list[asyncio.Task] = []
+            for _cid in new_contact_ids:
+                if update_bios:
+                    follow_up_tasks.append(
+                        asyncio.create_task(
+                            self.update_contact_bio(
+                                transcript,
+                                contact_id=_cid,
+                            ),
+                        ),
+                    )
+                if update_rolling_summaries:
+                    follow_up_tasks.append(
+                        asyncio.create_task(
+                            self.update_contact_rolling_summary(
+                                transcript,
+                                contact_id=_cid,
+                            ),
+                        ),
+                    )
+
+            if follow_up_tasks:
+                # Run concurrently – ignore individual failures so one contact
+                # does not block others or propagate errors back to callers.
+                await asyncio.gather(*follow_up_tasks, return_exceptions=True)
+
+        return result_str
 
     # ------------------------------------------------------------------ #
     # 2  update_contact_bio                                              #
