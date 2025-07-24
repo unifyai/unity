@@ -695,7 +695,15 @@ class TranscriptGenerator:
 
             # 2️⃣  No existing contact found → fabricate a new one
             details = details or {}
-            base_kwargs: dict[str, Any] = {"first_name": name.title()}
+            # Robustly split *name* into first_name and (optional) surname so that
+            # we never treat the full name as the first_name.  This fixes the issue
+            # where "Daniel Lenton" was stored with first_name="Daniel Lenton" and
+            # surname=None, leading to duplicate contact creation.
+
+            first, *rest = name.strip().split()
+            base_kwargs: dict[str, Any] = {"first_name": first.title()}
+            if rest:
+                base_kwargs["surname"] = " ".join(rest).title()
 
             # Preserve any recognised fields the LLM provided
             for fld in [
@@ -842,9 +850,12 @@ class TranscriptGenerator:
                     import time  # local to avoid unnecessary global import at top
 
                     time.sleep(delay_per_message)
+                # Store only the *first name* as the sender to match the simplified
+                # `{first_name}: {content}` format expected by the MemoryManager
+                # maintenance commands.
                 transcript.append(
                     {
-                        "sender": sender_name,
+                        "sender": sender_name.split(" ")[0],
                         "content": content,
                         "timestamp": timestamp,
                         "medium": medium,

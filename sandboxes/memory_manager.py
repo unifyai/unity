@@ -410,11 +410,29 @@ async def _main_async() -> None:
     last_sender_contact: Contact | None = None
 
     def _create_contact(name: str, medium: str) -> Contact:
+        """Construct a *new* Contact object from a full name and medium.
+
+        We now parse the *name* into first_name and (optional) surname so that
+        only the first token is stored as first_name.  This prevents cases
+        like "Daniel Lenton" being recorded with first_name="Daniel Lenton".
+        """
+
+        first, *rest = name.strip().split()
+        surname = " ".join(rest).title() if rest else None
+
         slug = name.lower().replace(" ", ".")
         idx = len(_name_to_contact) + 1
+
+        kwargs: dict[str, Any] = {"first_name": first.title()}
+        if surname:
+            kwargs["surname"] = surname
+
         if medium == "email":
-            return Contact(first_name=name.title(), email_address=f"{slug}@example.com")
-        return Contact(first_name=name.title(), phone_number=f"+155509{idx:04d}")
+            kwargs["email_address"] = f"{slug}@example.com"
+        else:
+            kwargs["phone_number"] = f"+155509{idx:04d}"
+
+        return Contact(**kwargs)
 
     def _contact_for(name: str, medium: str) -> Contact:
         if name not in _name_to_contact:
