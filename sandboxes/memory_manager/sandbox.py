@@ -96,12 +96,8 @@ async def _build_transcript(
 
 
 def _chunk_to_text(messages: List[Dict[str, Any]]) -> str:
-    """
-    Convert a slice of message dicts to a plain-text transcript that the
-    MemoryManager methods expect.
-    """
-    lines = [f"{m.get('sender', '')}: {m.get('content', '')}" for m in messages]
-    return "\n".join(lines)
+    """Convert *messages* slice → plain-text using shared helper."""
+    return MemoryManager.build_plain_transcript(messages)
 
 
 def _clear_contacts() -> None:
@@ -554,13 +550,14 @@ async def _main_async() -> None:
                             if records:
                                 # Prefer first_name; fallback to combined name fields
                                 rec = records[0]
-                                name = (rec.first_name or "").strip() or (
-                                    " ".join(
-                                        p for p in [rec.first_name, rec.surname] if p
-                                    ).strip()
-                                )
+                                name = " ".join(
+                                    p for p in [rec.first_name, rec.surname] if p
+                                ).strip()
+                                if not name:
+                                    # Fallback to whatever first_name was available
+                                    name = (rec.first_name or "").strip()
                                 if name:
-                                    contact_name_cache[cid] = name.split(" ")[0]
+                                    contact_name_cache[cid] = name
                                     return contact_name_cache[cid]
                         except Exception:
                             # Any backend issue – fall through to numeric id

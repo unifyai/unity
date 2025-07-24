@@ -868,12 +868,12 @@ class TranscriptGenerator:
                     import time  # local to avoid unnecessary global import at top
 
                     time.sleep(delay_per_message)
-                # Store only the *first name* as the sender to match the simplified
-                # `{first_name}: {content}` format expected by the MemoryManager
-                # maintenance commands.
+                # Store the *full* sender name so downstream maintenance commands
+                # have unambiguous identifiers even when multiple contacts share
+                # the same first name.
                 transcript.append(
                     {
-                        "sender": sender_name.split(" ")[0],
+                        "sender": sender_name.strip(),
                         "content": content,
                         "timestamp": timestamp,
                         "medium": medium,
