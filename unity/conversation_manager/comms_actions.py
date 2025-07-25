@@ -45,13 +45,21 @@ headers = {"Authorization": f"Bearer {os.getenv('ORCHESTRA_ADMIN_KEY')}"}
 
 # Local chat history builder
 # This is required as Call/Meet is a separate process and requires polling data
-redis_client = redis.Redis(host="localhost", port=6379, db=0).pubsub()
-redis_client.subscribe("local_chat")
+redis_client = None
 local_chat_history = []
+
+
+def _init_redis_client():
+    global redis_client
+    redis_client = redis.Redis(host="localhost", port=6379, db=0).pubsub()
+    redis_client.subscribe("local_chat")
 
 
 def _get_update_from_redis():
     global redis_client
+
+    if not redis_client:
+        _init_redis_client()
 
     msg = redis_client.get_message()
     if msg and msg["type"] == "message":
