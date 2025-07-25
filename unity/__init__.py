@@ -74,7 +74,13 @@ def init(
                 ASSISTANT = filtered_assistants[0] if filtered_assistants else None
         else:
             ASSISTANT = default_assistant
-        ctx = ASSISTANT["first_name"].capitalize() + ASSISTANT["surname"].capitalize()
+        first_name = "".join(
+            [chnk.capitalize() for chnk in ASSISTANT["first_name"].split(" ")],
+        )
+        surname = "".join(
+            [chnk.capitalize() for chnk in ASSISTANT["surname"].split(" ")],
+        )
+        ctx = first_name + surname
     else:
         # No assistants returned (offline / stub environment) – leave None.
         ASSISTANT = None
