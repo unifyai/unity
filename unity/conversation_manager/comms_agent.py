@@ -832,13 +832,12 @@ class CommsAgent:
 
     def handle_logging(self, event: dict):
         import unity
-        from unity import ASSISTANT
         from unity.transcript_manager.transcript_manager import TranscriptManager
         from unity.transcript_manager.types.message import Message
         from unity.events.event_bus import EVENT_BUS
 
         try:
-            if not ASSISTANT:
+            if not unity.ASSISTANT:
                 assistant_id = os.environ.get("ASSISTANT_ID", "0")
                 unity.init(
                     assistant_id=int(assistant_id.replace("default-assistant-", "")),
@@ -857,6 +856,9 @@ class CommsAgent:
                         "api_key": os.environ.get("UNIFY_KEY"),
                     },
                 )
+                EVENT_BUS._get_logger().session.headers["Authorization"] = (
+                    f"Bearer {os.environ['UNIFY_KEY']}"
+                )
         except Exception as e:
             print(f"Error initializing unity: {e}")
             traceback.print_exc()
@@ -864,6 +866,9 @@ class CommsAgent:
 
         if self.transcript_manager is None:
             self.transcript_manager = TranscriptManager()
+            self.transcript_manager._get_logger().session.headers["Authorization"] = (
+                f"Bearer {os.environ['UNIFY_KEY']}"
+            )
 
         try:
             bus_event = Event.from_dict(event["event"]).to_bus_event()
