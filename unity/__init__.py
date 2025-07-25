@@ -74,12 +74,14 @@ def init(
                 ASSISTANT = filtered_assistants[0] if filtered_assistants else None
         else:
             ASSISTANT = default_assistant
+        ctx = ASSISTANT["first_name"].capitalize() + ASSISTANT["surname"].capitalize()
     else:
         # No assistants returned (offline / stub environment) – leave None.
         ASSISTANT = None
+        ctx = "Assistant"
 
     # 2. Set the assistant context *after* validation
-    unify.set_context(str(assistant_id))
+    unify.set_context(ctx)
 
     # 3. Bring up the global EventBus
     from .events import event_bus as _event_bus_mod
