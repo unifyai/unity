@@ -557,26 +557,50 @@ class MemoryManager(BaseMemoryManager):
             "set_rolling_summary": set_rolling_summary,
         }
 
-        llm = unify.AsyncUnify(
-            "o4-mini@openai",
-            cache=json.loads(os.getenv("UNIFY_CACHE", "true")),
-            traced=json.loads(os.getenv("UNIFY_TRACED", "true")),
-        )
-        llm.set_system_message(build_rolling_prompt(tools, combined_guidance))
-
-        # ------------------------------------------------------------------
-        # Retrieve the *current* rolling summary from the backend so the LLM
-        # always has the freshest context and callers do not need to supply it.
+        # ────────────────────────────────────────────────────────────────
+        #   Retrieve contact details once (name + current rolling summary)
+        #   so we can build the prompt and seed the user payload without
+        #   duplicating backend look-ups later on.
+        # ----------------------------------------------------------------
         try:
             contacts = await asyncio.to_thread(
                 self._contact_manager._search_contacts,
                 filter=f"contact_id == {contact_id}",
                 limit=1,
             )
-            latest_summary_val = contacts[0].rolling_summary if contacts else None
+            c0 = contacts[0] if contacts else None
+            contact_name_val = (
+                " ".join(p for p in [c0.first_name, c0.surname] if p).strip()
+                if c0
+                else None
+            )
+            latest_summary_val = c0.rolling_summary if c0 else None
         except Exception:
+            contact_name_val = None
             latest_summary_val = None  # best-effort fallback
 
+        # ------------------------------------------------------------------
+        llm = unify.AsyncUnify(
+            "o4-mini@openai",
+            cache=json.loads(os.getenv("UNIFY_CACHE", "true")),
+            traced=json.loads(os.getenv("UNIFY_TRACED", "true")),
+        )
+        contact_label = (
+            f"{contact_name_val} (id {contact_id})"
+            if contact_name_val
+            else f"id {contact_id}"
+        )
+        llm.set_system_message(
+            build_rolling_prompt(
+                contact_label,
+                tools,
+                guidance=combined_guidance,
+            ),
+        )
+
+        # ------------------------------------------------------------------
+        # Build the LLM *user* payload using the already-retrieved summary.
+        # ------------------------------------------------------------------
         user_blob = json.dumps(
             {
                 "contact_id": contact_id,

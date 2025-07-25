@@ -129,7 +129,7 @@ def build_bio_prompt(
     # the assistant remain unambiguous.
     assistant_full = _assistant_name()
     lines.append(
-        f"IMPORTANT: Whenever you mention the assistant, {assistant_full}, in this bio, address them using second-person pronouns – e.g. 'you', 'your' – rather than their name or third-person forms.",
+        f"IMPORTANT: Whenever you mention the assistant, {assistant_full}, in this bio, address them using second-person pronouns – e.g. 'you', 'your' – rather than their name {assistant_full} or third-person forms.",
     )
     lines.append("")
     lines.append(
@@ -167,19 +167,36 @@ def build_bio_prompt(
 
 
 def build_rolling_prompt(
+    contact_name: str,
     tools: Dict[str, Callable],
+    *,
     guidance: Optional[str] = None,
 ) -> str:
     lines = [
         get_broader_context(),
         "",
-        "You are refreshing the *rolling summary*",
-        "for ONE contact.  Start from the previous rolling summary (if supplied).",
-        "",
-        f"IMPORTANT: Whenever you mention the assistant, {_assistant_name()}, inside this summary, refer to them with second-person pronouns ('you', 'your') – never in the third person or by name.",
-        "",
+    ]
+
+    # Provide the model with an unambiguous identifier so it knows *who* it is updating
+
+    # ── assistant reference rule ───────────────────────────────────────────
+    # The assistant (contact_id == 0, typically named <first last>) must ALWAYS
+    # be referred to in **second person** so that subsequent prompts shown to
+    # the assistant remain unambiguous.
+    assistant_full = _assistant_name()
+    lines.append(
+        f"IMPORTANT: Whenever you mention the assistant, {assistant_full}, in this rolling summary, address them using second-person pronouns – e.g. 'you', 'your' – rather than their name {assistant_full} or third-person forms.",
+    )
+    lines.append("")
+    lines.append(
+        f"You are updating the *rolling summary* for contact **{contact_name}**.",
+    )
+
+    lines += [
         "Produce **concise holistic freeform text (≤ 500 words)** that weaves recent information into the existing summary instead of tacking items on as a list.",
-        "The summary must remain **highly specific to the TARGET CONTACT** (the person whose summary you are updating).",
+        f"The summary must remain **highly specific to {contact_name}** (the person whose summary you are updating).",
+        "🚫 **ABSOLUTELY NO HALLUCINATIONS:** Include **only** information that is explicitly stated in the provided transcript chunk. If a detail is not clearly present, you must *not* invent, infer, or elaborate on it.",
+        "✅ The rolling summary can be **very short** (even a single sentence) if limited information is available – there is no minimum length requirement, only the upper limit mentioned above.",
         "• Mention other people or company-wide context ONLY when it directly affects or involves the target contact.",
         "• If the latest transcript chunk contains little or no new information about the target contact, keep the update extremely brief or leave the summary unchanged.",
         "• Do NOT pad the summary with generic project context, team member lists, or unrelated details.",
