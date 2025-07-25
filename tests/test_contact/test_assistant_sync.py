@@ -1,7 +1,56 @@
 import pytest
+import unity  # Added to patch global assistant
 
 from unity.contact_manager.contact_manager import ContactManager
 from tests.helpers import _handle_project
+
+
+# ---------------------------------------------------------------------------
+#  Test-local fixture – ensure deterministic assistant state
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture(autouse=True)
+def _clear_cached_assistant(monkeypatch):
+    """Force *unity* to behave as if no real assistant were configured.
+
+    We patch the global ``unity.ASSISTANT`` that `unity.init()` caches so that
+    every time a ``ContactManager`` instance synchronises the assistant (id 0)
+    it sees *None* and therefore falls back to the dummy placeholder record.
+
+    The fixture is *autouse* and therefore applies to every test in this
+    module without having to be listed explicitly.
+    """
+
+    # 1. Clear any previously cached assistant record (from earlier tests)
+    monkeypatch.setattr(unity, "ASSISTANT", None, raising=False)
+
+    # 2. Ensure future `unity.init()` calls cannot discover a real assistant
+    #    by monkey-patching the internal helper it relies on.
+    monkeypatch.setattr(
+        unity,
+        "_list_all_assistants",
+        lambda: [],
+        raising=False,
+    )
+
+    # 3. Prevent ContactManager from touching the network when synchronising
+    #    the default *user* contact (id == 1). We replace the helper with a
+    #    stub that returns an *empty* dict so no metadata is available but –
+    #    crucially – the call succeeds without needing a real backend and
+    #    without relying on ``unity.ASSISTANT`` being a mapping.
+    from unity.contact_manager.contact_manager import ContactManager
+
+    monkeypatch.setattr(
+        ContactManager,
+        "_fetch_user_info",
+        lambda self: {
+            "first_name": "John",
+            "last_name": "Doe",
+            "email": "john.doe@example.com",
+        },
+        raising=False,
+    )
 
 
 @pytest.mark.unit
