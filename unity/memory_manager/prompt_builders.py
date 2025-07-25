@@ -280,6 +280,7 @@ def build_task_prompt(
         "You are responsible for maintaining the *task schedule* in light of the **latest transcript chunk**.",
         "",
         "🧭 **General process:**",
+        "⚠️  **Important:** General descriptions of responsibilities or examples of typical duties (e.g. 'You'll be responsible for X') are **NOT** explicit task requests. Only create, update, or cancel tasks when the transcript includes a clear utterance whereby a concrete action should be taken, and sufficient details are given to act upon (such as 'Please do X when you get the chance' or 'Y was already completed by Z, so don't worry about it'). When in doubt, make no changes.",
         "1️⃣ Reflect on the broader context of your role and recent activity above and decide whether the conversation requests or implies new tasks or any changes to the existing tasks.",
         "2️⃣ Always begin by calling `TaskScheduler.ask` to retrieve the **current** task list.",
         "3️⃣ For each required change:",
