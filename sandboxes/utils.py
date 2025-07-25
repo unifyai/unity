@@ -29,7 +29,7 @@ from unity.common.llm_helpers import SteerableToolHandle
 
 # Added for direct logging of generated messages
 from unity.transcript_manager.transcript_manager import TranscriptManager
-from scenario_builder import ScenarioBuilder
+from sandboxes.scenario_builder import ScenarioBuilder
 
 from dotenv import load_dotenv
 
