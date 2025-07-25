@@ -62,12 +62,12 @@ def init(
 
     if assistants:
         if not default_assistant:
-            if not (0 <= assistant_id < len(assistants)):
-                raise ValueError(
-                    f"assistant_id {assistant_id} out of range – "
-                    f"{len(assistants)} assistants available.",
-                )
-            ASSISTANT = assistants[assistant_id]
+            filtered_assistants = [
+                assistant
+                for assistant in assistants
+                if assistant["agent_id"] == str(assistant_id)
+            ]
+            ASSISTANT = filtered_assistants[0] if len(filtered_assistants) > 0 else None
         else:
             ASSISTANT = default_assistant
     else:
