@@ -42,22 +42,36 @@ function jsonSchemaToZod(schema: any, definitions: any = {}, visitedRefs = new S
 
   // Handle unions and optionals
   if (schema.anyOf) {
-    const unionTypes = schema.anyOf.map((s: any) => jsonSchemaToZod(s, defs, visitedRefs));
-    if (unionTypes.length === 2 && unionTypes.some((t: ZodTypeAny) => t instanceof z.ZodNull)) {
-      const nonNullType = unionTypes.find((t: ZodTypeAny) => !(t instanceof z.ZodNull));
-      return nonNullType ? nonNullType.optional().nullable() : z.any();
+    const nonNullTypes = schema.anyOf.filter((s: any) => s.type !== 'null');
+
+    // Check if this is a simple optional type (e.g., string | null)
+    if (schema.anyOf.length > nonNullTypes.length && nonNullTypes.length === 1) {
+      const baseSchema = { ...schema, ...nonNullTypes[0] };
+      delete baseSchema.anyOf; // Prevent infinite recursion
+
+      // Recursively call jsonSchemaToZod on the now-complete schema and make it optional
+      return jsonSchemaToZod(baseSchema, defs, visitedRefs).optional().nullable();
     }
+
+    // Fallback for more complex unions (e.g., string | number)
+    const unionTypes = schema.anyOf.map((s: any) => jsonSchemaToZod(s, defs, visitedRefs));
     return z.union(unionTypes as [ZodTypeAny, ZodTypeAny, ...ZodTypeAny[]]);
   }
 
   // Handle type arrays
   if (Array.isArray(schema.type)) {
-    const types = schema.type.map((type: string) => jsonSchemaToZod({ ...schema, type }, defs, visitedRefs));
-    if (types.length === 2 && types.some((t: ZodTypeAny) => t instanceof z.ZodNull)) {
-        const nonNullType = types.find((t: ZodTypeAny) => !(t instanceof z.ZodNull));
-        return nonNullType ? nonNullType.optional().nullable() : z.any();
-    }
-    return z.union(types as [ZodTypeAny, ZodTypeAny, ...ZodTypeAny[]]);
+      // This is another common pattern for Optional fields.
+      const hasNull = schema.type.includes('null');
+      const nonNullTypes = schema.type.filter((t: string) => t !== 'null');
+
+      if (hasNull && nonNullTypes.length === 1) {
+          // This handles cases like `type: ['number', 'null']`
+          const baseType = jsonSchemaToZod({ ...schema, type: nonNullTypes[0] }, defs, visitedRefs);
+          return baseType.optional().nullable();
+      }
+
+      const types = schema.type.map((type: string) => jsonSchemaToZod({ ...schema, type }, defs, visitedRefs));
+      return z.union(types as [ZodTypeAny, ZodTypeAny, ...ZodTypeAny[]]);
   }
 
   // Handle enums and literals
