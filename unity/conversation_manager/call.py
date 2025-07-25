@@ -82,7 +82,6 @@ async def process_structured_output(
     last_response = ""
     acc_text = ""
     async for chunk in text:
-        print("CHUNK FOR TTS", chunk)
         acc_text += chunk
         try:
             resp: AssistantOutput = from_json(
@@ -97,7 +96,6 @@ async def process_structured_output(
 
         new_delta = resp["phone_utterance"][len(last_response) :]
         if new_delta:
-            print("delta", new_delta)
             yield new_delta
         last_response = resp["phone_utterance"]
 
@@ -440,7 +438,6 @@ async def entrypoint(ctx: agents.JobContext):
                 if not raw:
                     break
                 msg = json.loads(raw.decode())
-                print("GOT", msg)
                 # Update activity time on any event
                 last_activity_time = asyncio.get_event_loop().time()
                 # handle msg
