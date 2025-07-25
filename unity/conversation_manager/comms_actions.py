@@ -339,6 +339,7 @@ async def _join_meet_call(
     meet_id: str,
     purpose: str = "general",
     task_context: Dict[str, str] = None,
+    ongoing_call: bool = False,
 ) -> str:
     """
     Join a Google Meet call.
@@ -368,21 +369,22 @@ async def _join_meet_call(
         },
     )
 
-    print(f"Joining Google Meet call with ID: {meet_id}")
-    async with aiohttp.ClientSession() as session:
-        async with session.post(
-            f"{os.getenv('UNITY_COMMS_URL')}/phone/meet-call",
-            headers=headers,
-            json={
-                "from": os.getenv("ASSISTANT_NUMBER"),
-                "to": os.getenv("USER_PHONE_NUMBER"),
-                "meet_id": meet_id,
-            },
-        ) as response:
-            response.raise_for_status()
-            response_text = await response.text()
-            print(f"Response: {response_text}")
-            return response_text
+    if not ongoing_call:
+        print(f"Joining Google Meet call with ID: {meet_id}")
+        async with aiohttp.ClientSession() as session:
+            async with session.post(
+                f"{os.getenv('UNITY_COMMS_URL')}/phone/meet-call",
+                headers=headers,
+                json={
+                    "from": os.getenv("ASSISTANT_NUMBER"),
+                    "to": os.getenv("USER_PHONE_NUMBER"),
+                    "meet_id": meet_id,
+                },
+            ) as response:
+                response.raise_for_status()
+                response_text = await response.text()
+                print(f"Response: {response_text}")
+                return response_text
 
 
 # High-level Actions
