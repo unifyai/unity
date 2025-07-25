@@ -136,36 +136,21 @@ class SimulatedMemoryManager(BaseMemoryManager):
         }
 
         # Retrieve contact info for clearer context
-        try:
-            contacts = self._contact_manager._search_contacts(
-                filter=f"contact_id == {contact_id}",
-                limit=1,
-            )
-            if contacts:
-                c0 = contacts[0]
-                latest_bio_val = c0.bio
-                contact_name_val = (
-                    " ".join(p for p in [c0.first_name, c0.surname] if p).strip()
-                    or None
-                )
-            else:
-                latest_bio_val = None
-                contact_name_val = None
-        except Exception:
-            latest_bio_val = None
-            contact_name_val = None
-
-        identifier = (
-            f"{contact_name_val} (id {contact_id})"
-            if contact_name_val
-            else str(contact_id)
+        contacts = self._contact_manager._search_contacts(
+            filter=f"contact_id == {contact_id}",
+            limit=1,
+        )
+        c0 = contacts[0]
+        latest_bio_val = c0.bio
+        contact_name_val = (
+            " ".join(p for p in [c0.first_name, c0.surname] if p).strip() or None
         )
 
         self._llm.set_system_message(
             pb.build_bio_prompt(
+                f"{contact_name_val} (id {contact_id})",
                 tools,
                 guidance=combined_guidance,
-                contact_identifier=identifier,
             ),
         )
 
