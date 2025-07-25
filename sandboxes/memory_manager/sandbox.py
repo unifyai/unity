@@ -546,6 +546,55 @@ async def _main_async() -> None:
             # 1️⃣  Ensure we have a *local* copy of the transcript to work with
             # ------------------------------------------------------------------
 
+            # Always refresh `last_transcript` from the backend so that the
+            # maintenance commands (uc/uk/ut/etc.) can **always** see the full
+            # transcript history – not just the messages generated during the
+            # current sandbox session.
+            try:
+                backend_msgs = list(reversed(tm._search_messages(limit=1000)))
+
+                # Cache mapping contact_id → first name so we reuse contacts
+                contact_name_cache: dict[int, str] = {}
+
+                def _name_for_contact(cid: int) -> str:  # noqa: D401 – helper
+                    """Return a display name for *cid* (first name preferred)."""
+                    if cid in contact_name_cache:
+                        return contact_name_cache[cid]
+                    try:
+                        records = mm._contact_manager._search_contacts(  # type: ignore[attr-defined]
+                            filter=f"contact_id == {cid}",
+                            limit=1,
+                        )
+                        if records:
+                            rec = records[0]
+                            name = " ".join(
+                                p for p in [rec.first_name, rec.surname] if p
+                            ).strip()
+                            if not name:
+                                name = (rec.first_name or "").strip()
+                            if name:
+                                contact_name_cache[cid] = name
+                                return name
+                    except Exception:
+                        # Backend issue – fall through to numeric id
+                        pass
+                    contact_name_cache[cid] = str(cid)
+                    return contact_name_cache[cid]
+
+                last_transcript = [
+                    {
+                        "sender": _name_for_contact(m.sender_id),
+                        "content": m.content,
+                        "timestamp": m.timestamp.isoformat(),
+                        "medium": m.medium,
+                    }
+                    for m in backend_msgs
+                ]
+            except Exception:
+                # If anything goes wrong we keep whatever was in memory so we
+                # don't block the command.
+                pass
+
             # If the in-memory `last_transcript` list is still empty we try to
             # lazily load *existing* messages from the backend so users can run
             # maintenance commands right after opening a project that already
