@@ -266,6 +266,16 @@ async def entrypoint(ctx: agents.JobContext):
     async def end_call():
         print("Initiating graceful shutdown...")
 
+        # Send end call event before cleaning tasks and closing connection
+        await publish_event(
+            {
+                "topic": from_number,
+                "to": "past",
+                "event": PhoneCallEndedEvent().to_dict(),
+            },
+        )
+        print("End call event sent")
+
         # Get all running tasks except current task
         tasks = [t for t in asyncio.all_tasks() if t is not asyncio.current_task()]
 
@@ -289,17 +299,6 @@ async def entrypoint(ctx: agents.JobContext):
 
         # Close the connection gracefully
         try:
-            # Send end call event before closing connection
-            await publish_event(
-                {
-                    "topic": from_number,
-                    "to": "past",
-                    "event": PhoneCallEndedEvent().to_dict(),
-                },
-            )
-            print("End call event sent")
-
-            # Close the connection using utility function
             await close_connection()
             print("Connection closed gracefully")
         except Exception as e:
