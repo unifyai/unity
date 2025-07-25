@@ -148,6 +148,9 @@ class CommsAgent:
             self.enabled_tools = methods_to_tool_dict(
                 self.conductor.ask,
                 self.conductor.request,
+                # todo: temporary adding them here explicitly
+                self._inner_send_call,
+                self._join_meet,
             )
             return
 
