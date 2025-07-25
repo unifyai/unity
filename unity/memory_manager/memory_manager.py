@@ -632,12 +632,18 @@ class MemoryManager(BaseMemoryManager):
         Mine reusable information and persist to the long-term knowledge base.
         """
 
+        # Instantiate a **detached** KnowledgeManager that operates without any
+        # linkage to the Contacts table.  This ensures that long-term knowledge
+        # maintenance remains fully decoupled from contact management.
+
+        _km = KnowledgeManager(include_contacts=False)
+
         tools: Dict[str, Callable[..., Any]] = methods_to_tool_dict(
             self._contact_manager.ask,
             self._transcript_manager.ask,
-            self._knowledge_manager.ask,
-            self._knowledge_manager.refactor,
-            self._knowledge_manager.update,
+            _km.ask,
+            _km.refactor,
+            _km.update,
             include_class_name=True,
         )
 

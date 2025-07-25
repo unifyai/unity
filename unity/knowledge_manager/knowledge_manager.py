@@ -30,7 +30,12 @@ from ..events.manager_event_logging import (
 
 
 class KnowledgeManager(BaseKnowledgeManager):
-    def __init__(self, *, rolling_summary_in_prompts: bool = True) -> None:
+    def __init__(
+        self,
+        *,
+        rolling_summary_in_prompts: bool = True,
+        include_contacts: bool = True,
+    ) -> None:
         """
         KnowledgeManager now **directly manipulates** the root-level
         ``Contacts`` table instead of calling the public ContactManager API.
@@ -93,20 +98,45 @@ class KnowledgeManager(BaseKnowledgeManager):
 
         self._rolling_summary_in_prompts = rolling_summary_in_prompts
 
+        # ------------------------------------------------------------------
+        # Optional Contacts-table linkage
+        # ------------------------------------------------------------------
+        self._include_contacts: bool = include_contacts
+
         ctxs = unify.get_active_context()
         read_ctx, write_ctx = ctxs["read"], ctxs["write"]
         assert (
             read_ctx == write_ctx
         ), "read and write contexts must be the same when instantiating a KnowledgeManager."
         self._ctx = f"{read_ctx}/Knowledge" if read_ctx else "Knowledge"
-        self._contacts_ctx = f"{read_ctx}/Contacts" if read_ctx else "Contacts"
+
+        # Only compute the Contacts context if the caller requested integration.
+        self._contacts_ctx = (
+            (f"{read_ctx}/Contacts" if read_ctx else "Contacts")
+            if include_contacts
+            else None
+        )
 
     # Helpers #
     # --------#
 
     def _ctx_for_table(self, table: str) -> str:
-        """Return the correct Unify context for *table*."""
-        return self._contacts_ctx if table == "Contacts" else f"{self._ctx}/{table}"
+        """Return the correct Unify context for *table*.
+
+        When this instance was created with ``include_contacts=False`` any
+        attempt to reference the *Contacts* table is considered an error to
+        avoid hidden cross-coupling between the knowledge store and the
+        contact book.
+        """
+
+        if table == "Contacts":
+            if not self._include_contacts or self._contacts_ctx is None:
+                raise ValueError(
+                    "This KnowledgeManager instance was initialised with include_contacts=False so it cannot access the Contacts table.",
+                )
+            return self._contacts_ctx
+
+        return f"{self._ctx}/{table}"
 
     def _look_first_tool_policy(self, step: int, tls: Dict[str, Callable]):
         if step < 1:
@@ -488,8 +518,13 @@ class KnowledgeManager(BaseKnowledgeManager):
             k[len(f"{self._ctx}/") :]: {"description": v}
             for k, v in unify.get_contexts(prefix=f"{self._ctx}/").items()
         }
-        # Expose root-level Contacts
-        if self._contacts_ctx in unify.get_contexts():
+
+        # Optionally expose root-level Contacts when linkage is enabled.
+        if (
+            self._include_contacts
+            and self._contacts_ctx is not None
+            and self._contacts_ctx in unify.get_contexts()
+        ):
             tables["Contacts"] = {
                 "description": unify.get_contexts()[self._contacts_ctx],
             }
