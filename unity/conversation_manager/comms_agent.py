@@ -9,6 +9,7 @@ from unity.common.llm_helpers import start_async_tool_use_loop, methods_to_tool_
 from unity.helpers import run_script, terminate_process
 from unity.conversation_manager.comms_actions import (
     _start_call,
+    _join_meet_call,
     _send_email_via_address,
     _send_sms_message_via_number,
     _send_whatsapp_message_via_number,
@@ -184,6 +185,7 @@ class CommsAgent:
                 tools_list += [manager.ask, manager.update]
 
             elif tool == "comms":
+                tools_list += [self._join_meet]
                 if self.outer_comms_enabled:
                     tools_list += [
                         self._outer_send_call,
@@ -574,6 +576,24 @@ class CommsAgent:
         self.inflight_events.clear()
         return event.parsed
 
+    # general communications
+    async def _join_meet(
+        self,
+        meet_id: str,
+        purpose: str = "general",
+        task_context: Dict[str, str] = None,
+    ):
+        """
+        Joins a Google Meet call.
+
+        Args:
+            meet_id (str): The ID of the Google Meet call.
+            purpose (str): The purpose of the call. Use 'general' if there is no specific purpose.
+            task_context (Dict[str, str]): The broader task context for the call, with name and description attributes. Use None if there is no task context.
+        """
+        global ONGOING_CALL
+        await _join_meet_call(meet_id, purpose, task_context, ongoing_call=ONGOING_CALL)
+
     # inner communications
     async def _inner_send_call(
         self,
@@ -604,7 +624,6 @@ class CommsAgent:
             message (str): The message content to be sent via SMS.
         """
         await _send_sms_message_via_number(
-            # self.assistant_number,
             self.user_phone_call_number,
             message,
         )
@@ -618,7 +637,6 @@ class CommsAgent:
             message (str): The message content to be sent via email.
         """
         await _send_email_via_address(
-            # self.assistant_email,
             self.user_email,
             subject,
             message,
@@ -633,7 +651,6 @@ class CommsAgent:
             reply_to_user (bool): `True` if replying to user's message. `False` if starting a new conversation.
         """
         await _send_whatsapp_message_via_number(
-            # self.assistant_number,
             self.user_number,
             message,
             reply_to_user,
@@ -672,7 +689,6 @@ class CommsAgent:
             message (str): The message content to be sent via SMS.
         """
         await _send_sms_message_via_number(
-            # self.assistant_number,
             to_number,
             message,
         )
@@ -687,7 +703,6 @@ class CommsAgent:
             message (str): The message content to be sent via email.
         """
         await _send_email_via_address(
-            # self.assistant_email,
             to_email,
             subject,
             message,
@@ -708,7 +723,6 @@ class CommsAgent:
             reply_to_user (bool): `True` if replying to user's message. `False` if starting a new conversation.
         """
         await _send_whatsapp_message_via_number(
-            # self.assistant_number,
             to_number,
             message,
             reply_to_user,
@@ -917,16 +931,26 @@ class CommsAgent:
                 # check for queued calls
                 if self.pending_calls:
                     next_call_event = self.pending_calls.pop(0)
-                    # todo: fix for meet call events
-                    asyncio.create_task(
-                        _start_call(
-                            self.assistant_number,
-                            next_call_event["payload"]["target_number"],
-                            next_call_event["payload"]["purpose"],
-                            next_call_event["payload"]["task_context"],
-                            ongoing_call=ONGOING_CALL,
-                        ),
-                    )
+
+                    if next_call_event["payload"]["meet_id"]:
+                        asyncio.create_task(
+                            _join_meet_call(
+                                next_call_event["payload"]["meet_id"],
+                                next_call_event["payload"]["purpose"],
+                                next_call_event["payload"]["task_context"],
+                                ongoing_call=ONGOING_CALL,
+                            ),
+                        )
+                    else:
+                        asyncio.create_task(
+                            _start_call(
+                                self.assistant_number,
+                                next_call_event["payload"]["target_number"],
+                                next_call_event["payload"]["purpose"],
+                                next_call_event["payload"]["task_context"],
+                                ongoing_call=ONGOING_CALL,
+                            ),
+                        )
 
         elif event["event"]["event_name"] == "PhoneCallStopEvent":
             self.publish(

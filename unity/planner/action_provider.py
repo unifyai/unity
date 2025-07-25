@@ -1,7 +1,7 @@
 import functools
 import os
 import unify
-from typing import Any
+from typing import Any, Dict
 from pydantic import BaseModel
 import inspect
 from unity.common.llm_helpers import (
@@ -118,17 +118,49 @@ class ActionProvider:
             parent_chat_context,
         )
 
-    def start_call(self, phone_number: str, purpose: str) -> SteerableToolHandle:
+    def start_call(
+        self,
+        phone_number: str,
+        purpose: str,
+        task_context: Dict[str, str] = None,
+    ) -> SteerableToolHandle:
         """
         Initiates an outbound phone call to a specified number for a given purpose.
         This function returns a steerable 'Call' handle that allows for interactive, real-time conversation.
         Args:
             phone_number: The destination phone number to call.
             purpose: A clear and concise description of why the call is being made. This purpose will be used to guide the conversation.
+            task_context: The broader task context for the call, with name and description attributes. Use None if there is no task context.
         """
-        return comms_actions.Call(
+        return comms_actions.Call.create(
             phone_number,
             purpose,
+            task_context,
+            tools=methods_to_tool_dict(
+                self.contact_manager.ask,
+                self.transcript_manager.ask,
+                self.knowledge_manager.ask,
+                self.task_scheduler.ask,
+            ),
+        )
+
+    def join_meet(
+        self,
+        meet_id: str,
+        purpose: str,
+        task_context: Dict[str, str] = None,
+    ):
+        """
+        Joins a Google Meet call.
+        Args:
+            meet_id: The ID of the Google Meet call.
+            purpose: A clear and concise description of why the call is being made. This purpose will be used to guide the conversation.
+            task_context: The broader task context for the call, with name and description attributes. Use None if there is no task context.
+        """
+        return comms_actions.GoogleMeet.create(
+            meet_id,
+            purpose,
+            task_context,
             tools=methods_to_tool_dict(
                 self.contact_manager.ask,
                 self.transcript_manager.ask,
