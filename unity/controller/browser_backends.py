@@ -337,18 +337,35 @@ class MagnitudeBrowserBackend(BrowserBackend):
 
         The agent uses a vision-language model to analyze the page content and screenshot, allowing it to understand context and structure. It can return complex, nested data if a Pydantic model is provided.
 
-        **✅ Good Queries (Leveraging Structure and Vision):**
-        - "List all the user comments on the page, including the author and the comment text." (Requires a Pydantic model for the response format).
-        - "Extract the product name, price, and rating for every item shown."
-        - "What is the shipping address displayed in the order summary?"
+         **Key Principles for Effective Observation:**
+
+        1.  **Be Specific and Descriptive**: Don't just ask "what's on the page." Guide the agent. Instead of "get the product details," prefer "Extract the product name from the top, the price listed in bold, and the author's name below the title."
+
+        2.  **Provide a Strategy for Non-Textual Elements**: For visual elements like star ratings, progress bars, or icons, you MUST provide a method for interpretation, as the model cannot infer it.
+            * **Good (Star Rating):** "For the 'star_rating', visually count the number of filled yellow stars and provide it as a number (e.g., 4.0). If you see a half-filled star, add 0.5. If you cannot determine the rating, approximate the value to the nearest half-star."
+            * **Good (Active Icon):** "Determine which navigation link is active by identifying the one that is underlined or has a different text color."
+            * **Bad:** "Get the star rating." (This will fail if the rating is not plain text).
+
+        3.  **Request Specific Data Types**: Guide the model to return the correct data type to ensure successful validation against your Pydantic schema.
+            * **Good:** "Extract the number of reviews as an integer."
+            * **Good:** "Get the price as a floating-point number, without the currency symbol."
+
+        4.  **Leverage Pydantic for Structure**: For any non-trivial extraction (more than a single string), always use a Pydantic model. This forces the agent to return clean, structured, and validated data.
+
+        5.  **Embrace Optional Fields for Robustness**: Web pages are unpredictable; an element might be missing for one item but not another. Define fields that might not always be present as `Optional` in your Pydantic model (e.g., `rating: Optional[float]`). This prevents the entire extraction from failing if a single piece of data is missing.
+
+        **✅ Good Queries (Following the 5 Principles):**
+        - **(Principles 1, 4, 5):** "List all user comments. For each comment, extract the author's name and the comment text. Also, extract the date it was posted, but note that the date may be missing for some older comments."
+        - **(Principles 1, 2, 3, 4, 5):** "For every product card on the page, extract the product name, the price as a float, and the star rating. For the rating, visually count the number of filled stars and return it as a number (e.g., 4.0 or 4.5). If a rating is not visible, it should be null."
+        - **(Principles 1, 2, 4, 5):** "From the user data table, extract a list of users. For each user, get their full name and email. Also, check their 'Status' icon: a green checkmark means 'Active', and a red 'X' means 'Inactive'. Extract the status as the corresponding string. The email may be missing for some users."
 
         **❌ Bad Queries (HTML/DOM Specific):**
         - "Get the href attribute of the 'About Us' link."
         # Instead, ask: "What is the destination URL of the 'About Us' link?" The agent can often infer this by navigating and checking the URL.
 
         Args:
-            query: The natural-language instruction for what to extract.
-            response_format: Optional. A Pydantic model to structure the output.
+            query: The natural-language instruction for what to extract and, if necessary, a strategy for visual interpretation.
+            response_format: Optional. A Pydantic model to structure the output. **Highly recommended for reliable extraction.**
         """
 
         def _safe_model_json_schema(model: type[BaseModel]):
