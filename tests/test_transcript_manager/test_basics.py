@@ -1,5 +1,4 @@
 import time
-import unify
 import random
 import pytest
 from datetime import datetime, UTC
@@ -34,13 +33,6 @@ MESSAGES = [
     "Wow, did you see that?",
     "Goodbye",
 ]
-
-
-def _create_contacts():
-    unify.create_logs(
-        context="Contacts",
-        entries=CONTACTS,
-    )
 
 
 @pytest.mark.unit
