@@ -177,7 +177,7 @@ def signal_handler(signum, frame):
         datetime.now().strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
         + " - [MAIN.PY] Received signal "
         + str(signum)
-        + ", shutting down gracefully..."
+        + ", shutting down gracefully...",
     )
 
     # Clean up any running call processes
