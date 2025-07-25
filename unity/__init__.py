@@ -2,6 +2,7 @@ import os
 import requests
 import unify
 from .helpers import _handle_exceptions
+from typing import Optional
 
 # ---------------------------------------------------------------------------
 # Lazy runtime initialisation
@@ -34,7 +35,7 @@ def _list_all_assistants() -> list[dict]:
 
 def init(
     project_name: str = "Assistants",
-    assistant_id: int = 0,
+    assistant_id: Optional[int] = None,
     overwrite: bool = False,
     default_assistant: dict | None = None,
 ) -> None:  # noqa: D401 – imperative name
@@ -62,12 +63,15 @@ def init(
 
     if assistants:
         if not default_assistant:
-            filtered_assistants = [
-                assistant
-                for assistant in assistants
-                if assistant["agent_id"] == str(assistant_id)
-            ]
-            ASSISTANT = filtered_assistants[0] if len(filtered_assistants) > 0 else None
+            if assistant_id is None:
+                ASSISTANT = assistants[0]
+            else:
+                filtered_assistants = [
+                    assistant
+                    for assistant in assistants
+                    if assistant["agent_id"] == str(assistant_id)
+                ]
+                ASSISTANT = filtered_assistants[0] if filtered_assistants else None
         else:
             ASSISTANT = default_assistant
     else:
