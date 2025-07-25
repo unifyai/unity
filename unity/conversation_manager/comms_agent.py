@@ -151,6 +151,8 @@ class CommsAgent:
                 # todo: temporary adding them here explicitly
                 self._inner_send_call,
                 self._join_meet,
+                self._inner_send_email,
+                self._inner_send_sms,
             )
             return
 
