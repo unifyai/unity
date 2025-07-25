@@ -134,6 +134,7 @@ class StartupEvent(Event):
         self.user_name = kwargs.pop("user_name")
         self.user_number = kwargs.pop("user_number")
         self.user_phone_number = kwargs.pop("user_phone_number")
+        self.user_email = kwargs.pop("user_email")
         super().__init__(**kwargs)
 
     def to_dict(self) -> dict[str, Any]:
@@ -150,6 +151,7 @@ class StartupEvent(Event):
                 "user_name": self.user_name,
                 "user_number": self.user_number,
                 "user_phone_number": self.user_phone_number,
+                "user_email": self.user_email,
             },
         )
         return base_dict

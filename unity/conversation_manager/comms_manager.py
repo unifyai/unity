@@ -89,6 +89,7 @@ class CommsManager:
                             user_name=event["user_name"],
                             user_number=event["user_number"],
                             user_phone_number=event["user_phone_number"],
+                            user_email=event["user_email"],
                         ).to_dict(),
                     },
                 )
