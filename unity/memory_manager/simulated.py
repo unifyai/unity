@@ -208,6 +208,27 @@ class SimulatedMemoryManager(BaseMemoryManager):
             "set_rolling_summary": set_rolling_summary,
         }
 
+        # ────────────────────────────────────────────────────────────────
+        #   Retrieve contact details (name + current rolling summary) so
+        #   that we can build the prompt and construct the payload in one
+        #   pass without duplicate look-ups.
+        # ----------------------------------------------------------------
+        try:
+            contacts = self._contact_manager._search_contacts(
+                filter=f"contact_id == {contact_id}",
+                limit=1,
+            )
+            c0 = contacts[0] if contacts else None
+            contact_name_val = (
+                " ".join(p for p in [c0.first_name, c0.surname] if p).strip()
+                if c0
+                else None
+            )
+            latest_summary_val = c0.rolling_summary if c0 else None
+        except Exception:
+            contact_name_val = None
+            latest_summary_val = None
+
         # Ensure assistant summaries are second-person
         assistant_extra = (
             "IMPORTANT: This rolling summary belongs to the assistant itself (contact_id 0). Always use **second-person** pronouns ('you') when describing the assistant. Never refer in the third person."  # noqa: E501
@@ -218,20 +239,22 @@ class SimulatedMemoryManager(BaseMemoryManager):
             "\n".join(g for g in (guidance, assistant_extra) if g) or None
         )
 
+        contact_label = (
+            f"{contact_name_val} (id {contact_id})"
+            if contact_name_val
+            else f"id {contact_id}"
+        )
         self._llm.set_system_message(
-            pb.build_rolling_prompt(tools, guidance=combined_guidance),
+            pb.build_rolling_prompt(
+                contact_label,
+                tools,
+                guidance=combined_guidance,
+            ),
         )
 
-        # Retrieve the latest rolling summary to seed the LLM with up-to-date info
-        try:
-            contacts = self._contact_manager._search_contacts(
-                filter=f"contact_id == {contact_id}",
-                limit=1,
-            )
-            latest_summary_val = contacts[0].rolling_summary if contacts else None
-        except Exception:
-            latest_summary_val = None
-
+        # ------------------------------------------------------------------
+        # Build payload with the rolling summary we already fetched.
+        # ------------------------------------------------------------------
         payload = json.dumps(
             {
                 "contact_id": contact_id,
