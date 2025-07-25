@@ -3,8 +3,11 @@ from typing import Dict
 import aiohttp
 import os
 import redis
+import json
+import ast
 from dotenv import load_dotenv
 from unity.conversation_manager.events import (
+    Event,
     PhoneUtteranceEvent,
     PhoneCallInitiatedEvent,
     PhoneCallStopEvent,
@@ -38,6 +41,56 @@ from unity.common.llm_helpers import (
 load_dotenv()
 
 headers = {"Authorization": f"Bearer {os.getenv('ORCHESTRA_ADMIN_KEY')}"}
+
+
+# Local chat history builder
+# This is required as Call/Meet is a separate process and requires polling data
+redis_client = redis.Redis(host="localhost", port=6379, db=0).pubsub()
+redis_client.subscribe("local_chat")
+local_chat_history = []
+
+
+def _get_update_from_redis():
+    global redis_client
+
+    msg = redis_client.get_message()
+    if msg and msg["type"] == "message":
+        data = msg["data"]
+        try:
+            return json.loads(data)
+        except Exception:
+            try:
+                return ast.literal_eval(
+                    data.decode() if isinstance(data, bytes) else data,
+                )
+            except Exception:
+                return None
+    return None
+
+
+def _poll_updates():
+    global local_chat_history
+
+    while True:
+        payload = _get_update_from_redis()
+        if payload is None:
+            break
+
+        # ensure dict
+        if not isinstance(payload, dict):
+            continue
+        local_chat_history.append(payload)
+
+
+def build_local_chat_history():
+    global local_chat_history
+
+    _poll_updates()
+    return (
+        "\n".join(str(Event.from_dict(e)) for e in local_chat_history)
+        if local_chat_history
+        else ""
+    )
 
 
 # Low-level functions
@@ -282,6 +335,56 @@ async def _start_call(
                 return response_text
 
 
+async def _join_meet_call(
+    meet_id: str,
+    purpose: str = "general",
+    task_context: Dict[str, str] = None,
+) -> str:
+    """
+    Join a Google Meet call.
+
+    Args:
+        meet_id: The ID of the Google Meet call to join
+        purpose: The purpose of the call
+        task_context: The broader task context for the call, with name and description attributes. Use None if there is no task context.
+
+    Returns:
+        str: The response from the Google Meet API
+    """
+    await publish_event(
+        {
+            "topic": os.getenv("USER_PHONE_NUMBER"),
+            "event": {
+                **PhoneCallInitiatedEvent(
+                    purpose=purpose,
+                    task_context=task_context,
+                    target_number=os.getenv("USER_PHONE_NUMBER"),
+                    meet_id=meet_id,
+                ).to_dict(),
+                "voice_id": None,
+                "tts_provider": None,
+                "outbound": True,
+            },
+        },
+    )
+
+    print(f"Joining Google Meet call with ID: {meet_id}")
+    async with aiohttp.ClientSession() as session:
+        async with session.post(
+            f"{os.getenv('UNITY_COMMS_URL')}/phone/meet-call",
+            headers=headers,
+            json={
+                "from": os.getenv("ASSISTANT_NUMBER"),
+                "to": os.getenv("USER_PHONE_NUMBER"),
+                "meet_id": meet_id,
+            },
+        ) as response:
+            response.raise_for_status()
+            response_text = await response.text()
+            print(f"Response: {response_text}")
+            return response_text
+
+
 # High-level Actions
 async def send_whatsapp_message(
     description: str,
@@ -399,10 +502,6 @@ class Call(SteerableToolHandle):
         self.call_ask_status = asyncio.Event()
         self.call_ask_status.set()
 
-        self.redis = redis.Redis(host="localhost", port=6379, db=0).pubsub()
-        self.redis.subscribe("local_chat")
-        self.chat = []
-
         self.status = "initiated"
 
     async def _start_call_task(self):
@@ -431,42 +530,6 @@ class Call(SteerableToolHandle):
         await instance._start_call_task()
         return instance
 
-    def _get_update_from_redis(self):
-        import json, ast
-
-        msg = self.redis.get_message()
-        if msg and msg["type"] == "message":
-            data = msg["data"]
-            try:
-                return json.loads(data)
-            except Exception:
-                try:
-                    return ast.literal_eval(
-                        data.decode() if isinstance(data, bytes) else data,
-                    )
-                except Exception:
-                    return None
-        return None
-
-    def _poll_updates(self):
-        while True:
-            payload = self._get_update_from_redis()
-            if payload is None:
-                break
-
-            # ensure dict
-            if not isinstance(payload, dict):
-                continue
-            self.chat.append(payload)
-
-    def build_local_chat_history(self):
-        from unity.conversation_manager.events import Event
-
-        self._poll_updates()
-        return (
-            "\n".join(str(Event.from_dict(e)) for e in self.chat) if self.chat else ""
-        )
-
     async def _search_local_chat(self, question: str):
         """Search local chat window if a user response relevant to the question is found"""
 
@@ -474,7 +537,7 @@ class Call(SteerableToolHandle):
 
         # Use shared prompt builder for local chat search
         client.set_system_message(
-            build_local_chat_search_prompt(self.build_local_chat_history()),
+            build_local_chat_search_prompt(build_local_chat_history()),
         )
 
         handle = start_async_tool_use_loop(
@@ -558,7 +621,7 @@ class Call(SteerableToolHandle):
         )
 
         # give time for utterance after event publish
-        await asyncio.sleep(10)
+        await asyncio.sleep(20)
         self.call_ask_status.set()
         return f"Message interjected to user: {text}"
 
@@ -585,7 +648,197 @@ class Call(SteerableToolHandle):
                 ).to_dict(),
             },
         )
-        await asyncio.sleep(8)
+        await asyncio.sleep(15)
+        await publish_event(
+            {
+                "topic": self.phone_number,
+                "to": "past",
+                "event": PhoneCallStopEvent().to_dict(),
+            },
+        )
+        self.status = "ended"
+
+    def result(self) -> str:
+        return self.status
+
+    def pause(self) -> str:
+        return "Not applicable."
+
+    def resume(self) -> str:
+        return "Not applicable."
+
+    def done(self) -> bool:
+        return self.status == "ended"
+
+
+class GoogleMeet(SteerableToolHandle):
+    def __init__(
+        self,
+        meet_id: str,
+        purpose: str = "general",
+        task_context: Dict[str, str] = None,
+        tools=None,
+    ):
+        self.meet_id = meet_id
+        self.purpose = purpose
+        self.task_context = task_context
+        self.phone_number = os.getenv("USER_PHONE_NUMBER")
+
+        self.client = unify.AsyncUnify("o4-mini@openai")
+        self.tools = methods_to_tool_dict(
+            self._search_local_chat,
+            self._ask_user_then_search,
+        )
+        if tools:
+            self.tools = {
+                **tools,
+                **self.tools,
+            }
+
+        self.call_ready = asyncio.Event()
+        self.call_ask_status = asyncio.Event()
+        self.call_ask_status.set()
+
+        self.status = "initiated"
+
+    async def _join_meet_task(self):
+        await _join_meet_call(self.meet_id, self.purpose, self.task_context)
+        # give time to control browser and join meet
+        await asyncio.sleep(30)
+        self.call_ready.set()
+        self.status = "started"
+
+    @classmethod
+    async def create(
+        cls,
+        meet_id: str,
+        purpose: str,
+        task_context: Dict[str, str] = None,
+        tools=None,
+    ) -> "GoogleMeet":
+        instance = cls(meet_id, purpose, task_context, tools)
+        await instance._join_meet_task()
+        return instance
+
+    async def _search_local_chat(self, question: str):
+        """Search local chat window if a user response relevant to the question is found"""
+
+        client = unify.AsyncUnify("o4-mini@openai")
+
+        # Use shared prompt builder for local chat search
+        client.set_system_message(
+            build_local_chat_search_prompt(build_local_chat_history()),
+        )
+
+        handle = start_async_tool_use_loop(
+            client,
+            f"This is the user's question: {question}.",
+            {},
+            loop_id="meet_search_local_chat",
+        )
+        return await handle.result()
+
+    async def _ask_user_then_search(self, question):
+        """Ask user the question, then search for their response in local chat history."""
+        await publish_event(
+            {
+                "topic": self.phone_number,
+                "to": "past",
+                "event": InterruptEvent().to_dict(),
+            },
+        ),
+        await publish_event(
+            {
+                "topic": self.phone_number,
+                "to": "pending",
+                "event": PhoneUtteranceEvent(
+                    role="System",
+                    content=f"Ask the user this question directly: {question}",
+                ).to_dict(),
+            },
+        )
+
+        # give time for utterance and response
+        await asyncio.sleep(40)
+        return await self._search_local_chat(question)
+
+    async def ask(self, question: str) -> SteerableToolHandle:
+        """
+        Ask a question to the assistant.
+        """
+        await self.call_ready.wait()
+        await self.call_ask_status.wait()
+
+        self.call_ask_status.clear()
+
+        self.client.set_system_message(
+            build_call_ask_prompt(self.tools, question),
+        )
+
+        handle = start_async_tool_use_loop(
+            self.client,
+            f"The user is answering this question: {question}. Use available tools to get information of the user's answer.",
+            self.tools,
+            loop_id="meet_ask",
+        )
+
+        async def _reset_call_ask_status():
+            try:
+                await handle.result()
+            finally:
+                self.call_ask_status.set()
+
+        asyncio.create_task(_reset_call_ask_status())
+        return handle
+
+    async def interject(self, text: str) -> str:
+        """
+        Interject a message to the assistant for them to log as instruction for next response.
+        """
+        await self.call_ready.wait()
+        await self.call_ask_status.wait()
+        self.call_ask_status.clear()
+
+        await publish_event(
+            {
+                "topic": self.phone_number,
+                "to": "past",
+                "event": PhoneUtteranceEvent(
+                    role="System",
+                    content=f"Instruction on next response: {text}",
+                ).to_dict(),
+            },
+        )
+
+        # give time for utterance after event publish
+        await asyncio.sleep(15)
+        self.call_ask_status.set()
+        return f"Message interjected to user: {text}"
+
+    async def stop(self):
+        """
+        End the call.
+        """
+        await self.call_ready.wait()
+        await self.call_ask_status.wait()
+        await publish_event(
+            {
+                "topic": self.phone_number,
+                "to": "past",
+                "event": InterruptEvent().to_dict(),
+            },
+        ),
+        await publish_event(
+            {
+                "topic": self.phone_number,
+                "to": "pending",
+                "event": PhoneUtteranceEvent(
+                    role="System",
+                    content=f"Say goodbye to user.",
+                ).to_dict(),
+            },
+        )
+        await asyncio.sleep(15)
         await publish_event(
             {
                 "topic": self.phone_number,
