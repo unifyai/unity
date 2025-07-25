@@ -460,32 +460,22 @@ class MemoryManager(BaseMemoryManager):
             cache=json.loads(os.getenv("UNIFY_CACHE", "true")),
             traced=json.loads(os.getenv("UNIFY_TRACED", "true")),
         )
-        try:
-            contacts = await asyncio.to_thread(
-                self._contact_manager._search_contacts,
-                filter=f"contact_id == {contact_id}",
-                limit=1,
-            )
-            if contacts:
-                c0 = contacts[0]
-                latest_bio_val = c0.bio
-                contact_name_val = (
-                    " ".join(p for p in [c0.first_name, c0.surname] if p).strip()
-                    or None
-                )
-            else:
-                latest_bio_val = None
-                contact_name_val = None
-        except Exception:
-            latest_bio_val = None  # Fallback – treat as unknown
-            contact_name_val = None
-        identifier = (
-            f"{contact_name_val} (id {contact_id})"
-            if contact_name_val
-            else str(contact_id)
+        contacts = await asyncio.to_thread(
+            self._contact_manager._search_contacts,
+            filter=f"contact_id == {contact_id}",
+            limit=1,
+        )
+        c0 = contacts[0]
+        latest_bio_val = c0.bio
+        contact_name_val = (
+            " ".join(p for p in [c0.first_name, c0.surname] if p).strip() or None
         )
         llm.set_system_message(
-            build_bio_prompt(tools, combined_guidance, contact_identifier=identifier),
+            build_bio_prompt(
+                f"{contact_name_val} (id {contact_id})",
+                tools,
+                guidance=combined_guidance,
+            ),
         )
 
         # ------------------------------------------------------------------

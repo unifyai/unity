@@ -111,10 +111,10 @@ def build_contact_update_prompt(
 
 
 def build_bio_prompt(
+    contact_name: str,
     tools: Dict[str, Callable],
-    guidance: Optional[str] = None,
     *,
-    contact_identifier: Optional[str] = None,
+    guidance: Optional[str] = None,
 ) -> str:
     lines = [
         get_broader_context(),
@@ -132,19 +132,17 @@ def build_bio_prompt(
         f"IMPORTANT: Whenever you mention the assistant, {assistant_full}, in this bio, address them using second-person pronouns – e.g. 'you', 'your' – rather than their name or third-person forms.",
     )
     lines.append("")
-
-    if contact_identifier:
-        lines.append(
-            f"You are updating the *bio* for contact **{contact_identifier}**.",
-        )
-    else:
-        lines.append("You are responsible for the *bio* column for ONE contact.")
+    lines.append(
+        f"You are updating the *bio* for contact **{contact_name}**.",
+    )
 
     lines += [
         "Input: the latest transcript chunk *plus* the current bio (if any).",
         "",
         "The bio is **concise freeform text (≤ 500 words)** describing relatively *time-invariant* information about the person: background, role, expertise, personality traits, important history, etc.",
         "Do **NOT** include fleeting topics, moment-to-moment tasks, or random facts that will quickly become irrelevant.",
+        "🚫 **ABSOLUTELY NO HALLUCINATIONS:** Include **only** information that is explicitly stated in the provided transcript chunk. If a detail is not clearly present, you must *not* invent, infer, or elaborate on it.",
+        "✅ The bio can be **very short** (even a single sentence) if limited information is available – there is no minimum length requirement, only the upper limit mentioned above.",
         "",
         "Update logic:",
         "1️⃣ First read the existing bio (if any) to understand what we already know about this contact.",
