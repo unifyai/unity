@@ -29,7 +29,7 @@ import unify
 
 from dotenv import load_dotenv
 from pydantic import BaseModel, Field
-from scenario_builder import ScenarioBuilder
+from sandboxes.scenario_builder import ScenarioBuilder
 
 # Ensure repository root resolves for local execution
 ROOT = Path(__file__).resolve().parents[1]

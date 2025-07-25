@@ -35,7 +35,7 @@ from livekit.agents import ModelSettings, llm, FunctionTool
 from unity.contact_manager.contact_manager import ContactManager
 import unify
 from pydantic import BaseModel, Field
-from scenario_builder import ScenarioBuilder
+from sandboxes.scenario_builder import ScenarioBuilder
 
 load_dotenv()
 
