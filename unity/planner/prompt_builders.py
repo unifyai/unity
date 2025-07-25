@@ -49,13 +49,12 @@ def _build_handle_apis(tool_dict: Dict[str, Callable]) -> str:
     return "\n\n".join(handle_docs)
 
 
-def _build_rules_and_examples_prompt(
+def _build_initial_plan_rules_and_examples(
     tools: Dict[str, Callable],
     strategy_instruction: str,
     tool_usage_instruction: str,
-    is_dynamic_implement: bool = False,
 ) -> str:
-    """Builds the reusable block of core rules and examples for code generation."""
+    """Builds the reusable block of core rules and examples for initial planning."""
     tool_reference = _build_tool_signatures(tools)
     handle_apis = _build_handle_apis(tools)
 
@@ -72,47 +71,181 @@ def _build_rules_and_examples_prompt(
         ---
         """,
     )
-    if is_dynamic_implement:
-        instructions_and_rules = textwrap.dedent(
-            """
-            1.  **Single Code Block:** Your entire response MUST be a single, valid Python code block.
-            2.  **Manage Your Imports**: You are free to import any standard Python library (e.g., `typing`, `re`, `json`, `datetime`, `collections`). Write standard, self-contained Python code with proper imports directly inside the functions that use them.
-            3.  **Decorators & Docstrings:** Every **function** you define MUST include docstrings which include the function's purpose, its arguments, and its return value.
-            4.  **Async All The Way**: All helper functions you define MUST be `async def`.
-            5.  **Await Keyword**: All `action_provider` methods that are asynchronous MUST be called with the `await` keyword.
-            6.  **Structured Output with Pydantic (MUST Follow Rules):**
-                -  **For `observe` or `reason` calls that expect a structured answer (e.g., yes/no, a list of items), you MUST define a Pydantic `BaseModel` and pass it to the `response_format` argument to ensure reliable, parsable output.**
-                -  **Define Models Locally**: To ensure the function is self-contained, all Pydantic `BaseModel` classes **MUST** be defined **inside** the function where they are used.
-                -  **Rebuild After Definition**: Immediately after defining your Pydantic classes, you **MUST** call `<OuterModel>.model_rebuild()` on the final, top-level model you will pass to `response_format`. This is critical to prevent schema resolution errors.
-                -  **Handle Missing Data Gracefully**: If a piece of data might not be present for every item on the page (e.g., a product rating, a middle name), you **MUST** define that field as `Optional` in your Pydantic model. For example, use `rating: Optional[float] = None` instead of `rating: float`. This prevents validation errors when data is missing for some items.
-                -  **Use Modern Type Hints**: Prefer built-in types like `list[MyModel]` over `typing.List[MyModel]` where possible to simplify code.
-            7.  **Robust Error Handling**: Proactively use `try...except` blocks to handle potential **unexpected** failures (e.g., an element not being found). When you catch an exception, you may print an informative message, but you **MUST re-raise the exception** using a simple `raise` statement. This ensures the planner can see the full error traceback to perform an accurate repair. **DO NOT** silence errors by returning `None` or using `pass`.
-            8.  **CRITICAL - NO ACTION PROVIDER STUBS**: The `action_provider` object is globally available in the execution environment. Do NOT define, stub, or create a class for `ActionProvider` or any of its methods. Do NOT add type hints like `action_provider: ActionProvider`. Use the `action_provider` object directly as if it were already imported and available.
-            """,
-        )
-    else:
-        instructions_and_rules = textwrap.dedent(
-            """
-            1.  **Single Code Block:** Your entire response MUST be a single, valid Python code block.
-            2.  **Entry Point:** For a full plan, the main entry point MUST be `async def main_plan()`.
-            3.  **Manage Your Imports**: You are free to import any standard Python library (e.g., `typing`, `re`, `json`, `datetime`, `collections`). Write standard, self-contained Python code with proper imports directly inside the functions that use them.
-            4.  **Decomposition:** Break down complex problems into smaller, logical, self-contained `async def` helper functions.
-            5.  **Confidence-Based Stubbing**: Your primary goal is to create a robust plan.
-                * **If a step is simple and you are highly confident** about how to perform it (e.g., `browser_navigate("https://google.com")`, `browser_act("Type 'reports' into the search bar")`), implement it directly.
-                * **If a step is ambiguous or requires seeing the page first**, you **MUST** create a descriptive helper function stubbed with `raise NotImplementedError`. This is critical for actions like finding and applying non-standard filters, extracting data from a unique table layout, or navigating a custom multi-step form.
-            6.  **Decorators & Docstrings:** Every **function** you define MUST include docstrings which include the function's purpose, its arguments, and its return value.
-            7.  **Async All The Way**: All helper functions you define MUST be `async def`.
-            8.  **Await Keyword**: All `action_provider` methods that are asynchronous MUST be called with the `await` keyword.
-            9.  **Structured Output with Pydantic (MUST Follow Rules):**
-                -  **For `observe` or `reason` calls that expect a structured answer (e.g., yes/no, a list of items), you MUST define a Pydantic `BaseModel` and pass it to the `response_format` argument to ensure reliable, parsable output.**
-                -  **Define Models Locally**: To ensure the function is self-contained, all Pydantic `BaseModel` classes **MUST** be defined **inside** the function where they are used.
-                -  **Rebuild After Definition**: Immediately after defining your Pydantic classes, you **MUST** call `<OuterModel>.model_rebuild()` on the final, top-level model you will pass to `response_format`. This is critical to prevent schema resolution errors.
-                -  **Handle Missing Data Gracefully**: If a piece of data might not be present for every item on the page (e.g., a product rating, a middle name), you **MUST** define that field as `Optional` in your Pydantic model. For example, use `rating: Optional[float] = None` instead of `rating: float`. This prevents validation errors when data is missing for some items.
-                -  **Use Modern Type Hints**: Prefer built-in types like `list[MyModel]` over `typing.List[MyModel]` where possible to simplify code.
-            10. **Robust Error Handling**: Proactively use `try...except` blocks to handle potential **unexpected** failures (e.g., an element not being found). When you catch an exception, you may print an informative message, but you **MUST re-raise the exception** using a simple `raise` statement. This ensures the planner can see the full error traceback to perform an accurate repair. **DO NOT** wrap calls to stubbed functions in a `try...except` block, and **DO NOT** silence errors by returning `None` or using `pass`.
-            11. **CRITICAL - NO ACTION PROVIDER STUBS**: The `action_provider` object is globally available in the execution environment. Do NOT define, stub, or create a class for `ActionProvider` or any of its methods. Do NOT add type hints like `action_provider: ActionProvider`. Use the `action_provider` object directly as if it were already imported and available.
-            """,
-        )
+
+    instructions_and_rules = textwrap.dedent(
+        """
+        ### 🎯 CRITICAL RULES FOR INITIAL PLAN CREATION
+
+        1.  **Single Code Block:** Your entire response MUST be a single, valid Python code block.
+            ```python
+            # ✅ CORRECT: Single code block response
+            async def helper_function():
+                ...
+
+            async def main_plan():
+                ...
+            ```
+
+        2.  **Entry Point:** For a full plan, the main entry point MUST be `async def main_plan()`.
+            ```python
+            # ✅ CORRECT: Always end with main_plan
+            async def main_plan():
+                \"\"\"Main entry point for the automation plan.\"\"\"
+                await step_one()
+                result = await step_two()
+                return result
+            ```
+
+        3.  **Scope and Imports**: ALL imports must be placed **inside** functions, never at the top level.
+            ```python
+            # ❌ WRONG: Top-level import
+            from typing import Optional
+
+            # ✅ CORRECT: Import inside function
+            async def my_function():
+                from typing import Optional
+                from pydantic import BaseModel
+                ...
+            ```
+
+        4.  **Decomposition:** Break complex tasks into smaller, focused functions.
+            ```python
+            # ✅ GOOD: Each function has a single, clear purpose
+            async def login_to_account(username: str, password: str):
+                \"\"\"Logs into the user account.\"\"\"
+                ...
+
+            async def search_for_product(product_name: str):
+                \"\"\"Searches for a specific product.\"\"\"
+                ...
+            ```
+
+        5.  **Confidence-Based Stubbing**: The MOST IMPORTANT rule for robust planning.
+            ```python
+            # ✅ IMPLEMENT if confident (simple, predictable actions)
+            async def navigate_to_shop():
+                \"\"\"Navigate to the shop homepage.\"\"\"
+                await action_provider.browser_navigate("https://shop.example.com")
+
+            # ✅ STUB if uncertain (complex extractions, unknown layouts)
+            async def extract_shipping_options():
+                \"\"\"Extract available shipping options and prices.\"\"\"
+                # Need to see the page structure first
+                raise NotImplementedError("Extract shipping options from checkout page")
+            ```
+
+        6.  **Decorators & Docstrings:** EVERY function needs proper documentation.
+            ```python
+            # ✅ CORRECT: Clear docstring with Args and Returns
+            async def calculate_total_price(items: list[dict], tax_rate: float) -> float:
+                \"\"\"Calculate the total price including tax.
+
+                Args:
+                    items: List of items with 'price' keys
+                    tax_rate: Tax rate as a decimal (e.g., 0.08 for 8%)
+
+                Returns:
+                    float: Total price including tax
+                \"\"\"
+                ...
+            ```
+
+        7.  **Async All The Way**: ALL functions must be async.
+            ```python
+            # ❌ WRONG: Regular function
+            def helper():
+                pass
+
+            # ✅ CORRECT: Async function
+            async def helper():
+                pass
+            ```
+
+        8.  **Await Keyword**: ALWAYS await async action_provider methods.
+            ```python
+            # ❌ WRONG: Missing await
+            action_provider.browser_navigate("https://example.com")
+
+            # ✅ CORRECT: With await
+            await action_provider.browser_navigate("https://example.com")
+            ```
+
+        9.  **Structured Output with Pydantic - THE COMPLETE PATTERN:**
+            ```python
+            async def extract_structured_data():
+                # Step 1: Import inside function
+                from pydantic import BaseModel, Field
+                from typing import Optional, List
+
+                # Step 2: Define models inside function
+                class Product(BaseModel):
+                    name: str
+                    price: float
+                    # Step 3: Use Optional for potentially missing fields
+                    rating: Optional[float] = Field(default=None)
+                    in_stock: bool = Field(description="Availability status")
+
+                class ProductList(BaseModel):
+                    products: List[Product]
+                    total: int
+
+                # Step 4: CRITICAL - Call model_rebuild() on outermost model
+                ProductList.model_rebuild()
+
+                # Step 5: Use with response_format
+                result = await action_provider.browser_observe(
+                    "Extract all products with details",
+                    response_format=ProductList
+                )
+
+                # ❌ WRONG: Forgetting model_rebuild()
+                # ❌ WRONG: Not using Optional for missing fields
+                # ❌ WRONG: Defining models outside the function
+            ```
+
+        10. **Error Handling - NEVER SILENCE ERRORS:**
+            ```python
+            # ❌ WRONG: Silencing errors
+            try:
+                result = await risky_operation()
+            except:
+                return None  # Never do this!
+
+            # ✅ CORRECT: Log and re-raise
+            try:
+                result = await risky_operation()
+            except Exception as e:
+                print(f"Operation failed: {e}")
+                raise  # Always re-raise!
+
+            # ⚠️ EXCEPTION: Never wrap stubbed functions
+            # ❌ WRONG:
+            try:
+                await my_stubbed_function()  # Has NotImplementedError
+            except:
+                pass  # This breaks dynamic implementation!
+
+            # ✅ CORRECT:
+            await my_stubbed_function()  # Let NotImplementedError propagate
+            ```
+
+        11. **Action Provider Usage:**
+            ```python
+            # ❌ WRONG: Don't create or import ActionProvider
+            from some_module import ActionProvider
+            action_provider = ActionProvider()
+
+            # ❌ WRONG: Don't type hint it
+            def my_func(action_provider: ActionProvider):
+                pass
+
+            # ✅ CORRECT: Use it directly as a global
+            async def my_func():
+                await action_provider.browser_navigate("...")
+            ```
+        """,
+    )
+
     return textwrap.dedent(
         f"""
         ---
@@ -137,65 +270,325 @@ def _build_rules_and_examples_prompt(
         {handle_apis}
 
         ---
-        ### Usage Examples
+        ### Usage Examples for Initial Plan Creation
 
-        **Using a Handle-Based Tool (like sending a message or making a call)**
-        This example demonstrates how to use the `send_sms_message` tool to send a message.
-        # Example 1: Sending a message
+        **COMPLETE EXAMPLE: E-commerce Automation Plan**
+        This example demonstrates ALL the rules for creating a robust initial plan.
         ```python
+        # RULE 6: Every function has proper docstrings with purpose, args, and returns
         @verify
-        async def send_confirmation_sms():
-            # First, await the tool to get the interactive handle.
-            sms_handle = await action_provider.send_sms_message("Text Jane Doe to confirm her 3pm appointment")
+        async def search_for_product(product_name: str) -> None:
+            \"\"\"Searches for a specific product on the e-commerce site.
 
-            # You can now interact with the handle if needed, or just get the final result.
-            confirmation = await sms_handle.result()
-            return confirmation
-        ```
+            Args:
+                product_name: The name of the product to search for
 
-        # Example 2: Making an Interactive Phone Call
-        This example demonstrates how to use the `start_call` tool to make an interactive phone call.
-        ```python
+            Returns:
+                None
+            \"\"\"
+            # RULE 5: Implemented directly - high confidence action
+            print(f"Searching for product: {{product_name}}")
+
+            # RULE 8: Await all async action_provider methods
+            await action_provider.browser_navigate("https://shop.example.com")
+            await action_provider.browser_act(
+                f"Type '{{product_name}}' in the search box and press Enter",
+                expectation="Search results page should load with products"
+            )
+
+        # RULE 5: STUB - Complex extraction requiring page analysis
         @verify
-        async def make_appointment_followup_call():
+        async def extract_product_prices() -> list[dict]:
+            \"\"\"Extracts all product information from search results.
+
+            This needs to see the actual page structure to implement properly.
+
+            Returns:
+                list[dict]: List of products with name, price, rating
+            \"\"\"
+            # RULE 5: Use NotImplementedError for confidence-based stubbing
+            raise NotImplementedError("Need to see search results page structure to extract products")
+
+        # RULE 3: All imports inside functions
+        @verify
+        async def filter_by_price_range(min_price: float, max_price: float) -> None:
+            \"\"\"Applies price filters to the search results.
+
+            Args:
+                min_price: Minimum price in dollars
+                max_price: Maximum price in dollars
+
+            Returns:
+                None
+            \"\"\"
+            # RULE 3: Import inside the function
+            from typing import Optional
+
+            # RULE 10: Error handling with re-raise
+            try:
+                await action_provider.browser_act(
+                    f"Set price filter from ${{min_price}} to ${{max_price}}",
+                    expectation="Products should be filtered by price range"
+                )
+            except Exception as e:
+                print(f"Failed to apply price filter: {{e}}")
+                # RULE 10: MUST re-raise the exception
+                raise
+
+        # RULE 9: Pydantic models for structured data
+        @verify
+        async def verify_product_in_cart() -> dict:
+            \"\"\"Verifies that the product was added to cart successfully.
+
+            Returns:
+                dict: Cart information including item count and total
+            \"\"\"
+            # RULE 3 & 9: Import Pydantic inside function
             from pydantic import BaseModel, Field
+            from typing import Optional
 
-            # Note: start_call is synchronous and returns a Call handle immediately
-            call_handle = action_provider.start_call(
-                phone_number="+1234567890",
-                purpose="Follow up with patient about their upcoming appointment on Friday at 2 PM and confirm they received the pre-appointment instructions"
+            # RULE 9: Define model inside function
+            class CartStatus(BaseModel):
+                item_count: int = Field(description="Number of items in cart")
+                total_price: float = Field(description="Total price of items")
+                # RULE 9: Use Optional for fields that might be missing
+                discount: Optional[float] = Field(default=None, description="Discount amount if any")
+
+            # RULE 9: CRITICAL - Always rebuild the model
+            CartStatus.model_rebuild()
+
+            # RULE 9: Use response_format for structured output
+            cart_info = await action_provider.browser_observe(
+                "What is the current cart status including item count and total price?",
+                response_format=CartStatus
             )
 
-            # The Call handle returns a SteerableToolHandle object.
-            # You can use methods like ask(), interject(), or get the full result
+            return {{
+                "items": cart_info.item_count,
+                "total": cart_info.total_price,
+                "discount": cart_info.discount
+            }}
 
-            # Example of using ask() to get specific information during the call:
-            ask_handle = await call_handle.ask("Do you have any allergies we should be aware of?")
-            allergy_response = await ask_handle.result()
+        # RULE 4: All functions must be async
+        @verify
+        async def main_plan():
+            \"\"\"Main plan to search for and purchase a product.
 
-            # Or you can just wait for the full call result:
-            call_result = await call_handle.result()
+            This demonstrates a complete e-commerce automation flow.
+            \"\"\"
+            # Step 1: Search for the product
+            await search_for_product("wireless headphones")
 
-            # Extract key information from the call
-            class CallOutcome(BaseModel):
-                appointment_confirmed: bool = Field(description="Whether the patient confirmed the appointment")
-                instructions_received: bool = Field(description="Whether they received the pre-appointment instructions")
-                notes: str = Field(description="Any additional notes from the conversation")
+            # Step 2: Extract and analyze products (stubbed)
+            # RULE 10: Don't wrap stubbed functions in try/except
+            products = await extract_product_prices()
 
-            # Analyze the call transcript
-            analysis = await action_provider.reason(
-                request="Extract the key outcomes from this phone call transcript",
-                context=call_result,
-                response_format=CallOutcome
-            )
+            # Step 3: Apply filters
+            await filter_by_price_range(50.0, 150.0)
 
-            return analysis
+            # Step 4: Select and add to cart (would be implemented)
+            # Step 5: Verify cart
+            cart_status = await verify_product_in_cart()
+
+            print(f"Cart has {{cart_status['items']}} items, total: ${{cart_status['total']}}")
+            return cart_status
         ```
 
-        **Browser Automation Example**
-        This example demonstrates how to combine navigation, observation with Pydantic models, and confidence-based stubbing to create a robust, multi-step web automation plan.
-
+        **Example: Using Handle-Based Tools (SMS and Calls)**
+        This demonstrates proper use of SteerableToolHandle for communication tools.
         ```python
+        @verify
+        async def send_appointment_reminders(appointments: list[dict]) -> list[str]:
+            \"\"\"Sends SMS reminders for multiple appointments.
+
+            Args:
+                appointments: List of dicts with 'phone', 'time', 'doctor' keys
+
+            Returns:
+                list[str]: List of confirmation messages
+            \"\"\"
+            # RULE 3: Import inside function
+            from typing import List
+
+            confirmations = []
+
+            # RULE 10: Proper error handling
+            for appt in appointments:
+                try:
+                    # RULE 8: Await the async tool
+                    sms_handle = await action_provider.send_sms_message(
+                        f"Text {{appt['phone']}} about appointment at {{appt['time']}} with Dr. {{appt['doctor']}}"
+                    )
+
+                    # Handle returns allow interaction
+                    result = await sms_handle.result()
+                    confirmations.append(result)
+
+                except Exception as e:
+                    print(f"Failed to send SMS to {{appt['phone']}}: {{e}}")
+                    # RULE 10: Re-raise to let planner handle
+                    raise
+
+            return confirmations
+
+        @verify
+        async def make_followup_call_with_questions(phone: str, questions: list[str]) -> dict:
+            \"\"\"Makes an interactive phone call with specific questions.
+
+            Args:
+                phone: Phone number to call
+                questions: List of questions to ask during call
+
+            Returns:
+                dict: Call summary with answers
+            \"\"\"
+            # RULE 3: All imports inside
+            from pydantic import BaseModel, Field
+            from typing import Optional, Dict
+
+            # Note: start_call is synchronous
+            call_handle = action_provider.start_call(
+                phone_number=phone,
+                purpose="Follow-up call to ask specific questions"
+            )
+
+            answers = {{}}
+
+            # Use the handle's interactive methods
+            for question in questions:
+                ask_handle = await call_handle.ask(question)
+                answer = await ask_handle.result()
+                answers[question] = answer
+
+            # Get full transcript
+            full_result = await call_handle.result()
+
+            # RULE 9: Structured analysis with Pydantic
+            class CallAnalysis(BaseModel):
+                all_questions_answered: bool
+                followup_needed: bool
+                satisfaction_level: Optional[str] = Field(default=None)
+
+            CallAnalysis.model_rebuild()
+
+            analysis = await action_provider.reason(
+                request="Analyze if all questions were answered satisfactorily",
+                context=f"Questions: {{questions}}\\nAnswers: {{answers}}\\nTranscript: {{full_result}}",
+                response_format=CallAnalysis
+            )
+
+            return {{
+                "answers": answers,
+                "analysis": analysis.dict(),
+                "transcript": full_result
+            }}
+        ```
+
+        **Example: Complex Multi-Step Plan with Fallbacks**
+        This shows advanced patterns including stubbing strategy and error recovery.
+        ```python
+        @verify
+        async def process_customer_data() -> dict:
+            \"\"\"Processes customer data with multiple fallback strategies.
+
+            Demonstrates proper error handling and recovery patterns.
+
+            Returns:
+                dict: Processed customer information
+            \"\"\"
+            # RULE 3: Imports inside function
+            from pydantic import BaseModel, Field
+            from typing import Optional, List
+            import json
+
+            # Primary approach: Use the website's export feature
+            try:
+                await action_provider.browser_act(
+                    "Click on 'Export Data' button and select JSON format",
+                    expectation="Download should start or data should be displayed"
+                )
+
+                # RULE 9: Structured extraction
+                class ExportedData(BaseModel):
+                    customers: List[dict]
+                    export_date: str
+                    total_count: int
+
+                ExportedData.model_rebuild()
+
+                data = await action_provider.browser_observe(
+                    "Extract the exported customer data",
+                    response_format=ExportedData
+                )
+
+                return {{"source": "export", "data": data.dict()}}
+
+            except Exception as e:
+                print(f"Export feature failed: {{e}}")
+                # RULE 10: Log but don't silence - try fallback
+
+                # Fallback: Manually extract from table
+                try:
+                    class CustomerTable(BaseModel):
+                        class Customer(BaseModel):
+                            name: str
+                            email: str
+                            status: str
+                            joined_date: Optional[str] = None
+
+                        customers: List[Customer]
+
+                    # RULE 9: Always rebuild outermost model
+                    CustomerTable.model_rebuild()
+
+                    table_data = await action_provider.browser_observe(
+                        "Extract all customer information from the visible table",
+                        response_format=CustomerTable
+                    )
+
+                    return {{
+                        "source": "table_extraction",
+                        "data": {{
+                            "customers": [c.dict() for c in table_data.customers],
+                            "total_count": len(table_data.customers)
+                        }}
+                    }}
+
+                except Exception as fallback_e:
+                    print(f"Table extraction also failed: {{fallback_e}}")
+                    # RULE 10: Must re-raise
+                    raise ValueError(f"Both export ({{e}}) and table extraction ({{fallback_e}}) failed")
+
+        # The main plan shows how everything comes together
+        @verify
+        async def main_plan():
+            \"\"\"Main entry point demonstrating a complete workflow.
+
+            RULE 2: This is the required entry point for the plan.
+            \"\"\"
+            print("Starting customer data processing workflow")
+
+            # Navigate to the system
+            await action_provider.browser_navigate("https://crm.example.com")
+
+            # Login (would typically be implemented or stubbed based on confidence)
+            await login_to_system("admin", "password123")
+
+            # Process the data with fallbacks
+            customer_data = await process_customer_data()
+
+            # Send notifications (demonstrates handle-based tools)
+            if customer_data["source"] == "export":
+                confirmations = await send_appointment_reminders([
+                    {{"phone": "+1234567890", "time": "3pm", "doctor": "Smith"}}
+                ])
+
+            print(f"Workflow completed. Processed {{customer_data['data']['total_count']}} customers")
+            return customer_data
+        ```
+
+        **Browser Automation with Strategic Stubbing**
+        This example shows the recommended approach for web automation tasks.
         # This function is implemented directly because navigating and searching are simple, high-confidence actions.
         @verify
         async def search_for_product() -> str:
@@ -332,6 +725,468 @@ def _build_rules_and_examples_prompt(
     )
 
 
+def _build_dynamic_implement_rules_and_examples(
+    tools: Dict[str, Callable],
+    strategy_instruction: str,
+    tool_usage_instruction: str,
+) -> str:
+    """Builds the reusable block of core rules and examples for dynamic implementation."""
+    tool_reference = _build_tool_signatures(tools)
+    handle_apis = _build_handle_apis(tools)
+
+    strategy_instruction += textwrap.dedent(
+        """\n
+        ---
+        ### Strategic Principles for Web Automation
+        To create a robust and efficient plan, follow these core principles:
+        1.  **Trust the Agent's Autonomy**: The `browser_act` tool is autonomous. Give it high-level goals. Instead of writing separate steps for "click username field", "type username", "click password field", "type password", and "click login", you should create a single step: `await action_provider.browser_act("Log in with username 'test' and password 'pass123'")`. The agent will handle the intermediate steps.
+        2.  **Combine Action and Verification**: Use the `expectation` parameter in `browser_act` to tell the agent what success looks like. This is more efficient than a separate `browser_observe` call. For example: `await action_provider.browser_act("Click the 'Add to Cart' button", expectation="The cart icon should show '1' item")`.
+        3.  **Use `browser_observe` for Complex Data**: When you need to extract structured data (like a list of products, table contents, or form fields), use `browser_observe` with a Pydantic `response_format`. This is the best way to gather context before acting on complex pages.
+        4.  **Describe Visually**: All browser tools operate on what is *visible*. Describe elements by their text, color, or relative position (e.g., "the blue 'Save' button at the bottom of the form"), not by HTML attributes.
+        5.  **Use Fallback Capabilities**: If a website's interactive feature (e.g., a "Convert" button, a "Sort" dropdown) fails or doesn't meet your needs, don't give up. Instead, consider if you can achieve the goal using a more fundamental tool. For instance, if you can observe the raw data, you can often use `action_provider.reason` to perform the necessary calculation, transformation, or analysis yourself.
+        ---
+        """,
+    )
+
+    instructions_and_rules = textwrap.dedent(
+        """
+        ### 🎯 CRITICAL RULES FOR DYNAMIC FUNCTION IMPLEMENTATION
+
+        1.  **Single Code Block:** Your entire response MUST be a single, valid Python code block.
+            ```python
+            # ✅ CORRECT: Just one function implementation
+            async def extract_data():
+                # Full implementation here
+                pass
+
+            # ❌ WRONG: Multiple functions or extra code
+            def helper():
+                pass
+            async def extract_data():
+                pass
+            ```
+
+        2.  **Scope and Imports:** ALL imports must be placed **inside** the function.
+            ```python
+            # ❌ WRONG: Top-level imports
+            from pydantic import BaseModel
+            from typing import Optional
+
+            async def my_function():
+                pass
+
+            # ✅ CORRECT: All imports inside the function
+            async def my_function():
+                from pydantic import BaseModel
+                from typing import Optional
+                import json
+                import re
+                # Rest of implementation
+            ```
+
+        3.  **Decorators & Docstrings:** Include comprehensive docstrings, but NO decorators.
+            ```python
+            # ❌ WRONG: Using @verify decorator
+            @verify
+            async def process_data():
+                pass
+
+            # ✅ CORRECT: No decorators, clear docstring
+            async def process_data(items: list[dict]) -> dict:
+                \"\"\"Process and analyze item data.
+
+                Args:
+                    items: List of item dictionaries
+
+                Returns:
+                    dict: Processed results with statistics
+                \"\"\"
+            ```
+
+        4.  **Async All The Way:** Function MUST be async.
+            ```python
+            # ❌ WRONG: Regular function
+            def extract_info():
+                return data
+
+            # ✅ CORRECT: Async function
+            async def extract_info():
+                return data
+            ```
+
+        5.  **Await Keyword:** ALWAYS await async action_provider methods.
+            ```python
+            # ❌ WRONG: Missing await
+            result = action_provider.browser_observe("Get data")
+
+            # ✅ CORRECT: With await
+            result = await action_provider.browser_observe("Get data")
+            ```
+
+        6.  **Structured Output with Pydantic - THE COMPLETE PATTERN:**
+            ```python
+            async def extract_structured_data():
+                # Step 1: Import inside function
+                from pydantic import BaseModel, Field
+                from typing import Optional, List
+
+                # Step 2: Define models inside function
+                class Product(BaseModel):
+                    name: str
+                    price: float
+                    # Step 3: Use Optional for potentially missing fields
+                    rating: Optional[float] = Field(default=None)
+                    in_stock: bool = Field(description="Availability status")
+
+                class ProductList(BaseModel):
+                    products: List[Product]
+                    total: int
+
+                # Step 4: CRITICAL - Call model_rebuild() on outermost model
+                ProductList.model_rebuild()
+
+                # Step 5: Use with response_format
+                result = await action_provider.browser_observe(
+                    "Extract all products with details",
+                    response_format=ProductList
+                )
+
+                # ❌ WRONG: Forgetting model_rebuild()
+                # ❌ WRONG: Not using Optional for missing fields
+                # ❌ WRONG: Defining models outside the function
+            ```
+
+        7.  **Robust Error Handling:** Log errors but ALWAYS re-raise.
+            ```python
+            # ❌ WRONG: Silencing errors
+            try:
+                result = await risky_operation()
+            except Exception as e:
+                print(f"Failed: {{e}}")
+                return None  # Never do this!
+
+            # ✅ CORRECT: Log and re-raise
+            try:
+                result = await risky_operation()
+            except Exception as e:
+                print(f"Operation failed: {{e}}")
+                raise  # Always re-raise!
+
+            # ✅ CORRECT: With fallback and re-raise
+            try:
+                # Primary approach
+                result = await primary_method()
+            except Exception as e:
+                print(f"Primary failed: {{e}}")
+                try:
+                    # Fallback approach
+                    result = await fallback_method()
+                except Exception as fallback_e:
+                    print(f"Fallback also failed: {{fallback_e}}")
+                    raise ValueError(f"Both methods failed: {{e}}, {{fallback_e}}")
+            ```
+
+        8.  **Action Provider Usage:** Use directly as global, no imports or type hints.
+            ```python
+            # ❌ WRONG: Importing or typing ActionProvider
+            from somewhere import ActionProvider
+            def my_func(action_provider: ActionProvider):
+                pass
+
+            # ❌ WRONG: Creating ActionProvider instance
+            action_provider = ActionProvider()
+
+            # ✅ CORRECT: Use directly as if it exists globally
+            async def my_func():
+                result = await action_provider.browser_navigate("https://example.com")
+                data = await action_provider.browser_observe("Get page title")
+            ```
+        """,
+    )
+
+    return textwrap.dedent(
+        f"""
+        ---
+        ### Core Instructions & Rules
+        {instructions_and_rules}
+        ---
+        ### Strategy & Tool Usage
+        {strategy_instruction}
+        {tool_usage_instruction}
+
+        ---
+        ### Tools Reference
+        You have access to a global `action_provider` object with the following methods. You must call them with the correct arguments as specified here.
+        ```json
+        {tool_reference}
+        ```
+
+        ---
+        ### Handle APIs
+        Some tools return a "handle" object for ongoing interaction. The available methods for these handles are listed below. You MUST only use the methods listed.
+
+        {handle_apis}
+
+        ---
+        ### Usage Examples for Dynamic Function Implementation
+
+        **CONTEXT:** You are implementing a SINGLE function that was previously stubbed. These examples show how to properly implement functions following all the rules above.
+
+        **Example 1: Using Handle-Based Tools (SMS Message)**
+        This shows how to use the `send_sms_message` tool which returns a SteerableToolHandle.
+        ```python
+        async def send_appointment_reminder(phone_number: str, appointment_details: str) -> str:
+            "\"\"\Sends an SMS reminder about an appointment.
+
+            Args:
+                phone_number: The phone number to text
+                appointment_details: Details about the appointment
+
+            Returns:
+                str: Confirmation message or delivery status
+            \"\"\"
+            print(f"Sending SMS to {{phone_number}}")
+
+            # The send_sms_message tool returns a handle for ongoing interaction
+            try:
+                # Await the tool to get the interactive handle
+                sms_handle = await action_provider.send_sms_message(
+                    f"Text {{phone_number}} to remind them about their {{appointment_details}}"
+                )
+
+                # The handle allows ongoing interaction if needed
+                # For simple cases, just get the final result
+                result = await sms_handle.result()
+
+                print(f"SMS sent successfully: {{result}}")
+                return result
+
+            except Exception as e:
+                print(f"Failed to send SMS: {{e}}")
+                raise
+        ```
+
+        **Example 2: Using Handle-Based Tools (Phone Call with Interaction)**
+        This demonstrates the full capabilities of SteerableToolHandle with the start_call tool.
+        ```python
+        async def conduct_detailed_appointment_call(phone_number: str, appointment_info: dict) -> dict:
+            "\"\"\Makes an interactive phone call to confirm appointment details.
+
+            Args:
+                phone_number: The phone number to call
+                appointment_info: Dict with 'date', 'time', 'doctor' keys
+
+            Returns:
+                dict: Detailed call outcomes including confirmation status
+            "\"\"\
+            # Imports inside the function
+            from pydantic import BaseModel, Field
+            from typing import Optional
+
+            print(f"Starting call to {{phone_number}}")
+
+            # Note: start_call is synchronous and returns a Call handle immediately
+            call_handle = action_provider.start_call(
+                phone_number=phone_number,
+                purpose=f"Confirm appointment on {{appointment_info['date']}} at {{appointment_info['time']}} with Dr. {{appointment_info['doctor']}}"
+            )
+
+            try:
+                # The Call handle is a SteerableToolHandle with special methods
+                # You can interact during the call with ask() or interject()
+
+                # Example of asking a specific question during the call
+                allergy_handle = await call_handle.ask("Do you have any medication allergies we should know about?")
+                allergy_info = await allergy_handle.result()
+
+                # You can also just wait for the full call to complete
+                full_transcript = await call_handle.result()
+
+                print("Call completed, analyzing results...")
+
+                # Define models for structured analysis
+                class CallSummary(BaseModel):
+                    appointment_confirmed: bool = Field(description="Whether the appointment was confirmed")
+                    has_allergies: bool = Field(description="Whether patient reported any allergies")
+                    allergy_details: Optional[str] = Field(default=None, description="Specific allergy information if any")
+                    needs_followup: bool = Field(description="Whether a follow-up call is needed")
+                    additional_notes: Optional[str] = Field(default=None, description="Any other important information")
+
+                # CRITICAL: Always rebuild Pydantic models
+                CallSummary.model_rebuild()
+
+                # Analyze the complete call
+                analysis = await action_provider.reason(
+                    request="Analyze this phone call transcript and extract key information about the appointment confirmation and any medical information discussed",
+                    context=f"Full call transcript: {{full_transcript}}\n\nAllergy question response: {{allergy_info}}",
+                    response_format=CallSummary
+                )
+
+                return {{
+                    "confirmed": analysis.appointment_confirmed,
+                    "allergies": {{
+                        "has_allergies": analysis.has_allergies,
+                        "details": analysis.allergy_details
+                    }},
+                    "needs_folloswup": analysis.needs_followup,
+                    "notes": analysis.additional_notes
+                }}
+
+            except Exception as e:
+                print(f"Call failed or was interrupted: {{e}}")
+                raise
+
+        ```
+
+        **Example 3: Browser Data Extraction with Pydantic Models**
+        This shows the proper pattern for extracting structured data from web pages.
+        ```python
+        async def extract_product_listings() -> list[dict]:
+            "\"\"\Extracts all product information from a search results page.
+
+            Returns:
+                list[dict]: List of products with name, price, rating, and availability
+            \"\"\"
+            # All imports inside the function
+            from pydantic import BaseModel, Field
+            from typing import Optional, List
+
+            print("Extracting product listings from current page...")
+
+            # Define the data models inside the function
+            class Product(BaseModel):
+                name: str = Field(description="Product name or title")
+                price: float = Field(description="Numeric price without currency symbol")
+                currency: str = Field(description="Currency code or symbol")
+                # Use Optional for fields that might not always be present
+                rating: Optional[float] = Field(default=None, description="Average rating out of 5")
+                review_count: Optional[int] = Field(default=None, description="Number of reviews")
+                in_stock: bool = Field(description="Whether the item is available")
+                image_url: Optional[str] = Field(default=None, description="Product image URL if visible")
+
+            class ProductListings(BaseModel):
+                products: List[Product] = Field(description="All products found on the page")
+                total_results: Optional[int] = Field(default=None, description="Total number of results if shown")
+
+            # CRITICAL: Always call model_rebuild() on the outermost model
+            ProductListings.model_rebuild()
+
+            try:
+                # Use browser_observe with structured output
+                result = await action_provider.browser_observe(
+                    "Extract all products from this search results page. For each product, get the name, "
+                    "numeric price (without currency), currency symbol/code, rating if shown, review count if shown, "
+                    "stock availability, and image URL if visible. Also note the total number of results if displayed.",
+                    response_format=ProductListings
+                )
+
+                # Process and return the data
+                products_data = []
+                for product in result.products:
+                    products_data.append({{
+                        "name": product.name,
+                        "price": product.price,
+                        "currency": product.currency,
+                        "rating": product.rating,
+                        "review_count": product.review_count,
+                        "in_stock": product.in_stock,
+                        "image_url": product.image_url
+                    }})
+
+                print(f"Successfully extracted {{len(products_data)}} products")
+                return products_data
+
+            except Exception as e:
+                print(f"Failed to extract product listings: {{e}}")
+                raise
+        ```
+
+        **Example 4: Complex Operation with Fallback Strategy**
+        This demonstrates robust error handling with fallback approaches.
+        ```python
+        async def complete_checkout_process(payment_info: dict) -> dict:
+            "\"\"\Completes the checkout process with payment information.
+
+            Args:
+                payment_info: Dict containing 'card_number', 'cvv', 'expiry', 'zip'
+
+            Returns:
+                dict: Order confirmation details
+            \"\"\"
+            from pydantic import BaseModel, Field
+            from typing import Optional
+
+            print("Starting checkout process...")
+
+            # Define expected output structure
+            class OrderConfirmation(BaseModel):
+                order_number: str = Field(description="The order confirmation number")
+                total_amount: float = Field(description="Total amount charged")
+                delivery_date: Optional[str] = Field(default=None, description="Expected delivery date if shown")
+                confirmation_email: Optional[str] = Field(default=None, description="Email where confirmation was sent")
+
+            OrderConfirmation.model_rebuild()
+
+            try:
+                # Primary approach: Fill out the payment form
+                await action_provider.browser_act(
+                    f"Fill out the payment form with card ending in {{payment_info['card_number'][-4:]}}, "
+                    f"CVV {{payment_info['cvv']}}, expiry {{payment_info['expiry']}}, and billing zip {{payment_info['zip']}}. "
+                    f"Then click the 'Place Order' or 'Complete Purchase' button.",
+                    expectation="Should see an order confirmation page with order number"
+                )
+
+                # Extract confirmation details
+                confirmation = await action_provider.browser_observe(
+                    "Extract the order confirmation number, total amount charged, expected delivery date, and confirmation email address",
+                    response_format=OrderConfirmation
+                )
+
+                print(f"Order placed successfully: {{confirmation.order_number}}")
+                return {{
+                    "success": True,
+                    "order_number": confirmation.order_number,
+                    "total": confirmation.total_amount,
+                    "delivery_date": confirmation.delivery_date,
+                    "email": confirmation.confirmation_email
+                }}
+
+            except Exception as e:
+                print(f"Primary checkout approach failed: {{e}}")
+
+                # Fallback: Try alternative checkout flow
+                try:
+                    print("Attempting PayPal checkout as fallback...")
+
+                    await action_provider.browser_act(
+                        "Click on 'PayPal' or 'Pay with PayPal' option",
+                        expectation="Should redirect to PayPal login or show PayPal frame"
+                    )
+
+                    # Note: In real scenario, would handle PayPal flow
+                    # This is simplified for example
+                    return {{
+                        "success": True,
+                        "order_number": "PAYPAL-PENDING",
+                        "total": 0.0,
+                        "delivery_date": None,
+                        "email": None,
+                        "payment_method": "paypal_redirect"
+                    }}
+
+                except Exception as fallback_e:
+                    print(f"Fallback PayPal approach also failed: {{fallback_e}}")
+                    # Re-raise with full context
+                    raise ValueError(
+                        f"Unable to complete checkout. "
+                        f"Credit card error: {{e}}, "
+                        f"PayPal error: {{fallback_e}}"
+                    )
+        ```
+    """,
+    )
+
+
 def _format_existing_functions(existing_functions: Dict[str, Any]) -> str:
     """Formats the library of existing functions into clean code blocks."""
     if not existing_functions:
@@ -369,7 +1224,7 @@ def build_initial_plan_prompt(
     )
     tool_usage_instruction = "Use the `action_provider` global object to interact with the environment. Available tools and their handle APIs have been described in the rules below."
 
-    rules_and_examples = _build_rules_and_examples_prompt(
+    rules_and_examples = _build_initial_plan_rules_and_examples(
         tools,
         strategy_instruction,
         tool_usage_instruction,
@@ -490,11 +1345,10 @@ def build_dynamic_implement_prompt(
         "Your task is to analyze the situation and decide on the best course of action."
     )
     tool_usage_instruction = "Use the `action_provider` global object to interact with the environment. Available tools and their handle APIs have been described in the rules below."
-    rules_and_examples = _build_rules_and_examples_prompt(
+    rules_and_examples = _build_dynamic_implement_rules_and_examples(
         tools,
         strategy_instruction,
         tool_usage_instruction,
-        is_dynamic_implement=True,
     )
 
     return textwrap.dedent(
@@ -502,7 +1356,7 @@ def build_dynamic_implement_prompt(
         You are an expert Python programmer and a master strategist. Your task is to analyze the state of a running plan and decide the best course of action for the function `{function_name}`.
 
         **CRITICAL: You must choose one of three actions:**
-        1.  **`implement_function`**: Write the Python code for `{function_name}`. Choose this if the function's goal is achievable from the current browser state.
+        1.  **`implement_function`**: Write the Python code for `{function_name}`. Choose this if the function's goal is achievable from the current browser state. **Your code MUST be a single, self-contained `async def` function block. DO NOT include top-level imports or class definitions outside the function.** All necessary imports and helper classes MUST be defined *inside* the function.
         2.  **`skip_function`**: Bypass this function entirely. Choose this if you observe that the function's goal is **already completed** or is now **irrelevant**. For example, skip a "log in" function if you are already logged in.
         3.  **`replan_parent`**: Escalate the failure to the calling function. Choose this if the current function is **impossible to implement** because of a mistake made in a *previous* step. For example, if the goal is "apply filters" but the page has no filter controls, the error lies with the parent function that navigated to the wrong page or failed to get to the right state.
 
@@ -637,7 +1491,7 @@ def build_plan_surgery_prompt(
     """
     strategy_instruction = "Your task is to rewrite the script below to incorporate the user's change request."
     tool_usage_instruction = "Use the `action_provider` global object to interact with the environment. Available tools and their handle APIs have been described in the rules below."
-    rules_and_examples = _build_rules_and_examples_prompt(
+    rules_and_examples = _build_initial_plan_rules_and_examples(
         tools,
         strategy_instruction,
         tool_usage_instruction,
@@ -684,7 +1538,7 @@ def build_course_correction_prompt(
 2.  If it is NOT suitable, write a script containing an `async def course_correction_main()` function. This script must use the `action_provider` to navigate to the correct starting state for the new plan.
 3.  If the current state is already suitable, respond ONLY with the single word: `None`."""
     tool_usage_instruction = "Use the `action_provider` global object as defined in the examples and reference to perform any needed actions."
-    rules_and_examples = _build_rules_and_examples_prompt(
+    rules_and_examples = _build_initial_plan_rules_and_examples(
         tools,
         strategy_instruction,
         tool_usage_instruction,
