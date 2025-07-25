@@ -86,9 +86,7 @@ class ContactManager(BaseContactManager):
                 self._search_contacts,
                 self._nearest_contacts,
                 self._create_contact,
-                self._create_contacts,
                 self._update_contact,
-                self._update_contacts,
                 self._create_custom_column,
                 self._delete_custom_column,
                 include_class_name=False,
@@ -1087,97 +1085,6 @@ class ContactManager(BaseContactManager):
             ],
         )
         return [Contact(**lg.entries) for lg in logs]
-
-    # ────────────────────────────────────────────────────────────────── #
-    #  Batched variants (concurrent, fault-tolerant)                   #
-    # ────────────────────────────────────────────────────────────────── #
-
-    async def _create_contacts(
-        self,
-        *,
-        contacts: List[Dict[str, Any]],
-    ) -> List[ToolOutcome]:
-        """
-        **Batched** version of :py:meth:`_create_contact`.
-
-        Performs every insertion concurrently in background threads so that
-        a single failure never blocks the remaining items.
-
-        Returns the list of **new** ``contact_id`` values in the *original
-        order*.  If *any* contact fails, a **RuntimeError** is raised that
-        clearly lists *both* the successes *and* failures – allowing the
-        caller to retry only what is necessary.
-        """
-
-        if not isinstance(contacts, list):
-            raise ValueError("`contacts` must be a list of dictionaries.")
-
-        async def _safe_create(idx: int, kw: Dict[str, Any]):
-            try:
-                cid = await asyncio.to_thread(self._create_contact, **kw)
-                return ("ok", idx, cid)
-            except Exception as e:
-                return ("err", idx, str(e))
-
-        results = await asyncio.gather(
-            *(_safe_create(i, kw) for i, kw in enumerate(contacts)),
-        )
-
-        ok: Dict[int, ToolOutcome] = {}
-        err: Dict[int, str] = {}
-        for status, idx, payload in results:
-            (ok if status == "ok" else err)[idx] = payload
-
-        if err:
-            raise RuntimeError(
-                "Partial success while creating contacts – "
-                f"{len(ok)}/{len(contacts)} succeeded.\n"
-                f"Successes (index → contact_id): {ok}\n"
-                f"Failures (index → error): {err}\n"
-                "⚠️  Do **not** retry the successful items.",
-            )
-
-        return [ok[i] for i in range(len(contacts))]
-
-    async def _update_contacts(
-        self,
-        *,
-        contacts: List[Dict[str, Any]],
-    ) -> List[int]:
-        """
-        **Batched** version of :py:meth:`_update_contact` with identical
-        concurrency & error-handling semantics to :py:meth:`_create_contacts`.
-        """
-
-        if not isinstance(contacts, list):
-            raise ValueError("`contacts` must be a list of dictionaries.")
-
-        async def _safe_update(idx: int, kw: Dict[str, Any]):
-            try:
-                cid = await asyncio.to_thread(self._update_contact, **kw)
-                return ("ok", idx, cid)
-            except Exception as e:
-                return ("err", idx, str(e))
-
-        results = await asyncio.gather(
-            *(_safe_update(i, kw) for i, kw in enumerate(contacts)),
-        )
-
-        ok: Dict[int, ToolOutcome] = {}
-        err: Dict[int, str] = {}
-        for status, idx, payload in results:
-            (ok if status == "ok" else err)[idx] = payload
-
-        if err:
-            raise RuntimeError(
-                "Partial success while updating contacts – "
-                f"{len(ok)}/{len(contacts)} succeeded.\n"
-                f"Successes (index → contact_id): {ok}\n"
-                f"Failures (index → error): {err}\n"
-                "⚠️  Do **not** retry the successful items.",
-            )
-
-        return [ok[i] for i in range(len(contacts))]
 
     @staticmethod
     def _inject_broader_context(msgs: list[dict]) -> list[dict]:
