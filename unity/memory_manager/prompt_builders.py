@@ -129,11 +129,13 @@ def build_bio_prompt(
     # the assistant remain unambiguous.
     assistant_full = _assistant_name()
     lines.append(
-        f"IMPORTANT: Whenever you mention the assistant, {assistant_full}, in this bio, address them using second-person pronouns – e.g. 'you', 'your' – rather than their name {assistant_full} or third-person forms.",
-    )
-    lines.append("")
-    lines.append(
         f"You are updating the *bio* for contact **{contact_name}**.",
+    )
+    lines.append(
+        f"This bio is being written exclusively for {assistant_full}! Therefore always address them using second-person pronouns – e.g. 'you', 'your' – rather than their name {assistant_full} or third-person forms.",
+    )
+    lines.append(
+        f"In contrast, {contact_name} *must* always be referred to in the third-party ('{contact_name} works here' etc.), such that {assistant_full} clearly knows who the bio is about when reading it.",
     )
 
     lines += [
@@ -184,12 +186,15 @@ def build_rolling_prompt(
     # be referred to in **second person** so that subsequent prompts shown to
     # the assistant remain unambiguous.
     assistant_full = _assistant_name()
-    lines.append(
-        f"IMPORTANT: Whenever you mention the assistant, {assistant_full}, in this rolling summary, address them using second-person pronouns – e.g. 'you', 'your' – rather than their name {assistant_full} or third-person forms.",
-    )
     lines.append("")
     lines.append(
         f"You are updating the *rolling summary* for contact **{contact_name}**.",
+    )
+    lines.append(
+        f"This summary is being written exclusively for {assistant_full}! Therefore always address them using second-person pronouns – e.g. 'you', 'your' – rather than their name {assistant_full} or third-person forms.",
+    )
+    lines.append(
+        f"In contrast, {contact_name} *must* always be referred to in the third-party ('{contact_name} did this' etc.), such that {assistant_full} clearly knows who the summary is about when reading it.",
     )
 
     lines += [
