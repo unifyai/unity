@@ -856,9 +856,9 @@ class CommsAgent:
                         "api_key": os.environ.get("UNIFY_KEY"),
                     },
                 )
-                EVENT_BUS._get_logger().session.headers["Authorization"] = (
-                    f"Bearer {os.environ['UNIFY_KEY']}"
-                )
+                EVENT_BUS._get_logger().session.headers[
+                    "Authorization"
+                ] = f"Bearer {os.environ['UNIFY_KEY']}"
         except Exception as e:
             print(f"Error initializing unity: {e}")
             traceback.print_exc()
@@ -866,9 +866,9 @@ class CommsAgent:
 
         if self.transcript_manager is None:
             self.transcript_manager = TranscriptManager()
-            self.transcript_manager._get_logger().session.headers["Authorization"] = (
-                f"Bearer {os.environ['UNIFY_KEY']}"
-            )
+            self.transcript_manager._get_logger().session.headers[
+                "Authorization"
+            ] = f"Bearer {os.environ['UNIFY_KEY']}"
 
         try:
             bus_event = Event.from_dict(event["event"]).to_bus_event()
