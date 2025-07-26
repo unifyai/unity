@@ -87,6 +87,7 @@ class ContactManager(BaseContactManager):
                 self._nearest_contacts,
                 self._create_contact,
                 self._update_contact,
+                self._delete_contact,
                 self._create_custom_column,
                 self._delete_custom_column,
                 include_class_name=False,
@@ -1004,6 +1005,51 @@ class ContactManager(BaseContactManager):
         )
         return {
             "outcome": "contact updated",
+            "details": {"contact_id": contact_id},
+        }
+
+    def _delete_contact(
+        self,
+        *,
+        contact_id: int,
+    ) -> ToolOutcome:
+        """
+        Permanently **remove** a contact from storage.
+
+        Parameters
+        ----------
+        contact_id : int
+            Identifier of the contact to delete.
+
+        Returns
+        -------
+        ToolOutcome
+            Confirmation of deletion with the contact_id.
+        """
+        # Protect special contacts (assistant/user) from accidental deletion
+        if contact_id in (0, 1):
+            raise RuntimeError("Cannot delete system contacts with id 0 or 1.")
+
+        log_ids = unify.get_logs(
+            context=self._ctx,
+            filter=f"contact_id == {contact_id}",
+            return_ids_only=True,
+        )
+        if not log_ids:
+            raise ValueError(
+                f"No contact found with contact_id {contact_id} to delete.",
+            )
+        if len(log_ids) > 1:
+            raise RuntimeError(
+                f"Multiple contacts found with contact_id {contact_id}. Data integrity issue.",
+            )
+
+        unify.delete_logs(
+            context=self._ctx,
+            logs=log_ids,
+        )
+        return {
+            "outcome": "contact deleted",
             "details": {"contact_id": contact_id},
         }
 
