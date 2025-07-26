@@ -875,7 +875,7 @@ class ContactManager(BaseContactManager):
                 continue
             logs = unify.get_logs(
                 context=self._ctx,
-                filter=f"{key} == '{value}'",
+                filter=f"{key} == {value!r}",
             )
             assert (
                 len(logs) == 0
@@ -975,7 +975,7 @@ class ContactManager(BaseContactManager):
             if key in unique_fields and value is not None:
                 logs = unify.get_logs(
                     context=self._ctx,
-                    filter=f"{key} == '{value}' and contact_id != {contact_id}",
+                    filter=f"{key} == {value!r} and contact_id != {contact_id}",
                 )
                 if logs:
                     raise ValueError(

@@ -625,10 +625,14 @@ class TaskScheduler(BaseTaskScheduler):
             raise ValueError("Both 'name' and 'description' are required")
 
         # uniqueness (name / description)
+        # Escape *value* via ``repr`` so that any internal quotes (like apostrophes)
+        # do **not** break the filter expression.  Using ``!r`` ensures that we
+        # always generate a *valid* Python string literal regardless of the
+        # characters contained in *value*.
         for key, value in {"name": name, "description": description}.items():
             clashes = unify.get_logs(
                 context=self._ctx,
-                filter=f"{key} == '{value}'",
+                filter=f"{key} == {value!r}",
                 limit=1,
             )
             if clashes:
