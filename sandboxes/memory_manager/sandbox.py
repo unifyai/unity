@@ -6,20 +6,20 @@ Sandbox for **MemoryManager** maintenance tasks.
 Supports plain-text *or* voice capture of the initial transcript
 description via the ``--voice/-v`` flag (same UX as the other sandboxes).
 
-┌────────────── 11 accepted commands ─────────────┐
-│ uc   –– update_contacts                         │
-│ ucb {contact_id[, …]}  –– update_contact_bio                      │
-│ ucrs {contact_id[, …]} –– update_contact_rolling_summary          │
-│ uk   –– update_knowledge                        │
-│ ut   –– update_tasks                           │
-│ cc        –– clear Contacts store               │
-│ ccb       –– clear Contact bios      (alias cc) │
-│ ccrs      –– clear Rolling summaries (alias cc) │
-│ ck        –– clear Knowledge store              │
-│ nt   –– new_transcript {description}            │
-│ ntv  –– new_transcript_vocally (voice only)     │
-│ r    –– record freeform command (voice mode)     │
-└─────────────────────────────────────────────────┘
+┌────────────── 11 accepted commands ───────────────────────┐
+│ uc   –– update_contacts                                   │
+│ ucb {contact_id[, …]}  –– update_contact_bio              │
+│ ucrs {contact_id[, …]} –– update_contact_rolling_summary  │
+│ uk   –– update_knowledge                                  │
+│ ut   –– update_tasks                                      │
+│ cc        –– clear Contacts store                         │
+│ ccb       –– clear Contact bios      (alias cc)           │
+│ ccrs      –– clear Rolling summaries (alias cc)           │
+│ ck        –– clear Knowledge store                        │
+│ nt   –– new_transcript {description}                      │
+│ ntv  –– new_transcript_vocally (voice only)               │
+│ r    –– record freeform command (voice mode)              │
+└───────────────────────────────────────────────────────────┘
 
 After typing **uc / ucb / ucrs / uk / ut** you will be *asked* for the message
 **range** in a second prompt.  Use Python-slice style notation just like
