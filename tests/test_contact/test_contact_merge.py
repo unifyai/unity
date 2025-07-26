@@ -1,8 +1,12 @@
 from __future__ import annotations
 
 import pytest
+from datetime import datetime, timezone
 
 from unity.contact_manager.contact_manager import ContactManager
+from unity.transcript_manager.transcript_manager import TranscriptManager
+from unity.transcript_manager.types.message import Message
+
 from tests.helpers import _handle_project
 
 
@@ -65,6 +69,73 @@ def test_merge_contacts_private():
     assert (
         len(cm._search_contacts(filter=f"contact_id == {deleted_id}")) == 0
     ), "Deleted contact should be removed after merge"
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 3.  Merge must rewrite TranscriptManager ids                                #
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+@pytest.mark.unit
+@_handle_project
+def test_merge_contacts_updates_transcripts():
+    """Merging contacts should rewrite historic transcript ids."""
+
+    cm = ContactManager()
+    tm = TranscriptManager(contact_manager=cm)
+
+    # Create two contacts – cid1 will survive, cid2 will be removed
+    cid1 = cm._create_contact(first_name="Alice", surname="Smith")["details"][
+        "contact_id"
+    ]
+    cid2 = cm._create_contact(first_name="Alicia", surname="Jones")["details"][
+        "contact_id"
+    ]
+
+    # Log a message where *cid2* appears (as sender here)
+    EX_ID = 12345  # unique exchange identifier
+    tm.log_messages(
+        Message(
+            medium="email",
+            sender_id=cid2,
+            receiver_ids=[cid1],
+            timestamp=datetime.now(timezone.utc),
+            content="Hello from Alicia",
+            exchange_id=EX_ID,
+        ),
+    )
+    tm.join_published()
+
+    # Sanity – cid2 should be present as sender before merge
+    before = tm._search_messages(
+        filter=f"sender_id == {cid2} and exchange_id == {EX_ID}",
+    )
+    assert len(before) == 1, "Precondition failed: expected one message from cid2"
+
+    # Merge: keep cid1, delete cid2, but take name from cid2 to simulate override
+    cm._merge_contacts(
+        contact_id_1=cid1,
+        contact_id_2=cid2,
+        overrides={
+            "first_name": 2,
+            "surname": 2,
+            "contact_id": 1,
+        },
+    )
+
+    # After merge, there should be *no* messages referencing cid2
+    after_old = tm._search_messages(
+        filter=f"sender_id == {cid2} and exchange_id == {EX_ID}",
+    )
+    assert (
+        len(after_old) == 0
+    ), "sender_id referencing deleted contact should be updated"
+
+    # The same message should now reference cid1 instead
+    after_new = tm._search_messages(
+        filter=f"sender_id == {cid1} and exchange_id == {EX_ID}",
+    )
+    assert len(after_new) == 1, "sender_id should be rewritten to surviving contact id"
 
 
 # ─────────────────────────────────────────────────────────────────────────────
