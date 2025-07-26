@@ -75,6 +75,23 @@ class VerificationAssessment(BaseModel):
     reason: str = Field(..., description="A concise explanation for the status.")
 
 
+class CourseCorrectionDecision(BaseModel):
+    """A structured decision on whether course correction is needed."""
+
+    correction_needed: bool = Field(
+        ...,
+        description="True if the current state deviates from the expected state and a correction script is required.",
+    )
+    reason: str = Field(
+        ...,
+        description="A brief explanation of why correction is or is not needed.",
+    )
+    correction_code: Optional[str] = Field(
+        None,
+        description="A short, self-contained Python script using the 'action_provider' to restore the browser state. This should only be provided if correction_needed is True. The script must be a single code block and contain no functions, only a sequence of `await action_provider...` calls.",
+    )
+
+
 class PageAnalysis(BaseModel):
     page_title: str = Field(description="The title of the current page.")
     url: str = Field(description="The current URL.")
@@ -1160,6 +1177,9 @@ class HierarchicalPlanner(BasePlanner):
         self.summarization_client: unify.AsyncUnify = unify.AsyncUnify(
             "gemini-2.5-pro@vertex-ai",
         )
+        self.course_correction_client: unify.AsyncUnify = unify.AsyncUnify(
+            "gemini-2.5-pro@vertex-ai",
+        )
         self.modification_client: unify.AsyncUnify = unify.AsyncUnify("o4-mini@openai")
         self.exploration_client: unify.AsyncUnify = unify.AsyncUnify("o4-mini@openai")
         self.ask_client: unify.AsyncUnify = unify.AsyncUnify("gpt-4o-mini@openai")
@@ -1737,19 +1757,147 @@ class HierarchicalPlanner(BasePlanner):
                         f"Could not add function '{fn.__name__}' to FunctionManager: {e}",
                     )
             return result
-        elif assessment.status == "reimplement_local":
-            await plan._handle_dynamic_implementation(
-                fn.__name__,
-                replan_reason=assessment.reason,
-                failed_interactions=interactions,
-            )
-            raise _ForcedRetryException("Forced retry after local reimplementation")
-        elif assessment.status == "replan_parent":
-            raise ReplanFromParentException(
-                f"Strategic failure in '{fn.__name__}': {assessment.reason}",
-                failed_interactions=interactions,
-            )
-        else:
+        elif assessment.status in ("reimplement_local", "replan_parent"):
+            if plan.last_verified_screenshot:
+                logger.info(
+                    "Function verification failed. Assessing if course correction is needed.",
+                )
+                plan.action_log.append(
+                    "ASSESSING STATE: Verification failed. Checking if browser state is corrupted.",
+                )
+
+                try:
+                    current_url = await self.action_provider.browser.get_current_url()
+                    current_page_analysis = await self.action_provider.browser.observe(
+                        "Analyze the current page state for deviation assessment.",
+                        response_format=PageAnalysis,
+                    )
+
+                    correction_prompt = prompt_builders.build_course_correction_prompt(
+                        last_verified_function_name=plan.last_verified_function_name,
+                        last_verified_url=plan.last_verified_url,
+                        last_verified_page_analysis=plan.last_verified_page_analysis,
+                        has_last_verified_screenshot=plan.last_verified_screenshot
+                        is not None,
+                        current_url=current_url,
+                        current_page_analysis=current_page_analysis,
+                        has_current_screenshot=final_screenshot is not None,
+                        failed_function_name=fn.__name__,
+                        failed_function_docstring=fn.__doc__,
+                        tools=self.tools,
+                    )
+
+                    self.course_correction_client.reset_messages()
+                    content = [{"type": "text", "text": correction_prompt}]
+                    if plan.last_verified_screenshot:
+                        b64_before = base64.b64encode(
+                            plan.last_verified_screenshot,
+                        ).decode("utf-8")
+                        content.insert(
+                            0,
+                            {
+                                "type": "image_url",
+                                "image_url": {
+                                    "url": f"data:image/png;base64,{b64_before}",
+                                },
+                            },
+                        )
+                        content.insert(
+                            0,
+                            {
+                                "type": "text",
+                                "text": "This is the screenshot of the state BEFORE the failure (the last known good state):",
+                            },
+                        )
+
+                    if final_screenshot:
+                        b64_after = base64.b64encode(final_screenshot).decode("utf-8")
+                        content.append(
+                            {
+                                "type": "image_url",
+                                "image_url": {
+                                    "url": f"data:image/png;base64,{b64_after}",
+                                },
+                            },
+                        )
+                        content.insert(
+                            len(content) - 1,
+                            {
+                                "type": "text",
+                                "text": "This is the screenshot of the state AFTER the failure (the current, potentially corrupted state):",
+                            },
+                        )
+
+                    self.course_correction_client.set_response_format(
+                        CourseCorrectionDecision,
+                    )
+                    response_str = await self.course_correction_client.generate(
+                        messages=[{"role": "user", "content": content}],
+                    )
+                    correction_decision = CourseCorrectionDecision.model_validate_json(
+                        response_str,
+                    )
+
+                    if (
+                        correction_decision.correction_needed
+                        and correction_decision.correction_code
+                    ):
+                        plan.action_log.append(
+                            f"COURSE CORRECTION: State deviated. Reason: {correction_decision.reason}. Running correction script.",
+                        )
+                        logger.info(
+                            f"COURSE CORRECTION: State deviated. Reason: {correction_decision.reason}. Correction script generated:\n{correction_decision.correction_code}",
+                        )
+
+                        try:
+                            await self._execute_course_correction(
+                                plan,
+                                correction_decision.correction_code,
+                            )
+                            plan.action_log.append(
+                                "COURSE CORRECTION: State restored successfully.",
+                            )
+                            logger.info(
+                                "COURSE CORRECTION: State restored successfully.",
+                            )
+                        except Exception as e:
+                            logger.error(
+                                f"Course correction script FAILED to execute: {e}",
+                                exc_info=True,
+                            )
+                            plan.action_log.append(
+                                f"CRITICAL: Course correction script FAILED. Proceeding from potentially corrupted state. Error: {e}",
+                            )
+                    else:
+                        plan.action_log.append(
+                            "COURSE CORRECTION: No state deviation detected. Proceeding with reimplementation directly.",
+                        )
+
+                except Exception as e:
+                    logger.error(
+                        f"Course correction assessment failed: {e}",
+                        exc_info=True,
+                    )
+                    plan.action_log.append(
+                        f"WARNING: Course correction assessment failed: {e}. Proceeding with reimplementation from current state.",
+                    )
+                finally:
+                    self.course_correction_client.reset_response_format()
+
+            if assessment.status == "replan_parent":
+                raise ReplanFromParentException(
+                    f"Strategic failure in '{fn.__name__}': {assessment.reason}",
+                    failed_interactions=interactions,
+                )
+            else:
+                await plan._handle_dynamic_implementation(
+                    fn.__name__,
+                    replan_reason=assessment.reason,
+                    failed_interactions=interactions,
+                )
+                raise _ForcedRetryException("Forced retry after local reimplementation")
+
+        elif assessment.status == "fatal_error":
             raise FatalVerificationError(
                 f"Fatal error in '{fn.__name__}': {assessment.reason}",
             )
@@ -1990,6 +2138,60 @@ class HierarchicalPlanner(BasePlanner):
         finally:
             self.verification_client.reset_response_format()
 
+    async def _execute_course_correction(self, plan: HierarchicalPlan, code: str):
+        """
+        Executes a temporary, dynamically generated script from a file to correct the browser state.
+
+        Args:
+            plan: The active HierarchicalPlan instance.
+            code: The Python code snippet to execute.
+        """
+        failed_function_name = (
+            plan.call_stack[-1] if plan.call_stack else "unknown_function"
+        )
+        timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+
+        correction_filename = f"correction_for_{failed_function_name}_{timestamp}.py"
+        plans_dir = Path.cwd() / ".unity_plans"
+        plans_dir.mkdir(exist_ok=True)
+        correction_file_path = plans_dir / correction_filename
+
+        script_to_write = f"""
+# Auto-generated course correction script
+# Triggered by failure in: {failed_function_name}
+# Executed at: {timestamp}
+#
+# Goal: Restore browser state to the one left by '{plan.last_verified_function_name}'
+# Target URL: {plan.last_verified_url}
+
+import asyncio
+import textwrap
+
+# The 'action_provider' is injected into the execution namespace by the planner.
+
+async def course_correction_plan():
+    # This is a sequence of actions to restore the state.
+    print("--- Starting Course Correction ---")
+{textwrap.indent(code, '    ')}
+    print("--- Course Correction Finished ---")
+
+"""
+        correction_file_path.write_text(textwrap.dedent(script_to_write).strip())
+
+        logger.info(
+            f"Executing course correction script. See '{correction_file_path}' for details.",
+        )
+        plan.action_log.append(
+            f"Saved course correction script to '{correction_file_path}'.",
+        )
+
+        exec_namespace = plan.execution_namespace
+
+        script_content = correction_file_path.read_text()
+        exec(script_content, exec_namespace)
+
+        correction_func = exec_namespace["course_correction_plan"]
+        await correction_func()
 
     async def close(self):
         """Shuts down the planner and its associated resources gracefully."""
