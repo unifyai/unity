@@ -26,7 +26,7 @@ from datetime import datetime
 import unify
 
 from dotenv import load_dotenv
-from sandboxes.scenario_builder import ScenarioBuilder
+from sandboxes.utils import TranscriptGenerator
 
 # Ensure repository root resolves for local execution
 ROOT = Path(__file__).resolve().parents[1]
@@ -54,16 +54,15 @@ LG = logging.getLogger("transcript_sandbox")
 
 
 async def _build_scenario(custom: Optional[str] = None) -> Optional[str]:
-    """Populate the transcript store **via the official tools** using
-    :class:`ScenarioBuilder`.
+    """Populate the transcript store using :class:`TranscriptGenerator`.
 
-    The tool-loop exposes:
-    • ``_log_messages`` – for inserting raw transcript messages.
-    • ``ask`` – so the LLM can sanity-check its inserts.
+    This higher-level helper abstracts away the low-level message-schema
+    details.  The LLM only needs to describe the desired conversation and
+    `TranscriptGenerator` inserts validated messages directly via
+    `TranscriptManager`, ensuring consistency with the Memory-Manager sandbox.
     """
 
-    tm = TranscriptManager()
-
+    # Fallback description when the caller does not supply a custom brief
     description = (
         custom.strip()
         if custom
@@ -75,35 +74,16 @@ async def _build_scenario(custom: Optional[str] = None) -> Optional[str]:
             "about context, participants and timing are interesting."
         )
     )
-    description += (
-        "\nYou have two tools:\n"
-        "• `_log_messages` — write raw messages (you *must* supply all schema "
-        "  fields).\n"
-        "• `ask` — query what you've created.\n"
-        "Work in batches: insert several related messages at once, then call "
-        "`ask` to confirm everything looks good."
-    )
 
-    def log_messages(messages: list[dict]) -> str:
-        for msg in messages:
-            tm.log_messages(msg)
-        tm.join_published()
-        return "messages logged successfully"
-
-    builder = ScenarioBuilder(
-        description=description,
-        tools={
-            "log_messages": log_messages,
-            "ask": tm.ask,
-        },
-    )
+    generator = TranscriptGenerator()
 
     try:
-        await builder.create()
+        # The generator writes messages via its internal TranscriptManager
+        await generator.generate(description)
     except Exception as exc:
-        raise RuntimeError(f"LLM seeding via ScenarioBuilder failed. {exc}")
+        raise RuntimeError(f"Transcript generation failed: {exc}")
 
-    return None  # kept for signature parity with other sandboxes
+    return None  # Signature retained for compatibility with caller
 
 
 # ═════════════════════════════ intent dispatcher ════════════════════════════
