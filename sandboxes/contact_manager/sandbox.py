@@ -155,14 +155,16 @@ async def _main_async() -> None:
 
     # ─────────────────── Unify context ────────────────────
     activate_project(args.project_name, args.overwrite)
-    unify.set_trace_context("Traces")
+    base_ctx = unify.get_active_context().get("write")
+    traces_ctx = f"{base_ctx}/Traces" if base_ctx else "Traces"
+    unify.set_trace_context(traces_ctx)
     if args.overwrite:
         ctxs = unify.get_contexts()
         if "Contacts" in ctxs:
             unify.delete_context("Contacts")
-        if "Traces" in ctxs:
-            unify.delete_context("Traces")
-        unify.create_context("Traces")
+        if traces_ctx in ctxs:
+            unify.delete_context(traces_ctx)
+        unify.create_context(traces_ctx)
 
     # ─────────────────── project version handling ────────────────────
     if args.project_version != -1:
