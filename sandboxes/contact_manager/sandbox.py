@@ -205,11 +205,9 @@ async def _main_async() -> None:
     def _explain_commands() -> None:  # noqa: D401 – helper
         print(_COMMANDS_HELP)
 
-    _explain_commands()
-
     if args.voice:
         _speak(
-            "Sandbox ready – you can type commands, or press enter on an empty line "
+            "Sandbox ready. You can type commands, or press enter on an empty line "
             "to record a voice query.  Use 'u-s-v' to build a new scenario vocally.",
         )
 
