@@ -6,11 +6,10 @@ Features
 --------
 • Fixed or LLM-generated seed data via :class:`ScenarioBuilder`.
 • Voice or plain-text input (shared helpers).
-• Automatic dispatch to `ask` *or* `summarize` depending on intent.
-• Mid-conversation interruption (pause / interject / cancel) for `ask` calls.
+• Automatic dispatch to `ask` depending on intent.
+• Mid-conversation interruption (pause / interject / cancel).
 • Scenario builder tool-loop exposes **private** ``_log_messages`` alongside
-  the public `ask` and `summarize` methods so that the LLM can inject raw
-  transcripts directly.
+  the public `ask` method so that the LLM can inject raw transcripts directly.
 """
 
 from __future__ import annotations
@@ -19,16 +18,14 @@ from __future__ import annotations
 import os
 import asyncio
 import logging
-import re
 import sys
 from pathlib import Path
-from typing import List, Optional, Tuple, Dict, Union
+from typing import List, Optional, Tuple, Dict
 from datetime import datetime
 
 import unify
 
 from dotenv import load_dotenv
-from pydantic import BaseModel, Field
 from sandboxes.scenario_builder import ScenarioBuilder
 
 # Ensure repository root resolves for local execution
@@ -45,10 +42,10 @@ from sandboxes.utils import (  # shared helpers reused in other sandboxes
     record_until_enter as _record_until_enter,
     transcribe_deepgram as _transcribe_deepgram,
     speak as _speak,
-    get_custom_scenario,
     await_with_interrupt as _await_with_interrupt,
     build_cli_parser,
     activate_project,
+    _wait_for_tts_end as _wait_tts_end,
 )
 
 LG = logging.getLogger("transcript_sandbox")
@@ -62,8 +59,7 @@ async def _build_scenario(custom: Optional[str] = None) -> Optional[str]:
 
     The tool-loop exposes:
     • ``_log_messages`` – for inserting raw transcript messages.
-    • ``ask``             – so the LLM can sanity-check its inserts.
-    • ``summarize``       – optional summarisation during seeding.
+    • ``ask`` – so the LLM can sanity-check its inserts.
     """
 
     tm = TranscriptManager()
@@ -80,13 +76,12 @@ async def _build_scenario(custom: Optional[str] = None) -> Optional[str]:
         )
     )
     description += (
-        "\nYou have three tools:\n"
+        "\nYou have two tools:\n"
         "• `_log_messages` — write raw messages (you *must* supply all schema "
         "  fields).\n"
         "• `ask` — query what you've created.\n"
-        "• `summarize` — store concise summaries of exchanges.\n"
         "Work in batches: insert several related messages at once, then call "
-        "`ask` to confirm, and finally `summarize` important threads."
+        "`ask` to confirm everything looks good."
     )
 
     def log_messages(messages: list[dict]) -> str:
@@ -100,7 +95,6 @@ async def _build_scenario(custom: Optional[str] = None) -> Optional[str]:
         tools={
             "log_messages": log_messages,
             "ask": tm.ask,
-            "summarize": tm.summarize,
         },
     )
 
@@ -115,72 +109,15 @@ async def _build_scenario(custom: Optional[str] = None) -> Optional[str]:
 # ═════════════════════════════ intent dispatcher ════════════════════════════
 
 
-class _Intent(BaseModel):
-    """Lightweight schema used when delegating intent detection to an LLM."""
-
-    action: str = Field(..., pattern=r"^(ask|summarize)$")
-    cleaned_text: str
-
-
-_INTENT_SYS_MSG = (
-    "Decide whether the user input is a question about the transcripts "
-    "(`ask`) or a summarisation request (`summarize`). Summarisation inputs "
-    "may mention one or more *exchange IDs* (integers). Return JSON "
-    "{'action':'ask'|'summarize','cleaned_text':<fixed_input>}."
-)
-
-
-_EXCHANGE_ID_RE = re.compile(r"\b\d+\b")
-
-
-def _extract_exchange_ids(text: str) -> List[int]:
-    """Return all integer tokens found in *text* as a list of `int`."""
-
-    return [int(m.group()) for m in _EXCHANGE_ID_RE.finditer(text)]
-
-
 async def _dispatch_with_context(
     tm: TranscriptManager,
     raw: str,
     *,
     show_steps: bool,
     parent_chat_context: List[Dict[str, str]],
-) -> Tuple[str, Union[SteerableToolHandle, str]]:
-    """Route *raw* to either `ask` or `summarize`, forwarding chat context."""
+) -> Tuple[str, SteerableToolHandle]:
+    """Always route *raw* to `ask`, forwarding parent chat context."""
 
-    lowered = raw.lower()
-
-    # ───── heuristic fast-paths ───────────────────────────────────────────
-    if lowered.startswith(("summarize ", "summarise ", "summary ")):
-        ids = _extract_exchange_ids(raw)
-        if not ids:
-            raise ValueError(
-                "Please mention at least one exchange/thread ID to summarise.",
-            )
-        # Guidance is whatever remains after stripping the first word & IDs
-        guidance = " ".join(w for w in raw.split()[1:] if not w.isdigit()).strip()
-        summary = await tm.summarize(from_exchanges=ids, guidance=guidance or None)
-        return "summarize", summary
-
-    # ───── otherwise maybe ask an LLM judge (rare) ───────────────────────
-    judge = unify.Unify("gpt-4o@openai", response_format=_Intent)
-    intent = _Intent.model_validate_json(
-        judge.set_system_message(_INTENT_SYS_MSG).generate(raw),
-    )
-
-    if intent.action == "summarize":
-        ids = _extract_exchange_ids(intent.cleaned_text)
-        if not ids:
-            raise ValueError(
-                "The summarisation request didn't include any exchange IDs.",
-            )
-        guidance = " ".join(
-            w for w in intent.cleaned_text.split() if not w.isdigit()
-        ).strip()
-        summary = await tm.summarize(from_exchanges=ids, guidance=guidance or None)
-        return "summarize", summary
-
-    # default: ask
     handle = await tm.ask(
         raw,
         parent_chat_context=parent_chat_context,
@@ -234,36 +171,63 @@ async def _main_async() -> None:
     if args.traced:
         tm = unify.traced(tm)
 
-    scenario_text: Optional[str] = get_custom_scenario(args)
-    LG.info("[seed] building synthetic transcript store – can take 30-60 s…")
-    if args.voice:
-        _speak("Sure thing, building your custom scenario now.")
-    await _build_scenario(scenario_text)
-    LG.info("[seed] done.")
-    if args.voice:
-        _speak("All done, your custom scenario is built and ready to go.")
+    # ─────────────────── optional initial seeding ─────────────────────────
+    # No automatic seeding – users can invoke 'us' / 'usv' commands to populate transcripts when desired.
 
-    print("TranscriptManager sandbox – type or speak. 'quit' to exit.\n")
+    # ─────────────────── command helper output ────────────────────
 
-    _speak(
-        "Press enter to ask questions or request a summary from the transcripts.",
+    _COMMANDS_HELP = (
+        "\nTranscriptManager sandbox – type commands below (press ↵ with an empty "
+        "line to dictate via voice when --voice mode is active – type 'r' to record).  'quit' to exit.\n\n"
+        "┌────────────────── accepted commands ─────────────────────┐\n"
+        "│ us  {description}     – update_scenario (text)           │\n"
+        "│ usv                   – update_scenario_vocally          │\n"
+        "│ r / free text         – freeform ask (auto)              │\n"
+        "│ save_project | sp     – save project snapshot            │\n"
+        "│ help | h              – show this help                   │\n"
+        "└──────────────────────────────────────────────────────────┘\n"
     )
+
+    def _explain_commands() -> None:  # noqa: D401 – helper
+        print(_COMMANDS_HELP)
+
+    if args.voice:
+        _speak(
+            "Sandbox ready. You can type commands, or press enter on an empty line "
+            "to record a voice query.  Use 'u-s-v' to build a new scenario vocally.",
+        )
+        _wait_tts_end()
 
     # running memory of the dialogue (passed back into tm.ask for context)
     chat_history: List[Dict[str, str]] = []
 
     # interaction loop
     while True:
+        # Keep command list visible similar to MemoryManager sandbox
+        print()
+        _explain_commands()
+        print()
+
         try:
-            # ─────────────────── capture input (voice / text) ──────────────────
             if args.voice:
-                audio = _record_until_enter()
-                raw = _transcribe_deepgram(audio).strip()
-                if not raw:
-                    continue
-                print(f"▶️  {raw}")
+                # Ensure any ongoing TTS playback has finished before showing prompt
+                _wait_tts_end()
+            if args.voice:
+                # Voice mode prompt with 'r' option
+                raw = input("command ('r' to record)> ").strip()
+                if raw.lower() == "r":
+                    audio = _record_until_enter()
+                    raw = _transcribe_deepgram(audio).strip()
+                    if not raw:
+                        continue
+                    print(f"▶️  {raw}")
             else:
-                raw = input("> ").strip()
+                raw = input("command> ").strip()
+
+            # Show help table
+            if raw.lower() in {"help", "h", "?"}:
+                _explain_commands()
+                continue
 
             if raw.lower() in {"quit", "exit"}:
                 break
@@ -281,6 +245,65 @@ async def _main_async() -> None:
                     _speak("Project saved")
                 continue
 
+            # ─────────────── scenario (re)seeding commands ────────────────
+            parts = raw.split(maxsplit=1)
+            cmd_lower = parts[0].lower()
+
+            if cmd_lower in {"us", "update_scenario"}:
+                # Text-based scenario description supplied after the command, if any
+                description = parts[1].strip() if len(parts) > 1 else ""
+                if not description:
+                    description = input(
+                        "🧮 Describe the transcript scenario you want to build > ",
+                    ).strip()
+                    if not description:
+                        print("⚠️  No description provided – cancelled.")
+                        continue
+
+                print(
+                    "[generate] Building synthetic transcripts – this can take a moment…",
+                )
+                if args.voice:
+                    _speak("Sure thing, building your custom scenario now.")
+                try:
+                    await _build_scenario(description)
+                    if args.voice:
+                        _speak(
+                            "All done, your custom scenario is built and ready to go.",
+                        )
+                except Exception as exc:
+                    LG.error("Scenario generation failed: %s", exc, exc_info=True)
+                    print(f"❌  Failed to generate scenario: {exc}")
+                continue  # back to REPL
+
+            if cmd_lower in {"usv", "update_scenario_vocally"}:
+                if not args.voice:
+                    print(
+                        "⚠️  Voice mode not enabled – restart with --voice or use 'us' instead.",
+                    )
+                    continue
+
+                audio = _record_until_enter()
+                description = _transcribe_deepgram(audio).strip()
+                if not description:
+                    print("⚠️  Transcription was empty – please try again.")
+                    continue
+                print(f"▶️  {description}")
+
+                print(
+                    "[generate] Building synthetic transcripts – this can take a moment…",
+                )
+                try:
+                    await _build_scenario(description)
+                    if args.voice:
+                        _speak(
+                            "All done, your custom scenario is built and ready to go.",
+                        )
+                except Exception as exc:
+                    LG.error("Scenario generation failed: %s", exc, exc_info=True)
+                    print(f"❌  Failed to generate scenario: {exc}")
+                continue  # back to REPL
+
             # ───────────── remember the user's utterance before dispatch ──────
             _kind, result = await _dispatch_with_context(
                 tm,
@@ -297,7 +320,7 @@ async def _main_async() -> None:
                 answer = await _await_with_interrupt(result)
                 if isinstance(answer, tuple):  # reasoning steps requested
                     answer, _steps = answer
-            else:  # already a string (summarize)
+            else:  # already a string (unlikely path)
                 answer = result
 
             if args.voice:
@@ -313,6 +336,8 @@ async def _main_async() -> None:
             break
         except Exception as exc:
             LG.error("[error] %s", exc)
+
+    # end while
 
 
 def main() -> None:
