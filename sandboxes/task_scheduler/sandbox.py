@@ -18,7 +18,6 @@ import logging
 import sys
 from pathlib import Path
 from typing import List, Optional, Tuple, Dict
-import re
 from datetime import datetime
 
 import unify
@@ -147,13 +146,11 @@ async def _dispatch_with_context(
         judge.set_system_message(_INTENT_SYS_MSG).generate(raw),
     )
 
-    if intent.action == "start":
-        task_id = _extract_first_int(intent.cleaned_text)
-        handle = await ts.execute_task(
-            task_id,
-            parent_chat_context=parent_chat_context,
-        )
-    elif intent.action == "update":
+    # For 'start' we no longer attempt to parse a numeric task ID here –
+    # instead we treat it as an *update* request so the LLM can decide how
+    # to promote the relevant task(s) using the official TaskScheduler
+    # tools (e.g. `_update_task_status`).
+    if intent.action in {"update", "start"}:
         handle = await ts.update(
             intent.cleaned_text,
             parent_chat_context=parent_chat_context,
@@ -166,14 +163,6 @@ async def _dispatch_with_context(
             _return_reasoning_steps=show_steps,
         )
     return intent.action, handle
-
-
-def _extract_first_int(text: str) -> int:
-    """Return the first integer found in *text* or raise ValueError."""
-    m = re.search(r"\d+", text)
-    if not m:
-        raise ValueError("Could not find a task ID in the request.")
-    return int(m.group())
 
 
 # ══════════════════════════════════  CLI  ═══════════════════════════════════
