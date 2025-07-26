@@ -18,6 +18,9 @@ from .types.schedule import Schedule
 from .types.trigger import Trigger
 from .types.repetition import RepeatPattern
 from .types.task import Task
+
+# Contact manager import (lazy at module level to avoid cycles in other modules)
+from ..contact_manager.contact_manager import ContactManager
 from ..common.model_to_fields import model_to_fields
 from .prompt_builders import build_ask_prompt, build_update_prompt
 from .base import BaseTaskScheduler
@@ -56,13 +59,22 @@ class TaskScheduler(BaseTaskScheduler):
             daemon (bool): Whether the thread should be a daemon thread.
         """
 
-        # Query-only helpers – safe, read-only operations
-        self._ask_tools = methods_to_tool_dict(
-            self._search_tasks,
-            self._nearest_tasks,
-            self._get_task_queue,
-            include_class_name=False,  # redundant, all same class (this one)
-        )
+        # Instantiate a ContactManager once so its bound methods can act as tools
+        self._contact_manager = ContactManager()
+
+        # Query-only helpers – safe, read-only operations.  Include the *external* contact lookup
+        self._ask_tools = {
+            **methods_to_tool_dict(
+                self._search_tasks,
+                self._nearest_tasks,
+                self._get_task_queue,
+                include_class_name=False,  # redundant, all same class (this one)
+            ),
+            **methods_to_tool_dict(
+                self._contact_manager.ask,
+                include_class_name=True,  # Retain originating class so name is ContactManager.ask
+            ),
+        }
 
         # Write-capable helpers – every mutating operation as well as the read-only ones.
         self._update_tools = {
