@@ -254,14 +254,16 @@ async def entrypoint(ctx: agents.JobContext):
 
     # Setup Unify context
     activate_project(args.project_name, args.overwrite)
-    unify.set_trace_context("Traces")
+    base_ctx = unify.get_active_context().get("write")
+    traces_ctx = f"{base_ctx}/Traces" if base_ctx else "Traces"
+    unify.set_trace_context(traces_ctx)
     if args.overwrite:
         ctxs = unify.get_contexts()
         if "Contacts" in ctxs:
             unify.delete_context("Contacts")
-        if "Traces" in ctxs:
-            unify.delete_context("Traces")
-        unify.create_context("Traces")
+        if traces_ctx in ctxs:
+            unify.delete_context(traces_ctx)
+        unify.create_context(traces_ctx)
 
     # Build scenario and seed data
     scenario_text = "Generate 10 realistic business contacts across EMEA, APAC and AMER. Each contact needs first_name, surname, email_address and phone_number. Also create custom columns with varying industries and locations."
