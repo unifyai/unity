@@ -6,6 +6,29 @@ both transcript_sandbox.py and tasklist_sandbox.py can import them.
 
 from __future__ import annotations
 
+# ---------------------------------------------------------------------------
+# Optional GNU readline support (improves in-line editing & command history)
+# ---------------------------------------------------------------------------
+#
+# On some Python builds the built-in ``input()`` function lacks readline
+# capabilities, meaning arrow keys emit escape sequences like ``^[[D`` instead
+# of moving the cursor.  Simply importing the *readline* module (or its
+# platform-specific shim) activates those features globally for the current
+# process.  We do this **once**, right at the top-level of ``sandboxes.utils``
+# so that every sandbox script benefits without further changes.
+#
+# The import safely degrades on platforms where readline isn't available.
+
+try:
+    import readline  # type: ignore  # noqa: F401 – bound for side-effects only
+except ModuleNotFoundError:
+    # macOS / Windows or custom builds – attempt the gnureadline shim first
+    try:
+        import gnureadline as readline  # type: ignore  # noqa: F401
+    except ModuleNotFoundError:
+        # Graceful fallback – arrow keys won't be fancy but everything else works
+        pass
+
 import asyncio
 import os
 import platform
@@ -287,7 +310,7 @@ async def _speak_async(text: str) -> None:
         # skip hint so that it appears **after** those warnings.
         await asyncio.sleep(1.0)
         print(f'🗣️ Assistant speaking…\n"{text}"')
-        print("press ↵ to skip playback 🔇")
+        print("🔇 Press ↵ to skip playback")
 
         def _frame_to_pcm(frame: "AudioFrame") -> bytes:
             """Return raw 16-bit PCM for *any* Cartesia AudioFrame flavour."""
