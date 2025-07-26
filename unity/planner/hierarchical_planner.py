@@ -1277,7 +1277,23 @@ class HierarchicalPlanner(BasePlanner):
         if plan._temp_file_path is None:
             plan._temp_file_path = plans_dir / f"{plan._module_name}.py"
 
-        plan._temp_file_path.write_text(plan.plan_source_code or "pass")
+        timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        header = textwrap.dedent(
+            f"""
+        # Hierarchical Plan Script
+        # Plan ID: {plan._module_name}
+        # Goal: {plan.goal}
+        # Last Updated: {timestamp}
+        #
+        # This script is auto-generated and executed by the HierarchicalPlanner.
+        # It is updated dynamically during the execution lifecycle.
+
+        """,
+        )
+
+        full_script_content = f"{header}\n{plan.plan_source_code or 'pass'}"
+
+        plan._temp_file_path.write_text(full_script_content)
         logger.info(f"Plan source code written to: {plan._temp_file_path}")
 
         if plan._module is None:
