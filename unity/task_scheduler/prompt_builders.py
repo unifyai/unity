@@ -83,7 +83,8 @@ def build_ask_prompt(
             "with a concise, final answer.",
             "Please *always* mention the relevant task id(s) in your response.",
             "The user will almost certainly require the task ids in order to do anything meaningful with your answer.",
-            "If you need to resolve a person's name to their numeric contact_id (e.g. for triggers or references), call the `ContactManager.ask` tool first and then use the returned id in your reasoning.",
+            "If the question refers to another person (such as communication oriented tasks), then we should *always* call the `ContactManager.ask` tool first to ensure we have the full context on the person/people involved.",
+            "Similarly, if a task refers to one or multiple 'contact_id' values (as part of the trigger for example), then we should also query 'ContactManager.ask' to learn more details about these contact(s)."
             "",
             "Tools (name → argspec):",
             sig_json,
