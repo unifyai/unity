@@ -16,9 +16,14 @@ import textwrap
 import traceback
 from typing import Any, Callable, Dict, List, Optional, Tuple, Set
 import typing
+import types
 import pydantic
 import unify
 from pydantic import BaseModel, Field
+import importlib.util
+import importlib.machinery
+import uuid
+from pathlib import Path
 
 from unity.common.llm_helpers import (
     AsyncToolUseLoopHandle,
@@ -413,6 +418,11 @@ class HierarchicalPlan(BaseActiveTask):
         self._execution_task = asyncio.create_task(self._initialize_and_run())
         self.MAX_ESCALATIONS = max_escalations
         self.MAX_LOCAL_RETRIES = max_local_retries
+
+        self._temp_file_path: Optional[Path] = None
+        self._module_name: str = f"hp_plan_{uuid.uuid4().hex}"
+        self._module: Optional[types.ModuleType] = None
+        self._module_spec: Optional[importlib.machinery.ModuleSpec] = None
 
     def _set_final_result(self, result: str):
         """Sets the final result and the completion event."""
@@ -843,22 +853,8 @@ class HierarchicalPlan(BaseActiveTask):
             ast.fix_missing_locations(final_tree)
 
             self.plan_source_code = ast.unparse(final_tree)
-            refreshed_tree = ast.parse(self.plan_source_code)
-            self.function_source_map.clear()
-            for node in refreshed_tree.body:
-                if isinstance(
-                    node,
-                    (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef),
-                ):
-                    self.function_source_map[node.name] = ast.get_source_segment(
-                        self.plan_source_code,
-                        node,
-                    )
+            self.planner._load_plan_module(self)
 
-            exec(
-                compile(self.plan_source_code, "<string>", "exec"),
-                self.execution_namespace,
-            )
         except (SyntaxError, ValueError, RuntimeError) as e:
             logger.error(
                 f"Robust AST-based code update for '{function_name}' failed: {e}",
@@ -959,23 +955,43 @@ class HierarchicalPlan(BaseActiveTask):
             self.completed_functions.clear()
 
         interactions = []
+        script_temp_file = None
+        script_module_name = f"hp_correction_{uuid.uuid4().hex}"
+
         try:
+            plans_dir = Path.cwd() / ".unity_plans"
+            plans_dir.mkdir(exist_ok=True)
+
+            script_temp_file = plans_dir / f"{script_module_name}.py"
+
+            sanitized_script = self.planner._sanitize_code(script)
+            script_temp_file.write_text(sanitized_script)
+            logger.info(f"Correction script written to: {script_temp_file}")
+
+            spec = importlib.util.spec_from_file_location(
+                script_module_name,
+                script_temp_file,
+            )
+            if spec is None or spec.loader is None:
+                raise RuntimeError(
+                    f"Failed to create module spec for correction script",
+                )
+
+            script_module = importlib.util.module_from_spec(spec)
+            sys.modules[script_module_name] = script_module
+
             correction_namespace = self.planner._create_sandbox_globals()
             correction_namespace["action_provider"] = self.planner.action_provider
-
             correction_namespace["verify"] = self.planner._create_verify_decorator(self)
             correction_namespace["ReplanFromParentException"] = (
                 ReplanFromParentException
             )
             correction_namespace["_ForcedRetryException"] = _ForcedRetryException
 
-            sanitized_script = self.planner._sanitize_code(script)
+            script_module.__dict__.update(correction_namespace)
+            spec.loader.exec_module(script_module)
 
-            exec(
-                compile(sanitized_script, "<correction_script>", "exec"),
-                correction_namespace,
-            )
-            correction_fn = correction_namespace.get("course_correction_main")
+            correction_fn = getattr(script_module, "course_correction_main", None)
             if not correction_fn or not asyncio.iscoroutinefunction(correction_fn):
                 raise RuntimeError(
                     "Script must define 'async def course_correction_main'.",
@@ -1003,6 +1019,14 @@ class HierarchicalPlan(BaseActiveTask):
         finally:
             if self.interaction_stack:
                 self.interaction_stack.pop()
+            if script_temp_file:
+                script_temp_file.unlink(missing_ok=True)
+                logger.debug(f"Deleted temporary script file: {script_temp_file}")
+            if script_module_name in sys.modules:
+                del sys.modules[script_module_name]
+                logger.debug(
+                    f"Removed script module from sys.modules: {script_module_name}",
+                )
 
     async def resolve_escalation_with_new_goal(self, new_goal: str) -> str:
         """
@@ -1051,6 +1075,31 @@ class HierarchicalPlan(BaseActiveTask):
         """
         return self._is_complete
 
+    def _cleanup_temp_file(self):
+        """
+        Clean up temporary file and module references.
+
+        This method ensures proper resource cleanup to prevent accumulation
+        of temporary files and modules in memory.
+        """
+        try:
+            if self._temp_file_path and self._temp_file_path.exists():
+                self._temp_file_path.unlink(missing_ok=True)
+                logger.debug(f"Deleted temporary plan file: {self._temp_file_path}")
+                self._temp_file_path = None
+
+            if self._module_name and self._module_name in sys.modules:
+                del sys.modules[self._module_name]
+                logger.debug(
+                    f"Removed plan module from sys.modules: {self._module_name}",
+                )
+
+            self._module = None
+            self._module_spec = None
+
+        except Exception as e:
+            logger.warning(f"Error during cleanup: {e}")
+
     async def interject(self, message: str) -> str:
         """
         Sends an interjection message to the running plan's execution loop.
@@ -1085,6 +1134,7 @@ class HierarchicalPlan(BaseActiveTask):
                 self._execution_task.cancel()
 
             self.action_log.append("Plan stopped by user.")
+            self._cleanup_temp_file()
             self._set_final_result(result_str)
             return result_str
         return f"Plan already in terminal state: {self._state.name}."
@@ -1343,6 +1393,81 @@ class HierarchicalPlanner(BasePlanner):
             max_local_retries=self.max_local_retries,
         )
 
+    def _load_plan_module(self, plan: HierarchicalPlan):
+        """
+        Load plan source code as a module from a temporary file.
+        """
+        plans_dir = Path.cwd() / ".unity_plans"
+        plans_dir.mkdir(exist_ok=True)
+
+        if plan._temp_file_path is None:
+            plan._temp_file_path = plans_dir / f"{plan._module_name}.py"
+
+        plan._temp_file_path.write_text(plan.plan_source_code or "pass")
+        logger.info(f"Plan source code written to: {plan._temp_file_path}")
+
+        if plan._module is None:
+            spec = importlib.util.spec_from_file_location(
+                plan._module_name,
+                plan._temp_file_path,
+            )
+            if spec is None or spec.loader is None:
+                raise RuntimeError(
+                    f"Failed to create module spec for {plan._temp_file_path}",
+                )
+
+            plan._module = importlib.util.module_from_spec(spec)
+            plan._module_spec = spec
+
+            plan._module.__name__ = plan._module_name
+            plan._module.__file__ = str(plan._temp_file_path)
+
+            sys.modules[plan._module_name] = plan._module
+
+            module_dict = plan._module.__dict__
+            module_dict.update(plan.execution_namespace)
+
+            spec.loader.exec_module(plan._module)
+        else:
+            if plan._module_name in sys.modules:
+                del sys.modules[plan._module_name]
+
+            spec = importlib.util.spec_from_file_location(
+                plan._module_name,
+                plan._temp_file_path,
+            )
+            if spec is None or spec.loader is None:
+                raise RuntimeError(
+                    f"Failed to recreate module spec for {plan._temp_file_path}",
+                )
+
+            plan._module = importlib.util.module_from_spec(spec)
+            plan._module_spec = spec
+
+            plan._module.__name__ = plan._module_name
+            plan._module.__file__ = str(plan._temp_file_path)
+
+            plan._module.__dict__.clear()
+            plan._module.__dict__.update(plan.execution_namespace)
+
+            sys.modules[plan._module_name] = plan._module
+            spec.loader.exec_module(plan._module)
+
+        plan.execution_namespace = plan._module.__dict__
+
+        plan.function_source_map.clear()
+        if plan.plan_source_code:
+            try:
+                tree = ast.parse(plan.plan_source_code)
+                for node in ast.walk(tree):
+                    if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                        plan.function_source_map[node.name] = ast.get_source_segment(
+                            plan.plan_source_code,
+                            node,
+                        )
+            except Exception:
+                pass
+
     def _create_sandbox_globals(self) -> Dict[str, Any]:
         """
         Creates a dictionary of safe, sandboxed global functions for plan execution.
@@ -1464,23 +1589,7 @@ class HierarchicalPlanner(BasePlanner):
             },
         )
 
-        plan.function_source_map.clear()
-        if plan.plan_source_code:
-            try:
-                tree = ast.parse(plan.plan_source_code)
-                for node in ast.walk(tree):
-                    if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
-                        plan.function_source_map[node.name] = ast.get_source_segment(
-                            plan.plan_source_code,
-                            node,
-                        )
-            except Exception:
-                pass
-
-        exec(
-            compile(plan.plan_source_code or "pass", "<string>", "exec"),
-            plan.execution_namespace,
-        )
+        self._load_plan_module(plan)
 
     def _create_verify_decorator(self, plan: HierarchicalPlan):
         """
@@ -2104,5 +2213,7 @@ class HierarchicalPlanner(BasePlanner):
     async def close(self):
         """Shuts down the planner and its associated resources gracefully."""
         if self._active_task and not self._active_task.done():
+            if hasattr(self._active_task, "_cleanup_temp_file"):
+                self._active_task._cleanup_temp_file()
             await self._active_task.stop()
         self.action_provider.browser.stop()

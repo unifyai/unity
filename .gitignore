@@ -17,3 +17,4 @@ dump.rdb
 .hypothesis
 .cache.json
 .async_trace.html
+.unity_plans
