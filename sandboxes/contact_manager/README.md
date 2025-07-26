@@ -3,7 +3,7 @@ Contact Manager Sandbox
 
 This folder contains an **interactive playground** for the `ContactManager` component that lives in `unity/contact_manager/`.  The goal of the sandbox is to let you experiment with the manager in isolation – create imaginary contacts, query them in natural-language, and observe how the underlying tool-loop behaves before you integrate the manager into a larger system.
 
-Prefer a quick demo? Watch this [18-minute video walkthrough](
+Prefer a quick demo? Watch this [video walkthrough](
 https://www.loom.com/share/31086a24fb9b4f9b8e0b69184773f942?sid=c444c524-96cf-4b95-b08d-57d35565a382) showing an end-to-end sandbox session.
 
 What is the `ContactManager`?
