@@ -90,6 +90,7 @@ class ContactManager(BaseContactManager):
                 self._delete_contact,
                 self._create_custom_column,
                 self._delete_custom_column,
+                self._merge_contacts,
                 include_class_name=False,
             ),
         }
@@ -1051,6 +1052,131 @@ class ContactManager(BaseContactManager):
         return {
             "outcome": "contact deleted",
             "details": {"contact_id": contact_id},
+        }
+
+    def _merge_contacts(
+        self,
+        *,
+        contact_id_1: int,
+        contact_id_2: int,
+        overrides: Dict[str, int],
+    ) -> ToolOutcome:
+        """
+        Merge exactly two existing contacts into **one** consolidated record.
+
+        The caller must provide a per-column *overrides* map indicating which of
+        the two source contacts wins for that column.  The map values **must**
+        be either ``1`` (take the value from *contact_id_1*) or ``2`` (take the
+        value from *contact_id_2*).  Any column absent from *overrides* keeps
+        the first non-``None`` value when scanned in the order
+        ``contact_id_1`` → ``contact_id_2``.
+
+        The *contact_id* itself can be overridden.  The resulting record keeps
+        whichever id is chosen while the *other* contact is permanently
+        deleted.  System contacts with ids 0 and 1 are **protected** and cannot
+        be deleted.
+
+        Parameters
+        ----------
+        contact_id_1 : int
+            Identifier of the **first** source contact.
+        contact_id_2 : int
+            Identifier of the **second** source contact.
+        overrides : Dict[str, int]
+            Mapping ``column_name → 1 | 2`` picking the winner for that field.
+
+        Returns
+        -------
+        ToolOutcome
+            Confirmation payload indicating the kept/deleted contact ids.
+        """
+
+        if contact_id_1 == contact_id_2:
+            raise ValueError("contact_id_1 and contact_id_2 must be distinct.")
+
+        if any(v not in (1, 2) for v in overrides.values()):
+            raise ValueError(
+                "Override values must be 1 or 2, referring to the corresponding contact id argument.",
+            )
+
+        # Retrieve both contacts
+        def _fetch(cid: int):
+            logs = unify.get_logs(
+                context=self._ctx,
+                filter=f"contact_id == {cid}",
+                limit=1,
+            )
+            if not logs:
+                raise ValueError(f"No contact found with contact_id {cid}.")
+            return logs[0]
+
+        log1 = _fetch(contact_id_1)
+        log2 = _fetch(contact_id_2)
+
+        entries1 = log1.entries
+        entries2 = log2.entries
+
+        # Decide which contact id to keep
+        keep_id = contact_id_1 if overrides.get("contact_id", 1) == 1 else contact_id_2
+        delete_id = contact_id_2 if keep_id == contact_id_1 else contact_id_1
+
+        # Protect system contacts from deletion
+        if delete_id in (0, 1):
+            raise RuntimeError(
+                "Cannot delete system contacts with id 0 or 1 during merge.",
+            )
+
+        # Build the consolidated field map (skip contact_id – handled separately)
+        consolidated: Dict[str, Any] = {}
+
+        all_cols = set(self._get_columns())
+        all_cols.discard("contact_id")
+
+        for col in all_cols:
+            # Ignore private vector columns ("*_emb")
+            if col.endswith("_emb"):
+                continue
+
+            if col in overrides:
+                source = overrides[col]
+                value = entries1.get(col) if source == 1 else entries2.get(col)
+            else:
+                value = entries1.get(col)
+                if value is None:
+                    value = entries2.get(col)
+
+            if value is not None:
+                consolidated[col] = value
+
+        # Split consolidated fields into built-in vs custom for _update_contact
+        builtin_updates = {
+            k: v for k, v in consolidated.items() if k in self._BUILTIN_FIELDS
+        }
+        custom_updates = {
+            k: v for k, v in consolidated.items() if k not in self._BUILTIN_FIELDS
+        }
+
+        # Apply updates to the kept contact
+        if builtin_updates or custom_updates:
+            self._update_contact(
+                contact_id=keep_id,
+                **{
+                    k: builtin_updates.get(k)
+                    for k in self._BUILTIN_FIELDS
+                    if k in builtin_updates
+                },
+                custom_fields=custom_updates or None,
+            )
+
+        # Delete the other contact
+        self._delete_contact(contact_id=delete_id)
+
+        return {
+            "outcome": "contacts merged successfully",
+            "details": {
+                "kept_contact_id": keep_id,
+                "deleted_contact_id": delete_id,
+            },
         }
 
     def _nearest_contacts(
