@@ -18,6 +18,7 @@ description via the ``--voice/-v`` flag (same UX as the other sandboxes).
 │ ck        –– clear Knowledge store              │
 │ nt   –– new_transcript {description}            │
 │ ntv  –– new_transcript_vocally (voice only)     │
+│ r    –– record freeform command (voice mode)     │
 └─────────────────────────────────────────────────┘
 
 After typing **uc / ucb / ucrs / uk / ut** you will be *asked* for the message
@@ -469,8 +470,14 @@ async def _main_async() -> None:
             # Voice or text capture for the scenario / command prompt
             if args.voice:
                 prompt = input(
-                    "scenario/command (see command list above)> ",
+                    "scenario/command ('r' to record)> ",
                 ).strip()
+                if prompt.lower() == "r":
+                    audio = _record_until_enter()
+                    prompt = _transcribe_deepgram(audio).strip()
+                    if not prompt:
+                        continue
+                    print(f"▶️  {prompt}")
             else:
                 prompt = input(
                     "scenario/command (see command list above)> ",

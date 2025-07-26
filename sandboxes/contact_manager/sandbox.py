@@ -198,6 +198,7 @@ async def _main_async() -> None:
         "┌────────────────── accepted commands ──────────────────┐\n"
         "│ us  {description}      – update_scenario (text)         │\n"
         "│ usv                   – update_scenario_vocally        │\n"
+        "│ r / free text         – freeform ask / update (auto)    │\n"
         "│ save_project | sp     – save project snapshot          │\n"
         "│ help | h              – show this help                  │\n"
         "└─────────────────────────────────────────────────────────┘\n"
