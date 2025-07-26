@@ -287,7 +287,7 @@ async def _speak_async(text: str) -> None:
         # skip hint so that it appears **after** those warnings.
         await asyncio.sleep(1.0)
         print(f'🗣️ Assistant speaking…\n"{text}"')
-        print("press ↵ to skip.")
+        print("press ↵ to skip playback 🔇")
 
         def _frame_to_pcm(frame: "AudioFrame") -> bytes:
             """Return raw 16-bit PCM for *any* Cartesia AudioFrame flavour."""
