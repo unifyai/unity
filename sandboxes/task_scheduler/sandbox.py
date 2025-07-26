@@ -41,10 +41,10 @@ from sandboxes.utils import (
     record_until_enter as _record_until_enter,
     transcribe_deepgram as _transcribe_deepgram,
     speak as _speak,
-    get_custom_scenario,
     await_with_interrupt as _await_with_interrupt,
     build_cli_parser,
     activate_project,
+    _wait_for_tts_end as _wait_tts_end,
 )
 
 LG = logging.getLogger("task_scheduler_sandbox")
@@ -181,19 +181,23 @@ def _extract_first_int(text: str) -> int:
 
 async def _main_async() -> None:
     parser = build_cli_parser("TaskScheduler sandbox")
+
+    # No automatic seeding – users can invoke 'us' / 'usv' commands to populate tasks when desired.
+
     args = parser.parse_args()
 
     os.environ["UNIFY_TRACED"] = "true" if args.traced else "false"
 
+    # ─────────────────── Unify context ────────────────────
     activate_project(args.project_name, args.overwrite)
     base_ctx = unify.get_active_context().get("write")
     traces_ctx = f"{base_ctx}/Traces" if base_ctx else "Traces"
     unify.set_trace_context(traces_ctx)
     if args.overwrite:
-        contexts = unify.get_contexts()
-        if "Tasks" in contexts:
+        ctxs = unify.get_contexts()
+        if "Tasks" in ctxs:
             unify.delete_context("Tasks")
-        if traces_ctx in contexts:
+        if traces_ctx in ctxs:
             unify.delete_context(traces_ctx)
         unify.create_context(traces_ctx)
 
@@ -211,6 +215,7 @@ async def _main_async() -> None:
                     args.project_version,
                 )
 
+    # logging
     logging.basicConfig(level=logging.INFO, format="%(message)s")
     LG.setLevel(logging.INFO)
 
@@ -218,35 +223,58 @@ async def _main_async() -> None:
     if args.traced:
         ts = unify.traced(ts)
 
-    scenario_text: Optional[str] = get_custom_scenario(args)
-    LG.info("[seed] building synthetic task list – this can take 20-40 s…")
-    if args.voice:
-        _speak("Sure thing, building your custom scenario now.")
-    await _build_scenario(scenario_text)
-    LG.info("[seed] done.")
-    if args.voice:
-        _speak("All done, your custom scenario is ready.")
-
-    print("TaskScheduler sandbox – type or speak. 'quit' to exit.\n")
-
-    _speak(
-        "Press enter to record a question or request an update for the task schedule.",
+    # ─────────────────── command helper output ────────────────────
+    _COMMANDS_HELP = (
+        "\nTaskScheduler sandbox – type commands below (press ↵ with an empty "
+        "line to dictate via voice when --voice mode is active – type 'r' to record).  'quit' to exit.\n\n"
+        "┌────────────────── accepted commands ─────────────────────┐\n"
+        "│ us  {description}     – update_scenario (text)           │\n"
+        "│ usv                   – update_scenario_vocally          │\n"
+        "│ r / free text         – freeform ask / update / start    │\n"
+        "│ save_project | sp     – save project snapshot            │\n"
+        "│ help | h              – show this help                   │\n"
+        "└──────────────────────────────────────────────────────────┘\n"
     )
+
+    def _explain_commands() -> None:  # noqa: D401 – helper
+        print(_COMMANDS_HELP)
+
+    if args.voice:
+        _speak(
+            "Sandbox ready. You can type commands, or press enter on an empty line "
+            "to record a voice query.  Use 'u-s-v' to build a new scenario vocally.",
+        )
+        _wait_tts_end()
 
     # running memory of the dialogue
     chat_history: List[Dict[str, str]] = []
 
     # interaction loop
     while True:
+        # Keep command list visible similar to other sandboxes
+        print()
+        _explain_commands()
+        print()
+
         try:
             if args.voice:
-                audio = _record_until_enter()
-                raw = _transcribe_deepgram(audio).strip()
-                if not raw:
-                    continue
-                print(f"▶️  {raw}")
+                # Ensure any ongoing TTS playback has finished before showing prompt
+                _wait_tts_end()
+            if args.voice:
+                raw = input("command ('r' to record)> ").strip()
+                if raw.lower() == "r":
+                    audio = _record_until_enter()
+                    raw = _transcribe_deepgram(audio).strip()
+                    if not raw:
+                        continue
+                    print(f"▶️  {raw}")
             else:
-                raw = input("> ").strip()
+                raw = input("command> ").strip()
+
+            # Show help table
+            if raw.lower() in {"help", "h", "?"}:
+                _explain_commands()
+                continue
 
             if raw.lower() in {"quit", "exit"}:
                 break
@@ -263,6 +291,60 @@ async def _main_async() -> None:
                 if args.voice:
                     _speak("Project saved")
                 continue
+
+            # ─────────────── scenario (re)seeding commands ────────────────
+            parts = raw.split(maxsplit=1)
+            cmd_lower = parts[0].lower()
+
+            if cmd_lower in {"us", "update_scenario"}:
+                description = parts[1].strip() if len(parts) > 1 else ""
+                if not description:
+                    description = input(
+                        "🧮 Describe the task scenario you want to build > ",
+                    ).strip()
+                    if not description:
+                        print("⚠️  No description provided – cancelled.")
+                        continue
+
+                print("[generate] Building synthetic tasks – this can take a moment…")
+                if args.voice:
+                    _speak("Sure thing, building your custom scenario now.")
+                try:
+                    await _build_scenario(description)
+                    if args.voice:
+                        _speak(
+                            "All done, your custom scenario is built and ready to go.",
+                        )
+                except Exception as exc:
+                    LG.error("Scenario generation failed: %s", exc, exc_info=True)
+                    print(f"❌  Failed to generate scenario: {exc}")
+                continue  # back to REPL
+
+            if cmd_lower in {"usv", "update_scenario_vocally"}:
+                if not args.voice:
+                    print(
+                        "⚠️  Voice mode not enabled – restart with --voice or use 'us' instead.",
+                    )
+                    continue
+
+                audio = _record_until_enter()
+                description = _transcribe_deepgram(audio).strip()
+                if not description:
+                    print("⚠️  Transcription was empty – please try again.")
+                    continue
+                print(f"▶️  {description}")
+
+                print("[generate] Building synthetic tasks – this can take a moment…")
+                try:
+                    await _build_scenario(description)
+                    if args.voice:
+                        _speak(
+                            "All done, your custom scenario is built and ready to go.",
+                        )
+                except Exception as exc:
+                    LG.error("Scenario generation failed: %s", exc, exc_info=True)
+                    print(f"❌  Failed to generate scenario: {exc}")
+                continue  # back to REPL
 
             # ──────────────── remember the user's utterance ────────────────
             _kind, _handle = await _dispatch_with_context(
@@ -291,6 +373,7 @@ async def _main_async() -> None:
             break
         except Exception as exc:
             LG.error("Error: %s", exc, exc_info=True)
+    # end while
 
 
 def main() -> None:
