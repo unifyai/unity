@@ -244,6 +244,17 @@ app.get('/screenshot', isAgentReady, async (_req: Request, res: Response) => {
   }
 });
 
+app.get('/state', isAgentReady, async (_req: Request, res: Response) => {
+  try {
+    const page = browserAgent!.page;
+    const url = page.url();
+    const title = await page.title();
+    res.json({ url, title });
+  } catch (err) {
+    handleAgentError(err, res, 'state_failed');
+  }
+});
+
 app.post('/stop', isAgentReady, async (_req: Request, res: Response) => {
   try {
     await browserAgent!.stop();

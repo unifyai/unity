@@ -52,6 +52,10 @@ class Browser:
         """Gets a screenshot by delegating to the active backend."""
         return await self.backend.get_screenshot()
 
+    async def get_current_url(self) -> str:
+        """Gets the current URL by delegating to the active backend."""
+        return await self.backend.get_current_url()
+
     def stop(self):
         """Shuts down the underlying backend."""
         self.backend.stop()
