@@ -1649,3 +1649,116 @@ def build_trace_summary_prompt(
         Respond with only the summary of your analysis. This summary will be used to rewrite the entire plan from scratch.
         """,
     )
+
+
+def _build_simple_script_rules(tools: Dict[str, Callable]) -> str:
+    """Builds a streamlined set of rules for simple, non-decomposed scripts."""
+    tool_reference = _build_tool_signatures(tools)
+    rules = textwrap.dedent(
+        f"""
+        ### 🎯 CRITICAL RULES FOR SCRIPTING
+        1.  **Sequence of Calls**: Your code must be a simple sequence of `await` calls on the `action_provider`. Do not define new functions.
+        2.  **Await Keyword**: You MUST `await` all `async` tool calls (like `browser_navigate`, `browser_act`, `browser_observe`).
+        3.  **Action Provider**: Use the `action_provider` object directly as if it's a global variable. Do not import or define it.
+
+        ### Tools Reference
+        You have access to a global `action_provider` object with the following methods.
+        ```json
+        {tool_reference}
+        ```
+
+        ### Examples of Correction Scripts
+
+        # ---
+        # Example 1: The agent navigated to the wrong page ('/settings') instead of the user's profile.
+        # Goal: Get back to the correct user profile page.
+        await action_provider.browser_navigate("https://example.com/user/123/profile")
+
+        # ---
+        # Example 2: The agent opened an unwanted "Share" popup that is now obscuring the page content.
+        # Goal: Close the popup to restore view of the underlying page.
+        await action_provider.browser_act("Click the 'X' or 'Close' button on the 'Share this article' popup")
+
+        # ---
+        # Example 3: The agent typed the wrong address into a form field.
+        # Goal: Clear the incorrect text from the 'Street Address' field.
+        # Note: The next implementation will handle typing the correct text. This script ONLY restores the state.
+        await action_provider.browser_act("Clear the text in the 'Street Address' field")
+
+    """,
+    )
+    return rules
+
+
+def build_course_correction_prompt(
+    last_verified_function_name: str,
+    last_verified_url: str,
+    last_verified_page_analysis,
+    has_last_verified_screenshot: bool,
+    current_url: str,
+    current_page_analysis,
+    has_current_screenshot: bool,
+    failed_function_name: str,
+    failed_function_docstring: str,
+    *,
+    tools: Dict[str, Callable],
+) -> str:
+    """
+    Builds the prompt for the course correction LLM.
+    """
+    last_page_analysis_str = last_verified_page_analysis.model_dump_json(indent=2)
+    current_page_analysis_str = current_page_analysis.model_dump_json(indent=2)
+
+    scripting_rules = _build_simple_script_rules(tools)
+
+    return textwrap.dedent(
+        f"""
+        You are a state recovery specialist for an autonomous web agent.
+
+        A function just failed, and the browser may have been left in a corrupted state. Your task is to compare the state of the browser BEFORE the failure to its state AFTER the failure and decide if a course-correction script is needed.
+
+        ---
+        ### State Analysis
+
+        **1. The "Last Known Good" State (BEFORE the failure):**
+        This is the state after the function `{last_verified_function_name}` completed successfully.
+        - **URL:** `{last_verified_url}`
+        - **Page Analysis:**
+          ```json
+          {last_page_analysis_str}
+          ```
+        - **Screenshot:** A screenshot of this state is provided.
+
+        **2. The "Current / Corrupted" State (AFTER the failure):**
+        This is the state where the function `{failed_function_name}` (Purpose: "{failed_function_docstring}") failed.
+        - **URL:** `{current_url}`
+        - **Page Analysis:**
+          ```json
+          {current_page_analysis_str}
+          ```
+        - **Screenshot:** A screenshot of this current state is also provided.
+
+        ---
+        ### Your Task
+
+        1.  **Compare the two states.** Did the failed function navigate away from the correct page, open an unexpected modal, or otherwise alter the page structure in a way that prevents the *next* attempt from succeeding?
+        2.  **Decide if correction is needed.**
+            - If the states are the same or the changes are irrelevant, set `correction_needed` to `false`.
+            - If the states are different and the browser needs to be returned to the "Last Known Good" state, set `correction_needed` to `true`.
+        3.  **If correction is needed, write `correction_code`.**
+            - This must be a simple, self-contained Python script.
+            - Use `action_provider.browser_navigate` or `action_provider.browser_act`.
+            - **Goal:** Get from the "Current" state back to the "Last Known Good" state.
+            - **Example:** If the agent is on the wrong page, the script might be `await action_provider.browser_navigate('{last_verified_url}')`.
+            - **Example:** If a popup is open, the script might be `await action_provider.browser_act("Click the 'Close' button on the popup")`.
+            - **Keep it simple!** Do not try to re-run the failed function. Only restore the state.
+
+        ---
+        ### Scripting Rules & Tool Reference
+        You MUST follow these rules when writing the `correction_code`.
+        {scripting_rules}
+        ---
+
+        Respond with ONLY the JSON object matching the `CourseCorrectionDecision` schema.
+        """,
+    )
