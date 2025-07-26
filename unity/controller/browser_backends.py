@@ -43,6 +43,10 @@ class BrowserBackend(ABC):
         """Get a base64 encoded screenshot of the current page."""
 
     @abstractmethod
+    async def get_current_url(self) -> str:
+        """Get the current URL of the browser."""
+
+    @abstractmethod
     async def navigate(self, url: str) -> str:
         """Navigate the browser to a specific URL."""
 
@@ -127,6 +131,12 @@ class LegacyBrowserBackend(BrowserBackend):
 
     async def get_screenshot(self) -> str:
         return self.controller._last_shot
+
+    async def get_current_url(self) -> str:
+        try:
+            return self.controller.state.url
+        except Exception as e:
+            return ""
 
     async def navigate(self, url: str) -> str:
         return await self.controller.act(
@@ -356,7 +366,7 @@ class MagnitudeBrowserBackend(BrowserBackend):
 
         **✅ Good Queries (Following the 5 Principles):**
         - **(Principles 1, 4, 5):** "List all user comments. For each comment, extract the author's name and the comment text. Also, extract the date it was posted, but note that the date may be missing for some older comments."
-        - **(Principles 1, 2, 3, 4, 5):** "For every product card on the page, extract the product name, the price as a float, and the star rating. For the rating, visually count the number of filled stars and return it as a number (e.g., 4.0 or 4.5). If a rating is not visible, it should be null."
+        - **(Principles 1, 2, 3, 4, 5):** "For every product card on the page, extract the product name, the price as a float, and the star rating. For the rating, visually count the number of filled stars and return it as a number (e.g., 4.0 or 4.5). If an exact value cannot be determined, approximate the value to the nearest half-star."
         - **(Principles 1, 2, 4, 5):** "From the user data table, extract a list of users. For each user, get their full name and email. Also, check their 'Status' icon: a green checkmark means 'Active', and a red 'X' means 'Inactive'. Extract the status as the corresponding string. The email may be missing for some users."
 
         **❌ Bad Queries (HTML/DOM Specific):**
@@ -389,6 +399,14 @@ class MagnitudeBrowserBackend(BrowserBackend):
     async def get_screenshot(self) -> str:
         response = await self._request("GET", "/screenshot")
         return response.get("screenshot")
+
+    async def get_current_url(self) -> str:
+        try:
+            # Get the current URL through the browser state
+            response = await self._request("GET", "/state")
+            return response.get("url", "")
+        except Exception as e:
+            return ""
 
     async def navigate(self, url: str) -> str:
         """Navigates the browser using the dedicated /nav endpoint."""
