@@ -1823,9 +1823,12 @@ class HierarchicalPlanner(BasePlanner):
                     self.course_correction_client.reset_messages()
                     content = [{"type": "text", "text": correction_prompt}]
                     if plan.last_verified_screenshot:
-                        b64_before = base64.b64encode(
-                            plan.last_verified_screenshot,
-                        ).decode("utf-8")
+                        if isinstance(plan.last_verified_screenshot, str):
+                            b64_before = plan.last_verified_screenshot
+                        else:
+                            b64_before = base64.b64encode(
+                                plan.last_verified_screenshot,
+                            ).decode("utf-8")
                         content.insert(
                             0,
                             {
@@ -1844,7 +1847,12 @@ class HierarchicalPlanner(BasePlanner):
                         )
 
                     if final_screenshot:
-                        b64_after = base64.b64encode(final_screenshot).decode("utf-8")
+                        if isinstance(final_screenshot, str):
+                            b64_after = final_screenshot
+                        else:
+                            b64_after = base64.b64encode(final_screenshot).decode(
+                                "utf-8",
+                            )
                         content.append(
                             {
                                 "type": "image_url",
