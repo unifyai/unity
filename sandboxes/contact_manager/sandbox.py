@@ -43,6 +43,7 @@ from sandboxes.utils import (  # shared helpers reused in other sandboxes
     await_with_interrupt as _await_with_interrupt,
     build_cli_parser,
     activate_project,
+    _wait_for_tts_end as _wait_tts_end,
 )
 
 LG = logging.getLogger("contact_sandbox")
@@ -210,6 +211,7 @@ async def _main_async() -> None:
             "Sandbox ready. You can type commands, or press enter on an empty line "
             "to record a voice query.  Use 'u-s-v' to build a new scenario vocally.",
         )
+        _wait_tts_end()
 
     # running memory of the dialogue
     chat_history: List[Dict[str, str]] = []
@@ -223,8 +225,11 @@ async def _main_async() -> None:
 
         try:
             if args.voice:
-                # Voice mode: 'r' triggers recording (explicit like MemoryManager sandbox)
-                raw = input(" > ").strip()
+                # Ensure any ongoing TTS playback has finished before showing prompt
+                _wait_tts_end()
+            if args.voice:
+                # Voice mode: explicit prompt shows 'r' option
+                raw = input("command ('r' to record)> ").strip()
                 if raw.lower() == "r":
                     audio = _record_until_enter()
                     raw = _transcribe_deepgram(audio).strip()
@@ -232,7 +237,7 @@ async def _main_async() -> None:
                         continue
                     print(f"▶️  {raw}")
             else:
-                raw = input("> ").strip()
+                raw = input("command> ").strip()
 
             # User can ask for the help table at any time
             if raw.lower() in {"help", "h", "?"}:
