@@ -43,6 +43,23 @@ from unity.controller.browser_backends import BrowserAgentError
 logger = logging.getLogger(__name__)
 
 
+def format_implementation_decision(decision: ImplementationDecision) -> str:
+    """Format an ImplementationDecision for logging with proper indentation."""
+    lines = [
+        "IMPLEMENTATION DECISION:",
+        f"  Action: {decision.action}",
+        f"  Reason: {decision.reason}",
+    ]
+
+    if decision.code:
+        lines.append("  Code:")
+        code_lines = decision.code.split("\n")
+        for code_line in code_lines:
+            lines.append(f"    {code_line}")
+
+    return "\n".join(lines)
+
+
 class ReplanFromParentException(Exception):
     """Raised by the @verify decorator when a function's goal is misguided."""
 
@@ -2045,7 +2062,7 @@ class HierarchicalPlanner(BasePlanner):
                     screenshot=browser_screenshot,
                 )
                 decision = ImplementationDecision.model_validate_json(response_str)
-
+                logger.debug(format_implementation_decision(decision))
                 if decision.action == "implement_function":
                     if not decision.code:
                         raise ValueError(
@@ -2060,7 +2077,6 @@ class HierarchicalPlanner(BasePlanner):
                             .strip()
                         )
                         decision.code = self._sanitize_code(clean_code)
-                        logger.info(f"IMPLEMENTATION DECISION: {decision}")
                         return decision
                     except SyntaxError as e:
                         last_syntax_error = f"Invalid Python code provided.\nError: {e}\nProblematic Code Snippet:\n---\n{decision.code}\n---"
@@ -2071,7 +2087,6 @@ class HierarchicalPlanner(BasePlanner):
                             raise e
                         continue
 
-                logger.info(f"IMPLEMENTATION DECISION: {decision}")
                 return decision
 
             finally:
