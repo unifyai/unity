@@ -64,6 +64,7 @@ from sandboxes.utils import (
     transcribe_deepgram as _transcribe_deepgram,
     speak as _speak,
     activate_project,
+    _wait_for_tts_end as _wait_tts_end,
 )
 
 load_dotenv()
@@ -455,8 +456,11 @@ async def _main_async() -> None:
         _speak(
             "Welcome to the Memory Manager sandbox. Use the command 'N-T-V' to record a new transcript vocally, or type commands and descriptions directly.",
         )
+        _wait_tts_end()
 
     while True:
+        if voice_enabled:
+            _wait_tts_end()
         # Reprint the command list so it's always visible just before the prompt
         print()
         _explain_commands()
