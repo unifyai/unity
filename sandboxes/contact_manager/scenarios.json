@@ -1,5 +1,5 @@
 {
     "superheros": [
-        "us Please create 10 new superhero contacts. Each contact should have a city that they protect, a unique superpower, and a unique weakness. Please add all of these (city, superpower, weakness) as custom columns. All of the other default columns (phone, whatsapp, bio, rolling summary etc.) should be fully populated as well, with imaginary contact information."
+        "us Please create 10 new superhero contacts. Each contact should have a city that they protect, a unique superpower, and a unique weakness. Please add all of these (city, superpower, weakness) as custom columns. Please also add their data of birth as a custom column. All of the other default columns (phone, whatsapp, bio, rolling summary etc.) should be fully populated as well, with imaginary contact information."
     ]
 }
