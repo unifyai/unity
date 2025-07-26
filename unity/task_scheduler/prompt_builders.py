@@ -82,7 +82,8 @@ def build_ask_prompt(
             "information you need, *step-by-step*.  When you have everything, respond",
             "with a concise, final answer.",
             "Please *always* mention the relevant task id(s) in your response.",
-            "The user will almost certainly require the task ids in order to do anything meaningful with your answer."
+            "The user will almost certainly require the task ids in order to do anything meaningful with your answer.",
+            "If you need to resolve a person's name to their numeric contact_id (e.g. for triggers or references), call the `ContactManager.ask` tool first and then use the returned id in your reasoning.",
             "",
             "Tools (name → argspec):",
             sig_json,
@@ -116,8 +117,9 @@ def build_update_prompt(
             "You are an assistant responsible for **creating and updating tasks**.",
             "Use the tools supplied *only* – never invent your own – until the task",
             "list fully reflects the user's intent.",
-            "If a any tasks were created or updated in the process,"
+            "If a any tasks were created or updated in the process,",
             "then please *always* include these task id(s) in your final response.",
+            "Whenever your update requires contact information (for example, building a trigger that should fire when specific contact(s) call), first call the `ContactManager.ask` tool to retrieve that contact id(s) and then insert into the trigger.",
             "",
             "If tasks are given in a *numbered order*, then please assume that these tasks "
             "should be *queued* in that *same order* unless explicitly stated otherwise.",
