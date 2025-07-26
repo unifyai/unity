@@ -561,3 +561,90 @@ class TranscriptManager(BaseTranscriptManager):
     # _search_summaries removed – summary functionality deprecated.
     def _search_summaries(self, *args, **kwargs):
         raise NotImplementedError("Summary functionality removed.")
+
+    def _update_contact_id(
+        self,
+        *,
+        original_contact_id: int,
+        new_contact_id: int,
+    ) -> Dict[str, Any]:
+        """Replace **all** occurrences of *original_contact_id* with *new_contact_id*
+        across every transcript message.
+
+        The substitution is applied to both the ``sender_id`` **and** every entry
+        inside ``receiver_ids``.  The update is *in-place* – no new rows are
+        created.
+
+        Parameters
+        ----------
+        original_contact_id : int
+            The contact identifier to be replaced.
+        new_contact_id : int
+            The replacement contact identifier.
+
+        Returns
+        -------
+        dict
+            ToolOutcome-style payload summarising how many messages were
+            updated.
+        """
+        if original_contact_id == new_contact_id:
+            raise ValueError("original_contact_id and new_contact_id must differ.")
+
+        total_updates = 0
+
+        # ── 1.  Bulk update all *sender_id* occurrences ────────────────────
+        sender_log_ids = unify.get_logs(
+            context=self._transcripts_ctx,
+            filter=f"sender_id == {original_contact_id}",
+            return_ids_only=True,
+        )
+        if sender_log_ids:
+            unify.update_logs(
+                logs=sender_log_ids,
+                context=self._transcripts_ctx,
+                entries={"sender_id": new_contact_id},
+                overwrite=True,
+            )
+            total_updates += len(sender_log_ids)
+
+        # ── 2.  Update all *receiver_ids* lists containing the old id ──────
+        receiver_logs = unify.get_logs(
+            context=self._transcripts_ctx,
+            filter=f"{original_contact_id} in receiver_ids",
+            return_ids_only=False,
+        )
+        for lg in receiver_logs:
+            rids = lg.entries.get("receiver_ids", [])
+            if not isinstance(rids, list):  # defensive – should always be list
+                continue
+
+            updated_rids = [
+                (new_contact_id if rid == original_contact_id else rid) for rid in rids
+            ]
+            # Optional: remove duplicates while preserving order
+            seen: set[int] = set()
+            deduped_rids: list[int] = []
+            for rid in updated_rids:
+                if rid not in seen:
+                    seen.add(rid)
+                    deduped_rids.append(rid)
+
+            # Only write when the list actually changed
+            if deduped_rids != rids:
+                unify.update_logs(
+                    logs=lg.id if hasattr(lg, "id") else lg,
+                    context=self._transcripts_ctx,
+                    entries={"receiver_ids": deduped_rids},
+                    overwrite=True,
+                )
+                total_updates += 1
+
+        return {
+            "outcome": "contact ids updated",
+            "details": {
+                "old_contact_id": original_contact_id,
+                "new_contact_id": new_contact_id,
+                "updated_messages": total_updates,
+            },
+        }
