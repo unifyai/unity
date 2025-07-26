@@ -38,7 +38,6 @@ from unity.planner.base import (
 from unity.planner.action_provider import ActionProvider
 import unity.planner.prompt_builders as prompt_builders
 
-from unity.controller.controller import InvalidActionError
 from unity.controller.browser_backends import BrowserAgentError
 
 logger = logging.getLogger(__name__)
@@ -1506,26 +1505,6 @@ class HierarchicalPlanner(BasePlanner):
                             if plan.interaction_stack:
                                 plan.interaction_stack[-1].clear()
                             continue
-                        except InvalidActionError as e:
-                            logger.warning(
-                                f"Caught InvalidActionError in '{func_name}'. Forcing local reimplementation.",
-                            )
-                            plan.action_log.append(
-                                f"INVALID ACTION ERROR in '{func_name}': {str(e)}",
-                            )
-                            replan_reason = (
-                                f"The function failed because it tried to execute an invalid browser action. "
-                                f"The instruction it gave resulted in the error: '{e}'.\n\n"
-                                f"The 'browser_act' tool can only perform atomic actions like clicking, typing, navigating, or scrolling. "
-                                f"Please rewrite the function to use only valid, direct actions."
-                            )
-                            await plan._handle_dynamic_implementation(
-                                func_name,
-                                replan_reason=replan_reason,
-                            )
-                            raise _ForcedRetryException(
-                                "Forced retry after invalid action.",
-                            )
                         except (
                             ReplanFromParentException,
                             NotImplementedError,
