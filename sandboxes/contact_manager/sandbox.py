@@ -195,13 +195,13 @@ async def _main_async() -> None:
     _COMMANDS_HELP = (
         "\nContactManager sandbox – type commands below (press ↵ with an empty "
         "line to dictate via voice when --voice mode is active – type 'r' to record).  'quit' to exit.\n\n"
-        "┌────────────────── accepted commands ──────────────────┐\n"
-        "│ us  {description}      – update_scenario (text)         │\n"
-        "│ usv                   – update_scenario_vocally        │\n"
-        "│ r / free text         – freeform ask / update (auto)    │\n"
-        "│ save_project | sp     – save project snapshot          │\n"
-        "│ help | h              – show this help                  │\n"
-        "└─────────────────────────────────────────────────────────┘\n"
+        "┌────────────────── accepted commands ─────────────────────┐\n"
+        "│ us  {description}     – update_scenario (text)           │\n"
+        "│ usv                   – update_scenario_vocally          │\n"
+        "│ r / free text         – freeform ask / update (auto)     │\n"
+        "│ save_project | sp     – save project snapshot            │\n"
+        "│ help | h              – show this help                   │\n"
+        "└──────────────────────────────────────────────────────────┘\n"
     )
 
     def _explain_commands() -> None:  # noqa: D401 – helper
