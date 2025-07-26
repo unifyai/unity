@@ -40,7 +40,6 @@ from sandboxes.utils import (  # shared helpers reused in other sandboxes
     record_until_enter as _record_until_enter,
     transcribe_deepgram as _transcribe_deepgram,
     speak as _speak,
-    get_custom_scenario,
     await_with_interrupt as _await_with_interrupt,
     build_cli_parser,
     activate_project,
@@ -145,6 +144,9 @@ async def _dispatch_with_context(
 
 async def _main_async() -> None:
     parser = build_cli_parser("ContactManager sandbox")
+
+    # No automatic seeding – users can invoke 'us' / 'usv' commands to populate contacts when desired.
+
     args = parser.parse_args()
 
     # tracing flag
@@ -184,36 +186,60 @@ async def _main_async() -> None:
     if args.traced:
         cm = unify.traced(cm)
 
-    # ─────────────────── seeding ──────────────────────────
-    scenario_text: Optional[str] = get_custom_scenario(args)
-    LG.info("[seed] building synthetic contacts – this can take 20-40 s…")
-    if args.voice:
-        _speak("Sure thing, building your custom scenario now.")
-    await _build_scenario(scenario_text)
-    LG.info("[seed] done.")
-    if args.voice:
-        _speak("All done, your custom scenario is built and ready to go.")
+    # ─────────────────── optional initial seeding ─────────────────────────
+    # No automatic seeding – users can invoke 'us' / 'usv' commands to populate contacts when desired.
 
-    print("ContactManager sandbox – type or speak. 'quit' to exit.\n")
+    # ─────────────────── command helper output ────────────────────
 
-    _speak(
-        "Press enter to record a question or request an update for the contact list.",
+    _COMMANDS_HELP = (
+        "\nContactManager sandbox – type commands below (press ↵ with an empty "
+        "line to dictate via voice when --voice mode is active – type 'r' to record).  'quit' to exit.\n\n"
+        "┌────────────────── accepted commands ──────────────────┐\n"
+        "│ us  {description}      – update_scenario (text)         │\n"
+        "│ usv                   – update_scenario_vocally        │\n"
+        "│ save_project | sp     – save project snapshot          │\n"
+        "│ help | h              – show this help                  │\n"
+        "└─────────────────────────────────────────────────────────┘\n"
     )
+
+    def _explain_commands() -> None:  # noqa: D401 – helper
+        print(_COMMANDS_HELP)
+
+    _explain_commands()
+
+    if args.voice:
+        _speak(
+            "Sandbox ready – you can type commands, or press enter on an empty line "
+            "to record a voice query.  Use 'u-s-v' to build a new scenario vocally.",
+        )
 
     # running memory of the dialogue
     chat_history: List[Dict[str, str]] = []
 
     # interaction loop
     while True:
+        # Reprint the commands so they remain visible, mirroring MemoryManager sandbox
+        print()
+        _explain_commands()
+        print()
+
         try:
             if args.voice:
-                audio = _record_until_enter()
-                raw = _transcribe_deepgram(audio).strip()
-                if not raw:
-                    continue
-                print(f"▶️  {raw}")
+                # Voice mode: 'r' triggers recording (explicit like MemoryManager sandbox)
+                raw = input(" > ").strip()
+                if raw.lower() == "r":
+                    audio = _record_until_enter()
+                    raw = _transcribe_deepgram(audio).strip()
+                    if not raw:
+                        continue
+                    print(f"▶️  {raw}")
             else:
                 raw = input("> ").strip()
+
+            # User can ask for the help table at any time
+            if raw.lower() in {"help", "h", "?"}:
+                _explain_commands()
+                continue
 
             if raw.lower() in {"quit", "exit"}:
                 break
@@ -230,6 +256,66 @@ async def _main_async() -> None:
                 if args.voice:
                     _speak("Project saved")
                 continue
+
+            # ─────────────── scenario (re)seeding commands ────────────────
+            parts = raw.split(maxsplit=1)
+            cmd_lower = parts[0].lower()
+
+            if cmd_lower in {"us", "update_scenario"}:
+                # Text-based scenario description supplied after the command, if any
+                description = parts[1].strip() if len(parts) > 1 else ""
+                if not description:
+                    # Fallback to interactive prompt for description
+                    description = input(
+                        "🧮 Describe the contact scenario you want to build > ",
+                    ).strip()
+                    if not description:
+                        print("⚠️  No description provided – cancelled.")
+                        continue
+
+                print(
+                    "[generate] Building synthetic contacts – this can take a moment…",
+                )
+                if args.voice:
+                    _speak("Sure thing, building your custom scenario now.")
+                try:
+                    await _build_scenario(description)
+                    if args.voice:
+                        _speak(
+                            "All done, your custom scenario is built and ready to go.",
+                        )
+                except Exception as exc:
+                    LG.error("Scenario generation failed: %s", exc, exc_info=True)
+                    print(f"❌  Failed to generate scenario: {exc}")
+                continue  # back to REPL
+
+            if cmd_lower in {"usv", "update_scenario_vocally"}:
+                if not args.voice:
+                    print(
+                        "⚠️  Voice mode not enabled – restart with --voice or use 'us' instead.",
+                    )
+                    continue
+
+                audio = _record_until_enter()
+                description = _transcribe_deepgram(audio).strip()
+                if not description:
+                    print("⚠️  Transcription was empty – please try again.")
+                    continue
+                print(f"▶️  {description}")
+
+                print(
+                    "[generate] Building synthetic contacts – this can take a moment…",
+                )
+                try:
+                    await _build_scenario(description)
+                    if args.voice:
+                        _speak(
+                            "All done, your custom scenario is built and ready to go.",
+                        )
+                except Exception as exc:
+                    LG.error("Scenario generation failed: %s", exc, exc_info=True)
+                    print(f"❌  Failed to generate scenario: {exc}")
+                continue  # back to REPL
 
             # ──────────────── remember the user's utterance ────────────────
             _kind, _handle = await _dispatch_with_context(
