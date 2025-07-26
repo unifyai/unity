@@ -1516,59 +1516,6 @@ def build_plan_surgery_prompt(
     )
 
 
-def build_course_correction_prompt(
-    old_code: str,
-    new_code: str,
-    current_state: str,
-    *,
-    tools: Dict[str, Callable],
-) -> str:
-    """
-    Builds the prompt to generate a course-correction script.
-
-    Args:
-        old_code: The previous version of the plan's code.
-        new_code: The new version of the plan's code.
-        current_state: A description of the current browser state.
-        tools: The tools available to the function.
-    Returns:
-        The complete prompt string.
-    """
-    strategy_instruction = """1.  Analyze if the **Current Browser State** is a suitable starting point for executing the **New Plan Code**.
-2.  If it is NOT suitable, write a script containing an `async def course_correction_main()` function. This script must use the `action_provider` to navigate to the correct starting state for the new plan.
-3.  If the current state is already suitable, respond ONLY with the single word: `None`."""
-    tool_usage_instruction = "Use the `action_provider` global object as defined in the examples and reference to perform any needed actions."
-    rules_and_examples = _build_initial_plan_rules_and_examples(
-        tools,
-        strategy_instruction,
-        tool_usage_instruction,
-    )
-
-    return textwrap.dedent(
-        f"""
-        You are a state transition analyst. An agent's plan has been modified, and you must determine if its current state is compatible with the new plan. If not, you must generate a Python script to fix it.
-
-        ---
-        ### Context
-        **Current Browser State:**
-        {current_state}
-
-        **Old Plan Snippet (for context):**
-        ```python
-        {old_code[:1000]}...
-        ```
-
-        **New Plan Code:**
-        ```python
-        {new_code}
-        ```
-        {rules_and_examples}
-
-        Begin your response now.
-        """,
-    )
-
-
 def build_exploration_prompt(goal: str, *, tools: Dict[str, Callable]) -> str:
     """
     Builds the system prompt for the pre-planning exploration phase.
