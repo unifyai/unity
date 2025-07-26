@@ -1171,6 +1171,27 @@ class ContactManager(BaseContactManager):
         # Delete the other contact
         self._delete_contact(contact_id=delete_id)
 
+        # ──────────────────────────────────────────────────────────────
+        # Keep transcript history consistent by rewriting old ids
+        # ──────────────────────────────────────────────────────────────
+        # Local import to prevent heavy top-level dependency and possible
+        # circular-import issues at module load time.
+        from unity.transcript_manager.transcript_manager import (
+            TranscriptManager,
+        )  # noqa: WPS433
+
+        # Re-use *this* ContactManager instance to avoid creating a second
+        # one inside TranscriptManager which would trigger another round of
+        # context/column checks.
+        tm = TranscriptManager(contact_manager=self)
+        # Update all sender/receiver occurrences of the deleted id so that
+        # future transcript queries remain consistent with the merged
+        # contact record.
+        tm._update_contact_id(
+            original_contact_id=delete_id,
+            new_contact_id=keep_id,
+        )
+
         return {
             "outcome": "contacts merged successfully",
             "details": {
