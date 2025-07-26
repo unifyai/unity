@@ -401,6 +401,10 @@ class HierarchicalPlan(BaseActiveTask):
         self.execution_namespace: Dict[str, Any] = {}
         self.call_stack: List[str] = []
         self.action_log: List[str] = []
+        self.last_verified_function_name: Optional[str] = None
+        self.last_verified_url: Optional[str] = None
+        self.last_verified_screenshot: Optional[str | bytes] = None
+        self.last_verified_page_analysis: Optional[PageAnalysis] = None
         self.function_source_map: Dict[str, str] = {}
         self.interaction_stack: List[List[Tuple[str, str, Optional[str]]]] = []
         self.escalation_count = 0
@@ -1665,6 +1669,27 @@ class HierarchicalPlanner(BasePlanner):
             logger.info(
                 f"CACHE ADD: Stored result for '{fn.__name__}' in cache.",
             )
+
+            try:
+                current_url = await self.action_provider.browser.get_current_url()
+                plan.last_verified_function_name = fn.__name__
+                plan.last_verified_url = current_url
+                plan.last_verified_screenshot = final_screenshot
+                plan.last_verified_page_analysis = await self.action_provider.browser.observe(
+                    "Analyze the current page state and provide a structured summary of visible headings, links, and interactive elements.",
+                    response_format=PageAnalysis,
+                )
+                plan.action_log.append(
+                    f"STATE CAPTURE: Stored successful state after '{fn.__name__}' at URL {current_url}.",
+                )
+                logger.info(
+                    f"STATE CAPTURE: Stored successful state after '{fn.__name__}' at URL {current_url}.",
+                )
+            except Exception as e:
+                logger.warning(
+                    f"Could not capture successful state after '{fn.__name__}': {e}",
+                    exc_info=True,
+                )
 
             if func_source and self.function_manager and fn.__name__ != "main_plan":
                 try:
