@@ -1,1 +1,5 @@
-{}
+{
+    "superheros": [
+        "Please create 10 new superhero contacts. Each contact should have a city that they protect, a unique superpower, and a unique weakness. All of the standard default columns should be fully populated as well."
+    ]
+}
