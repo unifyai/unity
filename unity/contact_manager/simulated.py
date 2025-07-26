@@ -199,6 +199,7 @@ class SimulatedContactManager(BaseContactManager):
         upd_tools = methods_to_tool_dict(
             ContactManager._create_contact,
             ContactManager._update_contact,
+            ContactManager._delete_contact,
             ContactManager._search_contacts,
             include_class_name=False,
         )
@@ -480,6 +481,21 @@ class SimulatedContactManager(BaseContactManager):
             }
 
         return data
+
+    # ------------------------------------------------------------------ #
+    #  Simulated _delete_contact                                          #
+    # ------------------------------------------------------------------ #
+    def _delete_contact(
+        self,
+        *,
+        contact_id: int,
+    ) -> "ToolOutcome":
+        """Simulate deletion of a contact and return a confirmation payload."""
+        # Compose a confirmation JSON manually – no actual storage.
+        return {
+            "outcome": "contact deleted (simulated)",
+            "details": {"contact_id": contact_id},
+        }
 
 
 # --- TYPE CHECKING SUPPORT --------------------------------------------------

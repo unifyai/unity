@@ -168,6 +168,27 @@ class BaseContactManager(ABC):
         """
         raise NotImplementedError
 
+    @abstractmethod
+    def _delete_contact(
+        self,
+        *,
+        contact_id: int,
+    ) -> "ToolOutcome":
+        """
+        Permanently **remove** a contact from storage.
+
+        Parameters
+        ----------
+        contact_id : int
+            Identifier of the contact to delete.
+
+        Returns
+        -------
+        ToolOutcome
+            A standard outcome payload summarising what was deleted (at minimum the contact_id).
+        """
+        raise NotImplementedError
+
 
 if TYPE_CHECKING:
     # Avoid a runtime import to prevent circular dependencies
