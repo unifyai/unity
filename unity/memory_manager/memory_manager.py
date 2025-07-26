@@ -318,6 +318,30 @@ class MemoryManager(BaseMemoryManager):
                 **cleaned_kwargs,
             )
 
+        # NEW ────────────────────────────────────────────────────────────
+        #  merge_contacts – expose full-contact merge to the LLM
+        #
+        #  Unlike the create/update wrappers above, *all* columns are allowed
+        #  during a merge, therefore we only strip internal helper parameters
+        #  (e.g. parent_chat_context) that the underlying implementation does
+        #  not understand – no additional field restrictions are applied.
+        @functools.wraps(self._contact_manager._merge_contacts, updated=())
+        async def _safe_merge_contacts(**kwargs):
+            # Remove any kwargs that _merge_contacts is not expecting (helps
+            # avoid accidental leaks of hidden parameters coming from the
+            # tool-use loop itself).
+            import inspect  # local import to avoid polluting module namespace
+
+            allowed = set(
+                inspect.signature(self._contact_manager._merge_contacts).parameters,
+            )
+            cleaned_kwargs = {k: v for k, v in kwargs.items() if k in allowed}
+
+            return await asyncio.to_thread(
+                self._contact_manager._merge_contacts,
+                **cleaned_kwargs,
+            )
+
         # ────────────────────────────────────────────────────────────────
         #   Patch wrapper *signatures* & *docstrings* so the LLM sees a
         #   cleaned-up schema that hides now-forbidden parameters.
@@ -355,6 +379,8 @@ class MemoryManager(BaseMemoryManager):
             # Restricted mutation helpers
             "create_contact": _safe_create_contact,
             "update_contact": _safe_update_contact,
+            # Full-contact merge helper (no field restrictions)
+            "merge_contacts": _safe_merge_contacts,
         }
 
         # ─ 2.  LLM client
