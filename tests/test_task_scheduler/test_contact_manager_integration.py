@@ -115,6 +115,25 @@ async def test_ts_ask_calls_contact_manager_ask(monkeypatch):
 async def test_ts_update_calls_contact_manager_ask(monkeypatch):
     """Trigger-based task creation referencing a contact name must query ContactManager.ask exactly once."""
 
+    # --------------------------------------------------------------------
+    # 1. Explicitly create a *Sara Smith* contact so the lookup succeeds
+    #    without devolving into an empty-result edge-case.  Importantly we
+    #    perform this step *before* monkey-patching ContactManager.ask so
+    #    any internal helper calls during the ``update`` flow do **not**
+    #    inflate the expected call-count.
+    # --------------------------------------------------------------------
+
+    cm = ContactManager()
+
+    create_handle = await cm.update(
+        "Add a new contact: Sara Smith, email sara.smith@example.com, bio 'Company accountant'. She prefers an *informal* tone",
+    )
+    await create_handle.result()
+
+    # --------------------------------------------------------------------
+    # 2. Spy on ContactManager.ask *after* the contact exists
+    # --------------------------------------------------------------------
+
     calls = {"count": 0}
 
     original = ContactManager.ask
@@ -126,7 +145,22 @@ async def test_ts_update_calls_contact_manager_ask(monkeypatch):
 
     monkeypatch.setattr(ContactManager, "ask", spy, raising=True)
 
+    # --------------------------------------------------------------------
+    # 3. Create a task mentioning Sara so the scheduler's task search has
+    #    context, yet still lacks enough detail for the trigger-building
+    #    question – mirroring the ask-flow test setup.
+    # --------------------------------------------------------------------
+
     ts = TaskScheduler()
+
+    ts._create_task(
+        name="Remind Sara about her homework",
+        description="Prepare guidance to help Sara with her homework when she calls.",
+    )
+
+    # --------------------------------------------------------------------
+    # 4. Proceed with the original integration scenario
+    # --------------------------------------------------------------------
 
     cmd = "When Sara phones, please help her with her homework by starting an appropriate task automatically."
 
