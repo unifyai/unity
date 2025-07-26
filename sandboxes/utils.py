@@ -252,8 +252,6 @@ async def _speak_async(text: str) -> None:
     if "CARTESIA_API_KEY" not in os.environ:
         return
 
-    print(f'🗣️ Assistant speaking…\n"{text}"\npress ↵ to skip.')
-
     # ─────────────── enter-to-skip listener ────────────────
     skip = threading.Event()  # raised when user hits ↵
     listener_done = threading.Event()  # tells the listener to exit
@@ -283,6 +281,13 @@ async def _speak_async(text: str) -> None:
             rate=tts.sample_rate,  # usually 24 kHz
             output=True,
         )
+
+        # PortAudio initialisation (and its interaction with JACK) tends to
+        # emit noisy warnings *right here*.  Briefly pause and then print the
+        # skip hint so that it appears **after** those warnings.
+        await asyncio.sleep(1.0)
+        print(f'🗣️ Assistant speaking…\n"{text}"')
+        print("press ↵ to skip.")
 
         def _frame_to_pcm(frame: "AudioFrame") -> bytes:
             """Return raw 16-bit PCM for *any* Cartesia AudioFrame flavour."""
