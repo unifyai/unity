@@ -43,15 +43,42 @@ class ActionProvider:
         self.browser = Browser(mode=browser_mode, **browser_kwargs[browser_mode])
         self._setup_browser_methods()
 
-        self.contact_manager = ContactManager()
-        self.transcript_manager = TranscriptManager(
-            contact_manager=self.contact_manager,
-        )
-        self.knowledge_manager = KnowledgeManager()
+        self._contact_manager = None
+        self._transcript_manager = None
+        self._knowledge_manager = None
+        self._task_scheduler = None
 
-        from unity.task_scheduler.task_scheduler import TaskScheduler
+    @property
+    def contact_manager(self):
+        """Lazily initialize and return the ContactManager."""
+        if self._contact_manager is None:
+            self._contact_manager = ContactManager()
+        return self._contact_manager
 
-        self.task_scheduler = TaskScheduler()
+    @property
+    def transcript_manager(self):
+        """Lazily initialize and return the TranscriptManager."""
+        if self._transcript_manager is None:
+            self._transcript_manager = TranscriptManager(
+                contact_manager=self.contact_manager,
+            )
+        return self._transcript_manager
+
+    @property
+    def knowledge_manager(self):
+        """Lazily initialize and return the KnowledgeManager."""
+        if self._knowledge_manager is None:
+            self._knowledge_manager = KnowledgeManager()
+        return self._knowledge_manager
+
+    @property
+    def task_scheduler(self):
+        """Lazily initialize and return the TaskScheduler."""
+        if self._task_scheduler is None:
+            from unity.task_scheduler.task_scheduler import TaskScheduler
+
+            self._task_scheduler = TaskScheduler()
+        return self._task_scheduler
 
     def _setup_browser_methods(self):
         """Dynamically create tool methods and assign backend docstrings."""
