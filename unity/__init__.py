@@ -82,9 +82,10 @@ def init(
         )
         ctx = first_name + surname
     else:
-        # No assistants returned (offline / stub environment) – leave None.
-        ASSISTANT = None
-        ctx = "Assistant"
+        # No assistants returned or explicitly passed (offline)
+        raise RuntimeError(
+            "No assistants found. Please create an assistant in the Unify dashboard or expliclty pass a default assistant.",
+        )
 
     # 2. Set the assistant context *after* validation
     unify.set_context(ctx)
