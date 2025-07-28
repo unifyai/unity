@@ -68,7 +68,7 @@ class Event(metaclass=_EventRegistry):
         payload = self.to_dict()["payload"]
         return BusEvent(
             calling_id="",
-            type=self.__class__.__name__,
+            type="Comms",
             timestamp=self.timestamp.isoformat(),
             payload=payload,
             payload_cls=self.__class__.__name__,
@@ -91,7 +91,10 @@ class Event(metaclass=_EventRegistry):
     @classmethod
     def from_bus_event(cls, event) -> "Event":
         event_dump = event.model_dump()
-        data = {"event_name": event_dump["type"], "payload": event_dump["payload"]}
+        data = {
+            "event_name": event_dump["payload_cls"],
+            "payload": event_dump["payload"],
+        }
         return cls.from_dict(data)
 
     def humanize_time_ago(self) -> str:
@@ -282,22 +285,33 @@ class ToolUseStartedEvent(Event):
         self,
         chat_history: list[dict[str, str]],
         query: str,
+        handle_id: int,
+        stage: str = "tool_use start",
         *,
         is_urgent: bool = True,
         **kwargs,
     ):
         kwargs.pop("chat_history", None)
         kwargs.pop("query", None)
+        kwargs.pop("handle_id", None)
+        kwargs.pop("stage", None)
         kwargs.pop("is_urgent", None)
 
         self.chat_history = chat_history
         self.query = query
+        self.handle_id = handle_id
+        self.stage = stage
         super().__init__(is_urgent=is_urgent, **kwargs)
 
     def to_dict(self) -> dict[str, Any]:
         base_dict = super().to_dict()
         base_dict["payload"].update(
-            {"chat_history": self.chat_history, "query": self.query},
+            {
+                "chat_history": self.chat_history,
+                "query": self.query,
+                "stage": self.stage,
+                "handle_id": self.handle_id,
+            },
         )
         return base_dict
 
@@ -307,16 +321,30 @@ class ToolUseStartedEvent(Event):
 
 
 class ToolUseEndedEvent(Event):
-    def __init__(self, query: str, *, is_urgent: bool = True, **kwargs):
+    def __init__(
+        self,
+        query: str,
+        handle_id: int,
+        stage: str = "tool_use end",
+        *,
+        is_urgent: bool = True,
+        **kwargs,
+    ):
         kwargs.pop("query", None)
+        kwargs.pop("handle_id", None)
+        kwargs.pop("stage", None)
         kwargs.pop("is_urgent", None)
 
         self.query = query
+        self.handle_id = handle_id
+        self.stage = stage
         super().__init__(is_urgent=is_urgent, **kwargs)
 
     def to_dict(self) -> dict[str, Any]:
         base_dict = super().to_dict()
-        base_dict["payload"].update({"query": self.query})
+        base_dict["payload"].update(
+            {"query": self.query, "handle_id": self.handle_id, "stage": self.stage},
+        )
         return base_dict
 
     def __str__(self):

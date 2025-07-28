@@ -1,5 +1,4 @@
 import asyncio
-from datetime import datetime
 from google.cloud import pubsub_v1
 import json
 import os
@@ -108,7 +107,6 @@ class CommsManager:
                         "topic": topic,
                         "event": events_map[thread](
                             content=content,
-                            timestamp=datetime.now(),
                             role="User",
                         ).to_dict(),
                     },
