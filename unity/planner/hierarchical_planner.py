@@ -482,8 +482,8 @@ class HierarchicalPlan(BaseActiveTask):
         self.completed_functions: dict = {}
         self.skipped_functions: set = set()
         self._execution_task = asyncio.create_task(self._initialize_and_run())
-        self.MAX_ESCALATIONS = max_escalations
-        self.MAX_LOCAL_RETRIES = max_local_retries
+        self.MAX_ESCALATIONS = max_escalations or 2
+        self.MAX_LOCAL_RETRIES = max_local_retries or 3
 
         self._temp_file_path: Optional[Path] = None
         self._module_name: str = f"hp_plan_{uuid.uuid4().hex}"
@@ -1048,7 +1048,7 @@ class HierarchicalPlan(BaseActiveTask):
         """
         if not self._is_complete:
             self._set_state(_HierarchicalPlanState.STOPPED)
-            result_str = "Plan was stopped."
+            result_str = final_result or "Plan was stopped."
             if self.main_loop_handle and not self.main_loop_handle.done():
                 self.main_loop_handle.stop()
             if self._execution_task and not self._execution_task.done():
@@ -1227,8 +1227,8 @@ class HierarchicalPlanner(BasePlanner):
             for name, attr in inspect.getmembers(self.action_provider)
             if not name.startswith("_") and callable(attr)
         }
-        self.max_escalations = max_escalations or 3
-        self.max_local_retries = max_local_retries or 2
+        self.max_escalations = max_escalations or 2
+        self.max_local_retries = max_local_retries or 3
         self.timeout = timeout
 
 
