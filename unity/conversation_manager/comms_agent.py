@@ -216,15 +216,15 @@ class CommsAgent:
         from unity.events.event_bus import EVENT_BUS
 
         bus_events = await EVENT_BUS.search(
-            filter=f"event_type in {json.dumps(EVENT_TYPES)}",
+            filter='type == "Comms"',
             limit=self.conv_context_length,
         )
 
-        return [Event.from_bus_event(e).to_dict() for e in bus_events]
+        return [Event.from_bus_event(e).to_dict() for e in bus_events][::-1]
 
     def get_chat_history(self):
         chat_history = []
-        for event in self.past_events[-self.conv_context_length :]:
+        for event in self.past_events:
             if event["event_name"] == "PhoneUtteranceEvent":
                 chat_history.append(
                     {
@@ -264,12 +264,14 @@ class CommsAgent:
                                 self.assistant_number,
                                 (
                                     new_event["tts_provider"]
-                                    if new_event["tts_provider"]
+                                    if hasattr(new_event, "tts_provider")
+                                    and new_event["tts_provider"]
                                     else "cartesia"
                                 ),
                                 (
                                     new_event["voice_id"]
-                                    if new_event["voice_id"]
+                                    if hasattr(new_event, "voice_id")
+                                    and new_event["voice_id"]
                                     else "None"
                                 ),
                                 "--outbound" if new_event.get("outbound") else "None",
@@ -408,7 +410,11 @@ class CommsAgent:
             {
                 "topic": "tool_use",
                 "to": "past",
-                "event": ToolUseStartedEvent(chat_history, action.query).to_dict(),
+                "event": ToolUseStartedEvent(
+                    chat_history,
+                    action.query,
+                    handle_id,
+                ).to_dict(),
             },
         )
 
@@ -427,7 +433,7 @@ class CommsAgent:
         self.publish(
             {
                 "topic": "tool_use",
-                "event": ToolUseEndedEvent(answer).to_dict(),
+                "event": ToolUseEndedEvent(answer, handle_id).to_dict(),
             },
         )
 
@@ -808,7 +814,7 @@ class CommsAgent:
     def get_user_agent_prompt(self):
         return build_user_agent_prompt(
             call_purpose=self.call_purpose,
-            past_events=self.past_events[-self.conv_context_length :] or [],
+            past_events=self.past_events,
             inflight_events=self.inflight_events,
             tool_use_handles=self.tool_use_handles,
         )
@@ -859,6 +865,21 @@ class CommsAgent:
                 EVENT_BUS._get_logger().session.headers[
                     "Authorization"
                 ] = f"Bearer {os.environ['UNIFY_KEY']}"
+
+                # event_bus auto-pinning registration
+                EVENT_BUS.set_window("Comms", self.conv_context_length)
+                EVENT_BUS.register_auto_pin(
+                    event_type="Comms",
+                    open_predicate=lambda e: e.payload.get("stage", "")
+                    == "tool_use start",
+                    close_predicate=lambda e: e.payload.get("stage", "")
+                    == "tool_use end",
+                    key_fn=lambda e: e.payload.get("handle_id", ""),
+                )
+
+                # poll past events
+                self.loop.create_task(self.handle_past_events())
+
         except Exception as e:
             print(f"Error initializing unity: {e}")
             traceback.print_exc()
@@ -916,6 +937,18 @@ class CommsAgent:
         except Exception as e:
             print(f"Error handling logging: {e}")
             traceback.print_exc()
+
+    async def handle_past_events(self):
+        """
+        Background task that periodically fetches recent events from the EventBus
+        and merges them into self.past_events.
+        """
+        while True:
+            try:
+                self.past_events = await self.get_bus_events()
+            except Exception as e:
+                print(f"Error fetching bus events: {e}")
+            await asyncio.sleep(2)
 
     def handle_event(self, event: dict):
         global ONGOING_CALL
