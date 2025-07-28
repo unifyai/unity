@@ -36,11 +36,13 @@ def main(use_controller: bool = True, debug: bool = True, mode: str = "hybrid") 
     if use_controller:
         # Use full Controller with act/observe capabilities and proper context management
         log.debug(f"Starting with full Controller (mode={mode}, debug={debug})...")
+        redis_db = 0
         controller = Controller(
             session_connect_url=None,
             headless=False,
             mode=mode,
             debug=debug,
+            redis_db=redis_db,
         )
         controller.start()
 
@@ -53,12 +55,12 @@ def main(use_controller: bool = True, debug: bool = True, mode: str = "hybrid") 
             while True:
                 cmd = gui_to_backend_queue.get()
                 # Commands go through redis to maintain compatibility with Controller's redis listener
-                r.publish("browser_command", cmd)
+                r.publish(f"browser_command_{redis_db}", cmd)
 
         threading.Thread(target=_cmd_forwarder, daemon=True).start()
 
         # launch Tk GUI (pulls browser_state directly from redis, sends commands via queue)
-        gui = ControlPanel(gui_to_backend_queue)
+        gui = ControlPanel(gui_to_backend_queue, redis_db=redis_db)
         gui.set_controller(
             controller,
         )  # Give GUI access to Controller for act/observe calls
@@ -80,11 +82,12 @@ def main(use_controller: bool = True, debug: bool = True, mode: str = "hybrid") 
             updates_queue=worker_to_gui_queue,
             headless=False,
             debug=debug,
+            redis_db=redis_db,
         )
         worker.start()
 
         # launch Tk GUI
-        gui = ControlPanel(gui_to_backend_queue, worker_to_gui_queue)
+        gui = ControlPanel(gui_to_backend_queue, worker_to_gui_queue, redis_db=redis_db)
         gui.set_worker(worker)
 
         try:

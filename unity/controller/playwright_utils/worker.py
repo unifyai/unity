@@ -56,11 +56,13 @@ class BrowserWorker(threading.Thread):
         headless: bool = False,
         mode: str = "heuristic",  # "heuristic" | "vision" | "hybrid"
         debug: bool = False,
+        redis_db: int = 0,
     ):
         super().__init__(daemon=True)
         self._redis_client = redis.Redis(host="localhost", port=6379, db=0)
+        self._redis_db = redis_db
         self._pubsub = self._redis_client.pubsub()
-        self._pubsub.subscribe("browser_command")
+        self._pubsub.subscribe(f"browser_command_{self._redis_db}")
         self.start_url = start_url
         self.log = log or (lambda *_: None)
         self._stop_event = threading.Event()
@@ -618,7 +620,10 @@ class BrowserWorker(threading.Thread):
                     if processed_request_id:
                         payload["ack_request_id"] = processed_request_id
                     try:
-                        self._redis_client.publish("browser_state", json.dumps(payload))
+                        self._redis_client.publish(
+                            f"browser_state_{self._redis_db}",
+                            json.dumps(payload),
+                        )
                     except Exception:
                         pass
 
