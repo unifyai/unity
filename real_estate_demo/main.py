@@ -14,6 +14,7 @@ from voice_demo import Agent
 
 load_dotenv()
 
+
 class EventManager:
     def __init__(self):
         self.servers = {}
@@ -156,7 +157,10 @@ def signal_handler(signum, frame):
 def loop_exception_handler(loop, context):
     print("Error:", context.get("message"), context.get("exception"))
 
+
 support_agent = None
+
+
 async def main():
     # global user_agent
 
