@@ -897,9 +897,9 @@ class CommsAgent:
                 EVENT_BUS.set_window("Comms", self.conv_context_length)
                 EVENT_BUS.register_auto_pin(
                     event_type="Comms",
-                    open_predicate=lambda e: e.payload.get("stage", "")
+                    open_predicate=lambda e: e.payload.get("role", "")
                     == "tool_use start",
-                    close_predicate=lambda e: e.payload.get("stage", "")
+                    close_predicate=lambda e: e.payload.get("role", "")
                     == "tool_use end",
                     key_fn=lambda e: e.payload.get("handle_id", ""),
                 )
