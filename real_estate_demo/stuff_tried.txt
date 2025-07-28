@@ -1,4 +1,4 @@
 Issue: Re-selecting fields infinitely
 - delimiting events (did not help)
-- making the field values visually clear and obvious in the prompt and structured output description 
+- making the field values visually clear and obvious in the prompt and structured output description
 (did not help)

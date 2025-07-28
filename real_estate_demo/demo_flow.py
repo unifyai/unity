@@ -1,5 +1,4 @@
 import os
-from typing import Optional
 
 from dotenv import load_dotenv
 
@@ -7,19 +6,29 @@ load_dotenv()
 
 
 from wizard_2 import (
-    Node, Flow, InputField, RadioField, 
-CheckBoxField, GoBack, GoNext, BaseGoToNode ,EndCall, PromptUser, BaseDataFieldAction
-# UpdateUser
+    Node,
+    Flow,
+    InputField,
+    RadioField,
+    CheckBoxField,
+    GoBack,
+    GoNext,
+    BaseGoToNode,
+    EndCall,
+    PromptUser,
+    BaseDataFieldAction,
+    # UpdateUser
 )
 
 from pydantic import BaseModel, Field
 import openai
 
-from datetime import datetime, timedelta
+from datetime import datetime
+
 
 def create_human_readable_delta(t):
     if isinstance(t, str):
-        t = datetime.fromisoformat(t)  
+        t = datetime.fromisoformat(t)
     delta = datetime.now() - t
     seconds = delta.seconds
     minutes = delta.seconds // 60
@@ -29,23 +38,45 @@ def create_human_readable_delta(t):
         return f'{"just now" if seconds <= 1 else str(seconds) + " seconds ago"}'
 
 
-
-async def call_llm_3(sys: str, flow: Flow, conversation_history: list[str], action_log: list[str], model="gpt-4.1"):
+async def call_llm_3(
+    sys: str,
+    flow: Flow,
+    conversation_history: list[str],
+    action_log: list[str],
+    model="gpt-4.1",
+):
     client = openai.AsyncOpenAI(api_key=os.environ["OPENAI_API_KEY"])
 
     class AgentOutput(BaseModel):
-        thoughts: str = Field(..., description="Your inner thoughts before taking actions. Also determine if you need to give a small update to the user based on the conversation history")
-        # phone_utterance: Optional[str] = Field(..., 
-                                        # description="Your response to the user over the phone, shown as [Assistant] ... in the conversation history.")
-        next_action: flow.current_action_model() | PromptUser | EndCall = Field(..., 
-                                        description="next action to take given the current state.")
-    
+        thoughts: str = Field(
+            ...,
+            description="Your inner thoughts before taking actions. Also determine if you need to give a small update to the user based on the conversation history",
+        )
+        # phone_utterance: Optional[str] = Field(...,
+        # description="Your response to the user over the phone, shown as [Assistant] ... in the conversation history.")
+        next_action: flow.current_action_model() | PromptUser | EndCall = Field(
+            ...,
+            description="next action to take given the current state.",
+        )
+
     # print(flow.current_action_model().model_json_schema())
     # event_stream_str = "\n".join(event_stream)
-    conversation_history_str = "\n".join([f'[{m["role"].title()}, {create_human_readable_delta(m["timestamp"])}]: {m["message"]}' for m in conversation_history])
-    conversation_history_prompt = f'<conversation_history>\n{conversation_history_str}\n</conversation_history>'
+    conversation_history_str = "\n".join(
+        [
+            f'[{m["role"].title()}, {create_human_readable_delta(m["timestamp"])}]: {m["message"]}'
+            for m in conversation_history
+        ],
+    )
+    conversation_history_prompt = (
+        f"<conversation_history>\n{conversation_history_str}\n</conversation_history>"
+    )
 
-    action_log_str = "\n".join([f'[{m["action"]}, {create_human_readable_delta(m["timestamp"])}]: {m["message"]}' for m in action_log])
+    action_log_str = "\n".join(
+        [
+            f'[{m["action"]}, {create_human_readable_delta(m["timestamp"])}]: {m["message"]}'
+            for m in action_log
+        ],
+    )
     agent_script_prompt = f"""
 <agent_script>
 <action_log>
@@ -59,19 +90,19 @@ async def call_llm_3(sys: str, flow: Flow, conversation_history: list[str], acti
     user_msg = f"{conversation_history_prompt}\n\n{agent_script_prompt}"
     print("\033[32m" + user_msg + "\033[0m", flush=True)
     res = await client.beta.chat.completions.parse(
-                model=model,
-                messages=[
-                    {
-                        "role": "system",
-                        "content": sys,
-                    },
-                    {
-                        "role": "user",
-                        "content": user_msg,
-                    },
-                ],
-                response_format=AgentOutput,
-            )
+        model=model,
+        messages=[
+            {
+                "role": "system",
+                "content": sys,
+            },
+            {
+                "role": "user",
+                "content": user_msg,
+            },
+        ],
+        response_format=AgentOutput,
+    )
     message = res.choices[0].message
     print(message)
     agent_output = message.parsed
@@ -79,13 +110,25 @@ async def call_llm_3(sys: str, flow: Flow, conversation_history: list[str], acti
     next_action = agent_output.next_action
 
     if isinstance(next_action, PromptUser):
-        conversation_history.append({"message": next_action.prompt, "role": "assistant", "timestamp": datetime.now()})
+        conversation_history.append(
+            {
+                "message": next_action.prompt,
+                "role": "assistant",
+                "timestamp": datetime.now(),
+            },
+        )
 
     else:
-        
+
         if isinstance(next_action, BaseDataFieldAction):
             if next_action.update:
-                conversation_history.append({"message": next_action.update, "role": "assistant", "timestamp": datetime.now()})
+                conversation_history.append(
+                    {
+                        "message": next_action.update,
+                        "role": "assistant",
+                        "timestamp": datetime.now(),
+                    },
+                )
             flow.play_actions(next_action.fields_actions)
             next_action = next_action.fields_actions
         else:
@@ -104,13 +147,23 @@ async def call_llm_3(sys: str, flow: Flow, conversation_history: list[str], acti
                 action_events.append((action, action_event))
             else:
                 if isinstance(action, GoNext):
-                    action_event = f"advanced to the next node: '{flow.current_node.title}'"
+                    action_event = (
+                        f"advanced to the next node: '{flow.current_node.title}'"
+                    )
                     action_events.append((action, action_event))
                 elif isinstance(action, GoBack):
-                    action_event = f"`went back to the previous node: '{flow.current_node.title}'"
+                    action_event = (
+                        f"`went back to the previous node: '{flow.current_node.title}'"
+                    )
                     action_events.append((action, action_event))
         for a, ae in action_events:
-            action_log.append({"action": a.__class__.__name__, "message": ae, "timestamp": datetime.now()})
+            action_log.append(
+                {
+                    "action": a.__class__.__name__,
+                    "message": ae,
+                    "timestamp": datetime.now(),
+                },
+            )
     return agent_output
 
 
@@ -127,14 +180,13 @@ def get_action_event(flow, action):
         return f"Option {action.value}"
 
 
-
 # flow = Flow([
 #       start_call_screen,
-#             profile_screen, 
-#              location_screen, 
-#              inside_home_area_screen, 
-#              floors_walls_stairs_screen, 
-#              ceiling_issues_screen, 
+#             profile_screen,
+#              location_screen,
+#              inside_home_area_screen,
+#              floors_walls_stairs_screen,
+#              ceiling_issues_screen,
 #              cracks_in_the_ceiling_screen,
 #              exact_location_screen,
 #              confirmation_screen,

@@ -125,10 +125,10 @@ def run_script(
             # Headless: run in its own session so we can kill the whole group later
             return subprocess.Popen(py_cmd, start_new_session=True)
 
-        term = _find_unix_terminal()           # gnome-terminal, xterm, kitty, …
+        term = _find_unix_terminal()  # gnome-terminal, xterm, kitty, …
         if not term:
             raise RuntimeError(
-                "No terminal emulator found (gnome-terminal, xterm, kitty, …)"
+                "No terminal emulator found (gnome-terminal, xterm, kitty, …)",
             )
 
         # The *only* process we launch is the terminal.  Inside it we `exec` Python,
@@ -141,7 +141,7 @@ def run_script(
 
         proc = subprocess.Popen(
             [term, "--", "bash", "-c", f"exec {full_cmd}"],
-            start_new_session=True,            # give the group its own PGID
+            start_new_session=True,  # give the group its own PGID
         )
         return proc
 

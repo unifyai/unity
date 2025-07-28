@@ -1,6 +1,5 @@
 from collections import defaultdict
-import re
-from typing import Callable, Literal, Union, Optional
+from typing import Callable, Literal, Union
 from textwrap import dedent
 
 from pydantic import BaseModel, Field, create_model
@@ -11,11 +10,13 @@ from pydantic import BaseModel, Field, create_model
 # ---------------------------------------------------------------------------
 class GoNext(BaseModel):
     """advance to the next node"""
+
     next: Literal[True] = True
 
 
 class GoBack(BaseModel):
     """go back to the previous node"""
+
     back: Literal[True] = True
 
 
@@ -26,31 +27,37 @@ class EndCall(BaseModel):
     Can only be used in a terminal node; using EndCall will end the call and
     you won't be able to listen to the user anymore.
     """
+
     end_call: Literal[True] = True
     closing_message: str
 
 
 class PromptUser(BaseModel):
     """prompt user (ask a question, provide clarification)"""
+
     prompt: str
 
 
 class BaseGoToNode(BaseModel):
     """base class for “jump to a visited node” actions"""
-    pass
 
 
 class BaseDataFieldAction(BaseModel):
     """base class for data-field-manipulation actions"""
-    pass
 
 
 # ---------------------------------------------------------------------------
 # Field widgets
 # ---------------------------------------------------------------------------
 class InputField:
-    def __init__(self, id: str, label: str = None,
-                 value=None, *, required: bool = True):
+    def __init__(
+        self,
+        id: str,
+        label: str = None,
+        value=None,
+        *,
+        required: bool = True,
+    ):
         self.id = id
         self.label = label if label is not None else self.id
         # keep an *immutable* copy of the default value
@@ -63,15 +70,24 @@ class InputField:
         self.value = value
 
     def render(self):
-        return dedent(f"""
+        return dedent(
+            f"""
 {self.label} (Input Field)
 {'[...]' if self.value is None else '[' + self.value + ']'}
-        """).strip()
+        """,
+        ).strip()
 
 
 class RadioField:
-    def __init__(self, id: str, label: str, options: list[str],
-                 value=None, *, required: bool = True):
+    def __init__(
+        self,
+        id: str,
+        label: str,
+        options: list[str],
+        value=None,
+        *,
+        required: bool = True,
+    ):
         self.id = id
         self.label = label
         self.options = options
@@ -85,20 +101,31 @@ class RadioField:
 
     def render(self):
         str_options = "\n".join(
-            "(x) {o} <- currently selected option".format(o=o)
-            if self.value == o else
-            "( ) {o}".format(o=o)
+            (
+                "(x) {o} <- currently selected option".format(o=o)
+                if self.value == o
+                else "( ) {o}".format(o=o)
+            )
             for o in self.options
         )
-        return dedent(f"""
+        return dedent(
+            f"""
 {self.label} (Radio Field)
 {str_options}
-        """).strip()
+        """,
+        ).strip()
 
 
 class CheckBoxField:
-    def __init__(self, id: str, label: str, options: list[str],
-                 value=None, *, required: bool = True):
+    def __init__(
+        self,
+        id: str,
+        label: str,
+        options: list[str],
+        value=None,
+        *,
+        required: bool = True,
+    ):
         self.id = id
         self.label = label
         self.options = options
@@ -111,15 +138,17 @@ class CheckBoxField:
         self.value = value
 
     def render(self):
-        chosen = self.value or []                     # ← guard against None
+        chosen = self.value or []  # ← guard against None
         str_options = "\n".join(
             "[x] {o} <- checked".format(o=o) if o in chosen else "[ ] {o}".format(o=o)
             for o in self.options
         )
-        return dedent(f"""
+        return dedent(
+            f"""
 {self.label} (CheckBox Field)
 {str_options}
-        """).strip()
+        """,
+        ).strip()
 
 
 # ---------------------------------------------------------------------------
@@ -127,7 +156,7 @@ class CheckBoxField:
 # ---------------------------------------------------------------------------
 class Node:
     """
-    A dialog “screen”.  
+    A dialog “screen”.
     `fields` can now be a *static* list *or* a callable(ctx) → list
     so that dynamic screens work.
     """
@@ -138,7 +167,7 @@ class Node:
         title: str,
         instructions: str,
         fields: list | Callable[[dict], list],
-        next: str | dict | Callable | None = None
+        next: str | dict | Callable | None = None,
     ):
         self.id = id
         self.title = title
@@ -147,7 +176,7 @@ class Node:
         # ------------------------------------------------------------------
         #  Make sure the attribute is ALWAYS present from the very start
         # ------------------------------------------------------------------
-        self.is_terminal: bool = False   # will be corrected later if needed
+        self.is_terminal: bool = False  # will be corrected later if needed
 
         # the user-supplied spec (can be list or callable)
         self._raw_fields = fields
@@ -263,8 +292,10 @@ class Node:
                 cls = create_model(
                     f"Select{''.join(w.title() for w in field.label.split())}",
                     field_label=(Literal[field.label], field.label),
-                    value=(Literal[*field.options],
-                           Field(..., description="option to select")),
+                    value=(
+                        Literal[*field.options],
+                        Field(..., description="option to select"),
+                    ),
                     __doc__=f"Select option for radio field '{field.label}'.",
                 )
                 mapping[cls] = field.id
@@ -275,8 +306,10 @@ class Node:
                 cls = create_model(
                     f"Check{''.join(w.title() for w in field.label.split())}",
                     field_label=(Literal[field.label], field.label),
-                    value=(list[Literal[*field.options]],
-                           Field(..., description="options to check")),
+                    value=(
+                        list[Literal[*field.options]],
+                        Field(..., description="options to check"),
+                    ),
                     __doc__=f"Check options for checkbox field '{field.label}'.",
                 )
                 mapping[cls] = field.id
@@ -294,12 +327,11 @@ class Node:
         if new_action_classes:
             self.action_model = Union[*new_action_classes]
         else:
+
             class NoFieldAction(BaseModel):
                 """This screen currently has no data-field actions."""
-                pass
 
             self.action_model = NoFieldAction
-
 
     # ------------------------------------------------------------------ #
     # Public methods                                                     #
@@ -331,14 +363,16 @@ class Node:
 
         instruction_block = self.instructions.format(**ctx) if self.instructions else ""
         body_str = "\n".join(body)
-        return dedent(f"""
+        return dedent(
+            f"""
 Node: {self.title}
 Is Terminal Node?: {self.is_terminal}
 Instructions: {instruction_block}
 ---
 
 {body_str}
-""").strip()
+""",
+        ).strip()
 
     def reset(self):
         """Reset node to its pristine state (used once per run)."""
@@ -368,7 +402,8 @@ class Flow:
             s.reset()
 
         self.current_node: Node = (
-            self.screens[0] if start is None
+            self.screens[0]
+            if start is None
             else next(s for s in self.screens if s.id == start)
         )
         self.root_node = self.current_node
@@ -390,7 +425,7 @@ class Flow:
     # ------------------------------------------------------------------ #
     def play_actions(self, actions):
         """
-        Execute a list of actions produced by the agent.  
+        Execute a list of actions produced by the agent.
         Stops once one of them moves the flow forward/backward because
         the agent will be called again afterwards.
         """
@@ -416,7 +451,9 @@ class Flow:
                     continue
 
                 next_screen_id = self.current_node.next(self.ctx)
-                self.current_node = next(s for s in self.screens if s.id == next_screen_id)
+                self.current_node = next(
+                    s for s in self.screens if s.id == next_screen_id
+                )
                 self.ctx |= self.current_node.data
                 self.path.append(self.current_node)
                 # dynamic field refresh
@@ -425,7 +462,9 @@ class Flow:
 
             # ---------------- jump to visited node ---------------- #
             if isinstance(action, BaseGoToNode):
-                self.current_node = next(s for s in self.screens if s.id == action.node_id)
+                self.current_node = next(
+                    s for s in self.screens if s.id == action.node_id
+                )
                 # ctx unchanged → still refresh fields (in case callable depends on ctx only)
                 self.current_node._materialise_fields(self.ctx)
                 return
@@ -453,8 +492,10 @@ class Flow:
 
         GoToNode = create_model(
             "GoToNode",
-            node_id=(Literal[*[n.id for n in self.path]],
-                     Field(..., description="Node ID to go to")),
+            node_id=(
+                Literal[*[n.id for n in self.path]],
+                Field(..., description="Node ID to go to"),
+            ),
             __doc__=(
                 "Goes to the chosen node that you have already visited in your "
                 "path. Useful when you need to go back to a specific node to "
@@ -475,11 +516,18 @@ class Flow:
         # wrap field actions so we can attach a short "update" string
         DataFieldAction = create_model(
             "DataFieldAction",
-            update=(str, Field(default=None,
-                               description="optional short (~3-5 words) friendly update for the user")),
-            fields_actions=(list[Union[self.current_node.action_model]],
-                            Field(..., description="data-field action(s) to take")),
-            __base__=BaseDataFieldAction
+            update=(
+                str,
+                Field(
+                    default=None,
+                    description="optional short (~3-5 words) friendly update for the user",
+                ),
+            ),
+            fields_actions=(
+                list[Union[self.current_node.action_model]],
+                Field(..., description="data-field action(s) to take"),
+            ),
+            __base__=BaseDataFieldAction,
         )
 
         # Union of everything
@@ -490,8 +538,10 @@ class Flow:
     # ------------------------------------------------------------------ #
     def render(self) -> str:
         """Return a pretty representation (for debugging/UI)."""
-        return dedent(f"""
+        return dedent(
+            f"""
 Current Path: {' > '.join(n.title for n in self.path)}
 
 {self.current_node.render(self.ctx)}
-        """).strip()
+        """,
+        ).strip()

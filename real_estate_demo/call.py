@@ -21,7 +21,6 @@ from livekit.plugins import (
 
 if sys.platform == "darwin":
     from livekit.plugins import noise_cancellation
-from livekit.plugins.turn_detector.multilingual import MultilingualModel
 from livekit.plugins.turn_detector.english import EnglishModel
 from livekit.agents import ChatContext, ChatMessage
 
@@ -32,7 +31,6 @@ from pydantic_core import from_json
 load_dotenv()
 
 RUNNING = False
-
 
 
 IN_GEN = False
@@ -85,8 +83,8 @@ class Assistant(Agent):
                     "type": "message",
                     "role": "user",
                     "content": f"User: {new_message.text_content}",
-                    "timestamp": str(datetime.now())
-                }
+                    "timestamp": str(datetime.now()),
+                },
             },
         )
         raise llm.StopResponse()
@@ -228,7 +226,7 @@ async def entrypoint(ctx: agents.JobContext):
                 "type": "message",
                 "role": "user",
                 "content": "<Call Started>",
-                "timestamp": str(datetime.now())
+                "timestamp": str(datetime.now()),
             },
         },
     )
@@ -243,7 +241,6 @@ async def entrypoint(ctx: agents.JobContext):
             return handle.chat_message.text_content, handle.interrupted
         except Exception as e:
             print(e)
-            pass
 
     def on_response_end(t: asyncio.Task):
         nonlocal last_activity_time
@@ -294,7 +291,7 @@ async def entrypoint(ctx: agents.JobContext):
                                         "type": "message",
                                         "role": "user",
                                         "content": f"<User has interrupted you>",
-                                        "timestamp": str(datetime.now())
+                                        "timestamp": str(datetime.now()),
                                     },
                                 },
                             ),
@@ -319,7 +316,7 @@ async def entrypoint(ctx: agents.JobContext):
                 if msg["type"] == "start_gen":
                     # global IN_GEN
                     # print("ENTERED START GEN WITH GEN", IN_GEN)
-                    if t is not None and not t.done(): 
+                    if t is not None and not t.done():
                         print("waiting for current speech to end first...")
                         await t
                     # nonlocal session
@@ -327,7 +324,7 @@ async def entrypoint(ctx: agents.JobContext):
                     chunk_queue = asyncio.Queue()
                     t = asyncio.create_task(response_task())
                     # t.add_done_callback(on_response_end)
-                    
+
                     while True:
                         raw = await READER.readline()
                         msg = json.loads(raw.decode())
@@ -360,6 +357,6 @@ if __name__ == "__main__":
     agents.cli.run_app(
         agents.WorkerOptions(
             entrypoint_fnc=entrypoint,
-            agent_name="unity_+17343611691"
+            agent_name="unity_+17343611691",
         ),
     )
