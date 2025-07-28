@@ -1499,17 +1499,3 @@ def _close_httpx_clients_at_session_end():
                 pass
     loop.run_until_complete(loop.shutdown_asyncgens())
     loop.close()
-
-
-# --------------------------------------------------------------------------- #
-#  asyncio debug flag for tests                                               #
-# --------------------------------------------------------------------------- #
-from unity.constants import ASYNCIO_DEBUG
-
-import pytest  # pytest is already imported earlier, but ensure available if moved
-
-
-@pytest.fixture(autouse=True)
-def _force_asyncio_debug(event_loop):
-    """Ensure the pytest-asyncio event loop respects the global debug flag."""
-    event_loop.set_debug(ASYNCIO_DEBUG)
