@@ -236,6 +236,26 @@ class CommsAgent:
                 )
         return chat_history
 
+    async def inactivity_check_for_meet(self):
+        # wait for the agent to be admitted into the meet
+        await asyncio.sleep(20)
+
+        while True:
+            await asyncio.sleep(10)  # Check every 10 seconds
+            ret = await self.meet_browser.observe(
+                f"Are there more than one participants in the meeting?",
+                bool,
+            )
+            if not ret:
+                print("All participants left, shutting down agent...")
+                await self.publish(
+                    {
+                        "topic": self.user_phone_call_number,
+                        "event": PhoneCallStopEvent().to_dict(),
+                    },
+                )
+                break  # Exit the loop after shutdown
+
     async def listen_for_events(self):
         print("COLLECTING...")
         while True:
@@ -334,6 +354,8 @@ class CommsAgent:
 
                             # Join meet
                             await self.meet_browser.act("Click the 'Join' button")
+
+                            asyncio.create_task(self.inactivity_check_for_meet())
 
                         continue
                     else:
