@@ -124,7 +124,7 @@ class UserTyping(Event):
 
 class StartupEvent(Event):
     def __init__(self, **kwargs):
-        self.api_key = kwargs.pop("api_key")
+        self.api_key = kwargs.pop("api_key", None)
         self.assistant_id = kwargs.pop("assistant_id")
         self.assistant_name = kwargs.pop("assistant_name")
         self.assistant_age = kwargs.pop("assistant_age")
