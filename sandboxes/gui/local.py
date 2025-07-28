@@ -4,7 +4,6 @@ from textual.app import App, ComposeResult
 from textual.screen import Screen
 from textual.widgets import Button, Header, Footer, Input, Label
 from textual.containers import Horizontal
-from datetime import datetime
 from unity.conversation_manager.utils import publish_event
 from unity.conversation_manager.events import (
     SMSMessageRecievedEvent,
@@ -26,7 +25,6 @@ def send_sms(message: str) -> None:
         "topic": os.getenv("USER_PHONE_NUMBER"),
         "event": SMSMessageRecievedEvent(
             content=message,
-            timestamp=datetime.now(),
             role="User",
         ).to_dict(),
     }
@@ -39,7 +37,6 @@ def send_email(message: str) -> None:
         "topic": os.getenv("USER_PHONE_NUMBER"),
         "event": EmailRecievedEvent(
             content=message,
-            timestamp=datetime.now(),
             role="User",
         ).to_dict(),
     }
@@ -52,7 +49,6 @@ def send_whatsapp(message: str) -> None:
         "topic": os.getenv("USER_PHONE_NUMBER"),
         "event": WhatsappMessageRecievedEvent(
             content=message,
-            timestamp=datetime.now(),
             role="User",
         ).to_dict(),
     }
@@ -155,7 +151,6 @@ class CallScreen(Screen):
                 "event": PhoneCallInitiatedEvent(
                     purpose=purpose,
                     task_context={"name": task_name, "description": task_description},
-                    timestamp=datetime.now(),
                 ).to_dict(),
             }
             asyncio.create_task(publish_event(ev))
