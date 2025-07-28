@@ -490,6 +490,26 @@ class HierarchicalPlan(BaseActiveTask):
         self._module: Optional[types.ModuleType] = None
         self._module_spec: Optional[importlib.machinery.ModuleSpec] = None
 
+        self.main_loop_client: unify.AsyncUnify = unify.AsyncUnify("gpt-4o-mini@openai")
+        self.plan_generation_client: unify.AsyncUnify = unify.AsyncUnify(
+            "gemini-2.5-pro@vertex-ai",
+        )
+        self.verification_client: unify.AsyncUnify = unify.AsyncUnify(
+            "gemini-2.5-pro@vertex-ai",
+        )
+        self.implementation_client: unify.AsyncUnify = unify.AsyncUnify(
+            "gemini-2.5-pro@vertex-ai",
+        )
+        self.summarization_client: unify.AsyncUnify = unify.AsyncUnify(
+            "gemini-2.5-pro@vertex-ai",
+        )
+        self.course_correction_client: unify.AsyncUnify = unify.AsyncUnify(
+            "gemini-2.5-pro@vertex-ai",
+        )
+        self.modification_client: unify.AsyncUnify = unify.AsyncUnify("o4-mini@openai")
+        self.exploration_client: unify.AsyncUnify = unify.AsyncUnify("o4-mini@openai")
+        self.ask_client: unify.AsyncUnify = unify.AsyncUnify("gpt-4o-mini@openai")
+
     def _set_final_result(self, result: str):
         """Sets the final result and the completion event."""
         if not self._completion_event.is_set():
@@ -518,8 +538,9 @@ class HierarchicalPlan(BaseActiveTask):
             if self.plan_source_code is None:
                 self.action_log.append("Generating new plan from goal...")
                 self.plan_source_code = await self.planner._generate_initial_plan(
-                    self.goal,
-                    self.exploration_summary,
+                    plan=self,
+                    goal=self.goal,
+                    exploration_summary=self.exploration_summary,
                 )
                 self.action_log.append("Initial plan generated successfully.")
             else:
@@ -547,7 +568,7 @@ class HierarchicalPlan(BaseActiveTask):
                 tools=self.planner.tools,
             )
 
-            client = self.planner.exploration_client
+            client = self.exploration_client
             client.reset_messages()
             client.set_system_message(research_prompt)
 
@@ -594,7 +615,7 @@ class HierarchicalPlan(BaseActiveTask):
         This loop uses a single tool, `_run_one_plan_step`, to advance the plan's
         execution, allowing for pausing, interjection, and control.
         """
-        client = self.planner.main_loop_client
+        client = self.main_loop_client
         client.reset_messages()
         plan_iterator = self._create_main_loop_iterator()
 
@@ -806,7 +827,7 @@ class HierarchicalPlan(BaseActiveTask):
                         action_log=full_trace,
                     )
                     trace_summary = await llm_call(
-                        self.planner.summarization_client,
+                        self.summarization_client,
                         summary_prompt,
                     )
                     logger.info(f"TRACE SUMMARY:\n{trace_summary}")
@@ -1103,7 +1124,7 @@ class HierarchicalPlan(BaseActiveTask):
                 context_log=context_log,
                 question=question,
             )
-            return await llm_call(self.planner.ask_client, prompt)
+            return await llm_call(self.ask_client, prompt)
         except Exception as e:
             return f"Could not answer question. Current state: {self._state.name}. Error: {e}"
 
@@ -1210,25 +1231,6 @@ class HierarchicalPlanner(BasePlanner):
         self.max_local_retries = max_local_retries or 2
         self.timeout = timeout
 
-        self.main_loop_client: unify.AsyncUnify = unify.AsyncUnify("gpt-4o-mini@openai")
-        self.plan_generation_client: unify.AsyncUnify = unify.AsyncUnify(
-            "gemini-2.5-pro@vertex-ai",
-        )
-        self.verification_client: unify.AsyncUnify = unify.AsyncUnify(
-            "gemini-2.5-pro@vertex-ai",
-        )
-        self.implementation_client: unify.AsyncUnify = unify.AsyncUnify(
-            "gemini-2.5-pro@vertex-ai",
-        )
-        self.summarization_client: unify.AsyncUnify = unify.AsyncUnify(
-            "gemini-2.5-pro@vertex-ai",
-        )
-        self.course_correction_client: unify.AsyncUnify = unify.AsyncUnify(
-            "gemini-2.5-pro@vertex-ai",
-        )
-        self.modification_client: unify.AsyncUnify = unify.AsyncUnify("o4-mini@openai")
-        self.exploration_client: unify.AsyncUnify = unify.AsyncUnify("o4-mini@openai")
-        self.ask_client: unify.AsyncUnify = unify.AsyncUnify("gpt-4o-mini@openai")
 
     def _sanitize_code(self, code: str) -> str:
         """
@@ -1849,7 +1851,7 @@ class HierarchicalPlanner(BasePlanner):
                         tools=self.tools,
                     )
 
-                    self.course_correction_client.reset_messages()
+                    plan.course_correction_client.reset_messages()
                     content = [{"type": "text", "text": correction_prompt}]
                     if plan.last_verified_screenshot:
                         if isinstance(plan.last_verified_screenshot, str):
@@ -1898,10 +1900,10 @@ class HierarchicalPlanner(BasePlanner):
                             },
                         )
 
-                    self.course_correction_client.set_response_format(
+                    plan.course_correction_client.set_response_format(
                         CourseCorrectionDecision,
                     )
-                    response_str = await self.course_correction_client.generate(
+                    response_str = await plan.course_correction_client.generate(
                         messages=[{"role": "user", "content": content}],
                     )
                     correction_decision = CourseCorrectionDecision.model_validate_json(
@@ -1952,7 +1954,7 @@ class HierarchicalPlanner(BasePlanner):
                         f"WARNING: Course correction assessment failed: {e}. Proceeding with reimplementation from current state.",
                     )
                 finally:
-                    self.course_correction_client.reset_response_format()
+                    plan.course_correction_client.reset_response_format()
 
             if assessment.status == "replan_parent":
                 raise ReplanFromParentException(
@@ -1974,6 +1976,7 @@ class HierarchicalPlanner(BasePlanner):
 
     async def _generate_initial_plan(
         self,
+        plan: HierarchicalPlan,
         goal: str,
         exploration_summary: Optional[str] = None,
     ) -> str:
@@ -1981,6 +1984,7 @@ class HierarchicalPlanner(BasePlanner):
         Generates the initial Python script for the plan from a user goal.
 
         Args:
+            plan: The HierarchicalPlan instance to generate the initial plan for.
             goal: The high-level user goal.
             exploration_summary: A summary from a preceding exploration phase.
 
@@ -2019,7 +2023,7 @@ class HierarchicalPlanner(BasePlanner):
                     ),
                     exploration_summary=exploration_summary,
                 )
-                response = await llm_call(self.plan_generation_client, prompt)
+                response = await llm_call(plan.plan_generation_client, prompt)
                 code = (
                     response.strip().replace("```python", "").replace("```", "").strip()
                 )
@@ -2106,11 +2110,11 @@ class HierarchicalPlanner(BasePlanner):
                 replan_context=replan_reason,
                 tools=self.tools,
             )
-            self.implementation_client.set_response_format(ImplementationDecision)
+            plan.implementation_client.set_response_format(ImplementationDecision)
 
             try:
                 response_str = await llm_call(
-                    self.implementation_client,
+                    plan.implementation_client,
                     prompt,
                     screenshot=browser_screenshot,
                 )
@@ -2145,7 +2149,7 @@ class HierarchicalPlanner(BasePlanner):
                 return decision
 
             finally:
-                self.implementation_client.reset_response_format()
+                plan.implementation_client.reset_response_format()
 
         raise RuntimeError(
             "Failed to generate a valid implementation after multiple retries.",
@@ -2186,11 +2190,11 @@ class HierarchicalPlanner(BasePlanner):
             function_return_value=function_return_value,
         )
 
-        self.verification_client.set_response_format(VerificationAssessment)
+        plan.verification_client.set_response_format(VerificationAssessment)
 
         try:
             response_str = await llm_call(
-                self.verification_client,
+                plan.verification_client,
                 prompt,
                 screenshot=screenshot,
             )
@@ -2206,7 +2210,7 @@ class HierarchicalPlanner(BasePlanner):
                 reason=f"LLM provided malformed assessment: {str(e)}",
             )
         finally:
-            self.verification_client.reset_response_format()
+            plan.verification_client.reset_response_format()
 
     async def _execute_course_correction(self, plan: HierarchicalPlan, code: str):
         """
