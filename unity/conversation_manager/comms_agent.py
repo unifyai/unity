@@ -151,6 +151,8 @@ class CommsAgent:
                 # todo: temporary adding them here explicitly
                 self._inner_send_call,
                 self._join_meet,
+                self._inner_send_email,
+                self._inner_send_sms,
             )
             return
 
@@ -766,7 +768,7 @@ class CommsAgent:
         self.user_number = payload["user_number"]
         self.user_phone_call_number = payload["user_phone_number"]
         self.user_email = payload["user_email"]
-        os.environ["UNIFY_KEY"] = payload["api_key"]
+        os.environ["UNIFY_KEY"] = payload.pop("api_key")
         os.environ["USER_NAME"] = self.user_name
         os.environ["USER_EMAIL"] = self.user_email
 
@@ -895,6 +897,7 @@ class CommsAgent:
 
         try:
             bus_event = Event.from_dict(event["event"]).to_bus_event()
+            bus_event.payload.pop("api_key", None)
             self.loop.create_task(EVENT_BUS.publish(bus_event))
             if event["event"]["event_name"] in [
                 "PhoneUtteranceEvent",
