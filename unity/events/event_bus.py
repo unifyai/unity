@@ -822,7 +822,14 @@ class EventBus:
             flat.extend(evts)
 
         # Global ordering (newest-first)
-        flat.sort(key=lambda e: e.timestamp, reverse=True)
+        flat.sort(
+            key=lambda e: (
+                e.timestamp
+                if e.timestamp.tzinfo
+                else e.timestamp.replace(tzinfo=dt.UTC)
+            ),
+            reverse=True,
+        )
 
         if combined_window:
             # apply global windowing now
