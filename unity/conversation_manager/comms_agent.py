@@ -880,7 +880,7 @@ class CommsAgent:
                 "WhatsappMessageRecievedEvent",
                 "SMSMessageRecievedEvent",
             ]:
-                event_name = event["event"]["event_name"]
+                event_name = event["event"]["event_name"].lower()
                 role = event["event"]["payload"]["role"]
                 content = event["event"]["payload"]["content"]
                 timestamp = event["event"]["payload"]["timestamp"]
@@ -898,7 +898,7 @@ class CommsAgent:
                         sender_id = self.user_phone_call_number
                         receiver_ids = [self.assistant_number]
                 else:
-                    if "recieved" in event_name.lower():
+                    if "recieved" in event_name:
                         sender_id = self.user_number
                         receiver_ids = [self.assistant_number]
                     else:
@@ -967,6 +967,7 @@ class CommsAgent:
                     "type": "stop",
                 },
             )
+
         if to == "past":
             self.past_events.append(event["event"])
             self.redis.publish("local_chat", json.dumps(event["event"]))
