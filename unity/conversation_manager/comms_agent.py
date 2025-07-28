@@ -294,7 +294,9 @@ class CommsAgent:
                         # Join meet conference programatically
                         if self.meet_id:
                             from unity.controller.controller import Controller
+                            from unify.logging.utils.logs import initialize_trace_logger
 
+                            initialize_trace_logger()
                             self.meet_browser = Controller(redis_db=10)
                             self.meet_browser.start()
 
