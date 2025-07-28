@@ -43,19 +43,48 @@ from unity.controller.browser_backends import BrowserAgentError
 logger = logging.getLogger(__name__)
 
 
-def format_implementation_decision(decision: ImplementationDecision) -> str:
-    """Format an ImplementationDecision for logging with proper indentation."""
-    lines = [
-        "IMPLEMENTATION DECISION:",
-        f"  Action: {decision.action}",
-        f"  Reason: {decision.reason}",
-    ]
+def format_pydantic_model(
+    model: BaseModel,
+    title: Optional[str] = None,
+    indent: int = 0,
+) -> str:
+    """
+    Generic pretty printer for any Pydantic model.
 
-    if decision.code:
-        lines.append("  Code:")
-        code_lines = decision.code.split("\n")
-        for code_line in code_lines:
-            lines.append(f"    {code_line}")
+    Args:
+        model: The Pydantic model instance to format
+        title: Optional title to display above the model data
+        indent: Base indentation level (number of spaces)
+
+    Returns:
+        A formatted string representation of the model
+    """
+    lines = []
+    indent_str = " " * indent
+    if title:
+        lines.append(f"{indent_str}{title}:")
+    else:
+        lines.append(f"{indent_str}{model.__class__.__name__}:")
+    model_data = model.model_dump(exclude_none=True)
+
+    for field_name, field_value in model_data.items():
+        field_indent = " " * (indent + 2)
+
+        if isinstance(field_value, str):
+            if "\n" in field_value:
+                lines.append(f"{field_indent}{field_name}:")
+                value_lines = field_value.split("\n")
+                for value_line in value_lines:
+                    lines.append(f"{field_indent}  {value_line}")
+            else:
+                lines.append(f"{field_indent}{field_name}: {field_value}")
+        elif isinstance(field_value, (list, dict)):
+            lines.append(f"{field_indent}{field_name}:")
+            json_str = json.dumps(field_value, indent=2)
+            for json_line in json_str.split("\n"):
+                lines.append(f"{field_indent}  {json_line}")
+        else:
+            lines.append(f"{field_indent}{field_name}: {field_value}")
 
     return "\n".join(lines)
 
@@ -1703,7 +1732,7 @@ class HierarchicalPlanner(BasePlanner):
             function_return_value=result,
         )
         logger.info(
-            f"🕵️ VERIFICATION ASSESSMENT for '{fn.__name__}': {assessment.model_dump_json(indent=2)}",
+            f"🕵️ VERIFICATION ASSESSMENT for '{fn.__name__}':\n{format_pydantic_model(assessment, indent=2)}",
         )
         plan.action_log.append(
             f"Verification for {fn.__name__}: {assessment.status} - '{assessment.reason}'",
@@ -2086,7 +2115,9 @@ class HierarchicalPlanner(BasePlanner):
                     screenshot=browser_screenshot,
                 )
                 decision = ImplementationDecision.model_validate_json(response_str)
-                logger.debug(format_implementation_decision(decision))
+                logger.debug(
+                    f"\n{format_pydantic_model(decision, title='IMPLEMENTATION DECISION', indent=2)}",
+                )
                 if decision.action == "implement_function":
                     if not decision.code:
                         raise ValueError(
