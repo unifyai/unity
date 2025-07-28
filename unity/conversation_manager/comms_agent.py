@@ -243,10 +243,11 @@ class CommsAgent:
         while True:
             await asyncio.sleep(10)  # Check every 10 seconds
             ret = await self.meet_browser.observe(
-                f"Are there more than one participants in the meeting?",
+                f"Is {self.assistant_name} the only participant in the meeting?",
                 bool,
             )
-            if not ret:
+            print("ASSISTANT ONLY PARTICIPANT:", ret)
+            if ret:
                 print("All participants left, shutting down agent...")
                 await self.publish(
                     {
