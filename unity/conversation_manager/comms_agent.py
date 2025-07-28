@@ -293,7 +293,7 @@ class CommsAgent:
                         if self.meet_id:
                             from unity.controller.controller import Controller
 
-                            self.meet_browser = Controller()
+                            self.meet_browser = Controller(redis_db=10)
                             self.meet_browser.start()
 
                             # Join meet

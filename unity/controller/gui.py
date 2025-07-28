@@ -130,6 +130,7 @@ class ControlPanel(tk.Tk):
         command_q: "queue.Queue[str]",
         update_q: "queue.Queue[dict] | None" = None,
         text_q: queue.Queue[str] | None = None,
+        redis_db: int = 0,
     ):
         super().__init__()
         self.cmd_q = command_q  # GUI → worker
@@ -140,6 +141,7 @@ class ControlPanel(tk.Tk):
         self.tab_titles: list[str] = []
         self.history: list[dict] = []
         self.state: BrowserState = BrowserState()
+        self._redis_db = redis_db
 
         # ── async LLM helper --------------------------------------------
         self._llm_resp_q: "queue.Queue[tuple[str,Any]]" = queue.Queue()
@@ -191,7 +193,7 @@ class ControlPanel(tk.Tk):
             import redis, ast, json
 
             self._redis_pub = redis.Redis(host="localhost", port=6379, db=0).pubsub()
-            self._redis_pub.subscribe("browser_state")
+            self._redis_pub.subscribe(f"browser_state_{self._redis_db}")
 
             def _get_update_from_redis():
                 msg = self._redis_pub.get_message()

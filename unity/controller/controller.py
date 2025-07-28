@@ -47,14 +47,16 @@ class Controller(threading.Thread):
         headless: bool = False,
         mode: str = "heuristic",
         debug: bool = False,
+        redis_db: int = 0,
     ) -> None:
         super().__init__(daemon=daemon)
         self._redis_client = redis.Redis(host="localhost", port=6379, db=0)
         self._pubsub_text_action = self._redis_client.pubsub()
-        self._pubsub_text_action.subscribe("text_action")
+        self._pubsub_text_action.subscribe(f"text_action_{redis_db}")
         self._pubsub_browser_state = self._redis_client.pubsub()
-        self._pubsub_browser_state.subscribe("browser_state")
+        self._pubsub_browser_state.subscribe(f"browser_state_{redis_db}")
         self.session_connect_url = session_connect_url
+        self._redis_db = redis_db
 
         self._headless = headless
         self._mode = mode
@@ -79,6 +81,7 @@ class Controller(threading.Thread):
                 headless=self._headless,
                 mode=self._mode,
                 debug=self._debug,
+                redis_db=self._redis_db,
             )
         if not self._browser_open:
             self._browser_worker.start()
@@ -188,12 +191,12 @@ class Controller(threading.Thread):
                 # lazily (auto) start the worker if it isn't running
                 self._browser_worker.start()
                 self._browser_open = True
-                self._redis_client.publish("browser_command", payload)
+                self._redis_client.publish(f"browser_command_{self._redis_db}", payload)
             else:
-                self._redis_client.publish("browser_command", payload)
+                self._redis_client.publish(f"browser_command_{self._redis_db}", payload)
 
             # notify listeners that the action finished (optimistic)
-            self._redis_client.publish("action_completion", payload)
+            self._redis_client.publish(f"action_completion_{self._redis_db}", payload)
 
             t = datetime.now(timezone.utc).time().isoformat(timespec="milliseconds")
             LOGGER.info(f"\n🕹️ Performed Action: {action} [⏱️ {t}]\n")
@@ -243,7 +246,7 @@ class Controller(threading.Thread):
         action: str,
         expectation: Optional[str] = None,
         multi_step_mode: bool = False,
-        timeout: float = 10.0,
+        timeout: float = 60.0,
     ) -> str:
         """
         Converts a natural-language instruction into a browser action, executes it,
@@ -325,7 +328,10 @@ class Controller(threading.Thread):
             except (json.JSONDecodeError, KeyError):
                 pass
 
-        await asyncio.to_thread(ps.subscribe, **{"browser_state": _waiter})
+        await asyncio.to_thread(
+            ps.subscribe,
+            **{f"browser_state_{self._redis_db}": _waiter},
+        )
         listener_thread = ps.run_in_thread(daemon=True)
 
         # Dispatch the action with its unique ID
@@ -359,7 +365,10 @@ class Controller(threading.Thread):
                     pass
 
             ps2 = self._redis_client.pubsub(ignore_subscribe_messages=True)
-            await asyncio.to_thread(ps2.subscribe, **{"browser_state": _settle})
+            await asyncio.to_thread(
+                ps2.subscribe,
+                **{f"browser_state_{self._redis_db}": _settle},
+            )
             t2 = ps2.run_in_thread(daemon=True)
             try:
                 await asyncio.wait_for(post_ack_fut, timeout)
