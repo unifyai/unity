@@ -4,7 +4,6 @@ Replaces legacy .md files with programmatic builders."""
 import inspect
 import json
 from typing import Dict, Callable
-from unity.memory_manager.broader_context import get_broader_context
 
 
 # Helpers for tool introspection
@@ -125,6 +124,7 @@ def _build_communication_rules_section(is_call: bool) -> str:
     return "\n".join([title, underline] + lines)
 
 
+# Helper to build the user details section
 def _build_user_details_section(name: str) -> str:
     title = "User Details:"
     underline = "-" * len(title)
@@ -173,7 +173,28 @@ def _build_task_context_section(
     )
 
 
-# prompt builders
+# Helper to build the Your Capabilities section
+def _build_your_capabilities_section(is_call: bool) -> str:
+    """Build the Your Capabilities section with a heading and underline."""
+    title = "Your Capabilities:"
+    underline = "-" * len(title)
+    if is_call:
+        lines = [
+            "- You are on an call with the user and can respond to the user through the phone alongside one of the communication channels (whatsapp, sms) through the ToolUse",
+            "- If you don't have the answer to the user's prompt, you should initiate a task using ToolUseAction",
+            "- If the user wants information or act on an existing task (you'd be provided with the currently ongoing tasks), you should use the ToolUseHandleAction",
+            "- You report back to the user the results of the ToolUse task once it is done",
+        ]
+    else:
+        lines = [
+            "- You respond to the user through one of the communication channels (whatsapp, sms, phone) through the provided actions.",
+            "- You can initiate communication tasks on the user's behalf by launching a communication task.",
+            "- You report back to the user the results of communication task once they are done.",
+        ]
+    return "\n".join([title, underline] + lines)
+
+
+# Refactored builders
 def build_call_sys_prompt(
     user_name: str,
     assistant_name: str,
@@ -181,13 +202,10 @@ def build_call_sys_prompt(
     assistant_region: str,
     assistant_about: str,
     task_context: Dict[str, str] = None,
-    *,
-    include_activity: bool = True,
 ) -> str:
     """Build the **system** prompt for phone-call LLM runs."""
     # assemble all sections
     sections = [
-        get_broader_context() if include_activity else "",
         _build_assistant_details_section(
             assistant_name,
             assistant_age,
@@ -195,6 +213,7 @@ def build_call_sys_prompt(
             assistant_about,
         ),
         _build_user_details_section(user_name),
+        # _build_your_capabilities_section(is_call=True),
         _build_event_stream_section(),
         _build_agent_loop_section(),
         _build_tool_use_tasks_rules_section(),
@@ -218,13 +237,10 @@ def build_non_call_sys_prompt(
     assistant_region: str,
     assistant_about: str,
     task_context: Dict[str, str] = None,
-    *,
-    include_activity: bool = True,
 ) -> str:
     """Build the **system** prompt for non-call LLM runs."""
     # assemble all sections
     sections = [
-        get_broader_context() if include_activity else "",
         _build_assistant_details_section(
             assistant_name,
             assistant_age,
@@ -232,6 +248,7 @@ def build_non_call_sys_prompt(
             assistant_about,
         ),
         _build_user_details_section(user_name),
+        # _build_your_capabilities_section(is_call=False),
         _build_event_stream_section(),
         _build_agent_loop_section(),
         _build_tool_use_tasks_rules_section(),
@@ -295,32 +312,7 @@ def build_user_agent_prompt(
     return "\n".join(lines)
 
 
-def build_action_prompt(
-    tools: Dict[str, Callable],
-    query: str,
-    *,
-    include_activity: bool = True,
-) -> str:
-    """Build the system prompt to await the user's reply and choose a tool."""
-    # Dump tool signatures
-    sig_json = json.dumps(_sig_dict(tools), indent=4)
-
-    # Assemble the ask prompt
-    lines = [
-        "{broader_context}" if include_activity else "",
-        "Tools (name → argspec):",
-        sig_json,
-        "",
-        f"Perform the query: {query} with the available tools above.",
-    ]
-    return "\n".join(lines)
-
-
-# comms actions prompt
-def build_call_ask_prompt(
-    tools: Dict[str, Callable],
-    question: str,
-) -> str:
+def build_call_ask_prompt(tools: Dict[str, Callable], question: str) -> str:
     """Build the system prompt to await the user's reply and choose a tool."""
     # Dump tool signatures
     sig_json = json.dumps(_sig_dict(tools), indent=4)
@@ -344,9 +336,22 @@ def build_call_ask_prompt(
     return "\n".join(lines)
 
 
-def build_local_chat_search_prompt(
-    local_chat_history: str,
-) -> str:
+def build_action_prompt(tools: Dict[str, Callable], query: str) -> str:
+    """Build the system prompt to await the user's reply and choose a tool."""
+    # Dump tool signatures
+    sig_json = json.dumps(_sig_dict(tools), indent=4)
+
+    # Assemble the ask prompt
+    lines = [
+        "Tools (name → argspec):",
+        sig_json,
+        "",
+        f"Perform the query: {query} with the available tools above.",
+    ]
+    return "\n".join(lines)
+
+
+def build_local_chat_search_prompt(local_chat_history: str) -> str:
     """Build the system prompt for searching the local chat history for an answer."""
     lines = [
         "The user is answering a question (given in user message).",
@@ -360,11 +365,7 @@ def build_local_chat_search_prompt(
     return "\n".join(lines)
 
 
-def build_message_prompt(
-    tools: Dict[str, Callable],
-    question: str,
-    medium: str,
-) -> str:
+def build_message_prompt(tools: Dict[str, Callable], question: str, medium: str) -> str:
     """Build the system prompt to await the user's reply and choose a tool."""
     # Dump tool signatures
     sig_json = json.dumps(_sig_dict(tools), indent=4)
