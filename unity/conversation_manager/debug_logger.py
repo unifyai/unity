@@ -45,3 +45,4 @@ async def log_message(
             "assistant_number": assistant_number,
         },
     )
+    _get_logger().join()
