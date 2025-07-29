@@ -1020,7 +1020,7 @@ class CommsAgent:
         to = event.get("to")
         if event["event"]["event_name"] == "StartupEvent":
             self.set_details(event["event"]["payload"])
-            # ToDo: log call start to the debug account
+            # ToDo: log to the debug account
 
         if event["event"]["event_name"] == "PhoneCallEndedEvent":
             if self.meet_browser:
