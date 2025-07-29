@@ -203,6 +203,8 @@ async def main(
 
     event_manager = EventManager()
     user_agent = CommsAgent(
+        os.getenv("USER_ID", ""),
+        os.getenv("ASSISTANT_ID", ""),
         os.getenv("USER_NAME", ""),
         os.getenv("ASSISTANT_NAME", ""),
         os.getenv("ASSISTANT_AGE", ""),
