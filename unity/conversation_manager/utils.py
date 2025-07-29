@@ -3,7 +3,6 @@ import json
 import time
 import os
 import aiohttp
-import unify
 
 # Configuration
 EVENT_SERVER_HOST = "127.0.0.1"
@@ -142,27 +141,6 @@ async def test_connection():
 
 
 # comms related utils
-def get_contact_details(contact_id: int) -> str:
-    ctxs = unify.get_active_context()
-    read_ctx, write_ctx = ctxs["read"], ctxs["write"]
-    assert (
-        read_ctx == write_ctx
-    ), "read and write contexts must be the same when instantiating a TranscriptManager."
-    if read_ctx:
-        _ctx = f"{read_ctx}/Contacts"
-    else:
-        _ctx = "Contacts"
-
-    logs = unify.get_logs(
-        context=_ctx,
-        filter=f"contact_id == {contact_id}",
-        exclude_fields=[
-            k for k in unify.get_fields(context=_ctx).keys() if k.endswith("_emb")
-        ],
-    )
-    return logs[0].entries
-
-
 async def find_assistant_whatsapp_number() -> str | None:
     assistant_number = os.getenv("ASSISTANT_NUMBER")
     async with aiohttp.ClientSession() as session:
@@ -181,10 +159,13 @@ async def find_assistant_whatsapp_number() -> str | None:
     return found_number
 
 
-async def find_assistant_phone_number(target_phone_number: str) -> str | None:
+async def find_assistant_phone_number(
+    target_phone_number: str,
+    assistant_whatsapp_number: str,
+) -> str | None:
     async with aiohttp.ClientSession() as session:
         async with session.get(
-            f"https://api.unify.ai/v0/admin/assistant?user_phone={target_phone_number}",
+            f"https://api.unify.ai/v0/admin/assistant?user_phone={target_phone_number}&assistant_whatsapp_number={assistant_whatsapp_number}",
             headers=admin_headers,
         ) as response:
             if response.status != 200:
@@ -322,12 +303,11 @@ async def send_sms_notification(
 
 async def admin_update_assistant(
     assistant_phone_number: str,
-    assistant_old_whatsapp_number: str,
     assistant_new_whatsapp_number: str,
 ) -> bool:
     async with aiohttp.ClientSession() as session:
         async with session.patch(
-            f"https://api.unify.ai/v0/admin/assistant?phone={assistant_phone_number}&assistant_whatsapp_number={assistant_old_whatsapp_number}&new_assistant_whatsapp_number={assistant_new_whatsapp_number}",
+            f"https://api.unify.ai/v0/admin/assistant?phone={assistant_phone_number}&new_assistant_whatsapp_number={assistant_new_whatsapp_number}",
             headers=admin_headers,
         ) as response:
             if response.status != 200:
