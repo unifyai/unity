@@ -118,10 +118,10 @@ async def _send_whatsapp_message_via_number(
     Returns:
         str: The response from the WhatsApp API
     """
-    from_number = os.getenv("ASSISTANT_NUMBER")  # for debugging, to remove
+    # always use the assistant phone number (unique) to find whatsapp number
+    from_number = await find_assistant_whatsapp_number()
     if not from_number:
-        # always use the assistant phone number (unique) to find whatsapp number
-        from_number = await find_assistant_whatsapp_number()
+        from_number = os.getenv("ASSISTANT_NUMBER")  # for debugging, to remove
 
     # check conflict
     conflict = await check_conflict(from_number, to_number)
@@ -143,6 +143,7 @@ async def _send_whatsapp_message_via_number(
         if conflict == "both":
             target_assistant_phone_number = await find_assistant_phone_number(
                 to_number,
+                from_number,  # 'to' user has assistant of same whatsapp number
             )
             second_new_whatsapp_number, target_user_phone_number = (
                 await assign_new_assistant_whatsapp_number(
@@ -159,7 +160,6 @@ async def _send_whatsapp_message_via_number(
 
             update_res = await admin_update_assistant(
                 target_assistant_phone_number,
-                from_number,
                 second_new_whatsapp_number,
             )
             if not update_res:
@@ -181,7 +181,6 @@ async def _send_whatsapp_message_via_number(
 
         update_res = await admin_update_assistant(
             os.getenv("ASSISTANT_NUMBER"),
-            from_number,
             new_whatsapp_number,
         )
         if not update_res:
@@ -857,6 +856,12 @@ class GoogleMeet(SteerableToolHandle):
             },
         )
         self.status = "ended"
+
+    def start_recording(self):
+        pass
+
+    def stop_recording(self):
+        pass
 
     def result(self) -> str:
         return self.status
