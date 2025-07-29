@@ -79,7 +79,9 @@ class CommsManager:
                         "to": "past",
                         "event": StartupEvent(
                             api_key=event["api_key"],
+                            medium=event["medium"],
                             assistant_id=event["assistant_id"],
+                            user_id=event["user_id"],
                             assistant_name=event["assistant_name"],
                             assistant_age=event["assistant_age"],
                             assistant_region=event["assistant_region"],

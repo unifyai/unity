@@ -23,6 +23,7 @@ async def log_message(
 ):
     await logger.log_create(
         project="Debug",
+        context="startup_events",
         params={},
         entries={
             "job_name": job_name,
