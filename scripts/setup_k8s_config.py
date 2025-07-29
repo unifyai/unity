@@ -234,6 +234,7 @@ def create_global_secrets(api_client, namespace="default"):
             "ELEVEN_API_KEY",
             "OPENAI_API_KEY",
             "ORCHESTRA_ADMIN_KEY",
+            "ORCHESTRA_API_KEY",
         ]
 
         print("🔐 Fetching secrets from GCP Secret Manager...")

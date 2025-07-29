@@ -6,6 +6,7 @@ import redis
 import traceback
 import unify
 from unity.common.llm_helpers import start_async_tool_use_loop, methods_to_tool_dict
+from unity.conversation_manager.debug_logger import log_message
 from unity.helpers import run_script, terminate_process
 from unity.conversation_manager.comms_actions import (
     _start_call,
@@ -63,6 +64,7 @@ class WhatsappQueue:
 class CommsAgent:
     def __init__(
         self,
+        job_name: str,
         user_id: str,
         assistant_id: str,
         user_name: str,
@@ -83,6 +85,7 @@ class CommsAgent:
         outer_comms_enabled: bool = False,
     ):
         # assistant details
+        self.job_name = job_name
         self.user_id = user_id
         self.assistant_id = assistant_id
         self.assistant_name = assistant_name
@@ -1020,7 +1023,18 @@ class CommsAgent:
         to = event.get("to")
         if event["event"]["event_name"] == "StartupEvent":
             self.set_details(event["event"]["payload"])
-            # ToDo: log to the debug account
+            # asyncio.create_task(log_message(
+            #     job_name=self.job_name,
+            #     timestamp=event["event"]["payload"]["timestamp"],
+            #     medium=event["event"]["payload"]["medium"],
+            #     user_id=self.user_id,
+            #     assistant_id=self.assistant_id,
+            #     user_name=self.user_name,
+            #     assistant_name=self.assistant_name,
+            #     user_number=self.user_number,
+            #     user_phone_call_number=self.user_phone_call_number,
+            #     assistant_number=self.assistant_number,
+            # ))
 
         if event["event"]["event_name"] == "PhoneCallEndedEvent":
             if self.meet_browser:
