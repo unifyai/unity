@@ -63,6 +63,8 @@ class WhatsappQueue:
 class CommsAgent:
     def __init__(
         self,
+        user_id: str,
+        assistant_id: str,
         user_name: str,
         assistant_name: str,
         assistant_age: str,
@@ -81,6 +83,8 @@ class CommsAgent:
         outer_comms_enabled: bool = False,
     ):
         # assistant details
+        self.user_id = user_id
+        self.assistant_id = assistant_id
         self.assistant_name = assistant_name
         self.assistant_age = assistant_age
         self.assistant_region = assistant_region
@@ -809,6 +813,8 @@ class CommsAgent:
         self.event_manager = event_manager
 
     def set_details(self, payload):
+        self.user_id = payload["user_id"]
+        self.assistant_id = payload["assistant_id"]
         self.assistant_name = payload["assistant_name"]
         self.assistant_age = payload["assistant_age"]
         self.assistant_region = payload["assistant_region"]
@@ -1014,6 +1020,7 @@ class CommsAgent:
         to = event.get("to")
         if event["event"]["event_name"] == "StartupEvent":
             self.set_details(event["event"]["payload"])
+            # ToDo: log call start to the debug account
 
         if event["event"]["event_name"] == "PhoneCallEndedEvent":
             if self.meet_browser:
