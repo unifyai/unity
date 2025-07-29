@@ -28,12 +28,6 @@ import re
 import threading
 import unify
 
-unify.activate(
-    "UnityTests",
-    overwrite=json.loads(os.getenv("UNIFY_OVERWRITE_PROJECT", "false")),
-)
-unify.set_user_logging(False)
-
 
 # --------------------------------------------------------------------------- #
 #  Controller Dependency Stubbing Fixture                                     #
@@ -246,6 +240,15 @@ def pytest_sessionstart(session):
         _install_requests_mock()
     else:
         _using_unify_stub = False
+
+    # ------------------------------------------------------------------
+    #  Activate the UnityTests project
+    # ------------------------------------------------------------------
+    unify.activate(
+        "UnityTests",
+        overwrite=json.loads(os.getenv("UNIFY_OVERWRITE_PROJECT", "false")),
+    )
+    unify.set_user_logging(False)
 
     # ------------------------------------------------------------------
     #  Ensure the unity runtime is fully initialised for the test suite
