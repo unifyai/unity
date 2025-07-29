@@ -29,6 +29,15 @@ import threading
 import unify
 
 
+def pytest_report_header(config):
+    overwrite = json.loads(os.getenv("UNIFY_OVERWRITE_PROJECT", "false"))
+    return [
+        f"unify_base_url={os.environ.get('UNIFY_BASE_URL')}",
+        f"unify_project={unify.active_project()}",
+        f"unify_overwrite_project={overwrite}",
+    ]
+
+
 # --------------------------------------------------------------------------- #
 #  Controller Dependency Stubbing Fixture                                     #
 # --------------------------------------------------------------------------- #
