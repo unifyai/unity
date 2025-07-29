@@ -3,6 +3,8 @@ import unify
 
 
 LOGGER = None
+if not unify.active_project():
+    unify.activate("Debug", api_key=os.environ.get("ORCHESTRA_API_KEY"))
 
 
 def _get_logger():
