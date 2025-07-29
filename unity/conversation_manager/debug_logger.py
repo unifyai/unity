@@ -2,11 +2,18 @@ import os
 import unify
 
 
-logger = unify.AsyncLoggerManager(
-    name="DebugLogger",
-    num_consumers=1,
-    api_key=os.environ.get("ORCHESTRA_API_KEY"),
-)
+LOGGER = None
+
+
+def _get_logger():
+    global LOGGER
+    if LOGGER is None:
+        LOGGER = unify.AsyncLoggerManager(
+            name="DebugLogger",
+            num_consumers=1,
+            api_key=os.environ.get("ORCHESTRA_API_KEY"),
+        )
+    return LOGGER
 
 
 async def log_message(
@@ -21,7 +28,7 @@ async def log_message(
     user_phone_call_number: str,
     assistant_number: str,
 ):
-    await logger.log_create(
+    _get_logger().log_create(
         project="Debug",
         context="startup_events",
         params={},
