@@ -9,7 +9,10 @@ def _get_logger():
     global LOGGER
 
     if not unify.active_project():
-        unify.activate("Debug", api_key=os.environ.get("ORCHESTRA_API_KEY"))
+        overwrite = False
+        if "Debug" not in unify.list_projects():
+            overwrite = True
+        unify.activate("Debug", api_key=os.environ.get("ORCHESTRA_API_KEY"), overwrite=overwrite)
 
     if LOGGER is None:
         LOGGER = unify.AsyncLoggerManager(
