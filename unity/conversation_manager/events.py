@@ -128,7 +128,9 @@ class UserTyping(Event):
 class StartupEvent(Event):
     def __init__(self, **kwargs):
         self.api_key = kwargs.pop("api_key", None)
+        self.medium = kwargs.pop("medium", None)
         self.assistant_id = kwargs.pop("assistant_id")
+        self.user_id = kwargs.pop("user_id")
         self.assistant_name = kwargs.pop("assistant_name")
         self.assistant_age = kwargs.pop("assistant_age")
         self.assistant_region = kwargs.pop("assistant_region")
@@ -145,7 +147,9 @@ class StartupEvent(Event):
         base_dict["payload"].update(
             {
                 "api_key": self.api_key,
+                "medium": self.medium,
                 "assistant_id": self.assistant_id,
+                "user_id": self.user_id,
                 "assistant_name": self.assistant_name,
                 "assistant_age": self.assistant_age,
                 "assistant_region": self.assistant_region,
