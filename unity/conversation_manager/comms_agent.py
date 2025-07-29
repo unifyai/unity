@@ -793,7 +793,11 @@ class CommsAgent:
         self.user_email = payload["user_email"]
         os.environ["UNIFY_KEY"] = payload.pop("api_key")
         os.environ["USER_NAME"] = self.user_name
+        os.environ["USER_PHONE_NUMBER"] = self.user_phone_call_number
         os.environ["USER_EMAIL"] = self.user_email
+        os.environ["ASSISTANT_NAME"] = self.assistant_name
+        os.environ["ASSISTANT_NUMBER"] = self.assistant_number
+        os.environ["ASSISTANT_EMAIL"] = self.assistant_email
 
     async def initialize_redis(self):
         """Initialize Redis connection after server is ready"""
