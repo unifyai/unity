@@ -14,7 +14,9 @@ def _get_logger():
 
     if LOGGER is None:
         LOGGER = unify.AsyncLoggerManager(
-            name="DebugLogger", num_consumers=1, api_key=api_key,
+            name="DebugLogger",
+            num_consumers=1,
+            api_key=api_key,
         )
     return LOGGER
 
