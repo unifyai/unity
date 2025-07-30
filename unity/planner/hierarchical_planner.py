@@ -553,47 +553,6 @@ class HierarchicalPlan(BaseActiveTask):
             self._set_state(_HierarchicalPlanState.ERROR)
             self._set_final_result(f"ERROR: Plan initialization failed: {e}")
 
-    async def _perform_exploration(self, function_purpose: str):
-        """
-        Runs an interactive conversational loop to gather information for a specific function.
-        """
-        self._set_state(_HierarchicalPlanState.EXPLORING)
-        self.action_log.append(
-            f"Starting exploration for task: '{function_purpose}'...",
-        )
-        try:
-            research_prompt = prompt_builders.build_exploration_prompt(
-                function_purpose=function_purpose,
-                overall_goal=self.goal,
-                tools=self.planner.tools,
-            )
-
-            client = self.exploration_client
-            client.reset_messages()
-            client.set_system_message(research_prompt)
-
-            exploration_loop_handle = start_async_tool_use_loop(
-                client=client,
-                message="Begin your research based on the main objective.",
-                tools=self.planner.tools,
-                loop_id="FunctionExplorationPhase",
-                max_steps=10,
-                timeout=self.planner.timeout,
-            )
-
-            summary = await exploration_loop_handle.result()
-            self.action_log.append("Exploration completed.")
-            self.action_log.append(f"Exploration Summary: {summary}")
-            return summary
-
-        except Exception as e:
-            logger.error(f"Exploration phase failed: {e}", exc_info=True)
-            self.action_log.append(
-                f"WARNING: Exploration failed: {e}. Proceeding without extra context.",
-            )
-            return None
-        finally:
-            self._set_state(_HierarchicalPlanState.RUNNING)
 
     def _create_main_loop_iterator(self):
         """
@@ -1252,21 +1211,6 @@ class HierarchicalPlanner(BasePlanner):
             logger.error(f"Generated code failed sanitization: {e}")
             raise
 
-    async def _should_explore(self, goal: str) -> bool:
-        """
-        Uses an LLM to assess if the goal is ambiguous and requires exploration.
-
-        Args:
-            goal: The user's goal.
-
-        Returns:
-            True if exploration is needed, False otherwise.
-        """
-        return False
-        prompt = build_should_explore_prompt(goal)
-        response = await llm_call(self.exploration_client, prompt)
-        logger.info(f"Exploration assessment for goal '{goal}': {response.strip()}")
-        return "EXPLORE" in response.strip().upper()
 
     async def _execute_task_and_return_handle(
         self,
@@ -1978,7 +1922,6 @@ class HierarchicalPlanner(BasePlanner):
         self,
         plan: HierarchicalPlan,
         goal: str,
-        exploration_summary: Optional[str] = None,
     ) -> str:
         """
         Generates the initial Python script for the plan from a user goal.
@@ -1986,7 +1929,6 @@ class HierarchicalPlanner(BasePlanner):
         Args:
             plan: The HierarchicalPlan instance to generate the initial plan for.
             goal: The high-level user goal.
-            exploration_summary: A summary from a preceding exploration phase.
 
         Returns:
             A string containing the generated Python code for the plan.
@@ -2021,7 +1963,6 @@ class HierarchicalPlanner(BasePlanner):
                         if attempt == 0
                         else f"Last attempt failed: {last_error}. Please fix."
                     ),
-                    exploration_summary=exploration_summary,
                 )
                 response = await llm_call(plan.plan_generation_client, prompt)
                 code = (
