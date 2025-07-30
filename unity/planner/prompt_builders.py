@@ -1877,10 +1877,10 @@ def build_interjection_prompt(
     plan_source_code: str,
     call_stack: list[str],
     action_log: list[str],
+    is_teaching_session: bool,
 ) -> str:
     """
     Builds the system prompt for the Interjection Handler LLM.
-
     This prompt provides the LLM with full context of the plan and conversation,
     and instructs it to follow a specific decision tree to handle a user's
     interjection, outputting a structured JSON response.
@@ -1895,12 +1895,27 @@ def build_interjection_prompt(
         else "No prior conversation."
     )
 
+    teaching_session_rule = ""
+    if is_teaching_session:
+        teaching_session_rule = textwrap.dedent(
+            """
+        ---
+        ### 📌 SPECIAL INSTRUCTIONS FOR THIS INTERJECTION
+
+        **You are in a "Teaching Session".** The user is building a plan step-by-step.
+        - If the user provides a new instruction to add to the plan (e.g., "now search for..."), you **MUST** choose the `modify_task` action.
+        - If the user signals they are finished (e.g., "we're done", "that's all"), you **MUST** choose the `complete_task` action.
+        ---
+        """,
+        )
+
     prompt = f"""
     You are an expert assistant responsible for steering a live-running automated plan.
     A user has interjected with a new instruction while a plan was executing.
     Your task is to analyze the user's intent and the current state of the plan, then decide on the correct course of action by following a strict decision tree.
 
-    ---
+    {teaching_session_rule}
+
     ### Full Situational Context
 
     **1. User's Interjection:**
@@ -1925,22 +1940,27 @@ def build_interjection_prompt(
 
     ### Your Task: Follow This Decision Tree Precisely
 
-    **Question 1: Is the user's request a fundamental change of goal that abandons or replaces the current task?**
-    - Example: The plan is booking a flight, and the user says, "Actually, just look up recipes for me."
-    - If YES, choose the `replace_task` action. For the `new_goal`, provide the user's new high-level objective.
+    **Question 1: Is the user signaling the end of the task or interactive session?**
+    - Example: The user says, "That's it," "We're done," "End the session," or "Complete the task."
+    - If YES, choose the `complete_task` action. This will allow the plan to execute its final version to completion.
     - If NO, proceed to Question 2.
 
-    **Question 2: Is the request a direct modification, a new step, or a correction for the *current* task?**
-    - Example: The plan is researching on a website, and the user says, "No, use my LinkedIn profile for this research," or "Now, put those findings into a presentation."
-    - If YES, choose the `modify_task` action. For `modification_request`, rephrase the user's instruction as a clear, actionable request for the planner to implement. For `target_function`, identify the most relevant function from the call stack to modify.
+    **Question 2: Is the user's request a fundamental change of goal that abandons or replaces the current task?**
+    - Example: The plan is booking a flight, and the user says, "Actually, just look up recipes for me."
+    - If YES, choose the `replace_task` action. For the `new_goal`, provide the user's new high-level objective.
     - If NO, proceed to Question 3.
 
-    **Question 3: Is the request a temporary, exploratory side-quest that doesn't alter the main goal?**
-    - Example: The plan is creating a presentation, and the user says, "Quickly run the slide show so I can see how it looks."
-    - If YES, choose the `explore_detached` action. For `new_goal`, provide the specific, temporary goal of the side-quest.
+    **Question 3: Is the request a direct modification, a new step, or a correction for the *current* task?**
+    - Example: The plan is researching on a website, and the user says, "No, use my LinkedIn profile for this research," or "Now, put those findings into a presentation."
+    - If YES, choose the `modify_task` action. For `modification_request`, rephrase the user's instruction as a clear, actionable request for the planner to implement. For `target_function`, identify the most relevant function from the call stack to modify.
     - If NO, proceed to Question 4.
 
-    **Question 4: Is the user's intent unclear, or does it require more information to proceed confidently?**
+    **Question 4: Is the request a temporary, exploratory side-quest that doesn't alter the main goal?**
+    - Example: The plan is creating a presentation, and the user says, "Quickly run the slide show so I can see how it looks."
+    - If YES, choose the `explore_detached` action. For `new_goal`, provide the specific, temporary goal of the side-quest.
+    - If NO, proceed to Question 5.
+
+    **Question 5: Is the user's intent unclear, or does it require more information to proceed confidently?**
     - Example: The user says, "Make it better."
     - If YES, choose the `clarify` action. For `clarification_question`, formulate a concise, multiple-choice or open-ended question to ask the user.
 
@@ -1956,6 +1976,14 @@ def build_interjection_prompt(
         "reason": "The user wants to add a new step to the existing plan: creating a presentation from the research findings.",
         "modification_request": "After extracting the research findings, create a new Google Slides presentation and summarize the key points on the first slide.",
         "target_function": "main_plan"
+    }}
+    ```
+
+    **Example `complete_task` response:**
+    ```json
+    {{
+        "action": "complete_task",
+        "reason": "The user has indicated that the teaching session is finished and the plan should now execute to completion."
     }}
     ```
     """
