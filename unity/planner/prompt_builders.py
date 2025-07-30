@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import ast
 import inspect
 import textwrap
 import json
+import re
 from typing import Callable, Dict, Any, Optional
 from unity.common.llm_helpers import (
     class_api_overview,
@@ -1474,6 +1476,8 @@ def build_dynamic_implement_prompt(
     implementation_strategy: Optional[Any] = None,
     *,
     tools: Dict[str, Callable],
+    is_teaching_session: bool = False,
+    function_source_map: Optional[Dict[str, str]] = None,
 ) -> str:
     """
     Builds the system prompt for dynamically implementing a function.
@@ -1491,6 +1495,8 @@ def build_dynamic_implement_prompt(
         browser_state: An optional description of the current browser state.
         replan_context: A message providing context for a replan.
         tools: The tools available to the function.
+        is_teaching_session: Whether we are in a teaching session via user interjections.
+        function_source_map: A map of function names to their source code.
 
     Returns:
         The complete prompt string.
@@ -1509,6 +1515,67 @@ def build_dynamic_implement_prompt(
             ---
             """,
         )
+
+    teaching_session_context = ""
+    if is_teaching_session and function_source_map:
+        existing_code = function_source_map.get(function_name, "No existing code.")
+        existing_docstring = ""
+        next_step_num = 1
+        if existing_code and existing_code.strip() != "No existing code.":
+            try:
+                tree = ast.parse(existing_code)
+                for node in ast.walk(tree):
+                    if (
+                        isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+                        and node.name == function_name
+                    ):
+                        docstring = ast.get_docstring(node)
+                        if docstring:
+                            existing_docstring = docstring
+                            lines = docstring.strip().split("\n")
+                            for line in reversed(lines):
+                                match = re.match(r"^(\d+)\.", line.strip())
+                                if match:
+                                    next_step_num = int(match.group(1)) + 1
+                                    break
+                        break
+            except:
+                pass
+
+        teaching_session_context = textwrap.dedent(
+            f"""
+            ---
+            ### 📌 SPECIAL INSTRUCTIONS FOR TEACHING SESSION
+
+            You are in a "Teaching Session". The user is adding a new step to the end of the `{function_name}` function.
+
+            **Your Task:** You MUST write a complete `async def {function_name}` function block that contains **only the new action(s)** requested by the user. The planner will intelligently merge this new logic into the existing function.
+
+            **IMPORTANT DOCSTRING INSTRUCTIONS:**
+            - Your function MUST have a docstring that describes ONLY the new action being added
+            - The docstring should be a single line describing what this new step does
+            - DO NOT include the step number in your docstring - just describe the action
+            - Example good docstring: "Navigate to the recipes website as requested by the user."
+            - Example bad docstring: "1. Navigate to the recipes website" (don't include numbers)
+            - The planner will automatically number and merge your docstring with existing steps
+
+            **IMPORTANT CODE INSTRUCTIONS:**
+            - **DO NOT** repeat or re-implement the steps that already exist in the function
+            - **Example:** If the function already navigates, and the user says "now search for cookies", your code should ONLY contain the `action_provider.browser_act` call for the search
+
+            **Current Function State:**
+            - Existing steps completed: {next_step_num - 1}
+            - Your action will become step {next_step_num}
+            {f'- Current docstring: """{existing_docstring}"""' if existing_docstring else ''}
+
+            **Code Already in `{function_name}`:**
+            ```python
+{textwrap.indent(existing_code, "            ")}
+            ```
+            ---
+            """,
+        )
+
     browser_context_section = ""
     if browser_state:
         browser_context_section = f"""**Current Browser State:**
@@ -1572,6 +1639,7 @@ def build_dynamic_implement_prompt(
         2.  **`skip_function`**: Bypass this function entirely. Choose this if you observe that the function's goal is **already completed** or is now **irrelevant**. For example, skip a "log in" function if you are already logged in.
         3.  **`replan_parent`**: Escalate the failure to the calling function. Choose this if the current function is **impossible to implement** because of a mistake made in a *previous* step. For example, if the goal is "apply filters" but the page has no filter controls, the error lies with the parent function that navigated to the wrong page or failed to get to the right state.
 
+        {teaching_session_context}
         {context_section}
 
         ### Situation Analysis
