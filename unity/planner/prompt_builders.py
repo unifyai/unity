@@ -721,6 +721,97 @@ def _build_initial_plan_rules_and_examples(
                 except Exception as reason_e:
                     raise ValueError(f"Both website interaction and manual reasoning failed. Error: ${{reason_e}}")
         ```
+
+        **Example: Isolating Pure Logic for Efficiency**
+        This example shows how to factor out a non-browser task into a separate, cacheable function.
+        ```python
+        @verify
+        async def extract_sales_data_from_page() -> list[dict]:
+            \"\"\\"Extracts raw sales data from a table on the current page.\"\"\\"
+            from pydantic import BaseModel, Field
+            from typing import List
+
+            class SalesRecord(BaseModel):
+                product_name: str
+                quantity: int
+                unit_price: float
+                date: str
+
+            class SalesData(BaseModel):
+                records: List[SalesRecord]
+
+            SalesData.model_rebuild()
+
+            result = await action_provider.browser_observe(
+                "Extract all sales records from the table including product name, quantity, unit price, and date",
+                response_format=SalesData
+            )
+
+            # Convert to list of dicts for easier processing
+            return [record.dict() for record in result.records]
+
+        @verify
+        async def perform_complex_analysis(sales_records: list[dict]) -> dict:
+            \"\"\\"
+            Performs a time-consuming analysis on raw data.
+            This function contains only pure Python logic and does not use the browser.
+            \"\"\\"
+            import asyncio
+            from datetime import datetime
+
+            print("Performing complex offline analysis...")
+
+            # Simulate complex calculations
+            total_sales = sum(r['quantity'] * r['unit_price'] for r in sales_records)
+            average_sale = total_sales / len(sales_records) if sales_records else 0
+
+            # Group by product (simulating complex logic)
+            product_totals = {{}}
+            for record in sales_records:
+                product = record['product_name']
+                amount = record['quantity'] * record['unit_price']
+                product_totals[product] = product_totals.get(product, 0) + amount
+
+            # Find best selling product
+            best_product = max(product_totals.items(), key=lambda x: x[1]) if product_totals else (None, 0)
+
+            # Simulate time-consuming computation
+            await asyncio.sleep(5)  # Represents complex calculations
+
+            print("Analysis complete.")
+            return {{
+                "total_sales": total_sales,
+                "average_sale": average_sale,
+                "best_product": best_product[0],
+                "best_product_sales": best_product[1],
+                "product_breakdown": product_totals
+            }}
+
+        @verify
+        async def main_plan():
+            \"\"\"
+            Main plan to extract and analyze sales data.
+            \"\"\"
+            # Navigate to the sales report page
+            await action_provider.browser_navigate("https://example.com/sales-report")
+
+            # The result of this step will be cached by the planner
+            raw_data = await extract_sales_data_from_page()
+
+            # If the plan is modified and restarts after this point,
+            # this analysis function will NOT be re-run because its result
+            # will be loaded from the cache, saving significant time.
+            analysis_results = await perform_complex_analysis(raw_data)
+
+            # Use the analysis results for further actions
+            if analysis_results['best_product']:
+                await action_provider.browser_act(
+                    f"Search for more information about {{analysis_results['best_product']}}",
+                    expectation="Product detail page should load"
+                )
+
+            return analysis_results
+        ```
     """,
     )
 
@@ -744,6 +835,7 @@ def _build_dynamic_implement_rules_and_examples(
         3.  **Use `browser_observe` for Complex Data**: When you need to extract structured data (like a list of products, table contents, or form fields), use `browser_observe` with a Pydantic `response_format`. This is the best way to gather context before acting on complex pages.
         4.  **Describe Visually**: All browser tools operate on what is *visible*. Describe elements by their text, color, or relative position (e.g., "the blue 'Save' button at the bottom of the form"), not by HTML attributes.
         5.  **Use Fallback Capabilities**: If a website's interactive feature (e.g., a "Convert" button, a "Sort" dropdown) fails or doesn't meet your needs, don't give up. Instead, consider if you can achieve the goal using a more fundamental tool. For instance, if you can observe the raw data, you can often use `action_provider.reason` to perform the necessary calculation, transformation, or analysis yourself.
+        6.  **Isolate Pure Logic for Caching**: If your plan involves a complex calculation or a long data-processing loop that does not use the browser, factor it out into its own `async def` helper function. The planner automatically caches the results of successfully completed functions. By isolating this logic, you ensure it won't be re-executed if the plan restarts after a modification.
         ---
         """,
     )
@@ -1182,6 +1274,127 @@ def _build_dynamic_implement_rules_and_examples(
                         f"Credit card error: {{e}}, "
                         f"PayPal error: {{fallback_e}}"
                     )
+        ```
+
+        **Example 5: Isolating Pure Logic for Efficiency**
+        This demonstrates how to implement a function that separates browser interaction from complex data processing.
+        The planner will cache results of each function, so separating pure logic ensures it won't be re-executed.
+        ```python
+        async def analyze_competitor_pricing(product_name: str) -> dict:
+            "\"\"\Analyzes competitor pricing data for a specific product.
+
+            This function demonstrates the pattern of isolating pure computation
+            from browser interaction to leverage the planner's caching system.
+
+            Args:
+                product_name: The product to analyze pricing for
+
+            Returns:
+                dict: Analysis results including price statistics and recommendations
+            \"\"\"
+            from pydantic import BaseModel, Field
+            from typing import List, Optional
+            import asyncio
+
+            print(f"Starting competitor pricing analysis for: {{product_name}}")
+
+            # Define the data model for competitor prices
+            class CompetitorPrice(BaseModel):
+                store_name: str
+                price: float
+                shipping_cost: Optional[float] = Field(default=0.0)
+                availability: str = Field(description="In stock, out of stock, limited stock")
+                rating: Optional[float] = Field(default=None)
+
+            class PricingData(BaseModel):
+                product_name: str
+                competitors: List[CompetitorPrice]
+                search_timestamp: str
+
+            PricingData.model_rebuild()
+
+            # Step 1: Extract pricing data from the current page
+            pricing_data = await action_provider.browser_observe(
+                f"Extract all competitor pricing information for {{product_name}}. "
+                "Include store name, price, shipping cost if shown, availability status, and rating if available.",
+                response_format=PricingData
+            )
+
+            # Step 2: Call a separate function for complex analysis
+            # This is the key pattern - isolating the pure logic computation
+            # If the plan restarts after this point, the analysis won't be re-run
+            analysis_result = await _perform_pricing_analysis(pricing_data.dict())
+
+            # Step 3: Use the analysis to make a decision
+            if analysis_result['recommendation'] == 'match_lowest':
+                await action_provider.browser_act(
+                    f"Update our price to {{analysis_result['suggested_price']}}",
+                    expectation="Price should be updated successfully"
+                )
+
+            return analysis_result
+
+        # This helper function would be implemented separately in the plan
+        # It contains pure logic with no browser interaction, making it cacheable
+        async def _perform_pricing_analysis(pricing_data: dict) -> dict:
+            "\"\"\Performs detailed statistical analysis on pricing data.
+
+            This is a separate function containing only pure Python logic.
+            The planner caches its result, so it won't re-execute if the plan restarts.
+            \"\"\"
+            import statistics
+            import asyncio
+
+            print("Performing complex pricing analysis...")
+
+            competitors = pricing_data['competitors']
+
+            # Extract total prices (price + shipping)
+            total_prices = [
+                c['price'] + c.get('shipping_cost', 0)
+                for c in competitors
+            ]
+
+            # Simulate complex calculations that might take time
+            await asyncio.sleep(2)  # Represents complex computation
+
+            # Calculate statistics
+            avg_price = statistics.mean(total_prices) if total_prices else 0
+            median_price = statistics.median(total_prices) if total_prices else 0
+            min_price = min(total_prices) if total_prices else 0
+            max_price = max(total_prices) if total_prices else 0
+
+            # Find best value (considering price and rating)
+            best_value_store = None
+            best_value_score = float('inf')
+
+            for comp in competitors:
+                total = comp['price'] + comp.get('shipping_cost', 0)
+                # Lower score is better (price divided by rating)
+                score = total / comp.get('rating', 3.0) if comp.get('rating') else total / 3.0
+                if score < best_value_score and comp['availability'] != 'out of stock':
+                    best_value_score = score
+                    best_value_store = comp['store_name']
+
+            # Determine pricing strategy
+            our_target_margin = 0.95  # We want to be 5% below average
+            suggested_price = round(avg_price * our_target_margin, 2)
+
+            recommendation = 'match_lowest' if suggested_price < min_price else 'competitive'
+
+            print("Analysis complete.")
+
+            return {{
+                "average_price": round(avg_price, 2),
+                "median_price": round(median_price, 2),
+                "min_price": round(min_price, 2),
+                "max_price": round(max_price, 2),
+                "best_value_store": best_value_store,
+                "suggested_price": suggested_price,
+                "recommendation": recommendation,
+                "total_competitors": len(competitors),
+                "analysis_timestamp": pricing_data['search_timestamp']
+            }}
         ```
     """,
     )
