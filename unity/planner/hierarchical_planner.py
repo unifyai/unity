@@ -171,6 +171,35 @@ class ImplementationDecision(BaseModel):
     )
 
 
+class InterjectionDecision(BaseModel):
+    """A structured decision for how to proceed with a user interjection."""
+
+    action: typing.Literal[
+        "modify_task",
+        "replace_task",
+        "explore_detached",
+        "clarify",
+        "complete_task",
+    ] = Field(..., description="The chosen action based on the user's interjection.")
+    reason: str = Field(..., description="A brief justification for the chosen action.")
+    modification_request: Optional[str] = Field(
+        None,
+        description="The user's request, rephrased as a direct instruction to modify the plan.",
+    )
+    target_function: Optional[str] = Field(
+        None,
+        description="The name of the function in the call stack that is most relevant to the modification.",
+    )
+    new_goal: Optional[str] = Field(
+        None,
+        description="The goal for the new or detached task.",
+    )
+    clarification_question: Optional[str] = Field(
+        None,
+        description="A question to ask the user for clarification.",
+    )
+
+
 class _HierarchicalPlanState(enum.Enum):
     """Manages the detailed lifecycle state of a hierarchical plan."""
 
