@@ -2101,3 +2101,36 @@ def build_course_correction_prompt(
         Respond with ONLY the JSON object matching the `CourseCorrectionDecision` schema.
         """,
     )
+
+
+def build_sandbox_merge_prompt(
+    main_goal: str,
+    main_plan_source: str,
+    sandbox_goal: str,
+    sandbox_result: str,
+) -> str:
+    """Builds the prompt for the sandbox merge decision LLM."""
+    return textwrap.dedent(
+        f"""
+    You are a strategic assistant for an autonomous agent. A "sandbox" task was just completed, and you must decide if its findings should be used to modify the main plan.
+
+    ### Main Plan Context
+    - **Main Goal:** "{main_goal}"
+    - **Main Plan Source Code:**
+    ```python
+    {main_plan_source}
+    ```
+
+    ### Sandbox Task Context
+    - **Sandbox Goal:** "{sandbox_goal}"
+    - **Sandbox Result:** "{sandbox_result}"
+
+    ### Your Task
+    1.  Analyze the sandbox result in the context of the main goal.
+    2.  Does the sandbox result provide information or a completed sub-task that makes the main plan more efficient or more likely to succeed?
+    3.  If yes, set `modification_needed` to `true` and formulate a `modification_request` that clearly instructs the planner on how to alter the main plan.
+    4.  If no, set `modification_needed` to `false`.
+
+    Respond ONLY with a JSON object matching the `SandboxMergeDecision` schema.
+    """,
+    )
