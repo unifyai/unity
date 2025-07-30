@@ -1,5 +1,6 @@
 import os
 import unify
+import traceback
 
 
 LOGGER = None
@@ -8,17 +9,22 @@ LOGGER = None
 def _get_logger():
     global LOGGER
 
-    api_key = os.environ.get("SHARED_UNIFY_KEY")
-    print(f"API Key: {api_key}")
-    if "Debug" not in unify.list_projects(api_key=api_key):
-        unify.create_project("Debug", api_key=api_key)
+    try:
+        api_key = os.environ.get("SHARED_UNIFY_KEY")
+        print(f"API Key: {api_key}")
+        if "Debug" not in unify.list_projects(api_key=api_key):
+            unify.create_project("Debug", api_key=api_key)
 
-    if LOGGER is None:
-        LOGGER = unify.AsyncLoggerManager(
-            name="DebugLogger",
-            num_consumers=1,
-            api_key=api_key,
-        )
+        if LOGGER is None:
+            LOGGER = unify.AsyncLoggerManager(
+                name="DebugLogger",
+                num_consumers=1,
+                api_key=api_key,
+            )
+    except Exception as e:
+        print(f"Error getting logger: {e}")
+        traceback.print_exc()
+        return None
     return LOGGER
 
 
