@@ -293,6 +293,7 @@ class ToolUseStartedEvent(Event):
         *,
         is_urgent: bool = True,
         role: str = "tool_use start",
+        stage: str = "",
         **kwargs,
     ):
         kwargs.pop("chat_history", None)
@@ -300,6 +301,7 @@ class ToolUseStartedEvent(Event):
         kwargs.pop("handle_id", None)
         kwargs.pop("role", None)
         kwargs.pop("is_urgent", None)
+        kwargs.pop("stage", None)
 
         self.chat_history = chat_history
         self.query = query
@@ -330,12 +332,14 @@ class ToolUseEndedEvent(Event):
         *,
         is_urgent: bool = True,
         role: str = "tool_use end",
+        stage: str = "",
         **kwargs,
     ):
         kwargs.pop("query", None)
         kwargs.pop("handle_id", None)
         kwargs.pop("role", None)
         kwargs.pop("is_urgent", None)
+        kwargs.pop("stage", None)
 
         self.query = query
         self.handle_id = handle_id
