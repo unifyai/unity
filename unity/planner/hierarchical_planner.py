@@ -208,6 +208,7 @@ class _HierarchicalPlanState(enum.Enum):
     RUNNING = enum.auto()
     PAUSED = enum.auto()
     PAUSED_FOR_MODIFICATION = enum.auto()
+    PAUSED_FOR_INTERJECTION = enum.auto()
     PAUSED_FOR_ESCALATION = enum.auto()
     COMPLETED = enum.auto()
     STOPPED = enum.auto()
@@ -467,7 +468,7 @@ class HierarchicalPlan(BaseActiveTask):
     def __init__(
         self,
         planner: "HierarchicalPlanner",
-        goal: str,
+        goal: Optional[str] = None,
         clarification_up_q: Optional[asyncio.Queue[str]] = None,
         clarification_down_q: Optional[asyncio.Queue[str]] = None,
         parent_chat_context: Optional[str] = None,
@@ -488,6 +489,7 @@ class HierarchicalPlan(BaseActiveTask):
         """
         self.planner = planner
         self.goal = goal
+        self.is_teaching_session = goal is None
         self.exploration_summary: Optional[str] = None
         self.plan_source_code: Optional[str] = None
         self.execution_namespace: Dict[str, Any] = {}
@@ -507,6 +509,7 @@ class HierarchicalPlan(BaseActiveTask):
         self._completion_event = asyncio.Event()
         self._final_result_str: Optional[str] = None
         self.clarification_up_q = clarification_up_q or asyncio.Queue()
+        self.parent_chat_context = parent_chat_context
         self.clarification_down_q = clarification_down_q or asyncio.Queue()
         self.completed_functions: dict = {}
         self.skipped_functions: set = set()
@@ -556,24 +559,39 @@ class HierarchicalPlan(BaseActiveTask):
         """
         Manages the entire lifecycle of the plan from initialization to completion.
         """
-        self.action_log.append("Initializing plan...")
-        try:
-            if await self.planner._should_explore(self.goal):
-                await self._perform_exploration()
+            if self.goal:
+                if not self._is_complete:
+                    self._set_state(_HierarchicalPlanState.RUNNING)
 
-            if not self._is_complete:
-                self._set_state(_HierarchicalPlanState.RUNNING)
-
-            if self.plan_source_code is None:
-                self.action_log.append("Generating new plan from goal...")
-                self.plan_source_code = await self.planner._generate_initial_plan(
-                    plan=self,
-                    goal=self.goal,
-                    exploration_summary=self.exploration_summary,
-                )
-                self.action_log.append("Initial plan generated successfully.")
+                if self.plan_source_code is None:
+                    self.action_log.append("Generating new plan from goal...")
+                    self.plan_source_code = await self.planner._generate_initial_plan(
+                        plan=self,
+                        goal=self.goal,
+                    )
+                    self.action_log.append("Initial plan generated successfully.")
+                else:
+                    self.action_log.append("Proceeding with existing plan source code.")
             else:
-                self.action_log.append("Proceeding with existing plan source code.")
+                if not self.plan_source_code:
+                    self.action_log.append(
+                        "Starting goal-less session. Awaiting user instruction.",
+                    )
+                    self.plan_source_code = textwrap.dedent(
+                        """
+                        @verify
+                        async def main_plan():
+                            \"\"\"Main entry point for the hierarchical plan.
+
+                            This is a teaching session that started without a specific goal.
+                            The plan will grow incrementally as you provide guidance.
+                            \"\"\"
+                            pass
+                    """,
+                    ).strip()
+                    self._set_state(_HierarchicalPlanState.PAUSED_FOR_INTERJECTION)
+                else:
+                    self._set_state(_HierarchicalPlanState.RUNNING)
 
             await self.planner._prepare_execution_environment(self)
             await self._start_main_execution_loop()
@@ -605,7 +623,7 @@ class HierarchicalPlan(BaseActiveTask):
         """
         client = self.main_loop_client
         client.reset_messages()
-        plan_iterator = self._create_main_loop_iterator()
+        plan_iterator = None
 
         async def _run_one_plan_step():
             """Executes a single step of the plan, handling state transitions."""
@@ -620,15 +638,36 @@ class HierarchicalPlan(BaseActiveTask):
             if self._state in (
                 _HierarchicalPlanState.PAUSED_FOR_MODIFICATION,
                 _HierarchicalPlanState.PAUSED_FOR_ESCALATION,
+                _HierarchicalPlanState.PAUSED_FOR_INTERJECTION,
             ):
                 return {
                     "status": "paused",
                     "message": f"Execution paused for {self._state.name.lower()}.",
                 }
 
+            if plan_iterator is None:
+                plan_iterator = self._create_main_loop_iterator()
+
             try:
                 main_coro = next(plan_iterator)
                 result = await main_coro
+
+                if self.is_teaching_session:
+                    self.action_log.append(
+                        "Teaching step complete. Awaiting next instruction.",
+                    )
+                    self._set_state(_HierarchicalPlanState.PAUSED_FOR_INTERJECTION)
+
+                    return_val = {
+                        "status": "paused",
+                        "message": "Step complete. Awaiting next instruction.",
+                        "force_stop": True,
+                    }
+                    logger.debug(
+                        f"EXEC_LOOP: Teaching step finished. Returning: {return_val}",
+                    )
+                    return return_val
+
                 self._set_state(_HierarchicalPlanState.COMPLETED)
                 self.action_log.append(f"Plan completed. Result: {result}")
                 self._set_final_result(f"Plan completed. Result: {result}")
@@ -736,6 +775,7 @@ class HierarchicalPlan(BaseActiveTask):
             if self._is_complete or self._state in (
                 _HierarchicalPlanState.PAUSED_FOR_MODIFICATION,
                 _HierarchicalPlanState.PAUSED_FOR_ESCALATION,
+                _HierarchicalPlanState.PAUSED_FOR_INTERJECTION,
             ):
                 return "auto", {}
             else:
@@ -745,7 +785,7 @@ class HierarchicalPlan(BaseActiveTask):
             client=client,
             message="Executing hierarchical plan...",
             tools={"_run_one_plan_step": _run_one_plan_step},
-            loop_id=f"HierarchicalPlan-{self.goal[:50]}",
+            loop_id=f"HierarchicalPlan-{self.goal[:50] if self.goal else 'goal-less'}",
             max_steps=100,
             tool_policy=dynamic_tool_policy,
             interrupt_llm_with_interjections=True,
@@ -1218,7 +1258,6 @@ class HierarchicalPlanner(BasePlanner):
         self.max_escalations = max_escalations or 2
         self.max_local_retries = max_local_retries or 3
         self.timeout = timeout
-
 
     def _sanitize_code(self, code: str) -> str:
         """
