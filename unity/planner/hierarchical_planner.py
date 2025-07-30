@@ -972,6 +972,126 @@ class HierarchicalPlan(BaseActiveTask):
                 return ("assign", node.targets[0].id)
         return ("other", ast.unparse(node))
 
+    def _is_docstring_or_pass(self, stmt, is_first=False):
+        """
+        Check if a statement is a docstring or pass statement that should be skipped during merge.
+
+        Args:
+            stmt: The AST statement to check
+            is_first: Whether this is the first statement in the function body
+
+        Returns:
+            True if the statement should be skipped, False otherwise
+        """
+        if isinstance(stmt, ast.Pass):
+            return True
+
+        if isinstance(stmt, ast.Expr) and isinstance(stmt.value, ast.Constant):
+            if isinstance(stmt.value.value, str):
+                return True
+
+        return False
+
+    def _merge_function_bodies(self, old_fn, new_fn):
+        """
+        Merges the bodies of two functions by appending new statements and
+        combining their docstrings into a step-by-step guide.
+
+        Args:
+            old_fn: The existing function AST node (FunctionDef or AsyncFunctionDef)
+            new_fn: The new function AST node (FunctionDef or AsyncFunctionDef)
+
+        Returns:
+            The merged function with combined body statements and docstring
+        """
+        old_doc = (ast.get_docstring(old_fn) or "").strip()
+        new_doc = (ast.get_docstring(new_fn) or "").strip()
+
+        if "This is a teaching session" in old_doc:
+            old_doc = ""
+        if "Main entry point for the hierarchical plan" in new_doc:
+            new_doc_lines = new_doc.split("\n")
+            new_doc = next(
+                (
+                    line
+                    for line in new_doc_lines
+                    if "Main entry" not in line and line.strip()
+                ),
+                "",
+            ).strip()
+
+        if old_doc and new_doc:
+            old_lines = [line.strip() for line in old_doc.split("\n") if line.strip()]
+
+            if old_lines and re.match(r"^\d+\.", old_lines[0]):
+                last_num = 0
+                match = re.match(r"^(\d+)\.", old_lines[-1])
+                if match:
+                    last_num = int(match.group(1))
+
+                merged_docstring = f"{old_doc}\n{last_num + 1}. {new_doc}"
+            else:
+                merged_docstring = f"1. {old_doc}\n2. {new_doc}"
+
+        elif new_doc:
+            merged_docstring = f"1. {new_doc}"
+        else:
+            merged_docstring = old_doc
+
+        if merged_docstring:
+            if "\n" in merged_docstring:
+                lines = merged_docstring.strip().split("\n")
+                formatted_lines = []
+                for line in lines:
+                    if line.strip():
+                        formatted_lines.append(f"    {line.strip()}")
+                merged_docstring = "\n" + "\n".join(formatted_lines) + "\n"
+
+        final_docstring_node = ast.Expr(value=ast.Constant(value=merged_docstring))
+
+        old_executable_stmts = [
+            stmt for stmt in old_fn.body if not self._is_docstring_or_pass(stmt)
+        ]
+        old_srcs = {ast.unparse(s).strip() for s in old_executable_stmts}
+
+        merged_body = [final_docstring_node]
+        merged_body.extend(old_executable_stmts)
+
+        for stmt in new_fn.body:
+            if self._is_docstring_or_pass(stmt):
+                continue
+            if ast.unparse(stmt).strip() not in old_srcs:
+                merged_body.append(stmt)
+
+        if len(merged_body) <= 1:
+            merged_body.append(ast.Pass())
+
+        if isinstance(old_fn, ast.AsyncFunctionDef):
+            merged_fn = ast.AsyncFunctionDef(
+                name=old_fn.name,
+                args=old_fn.args,
+                body=merged_body,
+                decorator_list=old_fn.decorator_list,
+                returns=old_fn.returns,
+                type_comment=old_fn.type_comment,
+                lineno=old_fn.lineno,
+                col_offset=old_fn.col_offset,
+            )
+        else:
+            merged_fn = ast.FunctionDef(
+                name=old_fn.name,
+                args=old_fn.args,
+                body=merged_body,
+                decorator_list=old_fn.decorator_list,
+                returns=old_fn.returns,
+                type_comment=old_fn.type_comment,
+                lineno=old_fn.lineno,
+                col_offset=old_fn.col_offset,
+            )
+
+        ast.fix_missing_locations(merged_fn)
+        return merged_fn
+
     def _update_plan_with_new_code(self, function_name: str, new_code: str):
         """
         Updates the plan's source code with a new function implementation using a
@@ -980,6 +1100,8 @@ class HierarchicalPlan(BaseActiveTask):
         This function merges all top-level statements, including
         functions, classes, imports, and global assignments, ensuring that the
         new code is seamlessly integrated without losing existing code.
+
+        During teaching sessions, function bodies are merged to preserve previous steps.
 
         Args:
             function_name: The name of the function to replace or add.
@@ -1002,17 +1124,50 @@ class HierarchicalPlan(BaseActiveTask):
             old_tree = ast.parse(self.plan_source_code or "pass")
             new_tree = ast.parse(textwrap.dedent(new_code))
 
-            final_nodes = {}
-
+            old_nodes = {}
             for node in old_tree.body:
                 key = self._get_node_key(node)
                 if key:
-                    final_nodes[key] = node
+                    old_nodes[key] = node
 
+            new_nodes = {}
             for node in new_tree.body:
                 key = self._get_node_key(node)
                 if key:
-                    final_nodes[key] = node
+                    new_nodes[key] = node
+
+            final_nodes = dict(old_nodes)
+
+            for key, new_node in new_nodes.items():
+                if (
+                    self.is_teaching_session
+                    and key[0] == "def"
+                    and key[1] == function_name
+                ):
+                    if key in old_nodes:
+                        old_node = old_nodes[key]
+                        if (
+                            isinstance(
+                                old_node,
+                                (ast.FunctionDef, ast.AsyncFunctionDef),
+                            )
+                            and isinstance(
+                                new_node,
+                                (ast.FunctionDef, ast.AsyncFunctionDef),
+                            )
+                            and type(old_node) == type(new_node)
+                        ):
+                            merged_fn = self._merge_function_bodies(old_node, new_node)
+                            final_nodes[key] = merged_fn
+                            self.action_log.append(
+                                f"Merged function bodies for '{function_name}' during teaching session.",
+                            )
+                        else:
+                            final_nodes[key] = new_node
+                    else:
+                        final_nodes[key] = new_node
+                else:
+                    final_nodes[key] = new_node
 
             final_tree = ast.Module(body=list(final_nodes.values()), type_ignores=[])
             ast.fix_missing_locations(final_tree)
@@ -1854,7 +2009,8 @@ class HierarchicalPlanner(BasePlanner):
                         include_implementations=True,
                     )
                     is_duplicate = any(
-                        data.get("implementation") == func_source
+                        textwrap.dedent(data.get("implementation", "")).strip()
+                        == textwrap.dedent(clean_func_source).strip()
                         for data in existing_funcs.values()
                     )
 
