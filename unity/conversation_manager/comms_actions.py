@@ -513,6 +513,7 @@ class Call(SteerableToolHandle):
 
         self.status = "initiated"
 
+    # init
     async def _start_call_task(self):
         """Internal helper: perform the call start then mark ready."""
         await _start_call(
@@ -539,6 +540,7 @@ class Call(SteerableToolHandle):
         await instance._start_call_task()
         return instance
 
+    # ask/interject
     async def _search_local_chat(self, question: str):
         """Search local chat window if a user response relevant to the question is found"""
 

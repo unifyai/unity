@@ -402,6 +402,32 @@ class CommsAgent:
 
                 self.pending_events.clear()
 
+    # broader context helper
+    def _inject_broader_context(self, msgs: list[dict]) -> list[dict]:
+        """Replace the `{broader_context}` placeholder inside *system* messages
+        with a fresh snapshot from `MemoryManager` right before the LLM call."""
+
+        import copy
+
+        from unity.memory_manager.memory_manager import (
+            MemoryManager,
+        )  # local import to avoid cycles
+
+        patched = copy.deepcopy(msgs)
+
+        try:
+            broader_ctx = MemoryManager().get_rolling_activity()
+        except Exception:
+            broader_ctx = ""
+
+        for m in patched:
+            if m.get("role") == "system" and "{broader_context}" in (
+                m.get("content") or ""
+            ):
+                m["content"] = m["content"].replace("{broader_context}", broader_ctx)
+
+        return patched
+
     async def tool_use_action(self, action: ToolUseAction):
         """Handle tool_use actions asynchronously"""
 
@@ -421,6 +447,7 @@ class CommsAgent:
             action.query,
             self.enabled_tools,
             parent_chat_context=chat_history,
+            preprocess_msgs=self._inject_broader_context,
         )
 
         # if action.show_steps:
