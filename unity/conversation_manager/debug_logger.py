@@ -11,7 +11,6 @@ def _get_logger():
 
     try:
         api_key = os.environ.get("SHARED_UNIFY_KEY")
-        print(f"API Key: {api_key}")
         if "Debug" not in unify.list_projects(api_key=api_key):
             unify.create_project("Debug", api_key=api_key)
 
