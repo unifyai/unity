@@ -70,6 +70,7 @@ def _build_initial_plan_rules_and_examples(
         3.  **Use `browser_observe` for Complex Data**: When you need to extract structured data (like a list of products, table contents, or form fields), use `browser_observe` with a Pydantic `response_format`. This is the best way to gather context before acting on complex pages.
         4.  **Describe Visually**: All browser tools operate on what is *visible*. Describe elements by their text, color, or relative position (e.g., "the blue 'Save' button at the bottom of the form"), not by HTML attributes.
         5.  **Use Fallback Capabilities**: If a website's interactive feature (e.g., a "Convert" button, a "Sort" dropdown) fails or doesn't meet your needs, don't give up. Instead, consider if you can achieve the goal using a more fundamental tool. For instance, if you can observe the raw data, you can often use `action_provider.reason` to perform the necessary calculation, transformation, or analysis yourself.
+        6.  **Isolate Pure Logic for Caching**: If your plan involves a complex calculation or a long data-processing loop that does not use the browser, factor it out into its own `async def` helper function. The planner automatically caches the results of successfully completed functions. By isolating this logic, you ensure it won't be re-executed if the plan restarts after a modification.
         ---
         """,
     )

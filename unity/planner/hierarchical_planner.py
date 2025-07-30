@@ -615,7 +615,16 @@ class HierarchicalPlan(BaseActiveTask):
     def _set_state(self, new_state: _HierarchicalPlanState):
         """Sets the plan state and logs the transition."""
         old_state = self._state
+        if old_state == new_state:
+            return
         self._state = new_state
+        stack = traceback.format_stack()
+        caller_info = " -> ".join(
+            line.strip().split("\n")[-1].strip() for line in stack[-3:-1]
+        )
+        logger.debug(
+            f"STATE_TRANSITION: {old_state.name} -> {new_state.name} (Caller: {caller_info})",
+        )
         self.action_log.append(f"STATE CHANGE: {old_state.name} -> {new_state.name}")
 
     async def _initialize_and_run(self):
@@ -1846,14 +1855,20 @@ class HierarchicalPlanner(BasePlanner):
             plan._module = importlib.util.module_from_spec(spec)
             plan._module_spec = spec
 
-            plan._module.__name__ = plan._module_name
-            plan._module.__file__ = str(plan._temp_file_path)
+            loader = spec.loader
 
             plan._module.__dict__.clear()
+
+            plan._module.__name__ = plan._module_name
+            plan._module.__file__ = str(plan._temp_file_path)
+            plan._module.__package__ = None
+            plan._module.__loader__ = loader
+            plan._module.__spec__ = spec
+
             plan._module.__dict__.update(plan.execution_namespace)
 
             sys.modules[plan._module_name] = plan._module
-            spec.loader.exec_module(plan._module)
+            loader.exec_module(plan._module)
 
         plan.execution_namespace = plan._module.__dict__
 
