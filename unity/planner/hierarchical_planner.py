@@ -200,6 +200,19 @@ class InterjectionDecision(BaseModel):
     )
 
 
+class SandboxMergeDecision(BaseModel):
+    """A structured decision on whether to merge sandbox findings."""
+
+    modification_needed: bool = Field(
+        ...,
+        description="True if the main plan should be modified based on the sandbox results.",
+    )
+    reason: str = Field(..., description="A brief justification for the decision.")
+    modification_request: Optional[str] = Field(
+        None,
+        description="If true, the user's request, rephrased as a direct instruction to modify the main plan.",
+    )
+    
 class _HierarchicalPlanState(enum.Enum):
     """Manages the detailed lifecycle state of a hierarchical plan."""
 
