@@ -334,15 +334,7 @@ class CommsAgent:
                             await self.meet_browser.act(
                                 f"Go to the page: https://meet.google.com/{self.meet_id}",
                             )
-
-                            # Enter name
                             await asyncio.sleep(1)
-                            await self.meet_browser.act(
-                                "Click 'your name' textbox",
-                            )
-                            await self.meet_browser.act(
-                                f"Enter your name as {self.assistant_name}",
-                            )
 
                             # Set agent mic
                             await self.meet_browser.act(
@@ -360,8 +352,15 @@ class CommsAgent:
                             await asyncio.sleep(1)
                             await self.meet_browser.act("Select 'meet_sink'")
 
-                            # Join meet
-                            await self.meet_browser.act("Click the 'Join' button")
+                            # Enter name and join
+                            await self.meet_browser.act(
+                                "Click 'your name' textbox",
+                            )
+                            await self.meet_browser.act(
+                                f"Enter your name as {self.assistant_name} and press enter",
+                            )
+
+                            # await self.meet_browser.act("Click the 'Join' button")
 
                             asyncio.create_task(self.inactivity_check_for_meet())
 
@@ -1008,7 +1007,7 @@ class CommsAgent:
                     user_number=self.user_number,
                     user_phone_call_number=self.user_phone_call_number,
                     assistant_number=self.assistant_number,
-                )
+                ),
             )
 
         if event["event"]["event_name"] == "PhoneCallEndedEvent":

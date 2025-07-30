@@ -295,15 +295,16 @@ class ContactManager(BaseContactManager):
 
         from .. import ASSISTANT
 
-        phone = ASSISTANT.get("user_phone")
-        whatsapp = ASSISTANT.get("user_whatsapp_number")
-        mapped_extra: Dict[str, Any] = {
-            "phone_number": phone,
-            "whatsapp_number": whatsapp,
-        }
-        user_info.update(
-            {k: v for k, v in mapped_extra.items() if v is not None},
-        )
+        if ASSISTANT is not None:
+            phone = ASSISTANT.get("user_phone")
+            whatsapp = ASSISTANT.get("user_whatsapp_number")
+            mapped_extra: Dict[str, Any] = {
+                "phone_number": phone,
+                "whatsapp_number": whatsapp,
+            }
+            user_info.update(
+                {k: v for k, v in mapped_extra.items() if v is not None},
+            )
 
         # If we managed to retrieve *any* real data, return it.
         if user_info:
