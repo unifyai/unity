@@ -1256,23 +1256,263 @@ class HierarchicalPlan(BaseActiveTask):
 
     async def interject(self, message: str) -> str:
         """
-        Sends an interjection message to the running plan's execution loop.
-
-        Args:
-            message: The user's interjection.
-
-        Returns:
-            A status message.
+        Processes a user interjection by using an LLM to decide on the best course of action.
         """
+        logger.debug(
+            f"INTERJECT: Interjection received. Current state: {self._state.name}",
+        )
         if not self._is_valid_method("interject"):
             return "Cannot interject: plan not running."
-        if self.main_loop_handle:
-            await self.main_loop_handle.interject(message)
-            self.action_log.append(f"User interjected: '{message}'")
-            return "Interjection sent."
-        return "Error: No active loop to interject into."
 
-    async def stop(self) -> str:
+        await self.pause()
+        decision = None
+        try:
+            prompt = prompt_builders.build_interjection_prompt(
+                interjection=message,
+                parent_chat_context=self.parent_chat_context,
+                plan_source_code=self.plan_source_code,
+                call_stack=self.call_stack,
+                action_log=self.action_log[-10:],
+                is_teaching_session=self.is_teaching_session,
+            )
+
+            self.modification_client.set_response_format(InterjectionDecision)
+            try:
+                decision_str = await llm_call(self.modification_client, prompt)
+                decision = InterjectionDecision.model_validate_json(decision_str)
+                logger.debug(
+                    f"{format_pydantic_model(decision, title='INTERJECTION DECISION', indent=2)}",
+                )
+            finally:
+                self.modification_client.reset_response_format()
+
+            self.action_log.append(
+                f"Interjection Decision: {decision.action} - {decision.reason}",
+            )
+
+            status_message = await self._execute_interjection_decision(decision)
+
+            return status_message
+
+        except Exception as e:
+            logger.error(f"Error during interjection handling: {e}", exc_info=True)
+            self.action_log.append(f"ERROR during interjection: {e}")
+            return f"Error processing interjection: {e}"
+        finally:
+            should_resume = decision is None or decision.action not in (
+                "modify_task",
+                "replace_task",
+            )
+            if self._state == _HierarchicalPlanState.PAUSED and should_resume:
+                await self.resume()
+
+    async def _execute_interjection_decision(
+        self,
+        decision: InterjectionDecision,
+    ) -> str:
+        """Executes the action decided by the Interjection Handler LLM."""
+        if (
+            decision.action in ("modify_task", "replace_task")
+            and self._execution_task
+            and not self._execution_task.done()
+        ):
+            self._execution_task.cancel()
+            try:
+                await self._execution_task
+            except asyncio.CancelledError:
+                self.action_log.append("Execution paused by user interjection.")
+
+        if decision.action == "modify_task":
+            self.action_log.append("Executing decision: modify_task.")
+
+            if not self.goal and decision.new_goal:
+                self.goal = decision.new_goal
+                self.action_log.append(
+                    f"Set plan goal from interjection: '{self.goal}'",
+                )
+
+            target_function = decision.target_function or (
+                self.call_stack[-1]
+                if self.call_stack
+                else self._get_main_function_name() or "main_plan"
+            )
+
+            if not target_function:
+                return "Error: Could not determine a target function to modify."
+
+            await self._handle_dynamic_implementation(
+                target_function,
+                replan_reason=f"User interjected with a new instruction: '{decision.modification_request}'",
+            )
+            self._cleanup_temp_file()
+            logger.debug(
+                "INTERJECT: modify_task decision. Creating new _execution_task.",
+            )
+            self._execution_task = asyncio.create_task(self._initialize_and_run())
+            return f"Plan modification for '{target_function}' initiated. Resuming execution."
+
+        elif decision.action == "replace_task":
+            self.action_log.append("Executing decision: replace_task.")
+
+            await self.stop(final_result=f"REPLACE_TASK: {decision.new_goal}")
+            return f"Current plan stopped. Requesting new plan for goal: '{decision.new_goal}'"
+
+        elif decision.action == "explore_detached":
+            self.action_log.append(
+                f"Executing decision: explore_detached for goal: '{decision.new_goal}'",
+            )
+
+            try:
+                try:
+
+                    class TabState(BaseModel):
+                        current_tab_index: int = Field(
+                            ...,
+                            description="The index of the current tab.",
+                        )
+
+                    original_tab_index = (
+                        await self.planner.action_provider.browser_observe(
+                            "What is the index of the current tab?",
+                            response_format=TabState,
+                        )
+                    )
+                    original_url = (
+                        await self.planner.action_provider.browser.get_current_url()
+                    )
+                except Exception as e:
+                    self.action_log.append(f"SANDBOX: Could not record tab state: {e}")
+                    original_tab_index = 0
+
+                self.action_log.append("SANDBOX: Opening new tab for exploration")
+                await self.planner.action_provider.browser_act(
+                    f"Open a new tab navigating to the url {original_url}",
+                    expectation=f"A new tab should be open and active and the url should be {original_url}",
+                )
+
+                self.action_log.append(
+                    f"SANDBOX: Starting sub-plan for goal: '{decision.new_goal}'",
+                )
+                sandbox_plan = HierarchicalPlan(
+                    planner=self.planner,
+                    goal=decision.new_goal,
+                    parent_chat_context=self.parent_chat_context,
+                    clarification_up_q=self.clarification_up_q,
+                    clarification_down_q=self.clarification_down_q,
+                )
+
+                sandbox_result = await sandbox_plan.result()
+                self.action_log.append(
+                    f"Sandbox plan finished with result: {sandbox_result}",
+                )
+
+                self.action_log.append(
+                    "SANDBOX: Analyzing sandbox results for potential merge.",
+                )
+
+                merge_prompt = prompt_builders.build_sandbox_merge_prompt(
+                    main_goal=self.goal or "No specific goal set",
+                    main_plan_source=self.plan_source_code
+                    or "No plan source available",
+                    sandbox_goal=decision.new_goal,
+                    sandbox_result=str(sandbox_result),
+                )
+
+                self.modification_client.set_response_format(SandboxMergeDecision)
+                try:
+                    decision_str = await llm_call(
+                        self.modification_client,
+                        merge_prompt,
+                    )
+                    merge_decision = SandboxMergeDecision.model_validate_json(
+                        decision_str,
+                    )
+                finally:
+                    self.modification_client.reset_response_format()
+
+                if merge_decision.modification_needed:
+                    self.action_log.append(
+                        f"SANDBOX MERGE: Decision to modify main plan. Reason: {merge_decision.reason}",
+                    )
+
+                    new_interjection = InterjectionDecision(
+                        action="modify_task",
+                        reason=merge_decision.reason,
+                        modification_request=merge_decision.modification_request,
+                        target_function=self._get_main_function_name() or "main_plan",
+                    )
+                    self._sandbox_merge_result = "Detached exploration completed and findings are being merged into the main plan."
+                    self._pending_merge_interjection = new_interjection
+                else:
+                    self.action_log.append(
+                        "SANDBOX MERGE: No modifications needed. Resuming main plan.",
+                    )
+                    self._sandbox_merge_result = (
+                        "Detached exploration completed. Resuming main plan."
+                    )
+                    self._pending_merge_interjection = None
+
+            finally:
+                self.action_log.append("SANDBOX: Returning to original tab")
+                try:
+                    await self.planner.action_provider.browser_act(
+                        f"Switch to tab {original_tab_index} which was on the url {original_url}",
+                        expectation="Should be back on the original tab",
+                    )
+                    self.action_log.append("SANDBOX: Returned to original tab")
+
+                except Exception as e:
+                    self.action_log.append(
+                        f"SANDBOX: Error returning to original tab: {e}",
+                    )
+
+            if (
+                hasattr(self, "_pending_merge_interjection")
+                and self._pending_merge_interjection
+            ):
+                await self._execute_interjection_decision(
+                    self._pending_merge_interjection,
+                )
+                delattr(self, "_pending_merge_interjection")
+
+            result_msg = getattr(
+                self,
+                "_sandbox_merge_result",
+                "Detached exploration completed. Resuming main plan.",
+            )
+            if hasattr(self, "_sandbox_merge_result"):
+                delattr(self, "_sandbox_merge_result")
+
+            return result_msg
+
+        elif decision.action == "clarify":
+            self.action_log.append(f"Executing decision: clarify.")
+            if decision.clarification_question:
+                await self.clarification_up_q.put(decision.clarification_question)
+                return "Clarification requested from user to determine next steps."
+            else:
+                return "Clarification needed, but no question was provided."
+
+        elif decision.action == "complete_task":
+            self.action_log.append("Executing decision: complete_task.")
+            if self.is_teaching_session:
+                self.is_teaching_session = False
+                self.action_log.append(
+                    "Teaching session completed. Plan will now execute to completion.",
+                )
+                if self._execution_task and not self._execution_task.done():
+                    self._execution_task.cancel()
+                self._execution_task = asyncio.create_task(self._initialize_and_run())
+
+                return (
+                    "Teaching session completed. Plan will now execute to completion."
+                )
+            else:
+                return "Not in a teaching session. Plan will continue normally."
+
+        return "Error: Unknown or unsupported interjection action."
+
+    async def stop(self, final_result: str | None = None) -> str:
         """
         Stops the plan's execution permanently.
 
@@ -1383,7 +1623,10 @@ class HierarchicalPlan(BaseActiveTask):
                 _HierarchicalPlanState.EXPLORING,
             )
         if name == "interject":
-            return self._state == _HierarchicalPlanState.RUNNING
+            return self._state in (
+                _HierarchicalPlanState.RUNNING,
+                _HierarchicalPlanState.PAUSED_FOR_INTERJECTION,
+            )
         if name == "modify_plan":
             return self._state in (
                 _HierarchicalPlanState.PAUSED,
