@@ -1208,7 +1208,6 @@ def build_initial_plan_prompt(
     goal: str,
     existing_functions: Dict[str, Any],
     retry_msg: str,
-    exploration_summary: Optional[str] = None,
     *,
     tools: Dict[str, Callable],
 ) -> str:
@@ -1512,66 +1511,6 @@ def build_plan_surgery_prompt(
         {rules_and_examples}
 
         Begin your response now. Your response must start immediately with the code.
-        """,
-    )
-
-
-def build_exploration_prompt(goal: str, *, tools: Dict[str, Callable]) -> str:
-    """
-    Builds the system prompt for the pre-planning exploration phase.
-
-    Args:
-        goal: The high-level user goal.
-        tools: A dictionary of available tools for exploration.
-
-    Returns:
-        The complete prompt string.
-    """
-    tool_reference = _build_tool_signatures(tools)
-    handle_apis = _build_handle_apis(tools)
-
-    return textwrap.dedent(
-        f"""
-        You are a Research Assistant for a web automation agent. Your mission is to gather facts to help write a successful script.
-
-        **Main Objective:** "{goal}"
-
-        **Your Task:**
-        1.  **Think Step-by-Step**: What specific pieces of information are missing from the objective? (e.g., URLs, exact text on buttons, structure of a search results page).
-        2.  **Use `browser_observe`**: Use this tool to gather the missing information. Ask targeted questions.
-        3.  **Summarize Findings**: Once you have gathered the necessary details, your final output MUST be a concise summary of your findings. This summary will be fed into the next stage of planning. Do not just say you are ready.
-
-        **Example Workflow:**
-        - **Goal:** "Find the contact email on the UnifyAI website."
-        - **Your Thought Process:** I need the URL for UnifyAI. Then I need to find a "Contact" or "About Us" link. Then I need to read that page to find the email.
-        - **Your Final Summary:** "The website is unify.ai. The contact information is located on the '/contact' page, which is linked in the footer. The email address is not directly listed, but there is a contact form."
-
-        ---
-        ### Tools Reference
-        {tool_reference}
-        ---
-        Begin. Your final output must be the summary.
-        """,
-    )
-
-
-def build_should_explore_prompt(goal: str) -> str:
-    """
-    Builds the system prompt for determining if exploration is needed.
-    """
-    return textwrap.dedent(
-        f"""
-        You are a planning analyst for a web automation agent. Your job is to decide if a task description contains enough specific information to write a Python script directly, or if an initial information-gathering phase is required.
-
-        **Analyze the following user goal:**
-        "{goal}"
-
-        **Decision Criteria:**
-        - **EXECUTE directly if:** The goal contains specific URLs, precise names of buttons/links ("Images tab", "Sign In button"), and a clear, linear workflow.
-        - **EXPLORE first if:** The goal is ambiguous. For example, it mentions a site but not a URL ("a popular news site"), asks to find something without specifying where ("find their contact email"), or implies a complex workflow that needs discovery ("find the cheapest can opener and add it to the cart"). The presence of a task like finding a specific item from a list of search results warrants exploration.
-
-        - If the goal is **clear and specific**, respond with the single word: **EXECUTE**.
-        - If the goal is **ambiguous or requires information gathering**, respond with the single word: **EXPLORE**.
         """,
     )
 
