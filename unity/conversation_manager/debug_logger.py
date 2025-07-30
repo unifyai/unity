@@ -8,7 +8,7 @@ LOGGER = None
 def _get_logger():
     global LOGGER
 
-    api_key = os.environ.get("ORCHESTRA_API_KEY")
+    api_key = os.environ.get("SHARED_UNIFY_KEY")
     if "Debug" not in unify.list_projects(api_key=api_key):
         unify.create_project("Debug", api_key=api_key)
 
