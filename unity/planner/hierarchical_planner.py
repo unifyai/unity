@@ -1553,12 +1553,22 @@ class HierarchicalPlan(BaseActiveTask):
         Returns:
             A status message.
         """
-        if self._state == _HierarchicalPlanState.RUNNING:
+        if self._state in (
+            _HierarchicalPlanState.RUNNING,
+            _HierarchicalPlanState.PAUSED_FOR_INTERJECTION,
+        ):
             self._set_state(_HierarchicalPlanState.PAUSED)
-            if self.main_loop_handle:
-                self.main_loop_handle.pause()
             self.action_log.append("Plan paused by user.")
             return "Plan paused."
+
+        if self._state in (
+            _HierarchicalPlanState.PAUSED,
+            _HierarchicalPlanState.COMPLETED,
+            _HierarchicalPlanState.STOPPED,
+            _HierarchicalPlanState.ERROR,
+        ):
+            return f"Plan already in state {self._state.name}, no action taken."
+
         return f"Cannot pause in state {self._state.name}."
 
     async def resume(self) -> str:
@@ -1570,8 +1580,6 @@ class HierarchicalPlan(BaseActiveTask):
         """
         if self._state == _HierarchicalPlanState.PAUSED:
             self._set_state(_HierarchicalPlanState.RUNNING)
-            if self.main_loop_handle:
-                self.main_loop_handle.resume()
             self.action_log.append("Plan resumed by user.")
             return "Plan resumed."
         return f"Cannot resume from state {self._state.name}."
@@ -2580,6 +2588,8 @@ class HierarchicalPlanner(BasePlanner):
                 has_browser_screenshot=browser_screenshot is not None,
                 replan_context=replan_reason,
                 tools=self.tools,
+                is_teaching_session=plan.is_teaching_session,
+                function_source_map=plan.function_source_map,
             )
             plan.implementation_client.set_response_format(ImplementationDecision)
 
