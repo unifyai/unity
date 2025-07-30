@@ -405,7 +405,56 @@ class _ActionProviderProxy:
             kwarg_str = ", ".join(f"{k}={v!r}" for k, v in kwargs.items())
             call_repr = f"action_provider.{name}({arg_str}, {kwarg_str})"
 
-            tool_output = await real_attr(*args, **kwargs)
+            if name == "browser_navigate":
+                try:
+                    bound_args = inspect.signature(real_attr).bind(*args, **kwargs)
+                    bound_args.apply_defaults()
+                    target_url = bound_args.arguments.get("url")
+
+                    current_url = (
+                        await self._real_action_provider.browser.get_current_url()
+                    )
+
+                    if target_url and (current_url == target_url):
+                        logger.info(
+                            f"ACTION_CACHE_HIT for tool 'browser_navigate' (already at URL '{current_url}').",
+                        )
+                        tool_output = f"Already at {current_url}, skipping navigation."
+                    else:
+                        tool_output = await real_attr(*args, **kwargs)
+                        self._plan.action_cache.clear()
+                except Exception as e:
+                    logger.warning(
+                        f"Could not perform navigation cache check, executing directly: {e}",
+                    )
+                    tool_output = await real_attr(*args, **kwargs)
+            elif name == "browser_observe":
+                tool_output = await real_attr(*args, **kwargs)
+            else:
+                try:
+                    current_url = (
+                        await self._real_action_provider.browser.get_current_url()
+                    )
+                    bound_args = inspect.signature(real_attr).bind(*args, **kwargs)
+                    bound_args.apply_defaults()
+                    args_tuple = frozenset(bound_args.arguments.items())
+
+                    cache_key = (name, args_tuple, current_url)
+
+                    if cache_key in self._plan.action_cache:
+                        self._plan.action_log.append(f"ACTION_CACHE_HIT: {name}")
+                        logger.info(
+                            f"ACTION_CACHE_HIT for tool '{name}' at URL '{current_url}'.",
+                        )
+                        tool_output = self._plan.action_cache[cache_key]
+                    else:
+                        logger.info(f"ACTION_CACHE_MISS for tool '{name}'.")
+                        tool_output = await real_attr(*args, **kwargs)
+                        self._plan.action_cache[cache_key] = tool_output
+
+                except Exception as e:
+                    logger.warning(f"Could not generate cache key for {name}: {e}")
+                    tool_output = await real_attr(*args, **kwargs)
 
             if isinstance(tool_output, SteerableToolHandle):
                 interactions_log.append(
@@ -513,6 +562,7 @@ class HierarchicalPlan(BaseActiveTask):
         self.clarification_down_q = clarification_down_q or asyncio.Queue()
         self.completed_functions: dict = {}
         self.skipped_functions: set = set()
+        self.action_cache: Dict[tuple, Any] = {}
         self._execution_task = asyncio.create_task(self._initialize_and_run())
         self.MAX_ESCALATIONS = max_escalations or 2
         self.MAX_LOCAL_RETRIES = max_local_retries or 3
