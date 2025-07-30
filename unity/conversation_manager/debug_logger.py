@@ -8,14 +8,13 @@ LOGGER = None
 def _get_logger():
     global LOGGER
 
-    if "Debug" not in unify.list_projects():
-        unify.create_project("Debug", api_key=os.environ.get("ORCHESTRA_API_KEY"))
+    api_key = os.environ.get("ORCHESTRA_API_KEY")
+    if "Debug" not in unify.list_projects(api_key=api_key):
+        unify.create_project("Debug", api_key=api_key)
 
     if LOGGER is None:
         LOGGER = unify.AsyncLoggerManager(
-            name="DebugLogger",
-            num_consumers=1,
-            api_key=os.environ.get("ORCHESTRA_API_KEY"),
+            name="DebugLogger", num_consumers=1, api_key=api_key,
         )
     return LOGGER
 
