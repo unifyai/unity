@@ -334,7 +334,7 @@ class CommsAgent:
                             await self.meet_browser.act(
                                 f"Go to the page: https://meet.google.com/{self.meet_id}",
                             )
-                            await asyncio.sleep(1)
+                            await asyncio.sleep(2)
 
                             # Set agent mic
                             await self.meet_browser.act(
