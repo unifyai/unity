@@ -969,14 +969,15 @@ class MemoryManager(BaseMemoryManager):
 
     # ───────────────────────────  HELPERS  ────────────────────────────
     # 1. Context & schema ---------------------------------------------------
-    def _ensure_rolling_context(self) -> str:
+    @classmethod
+    def _ensure_rolling_context(cls) -> str:
         """Create the `RollingActivity` context (idempotent) and return its name."""
         active_ctx = unify.get_active_context()["write"] or ""
         ctx = f"{active_ctx}/RollingActivity" if active_ctx else "RollingActivity"
         if ctx not in unify.get_contexts():
             unify.create_context(ctx, unique_column_ids="row_id")
             fields = {
-                col: {"type": "str", "mutable": True} for col in self._ROLLING_COLUMNS
+                col: {"type": "str", "mutable": True} for col in cls._ROLLING_COLUMNS
             }
             unify.create_fields(fields, context=ctx)
         return ctx
@@ -1312,8 +1313,9 @@ class MemoryManager(BaseMemoryManager):
     # ------------------------------------------------------------------ #
     #  helper: build human-readable activity summary                     #
     # ------------------------------------------------------------------ #
+    @classmethod
     def _build_activity_summary(
-        self,
+        cls,
         entries: dict[str, str],
         mode: str = "time",
     ) -> str:
@@ -1323,7 +1325,7 @@ class MemoryManager(BaseMemoryManager):
             raise ValueError("mode must be either 'time' or 'interaction'")
 
         windows: list[str] = (
-            list(self._TIME_ORDER) if mode == "time" else list(self._COUNT_ORDER)
+            list(cls._TIME_ORDER) if mode == "time" else list(cls._COUNT_ORDER)
         )
 
         def _pretty(w: str) -> str:
@@ -1356,7 +1358,7 @@ class MemoryManager(BaseMemoryManager):
         }
 
         lines: list[str] = []
-        for mgr_cls, nick in self._MANAGERS.items():
+        for mgr_cls, nick in cls._MANAGERS.items():
             title, desc = _TITLE_DESC.get(
                 nick,
                 (mgr_cls.replace("Manager", ""), ""),
@@ -1387,7 +1389,8 @@ class MemoryManager(BaseMemoryManager):
     # ------------------------------------------------------------------ #
     # 5  get_broader_context                                            #
     # ------------------------------------------------------------------ #
-    def get_rolling_activity(self, mode: str = "time") -> str:
+    @classmethod
+    def get_rolling_activity(cls, mode: str = "time") -> str:
         """
         Return the **latest** Rolling-Activity snapshot as a human-readable
         Markdown string.
@@ -1397,7 +1400,7 @@ class MemoryManager(BaseMemoryManager):
             raise ValueError("mode must be either 'time' or 'interaction'")
 
         rows = unify.get_logs(
-            context=self._rolling_ctx,
+            context=cls._ensure_rolling_context(),
             sorting={"row_id": "descending"},
             limit=1,
         )
@@ -1409,10 +1412,10 @@ class MemoryManager(BaseMemoryManager):
             return ""
 
         latest = rows[0].entries
-        key = self._SUMMARY_TIME_COL if mode == "time" else self._SUMMARY_COUNT_COL
+        key = cls._SUMMARY_TIME_COL if mode == "time" else cls._SUMMARY_COUNT_COL
         stored = latest.get(key)
         if stored:
             return stored
 
         # Fallback – build on the fly if snapshot predates summary columns
-        return self._build_activity_summary(latest, mode)
+        return cls._build_activity_summary(latest, mode)
