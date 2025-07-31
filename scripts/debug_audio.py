@@ -154,7 +154,9 @@ class AudioPlayer(App):
         with Container(classes="main-container"):
             with Horizontal(classes="controls"):
                 yield Button("Play", id="play-pause", variant="primary")
-                yield Button("Reset", id="reset")
+                yield Button("Reset", id="reset", variant="error")
+                yield Button("⏮ -5s", id="backward")
+                yield Button("⏭ +5s", id="forward")
                 yield Static(f"Time: {self.current_second:02d}s", id="time-display")
 
             with VerticalScroll(classes="transcript-container"):
@@ -301,6 +303,10 @@ class AudioPlayer(App):
                 self.start_playback()
             else:
                 self.pause_playback()
+        elif event.button.id == "forward":
+            self.jump_forward(5)
+        elif event.button.id == "backward":
+            self.jump_backward(5)
         elif event.button.id == "reset":
             self.reset_playback()
 
@@ -322,6 +328,64 @@ class AudioPlayer(App):
         self.pause_event.set()
         self.query_one("#play-pause").label = "Play"
         self.query_one("#play-pause").variant = "primary"
+
+    def jump_forward(self, seconds: int):
+        """Jump forward by specified seconds"""
+        if self.is_playing:
+            self.pause_playback()
+
+        self.current_second += seconds
+        self.update_time_display()
+
+        # Update transcript display to show all content up to current time
+        transcript_display = self.query_one(TranscriptDisplay)
+        transcript_display.update_time(self.current_second)
+
+        # Update audio position if audio is initialized
+        if self.audio_initialized and self.audio_wave:
+            self.update_audio_position()
+
+    def jump_backward(self, seconds: int):
+        """Jump backward by specified seconds"""
+        if self.is_playing:
+            self.pause_playback()
+
+        self.current_second = max(0, self.current_second - seconds)
+        self.update_time_display()
+
+        # Reset transcript display and rebuild up to current time
+        transcript_display = self.query_one(TranscriptDisplay)
+        transcript_display.displayed_utterances.clear()
+        transcript_display.all_content.clear()
+        transcript_display.update_time(self.current_second)
+
+        # Update audio position if audio is initialized
+        if self.audio_initialized and self.audio_wave:
+            self.update_audio_position()
+
+    def update_audio_position(self):
+        """Update audio position based on current time using actual audio properties"""
+        if not self.audio_initialized or not self.audio_wave:
+            return
+
+        try:
+            # Get actual audio properties
+            sample_rate = self.audio_wave.getframerate()
+            channels = self.audio_wave.getnchannels()
+            sample_width = self.audio_wave.getsampwidth()
+
+            # Calculate frames per second
+            frames_per_second = sample_rate
+
+            # Calculate frame position
+            new_position = int(self.current_second * frames_per_second)
+
+            # Ensure position is within bounds
+            total_frames = self.audio_wave.getnframes()
+            self.audio_position = max(0, min(new_position, total_frames))
+
+        except Exception as e:
+            self.notify(f"Error updating audio position: {e}", severity="error")
 
     def reset_playback(self):
         """Reset playback to beginning"""
