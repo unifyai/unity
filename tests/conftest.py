@@ -26,6 +26,8 @@ import asyncio
 import pytest
 import re
 import threading
+import random
+import string
 import unify
 
 
@@ -233,6 +235,10 @@ def get_test_log_format(config):
 # --------------------------------------------------------------------------- #
 
 
+def _generate_random_project_name():
+    return f"UnityTests_{''.join(random.choices(string.ascii_letters + string.digits, k=8))}"
+
+
 def pytest_sessionstart(session):
     global _using_unify_stub
     cmd_flag = session.config.getoption("--unify-stub")
@@ -253,8 +259,13 @@ def pytest_sessionstart(session):
     # ------------------------------------------------------------------
     #  Activate the UnityTests project
     # ------------------------------------------------------------------
+
+    randomize_project_name = json.loads(os.getenv("UNIFY_TESTS_RAND_PROJ", "false"))
+    project_name = (
+        _generate_random_project_name() if randomize_project_name else "UnityTests"
+    )
     unify.activate(
-        "UnityTests",
+        project_name,
         overwrite=json.loads(os.getenv("UNIFY_OVERWRITE_PROJECT", "false")),
     )
     unify.set_user_logging(False)
@@ -266,7 +277,7 @@ def pytest_sessionstart(session):
     import unity  # local import to avoid affecting stub installation order
 
     try:
-        unity.init("UnityTests")
+        unity.init(project_name)
     except Exception:
         # Fallback to default project if UnityTests not available yet
         unity.init()
