@@ -1,4 +1,5 @@
 from dotenv import load_dotenv
+
 load_dotenv()
 
 from argparse import ArgumentParser
@@ -11,6 +12,12 @@ from pydub import AudioSegment
 import requests
 import wave
 import unify
+import threading
+import time
+from textual.app import App, ComposeResult
+from textual.containers import Container, Horizontal, Vertical
+from textual.widgets import Button, Static, Header, Footer
+from textual.reactive import reactive
 
 unify.activate("Assistants")
 
@@ -18,15 +25,18 @@ unify.activate("Assistants")
 def fetch_nearest_recording(assistant_id: str, timestamp: datetime):
     response = requests.get(
         f"{os.environ['UNIFY_BASE_URL']}/assistant/{assistant_id}/recordings",
-        headers={
-            "Authorization": f"Bearer {os.environ['UNIFY_KEY']}"
-        }
+        headers={"Authorization": f"Bearer {os.environ['UNIFY_KEY']}"},
     )
     recordings = response.json()["info"]
     distances = [
-        abs((datetime.strptime(
-            recording["created_at"], "%Y-%m-%dT%H:%M:%S.%f"
-        ).replace(tzinfo=timezone.utc) - timestamp).total_seconds())
+        abs(
+            (
+                datetime.strptime(
+                    recording["created_at"], "%Y-%m-%dT%H:%M:%S.%f"
+                ).replace(tzinfo=timezone.utc)
+                - timestamp
+            ).total_seconds()
+        )
         for recording in recordings
     ]
     min_index = distances.index(min(distances))
@@ -48,122 +58,316 @@ def fetch_audio_file(recording_url: str):
     return file_name
 
 
-def play_audio(filename):
-    """Audio playback function"""
-    song = AudioSegment.from_mp3(filename)
-    song.export("audio/output.wav", format="wav")
+class TranscriptDisplay(Static):
+    """Widget to display transcripts with timestamps"""
+
+    def __init__(self, phone_utterance_seconds):
+        super().__init__("")
+        self.phone_utterance_seconds = phone_utterance_seconds
+        self.current_second = 0
+        self.audio_offset = 1
+        self.displayed_utterances = set()  # Store indices instead of dicts
+        self.all_content = []  # Store all content as a list
+
+    def update_time(self, seconds):
+        """Update the display based on current time"""
+        self.current_second = seconds
+        new_content = []
+
+        for i, utterance in enumerate(self.phone_utterance_seconds):
+            if (
+                utterance["second"] + self.audio_offset < seconds
+                and i not in self.displayed_utterances
+            ):
+                new_content.append(
+                    f"[{utterance['second']:02d}s] {utterance['role']}: {utterance['content']}"
+                )
+                self.displayed_utterances.add(i)
+
+        if new_content:
+            self.all_content.extend(new_content)
+            self.update("\n".join(self.all_content))
+            # Auto-scroll to the bottom to show latest content
+            self.scroll_end()
+
+
+class AudioPlayer(App):
+    """Main application for audio playback with transcripts"""
+
+    CSS = """
+    AudioPlayer {
+        layout: grid;
+        grid-size: 1;
+        grid-rows: 1fr auto;
+    }
     
-    p = pyaudio.PyAudio()
-    stream = p.open(
-        format=p.get_format_from_width(song.sample_width),
-        channels=song.channels,
-        rate=song.frame_rate,
-        output=True
-    )
-
-    # Define chunk size of audio frames
-    chunk = 1024
-
-    # Open the audio file
-    wf = wave.open("audio/output.wav", "rb")
-
-    # Read and write audio frames
-    data = wf.readframes(chunk)
-    while len(data) > 0:
-        stream.write(data)
-        data = wf.readframes(chunk)
+    .main-container {
+        layout: vertical;
+        height: 100%;
+    }
     
-    # Clean up
-    stream.stop_stream()
-    stream.close()
-    p.terminate()
-    wf.close()
-
-
-async def main(assistant_id: str, assistant_name: str, timestamp_str: str):
-    # fetch audio file
-    timestamp = datetime.strptime(timestamp_str, "%Y-%m-%dT%H:%M:%S.%f%z")
-    recording = fetch_nearest_recording(assistant_id, timestamp)
-    file_name = fetch_audio_file(recording["url"])
-    context = f"{assistant_name.replace(' ', '')}/Events/Comms"
-
-    # fetch startup event corresponding to the timestamp
-    logs = unify.get_logs(
-        project="Assistants",
-        context=context,
-        filter=f"payload_cls == 'StartupEvent' and timestamp == '{timestamp_str}'",
-        limit=1,
-    )
-    if len(logs) == 0:
-        print("No startup event found")
-        return
-    startup_event = logs[0].entries
-    print("Startup Event:")
-    print(startup_event)
-    print()
-
-    # fetch the phone call ended event corresponding to the startup
-    phone_call_ended_events = unify.get_logs(
-        project="Assistants",
-        context=context,
-        filter=f"payload_cls == 'PhoneCallEndedEvent' and timestamp > '{timestamp_str}'",
-        limit=1,
-        sorting={"timestamp": "ascending"},
-    )
-    if len(phone_call_ended_events) == 0:
-        print("No phone call ended event found")
-        return
-    phone_call_ended_event = phone_call_ended_events[0].entries
-    print("Phone Call Ended Event:")
-    print(phone_call_ended_event)
-    print()
-
-    # get phone utterance events between the startup and phone call ended events
-    phone_utterance_events = unify.get_logs(
-        project="Assistants",
-        context=context,
-        filter=(
-            "payload_cls == 'PhoneUtteranceEvent' "
-            f"and timestamp > '{startup_event['timestamp']}' "
-            f"and timestamp < '{phone_call_ended_event['timestamp']}'"
-        ),
-        limit=1000,
-        sorting={"timestamp": "ascending"},
-    )
-    if len(phone_utterance_events) == 0:
-        print("No phone call ended event found")
-        return
-    phone_utterance_events = list(map(lambda x: x.entries, phone_utterance_events))
-    print("Phone Utterance Events:")
-    phone_utterance_seconds = []
-    current_second = 0
-    current_timestamp = datetime.strptime(phone_utterance_events[0]["timestamp"], "%Y-%m-%dT%H:%M:%S.%f%z")
-    for event in phone_utterance_events:
-        new_timestamp = datetime.strptime(event["timestamp"], "%Y-%m-%dT%H:%M:%S.%f%z")
-        current_second = int(current_second + (new_timestamp - current_timestamp).total_seconds())
-        current_timestamp = new_timestamp
-        phone_utterance_seconds.append({
-            "second": current_second,
-            "role": event["role"],
-            "content": event["content"]
-        })
-        print(current_second, "\t|", event["role"], ":", event["content"])
-    print()
-
-    # play audio
-    audio_task = asyncio.create_task(asyncio.to_thread(play_audio, file_name))
+    .controls {
+        layout: horizontal;
+        height: auto;
+        padding: 1;
+        border-bottom: solid green;
+    }
     
-    # do other work
-    seconds, idx = 0, 0
-    print("Playing audio...")
-    while not audio_task.done():
-        if idx < len(phone_utterance_seconds) and seconds >= phone_utterance_seconds[idx]["second"]:
-            print(f"{phone_utterance_seconds[idx]['role']} : {phone_utterance_seconds[idx]['content']}")
-            idx += 1
-        seconds += 1
-        await asyncio.sleep(1)
+    .transcript-container {
+        height: 1fr;
+        border: solid blue;
+        padding: 1;
+        overflow: hidden;
+    }
     
-    print("Audio playback completed!")
+    TranscriptDisplay {
+        height: 100%;
+        overflow-y: auto;
+        background: $surface;
+        color: $text;
+        scrollbar-gutter: stable;
+    }
+    
+    Button {
+        margin: 0 1;
+    }
+    """
+
+    def __init__(self, assistant_id: str, assistant_name: str, timestamp_str: str):
+        super().__init__()
+        self.assistant_id = assistant_id
+        self.assistant_name = assistant_name
+        self.timestamp_str = timestamp_str
+        self.audio_file = None
+        self.phone_utterance_seconds = []
+        self.is_playing = False
+        self.current_second = 0
+        self.audio_thread = None
+        self.pause_event = threading.Event()
+        self.audio_position = 0  # Track audio position in frames
+        self.audio_stream = None
+        self.audio_wave = None
+        self.audio_pyaudio = None
+        self.audio_initialized = False
+
+    def compose(self) -> ComposeResult:
+        """Create child widgets for the app"""
+        yield Header()
+
+        with Container(classes="main-container"):
+            with Horizontal(classes="controls"):
+                yield Button("Play", id="play-pause", variant="primary")
+                yield Button("Reset", id="reset")
+                yield Static(f"Time: {self.current_second:02d}s", id="time-display")
+
+            with Container(classes="transcript-container"):
+                yield TranscriptDisplay(self.phone_utterance_seconds)
+
+        yield Footer()
+
+    def on_mount(self) -> None:
+        """Set up the app when it starts"""
+        self.load_data()
+        self.update_time_display()
+        # Set up timer for updating playback time
+        self.set_interval(1.0, self.update_playback_time)
+
+    def load_data(self):
+        """Load audio file and transcript data"""
+        try:
+            # Fetch data
+            timestamp = datetime.strptime(self.timestamp_str, "%Y-%m-%dT%H:%M:%S.%f%z")
+            recording = fetch_nearest_recording(self.assistant_id, timestamp)
+            self.audio_file = fetch_audio_file(recording["url"])
+            context = f"{self.assistant_name.replace(' ', '')}/Events/Comms"
+
+            # Get transcript events
+            phone_utterance_events = unify.get_logs(
+                project="Assistants",
+                context=context,
+                filter=(
+                    "payload_cls == 'PhoneUtteranceEvent' "
+                    f"and timestamp > '{self.timestamp_str}'"
+                ),
+                limit=1000,
+                sorting={"timestamp": "ascending"},
+            )
+
+            if phone_utterance_events:
+                phone_utterance_events = list(
+                    map(lambda x: x.entries, phone_utterance_events)
+                )
+
+                # Calculate timing
+                current_second = 0
+                current_timestamp = datetime.strptime(
+                    phone_utterance_events[0]["timestamp"], "%Y-%m-%dT%H:%M:%S.%f%z"
+                )
+
+                for event in phone_utterance_events:
+                    new_timestamp = datetime.strptime(
+                        event["timestamp"], "%Y-%m-%dT%H:%M:%S.%f%z"
+                    )
+                    current_second = int(
+                        current_second
+                        + (new_timestamp - current_timestamp).total_seconds()
+                    )
+                    current_timestamp = new_timestamp
+                    self.phone_utterance_seconds.append(
+                        {
+                            "second": current_second,
+                            "role": event["role"],
+                            "content": event["content"],
+                        }
+                    )
+
+                # Update transcript display
+                transcript_display = self.query_one(TranscriptDisplay)
+                transcript_display.phone_utterance_seconds = (
+                    self.phone_utterance_seconds
+                )
+
+        except Exception as e:
+            self.notify(f"Error loading data: {e}", severity="error")
+
+    def initialize_audio(self):
+        """Initialize audio resources once"""
+        if self.audio_initialized:
+            return
+
+        try:
+            # Convert MP3 to WAV if not already done
+            song = AudioSegment.from_mp3(self.audio_file)
+            song.export("audio/output.wav", format="wav")
+
+            self.audio_pyaudio = pyaudio.PyAudio()
+            self.audio_stream = self.audio_pyaudio.open(
+                format=self.audio_pyaudio.get_format_from_width(song.sample_width),
+                channels=song.channels,
+                rate=song.frame_rate,
+                output=True,
+            )
+
+            self.audio_wave = wave.open("audio/output.wav", "rb")
+            self.audio_initialized = True
+
+        except Exception as e:
+            self.notify(f"Audio initialization error: {e}", severity="error")
+
+    def play_audio(self):
+        """Play audio in a separate thread"""
+
+        def audio_worker():
+            try:
+                # Initialize audio if not done
+                if not self.audio_initialized:
+                    self.call_from_thread(self.initialize_audio)
+                    time.sleep(0.1)  # Give time for initialization
+
+                if not self.audio_initialized:
+                    return
+
+                chunk = 1024
+
+                # Set position if resuming
+                if self.audio_position > 0:
+                    self.audio_wave.setpos(self.audio_position)
+
+                data = self.audio_wave.readframes(chunk)
+                while len(data) > 0 and self.is_playing:
+                    if self.pause_event.is_set():
+                        # Save current position before pausing
+                        self.audio_position = self.audio_wave.tell()
+                        time.sleep(0.1)
+                        continue
+
+                    self.audio_stream.write(data)
+                    data = self.audio_wave.readframes(chunk)
+
+                # If we reach the end, mark as not playing
+                if not data:
+                    self.call_from_thread(self.pause_playback)
+                    self.audio_position = 0  # Reset position
+
+            except Exception as e:
+                self.call_from_thread(
+                    self.notify, f"Audio error: {e}", severity="error"
+                )
+
+        self.audio_thread = threading.Thread(target=audio_worker, daemon=True)
+        self.audio_thread.start()
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        """Handle button presses"""
+        if event.button.id == "play-pause":
+            if not self.is_playing:
+                self.start_playback()
+            else:
+                self.pause_playback()
+        elif event.button.id == "reset":
+            self.reset_playback()
+
+    def start_playback(self):
+        """Start audio playback"""
+        self.is_playing = True
+        self.pause_event.clear()
+
+        # Only start new audio thread if not already running
+        if not self.audio_thread or not self.audio_thread.is_alive():
+            self.play_audio()
+
+        self.query_one("#play-pause").label = "Pause"
+        self.query_one("#play-pause").variant = "warning"
+
+    def pause_playback(self):
+        """Pause audio playback"""
+        self.is_playing = False
+        self.pause_event.set()
+        self.query_one("#play-pause").label = "Play"
+        self.query_one("#play-pause").variant = "primary"
+
+    def reset_playback(self):
+        """Reset playback to beginning"""
+        self.pause_playback()
+        self.current_second = 0
+        self.audio_position = 0  # Reset audio position
+
+        # Reset audio file position
+        if self.audio_wave:
+            self.audio_wave.rewind()
+
+        self.update_time_display()
+
+        # Reset transcript display
+        transcript_display = self.query_one(TranscriptDisplay)
+        transcript_display.displayed_utterances.clear()
+        transcript_display.all_content.clear()
+        transcript_display.update("")
+
+    def on_unmount(self) -> None:
+        """Clean up audio resources when app closes"""
+        if self.audio_stream:
+            self.audio_stream.stop_stream()
+            self.audio_stream.close()
+        if self.audio_pyaudio:
+            self.audio_pyaudio.terminate()
+        if self.audio_wave:
+            self.audio_wave.close()
+
+    def update_time_display(self):
+        """Update the time display"""
+        time_widget = self.query_one("#time-display")
+        time_widget.update(f"Time: {self.current_second:02d}s")
+
+    def update_playback_time(self) -> None:
+        """Update playback time and transcripts"""
+        if self.is_playing and not self.pause_event.is_set():
+            self.current_second += 1
+            self.update_time_display()
+
+            # Update transcript display
+            transcript_display = self.query_one(TranscriptDisplay)
+            transcript_display.update_time(self.current_second)
 
 
 if __name__ == "__main__":
@@ -173,4 +377,5 @@ if __name__ == "__main__":
     parser.add_argument("--timestamp", type=str, required=True)
     args = parser.parse_args()
 
-    asyncio.run(main(args.assistant_id, args.assistant_name, args.timestamp))
+    app = AudioPlayer(args.assistant_id, args.assistant_name, args.timestamp)
+    app.run()
