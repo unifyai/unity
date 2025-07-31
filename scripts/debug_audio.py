@@ -146,6 +146,7 @@ class AudioPlayer(App):
         self.audio_wave = None
         self.audio_pyaudio = None
         self.audio_initialized = False
+        self.has_played_once = False  # Track if audio has been played at least once
 
     def compose(self) -> ComposeResult:
         """Create child widgets for the app"""
@@ -155,8 +156,8 @@ class AudioPlayer(App):
             with Horizontal(classes="controls"):
                 yield Button("Play", id="play-pause", variant="primary")
                 yield Button("Reset", id="reset", variant="error")
-                yield Button("⏮ -5s", id="backward")
-                yield Button("⏭ +5s", id="forward")
+                yield Button("⏮ -5s", id="backward", disabled=True)
+                yield Button("⏭ +5s", id="forward", disabled=True)
                 yield Static(f"Time: {self.current_second:02d}s", id="time-display")
 
             with VerticalScroll(classes="transcript-container"):
@@ -304,9 +305,11 @@ class AudioPlayer(App):
             else:
                 self.pause_playback()
         elif event.button.id == "forward":
-            self.jump_forward(5)
+            if self.has_played_once:
+                self.jump_forward(5)
         elif event.button.id == "backward":
-            self.jump_backward(5)
+            if self.has_played_once:
+                self.jump_backward(5)
         elif event.button.id == "reset":
             self.reset_playback()
 
@@ -314,6 +317,13 @@ class AudioPlayer(App):
         """Start audio playback"""
         self.is_playing = True
         self.pause_event.clear()
+
+        # Mark that audio has been played at least once
+        if not self.has_played_once:
+            self.has_played_once = True
+            # Enable forward/backward buttons
+            self.query_one("#forward").disabled = False
+            self.query_one("#backward").disabled = False
 
         # Only start new audio thread if not already running
         if not self.audio_thread or not self.audio_thread.is_alive():
@@ -331,7 +341,8 @@ class AudioPlayer(App):
 
     def jump_forward(self, seconds: int):
         """Jump forward by specified seconds"""
-        if self.is_playing:
+        was_playing = self.is_playing
+        if was_playing:
             self.pause_playback()
 
         self.current_second += seconds
@@ -345,9 +356,14 @@ class AudioPlayer(App):
         if self.audio_initialized and self.audio_wave:
             self.update_audio_position()
 
+        if was_playing:
+            time.sleep(0.1)
+            self.start_playback()
+
     def jump_backward(self, seconds: int):
         """Jump backward by specified seconds"""
-        if self.is_playing:
+        was_playing = self.is_playing
+        if was_playing:
             self.pause_playback()
 
         self.current_second = max(0, self.current_second - seconds)
@@ -362,6 +378,10 @@ class AudioPlayer(App):
         # Update audio position if audio is initialized
         if self.audio_initialized and self.audio_wave:
             self.update_audio_position()
+
+        if was_playing:
+            time.sleep(0.1)
+            self.start_playback()
 
     def update_audio_position(self):
         """Update audio position based on current time using actual audio properties"""
