@@ -15,7 +15,7 @@ import unify
 import threading
 import time
 from textual.app import App, ComposeResult
-from textual.containers import Container, Horizontal, Vertical
+from textual.containers import Container, Horizontal, VerticalScroll
 from textual.widgets import Button, Static, Header, Footer
 from textual.reactive import reactive
 
@@ -117,15 +117,12 @@ class AudioPlayer(App):
         height: 1fr;
         border: solid blue;
         padding: 1;
-        overflow: hidden;
     }
     
     TranscriptDisplay {
-        height: 100%;
-        overflow-y: auto;
         background: $surface;
         color: $text;
-        scrollbar-gutter: stable;
+        min-height: 100%;
     }
     
     Button {
@@ -160,7 +157,7 @@ class AudioPlayer(App):
                 yield Button("Reset", id="reset")
                 yield Static(f"Time: {self.current_second:02d}s", id="time-display")
 
-            with Container(classes="transcript-container"):
+            with VerticalScroll(classes="transcript-container"):
                 yield TranscriptDisplay(self.phone_utterance_seconds)
 
         yield Footer()
