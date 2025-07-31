@@ -37,7 +37,12 @@ def fetch_nearest_recording(assistant_id: str, timestamp: datetime):
 def fetch_audio_file(recording_url: str):
     client = storage.Client(project="saas-368716")
     bucket = client.bucket("log-images-bucket")
-    blob = bucket.blob(f"assistant_call_recording_staging/{recording_url.split('/')[-1]}")
+    audio_folder = (
+        "assistant_call_recording"
+        if not os.environ.get("STAGING")
+        else "assistant_call_recording_staging"
+    )
+    blob = bucket.blob(f"{audio_folder}/{recording_url.split('/')[-1]}")
     file_name = f"audio/{recording_url.split('/')[-1]}.mp3"
     blob.download_to_filename(file_name)
     return file_name
