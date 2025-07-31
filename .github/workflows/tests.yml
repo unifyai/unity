@@ -4,7 +4,7 @@ run-name: >-
     github.event_name == 'workflow_dispatch' &&
     github.event.inputs.test_path != '' &&
     format('Test {0}', github.event.inputs.test_path) ||
-    format('{0} #{1}', github.workflow, github.run_number)
+    github.event.head_commit.message
   }}
 
 
