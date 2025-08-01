@@ -1543,6 +1543,11 @@ def build_dynamic_implement_prompt(
             except:
                 pass
 
+        existing_docstring_str = (
+            f'- Current docstring: """{existing_docstring}"""'
+            if existing_docstring
+            else ""
+        )
         teaching_session_context = textwrap.dedent(
             f"""
             ---
@@ -1567,7 +1572,7 @@ def build_dynamic_implement_prompt(
             **Current Function State:**
             - Existing steps completed: {next_step_num - 1}
             - Your action will become step {next_step_num}
-            {f'- Current docstring: """{existing_docstring}"""' if existing_docstring else ''}
+            {existing_docstring_str}
 
             **Code Already in `{function_name}`:**
             ```python

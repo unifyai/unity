@@ -212,7 +212,8 @@ class SandboxMergeDecision(BaseModel):
         None,
         description="If true, the user's request, rephrased as a direct instruction to modify the main plan.",
     )
-    
+
+
 class _HierarchicalPlanState(enum.Enum):
     """Manages the detailed lifecycle state of a hierarchical plan."""
 
@@ -631,6 +632,7 @@ class HierarchicalPlan(BaseActiveTask):
         """
         Manages the entire lifecycle of the plan from initialization to completion.
         """
+        try:
             if self.goal:
                 if not self._is_complete:
                     self._set_state(_HierarchicalPlanState.RUNNING)
@@ -671,7 +673,6 @@ class HierarchicalPlan(BaseActiveTask):
             logger.error(f"Plan initialization failed: {e}", exc_info=True)
             self._set_state(_HierarchicalPlanState.ERROR)
             self._set_final_result(f"ERROR: Plan initialization failed: {e}")
-
 
     def _create_main_loop_iterator(self):
         """
@@ -1756,7 +1757,6 @@ class HierarchicalPlanner(BasePlanner):
         except SyntaxError as e:
             logger.error(f"Generated code failed sanitization: {e}")
             raise
-
 
     async def _execute_task_and_return_handle(
         self,

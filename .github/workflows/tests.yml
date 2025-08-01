@@ -1,4 +1,11 @@
 name: Testing Unity with uv
+run-name: >-
+  ${{
+    github.event_name == 'workflow_dispatch' &&
+    github.event.inputs.test_path != '' &&
+    format('Test {0}', github.event.inputs.test_path) ||
+    github.event.head_commit.message
+  }}
 
 on:
   push:
@@ -125,6 +132,7 @@ jobs:
           --test-log-file="tests.log" ${{ inputs.test_path || '.' }}
       env:
         UNITY_TESTS_CLI_LOGGING: ${{ inputs.test_enable_cli_logging || 'false' }}
+        UNIFY_TESTS_RAND_PROJ: true
         UNIFY_KEY: ${{ secrets.USER_API_KEY }}
         UNIFY_BASE_URL: https://api.unify.ai/v0
         UNIFY_CACHE: true
