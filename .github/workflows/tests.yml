@@ -127,6 +127,7 @@ jobs:
           --log-file-level=${{ inputs.test_log_file_level || 'INFO' }} \
           --test-log-enable \
           --html=report.html \
+          --self-contained-html \
           --junitxml=report.xml \
           --test-log-file="tests.log" ${{ inputs.test_path || '.' }}
       env:
