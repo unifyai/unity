@@ -355,12 +355,11 @@ class CommsAgent:
                             await self.meet_browser.act("Select 'meet_sink'")
 
                             # Enter name and join
-                            # await self.meet_browser.act(
-                            #     "Click 'your name' textbox",
-                            # )
                             await self.meet_browser.act(
-                                f"Click and enter your name as {self.assistant_name} and press enter",
-                                multi_step_mode=True,
+                                "Click 'your name' textbox",
+                            )
+                            await self.meet_browser.act(
+                                f"Enter your name as {self.assistant_name} and press enter",
                             )
 
                             # await self.meet_browser.act("Click the 'Join' button")
@@ -668,7 +667,7 @@ class CommsAgent:
 
     async def _start_screen_share_meet(self):
         """
-        Starts screen sharing in the Google Meet call.
+        Starts screen sharing.
         """
         if self.meet_browser is None:
             return
@@ -691,7 +690,7 @@ class CommsAgent:
 
     async def _stop_screen_share_meet(self):
         """
-        Stops screen sharing in the Google Meet call.
+        Stops screen sharing.
         """
         if self.meet_browser is None:
             return
