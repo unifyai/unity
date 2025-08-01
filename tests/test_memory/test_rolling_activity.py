@@ -222,6 +222,9 @@ def _patch_memory_manager_windows(monkeypatch):
     constructor registers callbacks with the shrunken thresholds.
     """
 
+    monkeypatch.setenv("REGISTER_SUMMARY_CALLBACKS", "true")
+    monkeypatch.setenv("REGISTER_UPDATE_CALLBACKS", "true")
+
     from unity.memory_manager.memory_manager import MemoryManager
     from unity.events.event_bus import Subscription
 

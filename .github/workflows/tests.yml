@@ -146,8 +146,8 @@ jobs:
         AGENT_AGE: 29
 
         # Reduce overhead of memory manager callbacks
-        REGISTER_SUMMARY_CALLBACKS: true
-        REGISTER_UPDATE_CALLBACKS: true
+        REGISTER_SUMMARY_CALLBACKS: false
+        REGISTER_UPDATE_CALLBACKS: false
 
     - name: Dump test logs
       if: always()
