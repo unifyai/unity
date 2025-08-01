@@ -158,8 +158,8 @@ class CommsAgent:
                 # todo: temporary adding them here explicitly
                 self._inner_send_call,
                 self._join_meet,
-                self._start_screen_share_meet,
-                self._stop_screen_share_meet,
+                self._start_screen_share,
+                self._stop_screen_share,
                 self._inner_send_email,
                 self._inner_send_sms,
             )
@@ -665,9 +665,9 @@ class CommsAgent:
         global ONGOING_CALL
         await _join_meet_call(meet_id, purpose, task_context, ongoing_call=ONGOING_CALL)
 
-    async def _start_screen_share_meet(self):
+    async def _start_screen_share(self):
         """
-        Starts screen sharing.
+        Starts browser screen sharing.
         """
         if self.meet_browser is None:
             return
@@ -688,9 +688,9 @@ class CommsAgent:
 
         await self.meet_browser.act("Click on the 'Share screen' button")
 
-    async def _stop_screen_share_meet(self):
+    async def _stop_screen_share(self):
         """
-        Stops screen sharing.
+        Stops browser screen sharing.
         """
         if self.meet_browser is None:
             return
