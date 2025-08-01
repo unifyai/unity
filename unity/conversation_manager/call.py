@@ -471,7 +471,7 @@ if __name__ == "__main__":
     outbound = ""
     meet_id = ""
 
-    if len(sys.argv) > 6:
+    if len(sys.argv) > 7:
         # Remove phone numbers from sys.argv to prevent them from being passed to agents.cli
         from_number = sys.argv[2]
         assistant_number = sys.argv[3]
