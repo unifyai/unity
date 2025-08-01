@@ -239,8 +239,8 @@ def launch_persistent(pw, headless: bool = False) -> BrowserContext:
         args=[
             "--disable-blink-features=AutomationControlled",
             "--disable-features=IsolateOrigins,site-per-process",
-            # "--use-fake-ui-for-media-stream",
             # "--enable-features=WebRtcV4L2VideoCapture",
+            "--auto-select-window-capture-source-by-title=Google",
         ],
         permissions=["microphone", "camera"],
     )
