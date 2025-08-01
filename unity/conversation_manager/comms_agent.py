@@ -293,18 +293,8 @@ class CommsAgent:
                                     else self.user_phone_call_number
                                 ),
                                 self.assistant_number,
-                                (
-                                    new_event["tts_provider"]
-                                    if hasattr(new_event, "tts_provider")
-                                    and new_event["tts_provider"]
-                                    else "cartesia"
-                                ),
-                                (
-                                    new_event["voice_id"]
-                                    if hasattr(new_event, "voice_id")
-                                    and new_event["voice_id"]
-                                    else "None"
-                                ),
+                                new_event["payload"].get("tts_provider", "cartesia"),
+                                new_event["payload"].get("voice_id", "None"),
                                 "--outbound" if new_event.get("outbound") else "None",
                                 self.meet_id if self.meet_id else "None",
                             )
