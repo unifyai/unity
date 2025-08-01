@@ -137,6 +137,7 @@ class CommsAgent:
         self.loop = asyncio.get_event_loop()
         self.transcript_manager = None
         self.redis = None
+        self.broader_context = ""
 
     def _build_enabled_tools_dict(self):
         from unity.common.llm_helpers import AsyncToolUseLoopHandle
@@ -222,6 +223,11 @@ class CommsAgent:
                 tools_list += [planner.execute]
 
         self.enabled_tools = methods_to_tool_dict(*tools_list)
+
+    async def _get_broader_context(self):
+        from unity.memory_manager.broader_context import get_broader_context
+
+        self.broader_context = await asyncio.to_thread(get_broader_context)
 
     async def get_bus_events(self):
         from unity.events.event_bus import EVENT_BUS
@@ -578,6 +584,7 @@ class CommsAgent:
             self.assistant_region,
             self.assistant_about,
             self.task_context,
+            broader_context=self.broader_context,
         )
         user_msg = self.get_user_agent_prompt()
         print(user_msg, flush=True)
@@ -607,6 +614,7 @@ class CommsAgent:
             self.assistant_region,
             self.assistant_about,
             self.task_context,
+            broader_context=self.broader_context,
         )
 
         user_msg = self.get_user_agent_prompt()
@@ -1040,6 +1048,7 @@ class CommsAgent:
         while True:
             try:
                 self.past_events = await self.get_bus_events()
+                await self._get_broader_context()
             except Exception as e:
                 print(f"Error fetching bus events: {e}")
             await asyncio.sleep(2)
