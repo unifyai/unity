@@ -248,6 +248,7 @@ async def entrypoint(ctx: agents.JobContext):
 
     print("tts_provider", tts_provider)
     print("voice_id", voice_id)
+
     session = AgentSession(
         stt=deepgram.STT(model="nova-3", language="multi"),
         llm=openai.LLM(model="gpt-4o"),
