@@ -286,6 +286,7 @@ class CommsAgent:
                         self.meet_id = new_event["payload"]["meet_id"]
 
                         print("call_requested", self.assistant_number)
+                        print("new_event", new_event)
                         if not self.start_local:
                             self.call_proc = run_script(
                                 "unity/conversation_manager/call.py",
@@ -296,18 +297,8 @@ class CommsAgent:
                                     else self.user_phone_call_number
                                 ),
                                 self.assistant_number,
-                                (
-                                    new_event["tts_provider"]
-                                    if hasattr(new_event, "tts_provider")
-                                    and new_event["tts_provider"]
-                                    else "cartesia"
-                                ),
-                                (
-                                    new_event["voice_id"]
-                                    if hasattr(new_event, "voice_id")
-                                    and new_event["voice_id"]
-                                    else "None"
-                                ),
+                                new_event["payload"].get("tts_provider", "cartesia"),
+                                new_event["payload"].get("voice_id", "None"),
                                 "--outbound" if new_event.get("outbound") else "None",
                                 self.meet_id if self.meet_id else "None",
                             )
