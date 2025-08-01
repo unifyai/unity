@@ -360,6 +360,7 @@ class CommsAgent:
                             # )
                             await self.meet_browser.act(
                                 f"Click and enter your name as {self.assistant_name} and press enter",
+                                multi_step_mode=True,
                             )
 
                             # await self.meet_browser.act("Click the 'Join' button")
