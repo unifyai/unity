@@ -52,6 +52,8 @@ def _build_tool_use_tasks_rules_section() -> str:
     underline = "-" * len(title)
     rules = [
         "- If the user asks about something that you can't answer based on the event history so far, you should use the ToolUse for performing it",
+        "- You're capable of using the browser to perform actions with the given ToolUse.",
+        "- You can share your screen with the user with the given ToolUse.",
         "- ToolUse actions launch a separate task in the background that you can keep track of in further steps",
         "- They also get logged into the event stream",
         "- You will be provided with a list of handles for all ongoing ToolUse tasks along with the query made to the ToolUse for each of them.",

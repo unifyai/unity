@@ -158,6 +158,8 @@ class CommsAgent:
                 # todo: temporary adding them here explicitly
                 self._inner_send_call,
                 self._join_meet,
+                self._start_screen_share_meet,
+                self._stop_screen_share_meet,
                 self._inner_send_email,
                 self._inner_send_sms,
             )
@@ -353,11 +355,11 @@ class CommsAgent:
                             await self.meet_browser.act("Select 'meet_sink'")
 
                             # Enter name and join
+                            # await self.meet_browser.act(
+                            #     "Click 'your name' textbox",
+                            # )
                             await self.meet_browser.act(
-                                "Click 'your name' textbox",
-                            )
-                            await self.meet_browser.act(
-                                f"Enter your name as {self.assistant_name} and press enter",
+                                f"Click and enter your name as {self.assistant_name} and press enter",
                             )
 
                             # await self.meet_browser.act("Click the 'Join' button")
@@ -645,7 +647,7 @@ class CommsAgent:
         self.inflight_events.clear()
         return event.parsed
 
-    # general communications
+    # google meet communications
     async def _join_meet(
         self,
         meet_id: str,
@@ -662,6 +664,38 @@ class CommsAgent:
         """
         global ONGOING_CALL
         await _join_meet_call(meet_id, purpose, task_context, ongoing_call=ONGOING_CALL)
+
+    async def _start_screen_share_meet(self):
+        """
+        Starts screen sharing in the Google Meet call.
+        """
+        if self.meet_browser is None:
+            return
+
+        query = "Create a new tab and go to https://www.google.com/"
+        unify_client = unify.AsyncUnify("o4-mini@openai")
+        unify_client.set_system_message(
+            build_action_prompt(self.enabled_tools, query),
+        )
+        tool_use_handle = start_async_tool_use_loop(
+            unify_client,
+            query,
+            self.enabled_tools,
+            parent_chat_context=[],
+            preprocess_msgs=self._inject_broader_context,
+        )
+        await tool_use_handle.result()
+
+        await self.meet_browser.act("Click on the 'Share screen' button")
+
+    async def _stop_screen_share_meet(self):
+        """
+        Stops screen sharing in the Google Meet call.
+        """
+        if self.meet_browser is None:
+            return
+
+        await self.meet_browser.act("Click on the 'Stop presenting' button")
 
     # inner communications
     async def _inner_send_call(
