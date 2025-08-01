@@ -281,9 +281,10 @@ def _patch_memory_manager_windows(monkeypatch):
 
     orig_build = MemoryManager._build_activity_summary
 
-    def _patched_build(self, entries: dict[str, str], mode: str = "time") -> str:  # type: ignore[override]
+    @classmethod
+    def _patched_build(cls, entries: dict[str, str], mode: str = "time") -> str:  # type: ignore[override]
         # Delegate to the original implementation first
-        text = orig_build(self, entries, mode)
+        text = orig_build(entries, mode)
 
         # Adjust interaction-based headings (as before) *and* time-based
         # headings so that they reflect the **actual test thresholds** from
