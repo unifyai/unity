@@ -251,6 +251,8 @@ class CommsAgent:
 
         while True:
             await asyncio.sleep(10)  # Check every 10 seconds
+            if self.meet_browser is None:
+                break  # meet call ended, exit the loop
             ret = await self.meet_browser.observe(
                 f"Is {self.assistant_name} the only participant in the meeting?",
                 bool,
