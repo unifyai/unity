@@ -38,7 +38,7 @@ async def test_get_broader_context_empty(monkeypatch):
     monkeypatch.setattr(
         MemoryManager,
         "_ensure_rolling_context",
-        lambda self: "ctx",
+        classmethod(lambda cls: "ctx"),
         raising=True,
     )
 
