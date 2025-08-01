@@ -4,7 +4,6 @@ Replaces legacy .md files with programmatic builders."""
 import inspect
 import json
 from typing import Dict, Callable
-from unity.memory_manager.broader_context import get_broader_context
 
 
 # Helpers for tool introspection
@@ -184,12 +183,12 @@ def build_call_sys_prompt(
     assistant_about: str,
     task_context: Dict[str, str] = None,
     *,
-    include_activity: bool = False,
+    broader_context: str = "",
 ) -> str:
     """Build the **system** prompt for phone-call LLM runs."""
     # assemble all sections
     sections = [
-        get_broader_context() if include_activity else "",
+        broader_context if broader_context else None,
         _build_assistant_details_section(
             assistant_name,
             assistant_age,
@@ -221,12 +220,12 @@ def build_non_call_sys_prompt(
     assistant_about: str,
     task_context: Dict[str, str] = None,
     *,
-    include_activity: bool = True,
+    broader_context: str = "",
 ) -> str:
     """Build the **system** prompt for non-call LLM runs."""
     # assemble all sections
     sections = [
-        get_broader_context() if include_activity else "",
+        broader_context if broader_context else None,
         _build_assistant_details_section(
             assistant_name,
             assistant_age,
