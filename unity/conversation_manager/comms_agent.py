@@ -137,6 +137,7 @@ class CommsAgent:
         self.loop = asyncio.get_event_loop()
         self.transcript_manager = None
         self.redis = None
+        self.broader_context = ""
 
     def _build_enabled_tools_dict(self):
         from unity.common.llm_helpers import AsyncToolUseLoopHandle
@@ -158,6 +159,8 @@ class CommsAgent:
                 # todo: temporary adding them here explicitly
                 self._inner_send_call,
                 self._join_meet,
+                self._start_screen_share,
+                self._stop_screen_share,
                 self._inner_send_email,
                 self._inner_send_sms,
             )
@@ -221,6 +224,11 @@ class CommsAgent:
 
         self.enabled_tools = methods_to_tool_dict(*tools_list)
 
+    async def _get_broader_context(self):
+        from unity.memory_manager.broader_context import get_broader_context
+
+        self.broader_context = await asyncio.to_thread(get_broader_context)
+
     async def get_bus_events(self):
         from unity.events.event_bus import EVENT_BUS
 
@@ -249,6 +257,8 @@ class CommsAgent:
 
         while True:
             await asyncio.sleep(10)  # Check every 10 seconds
+            if self.meet_browser is None:
+                break  # meet call ended, exit the loop
             ret = await self.meet_browser.observe(
                 f"Is {self.assistant_name} the only participant in the meeting?",
                 bool,
@@ -282,6 +292,7 @@ class CommsAgent:
                         self.meet_id = new_event["payload"]["meet_id"]
 
                         print("call_requested", self.assistant_number)
+                        print("new_event", new_event)
                         if not self.start_local:
                             self.call_proc = run_script(
                                 "unity/conversation_manager/call.py",
@@ -292,18 +303,8 @@ class CommsAgent:
                                     else self.user_phone_call_number
                                 ),
                                 self.assistant_number,
-                                (
-                                    new_event["tts_provider"]
-                                    if hasattr(new_event, "tts_provider")
-                                    and new_event["tts_provider"]
-                                    else "cartesia"
-                                ),
-                                (
-                                    new_event["voice_id"]
-                                    if hasattr(new_event, "voice_id")
-                                    and new_event["voice_id"]
-                                    else "None"
-                                ),
+                                new_event["payload"].get("tts_provider", "cartesia"),
+                                new_event["payload"].get("voice_id", "None"),
                                 "--outbound" if new_event.get("outbound") else "None",
                                 self.meet_id if self.meet_id else "None",
                             )
@@ -583,6 +584,7 @@ class CommsAgent:
             self.assistant_region,
             self.assistant_about,
             self.task_context,
+            broader_context=self.broader_context,
         )
         user_msg = self.get_user_agent_prompt()
         print(user_msg, flush=True)
@@ -612,6 +614,7 @@ class CommsAgent:
             self.assistant_region,
             self.assistant_about,
             self.task_context,
+            broader_context=self.broader_context,
         )
 
         user_msg = self.get_user_agent_prompt()
@@ -645,7 +648,7 @@ class CommsAgent:
         self.inflight_events.clear()
         return event.parsed
 
-    # general communications
+    # google meet communications
     async def _join_meet(
         self,
         meet_id: str,
@@ -662,6 +665,38 @@ class CommsAgent:
         """
         global ONGOING_CALL
         await _join_meet_call(meet_id, purpose, task_context, ongoing_call=ONGOING_CALL)
+
+    async def _start_screen_share(self):
+        """
+        Starts browser screen sharing.
+        """
+        if self.meet_browser is None:
+            return
+
+        query = "Create a new tab and go to https://www.google.com/"
+        unify_client = unify.AsyncUnify("o4-mini@openai")
+        unify_client.set_system_message(
+            build_action_prompt(self.enabled_tools, query),
+        )
+        tool_use_handle = start_async_tool_use_loop(
+            unify_client,
+            query,
+            self.enabled_tools,
+            parent_chat_context=[],
+            preprocess_msgs=self._inject_broader_context,
+        )
+        await tool_use_handle.result()
+
+        await self.meet_browser.act("Click on the 'Share screen' button")
+
+    async def _stop_screen_share(self):
+        """
+        Stops browser screen sharing.
+        """
+        if self.meet_browser is None:
+            return
+
+        await self.meet_browser.act("Click on the 'Stop presenting' button")
 
     # inner communications
     async def _inner_send_call(
@@ -1013,6 +1048,7 @@ class CommsAgent:
         while True:
             try:
                 self.past_events = await self.get_bus_events()
+                await self._get_broader_context()
             except Exception as e:
                 print(f"Error fetching bus events: {e}")
             await asyncio.sleep(2)

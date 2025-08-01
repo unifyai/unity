@@ -113,10 +113,7 @@ jobs:
         # 5) Install unify package from GitHub
         uv pip install git+https://github.com/unifyai/unify
 
-        # 6) Install pygments
-        uv pip install pygments
-
-        # 7) cleanup
+        # 6) cleanup
         rm temp_requirements.txt
 
     - name: Run unit tests
@@ -129,6 +126,8 @@ jobs:
           --log-cli-level=${{ inputs.test_cli_log_level || 'ERROR' }} \
           --log-file-level=${{ inputs.test_log_file_level || 'INFO' }} \
           --test-log-enable \
+          --html=report.html \
+          --junitxml=report.xml \
           --test-log-file="tests.log" ${{ inputs.test_path || '.' }}
       env:
         UNITY_TESTS_CLI_LOGGING: ${{ inputs.test_enable_cli_logging || 'false' }}
@@ -149,11 +148,13 @@ jobs:
         REGISTER_SUMMARY_CALLBACKS: false
         REGISTER_UPDATE_CALLBACKS: false
 
-    - name: Dump test logs
+    - name: Upload test results
       if: always()
-      run: |
-        if [ -f tests.log ]; then
-          pygmentize -l python tests.log
-        else
-          echo "No logs found"
-        fi
+      uses: actions/upload-artifact@v4
+      with:
+        name: test-results
+        path: |
+          tests.log
+          report.xml
+          report.html
+        retention-days: 7

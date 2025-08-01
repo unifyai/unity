@@ -226,6 +226,8 @@ class PhoneCallInitiatedEvent(Event):
         task_context: Dict[str, str] = None,
         target_number: str = None,
         meet_id: str = None,
+        voice_id: str = None,
+        tts_provider: str = None,
         **kwargs,
     ):
         kwargs.pop("content", None)
@@ -233,11 +235,15 @@ class PhoneCallInitiatedEvent(Event):
         kwargs.pop("task_context", None)
         kwargs.pop("target_number", None)
         kwargs.pop("meet_id", None)
+        kwargs.pop("voice_id", None)
+        kwargs.pop("tts_provider", None)
 
         self.purpose = purpose if purpose else "general"
         self.task_context = task_context
         self.target_number = target_number
         self.meet_id = meet_id
+        self.voice_id = voice_id
+        self.tts_provider = tts_provider
         super().__init__(**kwargs)
 
     def to_dict(self) -> dict[str, Any]:
@@ -248,6 +254,8 @@ class PhoneCallInitiatedEvent(Event):
                 "task_context": self.task_context,
                 "target_number": self.target_number,
                 "meet_id": self.meet_id,
+                "voice_id": self.voice_id,
+                "tts_provider": self.tts_provider,
             },
         )
         return base_dict

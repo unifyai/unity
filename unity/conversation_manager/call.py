@@ -246,6 +246,9 @@ async def entrypoint(ctx: agents.JobContext):
     meet_token = None
     meet_user_room = None
 
+    print("tts_provider", tts_provider)
+    print("voice_id", voice_id)
+
     session = AgentSession(
         stt=deepgram.STT(model="nova-3", language="multi"),
         llm=openai.LLM(model="gpt-4o"),
@@ -468,8 +471,9 @@ if __name__ == "__main__":
     voice_id = ""
     outbound = ""
     meet_id = ""
+    print("sys.argv", sys.argv)
 
-    if len(sys.argv) > 6:
+    if len(sys.argv) > 7:
         # Remove phone numbers from sys.argv to prevent them from being passed to agents.cli
         from_number = sys.argv[2]
         assistant_number = sys.argv[3]
