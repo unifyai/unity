@@ -282,6 +282,7 @@ class CommsAgent:
                         self.meet_id = new_event["payload"]["meet_id"]
 
                         print("call_requested", self.assistant_number)
+                        print("new_event", new_event)
                         if not self.start_local:
                             self.call_proc = run_script(
                                 "unity/conversation_manager/call.py",
