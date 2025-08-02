@@ -250,18 +250,18 @@ _OTHER_SECTIONS = {
     "see also",
 }
 
-# ––– parameter-line pattern that also accepts the “a / b / c : …” variant –––
+# ––– parameter-line pattern that also accepts the "a / b / c : …" variant –––
 _PARAM_LINE_RX = re.compile(
     r"""
     ^(?P<indent>\s*)                    # leading spaces
-    (?P<names>[^:]+?)                   # everything until “:”, *if any*
-    (?:\s*:\s*(?P<type>.+))?            # “: type”  ← now OPTIONAL
+    (?P<names>[^:]+?)                   # everything until " :", *if any*
+    (?:\s*:\s*(?P<type>.+))?            # " : type"  ← now OPTIONAL
     $                                   # EOL
     """,
     re.VERBOSE,
 )
 
-# dash-only underline used by the NumPy style (“----------”)
+# dash-only underline used by the NumPy style ("----------")
 _DASH_UNDERLINE_RX = re.compile(r"^\s*-{3,}\s*$")
 
 
@@ -280,7 +280,7 @@ def _strip_hidden_params_from_doc(
     i = 0
     in_params = False  # are we _currently_ inside a param section?
     skip = False  # are we skipping the current block?
-    base_indent = 0  # indent of the “name : type” line we skip
+    base_indent = 0  # indent of the "name : type" line we skip
 
     while i < len(lines):
         ln, stripped = lines[i], lines[i].lstrip()
@@ -304,7 +304,7 @@ def _strip_hidden_params_from_doc(
         # 2.  While inside the section, decide whether to keep or skip
         # ───────────────────────────────────────────────────────────────── #
         if in_params:
-            # Heading of some *other* section → we are done with “Parameters”
+            # Heading of some *other* section → we are done with "Parameters"
             if lower in _OTHER_SECTIONS:
                 in_params = False
                 out.append(ln)
@@ -321,7 +321,7 @@ def _strip_hidden_params_from_doc(
             # Parameter definition line
             m = _PARAM_LINE_RX.match(ln)
             if m:
-                # the spec allows either “a, b” or “a / b” to list synonyms
+                # the spec allows either "a, b" or "a / b" to list synonyms
                 names = {
                     n.strip()
                     for part in m.group("names").split("/")
@@ -450,7 +450,7 @@ def method_to_schema(
         if param.default is inspect._empty:
             required.append(name)
 
-    # ── scrub the docstring so hidden args disappear from “Args:”/“Parameters” ──
+    # ── scrub the docstring so hidden args disappear from "Args:"/"Parameters" ──
     raw_doc = bound_method.__doc__ or ""
     cleaned_doc = _strip_hidden_params_from_doc(raw_doc, hidden)
 
@@ -547,6 +547,7 @@ async def _async_tool_use_loop_inner(
         Callable[[int, Dict[str, Callable]], Tuple[str, Dict[str, Callable]]]
     ] = None,
     preprocess_msgs: Optional[Callable[[list[dict]], list[dict]]] = None,
+    outer_handle_container: Optional[list] = None,
 ) -> str:
     r"""
     Orchestrate an *interactive* "function-calling" dialogue between an LLM
@@ -856,6 +857,14 @@ async def _async_tool_use_loop_inner(
             from unity.common.llm_helpers import SteerableToolHandle
 
             if isinstance(raw, SteerableToolHandle):
+                # If the nested handle explicitly requests pass-through behaviour
+                # expose it directly to the outer caller *immediately*.
+                if (
+                    getattr(raw, "__passthrough__", False)
+                    and outer_handle_container
+                    and outer_handle_container[0] is not None
+                ):
+                    outer_handle_container[0]._adopt(raw)
                 # ── upgrade interject / clarification flags from handle ─────
                 if hasattr(raw, "interject"):
                     info["is_interjectable"] = True
@@ -1024,7 +1033,7 @@ async def _async_tool_use_loop_inner(
     #
     # • «norm_tools» holds the *canonical* mapping name → ToolSpec
     # • helper for the active-count of one tool (cheap O(#pending))
-    # • helper that answers “may we launch / advertise *this* tool right now?”
+    # • helper that answers "may we launch / advertise *this* tool right now?"
     #   by comparing the live count with max_concurrent.
     # -----------------------------------------------------------------------
 
@@ -1377,7 +1386,7 @@ async def _async_tool_use_loop_inner(
 
             # helper: register a freshly-minted coroutine as a *temporary* tool
             def _reg_tool(key: str, func_name: str, doc: str, fn: Callable) -> None:
-                # prefer the function’s own docstring if it exists, else fall back
+                # prefer the function's own docstring if it exists, else fall back
                 existing = inspect.getdoc(fn)
                 fn.__doc__ = existing.strip() if existing else doc
                 fn.__name__ = func_name[:64]
@@ -1583,7 +1592,7 @@ async def _async_tool_use_loop_inner(
                         }
 
                     for meth_name, bound in public_methods.items():
-                        # use the same name we’re about to give fn.__name__
+                        # use the same name we're about to give fn.__name__
                         func_name = f"{meth_name}_{_fn_name}_{_call_id}"
                         helper_key = func_name
 
@@ -1604,7 +1613,7 @@ async def _async_tool_use_loop_inner(
                             res = await _maybe_await(_bound(**_kw))
                             return {"call_id": _call_id, "result": res}
 
-                        # override the wrapper’s signature to match the real method
+                        # override the wrapper's signature to match the real method
                         _invoke_handle_method.__signature__ = inspect.signature(bound)
 
                         _reg_tool(
@@ -1801,7 +1810,7 @@ async def _async_tool_use_loop_inner(
             #      in `task_info` so we can later insert the result in the
             #      exact chronological position.
             #   4. Keep a pristine copy of the original `tool_calls` list;
-            #      step A temporarily hides it to avoid “naked” unresolved
+            #      step A temporarily hides it to avoid "naked" unresolved
             #      calls flashing in the UI, and restores it once *any*
             #      result for that assistant turn is ready.
             # Finally we `continue` so control jumps back to *branch A*
@@ -2116,7 +2125,7 @@ async def _async_tool_use_loop_inner(
                         fn = dynamic_tools[name]
                     else:
                         fn = norm_tools[name].fn
-                        # ⇢ counts only “real” (base) tool invocations
+                        # ⇢ counts only "real" (base) tool invocations
                         total_tool_calls_made += 1
 
                     # ── build **extra** kwargs (chat context + queue) ───
@@ -2358,7 +2367,7 @@ class SteerableToolHandle(ABC):
 
     @abstractmethod
     def result(self) -> Awaitable[str] | str:
-        """Wait for the assistant’s *final* reply."""
+        """Wait for the assistant's *final* reply."""
 
 
 class AsyncToolUseLoopHandle(SteerableToolHandle):
@@ -2380,9 +2389,12 @@ class AsyncToolUseLoopHandle(SteerableToolHandle):
         self._task = task
         self._queue = interject_queue
         self._cancel_event = cancel_event
-        # “running” ⇢ Event **set**,  “paused” ⇢ Event **cleared**
+        # "running" ⇢ Event **set**,  "paused" ⇢ Event **cleared**
         self._pause_event = pause_event or asyncio.Event()
         self._client = client
+        # Optional live delegate – set via ``_adopt`` when this handle should
+        # forward every steering call to another *SteerableToolHandle*.
+        self._delegate: Optional["SteerableToolHandle"] = None
         self._pause_event.set()
 
     async def ask(
@@ -2396,6 +2408,12 @@ class AsyncToolUseLoopHandle(SteerableToolHandle):
         The question is read-only (the tool state is not modified whatsoever).
         The calling parent loop is left completely untouched.
         """
+        # Fast-path: delegated handles answer directly.
+        if self._delegate is not None:
+            return await self._delegate.ask(
+                question,
+                _return_reasoning_steps=_return_reasoning_steps,
+            )
 
         # 0.  Defensive guard: if the outer loop has already finished we can
         #     just answer from the final transcript without starting another
@@ -2514,27 +2532,48 @@ class AsyncToolUseLoopHandle(SteerableToolHandle):
     # -- public API -----------------------------------------------------------
     @functools.wraps(SteerableToolHandle.interject, updated=())
     async def interject(self, message: str) -> None:
+        if self._delegate is not None:
+            await self._delegate.interject(message)
+            return
         await self._queue.put(message)
 
     @functools.wraps(SteerableToolHandle.stop, updated=())
     def stop(self) -> None:
+        if self._delegate is not None:
+            self._delegate.stop()
+            return
         self._cancel_event.set()
 
     @functools.wraps(SteerableToolHandle.pause, updated=())
     def pause(self) -> None:
+        if self._delegate is not None:
+            self._delegate.pause()
+            return
         self._pause_event.clear()
 
     @functools.wraps(SteerableToolHandle.resume, updated=())
     def resume(self) -> None:
+        if self._delegate is not None:
+            self._delegate.resume()
+            return
         self._pause_event.set()
 
     @functools.wraps(SteerableToolHandle.done, updated=())
     def done(self) -> bool:
+        if self._delegate is not None:
+            return self._delegate.done()
         return self._task.done()
 
     @functools.wraps(SteerableToolHandle.result, updated=())
     async def result(self) -> str:
+        if self._delegate is not None:
+            return await self._delegate.result()
         return await self._task
+
+    # ── internal helper ──────────────────────────────────────────────────────
+    def _adopt(self, new_handle: "SteerableToolHandle") -> None:
+        """Switch all steering methods to *new_handle* (in-process only)."""
+        self._delegate = new_handle
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -2570,6 +2609,11 @@ def start_async_tool_use_loop(
     pause_event = asyncio.Event()
     pause_event.set()  # start un-paused
 
+    # --- enable handle passthrough -----------------------------------------
+    # A single-element list is a mutable container that the inner loop can use
+    # to call ``_adopt`` on the *real* outer handle once it exists.
+    outer_handle_container: list = [None]
+
     task = asyncio.create_task(
         _async_tool_use_loop_inner(
             client,
@@ -2591,14 +2635,21 @@ def start_async_tool_use_loop(
             include_class_in_dynamic_tool_names=include_class_in_dynamic_tool_names,
             tool_policy=tool_policy,
             preprocess_msgs=preprocess_msgs,
+            outer_handle_container=outer_handle_container,
         ),
         name="ToolUseLoop",
     )
 
-    return AsyncToolUseLoopHandle(
+    handle = AsyncToolUseLoopHandle(
         task=task,
         interject_queue=interject_queue,
         cancel_event=cancel_event,
         pause_event=pause_event,
         client=client,
     )
+
+    # Let the inner coroutine discover the outer handle so it can switch
+    # steering when a nested handle requests pass-through behaviour.
+    outer_handle_container[0] = handle
+
+    return handle
