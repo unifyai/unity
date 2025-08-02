@@ -497,6 +497,12 @@ class TaskScheduler(BaseTaskScheduler):
         else:  # dict
             start_ts = schedule.get("start_at")
 
+        # ── Invariant – queue-head tasks with an explicit start_at must be 'scheduled' ──
+        if status == Status.queued and prev_ptr is None and start_ts is not None:
+            raise ValueError(
+                f"{err_prefix} tasks at the head of the queue that define 'start_at' must have status 'scheduled', not 'queued'.",
+            )
+
         if prev_ptr is not None and start_ts is not None:
             raise ValueError(
                 f"{err_prefix} a task cannot define both 'prev_task' and "
@@ -1388,6 +1394,15 @@ class TaskScheduler(BaseTaskScheduler):
 
         # ── Invariant check *per task* if new_status becomes 'scheduled' ─────
         if str(new_status) == Status.scheduled.value:
+            rows = self._search_tasks(filter=f"task_id in {task_ids}")
+            for row in rows:
+                self._validate_scheduled_invariants(
+                    status=new_status,
+                    schedule=row.get("schedule"),
+                    err_prefix=f"While changing status of task {row['task_id']}:",
+                )
+        # ── Invariant check when transitioning to 'queued' ───────────────
+        if str(new_status) == Status.queued.value:
             rows = self._search_tasks(filter=f"task_id in {task_ids}")
             for row in rows:
                 self._validate_scheduled_invariants(
