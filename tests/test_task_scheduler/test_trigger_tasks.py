@@ -194,7 +194,7 @@ async def test_triggerable_start_clones_instance():
     assert len(rows_before) == 1 and rows_before[0]["instance_id"] == 0
 
     # Activate
-    handle = await ts.execute_task(task_id=tid)
+    handle = await ts.execute_task(text=str(tid))
 
     # Two rows should now exist: 0 (active) and 1 (still triggerable)
     rows_after = ts._search_tasks(filter=f"task_id == {tid}")

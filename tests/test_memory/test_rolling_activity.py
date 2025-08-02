@@ -139,7 +139,7 @@ MANAGER_TEST_CASES: Tuple[
         "taskscheduler_execute",
         "none",
         lambda: SimulatedTaskScheduler(log_events=True),
-        lambda m: m.execute_task(1),
+        lambda m: m.execute_task(text="1"),
     ),
 )
 

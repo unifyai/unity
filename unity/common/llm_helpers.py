@@ -2580,7 +2580,49 @@ class AsyncToolUseLoopHandle(SteerableToolHandle):
 
     # ── internal helper ──────────────────────────────────────────────────────
     def _adopt(self, new_handle: "SteerableToolHandle") -> None:
-        """Switch all steering methods to *new_handle* (in-process only)."""
+        """Switch all steering methods to *new_handle* (in-process only).
+
+        Move any *already queued* interjections over to the freshly adopted
+        delegate so that early user steering (issued *before* the delegate was
+        ready) is not lost – a common source of hangs during tests that fire
+        `interject()` immediately after `execute_task()` returns.
+        """
+        # Flush queued interjections collected before the delegate became
+        # available.  We dispatch them *asynchronously* so that we keep the
+        # adopt operation non-blocking and avoid re-entrancy problems if the
+        # delegate itself relies on the outer event-loop.
+        import asyncio  # local import to dodge unconditional dependency at top-level
+
+        while not self._queue.empty():
+            try:
+                msg = self._queue.get_nowait()
+            except asyncio.QueueEmpty:
+                break
+
+            # Forward the message to the delegate.  We purposefully schedule the
+            # coroutine in the background – it is semantically equivalent to the
+            # original `interject()` call which also runs fire-and-forget.
+            try:
+                maybe_coro = new_handle.interject(msg)  # type: ignore[attr-defined]
+                if asyncio.iscoroutine(maybe_coro):
+                    asyncio.create_task(maybe_coro)
+            except Exception:
+                # Silently swallow to preserve backwards-compat – early
+                # interjections are *best-effort* hints rather than critical.
+                pass
+
+        # Keep pause / cancel signals in sync – they might have been toggled
+        # before we adopted the delegate.
+        try:
+            if not self._pause_event.is_set() and hasattr(new_handle, "pause"):
+                new_handle.pause()  # type: ignore[attr-defined]
+            if self._cancel_event.is_set() and hasattr(new_handle, "stop"):
+                new_handle.stop()  # type: ignore[attr-defined]
+        except Exception:
+            # These are advisory only – failing to propagate them should never
+            # break the overall execution.
+            pass
+
         self._delegate = new_handle
 
         # ── Flush any interjections that were consumed by the resolver loop ──

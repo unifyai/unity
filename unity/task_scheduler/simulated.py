@@ -358,7 +358,7 @@ class SimulatedTaskScheduler(BaseTaskScheduler):
     @functools.wraps(BaseTaskScheduler.execute_task, updated=())
     async def execute_task(
         self,
-        task_id: int,
+        text: str,
         *,
         parent_chat_context: list[dict] | None = None,
         _requests_clarification: bool = False,
@@ -367,9 +367,12 @@ class SimulatedTaskScheduler(BaseTaskScheduler):
         log_events: bool = False,
     ) -> SteerableToolHandle:
         """
-        In the simulated world we don't have a real DB of tasks, so we
-        fabricate a description from the *task_id* and spin up a **real**
-        `SimulatedPlan` by calling the shared `SimulatedPlanner.execute`.
+        Execute a *simulated* task from **free-form** text.
+
+        The implementation pretends that the supplied *text* uniquely
+        identifies the task – no attempt is made to reconcile with a real data
+        store.  A new :class:`unity.planner.simulated.SimulatedPlan` is spun up
+        and its handle returned.
         """
         should_log = self._log_events or log_events
         call_id = None
@@ -381,10 +384,10 @@ class SimulatedTaskScheduler(BaseTaskScheduler):
                 "TaskScheduler",
                 "execute_task",
                 phase="incoming",
-                task_id=task_id,
+                request=text,
             )
 
-        task_description = f"Simulated task #{task_id}"
+        task_description = f"{text} (simulated)"
         planner = SimulatedPlanner(
             timeout=10,
             _requests_clarification=_requests_clarification,

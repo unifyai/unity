@@ -94,9 +94,9 @@ async def test_update_phone_number_then_call(monkeypatch):
     original_ts_execute_task = SimulatedTaskScheduler.execute_task
 
     @functools.wraps(original_ts_execute_task)
-    async def spy_ts_execute_task(self, task_id: int, **kw):
+    async def spy_ts_execute_task(self, text: str, **kw):
         counts["ts_execute_task"] += 1
-        return await original_ts_execute_task(self, task_id, **kw)
+        return await original_ts_execute_task(self, text, **kw)
 
     monkeypatch.setattr(
         SimulatedTaskScheduler,
@@ -327,10 +327,10 @@ async def test_execute_task_and_interject(monkeypatch):
     orig_exec_task = SimulatedTaskScheduler.execute_task
 
     @functools.wraps(orig_exec_task)
-    async def spy_exec_task(self, task_id: int, **kw):
+    async def spy_exec_task(self, text: str, **kw):
         counts["exec_task"] += 1
         start_called.set()
-        return await orig_exec_task(self, task_id, **kw)
+        return await orig_exec_task(self, text, **kw)
 
     monkeypatch.setattr(
         SimulatedTaskScheduler,
