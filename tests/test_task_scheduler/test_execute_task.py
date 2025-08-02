@@ -36,7 +36,7 @@ async def _make_scheduler_with_task(description: str, *, steps: int = 1):
     task_id = scheduler._create_task(name=description, description=description)[
         "details"
     ]["task_id"]
-    handle = await scheduler.execute_task(task_id=task_id)
+    handle = await scheduler.execute_task(text=str(task_id))
     return scheduler, handle
 
 
@@ -209,3 +209,42 @@ async def test_execute_task_result_and_done():
 
     assert "completed task" in result.lower()
     assert task.done(), "`done()` must return True after natural completion"
+
+
+# --------------------------------------------------------------------------- #
+#  5. Free-form execute_task triggers internal ask                           #
+# --------------------------------------------------------------------------- #
+
+
+@pytest.mark.asyncio
+@_handle_project
+async def test_execute_task_invokes_ask_when_id_missing(monkeypatch):
+    """Executing via *description only* should call TaskScheduler.ask exactly once."""
+
+    description = "Prepare monthly analytics dashboard."
+
+    planner = SimulatedPlanner(steps=1)
+    ts = TaskScheduler(planner=planner)
+
+    # Seed one queued task (the one we'll start)
+    _ = ts._create_task(name=description, description=description)
+
+    calls = {"ask": 0}
+
+    original_ask = TaskScheduler.ask
+
+    @functools.wraps(original_ask)
+    async def spy_ask(self, text: str, **kw):  # type: ignore[override]
+        calls["ask"] += 1
+        return await original_ask(self, text, **kw)
+
+    monkeypatch.setattr(TaskScheduler, "ask", spy_ask, raising=True)
+
+    # Execute via free-form prompt WITHOUT numeric id
+    handle = await ts.execute_task(text=description)
+
+    # Wait for completion
+    await handle.interject("please be quick")
+    await handle.result()
+
+    assert calls["ask"] == 1, "TaskScheduler.ask should be invoked exactly once"

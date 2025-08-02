@@ -326,22 +326,123 @@ class TaskScheduler(BaseTaskScheduler):
     @functools.wraps(BaseTaskScheduler.execute_task, updated=())
     async def execute_task(
         self,
-        task_id: int,
+        text: str,
         *,
         parent_chat_context: list[dict] | None = None,
         clarification_up_q: asyncio.Queue[str] | None = None,
         clarification_down_q: asyncio.Queue[str] | None = None,
     ) -> SteerableToolHandle:
+        """Execute a task from **free-form** textual input.
+
+        The method launches a *private* async tool-use loop with two tools:
+
+        • ``ask`` – leverage the normal question-answer helper to identify the
+          numeric `task_id` (when not explicitly present).
+        • ``execute_task_by_id`` – thin wrapper around the internal
+          :py:meth:`_execute_task_internal` helper which returns the real
+          :class:`~unify.common.llm_helpers.SteerableToolHandle` **and sets the
+          pass-through flag** so the outer handle upgrades seamlessly.
+        """
+
+        freeform_text: str = text
+
         call_id = new_call_id()
         await publish_manager_method_event(
             call_id,
             "TaskScheduler",
             "execute_task",
             phase="incoming",
-            task_id=task_id,
+            request=freeform_text,
         )
 
-        # 0. sanity
+        import json, inspect
+
+        client = unify.AsyncUnify(
+            "o4-mini@openai",
+            cache=json.loads(os.environ.get("UNIFY_CACHE", "true")),
+            traced=json.loads(os.environ.get("UNIFY_TRACED", "true")),
+        )
+
+        # ── tool definitions ────────────────────────────────────────────────
+        async def _execute_task_by_id(*, task_id: int) -> SteerableToolHandle:  # type: ignore[valid-type]
+            """Start the task with *task_id* and bubble up its handle (passthrough)."""
+
+            handle = await self._execute_task_internal(
+                task_id=task_id,
+                parent_chat_context=parent_chat_context,
+                clarification_up_q=clarification_up_q,
+                clarification_down_q=clarification_down_q,
+            )
+            # 💡 signal pass-through so the outer loop adopts this handle
+            setattr(handle, "__passthrough__", True)
+            return handle
+
+        tools = {
+            "ask": self.ask,
+            "execute_task_by_id": _execute_task_by_id,
+        }
+
+        # ── dynamic system prompt ───────────────────────────────────────────
+        sig_json = json.dumps(
+            {n: str(inspect.signature(fn)) for n, fn in tools.items()},
+            indent=4,
+        )
+
+        prompt = "\n".join(
+            [
+                "You are an assistant that starts tasks on demand.",
+                "1. If the user instruction already contains the numeric task id, call `execute_task_by_id` directly.",
+                "2. Otherwise, call `ask` to figure out the task id from the description, then call `execute_task_by_id` with that id.",
+                "Respond *only* with tool calls until `execute_task_by_id` has been invoked. After it returns you may reply DONE.",
+                "",
+                "Tools (name → argspec):",
+                sig_json,
+                "",
+            ],
+        )
+
+        client.set_system_message(prompt)
+
+        outer_handle = start_async_tool_use_loop(
+            client,
+            freeform_text,
+            tools,
+            loop_id=f"{self.__class__.__name__}.execute_task_resolver",
+            parent_chat_context=parent_chat_context,
+            log_steps=True,
+            preprocess_msgs=self._inject_broader_context,
+        )
+
+        # Wire up event logging wrapper – outer_handle is an AsyncToolUseLoopHandle
+        outer_handle = wrap_handle_with_logging(
+            outer_handle,
+            call_id,
+            "TaskScheduler",
+            "execute_task",
+        )
+
+        return outer_handle
+
+    # ------------------------------------------------------------------ #
+    #  Internal helper – run existing *by-id* logic without event logging   #
+    # ------------------------------------------------------------------ #
+
+    async def _execute_task_internal(
+        self,
+        *,
+        task_id: int,
+        parent_chat_context: list[dict] | None = None,
+        clarification_up_q: asyncio.Queue[str] | None = None,
+        clarification_down_q: asyncio.Queue[str] | None = None,
+    ) -> SteerableToolHandle:
+        """The original *execute_task* implementation (minus event logging).
+
+        Separated so that both the public ``execute_task`` method **and** the
+        internally exposed ``execute_task_by_id`` tool can delegate to the same
+        core logic **without** duplicating ManagerMethod events.
+        """
+
+        # 0. sanity checks
         if self._active_task is not None:
             raise RuntimeError("Another task is already running – stop it first.")
 
@@ -362,27 +463,29 @@ class TaskScheduler(BaseTaskScheduler):
         if task_row["status"] in ("completed", "cancelled", "failed", "active"):
             raise ValueError(f"Task {task_id} is already {task_row['status']!r}.")
 
-        # 1.  build the *real* active plan
+        # 1. build the *real* active plan
         plan_handle = await self._planner.execute(
             task_row["description"],
             parent_chat_context=parent_chat_context,
             clarification_up_q=clarification_up_q,
             clarification_down_q=clarification_down_q,
         )
-        # 2.  wrap it so we can keep the task-table in sync
+
+        # 2. wrap it so we can keep the task-table in sync
         handle = ActiveTask(
             plan_handle,
             task_id=task_id,
             instance_id=task_row["instance_id"],
             scheduler=self,
         )
+
         self._active_task = {
             "task_id": task_id,
             "instance_id": task_row["instance_id"],
             "handle": handle,
         }
 
-        # ── Clone if this is a triggerable or recurring task ──────────────
+        # ── clone if this is a triggerable or recurring task ──────────────
         if task_row["status"] == Status.triggerable.value or task_row.get("repeat"):
             self._clone_task_instance(task_row)
 
@@ -394,14 +497,6 @@ class TaskScheduler(BaseTaskScheduler):
         )
         if self._primed_task and self._primed_task["task_id"] == task_id:
             self._primed_task = None
-
-        # ── add logged wrapper so pause/resume/... also traced ────────────
-        handle = wrap_handle_with_logging(
-            handle,
-            call_id,
-            "TaskScheduler",
-            "execute_task",
-        )
 
         return handle
 

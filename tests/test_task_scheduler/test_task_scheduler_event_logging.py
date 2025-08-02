@@ -76,7 +76,7 @@ async def test_managermethod_events_for_execute_task():
     outcome = ts._create_task(name="Demo", description="Run a demo task")
     task_id = outcome["details"]["task_id"]
 
-    h = await ts.execute_task(task_id)
+    h = await ts.execute_task(text=str(task_id))
     await h.result()
     EVENT_BUS.join_published()
     ev = await _gather_events()
@@ -85,7 +85,7 @@ async def test_managermethod_events_for_execute_task():
         for e in ev
         if e.payload.get("manager") == "TaskScheduler"
         and e.payload.get("method") == "execute_task"
-        and e.payload.get("task_id") == task_id
+        and e.payload.get("request") == str(task_id)
     ]
     assert incoming
     call_id = incoming[0].calling_id

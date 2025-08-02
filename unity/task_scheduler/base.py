@@ -103,21 +103,30 @@ class BaseTaskScheduler(ABC):
     @abstractmethod
     async def execute_task(
         self,
-        task_id: int,
+        text: str,
         *,
         parent_chat_context: Optional[List[Dict[str, Any]]] = None,
         clarification_up_q: Optional[asyncio.Queue[str]] = None,
         clarification_down_q: Optional[asyncio.Queue[str]] = None,
     ) -> SteerableToolHandle:
         """
-        Promote an **existing queued/scheduled task** to the *active* state and
-        hand back a :class:`SteerableToolHandle` that tracks the execution
-        conversation.
+        Start a **task** given a *free-form* textual instruction (*text*).
 
-        Parameters
-        ----------
-        task_id : int
-            Identifier of the task to activate.
+        The assistant should interpret *text* to figure out which task the user
+        wants to run.  Typical workflow:
+
+        1. Call :py:meth:`TaskScheduler.ask` to identify the `task_id` (if the
+           id is not explicitly mentioned in *text*).
+        2. Internally execute the task – the implementation SHOULD expose a
+           private ``_execute_task_by_id`` helper that returns a
+           :class:`~unify.common.llm_helpers.SteerableToolHandle` **and marks it
+           for pass-through** so that the outer handle is upgraded transparently
+           once the real execution begins.
+
+        Implementations MUST return a *live* steerable handle whose public
+        methods (pause, resume, interject, stop, result, …) continue to work
+        after the adoption.
+
         parent_chat_context, clarification_up_q, clarification_down_q
             Same purpose and semantics as in :pymeth:`ask`.
 
@@ -132,5 +141,5 @@ class BaseTaskScheduler(ABC):
         RuntimeError
             If another task is already active.
         ValueError
-            If *task_id* does not exist or cannot transition to **active**.
+            When no matching task could be identified.
         """
