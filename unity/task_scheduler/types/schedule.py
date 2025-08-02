@@ -10,11 +10,11 @@ class Schedule(BaseModel):
     )
     prev_task: Optional[int] = Field(
         default=None,
-        description="ID of the previous task in the sequence, used for task dependencies and ordering",
+        description="ID of the previous task in the sequence, used for task dependencies and ordering. If this is set, then `start_at` *must* be `None`",
     )
     start_at: Optional[datetime] = Field(
         default=None,
-        description="The scheduled start time for the task in ISO-8601 format. Only set when the user explicitly schedules the task.",
+        description="The scheduled start time for the task in ISO-8601 format. Can *only* be set if the task is the head of the queue (`prev_task` is `None`)",
     )
 
     @model_validator(mode="before")
