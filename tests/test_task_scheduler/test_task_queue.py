@@ -57,6 +57,48 @@ def test_insert_into_queue():
 
 
 # ---------------------------------------------------------------------------#
+#  Primed → Queued invariant                                                  #
+# ---------------------------------------------------------------------------#
+
+
+@_handle_project
+@pytest.mark.unit
+def test_insert_primed_task_downgrades_to_queued():
+    """A primed task inserted *behind* the head must be downgraded to queued."""
+
+    ts = TaskScheduler()
+
+    # 1) Queue head – starts in the default 'primed' state
+    ts._create_task(
+        name="Research",
+        description="Initial research phase",
+    )
+
+    # 2) Second task explicitly queued behind the head
+    ts._create_task(
+        name="Write report",
+        description="Summarise findings",
+        schedule=Schedule(prev_task=0),
+        status="queued",
+    )
+
+    # 3) Brand-new task – defaults to *primed* because no other primed exists yet
+    t_email = ts._create_task(
+        name="Email boss",
+        description="Send the report via email",
+    )["details"]["task_id"]
+
+    # 4) Insert the email task *after* the report in the runnable queue
+    ts._update_task_queue(original=[0, 1], new=[0, 1, t_email])
+
+    # 5) The scheduler must automatically downgrade the status to 'queued'
+    row = ts._search_tasks(filter=f"task_id == {t_email}", limit=1)[0]
+    assert (
+        row["status"] == "queued"
+    ), "Non-head tasks may not remain 'primed'; status should be 'queued'."
+
+
+# ---------------------------------------------------------------------------#
 #  Additional invariants: `start_at` sticks to the queue head                #
 # ---------------------------------------------------------------------------#
 
