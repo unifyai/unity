@@ -503,6 +503,12 @@ class TaskScheduler(BaseTaskScheduler):
                 "'start_at' – the timestamp belongs on the queue head only.",
             )
 
+        # ── Invariant #2 – 'primed' must always be the queue head ───────────
+        if Status(status) == Status.primed and prev_ptr is not None:
+            raise ValueError(
+                f"{err_prefix} a task in 'primed' state must be at the head of the queue (prev_task must be None).",
+            )
+
         if status != Status.scheduled:
             return
 
@@ -1139,14 +1145,20 @@ class TaskScheduler(BaseTaskScheduler):
             existing_status = Status(
                 existing_logs.get(tid, {}).get("status", Status.queued),
             )
-            if start_ts is not None:  # head keeps ts
+
+            # ── Determine the desired status after re-ordering ─────────────
+            if start_ts is not None:  # head carries explicit timestamp
                 desired_status = Status.scheduled
-            else:  # no ts
+            else:
                 desired_status = (
                     existing_status
                     if existing_status != Status.scheduled
                     else Status.queued
                 )
+
+            # Non-head tasks can *never* remain 'primed' – downgrade to queued
+            if idx != 0 and desired_status == Status.primed:
+                desired_status = Status.queued
 
             payload: Dict[str, Any] = {"schedule": sched_payload}
             if desired_status != existing_status:
