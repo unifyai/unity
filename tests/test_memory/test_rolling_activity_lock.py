@@ -17,7 +17,7 @@ async def test_rolling_activity_lock(monkeypatch):
     monkeypatch.setattr(
         MemoryManager,
         "_ensure_rolling_context",
-        lambda self: "ctx",
+        classmethod(lambda cls: "ctx"),
         raising=True,
     )
 
