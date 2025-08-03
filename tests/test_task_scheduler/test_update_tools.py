@@ -5,6 +5,7 @@ from unity.task_scheduler.types.status import Status
 from unity.task_scheduler.types.priority import Priority
 from unity.task_scheduler.task_scheduler import TaskScheduler
 from unity.task_scheduler.types.repetition import RepeatPattern, Frequency, Weekday
+from unity.task_scheduler.types.schedule import Schedule
 
 
 @_handle_project
@@ -80,6 +81,33 @@ def test_update_task_status():
     )
     task_list = task_scheduler._search_tasks()
     assert task_list[0]["status"] == "cancelled"
+
+
+@_handle_project
+@pytest.mark.unit
+def test_head_of_queue_scheduled_cannot_be_queued():
+    """A task at the queue head with an explicit start_at must stay 'scheduled'."""
+
+    ts = TaskScheduler()
+
+    # Create a task that sits at the head of the queue with a fixed start time
+    future_start = (datetime.now(timezone.utc) + timedelta(days=30)).isoformat()
+
+    sched = Schedule(start_at=future_start, prev_task=None, next_task=None)
+
+    tid = ts._create_task(
+        name="Launch campaign",
+        description="Kick-off marketing campaign on launch date.",
+        schedule=sched,
+    )["details"]["task_id"]
+
+    # Sanity: the task should have been stored as 'scheduled'
+    task_row = ts._search_tasks(filter=f"task_id == {tid}", limit=1)[0]
+    assert task_row["status"] == "scheduled"
+
+    # Attempting to mark it as 'queued' must fail
+    with pytest.raises(ValueError):
+        ts._update_task_status(task_ids=tid, new_status="queued")
 
 
 @_handle_project

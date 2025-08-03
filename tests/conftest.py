@@ -283,6 +283,11 @@ def pytest_sessionstart(session):
         unity.init()
 
 
+def pytest_sessionfinish(session, exitstatus):
+    if json.loads(os.environ.get("UNIFY_TESTS_DELETE_PROJ_ON_EXIT", "false")):
+        unify.delete_project(unify.active_project())
+
+
 # Function to check if we're using the unify stub
 def is_using_unify_stub():
     """Return True if tests are running with the unify stub."""

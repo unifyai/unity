@@ -53,6 +53,11 @@ on:
         required: false
         type: number
         default: 120
+      runner_timeout:
+        description: "Runner timeout in seconds"
+        required: false
+        type: number
+        default: 120
 
 jobs:
   black:
@@ -74,7 +79,7 @@ jobs:
   pytest:
     runs-on: ubuntu-latest
     environment: unity-testing
-    timeout-minutes: 120
+    timeout-minutes: ${{ inputs.runner_timeout || 120 }}
     steps:
     - uses: actions/checkout@v2
 
@@ -127,11 +132,13 @@ jobs:
           --log-file-level=${{ inputs.test_log_file_level || 'INFO' }} \
           --test-log-enable \
           --html=report.html \
+          --self-contained-html \
           --junitxml=report.xml \
           --test-log-file="tests.log" ${{ inputs.test_path || '.' }}
       env:
         UNITY_TESTS_CLI_LOGGING: ${{ inputs.test_enable_cli_logging || 'false' }}
         UNIFY_TESTS_RAND_PROJ: true
+        UNIFY_TESTS_DELETE_PROJ_ON_EXIT: true
         UNIFY_KEY: ${{ secrets.USER_API_KEY }}
         UNIFY_BASE_URL: https://api.unify.ai/v0
         UNIFY_CACHE: true
