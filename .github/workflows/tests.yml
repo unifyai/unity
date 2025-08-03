@@ -151,6 +151,10 @@ jobs:
         AGENT_LAST: Morty
         AGENT_AGE: 29
 
+        # Reduce overhead of memory manager callbacks
+        REGISTER_SUMMARY_CALLBACKS: false
+        REGISTER_UPDATE_CALLBACKS: false
+
     - name: Upload test results
       if: always()
       uses: actions/upload-artifact@v4

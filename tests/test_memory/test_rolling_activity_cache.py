@@ -41,7 +41,8 @@ async def test_global_broader_context_cache(monkeypatch):
     call_counter = {"count": 0}
 
     class _StubMemoryManager:  # noqa: D401 – simple stub
-        def get_rolling_activity(self):  # noqa: D401 – match real API
+        @classmethod
+        def get_rolling_activity(cls):  # noqa: D401 – match real API
             call_counter["count"] += 1
             return "INITIAL"
 

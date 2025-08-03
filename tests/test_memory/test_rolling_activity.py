@@ -38,7 +38,7 @@ async def test_get_broader_context_empty(monkeypatch):
     monkeypatch.setattr(
         MemoryManager,
         "_ensure_rolling_context",
-        lambda self: "ctx",
+        classmethod(lambda cls: "ctx"),
         raising=True,
     )
 
@@ -222,6 +222,9 @@ def _patch_memory_manager_windows(monkeypatch):
     constructor registers callbacks with the shrunken thresholds.
     """
 
+    monkeypatch.setenv("REGISTER_SUMMARY_CALLBACKS", "true")
+    monkeypatch.setenv("REGISTER_UPDATE_CALLBACKS", "true")
+
     from unity.memory_manager.memory_manager import MemoryManager
     from unity.events.event_bus import Subscription
 
@@ -281,9 +284,10 @@ def _patch_memory_manager_windows(monkeypatch):
 
     orig_build = MemoryManager._build_activity_summary
 
-    def _patched_build(self, entries: dict[str, str], mode: str = "time") -> str:  # type: ignore[override]
+    @classmethod
+    def _patched_build(cls, entries: dict[str, str], mode: str = "time") -> str:  # type: ignore[override]
         # Delegate to the original implementation first
-        text = orig_build(self, entries, mode)
+        text = orig_build(entries, mode)
 
         # Adjust interaction-based headings (as before) *and* time-based
         # headings so that they reflect the **actual test thresholds** from

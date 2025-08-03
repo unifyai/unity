@@ -72,7 +72,7 @@ def get_broader_context() -> str:  # noqa: D401 – imperative helper name
 
         # ------------------------------------------------------------------
         # 2.  Retrieve recent activity (may be empty) -----------------------
-        recent_activity = MemoryManager().get_rolling_activity()
+        recent_activity = MemoryManager.get_rolling_activity()
 
         # ------------------------------------------------------------------
         # 3.  Build Markdown snippet ---------------------------------------
