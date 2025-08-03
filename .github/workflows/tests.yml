@@ -54,7 +54,7 @@ on:
         type: number
         default: 120
       runner_timeout:
-        description: "Runner timeout in seconds"
+        description: "Runner timeout in minutes"
         required: false
         type: number
         default: 120
@@ -79,7 +79,7 @@ jobs:
   pytest:
     runs-on: ubuntu-latest
     environment: unity-testing
-    timeout-minutes: ${{ inputs.runner_timeout || 120 }}
+    timeout-minutes: ${{ fromJSON(inputs.runner_timeout) || 120 }}
     steps:
     - uses: actions/checkout@v2
 
