@@ -79,7 +79,7 @@ jobs:
   pytest:
     runs-on: ubuntu-latest
     environment: unity-testing
-    timeout-minutes: ${{ fromJSON(inputs.runner_timeout) || 120 }}
+    timeout-minutes: ${{ github.event_name == 'workflow_dispatch' && fromJSON(inputs.runner_timeout) || 120 }}
     steps:
     - uses: actions/checkout@v2
 
