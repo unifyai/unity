@@ -4,6 +4,7 @@ import openai
 import os
 import redis
 import traceback
+from pathlib import Path
 import unify
 from unity.common.llm_helpers import start_async_tool_use_loop, methods_to_tool_dict
 from unity.conversation_manager.debug_logger import log_message
@@ -298,8 +299,10 @@ class CommsAgent:
                         print("call_requested", self.assistant_number)
                         print("new_event", new_event)
                         if not self.start_local:
+                            target_path = Path(__file__).parent.resolve() / "call.py"
+
                             self.call_proc = run_script(
-                                "unity/conversation_manager/call.py",
+                                str(target_path),
                                 "dev",
                                 (
                                     target_number
@@ -313,8 +316,9 @@ class CommsAgent:
                                 self.meet_id if self.meet_id else "None",
                             )
                         else:
+                            target_path = Path(__file__).parent.resolve() / "call.py"
                             self.call_proc = run_script(
-                                "unity/conversation_manager/call.py",
+                                str(target_path),
                                 "console",
                                 self.user_phone_call_number,
                                 self.assistant_number,
