@@ -2397,6 +2397,11 @@ class AsyncToolUseLoopHandle(SteerableToolHandle):
         self._delegate: Optional["SteerableToolHandle"] = None
         self._pause_event.set()
 
+        # Buffer interjections that may arrive **before** a downstream handle
+        # (e.g. an `ActiveTask`) has been adopted.  Once a delegate is ready we
+        # forward all queued messages so that no early user guidance is lost.
+        self._early_interjects: list[str] = []
+
     async def ask(
         self,
         question: str,
@@ -2535,6 +2540,8 @@ class AsyncToolUseLoopHandle(SteerableToolHandle):
         if self._delegate is not None:
             await self._delegate.interject(message)
             return
+        # Buffer then forward to resolver loop.
+        self._early_interjects.append(message)
         await self._queue.put(message)
 
     @functools.wraps(SteerableToolHandle.stop, updated=())
@@ -2566,6 +2573,7 @@ class AsyncToolUseLoopHandle(SteerableToolHandle):
 
     @functools.wraps(SteerableToolHandle.result, updated=())
     async def result(self) -> str:
+        """Return the final answer once the conversation loop (or delegate) completes."""
         if self._delegate is not None:
             return await self._delegate.result()
         return await self._task
@@ -2574,6 +2582,22 @@ class AsyncToolUseLoopHandle(SteerableToolHandle):
     def _adopt(self, new_handle: "SteerableToolHandle") -> None:
         """Switch all steering methods to *new_handle* (in-process only)."""
         self._delegate = new_handle
+
+        # ── Flush any interjections that were consumed by the resolver loop ──
+        #     before the delegate became available.
+        if self._early_interjects:
+            import asyncio as _aio
+
+            for _msg in self._early_interjects:
+                try:
+                    maybe_coro = new_handle.interject(_msg)  # type: ignore[attr-defined]
+                    if _aio.iscoroutine(maybe_coro):
+                        _aio.create_task(maybe_coro)
+                except Exception:
+                    # Advisory only – failure to replay should not break the flow.
+                    pass
+
+            self._early_interjects.clear()
 
 
 # ─────────────────────────────────────────────────────────────────────────────
