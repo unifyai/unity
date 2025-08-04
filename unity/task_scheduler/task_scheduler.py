@@ -346,6 +346,11 @@ class TaskScheduler(BaseTaskScheduler):
 
         freeform_text: str = text
 
+        # ---------------------------------------------------------------
+        #  Prepare event logging – get a call_id *early* so that both the
+        #  fast-path and the normal LLM workflow share the same identifier.
+        # ---------------------------------------------------------------
+
         call_id = new_call_id()
         await publish_manager_method_event(
             call_id,
@@ -354,6 +359,40 @@ class TaskScheduler(BaseTaskScheduler):
             phase="incoming",
             request=freeform_text,
         )
+
+        # ── Fast-path: direct numeric task_id ───────────────────────────────
+        # When the user input *is* a plain integer we can skip the full
+        # tool-resolution loop, execute the task immediately and hand back
+        # the live ActiveTask handle.  This guarantees that callers who know
+        # the id (including the unit-tests) observe the task promotion and
+        # instance cloning *synchronously* after awaiting this method.
+
+        stripped = freeform_text.strip()
+        if stripped.isdigit():
+            try:
+                direct_handle = await self._execute_task_internal(
+                    task_id=int(stripped),
+                    parent_chat_context=parent_chat_context,
+                    clarification_up_q=clarification_up_q,
+                    clarification_down_q=clarification_down_q,
+                )
+
+                # Wrap with the same event-logging helper used elsewhere so
+                # callers receive uniform behaviour regardless of the path.
+                direct_handle = wrap_handle_with_logging(
+                    direct_handle,
+                    call_id,
+                    "TaskScheduler",
+                    "execute_task",
+                )
+
+                return direct_handle
+
+            except (ValueError, RuntimeError):
+                # Fall back to the slower, reasoning-based path when the id is
+                # unknown or the task cannot be started directly (e.g. already
+                # active).  Let the LLM ask for clarification / create a task.
+                pass  # ↴ continue with regular flow
 
         import json, inspect
 
