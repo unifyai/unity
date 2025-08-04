@@ -674,197 +674,61 @@ class HierarchicalPlan(BaseActiveTask):
             self._set_state(_HierarchicalPlanState.ERROR)
             self._set_final_result(f"ERROR: Plan initialization failed: {e}")
 
-    def _create_main_loop_iterator(self):
+    async def _start_main_execution_loop(self):
         """
-        Creates a generator that yields the main plan coroutine to be executed.
-
-        Yields:
-            The main plan's coroutine object.
+        Starts the primary, stateful execution loop that advances the plan
+        one checkpoint at a time and can hold at checkpoints.
         """
         main_fn_name = self._get_main_function_name()
         if not main_fn_name:
             raise RuntimeError("Could not determine main entry point 'main_plan'.")
+
         main_fn = self.execution_namespace[main_fn_name]
-        yield main_fn()
-
-    async def _start_main_execution_loop(self):
-        """
-        Starts the primary execution loop, driven by `start_async_tool_use_loop`.
-
-        This loop uses a single tool, `_run_one_plan_step`, to advance the plan's
-        execution, allowing for pausing, interjection, and control.
-        """
-        client = self.main_loop_client
-        client.reset_messages()
-        plan_iterator = None
-
-        async def _run_one_plan_step():
-            """Executes a single step of the plan, handling state transitions."""
-            nonlocal plan_iterator
-            if self._is_complete:
-                return {
-                    "status": self._state.name.lower(),
-                    "message": "Plan has concluded.",
-                    "force_stop": True,
-                }
-
-            if self._state in (
-                _HierarchicalPlanState.PAUSED_FOR_MODIFICATION,
-                _HierarchicalPlanState.PAUSED_FOR_ESCALATION,
-                _HierarchicalPlanState.PAUSED_FOR_INTERJECTION,
-            ):
-                return {
-                    "status": "paused",
-                    "message": f"Execution paused for {self._state.name.lower()}.",
-                }
-
-            if plan_iterator is None:
-                plan_iterator = self._create_main_loop_iterator()
-
-            try:
-                main_coro = next(plan_iterator)
-                result = await main_coro
-
-                if self.is_teaching_session:
-                    self.action_log.append(
-                        "Teaching step complete. Awaiting next instruction.",
-                    )
-                    self._set_state(_HierarchicalPlanState.PAUSED_FOR_INTERJECTION)
-
-                    return_val = {
-                        "status": "paused",
-                        "message": "Step complete. Awaiting next instruction.",
-                        "force_stop": True,
-                    }
-                    logger.debug(
-                        f"EXEC_LOOP: Teaching step finished. Returning: {return_val}",
-                    )
-                    return return_val
-
-                self._set_state(_HierarchicalPlanState.COMPLETED)
-                self.action_log.append(f"Plan completed. Result: {result}")
-                self._set_final_result(f"Plan completed. Result: {result}")
-                return {
-                    "status": "completed",
-                    "message": f"Plan finished. Result: {result}",
-                    "force_stop": True,
-                }
-            except StopIteration:
-                self._set_state(_HierarchicalPlanState.COMPLETED)
-                self.action_log.append("Plan finished.")
-                self._set_final_result("Plan finished.")
-                return {
-                    "status": "completed",
-                    "message": "Plan finished.",
-                    "force_stop": True,
-                }
-            except NotImplementedError as e:
-                try:
-                    function_name = self._get_unimplemented_function_name()
-                    not_implemented_reason = str(e)
-                    replan_reason = None
-                    if not_implemented_reason:
-                        replan_reason = f"Implement the function as described in its stub: '{not_implemented_reason}'"
-                    await self._handle_dynamic_implementation(
-                        function_name,
-                        replan_reason=replan_reason,
-                    )
-                    plan_iterator = self._create_main_loop_iterator()
-                    self.action_log.append(
-                        f"Restarting main execution loop after implementing '{function_name}'",
-                    )
-                    return {
-                        "status": "in_progress",
-                        "message": f"Implemented {function_name}, retrying.",
-                    }
-                except Exception as e:
-                    logger.error(
-                        f"Failed to implement stub function: {e}",
-                        exc_info=True,
-                    )
-                    self._set_state(_HierarchicalPlanState.ERROR)
-                    self.action_log.append(
-                        f"ERROR: Failed during dynamic implementation: {e}",
-                    )
-                    self._set_final_result(
-                        f"ERROR: Failed during dynamic implementation: {e}",
-                    )
-                    return {"status": "error", "message": str(e), "force_stop": True}
-            except ReplanFromParentException as e:
-                if self.call_stack:
-                    failed_function = self.call_stack.pop()
-                    self.action_log.append(
-                        f"Popping failed function '{failed_function}' from call stack before replan.",
-                    )
-                if self.interaction_stack:
-                    self.interaction_stack.pop()
-
-                self.escalation_count += 1
-                self.action_log.append(
-                    f"Escalation ({self.escalation_count}/{self.MAX_ESCALATIONS}): {e}",
-                )
-
-                parent_to_replan = None
-                if len(self.call_stack) > 0:
-                    parent_to_replan = self.call_stack[-1]
-                else:
-                    parent_to_replan = self._get_main_function_name()
-
-                if not parent_to_replan:
-                    raise RuntimeError("Could not determine a function to replan.")
-
-                if self.escalation_count > self.MAX_ESCALATIONS:
-                    self._set_state(_HierarchicalPlanState.PAUSED_FOR_ESCALATION)
-                    err_msg = f"ESCALATION LIMIT: Max escalations ({self.MAX_ESCALATIONS}) reached. Pausing for intervention. Final reason: {e.reason}"
-                    self.action_log.append(err_msg)
-                    await self.clarification_up_q.put(err_msg)
-                    self._set_final_result(err_msg)
-                    return {
-                        "status": "paused_for_escalation",
-                        "message": err_msg,
-                        "force_stop": True,
-                    }
-
-                await self._handle_dynamic_implementation(
-                    parent_to_replan,
-                    is_strategic_replan=True,
-                    replan_reason=e.reason,
-                    failed_interactions=e.failed_interactions,
-                )
-                plan_iterator = self._create_main_loop_iterator()
-                return {
-                    "status": "in_progress",
-                    "message": f"Strategically replanned '{parent_to_replan}' due to failure in child. Retrying.",
-                }
-            except Exception as e:
-                logger.error(f"Plan step execution failed: {e}", exc_info=True)
-                self._set_state(_HierarchicalPlanState.ERROR)
-                self.action_log.append(f"ERROR: Plan execution failed: {e}")
-                self._set_final_result(f"ERROR: Plan execution failed: {e}")
-                return {"status": "error", "message": str(e), "force_stop": True}
-
-        def dynamic_tool_policy(step_index, tools):
-            """Defines the tool usage policy for the main execution loop."""
-            if self._is_complete or self._state in (
-                _HierarchicalPlanState.PAUSED_FOR_MODIFICATION,
-                _HierarchicalPlanState.PAUSED_FOR_ESCALATION,
-                _HierarchicalPlanState.PAUSED_FOR_INTERJECTION,
-            ):
-                return "auto", {}
-            else:
-                return "required", {"_run_one_plan_step": _run_one_plan_step}
-
-        self.main_loop_handle = start_async_tool_use_loop(
-            client=client,
-            message="Executing hierarchical plan...",
-            tools={"_run_one_plan_step": _run_one_plan_step},
-            loop_id=f"HierarchicalPlan-{self.goal[:50] if self.goal else 'goal-less'}",
-            max_steps=100,
-            tool_policy=dynamic_tool_policy,
-            interrupt_llm_with_interjections=True,
-            timeout=self.planner.timeout,
+        main_task = asyncio.create_task(
+            main_fn(),
+            name=f"MainPlanTask-{self._module_name}",
         )
-        await self.main_loop_handle.result()
+
+        while not main_task.done():
+            checkpoint_waiter = asyncio.create_task(
+                self.runtime._checkpoint_event.wait(),
+            )
+            done, pending = await asyncio.wait(
+                {main_task, checkpoint_waiter},
+                return_when=asyncio.FIRST_COMPLETED,
+            )
+
+            if checkpoint_waiter in pending:
+                checkpoint_waiter.cancel()
+
+            if main_task in done:
+                break
+
+            if checkpoint_waiter in done:
+                if self._state == _HierarchicalPlanState.RUNNING:
+                    self.runtime._release_from_checkpoint()
+
+        try:
+            result = main_task.result()
+            if self.is_teaching_session:
+                self.action_log.append(
+                    "Teaching step complete. Awaiting next instruction.",
+                )
+                self._set_state(_HierarchicalPlanState.PAUSED_FOR_INTERJECTION)
+                return
+
+            self._set_state(_HierarchicalPlanState.COMPLETED)
+            self.action_log.append(f"Plan completed. Result: {result}")
+            self._set_final_result(f"Plan completed. Result: {result}")
+
+        except Exception as e:
+            logger.error(
+                f"Plan execution failed with unhandled exception: {e}",
+                exc_info=True,
+            )
+            self._set_state(_HierarchicalPlanState.ERROR)
+            self.action_log.append(f"ERROR: Plan execution failed: {e}")
+            self._set_final_result(f"ERROR: Plan execution failed: {e}")
 
     async def _handle_dynamic_implementation(self, function_name: str, **kwargs):
         """
