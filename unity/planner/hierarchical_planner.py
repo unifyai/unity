@@ -1847,12 +1847,6 @@ class HierarchicalPlanner(BasePlanner):
     async def _prepare_execution_environment(self, plan: HierarchicalPlan):
         """
         Prepares the sandboxed execution environment for a plan.
-
-        This involves setting up global functions (`coms_manager`, `verify`)
-        and compiling the plan's source code into the execution namespace.
-
-        Args:
-            plan: The HierarchicalPlan instance.
         """
         sandbox_globals = self._create_sandbox_globals()
 
@@ -1863,14 +1857,37 @@ class HierarchicalPlanner(BasePlanner):
 
         plan.execution_namespace.clear()
         plan.execution_namespace.update(sandbox_globals)
+        plan.execution_namespace["_cp"] = plan.runtime.checkpoint
+
+        async def _int(func_name: str):
+            req = plan.interruption_request
+            if req and req.get("target_function") == func_name:
+                plan.interruption_request = None
+                raise _ControlledInterruptionException(
+                    req.get("reason", "Interjection"),
+                )
+
+        plan.execution_namespace["_int"] = _int
+
+        async def _around_cp(label: str, awaitable):
+            await plan.runtime.checkpoint(f"Before: {label}")
+            try:
+                return await awaitable
+            finally:
+                await plan.runtime.checkpoint(f"After: {label}")
+
+        plan.execution_namespace["_around_cp"] = _around_cp
+
         plan.execution_namespace.update(
             {
                 "action_provider": _ActionProviderProxy(self.action_provider, plan),
                 "request_clarification": request_clarification_primitive,
+                "runtime": plan.runtime,
                 "verify": self._create_verify_decorator(plan),
                 "ReplanFromParentException": ReplanFromParentException,
                 "_ForcedRetryException": _ForcedRetryException,
                 "FatalVerificationError": FatalVerificationError,
+                "_ControlledInterruptionException": _ControlledInterruptionException,
             },
         )
 
