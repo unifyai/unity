@@ -41,6 +41,47 @@ from unity.controller.browser_backends import BrowserAgentError
 logger = logging.getLogger(__name__)
 
 
+class PlanRuntime:
+    """A runtime object injected into the plan to manage execution state."""
+
+    def __init__(self):
+        self._pause_event = asyncio.Event()
+        self._pause_event.set()
+        self._checkpoint_event = asyncio.Event()
+        self._waiting_for_planner = False
+        self._step_counter = 0
+
+    async def checkpoint(self, label: str = ""):
+        """
+        A cooperative yield point. It yields control, honors pauses,
+        and then signals the planner and waits for release.
+        """
+        self._step_counter += 1
+        await asyncio.sleep(0)
+        await self._pause_event.wait()
+
+        self._waiting_for_planner = True
+        self._checkpoint_event.set()
+        try:
+            while self._waiting_for_planner:
+                await asyncio.sleep(0.01)
+                await self._pause_event.wait()
+        finally:
+            self._checkpoint_event.clear()
+
+    def _release_from_checkpoint(self):
+        """Called by the planner to allow the plan to continue to the next checkpoint."""
+        self._waiting_for_planner = False
+
+    def pause(self):
+        """Pauses the plan's execution at the next checkpoint."""
+        self._pause_event.clear()
+
+    def resume(self):
+        """Resumes a paused plan."""
+        self._pause_event.set()
+
+
 def format_pydantic_model(
     model: BaseModel,
     title: Optional[str] = None,
@@ -680,6 +721,7 @@ class HierarchicalPlan(BaseActiveTask):
         self.is_teaching_session = goal is None
         self.plan_source_code: Optional[str] = None
         self.execution_namespace: Dict[str, Any] = {}
+        self.runtime = PlanRuntime()
         self.call_stack: List[str] = []
         self.action_log: List[str] = []
         self.last_verified_function_name: Optional[str] = None
