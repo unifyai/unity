@@ -1,5 +1,7 @@
 import asyncio
-from typing import Dict
+from typing import Dict, Optional
+from pydantic import BaseModel
+from enum import EnumType
 import aiohttp
 import os
 import redis
@@ -583,7 +585,30 @@ class Call(SteerableToolHandle):
         await asyncio.sleep(40)
         return await self._search_local_chat(question)
 
-    async def ask(self, question: str) -> SteerableToolHandle:
+    def _wrap_response_format(self, response_format):
+        if isinstance(response_format, EnumType):
+
+            class WrappedModel(BaseModel):
+                answer: response_format
+
+                def to_json(self):
+                    return json.dumps(
+                        {
+                            "answer": self.answer.value,
+                        },
+                    )
+
+            return WrappedModel, True
+
+        return response_format, False
+
+    async def ask(
+        self,
+        question: str,
+        response_format: Optional[
+            str | int | float | bool | BaseModel | EnumType
+        ] = None,
+    ) -> SteerableToolHandle:
         """
         Ask a question to the assistant.
         """
@@ -608,6 +633,33 @@ class Call(SteerableToolHandle):
                 await handle.result()
             finally:
                 self.call_ask_status.set()
+
+        if response_format:
+            response_format, is_enum = self._wrap_response_format(response_format)
+            original_result = handle.result
+
+            async def _wrap():
+                answer = await original_result()
+
+                unify_client = unify.Unify(
+                    endpoint="gpt-4o@openai",
+                    cache=json.loads(os.environ.get("UNIFY_CACHE", "true")),
+                    traced=json.loads(os.environ.get("UNIFY_TRACED", "true")),
+                )
+                unify_client.set_system_message(
+                    f"Convert the answer from string into the response format: {response_format}.",
+                )
+                answer = unify_client.generate(
+                    messages=unify_client.messages
+                    + [
+                        {"role": "user", "content": f"The user's answer is: {answer}"},
+                    ],
+                    response_format=response_format,
+                )
+                parsed = response_format.model_validate_json(answer)
+                return parsed.answer if is_enum else parsed
+
+            handle.result = _wrap
 
         asyncio.create_task(_reset_call_ask_status())
         return handle
