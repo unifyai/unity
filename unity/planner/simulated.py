@@ -167,7 +167,16 @@ class SimulatedActiveTask(BaseActiveTask):
             self._result_str = message
             self._done_event.set()
             # kill task thread
-            if self._task_thread and self._task_thread.is_alive():
+            # Avoid self-join which would raise RuntimeError when _complete is
+            # called *inside* the task thread.  Only join when invoked from a
+            # different thread.
+            import threading
+
+            if (
+                self._task_thread
+                and self._task_thread.is_alive()
+                and threading.current_thread() is not self._task_thread
+            ):
                 self._task_thread.join(timeout=1)
 
     def _count_step(self):
