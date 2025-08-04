@@ -107,3 +107,98 @@ async def test_outer_handle_delegates_to_inner_pause_resume(monkeypatch):
     # Final result must bubble through.
     result = await outer_handle.result()
     assert "slept" in result.lower() or "done" in result.lower()
+
+
+# ---------------------------------------------------------------------------
+#  Early interjection pass-through
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+@_handle_project
+async def test_outer_interjection_forwarded_to_inner(monkeypatch):
+    """An *early* interjection (sent before delegate adoption) must be forwarded
+    to the inner handle once the outer loop adopts it.
+
+    Prior to the buffering logic introduced in `llm_helpers.py` this behaviour
+    was missing – the outer loop would consume the interjection itself and the
+    nested handle would *never* see it.  The test therefore fails on the old
+    implementation and passes now.
+    """
+
+    # ---- helper tool -----------------------------------------------------
+    @unify.traced  # noqa: D401 – simple async sleep tool
+    async def sleeper(delay: float = 0.1) -> str:
+        await asyncio.sleep(delay)
+        return "slept"
+
+    # ---- counter to verify delegate.interject was called ------------------
+    counter: dict[str, list] = {"msgs": []}
+
+    async def delegating_tool() -> AsyncToolUseLoopHandle:  # type: ignore[valid-type]
+        """Return a nested handle marked for pass-through with patched interject."""
+        inner_client = unify.AsyncUnify(
+            endpoint="o4-mini@openai",
+            cache=json.loads(os.environ.get("UNIFY_CACHE", "true")),
+            traced=json.loads(os.environ.get("UNIFY_TRACED", "true")),
+        )
+
+        inner_handle = start_async_tool_use_loop(
+            inner_client,
+            message="Run sleeper please.",
+            tools={"sleeper": sleeper},
+            log_steps=False,
+        )
+
+        # Patch the inner handle's interject *before* it is returned so that the
+        # outer loop's adoption flush can be observed.
+        orig_interject = inner_handle.interject
+
+        async def _patched_interject(self, msg: str):  # type: ignore[valid-type]
+            counter["msgs"].append(msg)
+            return await orig_interject(msg)
+
+        import types as _types
+
+        inner_handle.interject = _types.MethodType(_patched_interject, inner_handle)  # type: ignore[method-assign]
+
+        # Artificial delay gives the outer test a chance to send an interjection
+        # *before* the nested handle is adopted.
+        await asyncio.sleep(0.5)
+
+        # Flag for pass-through so the outer handle adopts this one.
+        inner_handle.__passthrough__ = True  # type: ignore[attr-defined]
+        return inner_handle
+
+    # Give the tool a stable name for the LLM prompt.
+    delegating_tool.__name__ = "delegating_tool_interject"
+    delegating_tool.__qualname__ = "delegating_tool_interject"
+
+    # ---- start outer loop -------------------------------------------------
+    client = unify.AsyncUnify(
+        endpoint="o4-mini@openai",
+        cache=json.loads(os.environ.get("UNIFY_CACHE", "true")),
+        traced=json.loads(os.environ.get("UNIFY_TRACED", "true")),
+    )
+    client.set_system_message(
+        "Call `delegating_tool_interject` once then wait for it to finish before replying DONE.",
+    )
+
+    outer_handle = start_async_tool_use_loop(
+        client,
+        message="go",
+        tools={"delegating_tool_interject": delegating_tool},
+        log_steps=False,
+    )
+
+    # ---- send *early* interjection ---------------------------------------
+    early_msg = "EARLY_INTERJECTION"
+    await outer_handle.interject(early_msg)
+
+    # ---- await completion -------------------------------------------------
+    await outer_handle.result()
+
+    # ---- assertions -------------------------------------------------------
+    assert (
+        early_msg in counter["msgs"]
+    ), "Interjection was not forwarded to inner handle"
