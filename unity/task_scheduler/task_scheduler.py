@@ -377,9 +377,27 @@ class TaskScheduler(BaseTaskScheduler):
             setattr(handle, "__passthrough__", True)
             return handle
 
+        async def request_clarification(question: str) -> str:  # type: ignore[valid-type]
+            """Bubble *question* up to the caller and await the answer.
+
+            When *clarification_up_q* or *clarification_down_q* are *None* the
+            tool raises **RuntimeError** so the LLM avoids using it in
+            non-interactive contexts.
+            """
+
+            if clarification_up_q is None or clarification_down_q is None:
+                raise RuntimeError(
+                    "Clarification queues not supplied – cannot request clarification in this context.",
+                )
+
+            await clarification_up_q.put(question)
+            return await clarification_down_q.get()
+
         tools = {
-            "ask": self.ask,
-            "execute_task_by_id": _execute_task_by_id,
+            "ask": self.ask,  # determine an existing/created task id
+            "update": self.update,  # create a brand-new task or tweak an existing one
+            "request_clarification": request_clarification,  # human clarification channel
+            "execute_task_by_id": _execute_task_by_id,  # finally start the task
         }
 
         # ── dynamic system prompt ───────────────────────────────────────────
