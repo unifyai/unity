@@ -107,6 +107,10 @@ class _ForcedRetryException(Exception):
     """Internal exception to force a retry loop after a successful reimplementation."""
 
 
+class _ControlledInterruptionException(Exception):
+    """Raised to signal that a function's execution should be stopped and retried due to a user interjection."""
+
+
 class FatalVerificationError(Exception):
     """Raised when verification results in a fatal, unrecoverable error."""
 
@@ -1877,13 +1881,8 @@ class HierarchicalPlanner(BasePlanner):
         Creates the @verify decorator for a given plan instance.
 
         The decorator wraps each function in the plan to implement the
-        execution, verification, and correction loop.
-
-        Args:
-            plan: The HierarchicalPlan this decorator is associated with.
-
-        Returns:
-            The configured `verify` decorator.
+        execution, verification, and self-correction loop *locally*,
+        including handling escalations to parent functions.
         """
 
         def verify(fn):
@@ -1894,32 +1893,9 @@ class HierarchicalPlanner(BasePlanner):
                 """The wrapper that performs verification and correction."""
                 func_name = fn.__name__
                 if func_name in plan.skipped_functions:
-                    plan.action_log.append(
-                        f"SKIPPING function '{func_name}' as per previous decision.",
-                    )
+                    plan.action_log.append(f"SKIPPING function '{func_name}'.")
                     plan.skipped_functions.remove(func_name)
                     return
-
-                current_fn = plan.execution_namespace[func_name]
-                try:
-                    sig = inspect.signature(current_fn)
-                    bound_args = sig.bind(*args, **kwargs)
-                    bound_args.apply_defaults()
-                    cache_key = (func_name, frozenset(bound_args.arguments.items()))
-                except (TypeError, ValueError):
-                    cache_key = (func_name, str(args), str(kwargs))
-
-                if cache_key in plan.completed_functions:
-                    logger.info(
-                        f"CACHE HIT: Returning cached result for '{func_name}' with args {args}, {kwargs}",
-                    )
-                    plan.action_log.append(
-                        f"CACHE HIT: Returning cached result for '{func_name}'.",
-                    )
-                    return plan.completed_functions[cache_key]
-                logger.info(
-                    f"CACHE MISS: Proceeding with execution for '{func_name}'.",
-                )
 
                 args_repr = [repr(a) for a in args]
                 kwargs_repr = [f"{k}={v!r}" for k, v in kwargs.items()]
@@ -1930,15 +1906,17 @@ class HierarchicalPlanner(BasePlanner):
                 plan.call_stack.append(func_name)
                 plan.interaction_stack.append([])
                 logger.info(f"VERIFY: Entering '{func_name}'")
+
                 try:
-                    last_error_traceback = ""
+                    last_error_reason = ""
                     for i in range(plan.MAX_LOCAL_RETRIES):
                         try:
                             current_fn_for_execution = plan.execution_namespace[
                                 func_name
                             ]
                             func_source = plan.function_source_map.get(func_name)
-                            return await self._execute_and_verify_step(
+
+                            result = await self._execute_and_verify_step(
                                 plan,
                                 inspect.unwrap(current_fn_for_execution),
                                 func_source,
@@ -1946,97 +1924,86 @@ class HierarchicalPlanner(BasePlanner):
                                 kwargs,
                                 plan.interaction_stack[-1],
                             )
-                        except _ForcedRetryException:
+                            return result
+
+                        except _ControlledInterruptionException:
                             plan.action_log.append(
-                                f"Retrying '{func_name}' after reimplementation.",
+                                f"Retrying '{func_name}' after user interjection.",
                             )
                             if plan.interaction_stack:
                                 plan.interaction_stack[-1].clear()
                             continue
-                        except (
-                            ReplanFromParentException,
-                            NotImplementedError,
-                            FatalVerificationError,
-                        ):
-                            raise
-                        except (BrowserAgentError, Exception) as e:
-                            logger.error(
-                                f"Function '{func_name}' failed on attempt {i+1}: {e}",
-                                exc_info=True,
-                            )
-                            last_error_traceback = traceback.format_exc()
 
-                            error_details = {
-                                "error_type": type(e).__name__,
-                                "error_message": str(e),
-                                "attempt": i + 1,
-                                "traceback": last_error_traceback,
-                            }
+                        except _ForcedRetryException:
                             plan.action_log.append(
-                                f"TOOL ERROR in '{func_name}': {json.dumps(error_details, indent=2)}",
+                                f"Retrying '{func_name}' after successful reimplementation.",
                             )
-                            try:
-                                logger.info(
-                                    f"Performing failure analysis for '{func_name}'...",
-                                )
-                                page_analysis = await self.action_provider.browser.observe(
-                                    "Analyze the current page state to help debug a failure. Provide a structured summary of visible headings, links, and interactive elements.",
-                                    response_format=PageAnalysis,
-                                )
-                                visual_context = f"**Current Page Analysis:**\n{page_analysis.model_dump_json(indent=2)}"
-                                logger.info(
-                                    f"Failure analysis complete. Visual context captured.",
-                                )
-                            except Exception as analysis_exc:
-                                logger.warning(
-                                    f"Could not perform visual failure analysis: {analysis_exc}",
-                                )
-                                visual_context = (
-                                    "Could not retrieve page state for analysis."
-                                )
+                            if plan.interaction_stack:
+                                plan.interaction_stack[-1].clear()
+                            continue
 
-                            replan_reason = (
-                                f"The function '{func_name}' failed with an unexpected code error. "
-                                f"Analyze the following traceback AND the current page state to fix the bug.\n\n"
-                                f"**Traceback:**\n{traceback.format_exc()}\n\n"
-                                f"**Visual Context from Browser:**\n{visual_context}"
+                        except NotImplementedError as e:
+                            plan.action_log.append(
+                                f"'{func_name}' not implemented. Implementing JIT.",
                             )
-
+                            last_error_reason = str(e) or "Function is a stub."
                             await plan._handle_dynamic_implementation(
                                 func_name,
-                                replan_reason=replan_reason,
+                                replan_reason=f"Implement from stub: {last_error_reason}",
                             )
-                            raise _ForcedRetryException(
-                                "Forced retry after unexpected exception.",
+                            if plan.interaction_stack:
+                                plan.interaction_stack[-1].clear()
+                            continue
+
+                        except ReplanFromParentException as e:
+                            plan.action_log.append(
+                                f"Child of '{func_name}' requested strategic replan.",
                             )
+                            last_error_reason = e.reason
+                            await plan._handle_dynamic_implementation(
+                                func_name,
+                                is_strategic_replan=True,
+                                replan_reason=last_error_reason,
+                                failed_interactions=e.failed_interactions,
+                            )
+                            if plan.interaction_stack:
+                                plan.interaction_stack[-1].clear()
+                            continue
+
+                        except FatalVerificationError:
+                            raise
+
+                        except (BrowserAgentError, Exception) as e:
+                            logger.error(
+                                f"Function '{func_name}' failed with a runtime error on attempt {i+1}: {e}",
+                                exc_info=True,
+                            )
+                            last_error_reason = traceback.format_exc()
+                            await plan._handle_dynamic_implementation(
+                                func_name,
+                                replan_reason=f"Function crashed. Fix bug:\n{last_error_reason}",
+                            )
+                            if plan.interaction_stack:
+                                plan.interaction_stack[-1].clear()
+                            continue
+
                     raise ReplanFromParentException(
-                        f"Function '{func_name}' failed after multiple retries.",
-                        reason=last_error_traceback,
-                        # TODO: failed_interaction ?
+                        f"Function '{func_name}' failed after {plan.MAX_LOCAL_RETRIES} retries.",
+                        reason=f"Final error:\n{last_error_reason}",
                     )
+
                 finally:
-                    completed_successfully = any(
-                        key[0] == func_name for key in plan.completed_functions
-                    )
+                    if plan.call_stack and plan.call_stack[-1] == func_name:
+                        plan.call_stack.pop()
 
-                    if completed_successfully:
-                        if len(plan.interaction_stack) > 1:
-                            child_interactions = plan.interaction_stack.pop()
-                            parent_interactions = plan.interaction_stack[-1]
-                            parent_interactions.extend(child_interactions)
-                            logger.debug(
-                                f"Aggregated {len(child_interactions)} interactions from '{func_name}' to its parent.",
-                            )
-                        elif plan.interaction_stack:
-                            plan.interaction_stack.pop()
+                    if len(plan.interaction_stack) > 1:
+                        child_interactions = plan.interaction_stack.pop()
+                        parent_interactions = plan.interaction_stack[-1]
+                        parent_interactions.extend(child_interactions)
+                    elif plan.interaction_stack:
+                        plan.interaction_stack.pop()
 
-                        if plan.call_stack:
-                            plan.call_stack.pop()
-
-                    exit_status = "completed" if completed_successfully else "failed"
-                    plan.action_log.append(
-                        f"<- Exiting '{func_name}' (status={exit_status})",
-                    )
+                    plan.action_log.append(f"<- Exiting '{func_name}'")
 
             return wrapper
 
