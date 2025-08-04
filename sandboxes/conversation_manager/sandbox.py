@@ -69,7 +69,7 @@ if __name__ == "__main__":
         from unity.helpers import run_script
 
         if args.start_local:
-            proc = run_script("sandboxes/gui/local.py", terminal=True)
+            proc = run_script("sandboxes/conversation_manager/gui.py", terminal=True)
             proc.wait()
             unity.conversation_manager.stop("signal_shutdown")
 
