@@ -665,23 +665,20 @@ async def _async_tool_use_loop_inner(
         try:
             from pydantic import BaseModel  # local import
 
-            if isinstance(response_format, type) and issubclass(
-                response_format,
-                BaseModel,
+            # Require a Pydantic model class – anything else is a configuration error.
+            if not (
+                isinstance(response_format, type)
+                and issubclass(response_format, BaseModel)
             ):
-                _schema = response_format.model_json_schema()
-            elif isinstance(response_format, dict):
-                _schema = response_format
-            else:
-                _schema = None
-
-            if _schema is not None:
-                _hint = (
-                    "\n\nNOTE: After completing all tool calls, your **final** assistant reply must be valid JSON that conforms to the following schema. Do NOT include any extra keys or commentary.\n"
-                    + json.dumps(_schema, indent=2)
+                raise TypeError(
+                    "response_format must be a Pydantic BaseModel subclass (e.g. MySchema).",
                 )
-            else:
-                _hint = "\n\nNOTE: After completing all tool calls, your **final** assistant reply must be valid JSON conforming to the requested response format. Do NOT include any extra keys or commentary."
+
+            _schema = response_format.model_json_schema()
+            _hint = (
+                "\n\nNOTE: After completing all tool calls, your **final** assistant reply must be valid JSON that conforms to the following schema. Do NOT include any extra keys or commentary.\n"
+                + json.dumps(_schema, indent=2)
+            )
 
             client.set_system_message((client.system_message or "") + _hint)
         except Exception as _exc:  # noqa: BLE001
@@ -2348,31 +2345,52 @@ async def _async_tool_use_loop_inner(
             final_answer = msg["content"]
 
             if response_format is not None:
-                try:
-                    # 1.  Tell the client to enforce the desired format.
-                    client.set_response_format(response_format)  # type: ignore[attr-defined]
+                from pydantic import BaseModel  # local import
 
-                    # 2.  Ask the model to *only* re-format its previous reply.
-                    follow_up = {
-                        "role": "user",
-                        "content": (
-                            "Please output your previous answer again, but strictly conforming "
-                            "to the required response format. Do not add any extra commentary."
-                        ),
-                    }
-                    await _append_msgs([follow_up])
-
-                    await _generate_with_preprocess(
-                        return_full_completion=True,
-                        tools=[],  # no tools available on this final turn
-                        tool_choice="auto",
-                        stateful=True,
+                # Defensive check – we enforced this earlier, but keep for safety.
+                if not (
+                    isinstance(response_format, type)
+                    and issubclass(response_format, BaseModel)
+                ):
+                    LOGGER.error(
+                        "response_format must be a Pydantic BaseModel subclass – skipping validation and reformat.",
                     )
+                else:
+                    # First try to parse the assistant's answer as-is. If it already matches
+                    # the schema, we can skip the additional re-formatting step entirely.
+                    needs_reformat = True
+                    try:
+                        response_format.model_validate_json(final_answer)
+                        needs_reformat = False
+                    except Exception:
+                        needs_reformat = True
 
-                    final_answer = client.messages[-1]["content"]
-                except Exception as _e:
-                    # Fall back to the unformatted answer if anything goes wrong.
-                    LOGGER.error(f"response_format handling failed: {_e!r}")
+                    if needs_reformat:
+                        try:
+                            # Configure the client so the next call enforces the response format.
+                            client.set_response_format(response_format)  # type: ignore[attr-defined]
+
+                            # Ask the model to re-emit its answer in the correct JSON shape.
+                            follow_up = {
+                                "role": "user",
+                                "content": (
+                                    "Please output your previous answer again, but strictly conforming "
+                                    "to the required response format. Do not add any extra commentary."
+                                ),
+                            }
+                            await _append_msgs([follow_up])
+
+                            await _generate_with_preprocess(
+                                return_full_completion=True,
+                                tools=[],  # no tools on this final turn
+                                tool_choice="auto",
+                                stateful=True,
+                            )
+
+                            final_answer = client.messages[-1]["content"]
+                        except Exception as _e:  # noqa: BLE001
+                            # Fall back to the unformatted answer if anything goes wrong.
+                            LOGGER.error(f"response_format handling failed: {_e!r}")
 
             return final_answer  # DONE!
 
