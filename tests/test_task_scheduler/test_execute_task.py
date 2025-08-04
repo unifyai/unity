@@ -248,3 +248,93 @@ async def test_execute_task_invokes_ask_when_id_missing(monkeypatch):
     await handle.result()
 
     assert calls["ask"] == 1, "TaskScheduler.ask should be invoked exactly once"
+
+
+# --------------------------------------------------------------------------- #
+#  6. New task creation & execution                                           #
+# --------------------------------------------------------------------------- #
+
+
+@pytest.mark.asyncio
+@_handle_project
+async def test_execute_task_creates_new_task_and_executes(monkeypatch):
+    """When the task clearly does not exist the scheduler should create it via
+    `update` and then start it – `TaskScheduler.update` must therefore be
+    invoked exactly once (or more, in very unlikely multi-step flows)."""
+
+    description = "Organise annual security audit report."
+
+    planner = SimulatedPlanner(steps=1)
+    ts = TaskScheduler(planner=planner)
+
+    # ---- spy on update -----------------------------------------------------
+    calls: Dict[str, int] = {"update": 0}
+
+    original_update = TaskScheduler.update
+
+    @functools.wraps(original_update)
+    async def spy_update(self, text: str, **kw):  # type: ignore[override]
+        calls["update"] += 1
+        return await original_update(self, text, **kw)
+
+    monkeypatch.setattr(TaskScheduler, "update", spy_update, raising=True)
+
+    # ---- execute (no prior task with that description exists) -------------
+    handle = await ts.execute_task(text=description)
+
+    # Speed the simulated planner along so the outer loop can finish quickly.
+    await handle.interject("please proceed swiftly")
+    await handle.result()
+
+    # ---- assertions --------------------------------------------------------
+    assert calls["update"] >= 1, "Expected at least one call to TaskScheduler.update"
+
+    # Verify that a task with the expected description now exists
+    # Description may be normalised (e.g. trailing period removed).  Accept any
+    # task whose *name* or *description* contains our original phrase without
+    # the trailing period.
+    created_tasks = ts._search_tasks()
+    phrase = description.rstrip(".")
+    assert any(
+        phrase in t.get("name", "") or phrase in t.get("description", "")
+        for t in created_tasks
+    ), "A new task with the provided description should have been created"
+
+
+# --------------------------------------------------------------------------- #
+#  7. Clarification request for unknown id                                    #
+# --------------------------------------------------------------------------- #
+
+
+@pytest.mark.asyncio
+@_handle_project
+async def test_execute_task_requests_clarification_for_unknown_id(monkeypatch):
+    """Supplying a numeric task_id that does *not* exist should trigger the
+    internal `request_clarification` helper (i.e. push a question onto the
+    clarification_up_q)."""
+
+    planner = SimulatedPlanner(steps=1)
+    ts = TaskScheduler(planner=planner)
+
+    # Provide queues so the tool can ask for clarification.
+    clarification_up_q: asyncio.Queue[str] = asyncio.Queue()
+    clarification_down_q: asyncio.Queue[str] = asyncio.Queue()
+
+    nonexistent_id = 424242  # arbitrary id that will not exist in a fresh context
+
+    handle = await ts.execute_task(
+        text=str(nonexistent_id),
+        clarification_up_q=clarification_up_q,
+        clarification_down_q=clarification_down_q,
+    )
+
+    # Wait for the assistant to push a clarification question.
+    question = await asyncio.wait_for(clarification_up_q.get(), timeout=5)
+
+    assert question, "A clarification question should have been requested"
+
+    # Respond so the loop can terminate quickly.
+    await clarification_down_q.put("Let's create a new task with that id.")
+
+    # Gracefully stop the loop – we're only interested in the clarification behaviour.
+    await handle.result()
