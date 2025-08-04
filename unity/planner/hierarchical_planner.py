@@ -2186,33 +2186,39 @@ class HierarchicalPlanner(BasePlanner):
 
         if assessment.status == "ok":
             try:
-                sig = inspect.signature(fn)
-                bound_args = sig.bind(*args, **kwargs)
-                bound_args.apply_defaults()
-                cache_key = (fn.__name__, frozenset(bound_args.arguments.items()))
-            except (TypeError, ValueError):
-                cache_key = (fn.__name__, str(args), str(kwargs))
 
-            plan.completed_functions[cache_key] = result
-            logger.info(
-                f"CACHE ADD: Stored result for '{fn.__name__}' in cache.",
-            )
+                async def _capture_success_state(
+                    plan: "HierarchicalPlan",
+                    fn_name: str,
+                ):
+                    try:
+                        current_url = (
+                            await self.action_provider.browser.get_current_url()
+                        )
+                        plan.last_verified_function_name = fn_name
+                        plan.last_verified_url = current_url
+                        try:
+                            plan.last_verified_page_analysis = await self.action_provider.browser.observe(
+                                "Summarize current visible structure: headings, links, interactive elements.",
+                                response_format=PageAnalysis,
+                            )
+                        except Exception as e:
+                            logger.warning(
+                                f"Could not capture page analysis after '{fn_name}': {e}",
+                            )
+                        logger.info(
+                            f"STATE CAPTURE: Stored successful state after '{fn_name}' at URL {current_url}.",
+                        )
+                        plan.action_log.append(
+                            f"STATE CAPTURE: Stored successful state after '{fn_name}' at URL {current_url}.",
+                        )
 
-            try:
-                current_url = await self.action_provider.browser.get_current_url()
-                plan.last_verified_function_name = fn.__name__
-                plan.last_verified_url = current_url
-                plan.last_verified_screenshot = final_screenshot
-                plan.last_verified_page_analysis = await self.action_provider.browser.observe(
-                    "Analyze the current page state and provide a structured summary of visible headings, links, and interactive elements.",
-                    response_format=PageAnalysis,
-                )
-                plan.action_log.append(
-                    f"STATE CAPTURE: Stored successful state after '{fn.__name__}' at URL {current_url}.",
-                )
-                logger.info(
-                    f"STATE CAPTURE: Stored successful state after '{fn.__name__}' at URL {current_url}.",
-                )
+                    except Exception as e:
+                        logger.warning(
+                            f"Could not capture successful state after '{fn_name}': {e}",
+                        )
+
+                asyncio.create_task(_capture_success_state(plan, fn.__name__))
             except Exception as e:
                 logger.warning(
                     f"Could not capture successful state after '{fn.__name__}': {e}",
