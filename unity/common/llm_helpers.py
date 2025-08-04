@@ -548,6 +548,7 @@ async def _async_tool_use_loop_inner(
     ] = None,
     preprocess_msgs: Optional[Callable[[list[dict]], list[dict]]] = None,
     outer_handle_container: Optional[list] = None,
+    response_format: Optional[Any] = None,
 ) -> str:
     r"""
     Orchestrate an *interactive* "function-calling" dialogue between an LLM
@@ -2310,7 +2311,41 @@ async def _async_tool_use_loop_inner(
                         f"max_steps ({max_steps}) exceeded",
                     )
 
-            return msg["content"]  # DONE!
+            # If a structured response format was requested, perform one final
+            # LLM call that re-emits the answer in the desired format.  This
+            # is done *after* all tool calls have finished so the formatting
+            # step has full context but never needs to invoke any tools.
+
+            final_answer = msg["content"]
+
+            if response_format is not None:
+                try:
+                    # 1.  Tell the client to enforce the desired format.
+                    client.set_response_format(response_format)  # type: ignore[attr-defined]
+
+                    # 2.  Ask the model to *only* re-format its previous reply.
+                    follow_up = {
+                        "role": "user",
+                        "content": (
+                            "Please output your previous answer again, but strictly conforming "
+                            "to the required response format. Do not add any extra commentary."
+                        ),
+                    }
+                    await _append_msgs([follow_up])
+
+                    await _generate_with_preprocess(
+                        return_full_completion=True,
+                        tools=[],  # no tools available on this final turn
+                        tool_choice="auto",
+                        stateful=True,
+                    )
+
+                    final_answer = client.messages[-1]["content"]
+                except Exception as _e:
+                    # Fall back to the unformatted answer if anything goes wrong.
+                    LOGGER.error(f"response_format handling failed: {_e!r}")
+
+            return final_answer  # DONE!
 
     except asyncio.CancelledError:  # graceful shutdown
         # NOTE: Caller (or parent task) requested cancellation.  We propagate
@@ -2665,6 +2700,7 @@ def start_async_tool_use_loop(
         Callable[[int, Dict[str, Callable]], Tuple[str, Dict[str, Callable]]]
     ] = None,
     preprocess_msgs: Optional[Callable[[list[dict]], list[dict]]] = None,
+    response_format: Optional[Any] = None,
 ) -> AsyncToolUseLoopHandle:
     """
     Kick off `_async_tool_use_loop_inner` in its own task and give the caller
@@ -2702,6 +2738,7 @@ def start_async_tool_use_loop(
             tool_policy=tool_policy,
             preprocess_msgs=preprocess_msgs,
             outer_handle_container=outer_handle_container,
+            response_format=response_format,
         ),
         name="ToolUseLoop",
     )
