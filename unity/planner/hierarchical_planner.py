@@ -267,20 +267,143 @@ async def llm_call(
 class PlanSanitizer(ast.NodeTransformer):
     """
     AST transformer to enforce security and correctness of plan code.
-
-    Ensures every `async def` function is decorated with `@verify`.
+    - Ensures every `async def` function is decorated with `@verify`.
+    - Injects checkpoint calls (`_cp`) and interrupt probes (`_int`).
+    - Safely wraps awaited tool calls and sub-tasks.
     """
+
+    def __init__(self):
+        self._current_function_name = "global"
+        self._defined_functions = set()
+
+    def _make_call_node(self, func_id: str, args: list) -> ast.Call:
+        return ast.Call(
+            func=ast.Name(id=func_id, ctx=ast.Load()),
+            args=args,
+            keywords=[],
+        )
+
+    def _make_await_expr_node(self, call_node: ast.Call) -> ast.Expr:
+        return ast.Expr(value=ast.Await(value=call_node))
+
+    def _make_cp_node(self, label: str) -> ast.Expr:
+        return self._make_await_expr_node(
+            self._make_call_node("_cp", [ast.Constant(value=label)]),
+        )
+
+    def _make_int_node(self, func_name: str) -> ast.Expr:
+        return self._make_await_expr_node(
+            self._make_call_node("_int", [ast.Constant(value=func_name)]),
+        )
+
+    def _call_to_label(self, call: ast.Call) -> str:
+        """Derives a readable label from a call node."""
+        f = call.func
+        parts = []
+        while isinstance(f, ast.Attribute):
+            parts.append(f.attr)
+            f = f.value
+        if isinstance(f, ast.Name):
+            parts.append(f.id)
+        return ".".join(reversed(parts)) if parts else "call"
+
+    def visit_Module(self, node: ast.Module) -> ast.Module:
+        for sub_node in node.body:
+            if isinstance(sub_node, ast.AsyncFunctionDef):
+                self._defined_functions.add(sub_node.name)
+        self.generic_visit(node)
+        return node
 
     def visit_AsyncFunctionDef(
         self,
         node: ast.AsyncFunctionDef,
     ) -> ast.AsyncFunctionDef:
-        """Ensures all async functions have a @verify decorator."""
-        has_verify = any(
+        parent = self._current_function_name
+        self._current_function_name = node.name
+
+        if not any(
             isinstance(d, ast.Name) and d.id == "verify" for d in node.decorator_list
-        )
-        if not has_verify:
+        ):
             node.decorator_list.insert(0, ast.Name(id="verify", ctx=ast.Load()))
+
+        entry_probes = [
+            self._make_cp_node(f"Enter function: {node.name}"),
+            self._make_int_node(node.name),
+        ]
+
+        offset = (
+            1
+            if (
+                node.body
+                and isinstance(node.body[0], ast.Expr)
+                and isinstance(node.body[0].value, ast.Constant)
+            )
+            else 0
+        )
+        node.body[offset:offset] = entry_probes
+
+        self.generic_visit(node)
+        self._current_function_name = parent
+        return node
+
+    def _inject_loop_probes(self, node: typing.Union[ast.For, ast.While, ast.AsyncFor]):
+        probes = [
+            self._make_cp_node(
+                f"Enter {type(node).__name__} in {self._current_function_name}",
+            ),
+            self._make_int_node(self._current_function_name),
+        ]
+        node.body[0:0] = probes
+        self.generic_visit(node)
+        return node
+
+    def visit_For(self, node: ast.For) -> ast.For:
+        return self._inject_loop_probes(node)
+
+    def visit_While(self, node: ast.While) -> ast.While:
+        return self._inject_loop_probes(node)
+
+    def visit_AsyncFor(self, node: ast.AsyncFor) -> ast.AsyncFor:
+        return self._inject_loop_probes(node)
+
+    def visit_Expr(self, node: ast.Expr) -> list[ast.AST] | ast.Expr:
+        """Handles top-level 'await' statements, expanding them."""
+        if not (
+            isinstance(node.value, ast.Await) and isinstance(node.value.value, ast.Call)
+        ):
+            return self.generic_visit(node)
+
+        call = node.value.value
+        label = self._call_to_label(call)
+        if "action_provider" in label or (
+            isinstance(call.func, ast.Name) and call.func.id in self._defined_functions
+        ):
+            return [
+                self._make_cp_node(f"Before: {label}"),
+                node,
+                self._make_cp_node(f"After: {label}"),
+                self._make_int_node(self._current_function_name),
+            ]
+
+        return self.generic_visit(node)
+
+    def visit_Await(self, node: ast.Await) -> ast.Await:
+        """Handles awaited calls inside expressions by wrapping them."""
+        if not isinstance(node.value, ast.Call):
+            return self.generic_visit(node)
+
+        call = node.value
+        label = self._call_to_label(call)
+
+        if "action_provider" in label or (
+            isinstance(call.func, ast.Name) and call.func.id in self._defined_functions
+        ):
+            new_call = self._make_call_node(
+                "_around_cp",
+                [ast.Constant(value=label), call],
+            )
+            node.value = new_call
+
         return self.generic_visit(node)
 
 
