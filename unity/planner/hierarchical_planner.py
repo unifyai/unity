@@ -26,8 +26,6 @@ import uuid
 from pathlib import Path
 
 from unity.common.llm_helpers import (
-    AsyncToolUseLoopHandle,
-    start_async_tool_use_loop,
     SteerableToolHandle,
 )
 from unity.function_manager.function_manager import FunctionManager
@@ -680,7 +678,6 @@ class HierarchicalPlan(BaseActiveTask):
         self.planner = planner
         self.goal = goal
         self.is_teaching_session = goal is None
-        self.exploration_summary: Optional[str] = None
         self.plan_source_code: Optional[str] = None
         self.execution_namespace: Dict[str, Any] = {}
         self.call_stack: List[str] = []
@@ -693,7 +690,6 @@ class HierarchicalPlan(BaseActiveTask):
         self.interaction_stack: List[List[Tuple[str, str, Optional[str]]]] = []
         self.escalation_count = 0
         self._is_complete = False
-        self.main_loop_handle: Optional[AsyncToolUseLoopHandle] = None
         self._execution_task: Optional[asyncio.Task] = None
         self._state = _HierarchicalPlanState.IDLE
         self.interruption_request: Optional[Dict[str, str]] = None
@@ -703,7 +699,6 @@ class HierarchicalPlan(BaseActiveTask):
         self.clarification_up_q = clarification_up_q or asyncio.Queue()
         self.parent_chat_context = parent_chat_context
         self.clarification_down_q = clarification_down_q or asyncio.Queue()
-        self.completed_functions: dict = {}
         self.skipped_functions: set = set()
         self.action_cache: Dict[tuple, Any] = {}
         self._execution_task = asyncio.create_task(self._initialize_and_run())
@@ -715,7 +710,6 @@ class HierarchicalPlan(BaseActiveTask):
         self._module: Optional[types.ModuleType] = None
         self._module_spec: Optional[importlib.machinery.ModuleSpec] = None
 
-        self.main_loop_client: unify.AsyncUnify = unify.AsyncUnify("gpt-4o-mini@openai")
         self.plan_generation_client: unify.AsyncUnify = unify.AsyncUnify(
             "gemini-2.5-pro@vertex-ai",
         )
@@ -1126,15 +1120,6 @@ class HierarchicalPlan(BaseActiveTask):
         self.action_log.append(
             f"Updating implementation of '{function_name}' using robust merge.",
         )
-        keys_to_remove = [
-            key for key in self.completed_functions if key[0] == function_name
-        ]
-        for key in keys_to_remove:
-            self.completed_functions.pop(key, None)
-        if keys_to_remove:
-            logger.info(
-                f"CACHE INVALIDATE: Removed {len(keys_to_remove)} cache entries for '{function_name}'.",
-            )
 
         try:
             old_tree = ast.parse(self.plan_source_code or "pass")
@@ -1552,6 +1537,7 @@ class HierarchicalPlan(BaseActiveTask):
             _HierarchicalPlanState.RUNNING,
             _HierarchicalPlanState.PAUSED_FOR_INTERJECTION,
         ):
+            self.runtime.pause()
             self._set_state(_HierarchicalPlanState.PAUSED)
             self.action_log.append("Plan paused by user.")
             return "Plan paused."
@@ -1574,6 +1560,7 @@ class HierarchicalPlan(BaseActiveTask):
             A status message.
         """
         if self._state == _HierarchicalPlanState.PAUSED:
+            self.runtime.resume()
             self._set_state(_HierarchicalPlanState.RUNNING)
             self.action_log.append("Plan resumed by user.")
             return "Plan resumed."
