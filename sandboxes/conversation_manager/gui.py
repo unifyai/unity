@@ -164,6 +164,49 @@ class CallScreen(Screen):
             self.app.pop_screen()
 
 
+# class MeetScreen(Screen):
+#     def compose(self) -> ComposeResult:
+#         yield Header()
+#         yield Label("Task Name:")
+#         yield Input(placeholder="Enter task name", id="task_name")
+#         yield Label("Task Description:")
+#         yield Input(placeholder="Enter task description", id="task_description")
+#         yield Label("Purpose:")
+#         yield Input(placeholder="Enter purpose", id="purpose", value="general")
+#         yield Label("Meet ID:")
+#         yield Input(placeholder="Enter meet ID", id="meet_id")
+#         yield Horizontal(
+#             Button("Join Meet", id="send_meet"),
+#             Button("End Meet", id="end_meet"),
+#             Button("Back", id="back"),
+#         )
+#         yield Footer()
+
+#     def on_button_pressed(self, event: Button.Pressed) -> None:
+#         if event.button.id == "send_meet":
+#             task_name = self.query_one("#task_name", Input).value
+#             task_description = self.query_one("#task_description", Input).value
+#             purpose = self.query_one("#purpose", Input).value
+#             meet_id = self.query_one("#meet_id", Input).value
+#             ev = {
+#                 "topic": os.getenv("USER_PHONE_NUMBER"),
+#                 "event": PhoneCallInitiatedEvent(
+#                     purpose=purpose,
+#                     task_context={"name": task_name, "description": task_description},
+#                     meet_id=meet_id,
+#                 ).to_dict(),
+#             }
+#             asyncio.create_task(publish_event(ev))
+#         elif event.button.id == "end_meet":
+#             ev = {
+#                 "topic": os.getenv("USER_PHONE_NUMBER"),
+#                 "event": PhoneCallStopEvent().to_dict(),
+#             }
+#             asyncio.create_task(publish_event(ev))
+#         elif event.button.id == "back":
+#             self.app.pop_screen()
+
+
 class WhatsAppScreen(Screen):
     def compose(self) -> ComposeResult:
         yield Header()
