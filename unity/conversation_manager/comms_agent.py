@@ -37,7 +37,7 @@ DEFAULT_ASSISTANT_PAYLOAD = {
     "profile_photo": None,
     "country": None,
     "voice_id": None,
-    "tts_provider": "elevenlabs",
+    "tts_provider": "cartesia",
     "user_last_name": "",
 }
 
@@ -77,6 +77,8 @@ class CommsAgent:
         user_number: str,
         user_phone_call_number: str = None,
         user_email: str = None,
+        tts_provider: str = "cartesia",
+        voice_id: str = None,
         past_events: list | None = None,
         conv_context_length: int = 50,
         start_local: bool = False,
@@ -92,6 +94,8 @@ class CommsAgent:
         self.assistant_age = assistant_age
         self.assistant_region = assistant_region
         self.assistant_about = assistant_about
+        self.tts_provider = tts_provider
+        self.voice_id = voice_id
 
         # contact data
         self.assistant_number = assistant_number
@@ -303,8 +307,8 @@ class CommsAgent:
                                     else self.user_phone_call_number
                                 ),
                                 self.assistant_number,
-                                new_event["payload"].get("tts_provider", "cartesia"),
-                                new_event["payload"].get("voice_id", "None"),
+                                self.tts_provider,
+                                self.voice_id if self.voice_id else "None",
                                 "--outbound" if new_event.get("outbound") else "None",
                                 self.meet_id if self.meet_id else "None",
                             )
@@ -314,8 +318,8 @@ class CommsAgent:
                                 "console",
                                 self.user_phone_call_number,
                                 self.assistant_number,
-                                "cartesia",
-                                "None",
+                                self.tts_provider,
+                                self.voice_id if self.voice_id else "None",
                                 "None",
                                 self.meet_id if self.meet_id else "None",
                             )
@@ -861,6 +865,8 @@ class CommsAgent:
         self.user_number = payload["user_number"]
         self.user_phone_call_number = payload["user_phone_number"]
         self.user_email = payload["user_email"]
+        self.tts_provider = payload["tts_provider"]
+        self.voice_id = payload["voice_id"]
         os.environ["UNIFY_KEY"] = payload.pop("api_key")
         os.environ["USER_NAME"] = self.user_name
         os.environ["USER_PHONE_NUMBER"] = self.user_phone_call_number
@@ -868,6 +874,8 @@ class CommsAgent:
         os.environ["ASSISTANT_NAME"] = self.assistant_name
         os.environ["ASSISTANT_NUMBER"] = self.assistant_number
         os.environ["ASSISTANT_EMAIL"] = self.assistant_email
+        os.environ["TTS_PROVIDER"] = self.tts_provider
+        os.environ["VOICE_ID"] = self.voice_id
 
     async def initialize_redis(self):
         """Initialize Redis connection after server is ready"""
