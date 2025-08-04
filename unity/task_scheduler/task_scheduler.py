@@ -408,10 +408,29 @@ class TaskScheduler(BaseTaskScheduler):
 
         prompt = "\n".join(
             [
-                "You are an assistant that starts tasks on demand.",
-                "1. If the user instruction already contains the numeric task id, call `execute_task_by_id` directly.",
-                "2. Otherwise, call `ask` to figure out the task id from the description, then call `execute_task_by_id` with that id.",
-                "Respond *only* with tool calls until `execute_task_by_id` has been invoked. After it returns you may reply DONE.",
+                "You are an assistant that **starts tasks on demand**."
+                "  The task referred to in the user's request may or may not already"
+                "  exist in the task list.",
+                "",
+                "Use the tools below, step-by-step, following these rules:",
+                "",
+                "A. If the request contains a *numeric task_id*:",
+                "   • **First** call `ask` (or another suitable read-only tool) to confirm the task exists.",
+                "   • If exactly one matching task is found → call `execute_task_by_id`.",
+                "   • If the id is **unknown** (zero results) → call `request_clarification` to ask the human whether to create a new task or provide a different reference.  Do **NOT** call `execute_task_by_id` when the task cannot be confirmed.",
+                "",
+                "B. If **no numeric id** is given:",
+                "   1. Call `ask` with the free-form description to search for matching task(s).",
+                "   2. Based on the result:",
+                "      • **Exactly one** clear match → call `execute_task_by_id` with that id.",
+                "      • **Multiple / ambiguous** matches → call `request_clarification` so the user can disambiguate.",
+                "      • **No match**:",
+                "          – If it's ambiguous whether a *new* task should be created → `request_clarification`.",
+                "          – If it is obvious we need a *brand-new* task → call `update` to create the task, **then** call `execute_task_by_id` with the returned/newly discovered id.",
+                "",
+                "C. After creating a task with `update`, you may either read its id from the update response *or* call `ask` again to retrieve it before starting it.",
+                "",
+                "Respond *only* with tool calls until *after* `execute_task_by_id` returns.  You **must not** attempt `execute_task_by_id` until you are certain the referenced task exists. Once the task has started you may reply DONE.",
                 "",
                 "Tools (name → argspec):",
                 sig_json,
