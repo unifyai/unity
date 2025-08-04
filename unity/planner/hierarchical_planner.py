@@ -778,6 +778,11 @@ class HierarchicalPlan(BaseActiveTask):
                     """,
                     ).strip()
                     self._set_state(_HierarchicalPlanState.PAUSED_FOR_INTERJECTION)
+                    self.action_log.append(
+                        "Starting goal-less session. Awaiting user instruction.",
+                    )
+                    await self.planner._prepare_execution_environment(self)
+                    return
                 else:
                     self._set_state(_HierarchicalPlanState.RUNNING)
 
