@@ -696,6 +696,8 @@ class HierarchicalPlan(BaseActiveTask):
         self.main_loop_handle: Optional[AsyncToolUseLoopHandle] = None
         self._execution_task: Optional[asyncio.Task] = None
         self._state = _HierarchicalPlanState.IDLE
+        self.interruption_request: Optional[Dict[str, str]] = None
+        self._interject_lock = asyncio.Lock()
         self._completion_event = asyncio.Event()
         self._final_result_str: Optional[str] = None
         self.clarification_up_q = clarification_up_q or asyncio.Queue()
@@ -1278,72 +1280,56 @@ class HierarchicalPlan(BaseActiveTask):
         if not self._is_valid_method("interject"):
             return "Cannot interject: plan not running."
 
-        await self.pause()
-        decision = None
-        try:
-            prompt = prompt_builders.build_interjection_prompt(
-                interjection=message,
-                parent_chat_context=self.parent_chat_context,
-                plan_source_code=self.plan_source_code,
-                call_stack=self.call_stack,
-                action_log=self.action_log[-10:],
-                is_teaching_session=self.is_teaching_session,
-            )
-
-            self.modification_client.set_response_format(InterjectionDecision)
+        async with self._interject_lock:
+            await self.pause()
+            decision = None
             try:
-                decision_str = await llm_call(self.modification_client, prompt)
-                decision = InterjectionDecision.model_validate_json(decision_str)
-                logger.debug(
-                    f"{format_pydantic_model(decision, title='INTERJECTION DECISION', indent=2)}",
+                prompt = prompt_builders.build_interjection_prompt(
+                    interjection=message,
+                    parent_chat_context=self.parent_chat_context,
+                    plan_source_code=self.plan_source_code,
+                    call_stack=self.call_stack,
+                    action_log=self.action_log[-10:],
+                    is_teaching_session=self.is_teaching_session,
                 )
+
+                self.modification_client.set_response_format(InterjectionDecision)
+                try:
+                    decision_str = await llm_call(self.modification_client, prompt)
+                    decision = InterjectionDecision.model_validate_json(decision_str)
+                    logger.debug(
+                        f"{format_pydantic_model(decision, title='INTERJECTION DECISION', indent=2)}",
+                    )
+                finally:
+                    self.modification_client.reset_response_format()
+
+                self.action_log.append(
+                    f"Interjection Decision: {decision.action} - {decision.reason}",
+                )
+
+                status_message = await self._execute_interjection_decision(decision)
+
+                return status_message
+
+            except Exception as e:
+                logger.error(f"Error during interjection handling: {e}", exc_info=True)
+                self.action_log.append(f"ERROR during interjection: {e}")
+                return f"Error processing interjection: {e}"
             finally:
-                self.modification_client.reset_response_format()
-
-            self.action_log.append(
-                f"Interjection Decision: {decision.action} - {decision.reason}",
-            )
-
-            status_message = await self._execute_interjection_decision(decision)
-
-            return status_message
-
-        except Exception as e:
-            logger.error(f"Error during interjection handling: {e}", exc_info=True)
-            self.action_log.append(f"ERROR during interjection: {e}")
-            return f"Error processing interjection: {e}"
-        finally:
-            should_resume = decision is None or decision.action not in (
-                "modify_task",
-                "replace_task",
-            )
-            if self._state == _HierarchicalPlanState.PAUSED and should_resume:
-                await self.resume()
+                should_resume = decision is None or decision.action not in (
+                    "modify_task",
+                    "replace_task",
+                )
+                if self._state == _HierarchicalPlanState.PAUSED and should_resume:
+                    await self.resume()
 
     async def _execute_interjection_decision(
         self,
         decision: InterjectionDecision,
     ) -> str:
         """Executes the action decided by the Interjection Handler LLM."""
-        if (
-            decision.action in ("modify_task", "replace_task")
-            and self._execution_task
-            and not self._execution_task.done()
-        ):
-            self._execution_task.cancel()
-            try:
-                await self._execution_task
-            except asyncio.CancelledError:
-                self.action_log.append("Execution paused by user interjection.")
-
         if decision.action == "modify_task":
-            self.action_log.append("Executing decision: modify_task.")
-
-            if not self.goal and decision.new_goal:
-                self.goal = decision.new_goal
-                self.action_log.append(
-                    f"Set plan goal from interjection: '{self.goal}'",
-                )
+            self.action_log.append("Executing stateful decision: modify_task.")
 
             target_function = decision.target_function or (
                 self.call_stack[-1]
@@ -1358,16 +1344,31 @@ class HierarchicalPlan(BaseActiveTask):
                 target_function,
                 replan_reason=f"User interjected with a new instruction: '{decision.modification_request}'",
             )
-            self._cleanup_temp_file()
-            logger.debug(
-                "INTERJECT: modify_task decision. Creating new _execution_task.",
-            )
-            self._execution_task = asyncio.create_task(self._initialize_and_run())
-            return f"Plan modification for '{target_function}' initiated. Resuming execution."
+            if self.is_teaching_session:
+                if self._execution_task and not self._execution_task.done():
+                    self._execution_task.cancel()
+                    try:
+                        await self._execution_task
+                    except asyncio.CancelledError:
+                        pass
+                self.interaction_stack.clear()
+                self.interaction_stack.append([])
+                self.call_stack.clear()
+                self._execution_task = asyncio.create_task(self._initialize_and_run())
+                self.runtime.resume()
+            else:
+                self.interruption_request = {
+                    "target_function": target_function,
+                    "reason": decision.modification_request,
+                }
+                await self.resume()
+
+            return f"Plan modification for '{target_function}' applied. Resuming execution."
 
         elif decision.action == "replace_task":
+            if self._execution_task and not self._execution_task.done():
+                self._execution_task.cancel()
             self.action_log.append("Executing decision: replace_task.")
-
             await self.stop(final_result=f"REPLACE_TASK: {decision.new_goal}")
             return f"Current plan stopped. Requesting new plan for goal: '{decision.new_goal}'"
 
@@ -1511,16 +1512,9 @@ class HierarchicalPlan(BaseActiveTask):
             self.action_log.append("Executing decision: complete_task.")
             if self.is_teaching_session:
                 self.is_teaching_session = False
-                self.action_log.append(
-                    "Teaching session completed. Plan will now execute to completion.",
-                )
-                if self._execution_task and not self._execution_task.done():
-                    self._execution_task.cancel()
-                self._execution_task = asyncio.create_task(self._initialize_and_run())
-
-                return (
-                    "Teaching session completed. Plan will now execute to completion."
-                )
+                self._set_state(_HierarchicalPlanState.COMPLETED)
+                self._set_final_result(self._final_result_str or "Plan completed.")
+                return "Teaching session completed."
             else:
                 return "Not in a teaching session. Plan will continue normally."
 
