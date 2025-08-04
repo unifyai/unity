@@ -658,6 +658,35 @@ async def _async_tool_use_loop_inner(
     # unique id
     loop_id = loop_id if loop_id is not None else short_id()
 
+    # If structured output is expected, inform the model up-front so it can
+    # plan its reasoning with the final JSON shape in mind.  Enforcement via
+    # `set_response_format` still happens at the end of the loop.
+    if response_format is not None:
+        try:
+            from pydantic import BaseModel  # local import
+
+            if isinstance(response_format, type) and issubclass(
+                response_format,
+                BaseModel,
+            ):
+                _schema = response_format.model_json_schema()
+            elif isinstance(response_format, dict):
+                _schema = response_format
+            else:
+                _schema = None
+
+            if _schema is not None:
+                _hint = (
+                    "\n\nNOTE: After completing all tool calls, your **final** assistant reply must be valid JSON that conforms to the following schema. Do NOT include any extra keys or commentary.\n"
+                    + json.dumps(_schema, indent=2)
+                )
+            else:
+                _hint = "\n\nNOTE: After completing all tool calls, your **final** assistant reply must be valid JSON conforming to the requested response format. Do NOT include any extra keys or commentary."
+
+            client.set_system_message((client.system_message or "") + _hint)
+        except Exception as _exc:  # noqa: BLE001
+            LOGGER.error(f"response_format hint failed: {_exc!r}")
+
     # ── runtime guards ────────────────────────────────────────────────────
     # rolling timeout ----------------------------------------------------
     last_activity_ts: float = time.perf_counter()  # reset every time
