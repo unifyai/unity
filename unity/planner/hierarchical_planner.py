@@ -1476,7 +1476,7 @@ class HierarchicalPlan(BaseActiveTask):
                 reason = f"The user is teaching a new step. Add this instruction to the function: '{decision.modification_request}'"
             else:
                 reason = f"User interjected with a new instruction: '{decision.modification_request}'"
-                
+
             await self._handle_dynamic_implementation(
                 target_function,
                 replan_reason=reason,
