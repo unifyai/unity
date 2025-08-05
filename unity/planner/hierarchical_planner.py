@@ -49,14 +49,15 @@ class PlanRuntime:
         self._pause_event.set()
         self._checkpoint_event = asyncio.Event()
         self._waiting_for_planner = False
-        self._step_counter = 0
+
+        self.action_counter = 0
+        self.path_context: List[str] = []
 
     async def checkpoint(self, label: str = ""):
         """
         A cooperative yield point. It yields control, honors pauses,
         and then signals the planner and waits for release.
         """
-        self._step_counter += 1
         await asyncio.sleep(0)
         await self._pause_event.wait()
 
@@ -80,6 +81,15 @@ class PlanRuntime:
     def resume(self):
         """Resumes a paused plan."""
         self._pause_event.set()
+
+    def push_path_context(self, context_id: str):
+        """Pushes a new context (e.g., loop or branch) onto the execution path stack."""
+        self.path_context.append(context_id)
+
+    def pop_path_context(self):
+        """Pops the latest context from the execution path stack."""
+        if self.path_context:
+            self.path_context.pop()
 
 
 def format_pydantic_model(
@@ -2200,6 +2210,8 @@ class HierarchicalPlanner(BasePlanner):
                 plan.call_stack.append(func_name)
                 plan.interaction_stack.append([])
                 logger.info(f"VERIFY: Entering '{func_name}'")
+                parent_action_counter = plan.runtime.action_counter
+                plan.runtime.action_counter = 0
 
                 try:
                     last_error_reason = ""
@@ -2306,6 +2318,7 @@ class HierarchicalPlanner(BasePlanner):
                         plan.interaction_stack.pop()
 
                     plan.action_log.append(f"<- Exiting '{func_name}'")
+                    plan.runtime.action_counter = parent_action_counter
 
             return wrapper
 
