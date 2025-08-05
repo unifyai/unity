@@ -1,33 +1,14 @@
 import os
-import unify
 import traceback
+import unify
 
 
-LOGGER = None
+api_key = os.environ.get("SHARED_UNIFY_KEY")
+if "Debug" not in unify.list_projects(api_key=api_key):
+    unify.create_project("Debug", api_key=api_key)
 
 
-def _get_logger():
-    global LOGGER
-
-    try:
-        api_key = os.environ.get("SHARED_UNIFY_KEY")
-        if "Debug" not in unify.list_projects(api_key=api_key):
-            unify.create_project("Debug", api_key=api_key)
-
-        if LOGGER is None:
-            LOGGER = unify.AsyncLoggerManager(
-                name="DebugLogger",
-                num_consumers=1,
-                api_key=api_key,
-            )
-    except Exception as e:
-        print(f"Error getting logger: {e}")
-        traceback.print_exc()
-        return None
-    return LOGGER
-
-
-async def log_message(
+def log_job_startup(
     job_name: str,
     timestamp: str,
     medium: str,
@@ -39,21 +20,42 @@ async def log_message(
     user_phone_call_number: str,
     assistant_number: str,
 ):
-    _get_logger().log_create(
-        project="Debug",
-        context="startup_events",
-        params={},
-        entries={
-            "job_name": job_name,
-            "timestamp": timestamp,
-            "medium": medium,
-            "user_id": user_id,
-            "assistant_id": assistant_id,
-            "user_name": user_name,
-            "assistant_name": assistant_name,
-            "user_number": user_number,
-            "user_phone_call_number": user_phone_call_number,
-            "assistant_number": assistant_number,
-        },
-    )
-    _get_logger().join()
+    try:
+        unify.create_logs(
+            project="Debug",
+            context="startup_events",
+            params={},
+            entries={
+                "job_name": job_name,
+                "timestamp": timestamp,
+                "medium": medium,
+                "user_id": user_id,
+                "assistant_id": assistant_id,
+                "user_name": user_name,
+                "assistant_name": assistant_name,
+                "user_number": user_number,
+                "user_phone_call_number": user_phone_call_number,
+                "assistant_number": assistant_number,
+                "running": True,
+            },
+            api_key=api_key,
+        )
+        print("Logged Startup Event", job_name)
+    except Exception as e:
+        print(f"Error creating logs: {e}")
+        traceback.print_exc()
+
+
+def mark_job_done(job_name: str):
+    try:
+        job_log = unify.get_logs(
+            project="Debug",
+            context="startup_events",
+            filter=f"job_name == '{job_name}'",
+            api_key=api_key,
+        )[0]
+        job_log.update_entries(running=False)
+        print("Job marked done", job_name)
+    except Exception as e:
+        print(f"Error finding job: {e}")
+        traceback.print_exc()

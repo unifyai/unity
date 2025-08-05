@@ -10,11 +10,11 @@ import json
 import os
 import signal
 import traceback
+
+load_dotenv()
 from unity.conversation_manager.comms_agent import CommsAgent
 from unity.conversation_manager.comms_manager import CommsManager
 from unity.constants import ASYNCIO_DEBUG
-
-load_dotenv()
 
 
 # globals
