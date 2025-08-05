@@ -91,6 +91,8 @@ class CommsManager:
                             user_number=event["user_number"],
                             user_phone_number=event["user_phone_number"],
                             user_email=event["user_email"],
+                            tts_provider=event["tts_provider"],
+                            voice_id=event["voice_id"],
                         ).to_dict(),
                     },
                 )
