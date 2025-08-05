@@ -903,6 +903,7 @@ class HierarchicalPlan(BaseActiveTask):
                         parent_function_name,
                         is_strategic_replan=True,
                         replan_reason=decision.reason,
+                        existing_code_for_modification=parent_existing_code,
                     )
                 else:
                     self.action_log.append(
@@ -926,6 +927,7 @@ class HierarchicalPlan(BaseActiveTask):
                         function_name,
                         is_strategic_replan=True,
                         replan_reason=trace_summary,
+                        existing_code_for_modification=existing_code,
                     )
             except ValueError:
                 raise FatalVerificationError(
@@ -1003,106 +1005,6 @@ class HierarchicalPlan(BaseActiveTask):
 
         return False
 
-    def _merge_function_bodies(self, old_fn, new_fn):
-        """
-        Merges the bodies of two functions by appending new statements and
-        combining their docstrings into a step-by-step guide.
-
-        Args:
-            old_fn: The existing function AST node (FunctionDef or AsyncFunctionDef)
-            new_fn: The new function AST node (FunctionDef or AsyncFunctionDef)
-
-        Returns:
-            The merged function with combined body statements and docstring
-        """
-        old_doc = (ast.get_docstring(old_fn) or "").strip()
-        new_doc = (ast.get_docstring(new_fn) or "").strip()
-
-        if "This is a teaching session" in old_doc:
-            old_doc = ""
-        if "Main entry point for the hierarchical plan" in new_doc:
-            new_doc_lines = new_doc.split("\n")
-            new_doc = next(
-                (
-                    line
-                    for line in new_doc_lines
-                    if "Main entry" not in line and line.strip()
-                ),
-                "",
-            ).strip()
-
-        if old_doc and new_doc:
-            old_lines = [line.strip() for line in old_doc.split("\n") if line.strip()]
-
-            if old_lines and re.match(r"^\d+\.", old_lines[0]):
-                last_num = 0
-                match = re.match(r"^(\d+)\.", old_lines[-1])
-                if match:
-                    last_num = int(match.group(1))
-
-                merged_docstring = f"{old_doc}\n{last_num + 1}. {new_doc}"
-            else:
-                merged_docstring = f"1. {old_doc}\n2. {new_doc}"
-
-        elif new_doc:
-            merged_docstring = f"1. {new_doc}"
-        else:
-            merged_docstring = old_doc
-
-        if merged_docstring:
-            if "\n" in merged_docstring:
-                lines = merged_docstring.strip().split("\n")
-                formatted_lines = []
-                for line in lines:
-                    if line.strip():
-                        formatted_lines.append(f"    {line.strip()}")
-                merged_docstring = "\n" + "\n".join(formatted_lines) + "\n"
-
-        final_docstring_node = ast.Expr(value=ast.Constant(value=merged_docstring))
-
-        old_executable_stmts = [
-            stmt for stmt in old_fn.body if not self._is_docstring_or_pass(stmt)
-        ]
-        old_srcs = {ast.unparse(s).strip() for s in old_executable_stmts}
-
-        merged_body = [final_docstring_node]
-        merged_body.extend(old_executable_stmts)
-
-        for stmt in new_fn.body:
-            if self._is_docstring_or_pass(stmt):
-                continue
-            if ast.unparse(stmt).strip() not in old_srcs:
-                merged_body.append(stmt)
-
-        if len(merged_body) <= 1:
-            merged_body.append(ast.Pass())
-
-        if isinstance(old_fn, ast.AsyncFunctionDef):
-            merged_fn = ast.AsyncFunctionDef(
-                name=old_fn.name,
-                args=old_fn.args,
-                body=merged_body,
-                decorator_list=old_fn.decorator_list,
-                returns=old_fn.returns,
-                type_comment=old_fn.type_comment,
-                lineno=old_fn.lineno,
-                col_offset=old_fn.col_offset,
-            )
-        else:
-            merged_fn = ast.FunctionDef(
-                name=old_fn.name,
-                args=old_fn.args,
-                body=merged_body,
-                decorator_list=old_fn.decorator_list,
-                returns=old_fn.returns,
-                type_comment=old_fn.type_comment,
-                lineno=old_fn.lineno,
-                col_offset=old_fn.col_offset,
-            )
-
-        ast.fix_missing_locations(merged_fn)
-        return merged_fn
-
     def _update_plan_with_new_code(self, function_name: str, new_code: str):
         """
         Updates the plan's source code with a new function implementation using a
@@ -1111,8 +1013,6 @@ class HierarchicalPlan(BaseActiveTask):
         This function merges all top-level statements, including
         functions, classes, imports, and global assignments, ensuring that the
         new code is seamlessly integrated without losing existing code.
-
-        During teaching sessions, function bodies are merged to preserve previous steps.
 
         Args:
             function_name: The name of the function to replace or add.
@@ -1127,57 +1027,23 @@ class HierarchicalPlan(BaseActiveTask):
             logger.warning(f"Could not store clean source for '{function_name}': {e}")
 
         self.action_log.append(
-            f"Updating implementation of '{function_name}' using robust merge.",
+            f"Updating implementation of '{function_name}'.",
         )
 
         try:
             old_tree = ast.parse(self.plan_source_code or "pass")
             new_tree = ast.parse(textwrap.dedent(new_code))
 
-            old_nodes = {}
-            for node in old_tree.body:
-                key = self._get_node_key(node)
-                if key:
-                    old_nodes[key] = node
+            final_nodes = {
+                self._get_node_key(node): node
+                for node in old_tree.body
+                if self._get_node_key(node)
+            }
 
-            new_nodes = {}
             for node in new_tree.body:
                 key = self._get_node_key(node)
                 if key:
-                    new_nodes[key] = node
-
-            final_nodes = dict(old_nodes)
-
-            for key, new_node in new_nodes.items():
-                if (
-                    self.is_teaching_session
-                    and key[0] == "def"
-                    and key[1] == function_name
-                ):
-                    if key in old_nodes:
-                        old_node = old_nodes[key]
-                        if (
-                            isinstance(
-                                old_node,
-                                (ast.FunctionDef, ast.AsyncFunctionDef),
-                            )
-                            and isinstance(
-                                new_node,
-                                (ast.FunctionDef, ast.AsyncFunctionDef),
-                            )
-                            and type(old_node) == type(new_node)
-                        ):
-                            merged_fn = self._merge_function_bodies(old_node, new_node)
-                            final_nodes[key] = merged_fn
-                            self.action_log.append(
-                                f"Merged function bodies for '{function_name}' during teaching session.",
-                            )
-                        else:
-                            final_nodes[key] = new_node
-                    else:
-                        final_nodes[key] = new_node
-                else:
-                    final_nodes[key] = new_node
+                    final_nodes[key] = node
 
             final_tree = ast.Module(body=list(final_nodes.values()), type_ignores=[])
             ast.fix_missing_locations(final_tree)
@@ -1187,7 +1053,7 @@ class HierarchicalPlan(BaseActiveTask):
 
         except (SyntaxError, ValueError, RuntimeError) as e:
             logger.error(
-                f"Robust AST-based code update for '{function_name}' failed: {e}",
+                f"AST-based code replacement for '{function_name}' failed: {e}",
                 exc_info=True,
             )
             raise
@@ -1335,9 +1201,15 @@ class HierarchicalPlan(BaseActiveTask):
                 return "Error: Could not determine a target function to modify."
 
             existing_code = self.clean_function_source_map.get(target_function)
+            if self.is_teaching_session:
+                reason = f"The user is teaching a new step. Add this instruction to the function: '{decision.modification_request}'"
+            else:
+                reason = f"User interjected with a new instruction: '{decision.modification_request}'"
+                
             await self._handle_dynamic_implementation(
                 target_function,
-                replan_reason=f"User interjected with a new instruction: '{decision.modification_request}'",
+                replan_reason=reason,
+                existing_code_for_modification=existing_code,
             )
             if self.is_teaching_session:
                 if self._execution_task and not self._execution_task.done():
@@ -2102,6 +1974,7 @@ class HierarchicalPlanner(BasePlanner):
                                 is_strategic_replan=True,
                                 replan_reason=last_error_reason,
                                 failed_interactions=e.failed_interactions,
+                                existing_code_for_modification=existing_code,
                             )
                             if plan.interaction_stack:
                                 plan.interaction_stack[-1].clear()
@@ -2122,6 +1995,7 @@ class HierarchicalPlanner(BasePlanner):
                             await plan._handle_dynamic_implementation(
                                 func_name,
                                 replan_reason=f"Function crashed. Fix bug:\n{last_error_reason}",
+                                existing_code_for_modification=existing_code,
                             )
                             if plan.interaction_stack:
                                 plan.interaction_stack[-1].clear()
@@ -2436,10 +2310,12 @@ class HierarchicalPlanner(BasePlanner):
                     failed_interactions=interactions,
                 )
             else:
+                existing_code = plan.clean_function_source_map.get(fn.__name__)
                 await plan._handle_dynamic_implementation(
                     fn.__name__,
                     replan_reason=assessment.reason,
                     failed_interactions=interactions,
+                    existing_code_for_modification=existing_code,
                 )
                 raise _ForcedRetryException("Forced retry after local reimplementation")
 
@@ -2588,11 +2464,11 @@ class HierarchicalPlanner(BasePlanner):
                 has_browser_screenshot=browser_screenshot is not None,
                 replan_context=replan_reason,
                 tools=self.tools,
-                is_teaching_session=plan.is_teaching_session,
-                function_source_map=plan.function_source_map,
+                existing_code_for_modification=kwargs.get(
+                    "existing_code_for_modification",
+                ),
             )
             plan.implementation_client.set_response_format(ImplementationDecision)
-
             try:
                 response_str = await llm_call(
                     plan.implementation_client,
