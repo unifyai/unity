@@ -314,6 +314,9 @@ class PlanSanitizer(ast.NodeTransformer):
     def __init__(self):
         self._current_function_name = "global"
         self._defined_functions = set()
+        self._loop_counter = 0
+        self._if_counter = 0
+        self._try_counter = 0
 
     def _make_call_node(self, func_id: str, args: list) -> ast.Call:
         return ast.Call(
@@ -346,6 +349,20 @@ class PlanSanitizer(ast.NodeTransformer):
             parts.append(f.id)
         return ".".join(reversed(parts)) if parts else "call"
 
+    def _make_runtime_call_expr(self, method: str, args: List[ast.AST]) -> ast.Expr:
+        """Helper to create `runtime.method(...)` expressions."""
+        return ast.Expr(
+            value=ast.Call(
+                func=ast.Attribute(
+                    value=ast.Name(id="runtime", ctx=ast.Load()),
+                    attr=method,
+                    ctx=ast.Load(),
+                ),
+                args=args,
+                keywords=[],
+            ),
+        )
+
     def visit_Module(self, node: ast.Module) -> ast.Module:
         for sub_node in node.body:
             if isinstance(sub_node, ast.AsyncFunctionDef):
@@ -357,6 +374,43 @@ class PlanSanitizer(ast.NodeTransformer):
         self,
         node: ast.AsyncFunctionDef,
     ) -> ast.AsyncFunctionDef:
+        cleaned_body = []
+        for stmt in node.body:
+            if (
+                isinstance(stmt, ast.AugAssign)
+                and isinstance(stmt.target, ast.Attribute)
+                and hasattr(stmt.target.value, "id")
+                and stmt.target.value.id == "runtime"
+                and stmt.target.attr == "action_counter"
+            ):
+                continue
+
+            if (
+                isinstance(stmt, ast.Expr)
+                and isinstance(stmt.value, ast.Await)
+                and isinstance(stmt.value.value, ast.Call)
+                and isinstance(stmt.value.value.func, ast.Name)
+                and stmt.value.value.func.id in {"_cp", "_int"}
+            ):
+                continue
+
+            if (
+                isinstance(stmt, ast.Expr)
+                and isinstance(stmt.value, ast.Call)
+                and isinstance(stmt.value.func, ast.Attribute)
+                and hasattr(stmt.value.func.value, "id")
+                and stmt.value.func.value.id == "runtime"
+                and stmt.value.func.attr in {"push_path_context", "pop_path_context"}
+            ):
+                continue
+
+            cleaned_body.append(stmt)
+        node.body = cleaned_body
+
+        self._loop_counter = 0
+        self._if_counter = 0
+        self._try_counter = 0
+
         parent = self._current_function_name
         self._current_function_name = node.name
 
@@ -383,6 +437,51 @@ class PlanSanitizer(ast.NodeTransformer):
 
         self.generic_visit(node)
         self._current_function_name = parent
+        return node
+
+    def _wrap_block_with_context(
+        self,
+        block: List[ast.stmt],
+        context_id: str,
+    ) -> List[ast.stmt]:
+        """Injects push/pop context calls around a block of statements."""
+        if not block:
+            return []
+        push_call = self._make_runtime_call_expr(
+            "push_path_context",
+            [ast.Constant(value=context_id)],
+        )
+        pop_call = self._make_runtime_call_expr("pop_path_context", [])
+        return [push_call] + block + [pop_call]
+
+    def visit_If(self, node: ast.If) -> ast.If:
+        self._if_counter += 1
+        if_id = f"if_{self._if_counter}"
+
+        node.body = self._wrap_block_with_context(node.body, f"{if_id}_true")
+        if node.orelse:
+            node.orelse = self._wrap_block_with_context(node.orelse, f"{if_id}_false")
+
+        self.generic_visit(node)
+        return node
+
+    def visit_Try(self, node: ast.Try) -> ast.Try:
+        self._try_counter += 1
+        try_id = f"try_{self._try_counter}"
+
+        node.body = self._wrap_block_with_context(node.body, f"{try_id}_try")
+        for i, handler in enumerate(node.handlers):
+            handler.body = self._wrap_block_with_context(
+                handler.body,
+                f"{try_id}_except_{i}",
+            )
+        if node.finalbody:
+            node.finalbody = self._wrap_block_with_context(
+                node.finalbody,
+                f"{try_id}_finally",
+            )
+
+        self.generic_visit(node)
         return node
 
     def _inject_loop_probes(self, node: typing.Union[ast.For, ast.While, ast.AsyncFor]):
