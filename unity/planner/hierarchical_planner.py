@@ -726,9 +726,7 @@ class _SteerableToolHandleProxy:
 class _ActionProviderProxy:
     """
     A generic proxy that wraps the real ActionProvider to intercept all tool
-    calls and log them for the @verify decorator. It correctly
-    handles both synchronous and asynchronous tools and ensures that handles
-    returned by tools are also proxied to log subsequent interactions.
+    calls, apply idempotency caching, and log them for verification.
     """
 
     def __init__(self, real_action_provider: ActionProvider, plan: "HierarchicalPlan"):
@@ -741,68 +739,159 @@ class _ActionProviderProxy:
         is accessed on the proxy instance.
         """
         real_attr = getattr(self._real_action_provider, name)
-
         if not callable(real_attr):
             return real_attr
 
-        @functools.wraps(real_attr)
         async def async_wrapper(*args, **kwargs):
-            """Asynchronous wrapper for logging and calling async tools."""
             interactions_log = self._plan.interaction_stack[-1]
+            self._plan.runtime.action_counter += 1
+            tool_name = f"action_provider.{name}"
+            call_repr = (
+                f"{tool_name}({self._plan.planner._serialize_args(args, kwargs)})"
+            )
 
-            arg_str = ", ".join(map(repr, args))
-            kwarg_str = ", ".join(f"{k}={v!r}" for k, v in kwargs.items())
-            call_repr = f"action_provider.{name}({arg_str}, {kwarg_str})"
+            cache_key = self._plan.planner._generate_cache_key(
+                self._plan,
+                tool_name,
+                args,
+                kwargs,
+            )
+
+            if cache_key in self._plan.idempotency_cache:
+                cached_data = self._plan.idempotency_cache[cache_key]
+                cached_result_id = cached_data["result"]
+                cached_interaction = cached_data["interaction_log"]
+                self._plan.action_log.append(
+                    f"CACHE HIT: Using cached result for {call_repr}",
+                )
+                logger.debug(f"CACHE HIT for key: {cache_key}")
+                interactions_log.append(cached_interaction)
+
+                if (
+                    cached_interaction[0] == "tool_call"
+                    and "Returned handle" in cached_interaction[2]
+                ):
+                    real_handle = self._plan.live_handles.get(cached_result_id)
+                    if not real_handle:
+                        raise RuntimeError(
+                            f"Cache consistency error: Could not find live handle for ID {cached_result_id}",
+                        )
+                    handle_name = f"{name}_handle"
+                    return _SteerableToolHandleProxy(
+                        real_handle,
+                        self._plan,
+                        handle_name,
+                        cached_result_id,
+                    )
+                return cached_result_id
+
+            self._plan.action_log.append(f"CACHE MISS: Executing {call_repr}")
+            logger.debug(f"CACHE MISS for key: {cache_key}")
 
             tool_output = await real_attr(*args, **kwargs)
+
+            result_to_cache = tool_output
+            return_value = tool_output
+            interaction_str = str(tool_output)
+
             if isinstance(tool_output, SteerableToolHandle):
-                interactions_log.append(
-                    (
-                        "tool_call",
-                        call_repr,
-                        f"Returned handle: {tool_output.__class__.__name__}",
-                    ),
-                )
                 handle_name = f"{name}_handle"
-                return _SteerableToolHandleProxy(tool_output, self._plan, handle_name)
-            else:
-                if isinstance(tool_output, SteerableToolHandle):
-                    final_result = await tool_output.result()
-                    interactions_log.append(("tool_call", call_repr, str(final_result)))
-                else:
-                    interactions_log.append(("tool_call", call_repr, str(tool_output)))
+                handle_id = str(uuid.uuid4())
+                self._plan.live_handles[handle_id] = tool_output
+                result_to_cache = handle_id
+                interaction_str = f"Returned handle: {tool_output.__class__.__name__}"
+                return_value = _SteerableToolHandleProxy(
+                    tool_output,
+                    self._plan,
+                    handle_name,
+                    handle_id,
+                )
 
-                return tool_output
+            interaction_to_cache = ("tool_call", call_repr, interaction_str)
+            interactions_log.append(interaction_to_cache)
+            self._plan.idempotency_cache[cache_key] = {
+                "result": result_to_cache,
+                "interaction_log": interaction_to_cache,
+            }
 
-        @functools.wraps(real_attr)
+            return return_value
+
         def sync_wrapper(*args, **kwargs):
             """Synchronous wrapper for logging and calling sync tools."""
             interactions_log = self._plan.interaction_stack[-1]
+            self._plan.runtime.action_counter += 1
+            tool_name = f"action_provider.{name}"
+            call_repr = (
+                f"{tool_name}({self._plan.planner._serialize_args(args, kwargs)})"
+            )
 
-            arg_str = ", ".join(map(repr, args))
-            kwarg_str = ", ".join(f"{k}={v!r}" for k, v in kwargs.items())
-            call_repr = f"action_provider.{name}({arg_str}, {kwarg_str})"
+            cache_key = self._plan.planner._generate_cache_key(
+                self._plan,
+                tool_name,
+                args,
+                kwargs,
+            )
+
+            if cache_key in self._plan.idempotency_cache:
+                cached_data = self._plan.idempotency_cache[cache_key]
+                cached_result_id = cached_data["result"]
+                cached_interaction = cached_data["interaction_log"]
+                self._plan.action_log.append(
+                    f"CACHE HIT: Using cached result for {call_repr}",
+                )
+                logger.debug(f"CACHE HIT for key: {cache_key}")
+                interactions_log.append(cached_interaction)
+
+                if (
+                    cached_interaction[0] == "tool_call"
+                    and "Returned handle" in cached_interaction[2]
+                ):
+                    real_handle = self._plan.live_handles.get(cached_result_id)
+                    if not real_handle:
+                        raise RuntimeError(
+                            f"Cache consistency error: Could not find live handle for ID {cached_result_id}",
+                        )
+                    handle_name = f"{name}_handle"
+                    return _SteerableToolHandleProxy(
+                        real_handle,
+                        self._plan,
+                        handle_name,
+                        cached_result_id,
+                    )
+                return cached_result_id
+
+            self._plan.action_log.append(f"CACHE MISS: Executing {call_repr}")
+            logger.debug(f"CACHE MISS for key: {cache_key}")
 
             result = real_attr(*args, **kwargs)
 
-            if isinstance(result, SteerableToolHandle):
-                interactions_log.append(
-                    (
-                        "tool_call",
-                        call_repr,
-                        f"Returned handle: {result.__class__.__name__}",
-                    ),
-                )
-                handle_name = f"{name}_handle"
-                return _SteerableToolHandleProxy(result, self._plan, handle_name)
-            else:
-                interactions_log.append(("tool_call", call_repr, str(result)))
-                return result
+            result_to_cache = result
+            return_value = result
+            interaction_str = str(result)
 
-        if inspect.iscoroutinefunction(real_attr):
-            return async_wrapper
-        else:
-            return sync_wrapper
+            if isinstance(result, SteerableToolHandle):
+                handle_name = f"{name}_handle"
+                handle_id = str(uuid.uuid4())
+                self._plan.live_handles[handle_id] = result
+                result_to_cache = handle_id
+                interaction_str = f"Returned handle: {result.__class__.__name__}"
+                return_value = _SteerableToolHandleProxy(
+                    result,
+                    self._plan,
+                    handle_name,
+                    handle_id,
+                )
+
+            interaction_to_cache = ("tool_call", call_repr, interaction_str)
+            interactions_log.append(interaction_to_cache)
+            self._plan.idempotency_cache[cache_key] = {
+                "result": result_to_cache,
+                "interaction_log": interaction_to_cache,
+            }
+
+            return return_value
+
+        return async_wrapper if inspect.iscoroutinefunction(real_attr) else sync_wrapper
 
 
 class HierarchicalPlan(BaseActiveTask):
