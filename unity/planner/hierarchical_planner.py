@@ -406,23 +406,19 @@ class PlanSanitizer(ast.NodeTransformer):
         return self._inject_loop_probes(node)
 
     def visit_Expr(self, node: ast.Expr) -> list[ast.AST] | ast.Expr:
-        """Handles top-level 'await' statements, expanding them."""
+        """Handles top-level 'await' expressions."""
         if not (
             isinstance(node.value, ast.Await) and isinstance(node.value.value, ast.Call)
         ):
             return self.generic_visit(node)
 
         call = node.value.value
-        label = self._call_to_label(call)
-        if "action_provider" in label or (
+        is_tool_call = "action_provider" in self._call_to_label(call) or (
             isinstance(call.func, ast.Name) and call.func.id in self._defined_functions
-        ):
-            return [
-                self._make_cp_node(f"Before: {label}"),
-                node,
-                self._make_cp_node(f"After: {label}"),
-                self._make_int_node(self._current_function_name),
-            ]
+        )
+
+        if is_tool_call:
+            return self._instrument_awaited_call(call, node)
 
         return self.generic_visit(node)
 
@@ -442,6 +438,49 @@ class PlanSanitizer(ast.NodeTransformer):
                 [ast.Constant(value=label), call],
             )
             node.value = new_call
+
+        return self.generic_visit(node)
+
+    def _instrument_awaited_call(
+        self,
+        call_node: ast.Call,
+        full_statement_node: ast.AST,
+    ) -> list[ast.AST]:
+        """Helper to wrap a tool call statement with instrumentation."""
+        label = self._call_to_label(call_node)
+
+        increment_counter = ast.AugAssign(
+            target=ast.Attribute(
+                value=ast.Name(id="runtime", ctx=ast.Load()),
+                attr="action_counter",
+                ctx=ast.Store(),
+            ),
+            op=ast.Add(),
+            value=ast.Constant(value=1),
+        )
+
+        return [
+            increment_counter,
+            self._make_cp_node(f"Before: {label}"),
+            full_statement_node,
+            self._make_cp_node(f"After: {label}"),
+            self._make_int_node(self._current_function_name),
+        ]
+
+    def visit_Assign(self, node: ast.Assign) -> list[ast.AST] | ast.Assign:
+        """Handles assignment statements with awaited tool calls."""
+        if not (
+            isinstance(node.value, ast.Await) and isinstance(node.value.value, ast.Call)
+        ):
+            return self.generic_visit(node)
+
+        call = node.value.value
+        is_tool_call = "action_provider" in self._call_to_label(call) or (
+            isinstance(call.func, ast.Name) and call.func.id in self._defined_functions
+        )
+
+        if is_tool_call:
+            return self._instrument_awaited_call(call, node)
 
         return self.generic_visit(node)
 
