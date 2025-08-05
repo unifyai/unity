@@ -929,6 +929,9 @@ class HierarchicalPlan(BaseActiveTask):
         self.is_teaching_session = goal is None
         self.plan_source_code: Optional[str] = None
         self.execution_namespace: Dict[str, Any] = {}
+
+        self.idempotency_cache: Dict[tuple, Any] = {}
+        self.live_handles: Dict[str, SteerableToolHandle] = {}
         self.runtime = PlanRuntime()
         self.call_stack: List[str] = []
         self.action_log: List[str] = []
@@ -2856,12 +2859,23 @@ class HierarchicalPlanner(BasePlanner):
 
     async def _execute_course_correction(self, plan: HierarchicalPlan, code: str):
         """
-        Executes a temporary, dynamically generated script from a file to correct the browser state.
-
-        Args:
-            plan: The active HierarchicalPlan instance.
-            code: The Python code snippet to execute.
+        Executes a dynamically generated script to correct the browser state and
+        invalidates the cache for the failed function's scope.
         """
+
+        current_scope_tuple = tuple(plan.call_stack)
+        keys_to_invalidate = [
+            key for key in plan.idempotency_cache if key[0] == current_scope_tuple
+        ]
+
+        if keys_to_invalidate:
+            plan.action_log.append(
+                f"COURSE CORRECTION: Invalidating {len(keys_to_invalidate)} cache entries for scope: {plan.call_stack}",
+            )
+            logger.debug(f"Invalidating cache for scope {plan.call_stack}")
+            for key in keys_to_invalidate:
+                del plan.idempotency_cache[key]
+
         failed_function_name = (
             plan.call_stack[-1] if plan.call_stack else "unknown_function"
         )
