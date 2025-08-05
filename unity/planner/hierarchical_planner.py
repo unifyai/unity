@@ -1482,24 +1482,20 @@ class HierarchicalPlan(BaseActiveTask):
                 replan_reason=reason,
                 existing_code_for_modification=existing_code,
             )
-            if self.is_teaching_session:
-                if self._execution_task and not self._execution_task.done():
-                    self._execution_task.cancel()
-                    try:
-                        await self._execution_task
-                    except asyncio.CancelledError:
-                        pass
-                self.interaction_stack.clear()
-                self.interaction_stack.append([])
-                self.call_stack.clear()
-                self._execution_task = asyncio.create_task(self._initialize_and_run())
-                self.runtime.resume()
-            else:
-                self.interruption_request = {
-                    "target_function": target_function,
-                    "reason": decision.modification_request,
-                }
-                await self.resume()
+
+            if self._execution_task and not self._execution_task.done():
+                self._execution_task.cancel()
+                try:
+                    await self._execution_task
+                except asyncio.CancelledError:
+                    pass
+
+            self.interaction_stack.clear()
+            self.interaction_stack.append([])
+            self.call_stack.clear()
+
+            self._execution_task = asyncio.create_task(self._initialize_and_run())
+            self.runtime.resume()
 
             return f"Plan modification for '{target_function}' applied. Resuming execution."
 
@@ -2679,7 +2675,7 @@ class HierarchicalPlanner(BasePlanner):
                     f"LLM response for initial plan (attempt {attempt+1}):\n\n--- LLM RAW RESPONSE START ---\n{response}\n--- LLM RAW RESPONSE END ---\n\n",
                 )
 
-                return self._sanitize_code(code)
+                return self._sanitize_code(code, plan)
 
             except SyntaxError as e:
                 last_error = f"{e}\nProblematic Code:\n---\n{code}\n---"
