@@ -1097,19 +1097,21 @@ class CommsAgent:
         to = event.get("to")
         if event["event"]["event_name"] == "StartupEvent":
             self.set_details(event["event"]["payload"])
-            asyncio.create_task(asyncio.to_thread(
-                log_job_startup,
-                job_name=self.job_name,
-                timestamp=event["event"]["payload"]["timestamp"],
-                medium=event["event"]["payload"]["medium"],
-                user_id=self.user_id,
-                assistant_id=self.assistant_id,
-                user_name=self.user_name,
-                assistant_name=self.assistant_name,
-                user_number=self.user_number,
-                user_phone_call_number=self.user_phone_call_number,
-                assistant_number=self.assistant_number,
-            ))
+            asyncio.create_task(
+                asyncio.to_thread(
+                    log_job_startup,
+                    job_name=self.job_name,
+                    timestamp=event["event"]["payload"]["timestamp"],
+                    medium=event["event"]["payload"]["medium"],
+                    user_id=self.user_id,
+                    assistant_id=self.assistant_id,
+                    user_name=self.user_name,
+                    assistant_name=self.assistant_name,
+                    user_number=self.user_number,
+                    user_phone_call_number=self.user_phone_call_number,
+                    assistant_number=self.assistant_number,
+                )
+            )
 
         if event["event"]["event_name"] == "PhoneCallEndedEvent":
             if self.meet_browser:
