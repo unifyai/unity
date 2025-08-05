@@ -1096,7 +1096,12 @@ class CommsAgent:
         global ONGOING_CALL
         to = event.get("to")
         if event["event"]["event_name"] == "StartupEvent":
-            self.set_details(event["event"]["payload"])
+            try:
+                self.set_details(event["event"]["payload"])
+            except Exception as e:
+                print(f"Error setting details: {e}")
+                traceback.print_exc()
+                return
             asyncio.create_task(
                 asyncio.to_thread(
                     log_job_startup,
