@@ -960,10 +960,7 @@ class CommsAgent:
     def publish(self, event: dict):
         self.event_manager.publish(event)
 
-    def cleanup(self):
-        """Clean up any running call processes"""
-        print(f"Marking job {self.job_name} done")
-        mark_job_done(self.job_name)
+    def cleanup_call_proc(self):
         if hasattr(self, "call_proc") and self.call_proc:
             print(f"Terminating call process")
             try:
@@ -975,6 +972,12 @@ class CommsAgent:
                 print(f"Call process terminated")
             except Exception as e:
                 print(f"Error terminating call process: {e}")
+
+    def cleanup(self):
+        """Clean up any running call processes"""
+        print(f"Marking job {self.job_name} done")
+        mark_job_done(self.job_name)
+        self.cleanup_call_proc()
 
     def handle_logging(self, event: dict):
         import unity
@@ -1125,11 +1128,7 @@ class CommsAgent:
                 self.meet_id = None
 
             if self.call_proc:
-                self.call_proc.kill()
-                self.call_proc.wait()
-                self.call_proc = None
-                self.call_mode = False
-                ONGOING_CALL = False
+                self.cleanup_call_proc()
 
                 # check for queued calls
                 if self.pending_calls:
