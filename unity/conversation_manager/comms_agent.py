@@ -4,7 +4,9 @@ import openai
 import os
 import redis
 import traceback
+from typing import Callable
 from pathlib import Path
+from pydantic_core import from_json
 import unify
 from unity.common.llm_helpers import start_async_tool_use_loop, methods_to_tool_dict
 from unity.conversation_manager.debug_logger import log_message
@@ -86,6 +88,7 @@ class CommsAgent:
         enabled_tools: list | str | None = "conductor",
         task_context: Dict[str, str] = None,
         outer_comms_enabled: bool = False,
+        user_turn_end_callback: Callable = None,
     ):
         # assistant details
         self.job_name = job_name
@@ -123,6 +126,7 @@ class CommsAgent:
         self.call_purpose = "general"
         self.task_context = task_context
         self.outer_comms_enabled = outer_comms_enabled
+        self.user_turn_end_callback = user_turn_end_callback
         self.pending_calls = []
 
         # meet conference
@@ -396,7 +400,12 @@ class CommsAgent:
                     else:
                         self.inflight_events = self.pending_events.copy()
 
-                    self.current_llm_run = asyncio.create_task(self.run())
+                    self.current_llm_run = asyncio.create_task(
+                        self.run(
+                            add_filler=new_event["event_name"]
+                            != "PhoneCallStartedEvent",
+                        ),
+                    )
                     self.current_llm_run.add_done_callback(self.on_run_end)
                     self.pending_events.clear()
             except asyncio.TimeoutError:
@@ -574,12 +583,12 @@ class CommsAgent:
         finally:
             ...
 
-    async def run(self):
+    async def run(self, add_filler: bool = False):
         if self.past_events is None:
             self.past_events = await self.get_bus_events()
 
         if self.call_mode:
-            return await self.phone_call_llm_run()
+            return await self.phone_call_llm_run(add_filler=add_filler)
         else:
             return await self.non_phone_call_llm_run()
 
@@ -611,9 +620,18 @@ class CommsAgent:
         if message.parsed:
             return message.parsed
 
-    async def phone_call_llm_run(self):
-        ev = {"topic": "call_process", "type": "start_gen"}
-        self.publish(ev)
+    async def phone_call_llm_run(self, add_filler: bool = False):
+        first_ev = {"topic": "call_process", "type": "start_gen"}
+        self.publish(first_ev)
+
+        if add_filler and self.user_turn_end_callback:
+            filler = self.user_turn_end_callback()
+            ev = {
+                "topic": "call_process",
+                "type": "gen_chunk",
+                "chunk": f'{filler}<break time="1s"/>',
+            }
+            self.publish(ev)
 
         call_sys = build_call_sys_prompt(
             self.user_name,
@@ -628,6 +646,8 @@ class CommsAgent:
         user_msg = self.get_user_agent_prompt()
         print(user_msg)
 
+        acc_text = ""
+        last_response = ""
         async with client.beta.chat.completions.stream(
             model="gpt-4.1",
             messages=[
@@ -640,12 +660,19 @@ class CommsAgent:
             async for event in stream:
                 # print(event)
                 if event.type == "content.delta":
-                    ev = {
-                        "topic": "call_process",
-                        "type": "gen_chunk",
-                        "chunk": event.delta,
-                    }
-                    self.publish(ev)
+                    if event.delta:
+                        acc_text += event.delta
+                        output = from_json(acc_text, allow_partial="trailing-strings")
+                        if output.get("phone_utterance"):
+                            new_delta = output["phone_utterance"][len(last_response) :]
+                            last_response = output["phone_utterance"]
+                            if new_delta:
+                                ev = {
+                                    "topic": "call_process",
+                                    "type": "gen_chunk",
+                                    "chunk": new_delta,
+                                }
+                                self.publish(ev)
 
             ev = {"topic": "call_process", "type": "end_gen"}
             self.publish(ev)
