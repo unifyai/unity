@@ -616,9 +616,8 @@ class FunctionReplacer(ast.NodeTransformer):
 
 class _SteerableToolHandleProxy:
     """
-    A proxy for SteerableToolHandle to intercept its method calls and log
-    them for the @verify decorator. This ensures that interactions with
-    handles (e.g., call_handle.ask()) are visible to the verification process.
+    A proxy for SteerableToolHandle to intercept its method calls, log
+    them for verification, and apply idempotency caching.
     """
 
     def __init__(
@@ -626,70 +625,102 @@ class _SteerableToolHandleProxy:
         real_handle: SteerableToolHandle,
         plan: "HierarchicalPlan",
         handle_name: str,
+        handle_id: str,
     ):
         self._real_handle = real_handle
         self._plan = plan
         self._handle_name = handle_name
+        self._handle_id = handle_id
 
     def __getattr__(self, name: str) -> Any:
         """
         Intercepts attribute access on the handle (e.g., call_handle.ask).
         """
         real_attr = getattr(self._real_handle, name)
-
         if not callable(real_attr):
             return real_attr
 
-        @functools.wraps(real_attr)
+        def handle_method_logic(
+            call_repr: str,
+            is_cached: bool,
+            cached_data: dict | None,
+        ):
+            if is_cached:
+                cached_result = cached_data["result"]
+                cached_interaction = cached_data["interaction_log"]
+                self._plan.action_log.append(
+                    f"CACHE HIT: Using cached result for {call_repr}",
+                )
+                logger.debug(f"HANDLE CACHE HIT for: {call_repr}")
+                self._plan.interaction_stack[-1].append(cached_interaction)
+                return cached_result
+            return None
+
         async def async_method_wrapper(*args, **kwargs):
-            interactions_log = self._plan.interaction_stack[-1]
-            arg_str = ", ".join(map(repr, args))
-            kwarg_str = ", ".join(f"{k}={v!r}" for k, v in kwargs.items())
-            call_repr = f"{self._handle_name}.{name}({arg_str}, {kwarg_str})"
+            self._plan.runtime.action_counter += 1
+            tool_name = f"{self._handle_name}:{self._handle_id}.{name}"
+            call_repr = f"{self._handle_name}[{self._handle_id[:8]}].{name}({self._plan.planner._serialize_args(args, kwargs)})"
+
+            cache_key = self._plan.planner._generate_cache_key(
+                self._plan,
+                tool_name,
+                args,
+                kwargs,
+            )
+            if cache_key in self._plan.idempotency_cache:
+                return handle_method_logic(
+                    call_repr,
+                    True,
+                    self._plan.idempotency_cache[cache_key],
+                )
+
+            self._plan.action_log.append(f"CACHE MISS: Executing {call_repr}")
+            logger.debug(f"HANDLE CACHE MISS for: {call_repr}")
 
             output = await real_attr(*args, **kwargs)
+            interaction_to_cache = ("handle_method_call", call_repr, str(output))
+            self._plan.interaction_stack[-1].append(interaction_to_cache)
+            self._plan.idempotency_cache[cache_key] = {
+                "result": output,
+                "interaction_log": interaction_to_cache,
+            }
+            return output
 
-            if isinstance(output, SteerableToolHandle):
-                interactions_log.append(
-                    (
-                        "handle_method_call",
-                        call_repr,
-                        f"Returned new handle: {output.__class__.__name__}",
-                    ),
-                )
-                new_handle_name = f"{self._handle_name}_{name}"
-                return _SteerableToolHandleProxy(output, self._plan, new_handle_name)
-            else:
-                interactions_log.append(("handle_method_call", call_repr, str(output)))
-                return output
-
-        @functools.wraps(real_attr)
         def sync_method_wrapper(*args, **kwargs):
-            interactions_log = self._plan.interaction_stack[-1]
-            arg_str = ", ".join(map(repr, args))
-            kwarg_str = ", ".join(f"{k}={v!r}" for k, v in kwargs.items())
-            call_repr = f"{self._handle_name}.{name}({arg_str}, {kwarg_str})"
+            self._plan.runtime.action_counter += 1
+            tool_name = f"{self._handle_name}:{self._handle_id}.{name}"
+            call_repr = f"{self._handle_name}[{self._handle_id[:8]}].{name}({self._plan.planner._serialize_args(args, kwargs)})"
+
+            cache_key = self._plan.planner._generate_cache_key(
+                self._plan,
+                tool_name,
+                args,
+                kwargs,
+            )
+            if cache_key in self._plan.idempotency_cache:
+                return handle_method_logic(
+                    call_repr,
+                    True,
+                    self._plan.idempotency_cache[cache_key],
+                )
+
+            self._plan.action_log.append(f"CACHE MISS: Executing {call_repr}")
+            logger.debug(f"HANDLE CACHE MISS for: {call_repr}")
 
             output = real_attr(*args, **kwargs)
+            interaction_to_cache = ("handle_method_call", call_repr, str(output))
+            self._plan.interaction_stack[-1].append(interaction_to_cache)
+            self._plan.idempotency_cache[cache_key] = {
+                "result": output,
+                "interaction_log": interaction_to_cache,
+            }
+            return output
 
-            if isinstance(output, SteerableToolHandle):
-                interactions_log.append(
-                    (
-                        "handle_method_call",
-                        call_repr,
-                        f"Returned new handle: {output.__class__.__name__}",
-                    ),
-                )
-                new_handle_name = f"{self._handle_name}_{name}"
-                return _SteerableToolHandleProxy(output, self._plan, new_handle_name)
-            else:
-                interactions_log.append(("handle_method_call", call_repr, str(output)))
-                return output
-
-        if inspect.iscoroutinefunction(real_attr):
-            return async_method_wrapper
-        else:
-            return sync_method_wrapper
+        return (
+            async_method_wrapper
+            if inspect.iscoroutinefunction(real_attr)
+            else sync_method_wrapper
+        )
 
 
 class _ActionProviderProxy:
