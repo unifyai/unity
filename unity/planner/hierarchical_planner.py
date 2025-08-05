@@ -1753,6 +1753,33 @@ class HierarchicalPlanner(BasePlanner):
             logger.error(f"Generated code failed sanitization: {e}")
             raise
 
+    def _serialize_args(self, args: tuple, kwargs: dict) -> str:
+        """Robustly serializes tool arguments for the cache key."""
+        try:
+            # NOTE: could make this more robust with a JSON serializer
+            return repr((args, kwargs))
+        except Exception:
+            return f"ARGS:{str(args)}_KWARGS:{str(kwargs)}"
+
+    def _generate_cache_key(
+        self,
+        plan: HierarchicalPlan,
+        tool_name: str,
+        args: tuple,
+        kwargs: dict,
+    ) -> tuple:
+        """Generates the composite cache key for a tool call."""
+        call_stack_tuple = tuple(plan.call_stack)
+
+        execution_path_tuple = (
+            *plan.runtime.path_context,
+            f"step_{plan.runtime.action_counter}",
+        )
+
+        serialized_args = self._serialize_args(args, kwargs)
+
+        return (call_stack_tuple, execution_path_tuple, tool_name, serialized_args)
+
     async def _execute_task_and_return_handle(
         self,
         task_description: str,
