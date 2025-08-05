@@ -49,14 +49,15 @@ class PlanRuntime:
         self._pause_event.set()
         self._checkpoint_event = asyncio.Event()
         self._waiting_for_planner = False
-        self._step_counter = 0
+
+        self.action_counter = 0
+        self.path_context: List[str] = []
 
     async def checkpoint(self, label: str = ""):
         """
         A cooperative yield point. It yields control, honors pauses,
         and then signals the planner and waits for release.
         """
-        self._step_counter += 1
         await asyncio.sleep(0)
         await self._pause_event.wait()
 
@@ -80,6 +81,15 @@ class PlanRuntime:
     def resume(self):
         """Resumes a paused plan."""
         self._pause_event.set()
+
+    def push_path_context(self, context_id: str):
+        """Pushes a new context (e.g., loop or branch) onto the execution path stack."""
+        self.path_context.append(context_id)
+
+    def pop_path_context(self):
+        """Pops the latest context from the execution path stack."""
+        if self.path_context:
+            self.path_context.pop()
 
 
 def format_pydantic_model(
@@ -314,6 +324,9 @@ class PlanSanitizer(ast.NodeTransformer):
     def __init__(self):
         self._current_function_name = "global"
         self._defined_functions = set()
+        self._loop_counter = 0
+        self._if_counter = 0
+        self._try_counter = 0
 
     def _make_call_node(self, func_id: str, args: list) -> ast.Call:
         return ast.Call(
@@ -346,6 +359,20 @@ class PlanSanitizer(ast.NodeTransformer):
             parts.append(f.id)
         return ".".join(reversed(parts)) if parts else "call"
 
+    def _make_runtime_call_expr(self, method: str, args: List[ast.AST]) -> ast.Expr:
+        """Helper to create `runtime.method(...)` expressions."""
+        return ast.Expr(
+            value=ast.Call(
+                func=ast.Attribute(
+                    value=ast.Name(id="runtime", ctx=ast.Load()),
+                    attr=method,
+                    ctx=ast.Load(),
+                ),
+                args=args,
+                keywords=[],
+            ),
+        )
+
     def visit_Module(self, node: ast.Module) -> ast.Module:
         for sub_node in node.body:
             if isinstance(sub_node, ast.AsyncFunctionDef):
@@ -357,6 +384,43 @@ class PlanSanitizer(ast.NodeTransformer):
         self,
         node: ast.AsyncFunctionDef,
     ) -> ast.AsyncFunctionDef:
+        cleaned_body = []
+        for stmt in node.body:
+            if (
+                isinstance(stmt, ast.AugAssign)
+                and isinstance(stmt.target, ast.Attribute)
+                and hasattr(stmt.target.value, "id")
+                and stmt.target.value.id == "runtime"
+                and stmt.target.attr == "action_counter"
+            ):
+                continue
+
+            if (
+                isinstance(stmt, ast.Expr)
+                and isinstance(stmt.value, ast.Await)
+                and isinstance(stmt.value.value, ast.Call)
+                and isinstance(stmt.value.value.func, ast.Name)
+                and stmt.value.value.func.id in {"_cp", "_int"}
+            ):
+                continue
+
+            if (
+                isinstance(stmt, ast.Expr)
+                and isinstance(stmt.value, ast.Call)
+                and isinstance(stmt.value.func, ast.Attribute)
+                and hasattr(stmt.value.func.value, "id")
+                and stmt.value.func.value.id == "runtime"
+                and stmt.value.func.attr in {"push_path_context", "pop_path_context"}
+            ):
+                continue
+
+            cleaned_body.append(stmt)
+        node.body = cleaned_body
+
+        self._loop_counter = 0
+        self._if_counter = 0
+        self._try_counter = 0
+
         parent = self._current_function_name
         self._current_function_name = node.name
 
@@ -385,6 +449,51 @@ class PlanSanitizer(ast.NodeTransformer):
         self._current_function_name = parent
         return node
 
+    def _wrap_block_with_context(
+        self,
+        block: List[ast.stmt],
+        context_id: str,
+    ) -> List[ast.stmt]:
+        """Injects push/pop context calls around a block of statements."""
+        if not block:
+            return []
+        push_call = self._make_runtime_call_expr(
+            "push_path_context",
+            [ast.Constant(value=context_id)],
+        )
+        pop_call = self._make_runtime_call_expr("pop_path_context", [])
+        return [push_call] + block + [pop_call]
+
+    def visit_If(self, node: ast.If) -> ast.If:
+        self._if_counter += 1
+        if_id = f"if_{self._if_counter}"
+
+        node.body = self._wrap_block_with_context(node.body, f"{if_id}_true")
+        if node.orelse:
+            node.orelse = self._wrap_block_with_context(node.orelse, f"{if_id}_false")
+
+        self.generic_visit(node)
+        return node
+
+    def visit_Try(self, node: ast.Try) -> ast.Try:
+        self._try_counter += 1
+        try_id = f"try_{self._try_counter}"
+
+        node.body = self._wrap_block_with_context(node.body, f"{try_id}_try")
+        for i, handler in enumerate(node.handlers):
+            handler.body = self._wrap_block_with_context(
+                handler.body,
+                f"{try_id}_except_{i}",
+            )
+        if node.finalbody:
+            node.finalbody = self._wrap_block_with_context(
+                node.finalbody,
+                f"{try_id}_finally",
+            )
+
+        self.generic_visit(node)
+        return node
+
     def _inject_loop_probes(self, node: typing.Union[ast.For, ast.While, ast.AsyncFor]):
         probes = [
             self._make_cp_node(
@@ -406,23 +515,19 @@ class PlanSanitizer(ast.NodeTransformer):
         return self._inject_loop_probes(node)
 
     def visit_Expr(self, node: ast.Expr) -> list[ast.AST] | ast.Expr:
-        """Handles top-level 'await' statements, expanding them."""
+        """Handles top-level 'await' expressions."""
         if not (
             isinstance(node.value, ast.Await) and isinstance(node.value.value, ast.Call)
         ):
             return self.generic_visit(node)
 
         call = node.value.value
-        label = self._call_to_label(call)
-        if "action_provider" in label or (
+        is_tool_call = "action_provider" in self._call_to_label(call) or (
             isinstance(call.func, ast.Name) and call.func.id in self._defined_functions
-        ):
-            return [
-                self._make_cp_node(f"Before: {label}"),
-                node,
-                self._make_cp_node(f"After: {label}"),
-                self._make_int_node(self._current_function_name),
-            ]
+        )
+
+        if is_tool_call:
+            return self._instrument_awaited_call(call, node)
 
         return self.generic_visit(node)
 
@@ -442,6 +547,49 @@ class PlanSanitizer(ast.NodeTransformer):
                 [ast.Constant(value=label), call],
             )
             node.value = new_call
+
+        return self.generic_visit(node)
+
+    def _instrument_awaited_call(
+        self,
+        call_node: ast.Call,
+        full_statement_node: ast.AST,
+    ) -> list[ast.AST]:
+        """Helper to wrap a tool call statement with instrumentation."""
+        label = self._call_to_label(call_node)
+
+        increment_counter = ast.AugAssign(
+            target=ast.Attribute(
+                value=ast.Name(id="runtime", ctx=ast.Load()),
+                attr="action_counter",
+                ctx=ast.Store(),
+            ),
+            op=ast.Add(),
+            value=ast.Constant(value=1),
+        )
+
+        return [
+            increment_counter,
+            self._make_cp_node(f"Before: {label}"),
+            full_statement_node,
+            self._make_cp_node(f"After: {label}"),
+            self._make_int_node(self._current_function_name),
+        ]
+
+    def visit_Assign(self, node: ast.Assign) -> list[ast.AST] | ast.Assign:
+        """Handles assignment statements with awaited tool calls."""
+        if not (
+            isinstance(node.value, ast.Await) and isinstance(node.value.value, ast.Call)
+        ):
+            return self.generic_visit(node)
+
+        call = node.value.value
+        is_tool_call = "action_provider" in self._call_to_label(call) or (
+            isinstance(call.func, ast.Name) and call.func.id in self._defined_functions
+        )
+
+        if is_tool_call:
+            return self._instrument_awaited_call(call, node)
 
         return self.generic_visit(node)
 
@@ -478,9 +626,8 @@ class FunctionReplacer(ast.NodeTransformer):
 
 class _SteerableToolHandleProxy:
     """
-    A proxy for SteerableToolHandle to intercept its method calls and log
-    them for the @verify decorator. This ensures that interactions with
-    handles (e.g., call_handle.ask()) are visible to the verification process.
+    A proxy for SteerableToolHandle to intercept its method calls, log
+    them for verification, and apply idempotency caching.
     """
 
     def __init__(
@@ -488,78 +635,108 @@ class _SteerableToolHandleProxy:
         real_handle: SteerableToolHandle,
         plan: "HierarchicalPlan",
         handle_name: str,
+        handle_id: str,
     ):
         self._real_handle = real_handle
         self._plan = plan
         self._handle_name = handle_name
+        self._handle_id = handle_id
 
     def __getattr__(self, name: str) -> Any:
         """
         Intercepts attribute access on the handle (e.g., call_handle.ask).
         """
         real_attr = getattr(self._real_handle, name)
-
         if not callable(real_attr):
             return real_attr
 
-        @functools.wraps(real_attr)
+        def handle_method_logic(
+            call_repr: str,
+            is_cached: bool,
+            cached_data: dict | None,
+        ):
+            if is_cached:
+                cached_result = cached_data["result"]
+                cached_interaction = cached_data["interaction_log"]
+                self._plan.action_log.append(
+                    f"CACHE HIT: Using cached result for {call_repr}",
+                )
+                logger.debug(f"HANDLE CACHE HIT for: {call_repr}")
+                self._plan.interaction_stack[-1].append(cached_interaction)
+                return cached_result
+            return None
+
         async def async_method_wrapper(*args, **kwargs):
-            interactions_log = self._plan.interaction_stack[-1]
-            arg_str = ", ".join(map(repr, args))
-            kwarg_str = ", ".join(f"{k}={v!r}" for k, v in kwargs.items())
-            call_repr = f"{self._handle_name}.{name}({arg_str}, {kwarg_str})"
+            self._plan.runtime.action_counter += 1
+            tool_name = f"{self._handle_name}:{self._handle_id}.{name}"
+            call_repr = f"{self._handle_name}[{self._handle_id[:8]}].{name}({self._plan.planner._serialize_args(args, kwargs)})"
+
+            cache_key = self._plan.planner._generate_cache_key(
+                self._plan,
+                tool_name,
+                args,
+                kwargs,
+            )
+            if cache_key in self._plan.idempotency_cache:
+                return handle_method_logic(
+                    call_repr,
+                    True,
+                    self._plan.idempotency_cache[cache_key],
+                )
+
+            self._plan.action_log.append(f"CACHE MISS: Executing {call_repr}")
+            logger.debug(f"HANDLE CACHE MISS for: {call_repr}")
 
             output = await real_attr(*args, **kwargs)
+            interaction_to_cache = ("handle_method_call", call_repr, str(output))
+            self._plan.interaction_stack[-1].append(interaction_to_cache)
+            self._plan.idempotency_cache[cache_key] = {
+                "result": output,
+                "interaction_log": interaction_to_cache,
+            }
+            return output
 
-            if isinstance(output, SteerableToolHandle):
-                interactions_log.append(
-                    (
-                        "handle_method_call",
-                        call_repr,
-                        f"Returned new handle: {output.__class__.__name__}",
-                    ),
-                )
-                new_handle_name = f"{self._handle_name}_{name}"
-                return _SteerableToolHandleProxy(output, self._plan, new_handle_name)
-            else:
-                interactions_log.append(("handle_method_call", call_repr, str(output)))
-                return output
-
-        @functools.wraps(real_attr)
         def sync_method_wrapper(*args, **kwargs):
-            interactions_log = self._plan.interaction_stack[-1]
-            arg_str = ", ".join(map(repr, args))
-            kwarg_str = ", ".join(f"{k}={v!r}" for k, v in kwargs.items())
-            call_repr = f"{self._handle_name}.{name}({arg_str}, {kwarg_str})"
+            self._plan.runtime.action_counter += 1
+            tool_name = f"{self._handle_name}:{self._handle_id}.{name}"
+            call_repr = f"{self._handle_name}[{self._handle_id[:8]}].{name}({self._plan.planner._serialize_args(args, kwargs)})"
+
+            cache_key = self._plan.planner._generate_cache_key(
+                self._plan,
+                tool_name,
+                args,
+                kwargs,
+            )
+            if cache_key in self._plan.idempotency_cache:
+                return handle_method_logic(
+                    call_repr,
+                    True,
+                    self._plan.idempotency_cache[cache_key],
+                )
+
+            self._plan.action_log.append(f"CACHE MISS: Executing {call_repr}")
+            logger.debug(f"HANDLE CACHE MISS for: {call_repr}")
 
             output = real_attr(*args, **kwargs)
+            interaction_to_cache = ("handle_method_call", call_repr, str(output))
+            self._plan.interaction_stack[-1].append(interaction_to_cache)
+            self._plan.idempotency_cache[cache_key] = {
+                "result": output,
+                "interaction_log": interaction_to_cache,
+            }
+            return output
 
-            if isinstance(output, SteerableToolHandle):
-                interactions_log.append(
-                    (
-                        "handle_method_call",
-                        call_repr,
-                        f"Returned new handle: {output.__class__.__name__}",
-                    ),
-                )
-                new_handle_name = f"{self._handle_name}_{name}"
-                return _SteerableToolHandleProxy(output, self._plan, new_handle_name)
-            else:
-                interactions_log.append(("handle_method_call", call_repr, str(output)))
-                return output
-
-        if inspect.iscoroutinefunction(real_attr):
-            return async_method_wrapper
-        else:
-            return sync_method_wrapper
+        return (
+            async_method_wrapper
+            if inspect.iscoroutinefunction(real_attr)
+            else sync_method_wrapper
+        )
 
 
 class _ActionProviderProxy:
     """
     A generic proxy that wraps the real ActionProvider to intercept all tool
-    calls and log them for the @verify decorator. It correctly
-    handles both synchronous and asynchronous tools and ensures that handles
-    returned by tools are also proxied to log subsequent interactions.
+    calls, apply idempotency caching, and log them for verification.
     """
 
     def __init__(self, real_action_provider: ActionProvider, plan: "HierarchicalPlan"):
@@ -572,68 +749,159 @@ class _ActionProviderProxy:
         is accessed on the proxy instance.
         """
         real_attr = getattr(self._real_action_provider, name)
-
         if not callable(real_attr):
             return real_attr
 
-        @functools.wraps(real_attr)
         async def async_wrapper(*args, **kwargs):
-            """Asynchronous wrapper for logging and calling async tools."""
             interactions_log = self._plan.interaction_stack[-1]
+            self._plan.runtime.action_counter += 1
+            tool_name = f"action_provider.{name}"
+            call_repr = (
+                f"{tool_name}({self._plan.planner._serialize_args(args, kwargs)})"
+            )
 
-            arg_str = ", ".join(map(repr, args))
-            kwarg_str = ", ".join(f"{k}={v!r}" for k, v in kwargs.items())
-            call_repr = f"action_provider.{name}({arg_str}, {kwarg_str})"
+            cache_key = self._plan.planner._generate_cache_key(
+                self._plan,
+                tool_name,
+                args,
+                kwargs,
+            )
+
+            if cache_key in self._plan.idempotency_cache:
+                cached_data = self._plan.idempotency_cache[cache_key]
+                cached_result_id = cached_data["result"]
+                cached_interaction = cached_data["interaction_log"]
+                self._plan.action_log.append(
+                    f"CACHE HIT: Using cached result for {call_repr}",
+                )
+                logger.debug(f"CACHE HIT for key: {cache_key}")
+                interactions_log.append(cached_interaction)
+
+                if (
+                    cached_interaction[0] == "tool_call"
+                    and "Returned handle" in cached_interaction[2]
+                ):
+                    real_handle = self._plan.live_handles.get(cached_result_id)
+                    if not real_handle:
+                        raise RuntimeError(
+                            f"Cache consistency error: Could not find live handle for ID {cached_result_id}",
+                        )
+                    handle_name = f"{name}_handle"
+                    return _SteerableToolHandleProxy(
+                        real_handle,
+                        self._plan,
+                        handle_name,
+                        cached_result_id,
+                    )
+                return cached_result_id
+
+            self._plan.action_log.append(f"CACHE MISS: Executing {call_repr}")
+            logger.debug(f"CACHE MISS for key: {cache_key}")
 
             tool_output = await real_attr(*args, **kwargs)
+
+            result_to_cache = tool_output
+            return_value = tool_output
+            interaction_str = str(tool_output)
+
             if isinstance(tool_output, SteerableToolHandle):
-                interactions_log.append(
-                    (
-                        "tool_call",
-                        call_repr,
-                        f"Returned handle: {tool_output.__class__.__name__}",
-                    ),
-                )
                 handle_name = f"{name}_handle"
-                return _SteerableToolHandleProxy(tool_output, self._plan, handle_name)
-            else:
-                if isinstance(tool_output, SteerableToolHandle):
-                    final_result = await tool_output.result()
-                    interactions_log.append(("tool_call", call_repr, str(final_result)))
-                else:
-                    interactions_log.append(("tool_call", call_repr, str(tool_output)))
+                handle_id = str(uuid.uuid4())
+                self._plan.live_handles[handle_id] = tool_output
+                result_to_cache = handle_id
+                interaction_str = f"Returned handle: {tool_output.__class__.__name__}"
+                return_value = _SteerableToolHandleProxy(
+                    tool_output,
+                    self._plan,
+                    handle_name,
+                    handle_id,
+                )
 
-                return tool_output
+            interaction_to_cache = ("tool_call", call_repr, interaction_str)
+            interactions_log.append(interaction_to_cache)
+            self._plan.idempotency_cache[cache_key] = {
+                "result": result_to_cache,
+                "interaction_log": interaction_to_cache,
+            }
 
-        @functools.wraps(real_attr)
+            return return_value
+
         def sync_wrapper(*args, **kwargs):
             """Synchronous wrapper for logging and calling sync tools."""
             interactions_log = self._plan.interaction_stack[-1]
+            self._plan.runtime.action_counter += 1
+            tool_name = f"action_provider.{name}"
+            call_repr = (
+                f"{tool_name}({self._plan.planner._serialize_args(args, kwargs)})"
+            )
 
-            arg_str = ", ".join(map(repr, args))
-            kwarg_str = ", ".join(f"{k}={v!r}" for k, v in kwargs.items())
-            call_repr = f"action_provider.{name}({arg_str}, {kwarg_str})"
+            cache_key = self._plan.planner._generate_cache_key(
+                self._plan,
+                tool_name,
+                args,
+                kwargs,
+            )
+
+            if cache_key in self._plan.idempotency_cache:
+                cached_data = self._plan.idempotency_cache[cache_key]
+                cached_result_id = cached_data["result"]
+                cached_interaction = cached_data["interaction_log"]
+                self._plan.action_log.append(
+                    f"CACHE HIT: Using cached result for {call_repr}",
+                )
+                logger.debug(f"CACHE HIT for key: {cache_key}")
+                interactions_log.append(cached_interaction)
+
+                if (
+                    cached_interaction[0] == "tool_call"
+                    and "Returned handle" in cached_interaction[2]
+                ):
+                    real_handle = self._plan.live_handles.get(cached_result_id)
+                    if not real_handle:
+                        raise RuntimeError(
+                            f"Cache consistency error: Could not find live handle for ID {cached_result_id}",
+                        )
+                    handle_name = f"{name}_handle"
+                    return _SteerableToolHandleProxy(
+                        real_handle,
+                        self._plan,
+                        handle_name,
+                        cached_result_id,
+                    )
+                return cached_result_id
+
+            self._plan.action_log.append(f"CACHE MISS: Executing {call_repr}")
+            logger.debug(f"CACHE MISS for key: {cache_key}")
 
             result = real_attr(*args, **kwargs)
 
-            if isinstance(result, SteerableToolHandle):
-                interactions_log.append(
-                    (
-                        "tool_call",
-                        call_repr,
-                        f"Returned handle: {result.__class__.__name__}",
-                    ),
-                )
-                handle_name = f"{name}_handle"
-                return _SteerableToolHandleProxy(result, self._plan, handle_name)
-            else:
-                interactions_log.append(("tool_call", call_repr, str(result)))
-                return result
+            result_to_cache = result
+            return_value = result
+            interaction_str = str(result)
 
-        if inspect.iscoroutinefunction(real_attr):
-            return async_wrapper
-        else:
-            return sync_wrapper
+            if isinstance(result, SteerableToolHandle):
+                handle_name = f"{name}_handle"
+                handle_id = str(uuid.uuid4())
+                self._plan.live_handles[handle_id] = result
+                result_to_cache = handle_id
+                interaction_str = f"Returned handle: {result.__class__.__name__}"
+                return_value = _SteerableToolHandleProxy(
+                    result,
+                    self._plan,
+                    handle_name,
+                    handle_id,
+                )
+
+            interaction_to_cache = ("tool_call", call_repr, interaction_str)
+            interactions_log.append(interaction_to_cache)
+            self._plan.idempotency_cache[cache_key] = {
+                "result": result_to_cache,
+                "interaction_log": interaction_to_cache,
+            }
+
+            return return_value
+
+        return async_wrapper if inspect.iscoroutinefunction(real_attr) else sync_wrapper
 
 
 class HierarchicalPlan(BaseActiveTask):
@@ -671,6 +939,9 @@ class HierarchicalPlan(BaseActiveTask):
         self.is_teaching_session = goal is None
         self.plan_source_code: Optional[str] = None
         self.execution_namespace: Dict[str, Any] = {}
+
+        self.idempotency_cache: Dict[tuple, Any] = {}
+        self.live_handles: Dict[str, SteerableToolHandle] = {}
         self.runtime = PlanRuntime()
         self.call_stack: List[str] = []
         self.action_log: List[str] = []
@@ -679,6 +950,7 @@ class HierarchicalPlan(BaseActiveTask):
         self.last_verified_screenshot: Optional[str | bytes] = None
         self.last_verified_page_analysis: Optional[PageAnalysis] = None
         self.function_source_map: Dict[str, str] = {}
+        self.clean_function_source_map: Dict[str, str] = {}
         self.interaction_stack: List[List[Tuple[str, str, Optional[str]]]] = []
         self.escalation_count = 0
         self._is_complete = False
@@ -895,10 +1167,14 @@ class HierarchicalPlan(BaseActiveTask):
                     self.action_log.append(
                         f"Now attempting to replan '{parent_function_name}'...",
                     )
+                    parent_existing_code = self.clean_function_source_map.get(
+                        parent_function_name,
+                    )
                     await self._handle_dynamic_implementation(
                         parent_function_name,
                         is_strategic_replan=True,
                         replan_reason=decision.reason,
+                        existing_code_for_modification=parent_existing_code,
                     )
                 else:
                     self.action_log.append(
@@ -917,10 +1193,12 @@ class HierarchicalPlan(BaseActiveTask):
                     logger.info(f"TRACE SUMMARY:\n{trace_summary}")
                     self.action_log.append(f"TRACE SUMMARY:\n{trace_summary}")
 
+                    existing_code = self.clean_function_source_map.get(function_name)
                     await self._handle_dynamic_implementation(
                         function_name,
                         is_strategic_replan=True,
                         replan_reason=trace_summary,
+                        existing_code_for_modification=existing_code,
                     )
             except ValueError:
                 raise FatalVerificationError(
@@ -998,106 +1276,6 @@ class HierarchicalPlan(BaseActiveTask):
 
         return False
 
-    def _merge_function_bodies(self, old_fn, new_fn):
-        """
-        Merges the bodies of two functions by appending new statements and
-        combining their docstrings into a step-by-step guide.
-
-        Args:
-            old_fn: The existing function AST node (FunctionDef or AsyncFunctionDef)
-            new_fn: The new function AST node (FunctionDef or AsyncFunctionDef)
-
-        Returns:
-            The merged function with combined body statements and docstring
-        """
-        old_doc = (ast.get_docstring(old_fn) or "").strip()
-        new_doc = (ast.get_docstring(new_fn) or "").strip()
-
-        if "This is a teaching session" in old_doc:
-            old_doc = ""
-        if "Main entry point for the hierarchical plan" in new_doc:
-            new_doc_lines = new_doc.split("\n")
-            new_doc = next(
-                (
-                    line
-                    for line in new_doc_lines
-                    if "Main entry" not in line and line.strip()
-                ),
-                "",
-            ).strip()
-
-        if old_doc and new_doc:
-            old_lines = [line.strip() for line in old_doc.split("\n") if line.strip()]
-
-            if old_lines and re.match(r"^\d+\.", old_lines[0]):
-                last_num = 0
-                match = re.match(r"^(\d+)\.", old_lines[-1])
-                if match:
-                    last_num = int(match.group(1))
-
-                merged_docstring = f"{old_doc}\n{last_num + 1}. {new_doc}"
-            else:
-                merged_docstring = f"1. {old_doc}\n2. {new_doc}"
-
-        elif new_doc:
-            merged_docstring = f"1. {new_doc}"
-        else:
-            merged_docstring = old_doc
-
-        if merged_docstring:
-            if "\n" in merged_docstring:
-                lines = merged_docstring.strip().split("\n")
-                formatted_lines = []
-                for line in lines:
-                    if line.strip():
-                        formatted_lines.append(f"    {line.strip()}")
-                merged_docstring = "\n" + "\n".join(formatted_lines) + "\n"
-
-        final_docstring_node = ast.Expr(value=ast.Constant(value=merged_docstring))
-
-        old_executable_stmts = [
-            stmt for stmt in old_fn.body if not self._is_docstring_or_pass(stmt)
-        ]
-        old_srcs = {ast.unparse(s).strip() for s in old_executable_stmts}
-
-        merged_body = [final_docstring_node]
-        merged_body.extend(old_executable_stmts)
-
-        for stmt in new_fn.body:
-            if self._is_docstring_or_pass(stmt):
-                continue
-            if ast.unparse(stmt).strip() not in old_srcs:
-                merged_body.append(stmt)
-
-        if len(merged_body) <= 1:
-            merged_body.append(ast.Pass())
-
-        if isinstance(old_fn, ast.AsyncFunctionDef):
-            merged_fn = ast.AsyncFunctionDef(
-                name=old_fn.name,
-                args=old_fn.args,
-                body=merged_body,
-                decorator_list=old_fn.decorator_list,
-                returns=old_fn.returns,
-                type_comment=old_fn.type_comment,
-                lineno=old_fn.lineno,
-                col_offset=old_fn.col_offset,
-            )
-        else:
-            merged_fn = ast.FunctionDef(
-                name=old_fn.name,
-                args=old_fn.args,
-                body=merged_body,
-                decorator_list=old_fn.decorator_list,
-                returns=old_fn.returns,
-                type_comment=old_fn.type_comment,
-                lineno=old_fn.lineno,
-                col_offset=old_fn.col_offset,
-            )
-
-        ast.fix_missing_locations(merged_fn)
-        return merged_fn
-
     def _update_plan_with_new_code(self, function_name: str, new_code: str):
         """
         Updates the plan's source code with a new function implementation using a
@@ -1107,64 +1285,36 @@ class HierarchicalPlan(BaseActiveTask):
         functions, classes, imports, and global assignments, ensuring that the
         new code is seamlessly integrated without losing existing code.
 
-        During teaching sessions, function bodies are merged to preserve previous steps.
-
         Args:
             function_name: The name of the function to replace or add.
             new_code: The full source code of the new function implementation.
         """
+        try:
+            new_tree_for_clean_map = ast.parse(textwrap.dedent(new_code))
+            for node in new_tree_for_clean_map.body:
+                if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                    self.clean_function_source_map[node.name] = ast.unparse(node)
+        except Exception as e:
+            logger.warning(f"Could not store clean source for '{function_name}': {e}")
+
         self.action_log.append(
-            f"Updating implementation of '{function_name}' using robust merge.",
+            f"Updating implementation of '{function_name}'.",
         )
 
         try:
             old_tree = ast.parse(self.plan_source_code or "pass")
             new_tree = ast.parse(textwrap.dedent(new_code))
 
-            old_nodes = {}
-            for node in old_tree.body:
-                key = self._get_node_key(node)
-                if key:
-                    old_nodes[key] = node
+            final_nodes = {
+                self._get_node_key(node): node
+                for node in old_tree.body
+                if self._get_node_key(node)
+            }
 
-            new_nodes = {}
             for node in new_tree.body:
                 key = self._get_node_key(node)
                 if key:
-                    new_nodes[key] = node
-
-            final_nodes = dict(old_nodes)
-
-            for key, new_node in new_nodes.items():
-                if (
-                    self.is_teaching_session
-                    and key[0] == "def"
-                    and key[1] == function_name
-                ):
-                    if key in old_nodes:
-                        old_node = old_nodes[key]
-                        if (
-                            isinstance(
-                                old_node,
-                                (ast.FunctionDef, ast.AsyncFunctionDef),
-                            )
-                            and isinstance(
-                                new_node,
-                                (ast.FunctionDef, ast.AsyncFunctionDef),
-                            )
-                            and type(old_node) == type(new_node)
-                        ):
-                            merged_fn = self._merge_function_bodies(old_node, new_node)
-                            final_nodes[key] = merged_fn
-                            self.action_log.append(
-                                f"Merged function bodies for '{function_name}' during teaching session.",
-                            )
-                        else:
-                            final_nodes[key] = new_node
-                    else:
-                        final_nodes[key] = new_node
-                else:
-                    final_nodes[key] = new_node
+                    final_nodes[key] = node
 
             final_tree = ast.Module(body=list(final_nodes.values()), type_ignores=[])
             ast.fix_missing_locations(final_tree)
@@ -1174,7 +1324,7 @@ class HierarchicalPlan(BaseActiveTask):
 
         except (SyntaxError, ValueError, RuntimeError) as e:
             logger.error(
-                f"Robust AST-based code update for '{function_name}' failed: {e}",
+                f"AST-based code replacement for '{function_name}' failed: {e}",
                 exc_info=True,
             )
             raise
@@ -1321,28 +1471,31 @@ class HierarchicalPlan(BaseActiveTask):
             if not target_function:
                 return "Error: Could not determine a target function to modify."
 
+            existing_code = self.clean_function_source_map.get(target_function)
+            if self.is_teaching_session:
+                reason = f"The user is teaching a new step. Add this instruction to the function: '{decision.modification_request}'"
+            else:
+                reason = f"User interjected with a new instruction: '{decision.modification_request}'"
+                
             await self._handle_dynamic_implementation(
                 target_function,
-                replan_reason=f"User interjected with a new instruction: '{decision.modification_request}'",
+                replan_reason=reason,
+                existing_code_for_modification=existing_code,
             )
-            if self.is_teaching_session:
-                if self._execution_task and not self._execution_task.done():
-                    self._execution_task.cancel()
-                    try:
-                        await self._execution_task
-                    except asyncio.CancelledError:
-                        pass
-                self.interaction_stack.clear()
-                self.interaction_stack.append([])
-                self.call_stack.clear()
-                self._execution_task = asyncio.create_task(self._initialize_and_run())
-                self.runtime.resume()
-            else:
-                self.interruption_request = {
-                    "target_function": target_function,
-                    "reason": decision.modification_request,
-                }
-                await self.resume()
+
+            if self._execution_task and not self._execution_task.done():
+                self._execution_task.cancel()
+                try:
+                    await self._execution_task
+                except asyncio.CancelledError:
+                    pass
+
+            self.interaction_stack.clear()
+            self.interaction_stack.append([])
+            self.call_stack.clear()
+
+            self._execution_task = asyncio.create_task(self._initialize_and_run())
+            self.runtime.resume()
 
             return f"Plan modification for '{target_function}' applied. Resuming execution."
 
@@ -1706,7 +1859,7 @@ class HierarchicalPlanner(BasePlanner):
         self.max_local_retries = max_local_retries or 3
         self.timeout = timeout
 
-    def _sanitize_code(self, code: str) -> str:
+    def _sanitize_code(self, code: str, plan: HierarchicalPlan) -> str:
         """
         Parses, sanitizes, and unparses code to enforce security.
 
@@ -1718,6 +1871,9 @@ class HierarchicalPlanner(BasePlanner):
         """
         try:
             tree = ast.parse(code)
+            for node in ast.walk(tree):
+                if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                    plan.clean_function_source_map[node.name] = ast.unparse(node)
             sanitizer = PlanSanitizer()
             sanitized_tree = sanitizer.visit(tree)
             ast.fix_missing_locations(sanitized_tree)
@@ -1725,6 +1881,33 @@ class HierarchicalPlanner(BasePlanner):
         except SyntaxError as e:
             logger.error(f"Generated code failed sanitization: {e}")
             raise
+
+    def _serialize_args(self, args: tuple, kwargs: dict) -> str:
+        """Robustly serializes tool arguments for the cache key."""
+        try:
+            # NOTE: could make this more robust with a JSON serializer
+            return repr((args, kwargs))
+        except Exception:
+            return f"ARGS:{str(args)}_KWARGS:{str(kwargs)}"
+
+    def _generate_cache_key(
+        self,
+        plan: HierarchicalPlan,
+        tool_name: str,
+        args: tuple,
+        kwargs: dict,
+    ) -> tuple:
+        """Generates the composite cache key for a tool call."""
+        call_stack_tuple = tuple(plan.call_stack)
+
+        execution_path_tuple = (
+            *plan.runtime.path_context,
+            f"step_{plan.runtime.action_counter}",
+        )
+
+        serialized_args = self._serialize_args(args, kwargs)
+
+        return (call_stack_tuple, execution_path_tuple, tool_name, serialized_args)
 
     async def _execute_task_and_return_handle(
         self,
@@ -2023,6 +2206,8 @@ class HierarchicalPlanner(BasePlanner):
                 plan.call_stack.append(func_name)
                 plan.interaction_stack.append([])
                 logger.info(f"VERIFY: Entering '{func_name}'")
+                parent_action_counter = plan.runtime.action_counter
+                plan.runtime.action_counter = 0
 
                 try:
                     last_error_reason = ""
@@ -2077,11 +2262,15 @@ class HierarchicalPlanner(BasePlanner):
                                 f"Child of '{func_name}' requested strategic replan.",
                             )
                             last_error_reason = e.reason
+                            existing_code = plan.clean_function_source_map.get(
+                                func_name,
+                            )
                             await plan._handle_dynamic_implementation(
                                 func_name,
                                 is_strategic_replan=True,
                                 replan_reason=last_error_reason,
                                 failed_interactions=e.failed_interactions,
+                                existing_code_for_modification=existing_code,
                             )
                             if plan.interaction_stack:
                                 plan.interaction_stack[-1].clear()
@@ -2096,9 +2285,13 @@ class HierarchicalPlanner(BasePlanner):
                                 exc_info=True,
                             )
                             last_error_reason = traceback.format_exc()
+                            existing_code = plan.clean_function_source_map.get(
+                                func_name,
+                            )
                             await plan._handle_dynamic_implementation(
                                 func_name,
                                 replan_reason=f"Function crashed. Fix bug:\n{last_error_reason}",
+                                existing_code_for_modification=existing_code,
                             )
                             if plan.interaction_stack:
                                 plan.interaction_stack[-1].clear()
@@ -2121,6 +2314,7 @@ class HierarchicalPlanner(BasePlanner):
                         plan.interaction_stack.pop()
 
                     plan.action_log.append(f"<- Exiting '{func_name}'")
+                    plan.runtime.action_counter = parent_action_counter
 
             return wrapper
 
@@ -2413,10 +2607,12 @@ class HierarchicalPlanner(BasePlanner):
                     failed_interactions=interactions,
                 )
             else:
+                existing_code = plan.clean_function_source_map.get(fn.__name__)
                 await plan._handle_dynamic_implementation(
                     fn.__name__,
                     replan_reason=assessment.reason,
                     failed_interactions=interactions,
+                    existing_code_for_modification=existing_code,
                 )
                 raise _ForcedRetryException("Forced retry after local reimplementation")
 
@@ -2479,7 +2675,7 @@ class HierarchicalPlanner(BasePlanner):
                     f"LLM response for initial plan (attempt {attempt+1}):\n\n--- LLM RAW RESPONSE START ---\n{response}\n--- LLM RAW RESPONSE END ---\n\n",
                 )
 
-                return self._sanitize_code(code)
+                return self._sanitize_code(code, plan)
 
             except SyntaxError as e:
                 last_error = f"{e}\nProblematic Code:\n---\n{code}\n---"
@@ -2541,13 +2737,21 @@ class HierarchicalPlanner(BasePlanner):
             )
             func_sig = inspect.signature(plan.execution_namespace[function_name])
             parent_code = (
-                plan.function_source_map.get(plan.call_stack[-2], "")
+                plan.clean_function_source_map.get(plan.call_stack[-2], "")
                 if len(plan.call_stack) > 1
                 else "N/A (This is a top-level function call)"
             )
 
+            clean_full_plan_source = (
+                "\n\n".join(
+                    plan.clean_function_source_map.values(),
+                )
+                if plan.clean_function_source_map
+                else ""
+            )
+
             prompt = prompt_builders.build_dynamic_implement_prompt(
-                full_plan_source=plan.plan_source_code or "",
+                full_plan_source=clean_full_plan_source,
                 call_stack=plan.call_stack,
                 function_name=function_name,
                 function_sig=func_sig,
@@ -2557,11 +2761,11 @@ class HierarchicalPlanner(BasePlanner):
                 has_browser_screenshot=browser_screenshot is not None,
                 replan_context=replan_reason,
                 tools=self.tools,
-                is_teaching_session=plan.is_teaching_session,
-                function_source_map=plan.function_source_map,
+                existing_code_for_modification=kwargs.get(
+                    "existing_code_for_modification",
+                ),
             )
             plan.implementation_client.set_response_format(ImplementationDecision)
-
             try:
                 response_str = await llm_call(
                     plan.implementation_client,
@@ -2585,7 +2789,7 @@ class HierarchicalPlanner(BasePlanner):
                             .replace("```", "")
                             .strip()
                         )
-                        decision.code = self._sanitize_code(clean_code)
+                        decision.code = self._sanitize_code(clean_code, plan)
                         return decision
                     except SyntaxError as e:
                         last_syntax_error = f"Invalid Python code provided.\nError: {e}\nProblematic Code Snippet:\n---\n{decision.code}\n---"
@@ -2664,12 +2868,23 @@ class HierarchicalPlanner(BasePlanner):
 
     async def _execute_course_correction(self, plan: HierarchicalPlan, code: str):
         """
-        Executes a temporary, dynamically generated script from a file to correct the browser state.
-
-        Args:
-            plan: The active HierarchicalPlan instance.
-            code: The Python code snippet to execute.
+        Executes a dynamically generated script to correct the browser state and
+        invalidates the cache for the failed function's scope.
         """
+
+        current_scope_tuple = tuple(plan.call_stack)
+        keys_to_invalidate = [
+            key for key in plan.idempotency_cache if key[0] == current_scope_tuple
+        ]
+
+        if keys_to_invalidate:
+            plan.action_log.append(
+                f"COURSE CORRECTION: Invalidating {len(keys_to_invalidate)} cache entries for scope: {plan.call_stack}",
+            )
+            logger.debug(f"Invalidating cache for scope {plan.call_stack}")
+            for key in keys_to_invalidate:
+                del plan.idempotency_cache[key]
+
         failed_function_name = (
             plan.call_stack[-1] if plan.call_stack else "unknown_function"
         )

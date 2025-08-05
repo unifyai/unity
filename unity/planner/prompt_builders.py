@@ -1,10 +1,8 @@
 from __future__ import annotations
 
-import ast
 import inspect
 import textwrap
 import json
-import re
 from typing import Callable, Dict, Any, Optional
 from unity.common.llm_helpers import (
     class_api_overview,
@@ -1474,110 +1472,44 @@ def build_dynamic_implement_prompt(
     browser_state: str | None,
     has_browser_screenshot: bool,
     replan_context: str,
-    implementation_strategy: Optional[Any] = None,
     *,
     tools: Dict[str, Callable],
-    is_teaching_session: bool = False,
-    function_source_map: Optional[Dict[str, str]] = None,
+    existing_code_for_modification: Optional[str] = None,
 ) -> str:
-    """
-    Builds the system prompt for dynamically implementing a function.
+    """Builds the system prompt for dynamically implementing or modifying a function."""
 
-    This function is now context-aware. It will only include browser-specific
-    instructions and state if the `browser_state` argument is provided.
-
-    Args:
-        full_plan_source: The full source code of the plan.
-        call_stack: The current function call stack.
-        function_name: The name of the function to implement.
-        function_sig: The signature of the function to implement.
-        function_docstring: The docstring of the function to implement.
-        parent_code: The source code of the calling function.
-        browser_state: An optional description of the current browser state.
-        replan_context: A message providing context for a replan.
-        tools: The tools available to the function.
-        is_teaching_session: Whether we are in a teaching session via user interjections.
-        function_source_map: A map of function names to their source code.
-
-    Returns:
-        The complete prompt string.
-    """
-
-    failure_analysis_section = ""
-    if replan_context:
-        failure_analysis_section = textwrap.dedent(
+    modification_instructions = ""
+    if existing_code_for_modification:
+        modification_instructions = textwrap.dedent(
             f"""
             ---
-            ### CRITICAL: Failure Analysis & Recovery Instructions
-            You are being asked to implement this function because a previous attempt **failed**. You MUST analyze the following reason and write a new implementation that avoids this specific error.
+            ### 📌 CRITICAL INSTRUCTIONS: MODIFY EXISTING FUNCTION
+            You MUST rewrite the entire `{function_name}` function to incorporate a new change. Analyze the user's request and the original code, then produce the complete, final version of the function.
 
-            **Reason for Previous Failure:**
+            **Original Function Code:**
+            ```python
+            {existing_code_for_modification}
+            ```
+
+            **Modification Request:**
             {replan_context}
+
+            **Your Task:**
+            - **Rewrite the Entire Function:** Your output MUST be a single, complete `async def {function_name}` block.
+            - **Integrate Changes:** Seamlessly blend the new logic with the old. If the user is adding a step, append it logically. If they are correcting a mistake, replace the faulty code.
+            - **Update Docstrings:** Ensure the function's docstring accurately reflects the *complete* purpose of the newly modified function. If adding steps, you can use a numbered list.
             ---
             """,
         )
-
-    teaching_session_context = ""
-    if is_teaching_session and function_source_map:
-        existing_code = function_source_map.get(function_name, "No existing code.")
-        existing_docstring = ""
-        next_step_num = 1
-        if existing_code and existing_code.strip() != "No existing code.":
-            try:
-                tree = ast.parse(existing_code)
-                for node in ast.walk(tree):
-                    if (
-                        isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
-                        and node.name == function_name
-                    ):
-                        docstring = ast.get_docstring(node)
-                        if docstring:
-                            existing_docstring = docstring
-                            lines = docstring.strip().split("\n")
-                            for line in reversed(lines):
-                                match = re.match(r"^(\d+)\.", line.strip())
-                                if match:
-                                    next_step_num = int(match.group(1)) + 1
-                                    break
-                        break
-            except:
-                pass
-
-        existing_docstring_str = (
-            f'- Current docstring: """{existing_docstring}"""'
-            if existing_docstring
-            else ""
-        )
-        teaching_session_context = textwrap.dedent(
+    else:
+        modification_instructions = textwrap.dedent(
             f"""
             ---
-            ### 📌 SPECIAL INSTRUCTIONS FOR TEACHING SESSION
+            ### 📌 CRITICAL INSTRUCTIONS: IMPLEMENT STUB FUNCTION
+            You are implementing this function for the first time. Its purpose was defined in the initial plan, but the implementation was deferred.
 
-            You are in a "Teaching Session". The user is adding a new step to the end of the `{function_name}` function.
-
-            **Your Task:** You MUST write a complete `async def {function_name}` function block that contains **only the new action(s)** requested by the user. The planner will intelligently merge this new logic into the existing function.
-
-            **IMPORTANT DOCSTRING INSTRUCTIONS:**
-            - Your function MUST have a docstring that describes ONLY the new action being added
-            - The docstring should be a single line describing what this new step does
-            - DO NOT include the step number in your docstring - just describe the action
-            - Example good docstring: "Navigate to the recipes website as requested by the user."
-            - Example bad docstring: "1. Navigate to the recipes website" (don't include numbers)
-            - The planner will automatically number and merge your docstring with existing steps
-
-            **IMPORTANT CODE INSTRUCTIONS:**
-            - **DO NOT** repeat or re-implement the steps that already exist in the function
-            - **Example:** If the function already navigates, and the user says "now search for cookies", your code should ONLY contain the `action_provider.browser_act` call for the search
-
-            **Current Function State:**
-            - Existing steps completed: {next_step_num - 1}
-            - Your action will become step {next_step_num}
-            {existing_docstring_str}
-
-            **Code Already in `{function_name}`:**
-            ```python
-{textwrap.indent(existing_code, "            ")}
-            ```
+            **Reason for Implementation:**
+            {replan_context}
             ---
             """,
         )
@@ -1593,21 +1525,6 @@ def build_dynamic_implement_prompt(
         An image of the current browser page has been provided. Analyze it carefully to inform your new implementation.
         """
 
-    strategy_section = ""
-    if implementation_strategy:
-        strategy_steps = "\n".join(implementation_strategy.steps)
-        strategy_section = textwrap.dedent(
-            f"""
-            ---
-            ### CRITICAL: New Implementation Strategy
-            You have already analyzed the failure and created a new plan. You MUST write Python code that strictly follows these steps.
-
-            **Rationale:** {implementation_strategy.rationale}
-            **Steps to Follow:**
-            {strategy_steps}
-            ---
-            """,
-        )
     call_stack_str = " -> ".join(call_stack)
     context_section = textwrap.dedent(
         f"""
@@ -1645,7 +1562,7 @@ def build_dynamic_implement_prompt(
         2.  **`skip_function`**: Bypass this function entirely. Choose this if you observe that the function's goal is **already completed** or is now **irrelevant**. For example, skip a "log in" function if you are already logged in.
         3.  **`replan_parent`**: Escalate the failure to the calling function. Choose this if the current function is **impossible to implement** because of a mistake made in a *previous* step. For example, if the goal is "apply filters" but the page has no filter controls, the error lies with the parent function that navigated to the wrong page or failed to get to the right state.
 
-        {teaching_session_context}
+        {modification_instructions}
         {context_section}
 
         ### Situation Analysis
@@ -1655,8 +1572,6 @@ def build_dynamic_implement_prompt(
         {browser_state or "No browser state available."}
         A screenshot of the current browser page has been provided. **Use it as the primary source of truth.**
 
-        {failure_analysis_section}
-        {strategy_section}
         {rules_and_examples}
 
         Respond with ONLY the JSON object matching the `ImplementationDecision` schema.
