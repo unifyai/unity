@@ -679,6 +679,7 @@ class HierarchicalPlan(BaseActiveTask):
         self.last_verified_screenshot: Optional[str | bytes] = None
         self.last_verified_page_analysis: Optional[PageAnalysis] = None
         self.function_source_map: Dict[str, str] = {}
+        self.clean_function_source_map: Dict[str, str] = {}
         self.interaction_stack: List[List[Tuple[str, str, Optional[str]]]] = []
         self.escalation_count = 0
         self._is_complete = False
@@ -895,6 +896,9 @@ class HierarchicalPlan(BaseActiveTask):
                     self.action_log.append(
                         f"Now attempting to replan '{parent_function_name}'...",
                     )
+                    parent_existing_code = self.clean_function_source_map.get(
+                        parent_function_name,
+                    )
                     await self._handle_dynamic_implementation(
                         parent_function_name,
                         is_strategic_replan=True,
@@ -917,6 +921,7 @@ class HierarchicalPlan(BaseActiveTask):
                     logger.info(f"TRACE SUMMARY:\n{trace_summary}")
                     self.action_log.append(f"TRACE SUMMARY:\n{trace_summary}")
 
+                    existing_code = self.clean_function_source_map.get(function_name)
                     await self._handle_dynamic_implementation(
                         function_name,
                         is_strategic_replan=True,
@@ -1113,6 +1118,14 @@ class HierarchicalPlan(BaseActiveTask):
             function_name: The name of the function to replace or add.
             new_code: The full source code of the new function implementation.
         """
+        try:
+            new_tree_for_clean_map = ast.parse(textwrap.dedent(new_code))
+            for node in new_tree_for_clean_map.body:
+                if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                    self.clean_function_source_map[node.name] = ast.unparse(node)
+        except Exception as e:
+            logger.warning(f"Could not store clean source for '{function_name}': {e}")
+
         self.action_log.append(
             f"Updating implementation of '{function_name}' using robust merge.",
         )
@@ -1321,6 +1334,7 @@ class HierarchicalPlan(BaseActiveTask):
             if not target_function:
                 return "Error: Could not determine a target function to modify."
 
+            existing_code = self.clean_function_source_map.get(target_function)
             await self._handle_dynamic_implementation(
                 target_function,
                 replan_reason=f"User interjected with a new instruction: '{decision.modification_request}'",
@@ -1706,7 +1720,7 @@ class HierarchicalPlanner(BasePlanner):
         self.max_local_retries = max_local_retries or 3
         self.timeout = timeout
 
-    def _sanitize_code(self, code: str) -> str:
+    def _sanitize_code(self, code: str, plan: HierarchicalPlan) -> str:
         """
         Parses, sanitizes, and unparses code to enforce security.
 
@@ -1718,6 +1732,9 @@ class HierarchicalPlanner(BasePlanner):
         """
         try:
             tree = ast.parse(code)
+            for node in ast.walk(tree):
+                if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                    plan.clean_function_source_map[node.name] = ast.unparse(node)
             sanitizer = PlanSanitizer()
             sanitized_tree = sanitizer.visit(tree)
             ast.fix_missing_locations(sanitized_tree)
@@ -2077,6 +2094,9 @@ class HierarchicalPlanner(BasePlanner):
                                 f"Child of '{func_name}' requested strategic replan.",
                             )
                             last_error_reason = e.reason
+                            existing_code = plan.clean_function_source_map.get(
+                                func_name,
+                            )
                             await plan._handle_dynamic_implementation(
                                 func_name,
                                 is_strategic_replan=True,
@@ -2096,6 +2116,9 @@ class HierarchicalPlanner(BasePlanner):
                                 exc_info=True,
                             )
                             last_error_reason = traceback.format_exc()
+                            existing_code = plan.clean_function_source_map.get(
+                                func_name,
+                            )
                             await plan._handle_dynamic_implementation(
                                 func_name,
                                 replan_reason=f"Function crashed. Fix bug:\n{last_error_reason}",
@@ -2541,13 +2564,21 @@ class HierarchicalPlanner(BasePlanner):
             )
             func_sig = inspect.signature(plan.execution_namespace[function_name])
             parent_code = (
-                plan.function_source_map.get(plan.call_stack[-2], "")
+                plan.clean_function_source_map.get(plan.call_stack[-2], "")
                 if len(plan.call_stack) > 1
                 else "N/A (This is a top-level function call)"
             )
 
+            clean_full_plan_source = (
+                "\n\n".join(
+                    plan.clean_function_source_map.values(),
+                )
+                if plan.clean_function_source_map
+                else ""
+            )
+
             prompt = prompt_builders.build_dynamic_implement_prompt(
-                full_plan_source=plan.plan_source_code or "",
+                full_plan_source=clean_full_plan_source,
                 call_stack=plan.call_stack,
                 function_name=function_name,
                 function_sig=func_sig,
@@ -2585,7 +2616,7 @@ class HierarchicalPlanner(BasePlanner):
                             .replace("```", "")
                             .strip()
                         )
-                        decision.code = self._sanitize_code(clean_code)
+                        decision.code = self._sanitize_code(clean_code, plan)
                         return decision
                     except SyntaxError as e:
                         last_syntax_error = f"Invalid Python code provided.\nError: {e}\nProblematic Code Snippet:\n---\n{decision.code}\n---"
