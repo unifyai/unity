@@ -9,7 +9,7 @@ from pathlib import Path
 from pydantic_core import from_json
 import unify
 from unity.common.llm_helpers import start_async_tool_use_loop, methods_to_tool_dict
-from unity.conversation_manager.debug_logger import log_message
+from unity.conversation_manager.debug_logger import log_job_startup, mark_job_done
 from unity.helpers import run_script, terminate_process
 from unity.conversation_manager.comms_actions import (
     _start_call,
@@ -962,6 +962,8 @@ class CommsAgent:
 
     def cleanup(self):
         """Clean up any running call processes"""
+        print(f"Marking job {self.job_name} done")
+        mark_job_done(self.job_name)
         if hasattr(self, "call_proc") and self.call_proc:
             print(f"Terminating call process")
             try:
@@ -1095,20 +1097,19 @@ class CommsAgent:
         to = event.get("to")
         if event["event"]["event_name"] == "StartupEvent":
             self.set_details(event["event"]["payload"])
-            asyncio.create_task(
-                log_message(
-                    job_name=self.job_name,
-                    timestamp=event["event"]["payload"]["timestamp"],
-                    medium=event["event"]["payload"]["medium"],
-                    user_id=self.user_id,
-                    assistant_id=self.assistant_id,
-                    user_name=self.user_name,
-                    assistant_name=self.assistant_name,
-                    user_number=self.user_number,
-                    user_phone_call_number=self.user_phone_call_number,
-                    assistant_number=self.assistant_number,
-                ),
-            )
+            asyncio.create_task(asyncio.to_thread(
+                log_job_startup,
+                job_name=self.job_name,
+                timestamp=event["event"]["payload"]["timestamp"],
+                medium=event["event"]["payload"]["medium"],
+                user_id=self.user_id,
+                assistant_id=self.assistant_id,
+                user_name=self.user_name,
+                assistant_name=self.assistant_name,
+                user_number=self.user_number,
+                user_phone_call_number=self.user_phone_call_number,
+                assistant_number=self.assistant_number,
+            ))
 
         if event["event"]["event_name"] == "PhoneCallEndedEvent":
             if self.meet_browser:
