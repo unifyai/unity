@@ -316,7 +316,6 @@ class CommsAgent:
                                 self.assistant_number,
                                 self.tts_provider,
                                 self.voice_id if self.voice_id else "None",
-                                "--outbound" if new_event.get("outbound") else "None",
                                 self.meet_id if self.meet_id else "None",
                             )
                         else:
@@ -328,7 +327,6 @@ class CommsAgent:
                                 self.assistant_number,
                                 self.tts_provider,
                                 self.voice_id if self.voice_id else "None",
-                                "None",
                                 self.meet_id if self.meet_id else "None",
                             )
                         self.call_mode = True
