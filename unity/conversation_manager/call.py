@@ -399,18 +399,16 @@ if __name__ == "__main__":
     to_number = ""
     tts_provider = "cartesia"
     voice_id = ""
-    outbound = ""
     meet_id = ""
     print("sys.argv", sys.argv)
 
-    if len(sys.argv) > 7:
+    if len(sys.argv) > 6:
         # Remove phone numbers from sys.argv to prevent them from being passed to agents.cli
         from_number = sys.argv[2]
         assistant_number = sys.argv[3]
         tts_provider = sys.argv[4] if sys.argv[4] != "None" else "cartesia"
         voice_id = sys.argv[5]
-        outbound = sys.argv[6] if sys.argv[6] != "None" else ""
-        meet_id = sys.argv[7] if sys.argv[7] != "None" else ""
+        meet_id = sys.argv[6] if sys.argv[6] != "None" else ""
         sys.argv = sys.argv[:2]  # Keep only script name and "dev" command
 
     # Store phone numbers in environment variables to be accessed by entrypoint

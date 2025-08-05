@@ -1,5 +1,5 @@
 import asyncio
-from typing import Dict, Optional
+from typing import Dict, Optional, Any
 from pydantic import BaseModel
 from enum import EnumType
 import aiohttp
@@ -325,7 +325,6 @@ async def _start_call(
                     voice_id=os.getenv("VOICE_ID", None),
                     tts_provider=os.getenv("TTS_PROVIDER", "cartesia"),
                 ).to_dict(),
-                "outbound": True,
             },
         },
     )
@@ -373,7 +372,6 @@ async def _join_meet_call(
                     voice_id=os.getenv("VOICE_ID", None),
                     tts_provider=os.getenv("TTS_PROVIDER", "cartesia"),
                 ).to_dict(),
-                "outbound": True,
             },
         },
     )
@@ -488,7 +486,7 @@ class Call(SteerableToolHandle):
         phone_number: str,
         purpose: str,
         task_context: Dict[str, str] = None,
-        tools=None,
+        tools: Dict[str, Any] = None,
     ):
         """
         Starts a new phone call session and exposes the steerable methods
@@ -535,7 +533,7 @@ class Call(SteerableToolHandle):
         phone_number: str,
         purpose: str,
         task_context: Dict[str, str] = None,
-        tools=None,
+        tools: Dict[str, Any] = None,
     ) -> "Call":
         """Async factory for Call: constructs and schedules the call immediately."""
         instance = cls(phone_number, purpose, task_context, tools)
@@ -740,7 +738,7 @@ class GoogleMeet(SteerableToolHandle):
         meet_id: str,
         purpose: str = "general",
         task_context: Dict[str, str] = None,
-        tools=None,
+        tools: Dict[str, Any] = None,
     ):
         self.meet_id = meet_id
         self.purpose = purpose
@@ -777,7 +775,7 @@ class GoogleMeet(SteerableToolHandle):
         meet_id: str,
         purpose: str,
         task_context: Dict[str, str] = None,
-        tools=None,
+        tools: Dict[str, Any] = None,
     ) -> "GoogleMeet":
         instance = cls(meet_id, purpose, task_context, tools)
         await instance._join_meet_task()
