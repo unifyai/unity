@@ -2412,11 +2412,6 @@ async def _async_tool_use_loop_inner(
                         f"max_steps ({max_steps}) exceeded",
                     )
 
-            # If a structured response format was requested, perform one final
-            # LLM call that re-emits the answer in the desired format.  This
-            # step is now obsolete because the `final_answer` tool guarantees
-            # that the payload already conforms to the schema.
-
             final_answer = msg["content"]
 
             return final_answer  # DONE!
