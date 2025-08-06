@@ -13,10 +13,13 @@ from unity.conversation_manager.events import (
     WhatsappMessageRecievedEvent,
 )
 from dotenv import load_dotenv
+import sys, pathlib
 
 load_dotenv(override=True)
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[2]))
 
-# Stub functions for sending messages and making calls
+
+PROJECT_NAME = "ConversationManagerSandbox"
 
 
 def send_sms(message: str) -> None:
@@ -59,16 +62,18 @@ class MenuScreen(Screen):
     def compose(self) -> ComposeResult:
         yield Header()
 
-        # Actions menu: two small buttons per row
+        # Actions menu, split into two rows to avoid overflow
         yield Horizontal(
             Button("Send SMS", id="sms", classes="small"),
             Button("Send WhatsApp", id="whatsapp", classes="small"),
             Button("Send Email", id="email", classes="small"),
+            id="menu_row1",
+        )
+        yield Horizontal(
             Button("Send Call", id="call", classes="small"),
             Button("Quit", id="quit", classes="small"),
-            id="menu",
+            id="menu_row2",
         )
-
         yield Footer()
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
@@ -242,6 +247,11 @@ Button {
 Button.-active {
     background: gray;
 }
+
+#seed_log {
+    background: black;
+    color: white;
+}
 """
 
     def on_mount(self) -> None:
@@ -249,4 +259,7 @@ Button.-active {
 
 
 if __name__ == "__main__":
+    # override project name from first CLI argument
+    if len(sys.argv) > 1:
+        PROJECT_NAME = sys.argv[1]
     MessagingApp(ansi_color=True).run()

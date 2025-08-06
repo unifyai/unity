@@ -19,14 +19,23 @@ python -m sandboxes.conversation_manager.sandbox
 python -m sandboxes.conversation_manager.sandbox --full
 
 # Specify which tools to enable (choices: conductor, contact, transcript, knowledge, scheduler, comms)
-python -m sandboxes.conversation_manager.sandbox --enabled-tools comms,conductor
+python -m sandboxes.conversation_manager.sandbox --enabled_tools comms,conductor
 ```
 
 CLI flags
 ~~~~~~~~~
+Run `python -m sandboxes.conversation_manager.sandbox --help` to see additional flags:
 * `--local` (default): Enable local GUI mode.
 * `--full`         : Disable local GUI mode (real comms and no GUI).
-* `--enabled-tools`: Comma-separated list of enabled tools (choices: conductor, contact, transcript, knowledge, scheduler, comms). Default: None (all tools enabled).
+* `--enabled_tools`: Comma-separated list of enabled tools (choices: conductor, contact, transcript, knowledge, scheduler, comms). Default: None (all tools enabled).
+
+Standard flags:
+* `--voice` / `-v`            – enable voice input/output (scenario seeding and TTS)
+* `--project_name` / `-p`     – Unify project/context name
+* `--overwrite` / `-o`        – delete existing data for the project before start
+* `--project_version`         – load a specific saved version (index)
+* `--traced` / `-t`           – wrap manager calls with Unify tracing
+* `--debug` / `-d`            – show verbose tool logs (reasoning steps)
 
 Local GUI usage (default)
 -------------------------
@@ -42,18 +51,14 @@ When you run the sandbox with no flags (or with `--local`), a local Textual-base
 
 Full comms mode (`--full`)
 ---------------------------
-This mode starts a local LiveKit server and runs the sandbox without GUI, listening for incoming phone calls.
+In this mode the ConversationManager service runs without the GUI, handling real incoming SMS, WhatsApp, Email, and phone calls. It starts up a LiveKit server locally, thus no scenario seeding in this mode.
 
-Prerequisites:
-* Ensure you have a LiveKit server running locally (e.g., via Docker or `livekit-server --config livekit.yaml`).
-* Set the `CALL_FROM_NUMBER` environment variable to the phone number you want the agent to answer.
-
-Then start:
+To start:
 ```bash
 python -m sandboxes.conversation_manager.sandbox --full
 ```
 
-Dial the agent at the configured `CALL_FROM_NUMBER`. The agent will answer and you can speak naturally; it handles STT→LLM→TTS over the call. Hang up to end the call.
+Real incoming events and calls are processed by the live service; phone calls require a running LiveKit server and properly configured environment variables.
 
 Troubleshooting
 ---------------
