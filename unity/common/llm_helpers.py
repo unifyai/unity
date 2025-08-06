@@ -549,6 +549,7 @@ async def _async_tool_use_loop_inner(
     preprocess_msgs: Optional[Callable[[list[dict]], list[dict]]] = None,
     outer_handle_container: Optional[list] = None,
     response_format: Optional[Any] = None,
+    response_format_as_tool: bool = False,
 ) -> str:
     r"""
     Orchestrate an *interactive* "function-calling" dialogue between an LLM
@@ -1411,6 +1412,45 @@ async def _async_tool_use_loop_inner(
                 if _concurrency_ok(name)
             ]
 
+            # Inject `final_answer` tool when structured output is requested and the caller
+            # prefers the tool-based completion signal. The tool accepts a single `answer`
+            # argument whose schema is identical to the supplied Pydantic `response_format`.
+            if response_format_as_tool and response_format is not None:
+                try:
+                    from pydantic import BaseModel  # local import
+
+                    if not (
+                        isinstance(response_format, type)
+                        and issubclass(response_format, BaseModel)
+                    ):
+                        raise TypeError(
+                            "response_format must be a Pydantic BaseModel subclass.",
+                        )
+
+                    _answer_schema = response_format.model_json_schema()
+
+                    visible_base_tools_schema.append(
+                        {
+                            "type": "function",
+                            "function": {
+                                "name": "final_answer",
+                                "description": (
+                                    "Submit your final answer in the required JSON format. "
+                                    "Calling this tool marks the conversation as complete."
+                                ),
+                                "parameters": {
+                                    "type": "object",
+                                    "properties": {"answer": _answer_schema},
+                                    "required": ["answer"],
+                                },
+                            },
+                        },
+                    )
+                except Exception as _injection_exc:  # noqa: BLE001
+                    LOGGER.error(
+                        f"Failed to inject final_answer tool: {_injection_exc!r}",
+                    )
+
             # helper: register a freshly-minted coroutine as a *temporary* tool
             def _reg_tool(key: str, func_name: str, doc: str, fn: Callable) -> None:
                 # prefer the function's own docstring if it exists, else fall back
@@ -1848,6 +1888,44 @@ async def _async_tool_use_loop_inner(
                 for idx, call in enumerate(msg["tool_calls"]):  # capture index
                     name = call["function"]["name"]
                     args = json.loads(call["function"]["arguments"])
+
+                    # Special-case: handle synthetic `final_answer` tool when requested
+                    if (
+                        response_format_as_tool
+                        and name == "final_answer"
+                        and response_format is not None
+                    ):
+                        try:
+                            payload = (
+                                args.get("answer") if isinstance(args, dict) else None
+                            )
+                            if payload is None:
+                                raise ValueError("Missing 'answer' in tool arguments.")
+
+                            # Validate payload with the provided Pydantic model.
+                            response_format.model_validate(payload)
+
+                            tool_msg = {
+                                "role": "tool",
+                                "tool_call_id": call["id"],
+                                "name": "final_answer",
+                                "content": _dumps(payload, indent=4),
+                            }
+                            await _insert_after_assistant(msg, tool_msg)
+
+                            return json.dumps(payload)
+                        except Exception as _exc:
+                            tool_msg = {
+                                "role": "tool",
+                                "tool_call_id": call["id"],
+                                "name": "final_answer",
+                                "content": (
+                                    "⚠️ Validation failed – proceeding with standard formatting step.\n"
+                                    + str(_exc)
+                                ),
+                            }
+                            await _insert_after_assistant(msg, tool_msg)
+                            continue
 
                     # ── Special-case dynamic helpers ──────────────────────
                     # • continue_* → acknowledge, no scheduling
@@ -2748,6 +2826,7 @@ def start_async_tool_use_loop(
     ] = None,
     preprocess_msgs: Optional[Callable[[list[dict]], list[dict]]] = None,
     response_format: Optional[Any] = None,
+    response_format_as_tool: bool = False,
 ) -> AsyncToolUseLoopHandle:
     """
     Kick off `_async_tool_use_loop_inner` in its own task and give the caller
@@ -2786,6 +2865,7 @@ def start_async_tool_use_loop(
             preprocess_msgs=preprocess_msgs,
             outer_handle_container=outer_handle_container,
             response_format=response_format,
+            response_format_as_tool=response_format_as_tool,
         ),
         name="ToolUseLoop",
     )
