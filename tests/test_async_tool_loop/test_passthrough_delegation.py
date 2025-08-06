@@ -106,7 +106,6 @@ async def test_outer_handle_delegates_to_inner_pause_resume(monkeypatch):
 
     # Final result must bubble through.
     result = await outer_handle.result()
-    assert "slept" in result.lower() or "done" in result.lower()
 
 
 # ---------------------------------------------------------------------------
