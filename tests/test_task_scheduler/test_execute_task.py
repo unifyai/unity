@@ -283,7 +283,9 @@ async def test_execute_task_creates_new_task_and_executes(monkeypatch):
     handle = await ts.execute_task(text=description)
 
     # Speed the simulated planner along so the outer loop can finish quickly.
-    await handle.interject("please proceed swiftly")
+    await handle.interject(
+        "please proceed swiftly, but only create a new task if it is necessary",
+    )
     await handle.result()
 
     # ---- assertions --------------------------------------------------------
