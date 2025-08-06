@@ -247,11 +247,6 @@ Button {
 Button.-active {
     background: gray;
 }
-
-#seed_log {
-    background: black;
-    color: white;
-}
 """
 
     def on_mount(self) -> None:
