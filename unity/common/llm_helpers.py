@@ -473,6 +473,7 @@ def method_to_schema(
 
     return {
         "type": "function",
+        "strict": True,
         "function": {
             "name": tool_name,
             "description": cleaned_doc.strip(),
@@ -1432,6 +1433,7 @@ async def _async_tool_use_loop_inner(
                     visible_base_tools_schema.append(
                         {
                             "type": "function",
+                            "strict": True,
                             "function": {
                                 "name": "final_answer",
                                 "description": (
