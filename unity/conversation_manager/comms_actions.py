@@ -670,8 +670,6 @@ class Call(SteerableToolHandle):
             },
         )
 
-        # give time for utterance after event publish
-        await asyncio.sleep(20)
         self.call_ask_status.set()
         return f"Message interjected to user: {text}"
 
@@ -881,8 +879,6 @@ class GoogleMeet(SteerableToolHandle):
             },
         )
 
-        # give time for utterance after event publish
-        await asyncio.sleep(15)
         self.call_ask_status.set()
         return f"Message interjected to user: {text}"
 
