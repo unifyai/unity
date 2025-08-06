@@ -56,13 +56,21 @@ def get_broader_context() -> str:  # noqa: D401 – imperative helper name
         # ------------------------------------------------------------------
         # 1.  Gather assistant & user bios (robust to missing data) ---------
         cm = ContactManager()
+        contacts = sorted(
+            cm._search_contacts(
+                filter="(contact_id == 0) or (contact_id == 1)",
+                limit=2,
+            ),
+            key=lambda x: x.contact_id,
+        )
 
         # assistant ------------------------------------------------
-        assist = cm._search_contacts(filter="contact_id == 0", limit=1)
+        assist = contacts[0]
         assert assist
-        a = assist[0]
-        assistant_name = " ".join(p for p in [a.first_name, a.surname] if p).strip()
-        assistant_bio = a.bio if a.bio else ""
+        assistant_name = " ".join(
+            p for p in [assist.first_name, assist.surname] if p
+        ).strip()
+        assistant_bio = assist.bio if assist.bio else ""
 
         # user -----------------------------------------------------
         user = cm._search_contacts(filter="contact_id == 1", limit=1)
