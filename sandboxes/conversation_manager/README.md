@@ -39,7 +39,7 @@ Standard flags:
 
 Local GUI usage (default)
 -------------------------
-When you run the sandbox with no flags (or with `--local`), a local Textual-based GUI opens. Use:
+When you run the sandbox with no flags (or with `--local`), a local Textual-based GUI opens  in a separate terminal. Use:
 
 * Arrow keys or Tab to navigate the menu.
 * Press Enter on a menu item to choose:

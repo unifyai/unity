@@ -203,11 +203,6 @@ async def main():
         logging.basicConfig(level=logging.INFO, format="%(message)s")
         LG.setLevel(logging.INFO)
 
-    # from unity.helpers import run_script
-    # proc = run_script("sandboxes/conversation_manager/gui.py", terminal=True)
-    # proc.wait()
-    # exit(0)
-
     # Start the convo manager
     print("Starting convo manager...")
     if unity.conversation_manager.start(
