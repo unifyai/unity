@@ -550,7 +550,6 @@ async def _async_tool_use_loop_inner(
     preprocess_msgs: Optional[Callable[[list[dict]], list[dict]]] = None,
     outer_handle_container: Optional[list] = None,
     response_format: Optional[Any] = None,
-    response_format_as_tool: bool = False,
 ) -> str:
     r"""
     Orchestrate an *interactive* "function-calling" dialogue between an LLM
@@ -1413,10 +1412,10 @@ async def _async_tool_use_loop_inner(
                 if _concurrency_ok(name)
             ]
 
-            # Inject `final_answer` tool when structured output is requested and the caller
-            # prefers the tool-based completion signal. The tool accepts a single `answer`
-            # argument whose schema is identical to the supplied Pydantic `response_format`.
-            if response_format_as_tool and response_format is not None:
+            # Inject `final_answer` tool automatically whenever a `response_format` is
+            # supplied. The tool accepts a single `answer` argument whose schema matches
+            # the provided Pydantic model.
+            if response_format is not None:
                 try:
                     from pydantic import BaseModel  # local import
 
@@ -1891,12 +1890,8 @@ async def _async_tool_use_loop_inner(
                     name = call["function"]["name"]
                     args = json.loads(call["function"]["arguments"])
 
-                    # Special-case: handle synthetic `final_answer` tool when requested
-                    if (
-                        response_format_as_tool
-                        and name == "final_answer"
-                        and response_format is not None
-                    ):
+                    # Special-case: handle synthetic `final_answer` tool
+                    if name == "final_answer" and response_format is not None:
                         try:
                             payload = (
                                 args.get("answer") if isinstance(args, dict) else None
@@ -2419,58 +2414,10 @@ async def _async_tool_use_loop_inner(
 
             # If a structured response format was requested, perform one final
             # LLM call that re-emits the answer in the desired format.  This
-            # is done *after* all tool calls have finished so the formatting
-            # step has full context but never needs to invoke any tools.
+            # step is now obsolete because the `final_answer` tool guarantees
+            # that the payload already conforms to the schema.
 
             final_answer = msg["content"]
-
-            if response_format is not None:
-                from pydantic import BaseModel  # local import
-
-                # Defensive check – we enforced this earlier, but keep for safety.
-                if not (
-                    isinstance(response_format, type)
-                    and issubclass(response_format, BaseModel)
-                ):
-                    LOGGER.error(
-                        "response_format must be a Pydantic BaseModel subclass – skipping validation and reformat.",
-                    )
-                else:
-                    # First try to parse the assistant's answer as-is. If it already matches
-                    # the schema, we can skip the additional re-formatting step entirely.
-                    needs_reformat = True
-                    try:
-                        response_format.model_validate_json(final_answer)
-                        needs_reformat = False
-                    except Exception:
-                        needs_reformat = True
-
-                    if needs_reformat:
-                        try:
-                            # Configure the client so the next call enforces the response format.
-                            client.set_response_format(response_format)  # type: ignore[attr-defined]
-
-                            # Ask the model to re-emit its answer in the correct JSON shape.
-                            follow_up = {
-                                "role": "user",
-                                "content": (
-                                    "Please output your previous answer again, but strictly conforming "
-                                    "to the required response format. Do not add any extra commentary."
-                                ),
-                            }
-                            await _append_msgs([follow_up])
-
-                            await _generate_with_preprocess(
-                                return_full_completion=True,
-                                tools=[],  # no tools on this final turn
-                                tool_choice="auto",
-                                stateful=True,
-                            )
-
-                            final_answer = client.messages[-1]["content"]
-                        except Exception as _e:  # noqa: BLE001
-                            # Fall back to the unformatted answer if anything goes wrong.
-                            LOGGER.error(f"response_format handling failed: {_e!r}")
 
             return final_answer  # DONE!
 
@@ -2828,7 +2775,6 @@ def start_async_tool_use_loop(
     ] = None,
     preprocess_msgs: Optional[Callable[[list[dict]], list[dict]]] = None,
     response_format: Optional[Any] = None,
-    response_format_as_tool: bool = False,
 ) -> AsyncToolUseLoopHandle:
     """
     Kick off `_async_tool_use_loop_inner` in its own task and give the caller
@@ -2867,7 +2813,6 @@ def start_async_tool_use_loop(
             preprocess_msgs=preprocess_msgs,
             outer_handle_container=outer_handle_container,
             response_format=response_format,
-            response_format_as_tool=response_format_as_tool,
         ),
         name="ToolUseLoop",
     )
