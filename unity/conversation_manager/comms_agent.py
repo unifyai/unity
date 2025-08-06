@@ -8,9 +8,10 @@ from typing import Callable
 from pathlib import Path
 from pydantic_core import from_json
 import unify
-from unity.common.llm_helpers import start_async_tool_use_loop, methods_to_tool_dict
-from unity.conversation_manager.debug_logger import log_job_startup, mark_job_done
 from unity.helpers import run_script, terminate_process
+from unity.common.llm_helpers import start_async_tool_use_loop, methods_to_tool_dict
+from unity.memory_manager.broader_context import get_broader_context
+from unity.conversation_manager.debug_logger import log_job_startup, mark_job_done
 from unity.conversation_manager.comms_actions import (
     _start_call,
     _join_meet_call,
@@ -232,11 +233,6 @@ class CommsAgent:
                 tools_list += [planner.execute]
 
         self.enabled_tools = methods_to_tool_dict(*tools_list)
-
-    async def _get_broader_context(self):
-        from unity.memory_manager.broader_context import get_broader_context
-
-        self.broader_context = await asyncio.to_thread(get_broader_context)
 
     async def get_bus_events(self):
         from unity.events.event_bus import EVENT_BUS
@@ -1090,7 +1086,7 @@ class CommsAgent:
         while True:
             try:
                 self.past_events = await self.get_bus_events()
-                await self._get_broader_context()
+                self.broader_context = await asyncio.to_thread(get_broader_context)
             except Exception as e:
                 print(f"Error fetching bus events: {e}")
             await asyncio.sleep(2)
@@ -1118,7 +1114,7 @@ class CommsAgent:
                     user_number=self.user_number,
                     user_phone_call_number=self.user_phone_call_number,
                     assistant_number=self.assistant_number,
-                )
+                ),
             )
 
         if event["event"]["event_name"] == "PhoneCallEndedEvent":
