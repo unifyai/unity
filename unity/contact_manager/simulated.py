@@ -501,6 +501,26 @@ class SimulatedContactManager(BaseContactManager):
             "details": {"contact_id": contact_id},
         }
 
+    def _merge_contacts(
+        self,
+        *,
+        contact_id_1: int,
+        contact_id_2: int,
+        overrides: dict,
+    ) -> "ToolOutcome":  # noqa: D401 – imperative helper
+        """Simulated merge that records the action but does no real I/O."""
+
+        # For simulation purposes we simply return a deterministic payload –
+        # real de-duplication logic is unnecessary for offline tests.
+        return {
+            "outcome": "contacts merged (simulated)",
+            "details": {
+                "kept_contact_id": contact_id_1,
+                "deleted_contact_id": contact_id_2,
+                "overrides": overrides,
+            },
+        }
+
 
 # --- TYPE CHECKING SUPPORT --------------------------------------------------
 
