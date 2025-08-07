@@ -190,6 +190,7 @@ class ContactManager(BaseContactManager):
             base_fields = {
                 fld: None for fld in self._BUILTIN_FIELDS if fld != "contact_id"
             }
+            base_fields["respond_to"] = False
 
             # Map assistant API payload → Contact fields.  We still spell the
             # Contact field names exactly *once* here, centralising the mapping
@@ -214,6 +215,7 @@ class ContactManager(BaseContactManager):
             base_fields = {
                 fld: None for fld in self._BUILTIN_FIELDS if fld != "contact_id"
             }
+            base_fields["respond_to"] = False
             base_fields.update(
                 {
                     "first_name": "Unify",
@@ -788,6 +790,7 @@ class ContactManager(BaseContactManager):
         whatsapp_number: Optional[str] = None,
         bio: Optional[str] = None,
         rolling_summary: Optional[str] = None,
+        respond_to: bool = False,
         custom_fields: Optional[Dict[str, ColumnType]] = None,
     ) -> ToolOutcome:
         """
@@ -839,6 +842,7 @@ class ContactManager(BaseContactManager):
             "whatsapp_number": whatsapp_number,
             "bio": bio,
             "rolling_summary": rolling_summary,
+            "respond_to": respond_to,
         }
 
         # Merge any custom fields provided by the caller
@@ -905,6 +909,7 @@ class ContactManager(BaseContactManager):
         whatsapp_number: Optional[str] = None,
         bio: Optional[str] = None,
         rolling_summary: Optional[str] = None,
+        respond_to: Optional[bool] = None,
         custom_fields: Optional[Dict[str, ColumnType]] = None,
     ) -> ToolOutcome:
         """
@@ -955,6 +960,7 @@ class ContactManager(BaseContactManager):
             "whatsapp_number": whatsapp_number,
             "bio": bio,
             "rolling_summary": rolling_summary,
+            "respond_to": respond_to,
         }
 
         if custom_fields:
