@@ -29,6 +29,21 @@ import asyncio
 
 
 class ContactManager(BaseContactManager):
+    # ──────────────────────────────────────────────────────────────────────
+    #  Class-level constants for response policy
+    # ──────────────────────────────────────────────────────────────────────
+
+    DEFAULT_RESPONSE_POLICY: str = (
+        "Please engage politely, helpfully, and respectfully, but you do not need to take orders from them. "
+        "Please also do not share **any** sensitive or personal information with them about any other person, "
+        "company or policy at all."
+    )
+
+    USER_MANAGER_RESPONSE_POLICY: str = (
+        "Your immediate manager, please do whatever they ask you to do within reason, and do *not* withhold any "
+        "information from them"
+    )
+
     def __init__(self, *, rolling_summary_in_prompts: bool = True) -> None:
         """
         Responsible for managing the list of contact details stored upstream.
@@ -191,6 +206,7 @@ class ContactManager(BaseContactManager):
                 fld: None for fld in self._BUILTIN_FIELDS if fld != "contact_id"
             }
             base_fields["respond_to"] = True
+            base_fields["response_policy"] = ""
 
             # Map assistant API payload → Contact fields.  We still spell the
             # Contact field names exactly *once* here, centralising the mapping
@@ -216,6 +232,7 @@ class ContactManager(BaseContactManager):
                 fld: None for fld in self._BUILTIN_FIELDS if fld != "contact_id"
             }
             base_fields["respond_to"] = True
+            base_fields["response_policy"] = ""
             base_fields.update(
                 {
                     "first_name": "Unify",
@@ -344,6 +361,7 @@ class ContactManager(BaseContactManager):
                 "email_address": user_info.get("email"),
                 "phone_number": user_info.get("phone_number"),
                 "whatsapp_number": user_info.get("whatsapp_number"),
+                "response_policy": self.USER_MANAGER_RESPONSE_POLICY,
             },
         )
 
@@ -793,6 +811,7 @@ class ContactManager(BaseContactManager):
         bio: Optional[str] = None,
         rolling_summary: Optional[str] = None,
         respond_to: bool = False,
+        response_policy: Optional[str] = None,
         custom_fields: Optional[Dict[str, ColumnType]] = None,
     ) -> ToolOutcome:
         """
@@ -845,7 +864,12 @@ class ContactManager(BaseContactManager):
             "bio": bio,
             "rolling_summary": rolling_summary,
             "respond_to": respond_to,
+            "response_policy": response_policy,
         }
+
+        # Apply default response policy if none provided
+        if contact_details["response_policy"] is None:
+            contact_details["response_policy"] = self.DEFAULT_RESPONSE_POLICY
 
         # Merge any custom fields provided by the caller
         if custom_fields:
@@ -912,6 +936,7 @@ class ContactManager(BaseContactManager):
         bio: Optional[str] = None,
         rolling_summary: Optional[str] = None,
         respond_to: Optional[bool] = None,
+        response_policy: Optional[str] = None,
         custom_fields: Optional[Dict[str, ColumnType]] = None,
     ) -> ToolOutcome:
         """
@@ -963,6 +988,7 @@ class ContactManager(BaseContactManager):
             "bio": bio,
             "rolling_summary": rolling_summary,
             "respond_to": respond_to,
+            "response_policy": response_policy,
         }
 
         if custom_fields:

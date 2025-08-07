@@ -409,6 +409,7 @@ class SimulatedContactManager(BaseContactManager):
         bio: Optional[str] = None,
         rolling_summary: Optional[str] = None,
         respond_to: Optional[bool] = None,
+        response_policy: Optional[str] = None,
         custom_fields: Optional[Dict[str, Any]] = None,
     ) -> "ToolOutcome":
         """
@@ -435,6 +436,7 @@ class SimulatedContactManager(BaseContactManager):
                 "bio": bio,
                 "rolling_summary": rolling_summary,
                 "respond_to": respond_to,
+                "response_policy": response_policy,
                 **(custom_fields or {}),
             }.items()
             if v is not None
