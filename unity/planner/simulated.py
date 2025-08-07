@@ -49,7 +49,7 @@ class SimulatedActiveTask(BaseActiveTask):
         self._requests_clarification = _requests_clarification
 
         # step-counting
-        self._step_count = 0
+        self._steps_taken = 0
         self._step_lock = threading.Lock()
         # wall-clock timeout
         self._start_time: float | None = None
@@ -124,7 +124,7 @@ class SimulatedActiveTask(BaseActiveTask):
                     return
 
                 # tool-step budget ---------------------------------------------
-                if self._steps is not None and self._step_count >= self._steps:
+                if self._steps is not None and self._steps_taken >= self._steps:
                     self._complete(
                         f"Completed task '{task}' in {self._steps} steps.",
                     )
@@ -179,12 +179,12 @@ class SimulatedActiveTask(BaseActiveTask):
             ):
                 self._task_thread.join(timeout=1)
 
-    def _count_step(self):
+    # Pubic
+
+    def simulate_step(self):
         if not self._done_event.is_set():
             with self._step_lock:
-                self._step_count += 1
-
-    # Pubic
+                self._steps_taken += 1
 
     @functools.wraps(BaseActiveTask.result, updated=())
     async def result(self) -> str:
@@ -206,7 +206,7 @@ class SimulatedActiveTask(BaseActiveTask):
     async def interject(self, instruction: str) -> None:
         if not self._task:
             raise Exception("No tasks are currently being performed.")
-        self._count_step()
+        self.simulate_step()
         prompt = (
             f"Current simulated task:\n{self._task}\n\n"
             f"User instruction to adjust the plan:\n{instruction}"
@@ -221,7 +221,7 @@ class SimulatedActiveTask(BaseActiveTask):
             return "Task is already paused."
         self._paused = True
         self._pause_event.clear()
-        self._count_step()
+        self.simulate_step()
         return f"Paused task '{self._task}'."
 
     @functools.wraps(BaseActiveTask.resume, updated=())
@@ -232,14 +232,14 @@ class SimulatedActiveTask(BaseActiveTask):
             return "Task is already running."
         self._paused = False
         self._pause_event.set()
-        self._count_step()
+        self.simulate_step()
         return f"Resumed task '{self._task}'."
 
     @functools.wraps(BaseActiveTask.ask, updated=())
     async def ask(self, question: str) -> str:
         if not self._task:
             raise Exception("No tasks are currently being performed.")
-        self._count_step()
+        self.simulate_step()
         prompt = (
             f"You are working on the simulated task:\n{self._task}\n\n"
             f"User asks: {question}"
