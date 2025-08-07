@@ -11,6 +11,7 @@ class Medium(StrEnum):
     WHATSAPP_MSG = "whatsapp_message"
     PHONE_CALL = "phone_call"
     WHATSAPP_CALL = "whatsapp_call"
+    UNIFY_CHAT = "unify_chat"
 
 
 class Message(BaseModel):
