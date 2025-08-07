@@ -221,9 +221,9 @@ async def test_execute_task_result_and_done():
 async def test_execute_task_invokes_ask_when_id_missing(monkeypatch):
     """Executing via *description only* should call TaskScheduler.ask exactly once."""
 
-    description = "Prepare monthly analytics dashboard."
+    description = "prepare the monthly analytics dashboard."
 
-    planner = SimulatedPlanner(steps=1)
+    planner = SimulatedPlanner(steps=0)
     ts = TaskScheduler(planner=planner)
 
     # Seed one queued task (the one we'll start)
@@ -312,7 +312,7 @@ async def test_execute_task_requests_clarification_for_unknown_id(monkeypatch):
     internal `request_clarification` helper (i.e. push a question onto the
     clarification_up_q)."""
 
-    planner = SimulatedPlanner(steps=1)
+    planner = SimulatedPlanner(steps=0)
     ts = TaskScheduler(planner=planner)
 
     # Provide queues so the tool can ask for clarification.
