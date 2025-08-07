@@ -331,4 +331,11 @@ async def test_execute_task_requests_clarification_for_unknown_id(monkeypatch):
     question = await clarification_up_q.get()
 
     assert question, "A clarification question should have been requested"
-    handle.stop()
+
+    # Respond so the loop can terminate quickly.
+    await clarification_down_q.put(
+        "Oh sorry, my mistake. Let's not execute any task in that case then.",
+    )
+
+    # Gracefully stop the loop – we're only interested in the clarification behaviour.
+    await handle.result()
