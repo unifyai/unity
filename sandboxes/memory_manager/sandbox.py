@@ -223,7 +223,6 @@ async def _main_async() -> None:
         metavar="IDX",
         help="Project version index to load (default -1 for latest; supports positive and negative indexing)",
     )
-    # NEW ------------------------------------------------------------------
     parser.add_argument(
         "--manual_summaries",
         action="store_true",
@@ -532,7 +531,7 @@ async def _main_async() -> None:
         cmd = _CMD_ALIASES.get(parts[0], parts[0])
 
         if cmd in {"uc", "ucb", "ucrs", "uk", "ut"}:
-            # NEW: Extract contact_id for contact-specific commands (ucb/ucrs)
+            # Extract contact_id for contact-specific commands (ucb/ucrs)
             # The user can now supply **one or many** comma-separated ids, e.g. "ucb 0,1,2".
             contact_id_vals: list[int] = []
             if cmd in {"ucb", "ucrs"}:

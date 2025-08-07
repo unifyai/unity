@@ -23,7 +23,7 @@ from typing import (
     Set,
 )
 
-# NEW: context propagation helper for callback cascades
+# Context propagation helper for callback cascades
 import contextvars
 
 from importlib import import_module
@@ -900,7 +900,7 @@ class EventBus:
                 # (re-)attach the runtime callback
                 sub.callback = callback
 
-                # NEW: make sure we have a baseline that survived round-trip
+                # make sure we have a baseline that survived round-trip
                 if every_seconds is not None and sub.last_timestamp is None:
                     # same helper used for brand new subscriptions
                     sub.last_row_id, sub.last_timestamp = await self._compute_baseline(
