@@ -422,7 +422,8 @@ if __name__ == "__main__":
     agent_name = f"unity_{assistant_number}" if meet_id == "" else meet_id
 
     # dispatch agent
-    dispatch_agent(agent_name)
+    if sys.argv[1] == "dev":
+        dispatch_agent(agent_name)
 
     agents.cli.run_app(
         agents.WorkerOptions(
