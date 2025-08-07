@@ -264,7 +264,7 @@ async def test_execute_task_creates_new_task_and_executes(monkeypatch):
 
     description = "Organise annual security audit report."
 
-    planner = SimulatedPlanner(steps=1)
+    planner = SimulatedPlanner(steps=0)
     ts = TaskScheduler(planner=planner)
 
     # ---- spy on update -----------------------------------------------------
