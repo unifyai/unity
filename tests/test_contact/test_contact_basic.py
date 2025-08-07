@@ -32,7 +32,6 @@ def test_create_contact():
     assert contact.whatsapp_number is None
     assert contact.rolling_summary is None
     assert contact.respond_to is False
-    from unity.contact_manager.contact_manager import ContactManager
 
     assert contact.response_policy == ContactManager.DEFAULT_RESPONSE_POLICY
 
@@ -70,7 +69,6 @@ def test_update_contact():
     assert contact.first_name == "Daniel"
     assert contact.bio == "He's alright"
     assert contact.respond_to is False
-    from unity.contact_manager.contact_manager import ContactManager
 
     assert contact.response_policy == ContactManager.DEFAULT_RESPONSE_POLICY
 
@@ -114,7 +112,6 @@ def test_create_contacts():
     assert tom_contact.bio is None
     assert tom_contact.rolling_summary is None
     assert tom_contact.respond_to is False
-    from unity.contact_manager.contact_manager import ContactManager
 
     assert tom_contact.response_policy == custom_policy
     assert dan_contact.response_policy == ContactManager.DEFAULT_RESPONSE_POLICY
@@ -150,6 +147,5 @@ def test_system_contacts_respond_to_true():
     user = cm._search_contacts(filter="contact_id == 1")
     assert user, "Default user contact (id 1) must exist"
     assert user[0].respond_to is True, "User should default to respond_to=True"
-    from unity.contact_manager.contact_manager import ContactManager
 
     assert user[0].response_policy == ContactManager.USER_MANAGER_RESPONSE_POLICY
