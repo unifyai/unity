@@ -7,7 +7,7 @@ from typing import Optional
 
 class BaseMemoryManager(ABC):
     """
-    *Offline* memory-maintenance helper that is invoked every 50 messages.
+    *Offline* memory-maintenance helper that is invoked every 30 messages (by default).
 
     All public methods consume **one** request and return a final value
     (they do **not** expose live, steerable handles).

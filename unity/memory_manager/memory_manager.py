@@ -49,7 +49,7 @@ def _env_flag(
 
 class MemoryManager(BaseMemoryManager):
     """
-    Offline helper invoked by a scheduler every ~50 messages.
+    Offline helper invoked by a scheduler every ~30 messages (by default).
     """
 
     _MANAGERS = {
@@ -184,8 +184,8 @@ class MemoryManager(BaseMemoryManager):
             # No summary callbacks -> consider the system *ready* immediately
             self._callbacks_ready.set()
 
-        # ── real-time 50-message trigger (update callbacks) --------------------
-        self._CHUNK_SIZE: int = 50
+        # ── real-time 30-message trigger (update callbacks) --------------------
+        self._CHUNK_SIZE: int = 30
         self._recent_messages: list[dict] = []
         self._messages_since_update: int = 0
 
@@ -212,7 +212,7 @@ class MemoryManager(BaseMemoryManager):
             )
 
             # 2.  Listen to those explicit ManagerMethod events so they are included
-            #     in the 50-message rolling window given to the LLM.
+            #     in the 30-message rolling window given to the LLM.
             asyncio.create_task(self._setup_explicit_call_callbacks())
 
         # If update callbacks are disabled  no-op for message processing
@@ -800,7 +800,7 @@ class MemoryManager(BaseMemoryManager):
 
     # ------------------------------------------------------------------
     # NEW: capture *explicit* ManagerMethod invocations coming from the
-    #       ConversationManager so the passive 50-message chunk has full
+    #       ConversationManager so the passive 30-message chunk has full
     #       context.
     # ------------------------------------------------------------------
 
@@ -891,7 +891,7 @@ class MemoryManager(BaseMemoryManager):
             await self._flush_recent_items()
 
     async def _process_message_chunk(self, messages: list[dict]) -> None:
-        """Run the full suite of memory updates for one 50-message chunk."""
+        """Run the full suite of memory updates for one 30-message chunk."""
 
         # Serialise – prevent concurrent chunks from interleaving updates
         async with self._chunk_lock:
