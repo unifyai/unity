@@ -318,7 +318,6 @@ class MemoryManager(BaseMemoryManager):
                 **cleaned_kwargs,
             )
 
-        # NEW ────────────────────────────────────────────────────────────
         #  merge_contacts – expose full-contact merge to the LLM
         #
         #  Unlike the create/update wrappers above, *all* columns are allowed
@@ -799,7 +798,7 @@ class MemoryManager(BaseMemoryManager):
             pass
 
     # ------------------------------------------------------------------
-    # NEW: capture *explicit* ManagerMethod invocations coming from the
+    #       Capture *explicit* ManagerMethod invocations coming from the
     #       ConversationManager so the passive 30-message chunk has full
     #       context.
     # ------------------------------------------------------------------

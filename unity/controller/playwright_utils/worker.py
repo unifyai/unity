@@ -41,7 +41,7 @@ from .overlay import _make_js_helper
 from .heuristics import export_for_js
 
 # Manual-solve mode: set False to disable automatic CAPTCHA sniffing
-AUTO_CAPTCHA = False  # NEW – detect only when user issues `solve_captcha`
+AUTO_CAPTCHA = False  # Detect only when user issues `solve_captcha`
 OMNIPARSER_URL = "https://omniparser.saas.unify.ai/parse/"
 
 
@@ -490,7 +490,7 @@ class BrowserWorker(threading.Thread):
                             break
 
                     # ── update dynamic browser‑state fields ────────────────
-                    try:  # NEW
+                    try:
                         js = """
                             () => {
                                 const url = location.href;

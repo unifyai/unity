@@ -2196,7 +2196,7 @@ class ControlPanel(tk.Tk):
             btn.pack(fill="x", padx=1, pady=0)
             self._element_buttons.append(btn)
             self._bind_mousewheel(btn, self._el_canvas)
-        # ---- show scrollbar only when needed ---------------------------  # NEW
+        # ---- show scrollbar only when needed ---------------------------
         self._elements_rows_frame.update_idletasks()
         content_h = self._elements_rows_frame.winfo_reqheight()
         pane_h = self._el_canvas.winfo_height()

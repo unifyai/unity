@@ -40,8 +40,8 @@ class MirrorPage:
             if frame.parent_frame is None:
                 try:
                     url = frame.url
-                    if not url.startswith(("http://", "https://")):  # NEW
-                        url = "https://" + url  # NEW
+                    if not url.startswith(("http://", "https://")):
+                        url = "https://" + url
                     self.page.goto(url, timeout=10000)
                 except Exception:
                     pass  # ignore aborted navigations
