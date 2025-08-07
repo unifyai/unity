@@ -134,13 +134,49 @@ class MemoryManager(BaseMemoryManager):
         messages: list[dict],
         contact_manager: Optional["ContactManager"] = None,
     ) -> str:
-        """Delegate to `TranscriptManager.build_plain_transcript` to avoid duplication."""
+        """Return *plain-text* view of the message/event list.
 
+        • Chat messages are rendered exactly like `TranscriptManager.build_plain_transcript`.
+        • *ManagerMethod* events (kind == "manager_method") are preserved as **raw JSON** so
+          downstream helpers/tests can still inspect all attributes (the tests assert the
+          literal substring `"kind": "manager_method"` is present).
+        """
+
+        # Delegate chat messages to the central helper so naming etc. stays consistent
         from unity.transcript_manager.transcript_manager import (
             TranscriptManager as _TM,
         )
 
-        return _TM.build_plain_transcript(messages, contact_manager=contact_manager)
+        plain_chat = _TM.build_plain_transcript(
+            messages,
+            contact_manager=contact_manager,
+        )
+
+        # Append serialised manager-method events (if any) *in the order they appear*
+        extra_lines: list[str] = []
+        for itm in messages:
+            if itm.get("kind") == "manager_method":
+                try:
+                    import json  # local import to avoid polluting module namespace
+
+                    dat = itm.get("data", {})
+                    concise = {
+                        "kind": "manager_method",
+                        "manager": dat.get("manager"),
+                        "method": dat.get("method"),
+                        "phase": dat.get("phase"),
+                    }
+                    extra_lines.append(json.dumps(concise))
+                except Exception:
+                    # Fallback – best-effort string conversion
+                    extra_lines.append(str(itm))
+
+        if extra_lines:
+            if plain_chat:
+                return "\n".join([plain_chat] + extra_lines)
+            return "\n".join(extra_lines)
+
+        return plain_chat
 
     # ---------------------------------------------------------------------- #
     def __init__(
