@@ -190,7 +190,7 @@ class ContactManager(BaseContactManager):
             base_fields = {
                 fld: None for fld in self._BUILTIN_FIELDS if fld != "contact_id"
             }
-            base_fields["respond_to"] = False
+            base_fields["respond_to"] = True
 
             # Map assistant API payload → Contact fields.  We still spell the
             # Contact field names exactly *once* here, centralising the mapping
@@ -215,7 +215,7 @@ class ContactManager(BaseContactManager):
             base_fields = {
                 fld: None for fld in self._BUILTIN_FIELDS if fld != "contact_id"
             }
-            base_fields["respond_to"] = False
+            base_fields["respond_to"] = True
             base_fields.update(
                 {
                     "first_name": "Unify",
@@ -329,6 +329,8 @@ class ContactManager(BaseContactManager):
             for fld in self._BUILTIN_FIELDS
             if fld not in {"contact_id", "bio", "rolling_summary"}
         }
+        # Default for user: respond_to True so assistant replies
+        base_fields["respond_to"] = True
 
         # Merge in the real user metadata that we discovered.  Crucially we
         # *omit* the ``bio`` and ``rolling_summary`` keys so any manually

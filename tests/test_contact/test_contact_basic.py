@@ -115,3 +115,25 @@ def test_search_contacts():
     contact_manager._create_contact(
         first_name="Dan",
     )
+
+
+# ────────────────────────────────────────────────────────────────────────────
+#  System contacts respond_to defaults                              #
+# ────────────────────────────────────────────────────────────────────────────
+
+
+@pytest.mark.unit
+@_handle_project
+def test_system_contacts_respond_to_true():
+    """Assistant (id 0) and default user (id 1) should have respond_to == True."""
+    cm = ContactManager()
+
+    assistant = cm._search_contacts(filter="contact_id == 0")
+    assert assistant, "Assistant contact (id 0) must exist"
+    assert (
+        assistant[0].respond_to is True
+    ), "Assistant should default to respond_to=True"
+
+    user = cm._search_contacts(filter="contact_id == 1")
+    assert user, "Default user contact (id 1) must exist"
+    assert user[0].respond_to is True, "User should default to respond_to=True"
