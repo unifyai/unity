@@ -408,6 +408,7 @@ class SimulatedContactManager(BaseContactManager):
         whatsapp_number: Optional[str] = None,
         bio: Optional[str] = None,
         rolling_summary: Optional[str] = None,
+        respond_to: Optional[bool] = None,
         custom_fields: Optional[Dict[str, Any]] = None,
     ) -> "ToolOutcome":
         """
@@ -433,6 +434,7 @@ class SimulatedContactManager(BaseContactManager):
                 "whatsapp_number": whatsapp_number,
                 "bio": bio,
                 "rolling_summary": rolling_summary,
+                "respond_to": respond_to,
                 **(custom_fields or {}),
             }.items()
             if v is not None

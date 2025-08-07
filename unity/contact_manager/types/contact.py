@@ -45,6 +45,10 @@ class Contact(BaseModel):
         default=None,
         description="Short rolling conversation summary and current objectives with this contact.",
     )
+    respond_to: bool = Field(
+        default=False,
+        description="Whether the assistant should respond to inbound messages or calls from this contact.",
+    )
 
     @model_validator(mode="before")
     @classmethod
