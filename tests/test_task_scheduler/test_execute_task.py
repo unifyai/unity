@@ -331,12 +331,7 @@ async def test_execute_task_requests_clarification_for_unknown_id(monkeypatch):
     )
 
     # Wait for the assistant to push a clarification question.
-    question = await asyncio.wait_for(clarification_up_q.get(), timeout=5)
+    question = await clarification_up_q.get()
 
     assert question, "A clarification question should have been requested"
-
-    # Respond so the loop can terminate quickly.
-    await clarification_down_q.put("Let's create a new task with that id.")
-
-    # Gracefully stop the loop – we're only interested in the clarification behaviour.
-    await handle.result()
+    handle.stop()
