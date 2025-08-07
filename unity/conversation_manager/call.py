@@ -33,7 +33,7 @@ import numpy as np
 load_dotenv()
 
 from unity.conversation_manager.events import *
-from unity.conversation_manager.utils import publish_event, close_connection, get_reader
+from unity.conversation_manager.utils import dispatch_agent, publish_event, close_connection, get_reader
 
 events_queue = asyncio.Queue()
 chunk_queue = asyncio.Queue()
@@ -420,6 +420,10 @@ if __name__ == "__main__":
     # os.environ["CALL_TO_NUMBER"] = to_number
 
     agent_name = f"unity_{assistant_number}" if meet_id == "" else meet_id
+
+    # dispatch agent
+    dispatch_agent(agent_name)
+
     agents.cli.run_app(
         agents.WorkerOptions(
             entrypoint_fnc=entrypoint,

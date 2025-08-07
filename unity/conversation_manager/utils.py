@@ -3,6 +3,7 @@ import json
 import time
 import os
 import aiohttp
+import requests
 
 # Configuration
 EVENT_SERVER_HOST = "127.0.0.1"
@@ -314,3 +315,16 @@ async def admin_update_assistant(
                 print(f"Failed to update assistant. Status: {response.status}")
                 return False
             return True
+
+
+# dispatch agent
+def dispatch_agent(agent_name: str):
+    response = requests.post(
+        f"{unity_comms_url}/phone/dispatch-agent",
+        headers=admin_headers,
+        json={"agent_name": agent_name},
+    )
+    if response.status_code != 200:
+        print(f"Failed to dispatch agent. Status: {response.status_code}")
+        return False
+    return True
