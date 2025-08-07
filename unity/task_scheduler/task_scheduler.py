@@ -434,12 +434,13 @@ class TaskScheduler(BaseTaskScheduler):
             await clarification_up_q.put(question)
             return await clarification_down_q.get()
 
-        tools = {
-            "ask": self.ask,  # determine an existing/created task id
-            "update": self.update,  # create a brand-new task or tweak an existing one
-            "request_clarification": request_clarification,  # human clarification channel
-            "execute_task_by_id": _execute_task_by_id,  # finally start the task
-        }
+        tools = methods_to_tool_dict(
+            self.ask,
+            self.update,
+            request_clarification,
+            _execute_task_by_id,
+            include_class_name=False,
+        )
 
         # ── dynamic system prompt ───────────────────────────────────────────
         client.set_system_message(
