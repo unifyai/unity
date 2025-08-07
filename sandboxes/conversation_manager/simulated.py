@@ -34,6 +34,17 @@ SENT_MAP = {
     "email": EmailSentEvent,
 }
 
+COMMANDS_HELP = (
+    "\nAgent-User simulation – type commands below. 'exit' to end.\n\n"
+    "┌───────────────────────────────── accepted commands ─────────────────────────────────┐\n"
+    "│ start (s)      – begin conversation                                                 │\n"
+    "│ continue (c)   – continue for next 3 exchanges                                      │\n"
+    "│ medium (m)     – change communication medium (restarts conversation with history)   │\n"
+    "│ help (h)       – show this help                                                     │\n"
+    "│ exit | quit    – end simulation                                                     │\n"
+    "└─────────────────────────────────────────────────────────────────────────────────────┘"
+)
+
 
 def make_agent(
     job,
@@ -60,8 +71,10 @@ def make_agent(
 
 
 async def simulate_turn(agent, message):
-    # record user utterance via PhoneUtteranceEvent payload
-    ue = PhoneUtteranceEvent(timestamp=None, content=message, role="User")
+    global MEDIUM
+    # record user utterance via appropriate event class
+    recv_cls = RECEIVED_MAP.get(MEDIUM, PhoneUtteranceEvent)
+    ue = recv_cls(timestamp=None, content=message, role="User")
     agent["history"].append(ue.to_dict())
     # build system prompt
     sys_prompt = build_call_sys_prompt(
@@ -85,14 +98,16 @@ async def simulate_turn(agent, message):
     client.set_system_message(sys_prompt)
     # single-turn generate
     resp = await client.generate(user_message=ua_prompt)
-    # record assistant response via PhoneUtteranceEvent payload
+    # record assistant response via appropriate event class
     reply = getattr(resp, "phone_utterance", None) or str(resp)
-    ae = PhoneUtteranceEvent(timestamp=None, content=reply, role="Assistant")
+    send_cls = SENT_MAP.get(MEDIUM, PhoneUtteranceEvent)
+    ae = send_cls(timestamp=None, content=reply, role="Assistant")
     agent["history"].append(ae.to_dict())
     return reply
 
 
 async def simulate():
+    global MEDIUM
     parser = build_cli_parser("Raw two-agent simulation")
     args = parser.parse_args()
     activate_project(args.project_name, args.overwrite)
@@ -145,25 +160,25 @@ async def simulate():
     alice = make_agent("alice", "Bob", "Alice", "+1001", "+1002", assistant_behaviour)
     bob = make_agent("bob", "Alice", "Bob", "+1002", "+1001", user_behaviour)
 
-    print(
-        "Raw two-agent simulation. Commands: 'start (s)', 'continue (c)', 'medium (m)', 'exit'",
-    )
     last_message = None
     while True:
+        print(COMMANDS_HELP)
         cmd = input("Command> ").strip().lower()
+
         if cmd in ("exit", "quit"):
             break
+        if cmd in ("help", "h"):
+            print(COMMANDS_HELP)
+            continue
         if cmd not in ("start", "s", "continue", "c", "medium", "m"):
-            print(
-                "Use 'start' to begin, 'continue' for next 5 turns, 'medium' to toggle voice, or 'exit'.",
-            )
+            print("Invalid command. Please try again.")
             continue
 
         if cmd in ("start", "s"):
             # Use unify AsyncClient and generate first response based on user_behaviour
             client = unify.AsyncUnify(endpoint="gpt-4.1@openai")
             resp = await client.generate(
-                user_message=f"You are Bob, and you are calling Alice. Greet in one sentence with this purpose: {user_behaviour}",
+                user_message=f"You are Bob, and you are having {MEDIUM} conversation with Alice. Greet in one sentence with this purpose: {user_behaviour}",
             )
             last_message = getattr(resp, "phone_utterance", None) or str(resp)
             print("Bob (user)>  ", last_message, "\n")
@@ -174,6 +189,13 @@ async def simulate():
                 print(f"Communication medium changed to: {MEDIUM}")
             else:
                 print("Invalid medium. Please choose 'phone', 'sms', or 'email'.")
+            last_message = None
+            continue
+
+        if last_message is None:
+            print(
+                f"No conversation started. Use 'start' first. Current medium: {MEDIUM}",
+            )
             continue
 
         # run 3 exchange cycles
