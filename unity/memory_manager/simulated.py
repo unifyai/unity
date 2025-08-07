@@ -273,6 +273,89 @@ class SimulatedMemoryManager(BaseMemoryManager):
         )
         return await handle.result()
 
+    async def update_contact_response_policy(
+        self,
+        transcript: str,
+        *,
+        contact_id: int,
+        guidance: Optional[str] = None,
+    ) -> str:  # noqa: D401 – imperative helper
+        """Generate/refresh the response_policy field for the given contact."""
+
+        target_id = contact_id
+
+        async def set_response_policy(contact_id: int, response_policy: str) -> str:
+            final_id = contact_id or target_id
+            if final_id is None:
+                raise ValueError(
+                    "contact_id must be supplied either via argument or tool call.",
+                )
+            self._overlays.setdefault(final_id, {})["response_policy"] = response_policy
+            handle = await self._contact_manager.update(
+                f"Please set the response_policy for contact id {final_id} as follows:\n{response_policy}",
+            )
+            return await handle.result()
+
+        tools: Dict[str, Callable[..., Any]] = {
+            "transcript_ask": self._transcript_manager.ask,
+            "contact_ask": self._contact_manager.ask,
+            "set_response_policy": set_response_policy,
+        }
+
+        # Retrieve current policy & contact label
+        contacts = self._contact_manager._search_contacts(
+            filter=f"contact_id == {contact_id}",
+            limit=1,
+        )
+        c0 = contacts[0] if contacts else None
+        contact_name_val = (
+            " ".join(p for p in [c0.first_name, c0.surname] if p).strip()
+            if c0
+            else None
+        )
+        latest_policy_val = c0.response_policy if c0 else None
+
+        assistant_extra = (
+            "IMPORTANT: This response policy belongs to the assistant itself (contact_id 0). Always use **second-person** pronouns ('you')."
+            if contact_id == 0
+            else None
+        )
+        combined_guidance = (
+            "\n".join(g for g in (guidance, assistant_extra) if g) or None
+        )
+
+        contact_label = (
+            f"{contact_name_val} (id {contact_id})"
+            if contact_name_val
+            else f"id {contact_id}"
+        )
+
+        self._llm.set_system_message(
+            pb.build_response_policy_prompt(
+                contact_label,
+                tools,
+                guidance=combined_guidance,
+            ),
+        )
+
+        payload = json.dumps(
+            {
+                "contact_id": contact_id,
+                "latest_response_policy": latest_policy_val,
+                "transcript": transcript,
+            },
+            indent=2,
+        )
+
+        handle = start_async_tool_use_loop(
+            self._llm,
+            payload,
+            tools,
+            loop_id="SimulatedMemoryManager.update_contact_response_policy",
+            tool_policy=lambda i, _: ("required", _) if i < 1 else ("auto", _),
+        )
+        return await handle.result()
+
     async def update_knowledge(
         self,
         transcript: str,

@@ -90,6 +90,11 @@ def _wrap_builder(monkeypatch, name: str, bucket: dict):
             "build_task_prompt",
             "Please schedule a follow-up meeting next Monday.",
         ),
+        (
+            "update_contact_response_policy",
+            "build_response_policy_prompt",
+            "Please respond formally in future.",
+        ),
     ],
 )
 async def test_guidance_is_propagated(
@@ -109,7 +114,11 @@ async def test_guidance_is_propagated(
     method = getattr(mm, method_name)
 
     # call signatures differ slightly; pack kwargs accordingly
-    if method_name in {"update_contact_bio", "update_contact_rolling_summary"}:
+    if method_name in {
+        "update_contact_bio",
+        "update_contact_rolling_summary",
+        "update_contact_response_policy",
+    }:
         await method(transcript, contact_id=1, guidance=guidance)
     else:
         await method(transcript, guidance=guidance)

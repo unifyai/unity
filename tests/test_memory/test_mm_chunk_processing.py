@@ -60,6 +60,7 @@ async def test_memory_manager_parse_transcript_for_updates(monkeypatch):
         "tasks": 0,
         "bio": 0,
         "rolling": 0,
+        "policy": 0,
     }
 
     async def _stub_factory(key: str):  # noqa: D401 – imperative helper
@@ -99,6 +100,12 @@ async def test_memory_manager_parse_transcript_for_updates(monkeypatch):
         MemoryManager,
         "update_contact_rolling_summary",
         await _stub_factory("rolling"),
+        raising=True,
+    )
+    monkeypatch.setattr(
+        MemoryManager,
+        "update_contact_response_policy",
+        await _stub_factory("policy"),
         raising=True,
     )
 
@@ -170,3 +177,6 @@ async def test_memory_manager_parse_transcript_for_updates(monkeypatch):
     assert (
         counts["rolling"] == 2
     ), "update_contact_rolling_summary should fire once per unique contact"
+    assert (
+        counts["policy"] == 2
+    ), "update_contact_response_policy should fire once per unique contact"

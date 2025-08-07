@@ -58,6 +58,12 @@ def _make_mm(monkeypatch, kb_counter: Dict[str, int]):
         _noop,
         raising=True,
     )
+    monkeypatch.setattr(
+        MemoryManager,
+        "update_contact_response_policy",
+        _noop,
+        raising=True,
+    )
 
     mm = MemoryManager(
         contact_manager=SimulatedContactManager(),
