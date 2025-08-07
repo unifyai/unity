@@ -32,6 +32,9 @@ def test_create_contact():
     assert contact.whatsapp_number is None
     assert contact.rolling_summary is None
     assert contact.respond_to is False
+    from unity.contact_manager.contact_manager import ContactManager
+
+    assert contact.response_policy == ContactManager.DEFAULT_RESPONSE_POLICY
 
 
 @pytest.mark.unit
@@ -67,6 +70,9 @@ def test_update_contact():
     assert contact.first_name == "Daniel"
     assert contact.bio == "He's alright"
     assert contact.respond_to is False
+    from unity.contact_manager.contact_manager import ContactManager
+
+    assert contact.response_policy == ContactManager.DEFAULT_RESPONSE_POLICY
 
 
 @pytest.mark.unit
@@ -86,8 +92,10 @@ def test_create_contacts():
     assert contact.first_name == "Dan"
 
     # second
+    custom_policy = "Treat them courteously but share no secrets."
     contact_manager._create_contact(
         first_name="Tom",
+        response_policy=custom_policy,
     )
     user_contacts = [
         c for c in contact_manager._search_contacts() if c.contact_id not in (0, 1)
@@ -106,6 +114,10 @@ def test_create_contacts():
     assert tom_contact.bio is None
     assert tom_contact.rolling_summary is None
     assert tom_contact.respond_to is False
+    from unity.contact_manager.contact_manager import ContactManager
+
+    assert tom_contact.response_policy == custom_policy
+    assert dan_contact.response_policy == ContactManager.DEFAULT_RESPONSE_POLICY
 
 
 @pytest.mark.unit
@@ -133,7 +145,11 @@ def test_system_contacts_respond_to_true():
     assert (
         assistant[0].respond_to is True
     ), "Assistant should default to respond_to=True"
+    assert assistant[0].response_policy == ""
 
     user = cm._search_contacts(filter="contact_id == 1")
     assert user, "Default user contact (id 1) must exist"
     assert user[0].respond_to is True, "User should default to respond_to=True"
+    from unity.contact_manager.contact_manager import ContactManager
+
+    assert user[0].response_policy == ContactManager.USER_MANAGER_RESPONSE_POLICY
