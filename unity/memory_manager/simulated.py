@@ -14,6 +14,7 @@ import os
 from typing import Dict, Optional, Callable, Any
 
 import unify
+import asyncio
 
 # ── new helpers & simulated back-ends ────────────────────────────────────────
 from ..contact_manager.simulated import SimulatedContactManager
@@ -135,12 +136,13 @@ class SimulatedMemoryManager(BaseMemoryManager):
             "set_bio": set_bio,
         }
 
-        # Retrieve contact info for clearer context
-        contacts = self._contact_manager._search_contacts(
+        # Retrieve contact info for clearer context (run in thread to avoid nested loop)
+        contacts = await asyncio.to_thread(
+            self._contact_manager._search_contacts,
             filter=f"contact_id == {contact_id}",
             limit=1,
         )
-        c0 = contacts[0]
+        c0 = contacts[0] if contacts else None
         latest_bio_val = c0.bio
         contact_name_val = (
             " ".join(p for p in [c0.first_name, c0.surname] if p).strip() or None
@@ -208,13 +210,11 @@ class SimulatedMemoryManager(BaseMemoryManager):
             "set_rolling_summary": set_rolling_summary,
         }
 
-        # ────────────────────────────────────────────────────────────────
-        #   Retrieve contact details (name + current rolling summary) so
-        #   that we can build the prompt and construct the payload in one
-        #   pass without duplicate look-ups.
+        # Retrieve contact details (name + current rolling summary) – thread-safe
         # ----------------------------------------------------------------
         try:
-            contacts = self._contact_manager._search_contacts(
+            contacts = await asyncio.to_thread(
+                self._contact_manager._search_contacts,
                 filter=f"contact_id == {contact_id}",
                 limit=1,
             )
@@ -302,8 +302,9 @@ class SimulatedMemoryManager(BaseMemoryManager):
             "set_response_policy": set_response_policy,
         }
 
-        # Retrieve current policy & contact label
-        contacts = self._contact_manager._search_contacts(
+        # Retrieve current policy & contact label (thread-safe)
+        contacts = await asyncio.to_thread(
+            self._contact_manager._search_contacts,
             filter=f"contact_id == {contact_id}",
             limit=1,
         )
