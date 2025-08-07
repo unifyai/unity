@@ -1,11 +1,38 @@
 import asyncio
 import unify
-from sandboxes.utils import build_cli_parser, activate_project
+from sandboxes.utils import (
+    build_cli_parser,
+    activate_project,
+    speak,
+    record_until_enter,
+    transcribe_deepgram,
+)
 from unity.conversation_manager.prompt_builders import (
     build_call_sys_prompt,
     build_user_agent_prompt,
 )
-from unity.conversation_manager.events import PhoneUtteranceEvent
+from unity.conversation_manager.events import (
+    PhoneUtteranceEvent,
+    SMSMessageRecievedEvent,
+    SMSMessageSentEvent,
+    EmailRecievedEvent,
+    EmailSentEvent,
+)
+
+
+MEDIUM = "phone"
+
+RECEIVED_MAP = {
+    "phone": PhoneUtteranceEvent,
+    "sms": SMSMessageRecievedEvent,
+    "email": EmailRecievedEvent,
+}
+
+SENT_MAP = {
+    "phone": PhoneUtteranceEvent,
+    "sms": SMSMessageSentEvent,
+    "email": EmailSentEvent,
+}
 
 
 def make_agent(
@@ -27,10 +54,6 @@ def make_agent(
         "assistant_number": assistant_number,
         "user_number": user_number,
         "task_context": None,
-        # "task_context": {
-        #     "name": assistant_behaviour,
-        #     "description": assistant_behaviour,
-        # },
         "history": [],
         "client": client,
     }
@@ -76,34 +99,67 @@ async def simulate():
 
     # Input for customised user profile
     print("Configure Bob (user) profile behaviour:")
-    user_behaviour = (
-        input(
-            "Describe the user behaviour (e.g., 'You are a customer with a billing issue'): ",
+    # Start of Selection
+    if args.voice:
+        raw = input(
+            "Describe the user behaviour (or press 'r' to record voice): ",
         ).strip()
-        or "You are a customer with a billing issue"
-    )
+        if raw.lower() == "r":
+            print("Recording user behaviour. Press Enter to stop.")
+            audio = record_until_enter()
+            # Transcribe the recording
+            user_behaviour = (
+                await transcribe_deepgram(audio)
+            ).strip() or "You are a customer with a billing issue"
+        else:
+            user_behaviour = raw or "You are a customer with a billing issue"
+    else:
+        user_behaviour = (
+            input(
+                "Describe the user behaviour (e.g., 'You are a customer with a billing issue'): ",
+            ).strip()
+            or "You are a customer with a billing issue"
+        )
 
     print("Configure Alice (assistant) profile behaviour:")
-    assistant_behaviour = (
-        input(
-            "Describe the assistant behaviour (e.g., 'You are a utility provider support agent'): ",
+    if args.voice:
+        raw = input(
+            "Describe the assistant behaviour (or press 'r' to record voice): ",
         ).strip()
-        or "You are a utility provider support agent"
-    )
+        if raw.lower() == "r":
+            print("Recording assistant behaviour. Press Enter to stop.")
+            audio = record_until_enter()
+            assistant_behaviour = (
+                await transcribe_deepgram(audio)
+            ).strip() or "You are a utility provider support agent"
+        else:
+            assistant_behaviour = raw or "You are a utility provider support agent"
+    else:
+        assistant_behaviour = (
+            input(
+                "Describe the assistant behaviour (e.g., 'You are a utility provider support agent'): ",
+            ).strip()
+            or "You are a utility provider support agent"
+        )
 
     alice = make_agent("alice", "Bob", "Alice", "+1001", "+1002", assistant_behaviour)
     bob = make_agent("bob", "Alice", "Bob", "+1002", "+1001", user_behaviour)
 
-    print("Raw two-agent simulation. Commands: 'start', 'continue', 'exit'")
+    print(
+        "Raw two-agent simulation. Commands: 'start (s)', 'continue (c)', 'medium (m)', 'exit'",
+    )
     last_message = None
     while True:
         cmd = input("Command> ").strip().lower()
         if cmd in ("exit", "quit"):
             break
-        if cmd not in ("start", "continue"):
-            print("Use 'start' to begin, 'continue' for next 5 turns, or 'exit'.")
+        if cmd not in ("start", "s", "continue", "c", "medium", "m"):
+            print(
+                "Use 'start' to begin, 'continue' for next 5 turns, 'medium' to toggle voice, or 'exit'.",
+            )
             continue
-        if cmd == "start":
+
+        if cmd in ("start", "s"):
             # Use unify AsyncClient and generate first response based on user_behaviour
             client = unify.AsyncUnify(endpoint="gpt-4.1@openai")
             resp = await client.generate(
@@ -111,14 +167,22 @@ async def simulate():
             )
             last_message = getattr(resp, "phone_utterance", None) or str(resp)
             print("Bob (user)>  ", last_message, "\n")
-        if last_message is None:
-            print("No conversation started. Use 'start' first.")
+        elif cmd in {"medium", "m"}:
+            new_medium = input("Select medium (phone, sms, email): ").strip().lower()
+            if new_medium in ("phone", "sms", "email"):
+                MEDIUM = new_medium
+                print(f"Communication medium changed to: {MEDIUM}")
+            else:
+                print("Invalid medium. Please choose 'phone', 'sms', or 'email'.")
             continue
-        # run 5 exchange cycles
+
+        # run 3 exchange cycles
         for _ in range(3):
             # Alice turn
             alice_reply = await simulate_turn(alice, last_message)
             print("Alice (assistant)> ", alice_reply, "\n")
+            if args.voice:
+                speak(alice_reply)
             # Bob turn
             bob_reply = await simulate_turn(bob, alice_reply)
             print("Bob (user)>  ", bob_reply, "\n")
