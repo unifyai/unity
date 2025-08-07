@@ -36,6 +36,14 @@ class BaseMemoryManager(ABC):
         guidance: Optional[str] = None,
     ) -> str: ...
 
+    async def update_contact_response_policy(
+        self,
+        transcript: str,
+        *,
+        contact_id: int,
+        guidance: Optional[str] = None,
+    ) -> str: ...
+
     @abstractmethod
     async def update_knowledge(
         self,

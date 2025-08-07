@@ -56,6 +56,12 @@ async def test_explicit_conversation_manager_calls_are_visible_in_passive_chunk(
         _noop,
         raising=True,
     )
+    monkeypatch.setattr(
+        MemoryManager,
+        "update_contact_response_policy",
+        _noop,
+        raising=True,
+    )
 
     # ---------------------------------------------------------------
     # 1.  Instantiate MemoryManager with a tiny chunk size (3) so the

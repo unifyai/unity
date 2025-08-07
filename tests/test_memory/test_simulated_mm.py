@@ -209,3 +209,33 @@ async def test_mm_update_tasks_invokes_scheduler_update(monkeypatch):
 
     assert isinstance(result, str) and result.strip()
     assert counts["ts_update"] >= 1, "TaskScheduler.update should be invoked"
+
+
+# ---------------------------------------------------------------------------
+# Response policy helper
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+@_handle_project
+async def test_mm_update_contact_response_policy_invocations(monkeypatch):
+    orig_cm_upd = SimulatedContactManager.update
+
+    calls = {"cm_update": 0}
+
+    @functools.wraps(orig_cm_upd)
+    async def spy_cm_upd(self, text: str, **kw):  # noqa: D401 – imperative helper
+        calls["cm_update"] += 1
+        return await orig_cm_upd(self, text, **kw)
+
+    monkeypatch.setattr(SimulatedContactManager, "update", spy_cm_upd, raising=True)
+
+    mm = SimulatedMemoryManager("response policy helper demo")
+    transcript = _build_transcript("Please be more formal when replying to Jane.")
+
+    await mm.update_contact_response_policy(transcript, contact_id=1)
+
+    # One invocation of ContactManager.update expected
+    assert (
+        calls["cm_update"] >= 1
+    ), "ContactManager.update should be called at least once for response policy"

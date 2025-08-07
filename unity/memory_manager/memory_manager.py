@@ -20,6 +20,7 @@ from .prompt_builders import (
     build_rolling_prompt,
     build_knowledge_prompt,
     build_activity_events_summary_prompt,
+    build_response_policy_prompt,
 )
 from .base import BaseMemoryManager
 from ..events.event_bus import EVENT_BUS, Event
@@ -227,6 +228,7 @@ class MemoryManager(BaseMemoryManager):
         *,
         update_bios: bool = True,
         update_rolling_summaries: bool = True,
+        update_response_policies: bool = True,
     ) -> str:
         """
         Scan the transcript, identify *new* contacts or modified details,
@@ -425,6 +427,15 @@ class MemoryManager(BaseMemoryManager):
                     follow_up_tasks.append(
                         asyncio.create_task(
                             self.update_contact_rolling_summary(
+                                transcript,
+                                contact_id=_cid,
+                            ),
+                        ),
+                    )
+                if update_response_policies:
+                    follow_up_tasks.append(
+                        asyncio.create_task(
+                            self.update_contact_response_policy(
                                 transcript,
                                 contact_id=_cid,
                             ),
@@ -640,6 +651,114 @@ class MemoryManager(BaseMemoryManager):
             user_blob,
             tools,
             loop_id="MemoryManager.update_contact_rolling_summary",
+            tool_policy=lambda i, _: ("required", _) if i < 1 else ("auto", _),
+        )
+
+        return await handle.result()
+
+    # ------------------------------------------------------------------ #
+    # 4  update_contact_response_policy                                  #
+    # ------------------------------------------------------------------ #
+    async def update_contact_response_policy(
+        self,
+        transcript: str,
+        *,
+        contact_id: int,
+        guidance: Optional[str] = None,
+    ) -> str:
+        """Refresh the *response_policy* column for the given contact."""
+
+        # Ensure the assistant's response policy uses **second person**.
+        assistant_extra = (
+            "IMPORTANT: This response policy belongs to the assistant itself (contact_id 0). Always use **second-person** pronouns ('you') when describing the assistant. Never refer to the assistant in the third person."  # noqa: E501
+            if contact_id == 0
+            else None
+        )
+
+        combined_guidance: Optional[str] = (
+            "\n".join(g for g in (guidance, assistant_extra) if g) or None
+        )
+        target_id = contact_id  # capture for closure
+
+        async def set_response_policy(contact_id: int, response_policy: str) -> str:
+            final_id = contact_id or target_id
+            if final_id is None:
+                raise ValueError(
+                    "contact_id must be supplied either via the method argument or the tool call.",
+                )
+            await asyncio.to_thread(
+                self._contact_manager._update_contact,
+                contact_id=final_id,
+                custom_fields={"response_policy": response_policy},
+            )
+            return (
+                f"Response policy for contact with id {final_id} successfully updated"
+            )
+
+        tools: Dict[str, Callable[..., Any]] = {
+            "transcript_ask": self._transcript_manager.ask,
+            "contact_ask": self._contact_manager.ask,
+            "set_response_policy": set_response_policy,
+        }
+
+        # ────────────────────────────────────────────────────────────────
+        #   Retrieve contact details once (name + current response policy)
+        #   so we can build the prompt and seed the user payload without
+        #   duplicating backend look-ups later on.
+        # ----------------------------------------------------------------
+        try:
+            contacts = await asyncio.to_thread(
+                self._contact_manager._search_contacts,
+                filter=f"contact_id == {contact_id}",
+                limit=1,
+            )
+            c0 = contacts[0] if contacts else None
+            contact_name_val = (
+                " ".join(p for p in [c0.first_name, c0.surname] if p).strip()
+                if c0
+                else None
+            )
+            latest_policy_val = c0.response_policy if c0 else None
+        except Exception:
+            contact_name_val = None
+            latest_policy_val = None  # best-effort fallback
+
+        # ------------------------------------------------------------------
+        llm = unify.AsyncUnify(
+            "o4-mini@openai",
+            cache=json.loads(os.getenv("UNIFY_CACHE", "true")),
+            traced=json.loads(os.getenv("UNIFY_TRACED", "true")),
+        )
+        contact_label = (
+            f"{contact_name_val} (id {contact_id})"
+            if contact_name_val
+            else f"id {contact_id}"
+        )
+        llm.set_system_message(
+            build_response_policy_prompt(
+                contact_label,
+                tools,
+                guidance=combined_guidance,
+            ),
+        )
+
+        # ------------------------------------------------------------------
+        # Build the LLM *user* payload using the already-retrieved policy.
+        # ------------------------------------------------------------------
+        user_blob = json.dumps(
+            {
+                "contact_id": contact_id,
+                "latest_response_policy (to maybe update)": latest_policy_val,
+                "transcript": transcript,
+            },
+            indent=2,
+        )
+
+        handle = start_async_tool_use_loop(
+            llm,
+            user_blob,
+            tools,
+            loop_id="MemoryManager.update_contact_response_policy",
             tool_policy=lambda i, _: ("required", _) if i < 1 else ("auto", _),
         )
 
@@ -950,6 +1069,10 @@ class MemoryManager(BaseMemoryManager):
                                 contact_id=_cid,
                             ),
                             self.update_contact_rolling_summary(
+                                plain_transcript,
+                                contact_id=_cid,
+                            ),
+                            self.update_contact_response_policy(
                                 plain_transcript,
                                 contact_id=_cid,
                             ),

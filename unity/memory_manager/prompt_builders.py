@@ -240,6 +240,65 @@ def build_rolling_prompt(
     return _with_guidance(lines, guidance)
 
 
+def build_response_policy_prompt(
+    contact_name: str,
+    tools: Dict[str, Callable],
+    *,
+    guidance: Optional[str] = None,
+) -> str:
+    """Return a system prompt guiding the LLM to maintain the *response_policy* column.
+
+    The *response policy* tells the assistant **how** to respond to inbound messages
+    from the target contact – tone, formality, level of initiative, topics to avoid,
+    escalation rules, etc.  It should be concise (≤ 300 words) and evolve over time
+    as the relationship matures.
+    """
+
+    lines: list[str] = [
+        get_broader_context(),
+        "",
+    ]
+
+    assistant_full = _assistant_name()
+
+    lines.extend(
+        [
+            f"You are updating the *response policy* for contact **{contact_name}**.",
+            f'This policy is written *for* {assistant_full} so always address them in second person ("you should…").',
+            f"Refer to **{contact_name}** in the third person so the instructions remain unambiguous.",
+            "",
+            "The response policy should concisely cover (when relevant):",
+            "• Preferred tone and level of formality",
+            "• Typical response time expectations",
+            "• Topics to prioritise or avoid",
+            "• Preferred communication channels",
+            "• Escalation steps or fallback behaviours",
+            "",
+            "🚫 **NO HALLUCINATIONS:** Only include instructions that are *explicitly* stated or clearly implied in the transcript chunk.",
+            "✅ If the transcript provides no new directives, keep the existing policy unchanged and return an explanation.",
+            "",
+            "Update logic:",
+            "1️⃣ Read the existing response policy (if any).",
+            "2️⃣ Decide whether the transcript chunk introduces changes that belong in the policy.",
+            "3️⃣ If yes, edit the policy, integrating the new directives succinctly.",
+            "4️⃣ Use `set_response_policy` **exactly once** to persist your update.",
+            "5️⃣ Finally, respond with your full rationale for the changes you did or did not make.",
+            "",
+            "Please do *not* perform the same action more than once. If you already called `set_response_policy` successfully, do **not** repeat it.",
+            "🔒  If the transcript chunk includes a `manager_method` event indicating this operation is already in progress or completed, treat it as handled and **do not** perform it again.",
+            "",
+            "Tools (name → argspec):",
+            json.dumps(_sig_dict(tools), indent=4),
+            "",
+            "Read through the broader context of your role and recent activity for orientation.",
+            "",
+            "Current UTC time: " + _now(),
+        ],
+    )
+
+    return _with_guidance(lines, guidance)
+
+
 def build_knowledge_prompt(
     tools: Dict[str, Callable],
     guidance: Optional[str] = None,

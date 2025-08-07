@@ -78,7 +78,7 @@ async def test_update_contacts_triggers_followups(monkeypatch):
     """
 
     # --- counters ---------------------------------------------------------
-    counts = {"bio": 0, "rolling": 0}
+    counts = {"bio": 0, "rolling": 0, "policy": 0}
 
     async def _stub_bio(self, *_, **__):  # noqa: D401 – imperative helper
         counts["bio"] += 1
@@ -88,12 +88,22 @@ async def test_update_contacts_triggers_followups(monkeypatch):
         counts["rolling"] += 1
         return "roll-ok"
 
+    async def _stub_policy(self, *_, **__):  # noqa: D401 – imperative helper
+        counts["policy"] += 1
+        return "policy-ok"
+
     # Patch lightweight helpers & heavy internals
     monkeypatch.setattr(MemoryManager, "update_contact_bio", _stub_bio, raising=True)
     monkeypatch.setattr(
         MemoryManager,
         "update_contact_rolling_summary",
         _stub_roll,
+        raising=True,
+    )
+    monkeypatch.setattr(
+        MemoryManager,
+        "update_contact_response_policy",
+        _stub_policy,
         raising=True,
     )
 
@@ -114,6 +124,7 @@ async def test_update_contacts_triggers_followups(monkeypatch):
     # Expectations: exactly one call each
     assert counts["bio"] == 1, "update_contact_bio should run once"
     assert counts["rolling"] == 1, "update_contact_rolling_summary should run once"
+    assert counts["policy"] == 1, "update_contact_response_policy should run once"
 
 
 @pytest.mark.asyncio
@@ -122,7 +133,7 @@ async def test_update_contacts_respects_flags(monkeypatch):
     """When both follow-up flags are disabled, the respective helpers should
     *not* be invoked."""
 
-    counts = {"bio": 0, "rolling": 0}
+    counts = {"bio": 0, "rolling": 0, "policy": 0}
 
     async def _stub_bio(self, *_, **__):  # noqa: D401 – imperative helper
         counts["bio"] += 1
@@ -132,11 +143,21 @@ async def test_update_contacts_respects_flags(monkeypatch):
         counts["rolling"] += 1
         return "roll-ok"
 
+    async def _stub_policy(self, *_, **__):  # noqa: D401 – imperative helper
+        counts["policy"] += 1
+        return "policy-ok"
+
     monkeypatch.setattr(MemoryManager, "update_contact_bio", _stub_bio, raising=True)
     monkeypatch.setattr(
         MemoryManager,
         "update_contact_rolling_summary",
         _stub_roll,
+        raising=True,
+    )
+    monkeypatch.setattr(
+        MemoryManager,
+        "update_contact_response_policy",
+        _stub_policy,
         raising=True,
     )
 
@@ -155,6 +176,7 @@ async def test_update_contacts_respects_flags(monkeypatch):
         "dummy transcript",
         update_bios=False,
         update_rolling_summaries=False,
+        update_response_policies=False,
     )
 
     # No follow-up helper should have run
@@ -162,3 +184,6 @@ async def test_update_contacts_respects_flags(monkeypatch):
     assert (
         counts["rolling"] == 0
     ), "update_contact_rolling_summary should NOT run when disabled"
+    assert (
+        counts["policy"] == 0
+    ), "update_contact_response_policy should NOT run when disabled"
