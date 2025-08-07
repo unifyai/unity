@@ -52,9 +52,12 @@ def _handle_project(
                 test_fn_name = test_fn.__name__
 
             ctx = _ctx_name(test_fn, test_fn_name)
+            current_context_name = unify.get_active_context()
+            assert current_context_name["read"] == current_context_name["write"]
+            remote_ctx_name = f"{current_context_name['read']}/{ctx}"
 
-            if not try_reuse_prev_ctx and unify.get_contexts(prefix=ctx):
-                unify.delete_context(ctx)
+            if not try_reuse_prev_ctx and unify.get_contexts(prefix=remote_ctx_name):
+                unify.delete_context(remote_ctx_name)
 
             try:
                 with unify.Context(ctx):
@@ -72,11 +75,11 @@ def _handle_project(
                     await _call(test_fn, *args, **kwargs)
 
                 if delete_ctx_on_exit:
-                    unify.delete_context(ctx)
+                    unify.delete_context(remote_ctx_name)
 
             except Exception:
                 if delete_ctx_on_exit:
-                    unify.delete_context(ctx)
+                    unify.delete_context(remote_ctx_name)
                 exc_type, exc_value, exc_tb = sys.exc_info()
                 tb = "".join(traceback.format_exception(exc_type, exc_value, exc_tb))
                 raise Exception(tb)
@@ -91,9 +94,12 @@ def _handle_project(
                 test_fn_name = test_fn.__name__
 
             ctx = _ctx_name(test_fn, test_fn_name)
+            current_context_name = unify.get_active_context()
+            assert current_context_name["read"] == current_context_name["write"]
+            remote_ctx_name = f"{current_context_name['read']}/{ctx}"
 
-            if not try_reuse_prev_ctx and unify.get_contexts(prefix=ctx):
-                unify.delete_context(ctx)
+            if not try_reuse_prev_ctx and unify.get_contexts(prefix=remote_ctx_name):
+                unify.delete_context(remote_ctx_name)
 
             try:
                 with unify.Context(ctx):
@@ -113,11 +119,11 @@ def _handle_project(
                         test_fn(*args, **kwargs)
 
                 if delete_ctx_on_exit:
-                    unify.delete_context(ctx)
+                    unify.delete_context(remote_ctx_name)
 
             except Exception:
                 if delete_ctx_on_exit:
-                    unify.delete_context(ctx)
+                    unify.delete_context(remote_ctx_name)
                 exc_type, exc_value, exc_tb = sys.exc_info()
                 tb = "".join(traceback.format_exception(exc_type, exc_value, exc_tb))
                 raise Exception(tb)
