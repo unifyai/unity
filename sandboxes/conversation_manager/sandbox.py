@@ -103,7 +103,7 @@ async def interaction_loop(args):
                 print("[generate] Building scenario – please wait…")
                 if args.voice:
                     _speak("Building scenario now.")
-                gen = TranscriptGenerator()
+                gen = TranscriptGenerator(in_conversation_manager=True)
                 try:
                     messages = await gen.generate(description)
                     print(f"✓ Transcript generated: {len(messages)} messages")

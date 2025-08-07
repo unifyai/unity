@@ -657,11 +657,13 @@ class TranscriptGenerator:
         endpoint: str = "o4-mini@openai",
         traced: bool = True,
         stateful: bool = True,
+        in_conversation_manager: bool = False,
     ) -> None:
         self._endpoint = endpoint
         self._traced = traced
         self._stateful = stateful
         self._tm = TranscriptManager()
+        self._in_cm = in_conversation_manager
 
     async def generate(
         self,
@@ -907,6 +909,56 @@ class TranscriptGenerator:
                         "medium": medium,
                     },
                 )
+
+                if self._in_cm:
+                    # Emit comms messages following events.py schema
+                    # Map medium to the appropriate Event class
+                    from unity.conversation_manager.events import (
+                        SMSMessageRecievedEvent,
+                        EmailRecievedEvent,
+                        WhatsappMessageRecievedEvent,
+                        PhoneUtteranceEvent,
+                    )
+                    import unify
+
+                    event_obj = None
+                    if medium == "sms_message":
+                        event_obj = SMSMessageRecievedEvent(
+                            timestamp=timestamp,
+                            content=content,
+                            role="User",
+                        )
+                    elif medium == "email":
+                        event_obj = EmailRecievedEvent(
+                            timestamp=timestamp,
+                            content=content,
+                            role="User",
+                        )
+                    elif medium == "whatsapp_message":
+                        event_obj = WhatsappMessageRecievedEvent(
+                            timestamp=timestamp,
+                            content=content,
+                            role="User",
+                        )
+                    elif medium in ("phone_call", "whatsapp_call"):
+                        # Log each utterance in a phone call context
+                        event_obj = PhoneUtteranceEvent(
+                            timestamp=timestamp,
+                            role=sender_name.strip(),
+                            content=content,
+                        )
+                    if event_obj:
+                        ev_dict = event_obj.to_dict()
+                        entries = {
+                            "event_name": ev_dict["event_name"],
+                            **ev_dict["payload"],
+                        }
+                        unify.create_logs(
+                            project=unify.active_project(),
+                            context="Assistant/Events/Comms",
+                            params={},
+                            entries=entries,
+                        )
 
             return f"{len(transcript)} messages logged"
 
