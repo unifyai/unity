@@ -111,7 +111,8 @@ def _build_communication_rules_section(is_call: bool) -> str:
             "- Don't call unless needed or requested by the user.",
             "- If you need to ask questions, you should send a message with ToolUseAction.",
         ]
-    lines = [
+    lines += [
+        "- Say hello to the user during the start of the conversation only, don't need to say hello everytime.",
         "- Provide natural-sounding responses; the user expects human-like interactions.",
         "- Avoid verbose or unnecessary messages; only communicate when needed.",
         "- Maintain human-like language, avoid robotic and verbose responses",
