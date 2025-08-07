@@ -64,18 +64,20 @@ def make_agent(
         "assistant_about": assistant_behaviour,
         "assistant_number": assistant_number,
         "user_number": user_number,
+        "purpose": assistant_behaviour,
         "task_context": None,
         "history": [],
         "client": client,
     }
 
 
-async def simulate_turn(agent, message):
+async def simulate_turn(agent, message, start=False):
     global MEDIUM
-    # record user utterance via appropriate event class
-    recv_cls = RECEIVED_MAP.get(MEDIUM, PhoneUtteranceEvent)
-    ue = recv_cls(timestamp=None, content=message, role="User")
-    agent["history"].append(ue.to_dict())
+    if not start:
+        # record user utterance via appropriate event class
+        recv_cls = RECEIVED_MAP.get(MEDIUM, PhoneUtteranceEvent)
+        ue = recv_cls(timestamp=None, content=message, role="User")
+        agent["history"].append(ue.to_dict())
     # build system prompt
     sys_prompt = build_call_sys_prompt(
         agent["user_name"],
@@ -88,7 +90,7 @@ async def simulate_turn(agent, message):
     )
     # build user-agent prompt
     ua_prompt = build_user_agent_prompt(
-        call_purpose="general",
+        call_purpose=agent["purpose"],
         past_events=agent["history"],
         inflight_events=agent["history"][-1:],
         tool_use_handles=None,
@@ -175,12 +177,12 @@ async def simulate():
             continue
 
         if cmd in ("start", "s"):
-            # Use unify AsyncClient and generate first response based on user_behaviour
-            client = unify.AsyncUnify(endpoint="gpt-4.1@openai")
-            resp = await client.generate(
-                user_message=f"You are Bob, and you are having {MEDIUM} conversation with Alice. Greet in one sentence with this purpose: {user_behaviour}",
+            resp = await simulate_turn(
+                bob,
+                f"Start the {MEDIUM} conversation.",
+                start=True,
             )
-            last_message = getattr(resp, "phone_utterance", None) or str(resp)
+            last_message = resp
             print("Bob (user)>  ", last_message, "\n")
         elif cmd in {"medium", "m"}:
             new_medium = input("Select medium (phone, sms, email): ").strip().lower()
