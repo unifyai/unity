@@ -1796,6 +1796,11 @@ class TaskScheduler(BaseTaskScheduler):
         Return the **k** tasks whose *name + description* embeddings are
         *closest* (cosine distance) to the supplied *text*.
 
+        Always best to use *this tool* when searching for a task with a similar
+        name or description. Semantic similarity based on embeddings are *much*
+        more robust and accurate than trying to get an exact match on multi-word
+        substrings.
+
         Parameters
         ----------
         text : str
@@ -1831,6 +1836,11 @@ class TaskScheduler(BaseTaskScheduler):
         """
         Run a **column-wise Python expression** (`filter`) against every task
         and return the matching rows.
+
+        Do *not* use this tool when searching for a task with a similar name
+        or description. Trying to get an exact match on substrings (especially
+        with multiple words) is very brittle, and likely to return no matches.
+        The `nearest_tasks` tool is *much* more robust and accurate in such cases.
 
         Parameters
         ----------
