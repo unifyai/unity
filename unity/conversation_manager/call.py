@@ -33,7 +33,12 @@ import numpy as np
 load_dotenv()
 
 from unity.conversation_manager.events import *
-from unity.conversation_manager.utils import dispatch_agent, publish_event, close_connection, get_reader
+from unity.conversation_manager.utils import (
+    dispatch_agent,
+    publish_event,
+    close_connection,
+    get_reader,
+)
 
 events_queue = asyncio.Queue()
 chunk_queue = asyncio.Queue()
@@ -158,22 +163,35 @@ class Assistant(Agent):
 
             forward_task = asyncio.create_task(_forward_input())
             try:
-                collected = []
+                # real-time playback via OutputStream for meet calls
+                out_stream = None
                 async for ev in stream:
+                    frame = ev.frame
                     if not self.is_meet_call:
-                        yield ev.frame
+                        yield frame
                         continue
 
-                    collected.append(ev.frame.data)
+                    # open output stream on first chunk
+                    if out_stream is None:
+                        out_stream = sd.OutputStream(
+                            samplerate=frame.sample_rate,
+                            channels=frame.num_channels,
+                            dtype="int16",
+                            latency="low",
+                        )
+                        out_stream.start()
 
-                # todo: collect whole sentence for now
-                if self.is_meet_call:
-                    await asyncio.to_thread(
-                        sd.play,
-                        np.concatenate(collected),
-                        24000,
-                    )
-                    await asyncio.to_thread(sd.wait)
+                    # convert bytes to numpy array and write audio chunk
+                    audio_arr = np.frombuffer(frame.data, dtype=np.int16)
+                    if frame.num_channels > 1:
+                        audio_arr = audio_arr.reshape(-1, frame.num_channels)
+                    await asyncio.to_thread(out_stream.write, audio_arr)
+
+                # close output stream when done
+                if out_stream is not None:
+                    out_stream.stop()
+                    out_stream.close()
+                    out_stream = None
 
             finally:
                 await utils.aio.cancel_and_wait(forward_task)
@@ -422,7 +440,7 @@ if __name__ == "__main__":
     agent_name = f"unity_{assistant_number}" if meet_id == "" else meet_id
 
     # dispatch agent
-    if sys.argv[1] == "dev":
+    if sys.argv[1] == "dev" and not meet_id:
         dispatch_agent(agent_name)
 
     agents.cli.run_app(
