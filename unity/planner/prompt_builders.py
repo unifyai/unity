@@ -2124,3 +2124,90 @@ def build_precondition_prompt(
         - `description`: If status is "ok", a description of the page state that must be present for the function to run. This is required if URL is not provided.
         """,
     )
+
+def build_state_verification_prompt(
+    precondition: Dict[str, Any],
+    page_analysis: Any,
+) -> str:
+    """
+    Builds the prompt for an LLM to verify if the current browser state meets a required precondition.
+    """
+    precondition_str = json.dumps(precondition, indent=2)
+    page_analysis_str = page_analysis.model_dump_json(indent=2)
+    return textwrap.dedent(
+        f"""
+        You are a meticulous state verifier for an autonomous web agent. Your task is to determine if the current state of the web browser satisfies a function's required precondition.
+
+        ---
+        ### Analysis Task
+
+        1.  **Required Precondition (The Goal State):**
+            ```json
+            {precondition_str}
+            ```
+
+        2.  **Current Browser State (What you see now):**
+            ```json
+            {page_analysis_str}
+            ```
+        3.  **Visual Evidence:** A screenshot of the current browser page is provided. This is your primary source of truth.
+
+        **Your Decision:**
+        Compare the **Required Precondition** against the **Current Browser State**.
+        - Does the current URL match the required URL (if specified)?
+        - More importantly, does the visual content of the page (from the screenshot) match the required `description`?
+        - For example, if the description is "The 'Admin Panel' dialog must be open", you must visually confirm that this dialog is present and visible in the screenshot.
+
+        Respond with ONLY the JSON object matching the `StateVerificationDecision` schema.
+        """,
+    )
+
+
+def build_proactive_correction_prompt(
+    precondition: Dict[str, Any],
+    current_url: str,
+    current_page_analysis: Any,
+    *,
+    tools: Dict[str, Any],
+) -> str:
+    """
+    Builds the prompt for the LLM to generate a script to get from the current state to a target precondition state.
+    """
+    target_state_str = json.dumps(precondition, indent=2)
+    current_page_analysis_str = current_page_analysis.model_dump_json(indent=2)
+    scripting_rules = _build_simple_script_rules(tools)
+
+    return textwrap.dedent(
+        f"""
+        You are a state recovery specialist for an autonomous web agent. The agent needs to achieve a specific browser state (a "precondition") before it can execute a function.
+
+        Your task is to write a short Python script to bridge the gap between the current state and the target state.
+
+        ---
+        ### State Analysis
+
+        **1. The "Current" State (Where you are now):**
+        - **URL:** `{current_url}`
+        - **Page Analysis:**
+          ```json
+          {current_page_analysis_str}
+          ```
+        - **Screenshot:** A screenshot of this current state is provided.
+
+        **2. The "Target" Precondition (Where you need to be):**
+        ```json
+        {target_state_str}
+        ```
+
+        ---
+        ### Your Task
+        Write a `correction_code` snippet to get from the "Current" state to the "Target" state.
+        - **Goal:** Your script should perform the necessary actions (e.g., clicking a button, filling a field, navigating) to satisfy the target precondition's `description`.
+        - **Example:** If the current page is a dashboard and the target is "The 'Create New User' dialog must be open," your script should be `await action_provider.browser_act("Click the 'Create New User' button")`.
+        - **Keep it simple!** Only write the code needed to achieve the precondition.
+
+        {scripting_rules}
+
+        Respond with ONLY the JSON object matching the `CourseCorrectionDecision` schema. Set `correction_needed` to `true` if you write a script.
+        """,
+    )
