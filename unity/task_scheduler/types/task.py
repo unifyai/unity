@@ -52,6 +52,14 @@ class Task(BaseModel):
     priority: Priority = Field(
         description="Importance level of the task (low, normal, high, urgent)",
     )
+    response_policy: Optional[str] = Field(
+        default=None,
+        description=(
+            "Freeform policy for contact handling during this task (authority, "
+            "information visibility, who may interject/steer). When it conflicts with "
+            "a contact's own response_policy, the task-level policy takes precedence."
+        ),
+    )
 
     @model_validator(mode="before")
     @classmethod

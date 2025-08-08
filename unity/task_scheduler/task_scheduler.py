@@ -729,6 +729,7 @@ class TaskScheduler(BaseTaskScheduler):
         deadline: Optional[str] = None,
         repeat: Optional[List[Union[RepeatPattern, Dict[str, Any]]]] = None,
         priority: Priority = Priority.normal,
+        response_policy: Optional[str] = None,
     ) -> ToolOutcome:
         """
         Create a **brand-new task** and, depending on its attributes, place it
@@ -753,6 +754,8 @@ class TaskScheduler(BaseTaskScheduler):
             the task. Can be either RepeatPattern objects or dictionaries that will be converted to RepeatPattern.
         priority : Priority, default :pyattr:`Priority.normal`
             Relative importance used for queue ordering.
+        response_policy : str | None
+            Freeform policy dictating how the assistant should interact with relevant contacts during the task.
 
         Returns
         -------
@@ -878,6 +881,7 @@ class TaskScheduler(BaseTaskScheduler):
             deadline=deadline,
             repeat=repeat,
             priority=priority,
+            response_policy=response_policy,
         ).to_post_json()
 
         # ------------------  write log immediately  ------------------ #
@@ -1099,7 +1103,7 @@ class TaskScheduler(BaseTaskScheduler):
         • If *task_id* is *None* we begin with **the single active/primed task**
         • Tasks whose status is completed / cancelled / failed are *ignored*.
         • Only the nodes actually traversed are loaded from storage; we never
-          materialise the entire task table in memory.
+        materialise the entire task table in memory.
         """
 
         # ----------------  helpers  ---------------- #
@@ -1372,7 +1376,7 @@ class TaskScheduler(BaseTaskScheduler):
         • Disallowed when the task already has a *schedule*.<br>
         • When a *trigger* is introduced the status becomes **triggerable**.<br>
         • When a *trigger* is removed and the task was *triggerable* it falls
-          back to **queued** (idle, waiting for manual start or queue insert).
+        back to **queued** (idle, waiting for manual start or queue insert).
         """
 
         self._ensure_not_active_task(task_id)
