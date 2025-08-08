@@ -451,7 +451,7 @@ class TaskScheduler(BaseTaskScheduler):
             client,
             freeform_text,
             tools,
-            loop_id=f"{self.__class__.__name__}.execute_task_resolver",
+            loop_id=f"{self.__class__.__name__}.{self.execute_task.__name__}",
             parent_chat_context=parent_chat_context,
             log_steps=True,
             preprocess_msgs=self._inject_broader_context,
