@@ -194,6 +194,7 @@ def loop_exception_handler(loop, context):
 async def main(
     start_local: bool = False,
     enabled_tools: list | str | None = "conductor",
+    project_name: str = "Assistants",
 ):
     global user_agent
 
@@ -221,6 +222,7 @@ async def main(
         conv_context_length=conv_context_length,
         start_local=start_local,
         enabled_tools=enabled_tools,
+        project_name=project_name,
     )
     user_agent.set_event_manager(event_manager)
     user_agent.subscribe(
@@ -271,11 +273,19 @@ if __name__ == "__main__":
         default=False,
         help="Start local GUI instead of server",
     )
+    parser.add_argument(
+        "--project-name",
+        dest="project_name",
+        type=str,
+        default="Assistants",
+        help="Name of the project to use",
+    )
     args = parser.parse_args()
     asyncio.run(
         main(
             start_local=args.start_local,
             enabled_tools=args.enabled_tools,
+            project_name=args.project_name,
         ),
         debug=ASYNCIO_DEBUG,
     )

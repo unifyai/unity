@@ -90,6 +90,7 @@ class CommsAgent:
         task_context: Dict[str, str] = None,
         outer_comms_enabled: bool = False,
         user_turn_end_callback: Callable = None,
+        project_name: str = "Assistants",
     ):
         # assistant details
         self.job_name = job_name
@@ -148,6 +149,7 @@ class CommsAgent:
         self.transcript_manager = None
         self.redis = None
         self.broader_context = ""
+        self.project_name = project_name
 
     def _build_enabled_tools_dict(self):
         from unity.common.llm_helpers import AsyncToolUseLoopHandle
@@ -985,6 +987,7 @@ class CommsAgent:
             if not unity.ASSISTANT:
                 assistant_id = os.environ.get("ASSISTANT_ID", "0")
                 unity.init(
+                    project_name=self.project_name,
                     assistant_id=int(assistant_id.replace("default-assistant-", "")),
                     default_assistant={
                         **DEFAULT_ASSISTANT_PAYLOAD,

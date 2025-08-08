@@ -38,7 +38,7 @@ COMMANDS_HELP = (
     "\nAgent-User simulation – type commands below. 'exit' to end.\n\n"
     "┌───────────────────────────────── accepted commands ─────────────────────────────────┐\n"
     "│ start (s)      – begin conversation                                                 │\n"
-    "│ continue (c)   – continue for next 3 exchanges                                      │\n"
+    "│ continue (c)   – continue for the next round of exchanges                           │\n"
     "│ medium (m)     – change communication medium (restarts conversation with history)   │\n"
     "│ help (h)       – show this help                                                     │\n"
     "│ exit | quit    – end simulation                                                     │\n"
@@ -111,6 +111,14 @@ async def simulate_turn(agent, message, start=False):
 async def simulate():
     global MEDIUM
     parser = build_cli_parser("Raw two-agent simulation")
+    parser.add_argument(
+        "--num_turns",
+        "-n",
+        type=int,
+        default=5,
+        help="Number of conversation turns to simulate",
+    )
+
     args = parser.parse_args()
     activate_project(args.project_name, args.overwrite)
 
@@ -200,8 +208,7 @@ async def simulate():
             )
             continue
 
-        # run 3 exchange cycles
-        for _ in range(3):
+        for _ in range(args.num_turns):
             # Alice turn
             alice_reply = await simulate_turn(alice, last_message)
             print("Alice (assistant)> ", alice_reply, "\n")
