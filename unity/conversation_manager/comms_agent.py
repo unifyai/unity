@@ -133,6 +133,7 @@ class CommsAgent:
         # meet conference
         self.meet_id = None
         self.meet_browser = None
+        self.meet_joined = asyncio.Event()
 
         # conductor
         self.conductor = None
@@ -202,7 +203,10 @@ class CommsAgent:
                 from unity.knowledge_manager.knowledge_manager import KnowledgeManager
 
                 self.knowledge_manager = KnowledgeManager()
-                tools_list += [self.knowledge_manager.ask, self.knowledge_manager.update]
+                tools_list += [
+                    self.knowledge_manager.ask,
+                    self.knowledge_manager.update,
+                ]
 
             elif tool == "scheduler":
                 from unity.task_scheduler.task_scheduler import TaskScheduler
@@ -363,6 +367,7 @@ class CommsAgent:
                             # await self.meet_browser.act("Click the 'Join' button")
 
                             asyncio.create_task(self.inactivity_check_for_meet())
+                            self.meet_joined.set()
 
                         continue
                     else:
@@ -575,6 +580,8 @@ class CommsAgent:
             self.past_events = await self.get_bus_events()
 
         if self.call_mode:
+            if self.meet_id:
+                await self.meet_joined.wait()
             return await self.phone_call_llm_run(add_filler=add_filler)
         else:
             return await self.non_phone_call_llm_run()
@@ -1047,6 +1054,7 @@ class CommsAgent:
                 self.meet_browser.stop()
                 self.meet_browser = None
                 self.meet_id = None
+                self.meet_joined.clear()
 
             if self.call_proc:
                 self.cleanup_call_proc()
