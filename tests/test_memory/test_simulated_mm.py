@@ -165,7 +165,9 @@ async def test_mm_update_knowledge_invokes_kb_update(monkeypatch):
         raising=True,
     )
 
-    mm = SimulatedMemoryManager("Knowledge ingestion demo.")
+    mm = SimulatedMemoryManager(
+        "You have no prior knowledge on any topic. The knowledge base is *empty*!",
+    )
     transcript = _build_transcript(
         "Fun fact: The company standardised on Kubernetes for all deployments back in 2021.",
     )
