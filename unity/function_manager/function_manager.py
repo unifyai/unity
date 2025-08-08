@@ -156,20 +156,44 @@ class FunctionManager(threading.Thread):
         calls: Set[str] = set()
         for node in ast.walk(fn_node):
             if isinstance(node, ast.Call):
-                if (
-                    isinstance(node.func, ast.Attribute)
-                    and isinstance(node.func.value, ast.Name)
-                    and node.func.value.id == "action_provider"
-                ):
-                    calls.add(node.func.attr)
-                elif isinstance(node.func, ast.Name):
-                    calls.add(node.func.id)
-                else:
-                    raise ValueError(
-                        f"Complex attribute call '{ast.unparse(node.func)}' "
-                        f"is not allowed in {fn_node.name}().",
-                    )
+                name = self._format_callable_name(node.func)
+                if name:
+                    calls.add(name)
         return calls
+
+    def _format_callable_name(self, callable_node: ast.AST) -> Optional[str]:
+        """Return a best-effort fully qualified name for a callable.
+
+        Handles both simple names (e.g., ``foo()``) and nested attributes
+        (e.g., ``a.b.c()``). If the base of the attribute chain is not a simple
+        ``ast.Name`` (e.g., ``get().b()``), this falls back to ``ast.unparse``
+        when available.
+        """
+        # Simple function call: foo()
+        if isinstance(callable_node, ast.Name):
+            return callable_node.id
+
+        # Attribute access: a.b.c()
+        if isinstance(callable_node, ast.Attribute):
+            parts: List[str] = []
+            current: ast.AST = callable_node
+            while isinstance(current, ast.Attribute):
+                parts.append(current.attr)
+                current = current.value
+            if isinstance(current, ast.Name):
+                parts.append(current.id)
+                return ".".join(reversed(parts))
+            # Fallback to unparse for complex bases like calls/subscripts
+            try:
+                return ast.unparse(callable_node)
+            except Exception:
+                pass
+            return ".".join(reversed(parts)) if parts else None
+
+        try:
+            return ast.unparse(callable_node)
+        except Exception:
+            return None
 
     def _validate_function_calls(
         self,
