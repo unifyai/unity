@@ -1871,17 +1871,22 @@ def build_interjection_prompt(
     - If YES, choose the `replace_task` action. For the `new_goal`, provide the user's new high-level objective.
     - If NO, proceed to Question 3.
 
-    **Question 3: Is the request a direct modification, a new step, or a correction for the *current* task?**
-    - Example: The plan is researching on a website, and the user says, "No, use my LinkedIn profile for this research," or "Now, put those findings into a presentation."
-    - If YES, choose the `modify_task` action. For `modification_request`, rephrase the user's instruction as a clear, actionable request for the planner to implement. For `target_function`, identify the most relevant function from the call stack to modify.
+    **Question 3: Is the user asking to generalize, repeat, or refactor the previously taught steps for a new subject or context?**
+    - Example: After teaching a multi-step process for one item, the user says, "Now do the same for 'Sam Parker'," or "Great, now apply that to all other files in the folder."
+    - If YES, choose the `refactor_and_generalize` action. For `generalization_context`, provide the new context (e.g., "Sam Parker", "all other files in the folder").
     - If NO, proceed to Question 4.
 
-    **Question 4: Is the request a temporary, exploratory side-quest that doesn't alter the main goal?**
-    - Example: The plan is creating a presentation, and the user says, "Quickly run the slide show so I can see how it looks."
-    - If YES, choose the `explore_detached` action. For `new_goal`, provide the specific, temporary goal of the side-quest.
+    **Question 4: Is the request a direct modification, a new step, or a correction for the *current* task?**
+    - Example: The plan is researching on a website, and the user says, "No, use my LinkedIn profile for this research," or "Now, put those findings into a presentation."
+    - If YES, choose the `modify_task` action. For `modification_request`, rephrase the user's instruction as a clear, actionable request for the planner to implement. For `target_function`, identify the most relevant function from the call stack to modify.
     - If NO, proceed to Question 5.
 
-    **Question 5: Is the user's intent unclear, or does it require more information to proceed confidently?**
+    **Question 5: Is the request a temporary, exploratory side-quest that doesn't alter the main goal?**
+    - Example: The plan is creating a presentation, and the user says, "Quickly run the slide show so I can see how it looks."
+    - If YES, choose the `explore_detached` action. For `new_goal`, provide the specific, temporary goal of the side-quest.
+    - If NO, proceed to Question 6.
+
+    **Question 6: Is the user's intent unclear, or does it require more information to proceed confidently?**
     - Example: The user says, "Make it better."
     - If YES, choose the `clarify` action. For `clarification_question`, formulate a concise, multiple-choice or open-ended question to ask the user.
 
