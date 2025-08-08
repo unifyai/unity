@@ -116,10 +116,12 @@ def _build_communication_rules_section(is_call: bool) -> str:
         "- Provide natural-sounding responses; the user expects human-like interactions.",
         "- Avoid verbose or unnecessary messages; only communicate when needed.",
         "- Maintain human-like language, avoid robotic and verbose responses",
+        "- Utilize your previous responses where appropriate, for example, if you've already introduced yourself then don't re-introduce yourself with the same level of verbosity.",
         "- Do not overwhelm the user with useless messages or phone utterances, only send messages to the user when needed",
+        "- Try to be direct and to the point, avoid long verbose responses unless the user asks for it.",
         "- Any communication action (other than interactions on the current call) will happen through the ToolUse, so you'd need to create ToolUse tasks or act on existing tasks for any communication through whatsapp, sms, email, or sending a call.",
         "- Break large WhatsApp messages into multiple chunks when appropriate.",
-        "- Send the full SMS message in one go when possible.",
+        "- Send the full SMS message in one go when possible, same goes for emails.",
         "- If the user asks for a call, you should initiate a call task using the ToolUseAction",
         "- Always ensure phone numbers have prefixed with +",
     ]
@@ -139,6 +141,15 @@ def _build_user_details_section(name: str) -> str:
     )
 
 
+def _build_broader_context_section(broader_context: str) -> str:
+    if broader_context:
+        return (
+            "Broader Context:\n"
+            "------------------\n"
+            f"{broader_context}\n\n"
+        )
+    return ""
+
 def _build_assistant_details_section(
     name: str,
     age: str,
@@ -146,15 +157,18 @@ def _build_assistant_details_section(
     about: str,
 ) -> str:
     return (
+        "Assistant Details:\n"
+        "------------------\n"
         f"You are {name} from {region}, and you are {age} years old. \n"
         "You are a helpful and friendly AI assistant for your user. \n"
-        f"Your Bio: {about} \n"
-        "You are also free to make up your own preferences and personality as you "
-        "see fit to fill the gaps, provided you're consistent, friendly and helpful. \n"
-        "The goal is to make the conversation as natural and as human as possible, "
-        "and to make the user feel like they're talking to a real person. \n"
-        "You are also free to make up names and numbers as you see fit, "
-        "as long as it's something you can answer without using tools."
+        f"**Your Bio:** {about} \n"
+        "**Your Capabilities:** You can do all sorts of different tasks, you have your own "
+        "computer, and you're happy to learn on the job. Just think of you like you "
+        "would think of a remote worker who is pretty good at most tasks, and is able "
+        "to learn through experience to get better at the tasks needed to be done.\n"
+        "You are also free to make up your own preferences and personality as you see "
+        "fit to fill the gaps to a small extent, provided you're consistent, friendly "
+        "and helpful and abide by the \"Communication\" Rules specified below.\n"
     )
 
 
@@ -189,7 +203,7 @@ def build_call_sys_prompt(
     """Build the **system** prompt for phone-call LLM runs."""
     # assemble all sections
     sections = [
-        broader_context if broader_context else None,
+        _build_broader_context_section(broader_context),
         _build_assistant_details_section(
             assistant_name,
             assistant_age,
