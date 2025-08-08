@@ -378,13 +378,14 @@ class SimulatedMemoryManager(BaseMemoryManager):
                 f"Update knowledge card {card_id}: {content}",
             )
 
-        tools: Dict[str, Callable[..., Any]] = {
-            "contact_ask": self._contact_manager.ask,
-            "transcript_ask": self._transcript_manager.ask,
-            "kb_ask": self._knowledge_manager.ask,
-            "kb_refactor": self._knowledge_manager.refactor,
-            "kb_update": _kb_update,
-        }
+        tools: Dict[str, Callable[..., Any]] = methods_to_tool_dict(
+            self._contact_manager.ask,
+            self._transcript_manager.ask,
+            self._knowledge_manager.ask,
+            self._knowledge_manager.refactor,
+            _kb_update,
+            include_class_name=True,
+        )
 
         self._llm.set_system_message(
             pb.build_knowledge_prompt(tools, guidance=guidance),
@@ -409,10 +410,11 @@ class SimulatedMemoryManager(BaseMemoryManager):
         list accordingly. Returns a concise summary.
         """
 
-        tools: Dict[str, Callable[..., Any]] = {
-            "task_ask": self._task_scheduler.ask,
-            "task_update": self._task_scheduler.update,
-        }
+        tools: Dict[str, Callable[..., Any]] = methods_to_tool_dict(
+            self._task_scheduler.ask,
+            self._task_scheduler.update,
+            include_class_name=True,
+        )
 
         self._llm.set_system_message(
             pb.build_task_prompt(tools, guidance=guidance),
