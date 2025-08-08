@@ -682,11 +682,19 @@ class _SteerableToolHandleProxy:
                 args,
                 kwargs,
             )
-            if cache_key in self._plan.idempotency_cache:
+            self._plan.execution_key_log.append(
+                cache_key,
+            )
+            if self._plan.replay_keys:
+                lookup_key = self._plan.replay_keys.pop(0)
+            else:
+                lookup_key = cache_key
+
+            if lookup_key in self._plan.idempotency_cache:
                 return handle_method_logic(
                     call_repr,
                     True,
-                    self._plan.idempotency_cache[cache_key],
+                    self._plan.idempotency_cache[lookup_key],
                 )
 
             self._plan.action_log.append(f"CACHE MISS: Executing {call_repr}")
@@ -712,11 +720,20 @@ class _SteerableToolHandleProxy:
                 args,
                 kwargs,
             )
-            if cache_key in self._plan.idempotency_cache:
+            self._plan.execution_key_log.append(
+                cache_key,
+            )
+
+            if self._plan.replay_keys:
+                lookup_key = self._plan.replay_keys.pop(0)
+            else:
+                lookup_key = cache_key
+
+            if lookup_key in self._plan.idempotency_cache:
                 return handle_method_logic(
                     call_repr,
                     True,
-                    self._plan.idempotency_cache[cache_key],
+                    self._plan.idempotency_cache[lookup_key],
                 )
 
             self._plan.action_log.append(f"CACHE MISS: Executing {call_repr}")
@@ -771,15 +788,24 @@ class _ActionProviderProxy:
                 args,
                 kwargs,
             )
+            self._plan.execution_key_log.append(
+                cache_key,
+            )
 
-            if cache_key in self._plan.idempotency_cache:
-                cached_data = self._plan.idempotency_cache[cache_key]
+            if self._plan.replay_keys:
+                lookup_key = self._plan.replay_keys.pop(0)
+                logger.debug(f"found key during replay: {lookup_key}")
+            else:
+                lookup_key = cache_key
+
+            if lookup_key in self._plan.idempotency_cache:
+                cached_data = self._plan.idempotency_cache[lookup_key]
                 cached_result_id = cached_data["result"]
                 cached_interaction = cached_data["interaction_log"]
                 self._plan.action_log.append(
                     f"CACHE HIT: Using cached result for {call_repr}",
                 )
-                logger.debug(f"CACHE HIT for key: {cache_key}")
+                logger.debug(f"CACHE HIT for key: {lookup_key}")
                 interactions_log.append(cached_interaction)
 
                 if (
@@ -846,15 +872,23 @@ class _ActionProviderProxy:
                 args,
                 kwargs,
             )
+            self._plan.execution_key_log.append(
+                cache_key,
+            )
 
-            if cache_key in self._plan.idempotency_cache:
-                cached_data = self._plan.idempotency_cache[cache_key]
+            if self._plan.replay_keys:
+                lookup_key = self._plan.replay_keys.pop(0)
+            else:
+                lookup_key = cache_key
+
+            if lookup_key in self._plan.idempotency_cache:
+                cached_data = self._plan.idempotency_cache[lookup_key]
                 cached_result_id = cached_data["result"]
                 cached_interaction = cached_data["interaction_log"]
                 self._plan.action_log.append(
                     f"CACHE HIT: Using cached result for {call_repr}",
                 )
-                logger.debug(f"CACHE HIT for key: {cache_key}")
+                logger.debug(f"CACHE HIT for key: {lookup_key}")
                 interactions_log.append(cached_interaction)
 
                 if (
@@ -945,6 +979,8 @@ class HierarchicalPlan(BaseActiveTask):
         self.plan_source_code: Optional[str] = None
         self.execution_namespace: Dict[str, Any] = {}
 
+        self.execution_key_log: List[tuple] = []
+        self.replay_keys: List[tuple] = []
         self.idempotency_cache: Dict[tuple, Any] = {}
         self.live_handles: Dict[str, SteerableToolHandle] = {}
         self.runtime = PlanRuntime()
@@ -1498,6 +1534,7 @@ class HierarchicalPlan(BaseActiveTask):
             self.interaction_stack.clear()
             self.interaction_stack.append([])
             self.call_stack.clear()
+            self.execution_key_log.clear()
 
             self._execution_task = asyncio.create_task(self._initialize_and_run())
             self.runtime.resume()
