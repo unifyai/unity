@@ -51,6 +51,7 @@ class PlanRuntime:
         self._waiting_for_planner = False
 
         self.action_counter = 0
+        self.cache_miss_counter = 0
         self.path_context: List[str] = []
 
     async def checkpoint(self, label: str = ""):
@@ -281,7 +282,6 @@ class _HierarchicalPlanState(enum.Enum):
     PAUSED = enum.auto()
     PAUSED_FOR_MODIFICATION = enum.auto()
     PAUSED_FOR_INTERJECTION = enum.auto()
-    PAUSED_FOR_ESCALATION = enum.auto()
     COMPLETED = enum.auto()
     STOPPED = enum.auto()
     ERROR = enum.auto()
@@ -1374,30 +1374,6 @@ class HierarchicalPlan(BaseActiveTask):
             )
             raise
 
-    async def resolve_escalation_with_new_goal(self, new_goal: str) -> str:
-        """
-        Resolves a plan that is paused due to excessive escalations by restarting with a new goal.
-
-        Args:
-            new_goal: The new, revised goal from the user.
-
-        Returns:
-            A status message.
-        """
-        if self._state != _HierarchicalPlanState.PAUSED_FOR_ESCALATION:
-            return f"Error: Plan is not paused for escalation. Current state: {self._state.name}"
-
-        self.action_log.append(f"Resolving escalation with new goal: '{new_goal}'")
-        self.goal = new_goal
-        self.escalation_count = 0
-        self._is_complete = False
-
-        if self.main_loop_handle and not self.main_loop_handle.done():
-            self.main_loop_handle.stop()
-            self.main_loop_handle = None
-
-        await self._initialize_and_run()
-        return f"Plan restarted with new goal: '{new_goal}'"
 
     async def result(self) -> str:
         """
@@ -1656,7 +1632,7 @@ class HierarchicalPlan(BaseActiveTask):
                 )
 
                 merge_prompt = prompt_builders.build_sandbox_merge_prompt(
-                    main_goal=self.goal or "No specific goal set",
+                    main_goal=self.goal or "This is a teaching session",
                     main_plan_source=self.plan_source_code
                     or "No plan source available",
                     sandbox_goal=decision.new_goal,
@@ -1880,8 +1856,6 @@ class HierarchicalPlan(BaseActiveTask):
                 _HierarchicalPlanState.PAUSED,
                 _HierarchicalPlanState.RUNNING,
             )
-        if name == "resolve_escalation_with_new_goal":
-            return self._state == _HierarchicalPlanState.PAUSED_FOR_ESCALATION
         return False
 
     @property
@@ -1900,7 +1874,6 @@ class HierarchicalPlan(BaseActiveTask):
             "ask",
             "modify_plan",
             "interject",
-            "resolve_escalation_with_new_goal",
         ]
         for method_name in potential_tools:
             if self._is_valid_method(method_name):
@@ -2154,6 +2127,7 @@ class HierarchicalPlanner(BasePlanner):
                 "tuple",
                 "range",
                 "type",
+                "object",
                 "bytes",
                 "frozenset",
                 "isinstance",
@@ -2698,6 +2672,9 @@ class HierarchicalPlanner(BasePlanner):
                             )
                     else:
                         plan.action_log.append(
+                            "COURSE CORRECTION: No state deviation detected. Proceeding with reimplementation directly.",
+                        )
+                        logger.info(
                             "COURSE CORRECTION: No state deviation detected. Proceeding with reimplementation directly.",
                         )
 
