@@ -233,6 +233,7 @@ class InterjectionDecision(BaseModel):
         "explore_detached",
         "clarify",
         "complete_task",
+        "refactor_and_generalize",
     ] = Field(..., description="The chosen action based on the user's interjection.")
     reason: str = Field(..., description="A brief justification for the chosen action.")
     modification_request: Optional[str] = Field(
@@ -250,6 +251,10 @@ class InterjectionDecision(BaseModel):
     clarification_question: Optional[str] = Field(
         None,
         description="A question to ask the user for clarification.",
+    )
+    generalization_context: Optional[str] = Field(
+        None,
+        description="The context for generalization, e.g., 'all other employees in the folder' or 'Sam Parker'.",
     )
 
 
@@ -1505,6 +1510,56 @@ class HierarchicalPlan(BaseActiveTask):
             self.action_log.append("Executing decision: replace_task.")
             await self.stop(final_result=f"REPLACE_TASK: {decision.new_goal}")
             return f"Current plan stopped. Requesting new plan for goal: '{decision.new_goal}'"
+
+        elif decision.action == "refactor_and_generalize":
+            self.action_log.append(
+                f"Executing decision: refactor_and_generalize. Context: '{decision.generalization_context}'",
+            )
+            logger.debug(
+                "Refactor and generalize triggered. Proceeding to Phase 2 implementation.",
+            )
+
+            main_plan_name = self._get_main_function_name() or "main_plan"
+            monolithic_code = self.function_source_map.get(
+                main_plan_name,
+                self.plan_source_code,
+            )
+
+            refactor_prompt = prompt_builders.build_refactor_prompt(
+                monolithic_code=monolithic_code,
+                generalization_request=decision.generalization_context,
+                tools=self.planner.tools,
+            )
+
+            refactored_script = await llm_call(
+                self.plan_generation_client,
+                refactor_prompt,
+            )
+            clean_refactored_script = (
+                refactored_script.strip()
+                .replace("```python", "")
+                .replace("```", "")
+                .strip()
+            )
+
+            self.action_log.append("Replacing old plan with newly refactored version.")
+            self.replay_keys = list(self.execution_key_log)
+            self.execution_key_log.clear()
+
+            self.plan_source_code = self.planner._sanitize_code(
+                clean_refactored_script,
+                self,
+            )
+            self.planner._load_plan_module(self)
+
+            if self._execution_task and not self._execution_task.done():
+                self._execution_task.cancel()
+                try:
+                    await self._execution_task
+                except asyncio.CancelledError:
+                    pass
+            self._execution_task = asyncio.create_task(self._initialize_and_run())
+            return "Plan successfully refactored. Resuming execution with the new modular plan."
 
         elif decision.action == "explore_detached":
             self.action_log.append(
