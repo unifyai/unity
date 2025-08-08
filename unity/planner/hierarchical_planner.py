@@ -206,6 +206,16 @@ class PageAnalysis(BaseModel):
     )
 
 
+class StateVerificationDecision(BaseModel):
+    """A structured decision on whether the current state matches the required precondition."""
+
+    matches: bool = Field(
+        ...,
+        description="True if the current browser state satisfies the function's precondition. False otherwise.",
+    )
+    reason: str = Field(..., description="A brief explanation for the decision.")
+
+
 class ImplementationDecision(BaseModel):
     """A structured decision for how to proceed with a function implementation."""
 
@@ -2263,6 +2273,131 @@ class HierarchicalPlanner(BasePlanner):
 
         self._load_plan_module(plan)
 
+    async def _ensure_precondition(
+        self,
+        plan: HierarchicalPlan,
+        function_name: str,
+    ) -> None:
+        """
+        Checks and enforces the precondition for a function before execution.
+        This is the core of the proactive state drift correction mechanism.
+
+        Args:
+            plan: The active HierarchicalPlan instance.
+            function_name: The name of the function whose precondition needs to be checked.
+        """
+        precondition = self.function_manager.get_precondition(
+            function_name=function_name,
+        )
+
+        if not precondition or precondition.get("status") == "not_applicable":
+            return
+
+        logger.info(f"PRECONDITION CHECK for '{function_name}': {precondition}")
+        plan.action_log.append(
+            f"Verifying precondition for '{function_name}': {precondition}",
+        )
+
+        if url_precondition := precondition.get("url"):
+            try:
+                current_url = await self.action_provider.browser.get_current_url()
+                if current_url != url_precondition:
+                    logger.warning(
+                        f"URL DRIFT: Expected '{url_precondition}', was '{current_url}'. Navigating.",
+                    )
+                    plan.action_log.append(
+                        f"STATE DRIFT: Correcting URL from '{current_url}' to '{url_precondition}'.",
+                    )
+                    await self.action_provider.browser.navigate(url_precondition)
+            except Exception as e:
+                logger.error(
+                    f"Failed to enforce URL precondition for {function_name}: {e}",
+                )
+
+        if description_precondition := precondition.get("description"):
+            try:
+                page_analysis = await self.action_provider.browser.observe(
+                    "Analyze current page for state verification.",
+                    response_format=PageAnalysis,
+                )
+                screenshot = await self.action_provider.browser.get_screenshot()
+
+                verification_prompt = prompt_builders.build_state_verification_prompt(
+                    precondition=precondition,
+                    page_analysis=page_analysis,
+                )
+                plan.verification_client.set_response_format(
+                    StateVerificationDecision,
+                )
+                decision_str = await llm_call(
+                    plan.verification_client,
+                    verification_prompt,
+                    screenshot=screenshot,
+                )
+                verification_decision = StateVerificationDecision.model_validate_json(
+                    decision_str,
+                )
+
+                if verification_decision.matches:
+                    logger.info(
+                        f"PRECONDITION MET for '{function_name}': {verification_decision.reason}",
+                    )
+                    return
+
+                logger.warning(
+                    f"STATE DRIFT for '{function_name}': {verification_decision.reason}. Generating correction script.",
+                )
+                plan.action_log.append(
+                    f"STATE DRIFT for '{function_name}': {verification_decision.reason}",
+                )
+
+                correction_prompt = prompt_builders.build_proactive_correction_prompt(
+                    precondition=precondition,
+                    current_url=page_analysis.url,
+                    current_page_analysis=page_analysis,
+                    has_current_screenshot=screenshot is not None,
+                    tools=self.tools,
+                )
+                plan.course_correction_client.set_response_format(
+                    CourseCorrectionDecision,
+                )
+                correction_str = await llm_call(
+                    plan.course_correction_client,
+                    correction_prompt,
+                    screenshot=screenshot,
+                )
+                correction_decision = CourseCorrectionDecision.model_validate_json(
+                    correction_str,
+                )
+
+                if (
+                    correction_decision.correction_needed
+                    and correction_decision.correction_code
+                ):
+                    plan.action_log.append(
+                        f"PROACTIVE CORRECTION: Running script to meet precondition.",
+                    )
+                    await self._execute_course_correction(
+                        plan,
+                        correction_decision.correction_code,
+                    )
+                    logger.info(
+                        f"Proactive course correction for '{function_name}' completed.",
+                    )
+                else:
+                    logger.warning(
+                        "State drift detected, but LLM decided no correction was needed or failed to provide code.",
+                    )
+
+            except Exception as e:
+                logger.error(
+                    f"Error during proactive state correction for '{function_name}': {e}",
+                    exc_info=True,
+                )
+            finally:
+                plan.verification_client.reset_response_format()
+                plan.course_correction_client.reset_response_format()
+
     def _create_verify_decorator(self, plan: HierarchicalPlan):
         """
         Creates the @verify decorator for a given plan instance.
@@ -2292,10 +2427,23 @@ class HierarchicalPlanner(BasePlanner):
                 )
                 plan.call_stack.append(func_name)
                 plan.interaction_stack.append([])
+
+                entry_screenshot = None
+                if "action_provider.browser" in plan.plan_source_code:
+                    try:
+                        entry_screenshot = (
+                            await self.action_provider.browser.get_screenshot()
+                        )
+                    except Exception as e:
+                        logger.warning(
+                            f"Could not capture entry screenshot for '{func_name}': {e}",
+                        )
                 logger.info(f"VERIFY: Entering '{func_name}'")
                 parent_action_counter = plan.runtime.action_counter
                 plan.runtime.action_counter = 0
                 plan.runtime.cache_miss_counter = 0
+
+                await self._ensure_precondition(plan, func_name)
 
                 try:
                     last_error_reason = ""
@@ -2313,6 +2461,7 @@ class HierarchicalPlanner(BasePlanner):
                                 args,
                                 kwargs,
                                 plan.interaction_stack[-1],
+                                entry_screenshot=entry_screenshot,
                             )
                             return result
 
@@ -2416,6 +2565,7 @@ class HierarchicalPlanner(BasePlanner):
         args,
         kwargs,
         interactions: list,
+        entry_screenshot: Optional[bytes] = None,
     ):
         """
         Executes one function call and verifies its outcome.
@@ -2427,6 +2577,7 @@ class HierarchicalPlanner(BasePlanner):
             args: Positional arguments for the function.
             kwargs: Keyword arguments for the function.
             interactions: A list to log interactions within this step.
+            entry_screenshot: Screenshot captured right when the function was entered.
         """
         result = await fn(*args, **kwargs)
         if inspect.isawaitable(result):
