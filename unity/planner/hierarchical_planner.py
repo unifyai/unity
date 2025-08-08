@@ -697,6 +697,7 @@ class _SteerableToolHandleProxy:
                     self._plan.idempotency_cache[lookup_key],
                 )
 
+            self._plan.runtime.cache_miss_counter += 1
             self._plan.action_log.append(f"CACHE MISS: Executing {call_repr}")
             logger.debug(f"HANDLE CACHE MISS for: {call_repr}")
 
@@ -736,6 +737,7 @@ class _SteerableToolHandleProxy:
                     self._plan.idempotency_cache[lookup_key],
                 )
 
+            self._plan.runtime.cache_miss_counter += 1
             self._plan.action_log.append(f"CACHE MISS: Executing {call_repr}")
             logger.debug(f"HANDLE CACHE MISS for: {call_repr}")
 
@@ -826,6 +828,7 @@ class _ActionProviderProxy:
                     )
                 return cached_result_id
 
+            self._plan.runtime.cache_miss_counter += 1
             self._plan.action_log.append(f"CACHE MISS: Executing {call_repr}")
             logger.debug(f"CACHE MISS for key: {cache_key}")
 
@@ -909,6 +912,7 @@ class _ActionProviderProxy:
                     )
                 return cached_result_id
 
+            self._plan.runtime.cache_miss_counter += 1
             self._plan.action_log.append(f"CACHE MISS: Executing {call_repr}")
             logger.debug(f"CACHE MISS for key: {cache_key}")
 
@@ -2300,6 +2304,7 @@ class HierarchicalPlanner(BasePlanner):
                 logger.info(f"VERIFY: Entering '{func_name}'")
                 parent_action_counter = plan.runtime.action_counter
                 plan.runtime.action_counter = 0
+                plan.runtime.cache_miss_counter = 0
 
                 try:
                     last_error_reason = ""
@@ -2451,18 +2456,32 @@ class HierarchicalPlanner(BasePlanner):
             f"VERIFICATION EVIDENCE for '{fn.__name__}':\n{interactions_str}",
         )
 
-        final_screenshot = None
-        if "action_provider.browser" in plan.plan_source_code:
-            final_screenshot = await self.action_provider.browser.get_screenshot()
-        assessment = await self._check_state_against_goal(
-            plan,
-            fn.__name__,
-            fn.__doc__,
-            function_source_code=func_source,
-            interactions=interactions_for_this_step,
-            screenshot=final_screenshot,
-            function_return_value=result,
-        )
+        was_fully_cached = plan.runtime.cache_miss_counter == 0
+
+        if was_fully_cached and plan.replay_keys:
+            logger.info(
+                f"VERIFICATION SKIPPED for '{fn.__name__}' because it was fully executed from cache replay.",
+            )
+            plan.action_log.append(
+                f"Verification for {fn.__name__}: ok (Skipped for cached step)",
+            )
+            assessment = VerificationAssessment(
+                status="ok",
+                reason="Skipped verification for fully cached replay step.",
+            )
+        else:
+            final_screenshot = None
+            if "action_provider.browser" in plan.plan_source_code:
+                final_screenshot = await self.action_provider.browser.get_screenshot()
+            assessment = await self._check_state_against_goal(
+                plan,
+                fn.__name__,
+                fn.__doc__,
+                function_source_code=func_source,
+                interactions=interactions_for_this_step,
+                screenshot=final_screenshot,
+                function_return_value=result,
+            )
         logger.info(
             f"🕵️ VERIFICATION ASSESSMENT for '{fn.__name__}':\n{format_pydantic_model(assessment, indent=2)}",
         )
