@@ -273,6 +273,23 @@ class SandboxMergeDecision(BaseModel):
     )
 
 
+class PreconditionDecision(BaseModel):
+    """A structured decision on a function's precondition."""
+
+    status: typing.Literal["ok", "not_applicable"] = Field(
+        ...,
+        description="Whether a precondition was identified or not.",
+    )
+    url: Optional[str] = Field(
+        None,
+        description="The URL of the page that must be present for the function to run.",
+    )
+    description: Optional[str] = Field(
+        None,
+        description="A description of the page state that must be present for the function to run.",
+    )
+
+
 class _HierarchicalPlanState(enum.Enum):
     """Manages the detailed lifecycle state of a hierarchical plan."""
 
@@ -2526,6 +2543,37 @@ class HierarchicalPlanner(BasePlanner):
                         for data in existing_funcs.values()
                     )
 
+                    precondition_prompt = prompt_builders.build_precondition_prompt(
+                        function_source_code=clean_func_source,
+                        interactions_log=json.dumps(
+                            interactions_for_this_step,
+                            indent=2,
+                        ),
+                        has_entry_screenshot=entry_screenshot is not None,
+                    )
+
+                    plan.summarization_client.set_response_format(PreconditionDecision)
+                    try:
+                        decision_str = await llm_call(
+                            plan.summarization_client,
+                            precondition_prompt,
+                            screenshot=entry_screenshot,
+                        )
+                        precondition_data = PreconditionDecision.model_validate_json(
+                            decision_str,
+                        )
+                    finally:
+                        plan.summarization_client.reset_response_format()
+
+                    preconditions_for_fm = {}
+                    if precondition_data.status == "ok" and (
+                        precondition_data.url or precondition_data.description
+                    ):
+                        preconditions_for_fm[fn.__name__] = {
+                            "url": precondition_data.url,
+                            "description": precondition_data.description,
+                        }
+
                     if not is_duplicate:
                         plan.action_log.append(
                             f"Persisting verified function '{fn.__name__}' as a new skill.",
@@ -2535,6 +2583,7 @@ class HierarchicalPlanner(BasePlanner):
                         )
                         self.function_manager.add_functions(
                             implementations=[clean_func_source],
+                            preconditions=preconditions_for_fm,
                         )
                     else:
                         plan.action_log.append(
