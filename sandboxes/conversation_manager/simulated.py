@@ -9,6 +9,7 @@ from sandboxes.utils import (
 )
 from unity.conversation_manager.prompt_builders import (
     build_call_sys_prompt,
+    build_non_call_sys_prompt,
     build_user_agent_prompt,
 )
 from unity.conversation_manager.events import (
@@ -71,7 +72,7 @@ def make_agent(
     }
 
 
-async def simulate_turn(agent, message, start=False):
+async def simulate_turn(agent, message, start=False, user=False):
     global MEDIUM
     if not start:
         # record user utterance via appropriate event class
@@ -79,7 +80,10 @@ async def simulate_turn(agent, message, start=False):
         ue = recv_cls(timestamp=None, content=message, role="User")
         agent["history"].append(ue.to_dict())
     # build system prompt
-    sys_prompt = build_call_sys_prompt(
+    prompt_func = (
+        build_call_sys_prompt if MEDIUM == "phone" else build_non_call_sys_prompt
+    )
+    sys_prompt = prompt_func(
         agent["user_name"],
         agent["assistant_name"],
         agent["assistant_age"],
@@ -88,12 +92,39 @@ async def simulate_turn(agent, message, start=False):
         agent["task_context"],
         broader_context="",
     )
+    if not user:
+        tools_prompt = "\n".join(
+            [
+                "These are the **only** tools available to you, you may use them when the user requested to do so:",
+                "1. phone_call: Make a phone call to the user. (Don't use when already on a call)",
+                "2. sms_message: Send an SMS message to the user",
+                "3. email_message: Send an email message to the user",
+                "Simulate the tool use by returning the tool name and the arguments to use at the end of your response. For example: 'Tool trigerred: phone_call'",
+            ],
+        )
+    else:
+        tools_prompt = "\n".join(
+            [
+                "Based on your behaviour and bio, you may guide the conversation to go on with different issues and requests like a human.",
+                "You may request for a call back and/or sending an sms or email message in the conversation.",
+                "For example:",
+                "1. When in a call, you may ask the user to email you the details you mentioned.",
+                "2. In an sms conversation, you may ask the user to call you instead for further explanation or discussion.",
+            ],
+        )
+
+    sys_prompt += "\n" + tools_prompt
+
     # build user-agent prompt
-    ua_prompt = build_user_agent_prompt(
-        call_purpose=agent["purpose"],
-        past_events=agent["history"],
-        inflight_events=agent["history"][-1:],
-        tool_use_handles=None,
+    ua_prompt = (
+        build_user_agent_prompt(
+            call_purpose=agent["purpose"],
+            past_events=agent["history"],
+            inflight_events=[],
+            tool_use_handles=None,
+        )
+        + "\n"
+        + message
     )
     # run real AsyncUnify
     client = agent["client"]
@@ -137,9 +168,11 @@ async def simulate():
                 await transcribe_deepgram(audio)
             ).strip() or "You are a customer with a billing issue"
         else:
-            user_behaviour = raw or "You are a customer with a billing issue"
+            user_behaviour = "User: " + (
+                raw or "You are a customer with a billing issue"
+            )
     else:
-        user_behaviour = (
+        user_behaviour = "User: " + (
             input(
                 "Describe the user behaviour (e.g., 'You are a customer with a billing issue'): ",
             ).strip()
@@ -158,9 +191,11 @@ async def simulate():
                 await transcribe_deepgram(audio)
             ).strip() or "You are a utility provider support agent"
         else:
-            assistant_behaviour = raw or "You are a utility provider support agent"
+            assistant_behaviour = "Assistant: " + (
+                raw or "You are a utility provider support agent"
+            )
     else:
-        assistant_behaviour = (
+        assistant_behaviour = "Assistant: " + (
             input(
                 "Describe the assistant behaviour (e.g., 'You are a utility provider support agent'): ",
             ).strip()
@@ -187,8 +222,9 @@ async def simulate():
         if cmd in ("start", "s"):
             resp = await simulate_turn(
                 bob,
-                f"Start the {MEDIUM} conversation.",
+                f"This is your behaviour: {user_behaviour}. Start the new {MEDIUM} conversation for this scenario. Past Events are history from previous exchanges.",
                 start=True,
+                user=True,
             )
             last_message = resp
             print("Bob (user)>  ", last_message, "\n")
@@ -215,7 +251,7 @@ async def simulate():
             if args.voice:
                 speak(alice_reply)
             # Bob turn
-            bob_reply = await simulate_turn(bob, alice_reply)
+            bob_reply = await simulate_turn(bob, alice_reply, user=True)
             print("Bob (user)>  ", bob_reply, "\n")
             last_message = bob_reply
     print("Simulation ended.")
