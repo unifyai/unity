@@ -2523,7 +2523,7 @@ class HierarchicalPlanner(BasePlanner):
 
             if func_source and self.function_manager and fn.__name__ != "main_plan":
                 try:
-                    func_tree = ast.parse(func_source)
+                    func_tree = ast.parse(plan.clean_function_source_map[fn.__name__])
                     func_node = func_tree.body[0]
 
                     if isinstance(func_node, (ast.FunctionDef, ast.AsyncFunctionDef)):
@@ -2538,8 +2538,7 @@ class HierarchicalPlanner(BasePlanner):
                         include_implementations=True,
                     )
                     is_duplicate = any(
-                        textwrap.dedent(data.get("implementation", "")).strip()
-                        == textwrap.dedent(clean_func_source).strip()
+                        fn.__name__ == data.get("name")
                         for data in existing_funcs.values()
                     )
 
