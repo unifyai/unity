@@ -149,11 +149,6 @@ class FunctionManager(threading.Thread):
 
         return fn_node.name, tree, fn_node, source
 
-    @staticmethod
-    def _ensure_no_imports(tree: ast.Module, fn_name: str) -> None:
-        if any(isinstance(n, (ast.Import, ast.ImportFrom)) for n in ast.walk(tree)):
-            raise ValueError(f"Imports are not allowed (found in {fn_name}()).")
-
     def _collect_function_calls(
         self,
         fn_node: Union[ast.FunctionDef, ast.AsyncFunctionDef],
@@ -236,7 +231,6 @@ class FunctionManager(threading.Thread):
 
         # Deep validation
         for name, tree, node, _ in parsed:
-            self._ensure_no_imports(tree, name)
             calls = self._collect_function_calls(node)
             self._validate_function_calls(name, calls, provided_names)
 
