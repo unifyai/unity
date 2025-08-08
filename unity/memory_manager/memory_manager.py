@@ -160,11 +160,20 @@ class MemoryManager(BaseMemoryManager):
                     import json  # local import to avoid polluting module namespace
 
                     dat = itm.get("data", {})
+                    # Omit only EventBus metadata keys; include everything else so
+                    # summaries retain meaningful content (question/request/answer/etc.).
+                    keys_to_omit = {
+                        "row_id",
+                        "event_id",
+                        "calling_id",
+                        "type",
+                        "timestamp",
+                        "event_timestamp",
+                        "payload_cls",
+                    }
                     concise = {
                         "kind": "manager_method",
-                        "manager": dat.get("manager"),
-                        "method": dat.get("method"),
-                        "phase": dat.get("phase"),
+                        **{k: v for k, v in dat.items() if k not in keys_to_omit},
                     }
                     extra_lines.append(json.dumps(concise))
                 except Exception:
