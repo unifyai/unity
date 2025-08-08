@@ -2060,3 +2060,55 @@ def build_sandbox_merge_prompt(
     Respond ONLY with a JSON object matching the `SandboxMergeDecision` schema.
     """,
     )
+
+
+def build_refactor_prompt(
+    monolithic_code: str,
+    generalization_request: str,
+    *,
+    tools: Dict[str, Callable],
+) -> str:
+    """
+    Builds the prompt for refactoring a monolithic plan into modular functions.
+
+    Args:
+        monolithic_code: The source code of the current single-function plan.
+        generalization_request: The user's request to generalize the logic.
+        tools: The available tools for the planner.
+
+    Returns:
+        The complete prompt string for the refactoring LLM call.
+    """
+    strategy_instruction = "Your task is to rewrite the script below to incorporate the user's change request."
+    tool_usage_instruction = "Use the `action_provider` global object to interact with the environment. Available tools and their handle APIs have been described in the rules below."
+    rules_and_examples = _build_initial_plan_rules_and_examples(
+        tools,
+        strategy_instruction,
+        tool_usage_instruction,
+    )
+
+    return textwrap.dedent(
+        f"""
+        You are an expert Python programmer specializing in code refactoring and generalization.
+        Your task is to refactor the provided monolithic Python function into a set of smaller, logical, and reusable `async def` helper functions.
+
+        **User's Generalization Request:**
+        "{generalization_request}"
+
+        **Current Monolithic Code to Refactor:**
+        ```python
+        {monolithic_code}
+        ```
+
+        **Your Task & Instructions:**
+        1.  **Identify the Core Logic:** Analyze the user's request and the existing code to identify the central, repeated sequence of actions (e.g., the steps to process one item).
+        2.  **Create a Parameterized Function:** Encapsulate this core logic within a new, parameterized helper function. For example, `async def process_item(item_name: str)`.
+        3.  **Rewrite `main_plan`:** Rewrite the `main_plan` to be a clean coordinator. It should preserve the logic for the original subject that was taught but should now call your new helper functions, incorporating the user's generalization request.
+        4.  **Follow All Rules:** Your final output must adhere to all the established rules for plan creation, including docstrings, async usage, and placing imports inside functions.
+
+        {rules_and_examples}
+
+        Begin your response now. Your response must be a single, complete Python code block containing the fully refactored script.
+        """,
+    )
+
