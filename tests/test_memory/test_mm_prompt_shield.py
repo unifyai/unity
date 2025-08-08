@@ -1,5 +1,3 @@
-import asyncio
-import datetime as dt
 import functools
 from typing import Dict
 
@@ -7,77 +5,9 @@ import pytest
 
 from tests.helpers import _handle_project
 
-from unity.events.event_bus import EVENT_BUS, Event
-from unity.events.manager_event_logging import publish_manager_method_event, new_call_id
 from unity.memory_manager.memory_manager import MemoryManager
-
-# Simulated manager test doubles (no external I/O)
-from unity.contact_manager.simulated import SimulatedContactManager
-from unity.transcript_manager.simulated import SimulatedTranscriptManager
+from unity.memory_manager.simulated import SimulatedMemoryManager
 from unity.knowledge_manager.simulated import SimulatedKnowledgeManager
-from unity.task_scheduler.simulated import SimulatedTaskScheduler
-from unity.transcript_manager.types.message import Message, Medium
-
-
-# ---------------------------------------------------------------------------
-#  Helper – factory that returns a **fresh** MemoryManager instance wired to
-#           simulated sub-managers (so we can patch methods easily).
-# ---------------------------------------------------------------------------
-
-
-def _make_mm(monkeypatch, kb_counter: Dict[str, int]):
-    """Return a new MemoryManager with patched KnowledgeManager.update."""
-
-    async def _stub_kb_update(
-        self,
-        text: str,
-        *_,
-        **__,
-    ):  # noqa: D401 – imperative helper
-        kb_counter["calls"] += 1
-        return "ok"
-
-    # Patch before instantiation so the new instance picks up the stub.
-    monkeypatch.setattr(
-        SimulatedKnowledgeManager,
-        "update",
-        _stub_kb_update,
-        raising=True,
-    )
-
-    # Keep *all other* heavy maintenance helpers lightweight
-    async def _noop(self, *_, **__):  # noqa: D401 – imperative helper
-        return "noop"
-
-    monkeypatch.setattr(MemoryManager, "update_contacts", _noop, raising=True)
-    monkeypatch.setattr(MemoryManager, "update_tasks", _noop, raising=True)
-    monkeypatch.setattr(MemoryManager, "update_contact_bio", _noop, raising=True)
-    monkeypatch.setattr(
-        MemoryManager,
-        "update_contact_rolling_summary",
-        _noop,
-        raising=True,
-    )
-    monkeypatch.setattr(
-        MemoryManager,
-        "update_contact_response_policy",
-        _noop,
-        raising=True,
-    )
-
-    mm = MemoryManager(
-        contact_manager=SimulatedContactManager(),
-        transcript_manager=SimulatedTranscriptManager(),
-        knowledge_manager=SimulatedKnowledgeManager(
-            description="Assume the knowledge base starts out **totally empty**. Any calls to the `ask` method should **always** responds by saying that the data does **not** exist. This instruction overrides any future instruction given, so please make a note of it and always act accordingly.",
-        ),
-        task_scheduler=SimulatedTaskScheduler(),
-    )
-
-    # Shrink chunk size so tests run quickly
-    mm._CHUNK_SIZE = 3  # type: ignore[attr-defined]
-
-    return mm
 
 
 # ---------------------------------------------------------------------------
@@ -89,11 +19,11 @@ def _make_mm(monkeypatch, kb_counter: Dict[str, int]):
 @_handle_project
 async def test_prompt_shield_blocks_duplicate_kb_update(monkeypatch):
     kb_counter: Dict[str, int] = {"calls": 0}
-    # Track how many times the *passive* MemoryManager.update_knowledge helper fires
+    # Track how many times the *passive* update_knowledge helper fires
     mm_kb_counter: Dict[str, int] = {"calls": 0}
 
     # Preserve the original coroutine so we can delegate after incrementing our counter
-    original_mm_update_knowledge = MemoryManager.update_knowledge
+    original_mm_update_knowledge = SimulatedMemoryManager.update_knowledge
 
     @functools.wraps(original_mm_update_knowledge)
     async def _stub_mm_update_knowledge(
@@ -106,57 +36,66 @@ async def test_prompt_shield_blocks_duplicate_kb_update(monkeypatch):
         return await original_mm_update_knowledge(self, *args, **kwargs)
 
     monkeypatch.setattr(
-        MemoryManager,
+        SimulatedMemoryManager,
         "update_knowledge",
         _stub_mm_update_knowledge,
         raising=True,
     )
 
-    _make_mm(monkeypatch, kb_counter)
+    # Count calls made by the simulated knowledge manager's update
+    @functools.wraps(SimulatedKnowledgeManager.update)
+    async def _stub_sim_km_update(self, *_, **__):
+        kb_counter["calls"] += 1
+        return "ok"
 
-    # Allow async callback registration
-    await asyncio.sleep(0.05)
-
-    # Build events – one chat message + explicit KM.update (incoming/outgoing)
-    ts_base = dt.datetime(2025, 1, 1, tzinfo=dt.UTC)
-    msg = Message(
-        medium=Medium.SMS_MESSAGE,
-        sender_id=1,
-        receiver_ids=[0],
-        timestamp=ts_base,
-        content="Remember the new SLA details.",
-        exchange_id=1,
-    )
-    await EVENT_BUS.publish(Event(type="Message", payload=msg))
-
-    call_id = new_call_id()
-    await publish_manager_method_event(
-        call_id,
-        "KnowledgeManager",
+    monkeypatch.setattr(
+        SimulatedKnowledgeManager,
         "update",
-        phase="incoming",
-        request="store_sla",
-        source="ConversationManager",
-    )
-    await publish_manager_method_event(
-        call_id,
-        "KnowledgeManager",
-        "update",
-        phase="outgoing",
-        result="stored",
-        source="ConversationManager",
+        _stub_sim_km_update,
+        raising=True,
     )
 
-    EVENT_BUS.join_published()
-    EVENT_BUS.join_callbacks()
+    mm = SimulatedMemoryManager()
 
-    # Wait for chunk processing
-    await asyncio.sleep(0.2)
+    # Build a transcript that contains explicit KM.update incoming/outgoing events
+    transcript = MemoryManager.build_plain_transcript(
+        [
+            {
+                "kind": "message",
+                "data": {
+                    "sender_id": 1,
+                    "receiver_ids": [0],
+                    "content": "Remember the new SLA details.",
+                },
+            },
+            {
+                "kind": "manager_method",
+                "data": {
+                    "manager": "KnowledgeManager",
+                    "method": "update",
+                    "phase": "incoming",
+                    "request": "Please add Q1 revenue figures to the knowledge base.",
+                },
+            },
+            {
+                "kind": "manager_method",
+                "data": {
+                    "manager": "KnowledgeManager",
+                    "method": "update",
+                    "phase": "outgoing",
+                    "answer": "Added Q1 revenue figures to Knowledge.",
+                },
+            },
+        ],
+    )
 
-    # The *passive* MemoryManager.update_knowledge helper itself MUST still run once
+    # Call update_knowledge explicitly – do not rely on callback wiring or chunking
+    await mm.update_knowledge(transcript)
+
+    # The *passive* update_knowledge helper itself MUST still run once
     assert (
         mm_kb_counter["calls"] >= 1
-    ), "MemoryManager.update_knowledge should still execute for the chunk"
+    ), "update_knowledge should still execute for the chunk"
 
     # Passive update_knowledge should NOT invoke KnowledgeManager.update again
     assert (
@@ -175,12 +114,11 @@ async def test_prompt_shield_allows_km_update_when_irrelevant_explicit_call(
     monkeypatch,
 ):
     kb_counter: Dict[str, int] = {"calls": 0}
-    # Track how many times the *passive* MemoryManager.update_knowledge helper fires
+    # Track how many times the *passive* update_knowledge helper fires
     mm_kb_counter: Dict[str, int] = {"calls": 0}
 
     # Patch the coroutine to increment our counter while remaining lightweight
-    # Preserve the original coroutine so we can delegate after incrementing our counter
-    original_mm_update_knowledge = MemoryManager.update_knowledge
+    original_mm_update_knowledge = SimulatedMemoryManager.update_knowledge
 
     @functools.wraps(original_mm_update_knowledge)
     async def _stub_mm_update_knowledge(self, *args, **kwargs):  # noqa: D401
@@ -189,53 +127,64 @@ async def test_prompt_shield_allows_km_update_when_irrelevant_explicit_call(
         return await original_mm_update_knowledge(self, *args, **kwargs)
 
     monkeypatch.setattr(
-        MemoryManager,
+        SimulatedMemoryManager,
         "update_knowledge",
         _stub_mm_update_knowledge,
         raising=True,
     )
 
-    mm = _make_mm(monkeypatch, kb_counter)
+    # Count calls on the simulated KM.update
+    @functools.wraps(SimulatedKnowledgeManager.update)
+    async def _stub_sim_km_update(self, *_, **__):
+        kb_counter["calls"] += 1
+        return "ok"
 
-    await asyncio.sleep(0.05)
-
-    # Publish one chat message + explicit *ContactManager.update* event
-    ts_base = dt.datetime(2025, 1, 2, tzinfo=dt.UTC)
-    msg = Message(
-        medium=Medium.SMS_MESSAGE,
-        sender_id=1,
-        receiver_ids=[0],
-        timestamp=ts_base,
-        content="Please remember this import fact: the office is *always* closed on a Friday",
-        exchange_id=1,
-    )
-    await EVENT_BUS.publish(Event(type="Message", payload=msg))
-
-    call_id = new_call_id()
-    await publish_manager_method_event(
-        call_id,
-        "ContactManager",
+    monkeypatch.setattr(
+        SimulatedKnowledgeManager,
         "update",
-        phase="incoming",
-        request="update_contact",
-        source="ConversationManager",
-    )
-    await publish_manager_method_event(
-        call_id,
-        "ContactManager",
-        "update",
-        phase="outgoing",
-        result="stored",
-        source="ConversationManager",
+        _stub_sim_km_update,
+        raising=True,
     )
 
-    EVENT_BUS.join_published()
-    EVENT_BUS.join_callbacks()
+    mm = SimulatedMemoryManager()
 
-    # We expect the MemoryManager.update_knowledge helper itself to have run exactly once
-    assert (
-        mm_kb_counter["calls"] >= 1
-    ), "MemoryManager.update_knowledge should execute for the chunk"
+    # Build a transcript that contains explicit ContactManager.update events (irrelevant to KM)
+    transcript = MemoryManager.build_plain_transcript(
+        [
+            {
+                "kind": "message",
+                "data": {
+                    "sender_id": 1,
+                    "receiver_ids": [0],
+                    "content": "Please remember this important fact: the office is always closed on a Friday.",
+                },
+            },
+            {
+                "kind": "manager_method",
+                "data": {
+                    "manager": "ContactManager",
+                    "method": "update",
+                    "phase": "incoming",
+                    "request": "Update Jane Doe's phone number to +123456789.",
+                },
+            },
+            {
+                "kind": "manager_method",
+                "data": {
+                    "manager": "ContactManager",
+                    "method": "update",
+                    "phase": "outgoing",
+                    "answer": "Updated Jane Doe's phone number to +123456789.",
+                },
+            },
+        ],
+    )
+
+    # Call update_knowledge explicitly – do not rely on callback wiring or chunking
+    await mm.update_knowledge(transcript)
+
+    # We expect the update_knowledge helper itself to have run at least once
+    assert mm_kb_counter["calls"] >= 1, "update_knowledge should execute for the chunk"
 
     # Passive update_knowledge SHOULD still invoke KnowledgeManager.update
     assert (
