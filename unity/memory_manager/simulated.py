@@ -368,22 +368,12 @@ class SimulatedMemoryManager(BaseMemoryManager):
         for rudimentary statefulness.
         """
 
-        async def _kb_update(card_id: int | None, content: str) -> str:
-            """
-            Tiny wrapper that calls the simulated `.update` and records the
-            content locally so tests can assert changes between calls.
-            """
-            self._overlays.setdefault("kb", []).append(content)
-            return await self._knowledge_manager.update(
-                f"Update knowledge card {card_id}: {content}",
-            )
-
         tools: Dict[str, Callable[..., Any]] = methods_to_tool_dict(
             self._contact_manager.ask,
             self._transcript_manager.ask,
             self._knowledge_manager.ask,
             self._knowledge_manager.refactor,
-            _kb_update,
+            self._knowledge_manager.update,
             include_class_name=True,
         )
 
