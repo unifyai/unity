@@ -120,6 +120,26 @@ async def _dispatch_with_context(
 
     lowered = raw.lower()
 
+    # ───── immediate-execution heuristic (fast‑path) ─────────────────────
+    # If the user clearly asks to perform the work now/immediately, prefer
+    # starting the task over updating metadata.
+    if any(
+        token in lowered
+        for token in (
+            "right now",
+            "immediately",
+            "asap",
+            "as soon as possible",
+            "right away",
+            "open a browser",
+        )
+    ):
+        handle = await ts.execute_task(
+            raw,
+            parent_chat_context=parent_chat_context,
+        )
+        return "start", handle
+
     # ───── quick heuristics (fast‑path) ───────────────────────────────
     if lowered.startswith(
         (
@@ -142,19 +162,36 @@ async def _dispatch_with_context(
 
     # ───── everything else – ask an LLM judge ────────────────────────
     judge = unify.Unify("gpt-4o@openai", response_format=_Intent)
+    # Strengthen classification guidance: treat imperative, real-time
+    # requests (e.g. "start", "begin", "open a browser", "do X now") as 'start'.
+    start_bias_msg = (
+        _INTENT_SYS_MSG
+        + "\nRules:"
+        + "\n- Classify as 'start' when the user asks you to begin doing the task now/immediately/ASAP (e.g. 'right now', 'as soon as possible', 'immediately'), or uses imperative phrasing to carry out the task (e.g. 'start', 'begin', 'open a browser', 'do five minutes of research')."
+        + "\n- Use 'update' strictly for creating/updating/deleting tasks, schedules, priorities, or queue ordering."
+        + "\n- Use 'ask' for information-only questions about the current task list."
+        + "\nExamples:"
+        + "\nInput: 'Start task 12' → {'action':'start','cleaned_text':'12'}"
+        + "\nInput: 'Could you research ACME right now and tell me what you find?' → {'action':'start','cleaned_text':'research ACME right now and report back'}"
+        + "\nInput: 'Move task 3 behind task 5' → {'action':'update','cleaned_text':'Move task 3 behind task 5'}"
+        + "\nInput: 'What is due this week?' → {'action':'ask','cleaned_text':'What is due this week?'}"
+    )
     intent = _Intent.model_validate_json(
-        judge.set_system_message(_INTENT_SYS_MSG).generate(raw),
+        judge.set_system_message(start_bias_msg).generate(raw),
     )
 
-    # For 'start' we no longer attempt to parse a numeric task ID here –
-    # instead we treat it as an *update* request so the LLM can decide how
-    # to promote the relevant task(s) using the official TaskScheduler
-    # tools (e.g. `_update_task_status`).
-    if intent.action in {"update", "start"}:
+    # For 'start', call execute_task so the scheduler resolves/creates the
+    # relevant task and launches it.
+    if intent.action in {"update"}:
         handle = await ts.update(
             intent.cleaned_text,
             parent_chat_context=parent_chat_context,
             _return_reasoning_steps=show_steps,
+        )
+    elif intent.action == "start":
+        handle = await ts.execute_task(
+            intent.cleaned_text,
+            parent_chat_context=parent_chat_context,
         )
     else:  # ask
         handle = await ts.ask(
