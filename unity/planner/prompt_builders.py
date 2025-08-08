@@ -1674,49 +1674,6 @@ The full source code of the function that was just executed is provided below. A
     )
 
 
-def build_plan_surgery_prompt(
-    current_code: str,
-    request: str,
-    *,
-    tools: Dict[str, Callable],
-) -> str:
-    """
-    Builds the prompt for modifying an existing plan script.
-
-    Args:
-        current_code: The current source code of the plan.
-        request: The user's modification request.
-        tools: The tools available to the function.
-    Returns:
-        The complete prompt string.
-    """
-    strategy_instruction = "Your task is to rewrite the script below to incorporate the user's change request."
-    tool_usage_instruction = "Use the `action_provider` global object to interact with the environment. Available tools and their handle APIs have been described in the rules below."
-    rules_and_examples = _build_initial_plan_rules_and_examples(
-        tools,
-        strategy_instruction,
-        tool_usage_instruction,
-    )
-
-    return textwrap.dedent(
-        f"""
-        You are an expert Python programmer specializing in code modification.
-
-        **Modification Request:**
-        "{request}"
-
-        ---
-        ### Current Script
-        ```python
-        {current_code}
-        ```
-        {rules_and_examples}
-
-        Begin your response now. Your response must start immediately with the code.
-        """,
-    )
-
-
 def build_ask_prompt(
     goal: str,
     state: str,
