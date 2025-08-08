@@ -367,6 +367,7 @@ class CommsAgent:
                             # await self.meet_browser.act("Click the 'Join' button")
 
                             asyncio.create_task(self.inactivity_check_for_meet())
+                            await asyncio.sleep(5)
                             self.meet_joined.set()
 
                         continue
