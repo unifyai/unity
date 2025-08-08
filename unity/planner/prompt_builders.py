@@ -2069,3 +2069,58 @@ def build_refactor_prompt(
         """,
     )
 
+
+def build_precondition_prompt(
+    function_source_code: str,
+    interactions_log: str,
+    has_entry_screenshot: bool,
+) -> str:
+    """
+    Builds the prompt to determine the precondition for a function to run.
+
+    Args:
+        function_source_code: The source code of the function.
+        interactions_log: A JSON string of the tool interactions during the function's run.
+        has_entry_screenshot: Whether a screenshot of the browser is provided.
+    """
+    screenshot_section = ""
+    if has_entry_screenshot:
+        screenshot_section = textwrap.dedent(
+            """
+            ---
+            ### CRITICAL: Visual Context (Entry Screenshot)
+            You have been provided with a screenshot of the browser's state at the moment this function was called.
+            - **Use this image as the primary source of truth** to determine the necessary starting conditions.
+            - Analyze the image to describe the required visible elements (dialogs, buttons, forms, etc.).
+            """,
+        )
+
+    return textwrap.dedent(
+        f"""
+        You are a state analysis expert for an autonomous web agent.
+        A function that interacts with a web browser has just executed successfully. Your task is to describe the necessary **precondition** for this function to run correctly based on its first few actions and the visual state when it started.
+
+        **Function Source Code:**
+        ```python
+        {function_source_code}
+        ```
+
+        **Execution Interaction Log:**
+        ```json
+        {interactions_log}
+        ```
+
+        {screenshot_section}
+
+        **Your Task:**
+        1.  Analyze the function's code, its interactions, and the entry screenshot.
+        2.  If the first action is `browser_navigate`, your primary goal is to populate the `precondition.url` field.
+        3.  If the first action is `browser_act` or `browser_observe`, your primary goal is to populate the `precondition.description` field with a clear, verifiable description of the page state seen in the screenshot.
+        4.  If the function does not interact with the browser at all, the status should be "not_applicable".
+
+        Respond with ONLY the JSON object matching the `PreconditionDecision` schema.
+        - `status`: "ok" if a precondition was identified, or "not_applicable" if none is needed.
+        - `url`: If status is "ok", the URL of the page that must be present for the function to run. This is highly recommended.
+        - `description`: If status is "ok", a description of the page state that must be present for the function to run. This is required if URL is not provided.
+        """,
+    )
