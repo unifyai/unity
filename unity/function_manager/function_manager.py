@@ -236,6 +236,7 @@ class FunctionManager(threading.Thread):
         self,
         *,
         implementations: Union[str, List[str]],
+        preconditions: Optional[Dict[str, Dict]] = None,
     ) -> Dict[str, str]:
         """
         Validate, compile and persist one or more function implementations.
@@ -244,6 +245,8 @@ class FunctionManager(threading.Thread):
         -------
         Dict[str, str]  –  ``{<name>: "added" | "error: <msg>"}``
         """
+        if preconditions is None:
+            preconditions = {}
         if isinstance(implementations, str):
             implementations = [implementations]
 
@@ -274,6 +277,7 @@ class FunctionManager(threading.Thread):
             embedding_text = (
                 f"Function Name: {name}\nSignature: {signature}\nDocstring: {docstring}"
             )
+            precondition = preconditions.get(name)
 
             unify.log(
                 context=self._ctx,
@@ -283,6 +287,7 @@ class FunctionManager(threading.Thread):
                 implementation=source,
                 calls=calls,
                 embedding_text=embedding_text,
+                precondition=precondition,
                 new=True,
             )
 
@@ -301,7 +306,7 @@ class FunctionManager(threading.Thread):
 
         Each value contains:
 
-        * **argspec**   – full signature, e.g. ``(x: int, y: int) -> int``
+        * **argspec** – full signature, e.g. ``(x: int, y: int) -> int``
         * **docstring** – cleaned docstring or empty string
         * **implementation** – full source code (only when
           ``include_implementations=True``)
@@ -316,6 +321,26 @@ class FunctionManager(threading.Thread):
                 data["implementation"] = log.entries["implementation"]
             entries[log.entries["name"]] = data
         return entries
+
+    def get_precondition(self, *, function_name: str) -> Optional[Dict[str, Any]]:
+        """
+        Retrieves the stored precondition for a given function.
+
+        Args:
+            function_name: The name of the function.
+
+        Returns:
+            The precondition dictionary or None if not found or not applicable.
+        """
+        logs = unify.get_logs(
+            context=self._ctx,
+            filter=f"name == '{function_name}'",
+            limit=1,
+        )
+        if not logs:
+            return None
+
+        return logs[0].entries.get("precondition")
 
     # 3. Deletion ------------------------------------------------------- #
 
