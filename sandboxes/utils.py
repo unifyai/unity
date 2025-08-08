@@ -919,6 +919,8 @@ class TranscriptGenerator:
                         WhatsappMessageRecievedEvent,
                         PhoneUtteranceEvent,
                     )
+                    from pydantic import BaseModel
+                    from unity.events.event_bus import Event
                     import unify
 
                     event_obj = None
@@ -948,16 +950,25 @@ class TranscriptGenerator:
                             content=content,
                         )
                     if event_obj:
-                        ev_dict = event_obj.to_dict()
-                        entries = {
-                            "event_name": ev_dict["event_name"],
-                            **ev_dict["payload"],
-                        }
+                        ev_dict = event_obj.to_bus_event()
+                        payload_dict = (
+                            ev_dict.payload.model_dump(mode="json")
+                            if isinstance(ev_dict.payload, BaseModel)
+                            else Event._to_python(ev_dict.payload)
+                        )
                         unify.create_logs(
                             project=unify.active_project(),
                             context="Assistant/Events/Comms",
                             params={},
-                            entries=entries,
+                            entries={
+                                "row_id": ev_dict.row_id,
+                                "event_id": ev_dict.event_id,
+                                "calling_id": ev_dict.calling_id,
+                                "event_timestamp": ev_dict.timestamp.isoformat(),
+                                "payload_cls": ev_dict.payload_cls,
+                                "type": ev_dict.type,
+                                **payload_dict,
+                            },
                         )
 
             return f"{len(transcript)} messages logged"

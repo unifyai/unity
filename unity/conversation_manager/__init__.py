@@ -125,6 +125,7 @@ def wait_for_service_ready(timeout: int = 30) -> bool:
 def start(
     start_local: bool = False,
     enabled_tools: list | str | None = "conductor",
+    project_name: str = "Assistants",
 ) -> bool:
     """
     Start the Unity service as a subprocess and wait for it to be ready.
@@ -159,6 +160,9 @@ def start(
             )
         if start_local:
             cmd.append("--start-local")
+
+        cmd.append("--project-name")
+        cmd.append(project_name)
 
         _process = subprocess.Popen(
             cmd,

@@ -212,6 +212,7 @@ async def main():
             if isinstance(args.enabled_tools, list)
             else args.enabled_tools
         ),
+        project_name=args.project_name,
     ):
         print("Convo manager started successfully...")
 
