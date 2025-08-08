@@ -87,6 +87,7 @@ class CommsManager:
                             assistant_region=event["assistant_region"],
                             assistant_about=event["assistant_about"],
                             assistant_number=event["assistant_number"],
+                            assistant_email=event["assistant_email"],
                             user_name=event["user_name"],
                             user_number=event["user_number"],
                             user_phone_number=event["user_phone_number"],
