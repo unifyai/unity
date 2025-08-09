@@ -41,6 +41,7 @@ from sandboxes.utils import (  # shared helpers reused in other sandboxes
     transcribe_deepgram as _transcribe_deepgram,
     speak as _speak,
     await_with_interrupt as _await_with_interrupt,
+    steering_controls_hint as _steer_hint,
     build_cli_parser,
     activate_project,
     _wait_for_tts_end as _wait_tts_end,
@@ -334,6 +335,7 @@ async def _main_async() -> None:
             if args.voice:
                 _speak("Let me take a look, give me a moment")
 
+            print(_steer_hint())
             answer = await _await_with_interrupt(_handle)
             if args.voice:
                 _speak("Okay that's all done")

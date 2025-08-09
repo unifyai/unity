@@ -551,6 +551,11 @@ def input_now(timeout: float = 0.1) -> Optional[str]:
     return txt if has_input else None
 
 
+def steering_controls_hint() -> str:
+    """Return a one-line hint with available in-flight steering commands."""
+    return "Controls: /i <text>, /pause, /resume, /ask <q>, /stop, /help"
+
+
 async def await_with_interrupt(  # noqa: D401 – imperative helper
     handle: "SteerableToolHandle",
     poll: float = 0.05,
@@ -559,21 +564,76 @@ async def await_with_interrupt(  # noqa: D401 – imperative helper
     **Common wrapper** used by all interactive sandboxes.
 
     Waits on ``handle.result()`` but lets the user:
-    • *interject* arbitrary text ⇒ forwarded via ``handle.interject``
-    • type **stop / cancel**     ⇒ aborts the running tool call
+    • /i <text> or plain text     ⇒ interject via ``handle.interject``
+    • /pause | /p                 ⇒ pause the running call
+    • /resume | /r                ⇒ resume a paused call
+    • /ask <question> | ? <q>     ⇒ ask a read-only question about the running call
+    • /stop | /cancel             ⇒ abort the running call
+    • /status                     ⇒ print whether the call is done
+    • /help                       ⇒ show available controls
 
-    Consolidating this code removes four nearly identical copies.
+    Commands use a leading '/' prefix to avoid accidental interjections.
     """
 
     import asyncio  # local to avoid widening the public surface
 
+    HELP_TEXT = steering_controls_hint()
+
     while not handle.done():
         txt = input_now(poll * 2)  # same cadence as old versions
         if txt:
-            if txt.lower() in {"stop", "cancel"}:
-                handle.stop()
-                break
-            run_in_loop(handle.interject(txt))
+            stripped = txt.strip()
+            # Command mode with leading '/'
+            if stripped.startswith("/"):
+                parts = stripped[1:].split(maxsplit=1)
+                cmd = parts[0].lower()
+                arg = parts[1].strip() if len(parts) > 1 else ""
+
+                if cmd in {"stop", "cancel", "s", "c"}:
+                    handle.stop()
+                    break
+                if cmd in {"pause", "p"}:
+                    try:
+                        handle.pause()
+                        print("⏸️  Paused")
+                    except Exception as exc:
+                        print(f"⚠️  Pause failed: {exc}")
+                    continue
+                if cmd in {"resume", "r"}:
+                    try:
+                        handle.resume()
+                        print("▶️  Resumed")
+                    except Exception as exc:
+                        print(f"⚠️  Resume failed: {exc}")
+                    continue
+                if cmd in {"i", "interject"}:
+                    if not arg:
+                        print("Usage: /i <text>")
+                    else:
+                        run_in_loop(handle.interject(arg))
+                    continue
+                if cmd in {"ask", "?"}:
+                    if not arg:
+                        print("Usage: /ask <question>")
+                    else:
+                        try:
+                            nested = await handle.ask(arg)
+                            ans = await nested.result()
+                            print(f"[ask] → {ans}")
+                        except Exception as exc:
+                            print(f"⚠️  Ask failed: {exc}")
+                    continue
+                if cmd in {"status", "st"}:
+                    print("done" if handle.done() else "running")
+                    continue
+                if cmd in {"help", "h"}:
+                    print(HELP_TEXT)
+                    continue
+                # Unknown command → treat as interjection without the '/'
+                run_in_loop(handle.interject(stripped[1:]))
+            else:
+                # Plain text → interject
+                run_in_loop(handle.interject(stripped))
         await asyncio.sleep(poll)
 
     return await handle.result()
