@@ -47,6 +47,7 @@ from sandboxes.utils import (  # shared helpers reused in other sandboxes
     build_cli_parser,
     activate_project,
     _wait_for_tts_end as _wait_tts_end,
+    configure_sandbox_logging,
 )
 
 LG = logging.getLogger("transcript_sandbox")
@@ -145,7 +146,8 @@ async def _main_async() -> None:
                     args.project_version,
                 )
 
-    logging.basicConfig(level=logging.INFO, format="%(message)s")
+    # logging via shared helper
+    configure_sandbox_logging(args.log_in_terminal)
     LG.setLevel(logging.INFO)
 
     tm: TranscriptManager = TranscriptManager()

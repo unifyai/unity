@@ -530,7 +530,53 @@ def build_cli_parser(description: str) -> argparse.ArgumentParser:
         metavar="IDX",
         help="Project version index to load (default -1 for latest; supports positive and negative indexing)",
     )
+    parser.add_argument(
+        "--log_in_terminal",
+        action="store_true",
+        help="stream logs to terminal in addition to writing .logs.txt (default is file-only)",
+    )
     return parser
+
+
+def configure_sandbox_logging(
+    log_in_terminal: bool = False,
+    log_file: str = ".logs.txt",
+) -> None:
+    """Configure logging to a file by default, with optional terminal streaming.
+
+    - Overwrites the given log_file on each run.
+    - Adds a StreamHandler to stdout when log_in_terminal is True.
+    - Prints a short hint on how to watch the last 50 lines live.
+    """
+    import sys as _sys
+    import logging as _logging
+
+    root_logger = _logging.getLogger()
+    root_logger.setLevel(_logging.INFO)
+
+    # Clear any existing handlers to prevent duplicates
+    for _h in list(root_logger.handlers):
+        root_logger.removeHandler(_h)
+
+    _fmt = _logging.Formatter(
+        "%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+        "%Y-%m-%d %H:%M:%S",
+    )
+
+    _fh = _logging.FileHandler(log_file, mode="w", encoding="utf-8")
+    _fh.setFormatter(_fmt)
+    root_logger.addHandler(_fh)
+
+    if log_in_terminal:
+        _sh = _logging.StreamHandler(_sys.stdout)
+        _sh.setFormatter(_fmt)
+        root_logger.addHandler(_sh)
+
+    print(
+        "📝 Logging to .logs.txt (overwrites each run). "
+        "To watch live: watch -n 0.1 tail -n 50 .logs.txt. "
+        "Pass --log_in_terminal to also stream logs here.",
+    )
 
 
 # ===========================================================================

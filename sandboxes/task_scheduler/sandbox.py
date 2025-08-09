@@ -45,6 +45,7 @@ from sandboxes.utils import (
     build_cli_parser,
     activate_project,
     _wait_for_tts_end as _wait_tts_end,
+    configure_sandbox_logging,
 )
 
 LG = logging.getLogger("task_scheduler_sandbox")
@@ -242,8 +243,8 @@ async def _main_async() -> None:
                     args.project_version,
                 )
 
-    # logging
-    logging.basicConfig(level=logging.INFO, format="%(message)s")
+    # logging via shared helper
+    configure_sandbox_logging(args.log_in_terminal)
     LG.setLevel(logging.INFO)
 
     ts = TaskScheduler()
