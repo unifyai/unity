@@ -65,7 +65,7 @@ While an `ask` call is running, you can steer it in-flight. Type these commands 
 
 Notes:
 - Steering commands are ignored when no call is running; you’ll see a small hint if you try.
-- In voice mode, you still type these commands in the terminal while audio is playing. Press Enter to skip current TTS playback.
+- In voice mode, during TTS playback you can press Enter to skip. Steering commands (including `/r`) are entered after playback finishes.
 
 Example:
 ```text
