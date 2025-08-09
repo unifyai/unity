@@ -244,6 +244,15 @@ def _build_initial_plan_rules_and_examples(
             async def my_func():
                 await action_provider.browser_navigate("...")
             ```
+
+         12. **Requesting Clarification:**
+            ```python
+            # ✅ CORRECT: Call as a global function
+            destination = await request_clarification("What is your destination city?")
+
+            # ❌ WRONG: Do not call it on action_provider
+            # destination = await action_provider.request_clarification(...)
+            ```
         """,
     )
 
@@ -813,6 +822,28 @@ def _build_initial_plan_rules_and_examples(
 
             return analysis_results
         ```
+
+        **Example: Proactive Clarification**
+        This example shows how to generate a plan that asks for required information before acting.
+        ```python
+        # This plan is for a vague goal like "Book a hotel for me."
+        # The LLM knows it's missing key details, so it uses the request_clarification primitive.
+        @verify
+        async def get_booking_details_from_user() -> dict:
+            "\"\"\"Asks the user for all necessary details to book a hotel.\"\"\""
+            city = await request_clarification("Sure, I can book a hotel. What city are you traveling to?")
+            check_in = await request_clarification("What is your check-in date?")
+            check_out = await request_clarification("And what is your check-out date?")
+            return {{"city": city, "check_in": check_in, "check_out": check_out}}
+
+        @verify
+        async def main_plan():
+            "\"\"\"Main plan to book a hotel after gathering user input.\"\"\""
+            details = await get_booking_details_from_user()
+            # ... now the plan would proceed to use these details for browser automation ...
+            print(f"Searching for hotels in {{details['city']}} from {{details['check_in']}} to {{details['check_out']}}.")
+            return f"Search initiated for {{details['city']}}."
+        ```
     """,
     )
 
@@ -993,6 +1024,16 @@ def _build_dynamic_implement_rules_and_examples(
             async def my_func():
                 result = await action_provider.browser_navigate("https://example.com")
                 data = await action_provider.browser_observe("Get page title")
+            ```
+
+        9. **Requesting Clarification:**
+            ```python
+            # ✅ CORRECT: Call as a global function
+            destination = await request_clarification("What is your destination city?")
+
+            # ❌ WRONG: Do not call it on action_provider
+            # destination = await action_provider.request_clarification(...)
+            ```
             ```
         """,
     )
@@ -1470,11 +1511,15 @@ def build_dynamic_implement_prompt(
     function_docstring: str,
     parent_code: str,
     browser_state: str | None,
+    clarification_question: str | None,
+    clarification_answer: str | None,
     has_browser_screenshot: bool,
     replan_context: str,
     *,
     tools: Dict[str, Callable],
     existing_code_for_modification: Optional[str] = None,
+    recent_transcript: Optional[str] = None,
+    parent_chat_context: Optional[list] = None,
 ) -> str:
     """Builds the system prompt for dynamically implementing or modifying a function."""
 
@@ -1736,6 +1781,7 @@ The full source code of the function that was just executed is provided below. A
         - `ok`: The function's purpose was fully and correctly achieved.
         - `reimplement_local`: A tactical error occurred. The goal is correct, but the actions were wrong. The function needs to be re-written.
         - `replan_parent`: A strategic error occurred. The function itself is flawed or was called at the wrong time. The parent function needs to be replanned.
+        - `request_clarification`: The function's goal is correct, but you need more information from the user to fix it. If you choose this, you MUST provide a clear, specific `clarification_question`.
         - `fatal_error`: An unrecoverable error occurred that prevents any further progress.
 
         **Your Response:**
