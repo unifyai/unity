@@ -3063,6 +3063,15 @@ class HierarchicalPlanner(BasePlanner):
                 else ""
             )
 
+            recent_transcript = None
+            try:
+                # TODO: Add this in case the plan needs the full transcript as context(https://app.clickup.com/t/86c4unzg9)
+                # recent_transcript = await self.action_provider.transcript_manager.ask(
+                #     "Provide a summary of the most recent conversational turns."
+                # )
+                pass
+            except Exception as e:
+                logger.warning(f"Could not fetch recent transcript: {e}")
             prompt = prompt_builders.build_dynamic_implement_prompt(
                 full_plan_source=clean_full_plan_source,
                 call_stack=plan.call_stack,
@@ -3077,6 +3086,10 @@ class HierarchicalPlanner(BasePlanner):
                 existing_code_for_modification=kwargs.get(
                     "existing_code_for_modification",
                 ),
+                clarification_question=kwargs.get("clarification_question"),
+                clarification_answer=kwargs.get("clarification_answer"),
+                recent_transcript=recent_transcript,
+                parent_chat_context=plan.parent_chat_context,
             )
             plan.implementation_client.set_response_format(ImplementationDecision)
             try:
@@ -3147,6 +3160,15 @@ class HierarchicalPlanner(BasePlanner):
         Returns:
             A VerificationAssessment object with the outcome.
         """
+        recent_transcript = None
+        try:
+            # TODO: Add this in case the plan needs the full transcript as context(https://app.clickup.com/t/86c4unzg9)
+            # recent_transcript = await self.action_provider.transcript_manager.ask(
+            #     "Provide a summary of the most recent conversational turns."
+            # )
+            pass
+        except Exception as e:
+            logger.warning(f"Could not fetch recent transcript: {e}")
         prompt = prompt_builders.build_verification_prompt(
             goal=plan.goal,
             function_name=function_name,
@@ -3155,6 +3177,8 @@ class HierarchicalPlanner(BasePlanner):
             interactions=interactions,
             has_browser_screenshot=screenshot is not None,
             function_return_value=function_return_value,
+            recent_transcript=recent_transcript,
+            parent_chat_context=plan.parent_chat_context,
         )
 
         plan.verification_client.set_response_format(VerificationAssessment)
