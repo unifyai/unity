@@ -2531,8 +2531,6 @@ class AsyncToolUseLoopHandle(SteerableToolHandle):
         #     just answer from the final transcript without starting another
         #     loop.
         if self.done():
-            from ..constants import LOGGER
-
             LOGGER.warning(
                 "AsyncToolUseLoopHandle.ask() called on an already-finished "
                 "loop – returning a synthetic handle with a static answer.",
