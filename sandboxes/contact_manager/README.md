@@ -52,8 +52,33 @@ Once the sandbox starts you will see a prompt and a small help table.  The most 
 * `help` / `h`          Show the in-session command reference.
 * `quit`                Exit the sandbox.
 
-Example session (text mode)
-~~~~~~~~~~~~~~~~~~~~~~~~~~~
+### Steering controls (during a running request)
+While an `ask` or `update` call is running, you can steer it in-flight. Type these commands (they only work while a request is active):
+
+- **/i <text> | /interject <text> | plain text**: Interject guidance that the tool-loop should incorporate immediately. If you don’t prefix with `/`, any plain text you type during a run is treated as an interjection.
+- **/pause | /p**: Pause the running call.
+- **/resume | /r**: Resume a paused call.
+- **/ask <question> | /? <question>**: Ask a read-only side question about the currently running call; the answer prints inline without changing the main call’s state.
+- **/stop | /cancel | /s | /c**: Abort the running call.
+- **/status | /st**: Print whether the call is still running or already done.
+- **/help | /h**: Show the one-line controls hint.
+
+Notes:
+- Steering commands are ignored when no call is running; you’ll see a small hint if you try.
+- In voice mode, you still type these commands in the terminal while audio is playing. Press Enter to skip current TTS playback.
+
+Example:
+```text
+command> Update Alice’s contact with a new WhatsApp number +15551234
+Controls: /i <text>, /pause, /resume, /ask <q>, /stop, /help
+/i also add a short bio mentioning she’s based in NYC
+/ask what fields have been updated so far?
+/pause
+/resume
+/status
+```
+
+### Example session (text mode)
 ```text
 $ python -m sandboxes.contact_manager.sandbox -d
 ContactManager sandbox – type commands below …
@@ -69,8 +94,7 @@ Add WhatsApp number +15551234 for Bob Johnson.
 [update] → Updated contact 4 – whatsapp_number set to +15551234.
 ```
 
-Troubleshooting
----------------
+### Troubleshooting
 * **Deepgram / Cartesia keys** – if you use `--voice`, make sure the environment variables `DEEPGRAM_API_KEY` and `CARTESIA_API_KEY` are set.
 * **Unify backend access** – the sandbox will attempt to create contexts and logs in your configured Unify project.  If your credentials (`UNIFY_KEY`, `UNIFY_BASE_URL`) are missing or invalid you may see HTTP errors.
 * **Linter complaints** – the interactive session is powered by an LLM; if you hit a bug look at the `--debug` reasoning trace first.
