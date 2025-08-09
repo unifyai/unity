@@ -1514,6 +1514,44 @@ def build_dynamic_implement_prompt(
             """,
         )
 
+    clarification_section = ""
+    if clarification_question and clarification_answer:
+        clarification_section = textwrap.dedent(
+            f"""
+            ---
+            ### User Clarification Provided
+            CRITICAL: The plan was previously stuck, but the user has provided the following clarification. You MUST use this new information to fix the function.
+
+            - **Your Question:** "{clarification_question}"
+            - **User's Answer:** "{clarification_answer}"
+            ---
+            """,
+        )
+
+    transcript_section = ""
+    if recent_transcript:
+        transcript_section = textwrap.dedent(
+            f"""
+        ---
+        ### Recent Conversation Transcript
+        ```
+        {recent_transcript}
+        ```
+        """,
+        )
+
+    chat_context_section = ""
+    if parent_chat_context:
+        chat_context_section = textwrap.dedent(
+            f"""
+        ---
+        ### Full Parent Chat Context
+        ```json
+        {json.dumps(parent_chat_context, indent=2)}
+        ```
+        """,
+        )
+
     browser_context_section = ""
     if browser_state:
         browser_context_section = f"""**Current Browser State:**
@@ -1563,6 +1601,9 @@ def build_dynamic_implement_prompt(
         3.  **`replan_parent`**: Escalate the failure to the calling function. Choose this if the current function is **impossible to implement** because of a mistake made in a *previous* step. For example, if the goal is "apply filters" but the page has no filter controls, the error lies with the parent function that navigated to the wrong page or failed to get to the right state.
 
         {modification_instructions}
+        {clarification_section}
+        {transcript_section}
+        {chat_context_section}
         {context_section}
 
         ### Situation Analysis
@@ -1587,6 +1628,8 @@ def build_verification_prompt(
     interactions: list,
     has_browser_screenshot: bool,
     function_return_value: Any | None,
+    recent_transcript: Optional[str] = None,
+    parent_chat_context: Optional[list] = None,
 ) -> str:
     """
     Builds the prompt for verifying a function's execution.
@@ -1636,6 +1679,32 @@ The full source code of the function that was just executed is provided below. A
 ```
 """
 
+    transcript_section = ""
+    if recent_transcript:
+        transcript_section = textwrap.dedent(
+            f"""
+        ---
+        ### Recent Conversation Transcript
+        The following is a summary of the most recent conversation turns, which may provide context for the function's execution.
+        ```
+        {recent_transcript}
+        ```
+        """,
+        )
+
+    chat_context_section = ""
+    if parent_chat_context:
+        chat_context_section = textwrap.dedent(
+            f"""
+        ---
+        ### Full Parent Chat Context
+        This is the broader conversation history that this plan is a part of.
+        ```json
+        {json.dumps(parent_chat_context, indent=2)}
+        ```
+        """,
+        )
+
     return textwrap.dedent(
         f"""
         You are a meticulous verification agent. Your task is to assess if the executed actions successfully achieved the function's intended purpose and have made **meaningful and accurate progress** toward the **Overall User Goal**.
@@ -1646,6 +1715,8 @@ The full source code of the function that was just executed is provided below. A
 
         {source_code_section}
         {screenshot_context_section}
+        {transcript_section}
+        {chat_context_section}
 
         **Execution Log (Tool Interactions):**
         {interactions_log}
@@ -2124,6 +2195,7 @@ def build_precondition_prompt(
         - `description`: If status is "ok", a description of the page state that must be present for the function to run. This is required if URL is not provided.
         """,
     )
+
 
 def build_state_verification_prompt(
     precondition: Dict[str, Any],
