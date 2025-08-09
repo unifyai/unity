@@ -101,9 +101,19 @@ class _Intent(BaseModel):
 
 
 _INTENT_SYS_MSG = (
-    "Decide whether the user input is a *query* about existing contacts "
-    "or a *mutation* (create / update).  "
-    "Return JSON {'action':'ask'|'update','cleaned_text':<fixed_input>}."
+    "You are an intent router for the ContactManager.\n"
+    "Decide if the user's input is a read-only question about existing contacts ('ask') "
+    "or a write/mutation that creates, updates, or deletes contact data ('update').\n"
+    "Return ONLY JSON: {'action':'ask'|'update','cleaned_text':<fixed_input>}.\n"
+    "- Classify as 'update' when the user asks to set, add, create, change, update, delete, write, draft, generate, populate, fill in, assign or otherwise produce/modify data (e.g., bios, summaries, phone, email, WhatsApp, custom columns), including bulk operations ('for all', 'for each', 'all of the ...').\n"
+    "- Classify as 'ask' when the user is requesting information/lookup/reporting without modifying data (e.g., 'give me/show me/what is/which contacts have ...').\n"
+    "Examples:\n"
+    " - 'Give all of the footballers a bio' → update\n"
+    " - 'Could you make up bios for all of them?' → update\n"
+    " - 'What is Bob Johnson's phone number?' → ask\n"
+    " - 'Give me Alice's email' → ask\n"
+    " - 'Set Bob's WhatsApp to +15551234' → update\n"
+    "For cleaned_text: preserve the user's intent while removing disfluencies and hedges; keep entities, fields, and numbers intact."
 )
 
 
@@ -119,23 +129,13 @@ async def _dispatch_with_context(
     methods.  This indirection keeps the diff minimal.
     """
 
-    # quick heuristic – verbs that virtually always imply an update
-    if raw.lower().startswith(("add ", "create ", "update ", "change ", "delete ")):
-        handle = await cm.update(
-            raw,
-            parent_chat_context=parent_chat_context,
-            _return_reasoning_steps=show_steps,
-        )
-        return "update", handle
-
-    # ask an LLM if less obvious
     judge = unify.Unify("gpt-4o@openai", response_format=_Intent)
     intent = _Intent.model_validate_json(
         judge.set_system_message(_INTENT_SYS_MSG).generate(raw),
     )
     fn = cm.update if intent.action == "update" else cm.ask
     handle = await fn(
-        raw,
+        intent.cleaned_text,
         parent_chat_context=parent_chat_context,
         _return_reasoning_steps=show_steps,
     )
