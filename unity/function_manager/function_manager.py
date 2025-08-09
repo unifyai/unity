@@ -1,5 +1,4 @@
 import ast
-import builtins
 import inspect
 import threading
 from typing import Dict, List, Set, Union, Tuple, Any, Optional
@@ -55,63 +54,22 @@ class FunctionManager(threading.Thread):
             self = unify.traced(self)
 
     @property
-    def _allowed_calls(self) -> Set[str]:
+    def _dangerous_builtins(self) -> Set[str]:
         """
-        Dynamically generates the set of all allowed function and method calls.
+        A minimal set of truly dangerous built-ins that should never be allowed.
+        These could compromise security or system integrity.
         """
-        standard_builtins = {
-            "range",
-            "enumerate",
-            "len",
-            "str",
-            "min",
-            "max",
-            "zip",
-            "sum",
-            "sorted",
-            "abs",
-            "round",
-            "pow",
-            "divmod",
-            "int",
-            "float",
-            "complex",
-            "bool",
-            "list",
-            "tuple",
-            "set",
-            "dict",
-            "reversed",
-            "slice",
-            "all",
-            "any",
-            "chr",
-            "ord",
-            "isinstance",
-            "issubclass",
-            "id",
+        return {
+            "eval",
+            "exec",
+            "compile",
+            "__import__",
+            "open",  # File system access should go through proper APIs
+            "input",  # No interactive input in automated functions
+            "breakpoint",  # No debugging breakpoints
+            "exit",
+            "quit",
         }
-
-        # Lazy import to avoid circular dependency: the ActionProvider is only
-        # imported when this property is accessed, which happens *after* both
-        # modules have finished initial loading.  This breaks the circular
-        # import chain between FunctionManager <-> planner package.
-        from unity.planner.action_provider import ActionProvider  # noqa: WPS433,E402
-
-        action_provider_methods = {
-            name
-            for name, _ in inspect.getmembers(ActionProvider, inspect.isfunction)
-            if not name.startswith("_")
-        }
-
-        allowed_globals = {"action_provider"}
-
-        return standard_builtins | action_provider_methods | allowed_globals
-
-    @property
-    def _disallowed_builtins(self) -> Set[str]:
-        """Built-ins that are not in our explicit allow-list."""
-        return set(dir(builtins)) - self._allowed_calls
 
     def _parse_implementation(
         self,
@@ -201,18 +159,41 @@ class FunctionManager(threading.Thread):
         calls: Set[str],
         provided_names: Set[str],
     ) -> None:
-        allowed = self._allowed_calls
-        disallowed_builtins = self._disallowed_builtins
+        """
+        Validates function calls to prevent functions from calling other user-defined functions.
+
+        Allows:
+        - Built-in functions from the allowed list
+        - Any method calls on objects (e.g., action_provider.*, call_handle.*, call.*)
+
+        Disallows:
+        - Direct calls to any user-defined functions
+        - Disallowed built-in functions
+        """
+        dangerous = self._dangerous_builtins
+
         for called in calls:
-            if called in disallowed_builtins:
+            # Allow all method calls (anything with a dot)
+            # This includes action_provider.*, call_handle.*, obj.method(), etc.
+            if "." in called:
+                continue
+
+            # Block only truly dangerous built-ins
+            if called in dangerous:
                 raise ValueError(
-                    f"Built-in '{called}' is not permitted in {fn_name}().",
+                    f"Dangerous built-in '{called}' is not permitted in {fn_name}(). "
+                    f"Functions cannot use: {', '.join(sorted(dangerous))}",
                 )
-            if called not in provided_names and called not in allowed:
+
+            # Block direct calls to other user-defined functions
+            # (but not built-ins or exception classes)
+            if called in provided_names:
                 raise ValueError(
-                    f"{fn_name}() references unknown function '{called}'. "
-                    "All referenced functions must be provided together.",
+                    f"{fn_name}() cannot call user-defined function '{called}'. "
+                    "Functions must not call other user-defined functions.",
                 )
+
+            # Everything else is allowed - including all built-ins, exception classes, etc.
 
     # ------------------------------------------------------------------ #
     #  Private helpers for persistence                                    #
