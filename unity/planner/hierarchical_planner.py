@@ -173,6 +173,10 @@ class VerificationAssessment(BaseModel):
         description="Outcome: 'ok', 'reimplement_local', 'replan_parent', 'fatal_error', or 'request_clarification'.",
     )
     reason: str = Field(..., description="A concise explanation for the status.")
+    clarification_question: Optional[str] = Field(
+        None,
+        description="The specific question to ask the user if status is 'request_clarification'.",
+    )
 
 
 class CourseCorrectionDecision(BaseModel):
@@ -1400,7 +1404,6 @@ class HierarchicalPlan(BaseActiveTask):
                 exc_info=True,
             )
             raise
-
 
     async def result(self) -> str:
         """
@@ -2631,6 +2634,29 @@ class HierarchicalPlanner(BasePlanner):
             f"Verification for {fn.__name__}: {assessment.status} - '{assessment.reason}'",
         )
 
+        if assessment.status == "request_clarification":
+            if not assessment.clarification_question:
+                raise FatalVerificationError(
+                    "Verification assessment requested clarification but provided no question.",
+                )
+            plan.action_log.append(
+                f"Verification requires clarification: {assessment.clarification_question}",
+            )
+            user_answer = await plan.execution_namespace["request_clarification"](
+                assessment.clarification_question,
+            )
+            plan.action_log.append(f"Received user clarification: {user_answer}")
+
+            existing_code = plan.clean_function_source_map.get(fn.__name__)
+            await plan._handle_dynamic_implementation(
+                fn.__name__,
+                replan_reason=assessment.reason,
+                failed_interactions=interactions,
+                existing_code_for_modification=existing_code,
+                clarification_question=assessment.clarification_question,
+                clarification_answer=user_answer,
+            )
+            raise _ForcedRetryException("Retrying after receiving user clarification.")
         if assessment.status == "ok":
             try:
 
