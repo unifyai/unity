@@ -979,6 +979,7 @@ async def await_with_interrupt(  # noqa: D401 – imperative helper
                             print(f"[ask] → {ans}")
                             if enable_voice_steering:
                                 speak(str(ans))
+                                _wait_for_tts_end()
                                 print(HELP_TEXT)
                         except Exception as exc:
                             print(f"⚠️  Ask failed: {exc}")
@@ -1039,6 +1040,7 @@ async def await_with_interrupt(  # noqa: D401 – imperative helper
                                 print(f"[ask] → {ans}")
                                 if enable_voice_steering:
                                     speak(str(ans))
+                                    _wait_for_tts_end()
                                     print(HELP_TEXT)
                             elif _intent.action == "interject":
                                 txt_to_inject = (
@@ -1126,6 +1128,7 @@ async def await_with_interrupt(  # noqa: D401 – imperative helper
                             print(f"[ask] → {ans}")
                             if enable_voice_steering:
                                 speak(str(ans))
+                                _wait_for_tts_end()
                                 print(HELP_TEXT)
                         elif _intent.action == "interject":
                             txt_to_inject = (_intent.cleaned_text or arg).strip()
