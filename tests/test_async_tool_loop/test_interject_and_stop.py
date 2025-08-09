@@ -111,6 +111,80 @@ def new_client() -> unify.AsyncUnify:
     )
 
 
+class _StrictProtocolUnify:
+    """Stub client that enforces provider protocol at append-time.
+
+    If a user message is appended while the latest assistant turn has tool_calls
+    but there is no tool message responding to those calls immediately after it,
+    raise an error – mirroring the provider's validation.
+    """
+
+    def __init__(self):
+        self.messages: List[dict] = []
+        self._step = 0
+
+    def append_messages(self, msgs: List[dict]):
+        for m in msgs:
+            # Enforce: after an assistant with tool_calls, the next message must be a tool
+            if m.get("role") == "user":
+                # find the last assistant with tool_calls
+                last_ai_with_calls_idx = None
+                for i in range(len(self.messages) - 1, -1, -1):
+                    mm = self.messages[i]
+                    if mm.get("role") == "assistant" and mm.get("tool_calls"):
+                        last_ai_with_calls_idx = i
+                        break
+                if last_ai_with_calls_idx is not None:
+                    # Must be immediately followed by a tool response already present
+                    if last_ai_with_calls_idx == len(self.messages) - 1:
+                        raise RuntimeError(
+                            "Protocol violation: user turn appended before tool message "
+                            "responding to the latest assistant tool_calls.",
+                        )
+                    nxt = self.messages[last_ai_with_calls_idx + 1]
+                    if nxt.get("role") != "tool":
+                        raise RuntimeError(
+                            "Protocol violation: user turn appended without an immediate "
+                            "tool response following the assistant tool_calls.",
+                        )
+                    # If it is a tool, optionally verify id linkage when present
+                    if mm := self.messages[last_ai_with_calls_idx]:
+                        if mm.get("tool_calls"):
+                            expected_id = mm["tool_calls"][0]["id"]
+                            if nxt.get("tool_call_id") != expected_id:
+                                raise RuntimeError(
+                                    "Protocol violation: immediate tool does not match the "
+                                    "assistant tool_call id.",
+                                )
+            self.messages.append(m)
+
+    async def generate(self, *_, **__):
+        # First call: ask to run `slow`
+        if self._step == 0:
+            self._step += 1
+            msg = {
+                "role": "assistant",
+                "content": "run slow",
+                "tool_calls": [
+                    {
+                        "id": "call_slow_1",
+                        "type": "function",
+                        "function": {"name": "slow", "arguments": "{}"},
+                    },
+                ],
+            }
+        else:
+            # Subsequent calls: plain assistant content
+            self._step += 1
+            msg = {"role": "assistant", "content": "DONE", "tool_calls": []}
+        self.messages.append(msg)
+        return msg
+
+    @property
+    def system_message(self) -> str:
+        return ""
+
+
 # --------------------------------------------------------------------------- #
 #  TESTS                                                                      #
 # --------------------------------------------------------------------------- #
@@ -385,3 +459,83 @@ async def test_interjection_stops_ongoing_llm():
     assert (
         roles[-1] == "assistant"
     ), "The conversation should end with the assistant's single reply."
+
+
+@pytest.mark.asyncio
+@_handle_project
+async def test_interjection_before_any_tool_result_inserts_placeholder():
+    """
+    Regression test for race where an interjection arrives **after** an assistant
+    emits tool_calls but **before** any tool message exists.
+
+    Expectation: a placeholder tool message is inserted immediately after the
+    assistant tool_calls turn, so the subsequent user interjection never violates
+    the function-calling protocol.
+    """
+    client = new_client()
+    client.set_cache(False)
+
+    handle = start_async_tool_use_loop(
+        client,
+        ("Run the tool `slow` exactly once, then reply only with the word DONE."),
+        {"slow": slow},
+        interrupt_llm_with_interjections=True,  # maximize chance of pre-emption
+    )
+
+    # Wait until the assistant has requested the slow tool
+    await _wait_for_tool_request(client, "slow")
+
+    # Immediately interject BEFORE any tool result can be produced
+    interjection_text = "(test) just checking ordering"
+    await handle.interject(interjection_text)
+
+    # Complete the loop normally (should not raise provider errors)
+    await handle.result()
+
+    # Assertions: ensure a tool message sits between assistant tool_calls and user
+    msgs = client.messages
+    i_asst = _first_with_tool_calls(msgs)
+
+    # The very next message must be a tool message for the scheduled call (placeholder or real)
+    assert msgs[i_asst + 1]["role"] == "tool"
+    assert msgs[i_asst + 1]["name"] == "slow"
+
+    # And the interjection must appear AFTER that tool message
+    i_user = _user_index(msgs, interjection_text)
+    assert i_user > i_asst + 1
+
+    # Sanity: the placeholder/result tool message must respond to the assistant tool_call id
+    asst_call_id = msgs[i_asst]["tool_calls"][0]["id"]
+    assert msgs[i_asst + 1]["tool_call_id"] == asst_call_id
+
+
+@pytest.mark.asyncio
+@_handle_project
+async def test_preemptive_interjection_violates_protocol():
+    """
+    Uses a strict stub that enforces protocol on append_messages. The test
+    interjects immediately after the assistant schedules a tool.
+
+    - Pre-patch: user interjection would be appended before any tool message is
+      inserted, so append_messages raises.
+    - Post-patch: immediate placeholder is inserted at scheduling; user append
+      is allowed and the loop finishes.
+    """
+    client = _StrictProtocolUnify()
+
+    handle = start_async_tool_use_loop(
+        client,
+        "Call the tool `slow` exactly once, then say DONE.",
+        {"slow": slow},
+        interrupt_llm_with_interjections=True,
+    )
+
+    # Wait until the assistant has requested the slow tool
+    await _wait_for_tool_request(client, "slow")
+
+    # Interject immediately – append_messages of stub will enforce ordering
+    await handle.interject("(strict) now interjecting")
+
+    # Should complete without raising under the patched implementation
+    final = await handle.result()
+    assert isinstance(final, str) and final.strip()
