@@ -274,6 +274,124 @@ def record_until_enter() -> bytes:
             return f.read()
 
 
+# New: interruptible variant used for in-flight steering
+def record_until_enter_interruptible(is_cancelled) -> Optional[bytes]:
+    """
+    Like record_until_enter but cancelable via the is_cancelled() predicate.
+
+    Returns None if cancelled before completion.
+    """
+
+    def _read_line_nonblocking(timeout: float) -> Optional[str]:
+        if platform.system() == "Windows":
+            start_time = time.time()
+            buf: list[str] = []
+            while time.time() - start_time < timeout:
+                if msvcrt.kbhit():  # type: ignore[name-defined]
+                    ch = msvcrt.getche().decode("utf-8")  # type: ignore[name-defined]
+                    if ch == "\r":
+                        print()
+                        return "".join(buf)
+                    buf.append(ch)
+                time.sleep(0.01)
+            return None
+        rlist, _, _ = select.select([sys.stdin], [], [], timeout)
+        if rlist:
+            return sys.stdin.readline().strip()
+        return None
+
+    # Ensure TTS has finished before prompting
+    _wait_for_tts_end()
+
+    print("\nPress ↵ to start recording… (type 'c' then ↵ to cancel)")
+    # Wait for start or cancellation
+    while True:
+        if is_cancelled():
+            print("⚠️  Recording cancelled – task finished.")
+            return None
+        ln = _read_line_nonblocking(0.1)
+        if ln is None:
+            continue
+        if ln.strip().lower() == "c":
+            print("🚫 Cancelled.")
+            return None
+        # Any Enter (incl. empty) starts recording
+        break
+
+    # Set up audio
+    with noalsaerr(), suppress_stderr_fd():
+        pa = pyaudio.PyAudio()
+        stream = pa.open(
+            format=FORMAT,
+            channels=CHANNELS,
+            rate=SAMPLE_RATE,
+            input=True,
+            frames_per_buffer=CHUNK,
+        )
+        sample_size = pa.get_sample_size(FORMAT)
+
+    frames: List[bytes] = []
+    stop = threading.Event()
+
+    def _capture():
+        while not stop.is_set():
+            frames.append(stream.read(CHUNK, exception_on_overflow=False))
+
+    _beep(1000)
+    thr = threading.Thread(target=_capture, daemon=True)
+    thr.start()
+    print("🎙️  Recording… press ↵ to finish (or 'c' + ↵ to abort).")
+
+    # Wait for finish or cancellation
+    while True:
+        if is_cancelled():
+            # Tear down and abort
+            stop.set()
+            thr.join()
+            with suppress_stderr_fd():
+                stream.stop_stream()
+                stream.close()
+                pa.terminate()
+            print("⚠️  Recording cancelled – task finished.")
+            return None
+        ln2 = _read_line_nonblocking(0.1)
+        if ln2 is None:
+            continue
+        if ln2.strip().lower() == "c":
+            stop.set()
+            thr.join()
+            with suppress_stderr_fd():
+                stream.stop_stream()
+                stream.close()
+                pa.terminate()
+            _beep(750)
+            print("🚫 Cancelled.")
+            return None
+        # Any Enter ends recording
+        break
+
+    # Tear down on normal completion
+    stop.set()
+    thr.join()
+    with suppress_stderr_fd():
+        stream.stop_stream()
+        stream.close()
+        pa.terminate()
+
+    _beep(500)
+    print("✅ Recording captured.")
+
+    wav_path = "/tmp/voice_input.wav"
+    with wave.open(wav_path, "wb") as wf:
+        wf.setnchannels(CHANNELS)
+        wf.setsampwidth(sample_size)
+        wf.setframerate(SAMPLE_RATE)
+        wf.writeframes(b"".join(frames))
+
+    with open(wav_path, "rb") as f:
+        return f.read()
+
+
 def transcribe_deepgram(audio_bytes: bytes) -> str:
     "Send *audio_bytes* to Deepgram SDK v4 and return the transcript."
     key = os.getenv("DEEPGRAM_API_KEY")
@@ -757,14 +875,14 @@ def input_now(timeout: float = 0.1) -> Optional[str]:
 
 def steering_controls_hint() -> str:
     """Return a one-line hint with available in-flight steering commands."""
-    return (
-        "Controls: /i <text>, /pause, /resume, /ask <q>, /freeform <text>, /stop, /help"
-    )
+    return "Controls: /i <text>, /pause, /resume, /ask <q>, /freeform <text>, /r (record voice), /stop, /help"
 
 
 async def await_with_interrupt(  # noqa: D401 – imperative helper
     handle: "SteerableToolHandle",
     poll: float = 0.05,
+    *,
+    enable_voice_steering: bool = False,
 ) -> str:
     """
     **Common wrapper** used by all interactive sandboxes.
@@ -775,6 +893,7 @@ async def await_with_interrupt(  # noqa: D401 – imperative helper
     • /resume | /r                ⇒ resume a paused call
     • /ask <question> | ? <q>     ⇒ ask a read-only question about the running call
     • /freeform <text>            ⇒ route free-form text to the best steering command via an LLM
+    • /r | /record                ⇒ when enable_voice_steering=True, capture voice and route via freeform
     • /stop | /cancel             ⇒ abort the running call
     • /status                     ⇒ print whether the call is done
     • /help                       ⇒ show available controls
@@ -808,7 +927,7 @@ async def await_with_interrupt(  # noqa: D401 – imperative helper
                     except Exception as exc:
                         print(f"⚠️  Pause failed: {exc}")
                     continue
-                if cmd in {"resume", "r"}:
+                if cmd in {"resume"}:
                     try:
                         print("resuming…")
                         handle.resume()
@@ -836,6 +955,103 @@ async def await_with_interrupt(  # noqa: D401 – imperative helper
                             print(f"[ask] → {ans}")
                         except Exception as exc:
                             print(f"⚠️  Ask failed: {exc}")
+                    continue
+                if enable_voice_steering and cmd in {"record", "rec", "r"}:
+                    try:
+                        print(
+                            "🎙️  Voice steering – press ↵ to start, ↵ again to send, 'c'+↵ to cancel",
+                        )
+                        audio = record_until_enter_interruptible(lambda: handle.done())
+                        if audio is None:
+                            # Task finished or user cancelled mid-capture
+                            continue
+                        transcript = transcribe_deepgram(audio).strip()
+                        if not transcript:
+                            print("⚠️  Empty transcript – ignoring")
+                            continue
+                        # Route like /freeform
+                        try:
+                            # Lightweight LLM router to map free-form text to a steering action
+                            from pydantic import BaseModel, Field
+                            import unify as _unify
+
+                            class _SteeringIntent(BaseModel):
+                                action: str = Field(
+                                    ...,
+                                    pattern="^(ask|interject|pause|resume|stop|status)$",
+                                )
+                                question: str | None = None
+                                cleaned_text: str | None = None
+
+                            _SYS = (
+                                "You are a router that maps a user's free-form message to one of these steering commands: "
+                                "'ask' (include a specific, concise question in 'question'), "
+                                "'interject' (include the text to inject in 'cleaned_text'), "
+                                "'pause', 'resume', 'stop', or 'status'.\n"
+                                "Rules:\n"
+                                "- If the user requests progress, status, or 'how is it going', prefer 'ask' with a concrete question like 'what is the current task progress?'.\n"
+                                "- If the user gives guidance or additional info to incorporate, choose 'interject' and pass it via 'cleaned_text'.\n"
+                                "- Polite commands like 'please pause' → 'pause'. 'continue' → 'resume'. 'cancel/abort/stop' → 'stop'.\n"
+                                "- Return ONLY JSON matching the response schema."
+                            )
+
+                            _judge = _unify.Unify(
+                                "gpt-4o@openai",
+                                response_format=_SteeringIntent,
+                            )
+                            _intent = _SteeringIntent.model_validate_json(
+                                _judge.set_system_message(_SYS).generate(transcript),
+                            )
+
+                            if _intent.action == "ask":
+                                q = (
+                                    _intent.question or _intent.cleaned_text or ""
+                                ).strip()
+                                if not q:
+                                    q = "What is the current task progress?"
+                                print(f"asking question: {q}")
+                                nested = await handle.ask(q)
+                                ans = await nested.result()
+                                print(f"[ask] → {ans}")
+                            elif _intent.action == "interject":
+                                txt_to_inject = (
+                                    _intent.cleaned_text or transcript
+                                ).strip()
+                                if not txt_to_inject:
+                                    print(
+                                        "⚠️  Router produced empty interjection – ignoring",
+                                    )
+                                else:
+                                    print(f"interjecting: {txt_to_inject}")
+                                    run_in_loop(handle.interject(txt_to_inject))
+                            elif _intent.action == "pause":
+                                try:
+                                    print("pausing…")
+                                    handle.pause()
+                                    print("⏸️  Paused")
+                                except Exception as exc:
+                                    print(f"⚠️  Pause failed: {exc}")
+                            elif _intent.action == "resume":
+                                try:
+                                    print("resuming…")
+                                    handle.resume()
+                                    print("▶️  Resumed")
+                                except Exception as exc:
+                                    print(f"⚠️  Resume failed: {exc}")
+                            elif _intent.action == "stop":
+                                print("stopping…")
+                                handle.stop()
+                                break
+                            elif _intent.action == "status":
+                                print("status requested")
+                                print("done" if handle.done() else "running")
+                            else:
+                                print(f"interjecting: {transcript}")
+                                run_in_loop(handle.interject(transcript))
+                        except Exception as exc:
+                            print(f"⚠️  Freeform routing failed: {exc}")
+                    except Exception as exc:
+                        print(f"⚠️  Voice steering failed: {exc}")
                     continue
                 if cmd in {"freeform", "f"}:
                     if not arg:

@@ -57,15 +57,17 @@ While an `ask`, `update` or `start` (execute) call is running, you can steer it 
 
 - **/i <text> | /interject <text> | plain text**: Interject guidance that the tool-loop should incorporate immediately. If you don’t prefix with `/`, any plain text you type during a run is treated as an interjection.
 - **/pause | /p**: Pause the running call.
-- **/resume | /r**: Resume a paused call.
+- **/resume**: Resume a paused call.
 - **/ask <question> | /? <question>**: Ask a read-only side question about the currently running call; the answer prints inline without changing the main call’s state.
+- **/freeform <text>**: Route free-form text to the best steering command (ask/interject/pause/resume/stop/status).
+- **/r | /record** (voice mode only): Record a voice utterance and route it via freeform. Recording auto-cancels if the task finishes mid-capture.
 - **/stop | /cancel | /s | /c**: Abort the running call.
 - **/status | /st**: Print whether the call is still running or already done.
 - **/help | /h**: Show the one-line controls hint.
 
 Notes:
 - Steering commands are ignored when no call is running; you’ll see a small hint if you try.
-- In voice mode, you still type these commands in the terminal while audio is playing. Press Enter to skip current TTS playback.
+- In voice mode, you still type these commands in the terminal while audio is playing. Press Enter to skip current TTS playback. Use `/r` to record a steering utterance and route it via freeform; it auto-cancels if the run finishes while recording.
 
 Example session (text mode)
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~
