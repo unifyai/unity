@@ -757,7 +757,9 @@ def input_now(timeout: float = 0.1) -> Optional[str]:
 
 def steering_controls_hint() -> str:
     """Return a one-line hint with available in-flight steering commands."""
-    return "Controls: /i <text>, /pause, /resume, /ask <q>, /stop, /help"
+    return (
+        "Controls: /i <text>, /pause, /resume, /ask <q>, /freeform <text>, /stop, /help"
+    )
 
 
 async def await_with_interrupt(  # noqa: D401 – imperative helper
@@ -772,6 +774,7 @@ async def await_with_interrupt(  # noqa: D401 – imperative helper
     • /pause | /p                 ⇒ pause the running call
     • /resume | /r                ⇒ resume a paused call
     • /ask <question> | ? <q>     ⇒ ask a read-only question about the running call
+    • /freeform <text>            ⇒ route free-form text to the best steering command via an LLM
     • /stop | /cancel             ⇒ abort the running call
     • /status                     ⇒ print whether the call is done
     • /help                       ⇒ show available controls
@@ -794,10 +797,12 @@ async def await_with_interrupt(  # noqa: D401 – imperative helper
                 arg = parts[1].strip() if len(parts) > 1 else ""
 
                 if cmd in {"stop", "cancel", "s", "c"}:
+                    print("stopping…")
                     handle.stop()
                     break
                 if cmd in {"pause", "p"}:
                     try:
+                        print("pausing…")
                         handle.pause()
                         print("⏸️  Paused")
                     except Exception as exc:
@@ -805,6 +810,7 @@ async def await_with_interrupt(  # noqa: D401 – imperative helper
                     continue
                 if cmd in {"resume", "r"}:
                     try:
+                        print("resuming…")
                         handle.resume()
                         print("▶️  Resumed")
                     except Exception as exc:
@@ -814,6 +820,8 @@ async def await_with_interrupt(  # noqa: D401 – imperative helper
                     if not arg:
                         print("Usage: /i <text>")
                     else:
+                        # Log what is being interjected
+                        print(f"interjecting: {arg}")
                         run_in_loop(handle.interject(arg))
                     continue
                 if cmd in {"ask", "?"}:
@@ -821,22 +829,109 @@ async def await_with_interrupt(  # noqa: D401 – imperative helper
                         print("Usage: /ask <question>")
                     else:
                         try:
+                            # Log what is being asked
+                            print(f"asking question: {arg}")
                             nested = await handle.ask(arg)
                             ans = await nested.result()
                             print(f"[ask] → {ans}")
                         except Exception as exc:
                             print(f"⚠️  Ask failed: {exc}")
                     continue
+                if cmd in {"freeform", "f"}:
+                    if not arg:
+                        print("Usage: /freeform <text>")
+                        continue
+                    try:
+                        # Lightweight LLM router to map free-form text to a steering action
+                        from pydantic import BaseModel, Field
+                        import unify as _unify
+
+                        class _SteeringIntent(BaseModel):
+                            action: str = Field(
+                                ...,
+                                pattern="^(ask|interject|pause|resume|stop|status)$",
+                            )
+                            question: str | None = None
+                            cleaned_text: str | None = None
+
+                        _SYS = (
+                            "You are a router that maps a user's free-form message to one of these steering commands: "
+                            "'ask' (include a specific, concise question in 'question'), "
+                            "'interject' (include the text to inject in 'cleaned_text'), "
+                            "'pause', 'resume', 'stop', or 'status'.\n"
+                            "Rules:\n"
+                            "- If the user requests progress, status, or 'how is it going', prefer 'ask' with a concrete question like 'what is the current task progress?'.\n"
+                            "- If the user gives guidance or additional info to incorporate, choose 'interject' and pass it via 'cleaned_text'.\n"
+                            "- Polite commands like 'please pause' → 'pause'. 'continue' → 'resume'. 'cancel/abort/stop' → 'stop'.\n"
+                            "- Return ONLY JSON matching the response schema."
+                        )
+
+                        _judge = _unify.Unify(
+                            "gpt-4o@openai",
+                            response_format=_SteeringIntent,
+                        )
+                        _intent = _SteeringIntent.model_validate_json(
+                            _judge.set_system_message(_SYS).generate(arg),
+                        )
+
+                        if _intent.action == "ask":
+                            q = (_intent.question or _intent.cleaned_text or "").strip()
+                            if not q:
+                                q = "What is the current task progress?"
+                            print(f"asking question: {q}")
+                            nested = await handle.ask(q)
+                            ans = await nested.result()
+                            print(f"[ask] → {ans}")
+                        elif _intent.action == "interject":
+                            txt_to_inject = (_intent.cleaned_text or arg).strip()
+                            if not txt_to_inject:
+                                print(
+                                    "⚠️  Router produced empty interjection – ignoring",
+                                )
+                            else:
+                                print(f"interjecting: {txt_to_inject}")
+                                run_in_loop(handle.interject(txt_to_inject))
+                        elif _intent.action == "pause":
+                            try:
+                                print("pausing…")
+                                handle.pause()
+                                print("⏸️  Paused")
+                            except Exception as exc:
+                                print(f"⚠️  Pause failed: {exc}")
+                        elif _intent.action == "resume":
+                            try:
+                                print("resuming…")
+                                handle.resume()
+                                print("▶️  Resumed")
+                            except Exception as exc:
+                                print(f"⚠️  Resume failed: {exc}")
+                        elif _intent.action == "stop":
+                            print("stopping…")
+                            handle.stop()
+                            break
+                        elif _intent.action == "status":
+                            print("status requested")
+                            print("done" if handle.done() else "running")
+                        else:
+                            # Fallback to interject if unknown
+                            print(f"interjecting: {arg}")
+                            run_in_loop(handle.interject(arg))
+                    except Exception as exc:
+                        print(f"⚠️  Freeform routing failed: {exc}")
+                    continue
                 if cmd in {"status", "st"}:
+                    print("status requested")
                     print("done" if handle.done() else "running")
                     continue
                 if cmd in {"help", "h"}:
                     print(HELP_TEXT)
                     continue
                 # Unknown command → treat as interjection without the '/'
+                print(f"interjecting: {stripped[1:]}")
                 run_in_loop(handle.interject(stripped[1:]))
             else:
                 # Plain text → interject
+                print(f"interjecting: {stripped}")
                 run_in_loop(handle.interject(stripped))
         await asyncio.sleep(poll)
 
