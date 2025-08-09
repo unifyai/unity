@@ -97,6 +97,8 @@ c_error_handler = ERROR_HANDLER_FUNC(_py_error_handler)
 # ---------------------------------------------------------------------------
 
 _TTS_LOCK = threading.Lock()
+# Track the current TTS skip event to allow external cancellation
+_CURRENT_TTS_SKIP: Optional[threading.Event] = None
 
 
 def _wait_for_tts_end(start_timeout: float = 0.5, poll: float = 0.05) -> None:
@@ -422,6 +424,9 @@ async def _speak_async(text: str) -> None:
     # ─────────────── enter-to-skip listener ────────────────
     skip = threading.Event()  # raised when user hits ↵
     listener_done = threading.Event()  # tells the listener to exit
+    # expose skip globally so other parts can cancel speech immediately
+    global _CURRENT_TTS_SKIP
+    _CURRENT_TTS_SKIP = skip
 
     def _listen_enter():
         """Poll stdin so we can shut the thread down cleanly."""
@@ -435,58 +440,61 @@ async def _speak_async(text: str) -> None:
     listener = threading.Thread(target=_listen_enter, daemon=True)
     listener.start()
 
-    # ─────────────── streaming TTS ────────────────
-    async with aiohttp.ClientSession() as session:
-        tts = cartesia.TTS(http_session=session)
+    try:
+        # ─────────────── streaming TTS ────────────────
+        async with aiohttp.ClientSession() as session:
+            tts = cartesia.TTS(http_session=session)
 
-        # Open the PortAudio stream once, before the first frame arrives
-        with noalsaerr(), suppress_stderr_fd():
-            pa = pyaudio.PyAudio()
-            stream = pa.open(
-                format=pyaudio.paInt16,
-                channels=1,
-                rate=tts.sample_rate,  # usually 24 kHz
-                output=True,
-            )
+            # Open the PortAudio stream once, before the first frame arrives
+            with noalsaerr(), suppress_stderr_fd():
+                pa = pyaudio.PyAudio()
+                stream = pa.open(
+                    format=pyaudio.paInt16,
+                    channels=1,
+                    rate=tts.sample_rate,  # usually 24 kHz
+                    output=True,
+                )
 
-        # PortAudio initialisation (and its interaction with JACK) tends to
-        # emit noisy warnings *right here*.  Briefly pause and then print the
-        # skip hint so that it appears **after** those warnings.
-        await asyncio.sleep(1.0)
-        print(f'🗣️ Assistant speaking…\n"{text}"')
-        print("🔇 Press ↵ to skip playback")
+            # PortAudio initialisation (and its interaction with JACK) tends to
+            # emit noisy warnings *right here*.  Briefly pause and then print the
+            # skip hint so that it appears **after** those warnings.
+            await asyncio.sleep(1.0)
+            print(f'🗣️ Assistant speaking…\n"{text}"')
+            print("🔇 Press ↵ to skip playback")
 
-        def _frame_to_pcm(frame: "AudioFrame") -> bytes:
-            """Return raw 16-bit PCM for *any* Cartesia AudioFrame flavour."""
-            if hasattr(frame, "to_pcm_bytes"):  # newest SDK
-                return frame.to_pcm_bytes()
-            if hasattr(frame, "data"):  # mid-2024 builds
-                return bytes(frame.data)
-            if hasattr(frame, "to_wav_bytes"):  # old fallback → strip header
-                return frame.to_wav_bytes()[44:]
-            return bytes(frame)  # last-resort
+            def _frame_to_pcm(frame: "AudioFrame") -> bytes:
+                """Return raw 16-bit PCM for *any* Cartesia AudioFrame flavour."""
+                if hasattr(frame, "to_pcm_bytes"):  # newest SDK
+                    return frame.to_pcm_bytes()
+                if hasattr(frame, "data"):  # mid-2024 builds
+                    return bytes(frame.data)
+                if hasattr(frame, "to_wav_bytes"):  # old fallback → strip header
+                    return frame.to_wav_bytes()[44:]
+                return bytes(frame)  # last-resort
 
-        async with tts.synthesize(text) as synth_stream:
-            async for audio in synth_stream:  # 10-50 ms frames
-                if skip.is_set():
-                    break
-                stream.write(_frame_to_pcm(audio.frame))
-        with suppress_stderr_fd():
-            stream.stop_stream()
-            stream.close()
-            pa.terminate()
+            async with tts.synthesize(text) as synth_stream:
+                async for audio in synth_stream:  # 10-50 ms frames
+                    if skip.is_set():
+                        break
+                    stream.write(_frame_to_pcm(audio.frame))
+            with suppress_stderr_fd():
+                stream.stop_stream()
+                stream.close()
+                pa.terminate()
+    finally:
+        # ─────────────── clean-up ───────────────
+        listener_done.set()
+        listener.join(timeout=0.1)
+        # clear global skip handle now that we're done
+        _CURRENT_TTS_SKIP = None
 
-    # ─────────────── clean-up ───────────────
-    listener_done.set()
-    listener.join(timeout=0.1)
+        if skip.is_set():  # flush the newline the user pressed
+            try:
+                import termios
 
-    if skip.is_set():  # flush the newline the user pressed
-        try:
-            import termios
-
-            termios.tcflush(sys.stdin, termios.TCIFLUSH)
-        except Exception:
-            pass
+                termios.tcflush(sys.stdin, termios.TCIFLUSH)
+            except Exception:
+                pass
 
 
 # ────────────────────────────── public shim ────────────────────────────────
@@ -528,6 +536,24 @@ def speak(text: str) -> None:
         # a worker that will release it when done.
         _TTS_LOCK.acquire()
         threading.Thread(target=_run_in_thread, daemon=True).start()
+
+
+def stop_speaking() -> None:
+    """Cancel any in-flight TTS playback immediately if active."""
+    try:
+        # avoid races if called during transitions
+        if _CURRENT_TTS_SKIP is not None:
+            _CURRENT_TTS_SKIP.set()
+    except Exception:
+        pass
+
+
+def is_speaking() -> bool:
+    """Return True if a TTS utterance is currently playing."""
+    try:
+        return _TTS_LOCK.locked()
+    except Exception:
+        return False
 
 
 def input_with_timeout(timeout: float = 0.1) -> Tuple[bool, Optional[str]]:
@@ -939,7 +965,6 @@ async def await_with_interrupt(  # noqa: D401 – imperative helper
                     if not arg:
                         print("Usage: /i <text>")
                     else:
-                        # Log what is being interjected
                         print(f"interjecting: {arg}")
                         run_in_loop(handle.interject(arg))
                     continue
@@ -948,11 +973,13 @@ async def await_with_interrupt(  # noqa: D401 – imperative helper
                         print("Usage: /ask <question>")
                     else:
                         try:
-                            # Log what is being asked
                             print(f"asking question: {arg}")
                             nested = await handle.ask(arg)
                             ans = await nested.result()
                             print(f"[ask] → {ans}")
+                            if enable_voice_steering:
+                                speak(str(ans))
+                                print(HELP_TEXT)
                         except Exception as exc:
                             print(f"⚠️  Ask failed: {exc}")
                     continue
@@ -963,15 +990,12 @@ async def await_with_interrupt(  # noqa: D401 – imperative helper
                         )
                         audio = record_until_enter_interruptible(lambda: handle.done())
                         if audio is None:
-                            # Task finished or user cancelled mid-capture
                             continue
                         transcript = transcribe_deepgram(audio).strip()
                         if not transcript:
                             print("⚠️  Empty transcript – ignoring")
                             continue
-                        # Route like /freeform
                         try:
-                            # Lightweight LLM router to map free-form text to a steering action
                             from pydantic import BaseModel, Field
                             import unify as _unify
 
@@ -1013,6 +1037,9 @@ async def await_with_interrupt(  # noqa: D401 – imperative helper
                                 nested = await handle.ask(q)
                                 ans = await nested.result()
                                 print(f"[ask] → {ans}")
+                                if enable_voice_steering:
+                                    speak(str(ans))
+                                    print(HELP_TEXT)
                             elif _intent.action == "interject":
                                 txt_to_inject = (
                                     _intent.cleaned_text or transcript
@@ -1058,7 +1085,6 @@ async def await_with_interrupt(  # noqa: D401 – imperative helper
                         print("Usage: /freeform <text>")
                         continue
                     try:
-                        # Lightweight LLM router to map free-form text to a steering action
                         from pydantic import BaseModel, Field
                         import unify as _unify
 
@@ -1098,6 +1124,9 @@ async def await_with_interrupt(  # noqa: D401 – imperative helper
                             nested = await handle.ask(q)
                             ans = await nested.result()
                             print(f"[ask] → {ans}")
+                            if enable_voice_steering:
+                                speak(str(ans))
+                                print(HELP_TEXT)
                         elif _intent.action == "interject":
                             txt_to_inject = (_intent.cleaned_text or arg).strip()
                             if not txt_to_inject:
@@ -1151,6 +1180,8 @@ async def await_with_interrupt(  # noqa: D401 – imperative helper
                 run_in_loop(handle.interject(stripped))
         await asyncio.sleep(poll)
 
+    # Task completed: cancel any ongoing TTS immediately and return result
+    stop_speaking()
     return await handle.result()
 
 
