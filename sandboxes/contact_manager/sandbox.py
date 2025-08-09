@@ -183,7 +183,7 @@ async def _main_async() -> None:
                 )
 
     # logging via shared helper
-    configure_sandbox_logging(args.log_in_terminal)
+    configure_sandbox_logging(args.log_in_terminal, None, args.log_tcp_port)
     LG.setLevel(logging.INFO)
 
     # manager

@@ -34,7 +34,10 @@ import os
 import platform
 import select
 import threading
+import socket
+from queue import SimpleQueue
 import aiohttp
+import logging
 import sys
 import time
 import wave
@@ -535,17 +538,127 @@ def build_cli_parser(description: str) -> argparse.ArgumentParser:
         action="store_true",
         help="stream logs to terminal in addition to writing .logs.txt (default is file-only)",
     )
+    parser.add_argument(
+        "--log_tcp_port",
+        type=int,
+        default=-1,
+        metavar="PORT",
+        help="serve logs over TCP on localhost:PORT (default -1 auto-picks an available port; 0 disables)",
+    )
     return parser
+
+
+class _LogBroadcastServer:
+    """Minimal TCP log broadcaster: accepts clients and writes each line to them.
+
+    Designed for local development only (binds to 127.0.0.1). Not for production.
+    """
+
+    def __init__(self, port: int) -> None:
+        self._port = port
+        self._sock: Optional[socket.socket] = None
+        self._clients: list[socket.socket] = []
+        self._queue: SimpleQueue[bytes] = SimpleQueue()
+        self._running = threading.Event()
+
+    def start(self) -> None:
+        # Bind synchronously so the actual port is known before returning
+        try:
+            srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            # Auto-pick free port when port <= 0 (incl. -1 sentinel)
+            bind_port = 0 if self._port <= 0 else self._port
+            srv.bind(("127.0.0.1", bind_port))
+            srv.listen(5)
+            self._sock = srv
+            # Store the actual chosen port (useful when bind_port was 0)
+            self._port = srv.getsockname()[1]
+        except Exception:
+            return
+
+        self._running.set()
+        threading.Thread(target=self._accept_loop, daemon=True).start()
+        threading.Thread(target=self._drain_loop, daemon=True).start()
+
+    def stop(self) -> None:
+        self._running.clear()
+        try:
+            if self._sock:
+                self._sock.close()
+        except Exception:
+            pass
+        for c in list(self._clients):
+            try:
+                c.close()
+            except Exception:
+                pass
+        self._clients.clear()
+
+    def broadcast(self, line: str) -> None:
+        if not self._running.is_set():
+            return
+        self._queue.put((line + "\n").encode("utf-8", errors="ignore"))
+
+    def _accept_loop(self) -> None:
+        srv = self._sock
+        if srv is None:
+            return
+        while self._running.is_set():
+            try:
+                srv.settimeout(0.5)
+                try:
+                    conn, _ = srv.accept()
+                except socket.timeout:
+                    continue
+                conn.setblocking(False)
+                self._clients.append(conn)
+            except Exception:
+                break
+
+    def _drain_loop(self) -> None:
+        while self._running.is_set():
+            try:
+                chunk = self._queue.get(timeout=0.5)
+            except Exception:
+                continue
+            dead: list[socket.socket] = []
+            for c in self._clients:
+                try:
+                    c.sendall(chunk)
+                except Exception:
+                    dead.append(c)
+            for d in dead:
+                try:
+                    d.close()
+                except Exception:
+                    pass
+                if d in self._clients:
+                    self._clients.remove(d)
+
+
+class _BroadcastLogHandler(logging.Handler):
+    def __init__(self, server: _LogBroadcastServer) -> None:
+        super().__init__()
+        self._server = server
+
+    def emit(self, record: logging.LogRecord) -> None:
+        try:
+            msg = self.format(record)
+            self._server.broadcast(msg)
+        except Exception:
+            pass
 
 
 def configure_sandbox_logging(
     log_in_terminal: bool = False,
-    log_file: str = ".logs.txt",
+    log_file: Optional[str] = ".logs.txt",
+    tcp_port: int = 0,
 ) -> None:
     """Configure logging to a file by default, with optional terminal streaming.
 
     - Overwrites the given log_file on each run.
     - Adds a StreamHandler to stdout when log_in_terminal is True.
+    - Optionally serves logs over TCP on localhost:tcp_port for external viewing.
     - Prints a short hint on how to watch the last 50 lines live.
     """
     import sys as _sys
@@ -563,20 +676,42 @@ def configure_sandbox_logging(
         "%Y-%m-%d %H:%M:%S",
     )
 
-    _fh = _logging.FileHandler(log_file, mode="w", encoding="utf-8")
-    _fh.setFormatter(_fmt)
-    root_logger.addHandler(_fh)
+    if log_file:
+        _fh = _logging.FileHandler(log_file, mode="w", encoding="utf-8")
+        _fh.setFormatter(_fmt)
+        root_logger.addHandler(_fh)
 
     if log_in_terminal:
         _sh = _logging.StreamHandler(_sys.stdout)
         _sh.setFormatter(_fmt)
         root_logger.addHandler(_sh)
 
-    print(
-        "📝 Logging to .logs.txt (overwrites each run). "
-        "To watch live: watch -n 0.1 tail -n 50 .logs.txt. "
-        "Pass --log_in_terminal to also stream logs here.",
-    )
+    # Optional TCP broadcast for external terminals
+    # tcp_port semantics:
+    #   -1 → auto-pick a free port and enable streaming by default
+    #    0 → disabled
+    #   >0 → bind requested port
+    if tcp_port != 0:
+        try:
+            _srv = _LogBroadcastServer(tcp_port)
+            _srv.start()
+            _bh = _BroadcastLogHandler(_srv)
+            _bh.setFormatter(_fmt)
+            root_logger.addHandler(_bh)
+            _actual = _srv._port
+            print(
+                f"📡 Log stream on 127.0.0.1:{_actual} – connect via: nc 127.0.0.1 {_actual} (Ctrl-C to detach)",
+            )
+        except Exception as _exc:
+            print(f"⚠️  Failed to start log TCP stream on port {tcp_port}: {_exc}")
+
+    # Friendly hints
+    if log_file:
+        print(
+            "📝 Logging to .logs.txt (overwrites each run). "
+            "To follow live with scrollback: less +F .logs.txt (Ctrl-C to pause, F to resume, q to quit). "
+            "Pass --log_in_terminal to also stream logs here.",
+        )
 
 
 # ===========================================================================
