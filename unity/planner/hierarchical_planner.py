@@ -1035,10 +1035,6 @@ class HierarchicalPlan(BaseActiveTask):
         self.interruption_request: Optional[Dict[str, str]] = None
         self._interject_lock = asyncio.Lock()
         self._completion_event = asyncio.Event()
-        self._final_result_str: Optional[str] = None
-        self.clarification_up_q = clarification_up_q or asyncio.Queue()
-        self.parent_chat_context = parent_chat_context
-        self.clarification_down_q = clarification_down_q or asyncio.Queue()
         self.skipped_functions: set = set()
         self._execution_task = asyncio.create_task(self._initialize_and_run())
         self.MAX_ESCALATIONS = max_escalations or 2
@@ -1048,6 +1044,14 @@ class HierarchicalPlan(BaseActiveTask):
         self._module_name: str = f"hp_plan_{uuid.uuid4().hex}"
         self._module: Optional[types.ModuleType] = None
         self._module_spec: Optional[importlib.machinery.ModuleSpec] = None
+
+        self._final_result_str: Optional[str] = None
+        self.parent_chat_context = parent_chat_context
+        self.clarification_up_q = clarification_up_q
+        self.clarification_down_q = clarification_down_q
+        self.clarification_enabled = (
+            clarification_up_q is not None and clarification_down_q is not None
+        )
 
         self.plan_generation_client: unify.AsyncUnify = unify.AsyncUnify(
             "gemini-2.5-pro@vertex-ai",
@@ -1199,11 +1203,15 @@ class HierarchicalPlan(BaseActiveTask):
 
     async def _handle_dynamic_implementation(self, function_name: str, **kwargs):
         """
-        Orchestrates the dynamic implementation of a stub function based on the LLM's decision.
+        Orchestrates the dynamic implementation or modification of a function.
 
         Args:
             function_name: The name of the function to implement.
-            **kwargs: Additional context for implementation (e.g., replan reason).
+            **kwargs: Additional context for implementation, including:
+                - replan_reason: The string explaining why this is happening.
+                - clarification_question: The question that was asked to the user.
+                - clarification_answer: The answer received from the user.
+                - ...and other existing kwargs.
         """
         reason = kwargs.get(
             "replan_reason",
@@ -1501,6 +1509,7 @@ class HierarchicalPlan(BaseActiveTask):
                 should_resume = decision is None or decision.action not in (
                     "modify_task",
                     "replace_task",
+                    "clarify",
                 )
                 if self._state == _HierarchicalPlanState.PAUSED and should_resume:
                     await self.resume()
@@ -1746,6 +1755,9 @@ class HierarchicalPlan(BaseActiveTask):
 
         elif decision.action == "complete_task":
             self.action_log.append("Executing decision: complete_task.")
+            if self._state == _HierarchicalPlanState.PAUSED:
+                self._set_state(_HierarchicalPlanState.COMPLETED)
+
             if self.is_teaching_session:
                 self.is_teaching_session = False
                 self._set_state(_HierarchicalPlanState.COMPLETED)
@@ -2235,8 +2247,27 @@ class HierarchicalPlanner(BasePlanner):
 
         async def request_clarification_primitive(question: str) -> str:
             """Allows the plan to ask for clarification during execution."""
-            await plan.clarification_up_q.put(question)
-            return await plan.clarification_down_q.get()
+            if not plan.clarification_enabled:
+                raise RuntimeError("Clarification is not supported in this context.")
+            plan.action_log.append(f"Asking clarification: {question}")
+            call_repr = f"request_clarification('{question}')"
+            try:
+                await asyncio.wait_for(
+                    plan.clarification_up_q.put(question),
+                    timeout=5,
+                )
+                answer = await asyncio.wait_for(
+                    plan.clarification_down_q.get(),
+                    timeout=120,
+                )
+            except asyncio.TimeoutError:
+                raise FatalVerificationError(
+                    "Timed out waiting for user clarification.",
+                )
+            plan.action_log.append(f"Received clarification: {answer}")
+            interaction_to_log = ("tool_call", call_repr, answer)
+            plan.interaction_stack[-1].append(interaction_to_log)
+            return answer
 
         plan.execution_namespace.clear()
         plan.execution_namespace.update(sandbox_globals)
