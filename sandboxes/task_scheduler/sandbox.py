@@ -341,11 +341,13 @@ async def _main_async() -> None:
             chat_history.append({"role": "user", "content": raw})
             if args.voice:
                 _speak("Let me take a look, give me a moment")
+                _wait_tts_end()
 
             print(_steer_hint())
             answer = await _await_with_interrupt(_handle)
             if args.voice:
                 _speak("Okay, that's all done")
+                _wait_tts_end()
             if isinstance(answer, tuple):  # reasoning steps requested
                 answer, _steps = answer
             print(f"[{_kind}] → {answer}\n")

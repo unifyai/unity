@@ -297,6 +297,7 @@ async def _main_async() -> None:
             chat_history.append({"role": "user", "content": raw})
             if args.voice:
                 _speak("Let me take a look, give me a moment")
+                _wait_tts_end()
 
             # ───────────── process result (handle or immediate string) ─────────
             if isinstance(result, SteerableToolHandle):
@@ -309,6 +310,7 @@ async def _main_async() -> None:
 
             if args.voice:
                 _speak("Okay, that's all done")
+                _wait_tts_end()
             print(f"[{_kind}] → {answer}\n")
 
             # ───────────── remember assistant's reply for follow-up ────────────
