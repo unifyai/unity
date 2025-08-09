@@ -100,10 +100,23 @@ class _Intent(BaseModel):
 
 
 _INTENT_SYS_MSG = (
-    "Decide whether the user input is a *query* about existing tasks (`ask`), "
-    "a *mutation* that creates/updates/deletes tasks (`update`), or an "
-    "instruction to begin working on a specific task (`start`). "
-    "Return JSON {'action':'ask'|'update'|'start','cleaned_text':<fixed_input>}."
+    "You are an intent router for the TaskScheduler.\n"
+    "Decide if the user's input is:\n"
+    " - a read-only question about existing tasks ('ask'),\n"
+    " - a write/mutation that creates/updates/deletes tasks or metadata ('update'), or\n"
+    " - an instruction to begin working on a specific task ('start').\n"
+    "Return ONLY JSON: {'action':'ask'|'update'|'start','cleaned_text':<fixed_input>}.\n"
+    "Rules:\n"
+    "- Classify as 'start' when the user asks to begin doing the task now/immediately/ASAP, or uses imperative phrasing to carry out the task (e.g., 'start', 'begin', 'execute', 'work on', 'open a browser').\n"
+    "- Classify as 'update' for creating/updating/deleting tasks, schedules, priorities, queues, ordering, or status (pause/resume/cancel).\n"
+    "- Classify as 'ask' for information-only queries about the current task list, schedules, priorities, or status.\n"
+    "For cleaned_text: preserve the user's intent while removing hedges/disfluencies; keep identifiers, titles, and numbers intact. If starting a task by id, cleaned_text should ideally be just the id (e.g., '12').\n"
+    "Examples:\n"
+    "Input: 'Start task 12 right now' → {'action':'start','cleaned_text':'12'}\n"
+    "Input: 'Could you research ACME ASAP and report back?' → {'action':'start','cleaned_text':'research ACME ASAP and report back'}\n"
+    "Input: 'Move task 3 behind task 5' → {'action':'update','cleaned_text':'Move task 3 behind task 5'}\n"
+    "Input: 'Pause the active task' → {'action':'update','cleaned_text':'Pause the active task'}\n"
+    "Input: 'What is due this week?' → {'action':'ask','cleaned_text':'What is due this week?'}"
 )
 
 
@@ -116,70 +129,14 @@ async def _dispatch_with_context(
 ) -> Tuple[str, SteerableToolHandle]:
     """
     Decide whether to call `ask`, `update` or `execute_task`, forwarding
-    *parent_chat_context* to the TaskScheduler methods.  `execute_task` requires
-    a numeric *task_id* which is extracted from the user's text.
+    *parent_chat_context* to the TaskScheduler methods.  `execute_task` accepts
+    the cleaned text (often a numeric id) from the router.
     """
 
-    lowered = raw.lower()
-
-    # ───── immediate-execution heuristic (fast‑path) ─────────────────────
-    # If the user clearly asks to perform the work now/immediately, prefer
-    # starting the task over updating metadata.
-    if any(
-        token in lowered
-        for token in (
-            "right now",
-            "immediately",
-            "asap",
-            "as soon as possible",
-            "right away",
-            "open a browser",
-        )
-    ):
-        handle = await ts.execute_task(
-            raw,
-            parent_chat_context=parent_chat_context,
-        )
-        return "start", handle
-
-    # ───── quick heuristics (fast‑path) ───────────────────────────────
-    if lowered.startswith(
-        (
-            "add ",
-            "create ",
-            "update ",
-            "change ",
-            "delete ",
-            "schedule ",
-            "move ",
-            "reschedule ",
-        ),
-    ):
-        handle = await ts.update(
-            raw,
-            parent_chat_context=parent_chat_context,
-            _return_reasoning_steps=show_steps,
-        )
-        return "update", handle
-
-    # ───── everything else – ask an LLM judge ────────────────────────
+    # LLM-only routing
     judge = unify.Unify("gpt-4o@openai", response_format=_Intent)
-    # Strengthen classification guidance: treat imperative, real-time
-    # requests (e.g. "start", "begin", "open a browser", "do X now") as 'start'.
-    start_bias_msg = (
-        _INTENT_SYS_MSG
-        + "\nRules:"
-        + "\n- Classify as 'start' when the user asks you to begin doing the task now/immediately/ASAP (e.g. 'right now', 'as soon as possible', 'immediately'), or uses imperative phrasing to carry out the task (e.g. 'start', 'begin', 'open a browser', 'do five minutes of research')."
-        + "\n- Use 'update' strictly for creating/updating/deleting tasks, schedules, priorities, or queue ordering."
-        + "\n- Use 'ask' for information-only questions about the current task list."
-        + "\nExamples:"
-        + "\nInput: 'Start task 12' → {'action':'start','cleaned_text':'12'}"
-        + "\nInput: 'Could you research ACME right now and tell me what you find?' → {'action':'start','cleaned_text':'research ACME right now and report back'}"
-        + "\nInput: 'Move task 3 behind task 5' → {'action':'update','cleaned_text':'Move task 3 behind task 5'}"
-        + "\nInput: 'What is due this week?' → {'action':'ask','cleaned_text':'What is due this week?'}"
-    )
     intent = _Intent.model_validate_json(
-        judge.set_system_message(start_bias_msg).generate(raw),
+        judge.set_system_message(_INTENT_SYS_MSG).generate(raw),
     )
 
     # For 'start', call execute_task so the scheduler resolves/creates the
