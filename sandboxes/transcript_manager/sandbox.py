@@ -309,7 +309,10 @@ async def _main_async() -> None:
             # ───────────── process result (handle or immediate string) ─────────
             if isinstance(result, SteerableToolHandle):
                 print(_steer_hint())
-                answer = await _await_with_interrupt(result)
+                answer = await _await_with_interrupt(
+                    result,
+                    enable_voice_steering=bool(args.voice),
+                )
                 if isinstance(answer, tuple):  # reasoning steps requested
                     answer, _steps = answer
             else:  # already a string (unlikely path)

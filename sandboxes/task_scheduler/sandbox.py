@@ -351,7 +351,10 @@ async def _main_async() -> None:
                 _wait_tts_end()
 
             print(_steer_hint())
-            answer = await _await_with_interrupt(_handle)
+            answer = await _await_with_interrupt(
+                _handle,
+                enable_voice_steering=bool(args.voice),
+            )
             if args.voice:
                 _speak("Okay, that's all done")
                 _wait_tts_end()
