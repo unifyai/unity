@@ -67,7 +67,7 @@ While an `ask`, `update` or `start` (execute) call is running, you can steer it 
 
 Notes:
 - Steering commands are ignored when no call is running; you’ll see a small hint if you try.
-- In voice mode, you still type these commands in the terminal while audio is playing. Press Enter to skip current TTS playback. Use `/r` to record a steering utterance and route it via freeform; it auto-cancels if the run finishes while recording.
+- In voice mode, during TTS playback you can press Enter to skip. Steering commands (including `/r`) are entered after playback finishes. Use `/r` to record a steering utterance and route it via freeform; it auto-cancels if the run finishes while recording.
 
 Example session (text mode)
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~
