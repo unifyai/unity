@@ -130,6 +130,28 @@ def noalsaerr():
         yield
 
 
+# New: suppress low-level stderr (e.g. JACK 'server is not running' noise)
+@contextmanager
+def suppress_stderr_fd():
+    """Redirect the process-level stderr FD to os.devnull within the context."""
+    try:
+        # Duplicate original stderr (fd 2)
+        saved_stderr_fd = os.dup(2)
+        with open(os.devnull, "wb") as devnull:
+            os.dup2(devnull.fileno(), 2)
+            yield
+    except Exception:
+        # Best-effort – do not crash callers if redirection fails
+        yield
+    finally:
+        try:
+            if "saved_stderr_fd" in locals():
+                os.dup2(saved_stderr_fd, 2)
+                os.close(saved_stderr_fd)
+        except Exception:
+            pass
+
+
 # ---------------------------------------------------------------------------
 # Simple sine-wave beeps for recording cues
 # ---------------------------------------------------------------------------
@@ -155,18 +177,18 @@ def _generate_tone(
 def _beep(freq: int, duration: float = 0.15) -> None:
     """Play a sine-wave *freq* Hz tone via PortAudio (same path as TTS)."""
     pcm = _generate_tone(freq, duration)
-    with noalsaerr():
+    with noalsaerr(), suppress_stderr_fd():
         pa = pyaudio.PyAudio()
-    stream = pa.open(
-        format=FORMAT,
-        channels=1,
-        rate=SAMPLE_RATE,
-        output=True,
-    )
-    stream.write(pcm)
-    stream.stop_stream()
-    stream.close()
-    pa.terminate()
+        stream = pa.open(
+            format=FORMAT,
+            channels=1,
+            rate=SAMPLE_RATE,
+            output=True,
+        )
+        stream.write(pcm)
+        stream.stop_stream()
+        stream.close()
+        pa.terminate()
 
 
 # ---------------------------------------------------------------------------
@@ -192,16 +214,16 @@ def record_until_enter() -> bytes:
         input("\nPress ↵ to start recording…")
 
         # ───────────── PortAudio set-up ─────────────
-        with noalsaerr():
+        with noalsaerr(), suppress_stderr_fd():
             pa = pyaudio.PyAudio()
-        stream = pa.open(
-            format=FORMAT,
-            channels=CHANNELS,
-            rate=SAMPLE_RATE,
-            input=True,
-            frames_per_buffer=CHUNK,
-        )
-        sample_size = pa.get_sample_size(FORMAT)
+            stream = pa.open(
+                format=FORMAT,
+                channels=CHANNELS,
+                rate=SAMPLE_RATE,
+                input=True,
+                frames_per_buffer=CHUNK,
+            )
+            sample_size = pa.get_sample_size(FORMAT)
 
         frames: List[bytes] = []
         stop = threading.Event()
@@ -226,9 +248,10 @@ def record_until_enter() -> bytes:
         # ───────────── tear-down PortAudio ─────────────
         stop.set()
         thr.join()
-        stream.stop_stream()
-        stream.close()
-        pa.terminate()
+        with suppress_stderr_fd():
+            stream.stop_stream()
+            stream.close()
+            pa.terminate()
 
         # ───────────── cancellation branch ─────────────
         if user_cmd.lower() == "c":
@@ -299,14 +322,14 @@ async def _speak_async(text: str) -> None:
         tts = cartesia.TTS(http_session=session)
 
         # Open the PortAudio stream once, before the first frame arrives
-        with noalsaerr():
+        with noalsaerr(), suppress_stderr_fd():
             pa = pyaudio.PyAudio()
-        stream = pa.open(
-            format=pyaudio.paInt16,
-            channels=1,
-            rate=tts.sample_rate,  # usually 24 kHz
-            output=True,
-        )
+            stream = pa.open(
+                format=pyaudio.paInt16,
+                channels=1,
+                rate=tts.sample_rate,  # usually 24 kHz
+                output=True,
+            )
 
         # PortAudio initialisation (and its interaction with JACK) tends to
         # emit noisy warnings *right here*.  Briefly pause and then print the
@@ -330,10 +353,10 @@ async def _speak_async(text: str) -> None:
                 if skip.is_set():
                     break
                 stream.write(_frame_to_pcm(audio.frame))
-
-        stream.stop_stream()
-        stream.close()
-        pa.terminate()
+        with suppress_stderr_fd():
+            stream.stop_stream()
+            stream.close()
+            pa.terminate()
 
     # ─────────────── clean-up ───────────────
     listener_done.set()
@@ -543,7 +566,7 @@ def build_cli_parser(description: str) -> argparse.ArgumentParser:
         type=int,
         default=-1,
         metavar="PORT",
-        help="serve logs over TCP on localhost:PORT (default -1 auto-picks an available port; 0 disables)",
+        help="serve logs over TCP on localhost:PORT (default -1 auto-picks an available port; 0 disables; >0 binds requested port)",
     )
     return parser
 
