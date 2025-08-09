@@ -2373,27 +2373,10 @@ async def _async_tool_use_loop_inner(
                             clar_down_q,
                         )
 
-                    # Immediately insert a placeholder tool reply so that any
-                    # subsequent interjection/user turn does not violate the
-                    # function-calling protocol (assistant tool_calls must be
-                    # followed by a tool message).
-                    placeholder = {
-                        "role": "tool",
-                        "tool_call_id": call["id"],
-                        "name": name,
-                        "content": (
-                            "Still running… you can use any of the available helper tools "
-                            "to interact with this tool call while it is in progress."
-                        ),
-                    }
-                    await _insert_after_assistant(msg, placeholder)
-                    task_info[t]["tool_reply_msg"] = placeholder
-
                 # metadata for orderly insertion of results
-                prev_meta = assistant_meta.get(id(msg), {})
                 assistant_meta[id(msg)] = {
                     "original_tool_calls": original_tool_calls,
-                    "results_count": prev_meta.get("results_count", 0),
+                    "results_count": 0,
                 }
 
                 continue  # finished scheduling tools, back to the very top
