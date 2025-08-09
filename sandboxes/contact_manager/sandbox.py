@@ -325,6 +325,13 @@ async def _main_async() -> None:
                     print(f"❌  Failed to generate scenario: {exc}")
                 continue  # back to REPL
 
+            # Ignore steering commands when no request is running
+            if raw.startswith("/"):
+                print(
+                    "(no active request) Steering commands are only available while a call is running.",
+                )
+                continue
+
             # ──────────────── remember the user's utterance ────────────────
             _kind, _handle = await _dispatch_with_context(
                 cm,
