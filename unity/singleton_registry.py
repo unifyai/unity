@@ -21,11 +21,8 @@ class SingletonRegistry:
     _instances: Dict[Type[Any], Any] = {}
     _lock: Lock = Lock()
 
-    # ------------------------------------------------------------------ #
-    #  CRUD helpers
-    # ------------------------------------------------------------------ #
     @classmethod
-    def get(cls, klass: Type[Any]) -> Any | None:  # noqa: D401 – imperative helper
+    def get(cls, klass: Type[Any]) -> Any | None:
         """Return the cached instance for *klass* or *None* if none exists."""
         with cls._lock:
             return cls._instances.get(klass)
@@ -35,13 +32,13 @@ class SingletonRegistry:
         cls,
         klass: Type[Any],
         instance: Any,
-    ) -> None:  # noqa: D401 – imperative helper
+    ) -> None:
         """Register *instance* as the singleton for *klass*."""
         with cls._lock:
             cls._instances[klass] = instance
 
     @classmethod
-    def clear(cls) -> None:  # noqa: D401 – imperative helper
+    def clear(cls) -> None:
         """Remove **all** cached singletons – primarily for test isolation."""
         with cls._lock:
             cls._instances.clear()
@@ -56,16 +53,14 @@ class SingletonABCMeta(ABCMeta):
     ``__init__`` again.
     """
 
-    def __call__(cls, *args, **kwargs):  # type: ignore[override]
-        from .singleton_registry import (
-            SingletonRegistry,
-        )  # local import to avoid cycles
+    def __call__(cls, *args, **kwargs):
+        from .singleton_registry import SingletonRegistry
 
         existing = SingletonRegistry.get(cls)
         if existing is not None:
             return existing
 
-        # First instantiation – create the object and remember it
+        # First instantiation – create the object and register it
         instance = super().__call__(*args, **kwargs)
         SingletonRegistry.register(cls, instance)
         return instance
