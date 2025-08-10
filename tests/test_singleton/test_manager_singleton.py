@@ -11,6 +11,7 @@ from unity.knowledge_manager.knowledge_manager import KnowledgeManager
 from unity.memory_manager.memory_manager import MemoryManager
 from unity.transcript_manager.transcript_manager import TranscriptManager
 from unity.task_scheduler.task_scheduler import TaskScheduler
+from unity.conductor.conductor import Conductor
 
 
 # ---------------------------------------------------------------------------
@@ -22,6 +23,7 @@ MANAGER_CLASSES = [
     MemoryManager,
     TranscriptManager,
     TaskScheduler,
+    Conductor,
 ]
 
 
@@ -56,3 +58,34 @@ async def test_manager_singleton_after_clear(manager_cls):
     assert (
         original is not replacement
     ), f"{manager_cls.__name__} produced the same instance even after clearing the registry"
+
+
+@pytest.mark.asyncio
+@_handle_project
+async def test_manager_singleton_composition():
+    """All references to the same manager BETWEEN different managers must return the *same* instance."""
+
+    memory_manager = MemoryManager()
+    contact_manager = memory_manager._contact_manager
+    transcript_manager = memory_manager._transcript_manager
+    knowledge_manager = memory_manager._knowledge_manager
+    task_scheduler = memory_manager._task_scheduler
+
+    assert contact_manager is ContactManager()
+    assert transcript_manager is TranscriptManager()
+    assert knowledge_manager is KnowledgeManager()
+    assert task_scheduler is TaskScheduler()
+
+    SingletonRegistry.clear()
+
+    contact_manager = ContactManager()
+    transcript_manager = TranscriptManager()
+    knowledge_manager = KnowledgeManager()
+    task_scheduler = TaskScheduler()
+
+    memory_manager = MemoryManager()
+
+    assert contact_manager is memory_manager._contact_manager
+    assert transcript_manager is memory_manager._transcript_manager
+    assert knowledge_manager is memory_manager._knowledge_manager
+    assert task_scheduler is memory_manager._task_scheduler
