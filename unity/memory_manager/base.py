@@ -3,9 +3,10 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from typing import Optional
+from ..singleton_registry import SingletonABCMeta
 
 
-class BaseMemoryManager(ABC):
+class BaseMemoryManager(ABC, metaclass=SingletonABCMeta):
     """
     *Offline* memory-maintenance helper that is invoked every 30 messages (by default).
 

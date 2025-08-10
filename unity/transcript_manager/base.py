@@ -5,9 +5,10 @@ from abc import ABC, abstractmethod
 from typing import Any, Dict, List, Optional, Union
 
 from ..common.llm_helpers import SteerableToolHandle
+from ..singleton_registry import SingletonABCMeta
 
 
-class BaseTranscriptManager(ABC):
+class BaseTranscriptManager(ABC, metaclass=SingletonABCMeta):
     """
     *Public* contract that every concrete **transcript-manager** must satisfy.
 
