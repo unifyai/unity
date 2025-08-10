@@ -48,6 +48,10 @@ class Browser:
         """Asks a question by delegating to the active backend."""
         return await self.backend.observe(query, response_format)
 
+    async def navigate(self, url: str) -> str:
+        """Navigates to a specific URL by delegating to the active backend."""
+        return await self.backend.navigate(url)
+
     async def get_screenshot(self) -> str:
         """Gets a screenshot by delegating to the active backend."""
         return await self.backend.get_screenshot()

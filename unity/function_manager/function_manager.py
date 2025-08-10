@@ -1,5 +1,4 @@
 import ast
-import builtins
 import inspect
 import threading
 from typing import Dict, List, Set, Union, Tuple, Any, Optional
@@ -55,63 +54,22 @@ class FunctionManager(threading.Thread):
             self = unify.traced(self)
 
     @property
-    def _allowed_calls(self) -> Set[str]:
+    def _dangerous_builtins(self) -> Set[str]:
         """
-        Dynamically generates the set of all allowed function and method calls.
+        A minimal set of truly dangerous built-ins that should never be allowed.
+        These could compromise security or system integrity.
         """
-        standard_builtins = {
-            "range",
-            "enumerate",
-            "len",
-            "str",
-            "min",
-            "max",
-            "zip",
-            "sum",
-            "sorted",
-            "abs",
-            "round",
-            "pow",
-            "divmod",
-            "int",
-            "float",
-            "complex",
-            "bool",
-            "list",
-            "tuple",
-            "set",
-            "dict",
-            "reversed",
-            "slice",
-            "all",
-            "any",
-            "chr",
-            "ord",
-            "isinstance",
-            "issubclass",
-            "id",
+        return {
+            "eval",
+            "exec",
+            "compile",
+            "__import__",
+            "open",  # File system access should go through proper APIs
+            "input",  # No interactive input in automated functions
+            "breakpoint",  # No debugging breakpoints
+            "exit",
+            "quit",
         }
-
-        # Lazy import to avoid circular dependency: the ActionProvider is only
-        # imported when this property is accessed, which happens *after* both
-        # modules have finished initial loading.  This breaks the circular
-        # import chain between FunctionManager <-> planner package.
-        from unity.planner.action_provider import ActionProvider  # noqa: WPS433,E402
-
-        action_provider_methods = {
-            name
-            for name, _ in inspect.getmembers(ActionProvider, inspect.isfunction)
-            if not name.startswith("_")
-        }
-
-        allowed_globals = {"action_provider"}
-
-        return standard_builtins | action_provider_methods | allowed_globals
-
-    @property
-    def _disallowed_builtins(self) -> Set[str]:
-        """Built-ins that are not in our explicit allow-list."""
-        return set(dir(builtins)) - self._allowed_calls
 
     def _parse_implementation(
         self,
@@ -149,11 +107,6 @@ class FunctionManager(threading.Thread):
 
         return fn_node.name, tree, fn_node, source
 
-    @staticmethod
-    def _ensure_no_imports(tree: ast.Module, fn_name: str) -> None:
-        if any(isinstance(n, (ast.Import, ast.ImportFrom)) for n in ast.walk(tree)):
-            raise ValueError(f"Imports are not allowed (found in {fn_name}()).")
-
     def _collect_function_calls(
         self,
         fn_node: Union[ast.FunctionDef, ast.AsyncFunctionDef],
@@ -161,20 +114,44 @@ class FunctionManager(threading.Thread):
         calls: Set[str] = set()
         for node in ast.walk(fn_node):
             if isinstance(node, ast.Call):
-                if (
-                    isinstance(node.func, ast.Attribute)
-                    and isinstance(node.func.value, ast.Name)
-                    and node.func.value.id == "action_provider"
-                ):
-                    calls.add(node.func.attr)
-                elif isinstance(node.func, ast.Name):
-                    calls.add(node.func.id)
-                else:
-                    raise ValueError(
-                        f"Complex attribute call '{ast.unparse(node.func)}' "
-                        f"is not allowed in {fn_node.name}().",
-                    )
+                name = self._format_callable_name(node.func)
+                if name:
+                    calls.add(name)
         return calls
+
+    def _format_callable_name(self, callable_node: ast.AST) -> Optional[str]:
+        """Return a best-effort fully qualified name for a callable.
+
+        Handles both simple names (e.g., ``foo()``) and nested attributes
+        (e.g., ``a.b.c()``). If the base of the attribute chain is not a simple
+        ``ast.Name`` (e.g., ``get().b()``), this falls back to ``ast.unparse``
+        when available.
+        """
+        # Simple function call: foo()
+        if isinstance(callable_node, ast.Name):
+            return callable_node.id
+
+        # Attribute access: a.b.c()
+        if isinstance(callable_node, ast.Attribute):
+            parts: List[str] = []
+            current: ast.AST = callable_node
+            while isinstance(current, ast.Attribute):
+                parts.append(current.attr)
+                current = current.value
+            if isinstance(current, ast.Name):
+                parts.append(current.id)
+                return ".".join(reversed(parts))
+            # Fallback to unparse for complex bases like calls/subscripts
+            try:
+                return ast.unparse(callable_node)
+            except Exception:
+                pass
+            return ".".join(reversed(parts)) if parts else None
+
+        try:
+            return ast.unparse(callable_node)
+        except Exception:
+            return None
 
     def _validate_function_calls(
         self,
@@ -182,18 +159,41 @@ class FunctionManager(threading.Thread):
         calls: Set[str],
         provided_names: Set[str],
     ) -> None:
-        allowed = self._allowed_calls
-        disallowed_builtins = self._disallowed_builtins
+        """
+        Validates function calls to prevent functions from calling other user-defined functions.
+
+        Allows:
+        - Built-in functions from the allowed list
+        - Any method calls on objects (e.g., action_provider.*, call_handle.*, call.*)
+
+        Disallows:
+        - Direct calls to any user-defined functions
+        - Disallowed built-in functions
+        """
+        dangerous = self._dangerous_builtins
+
         for called in calls:
-            if called in disallowed_builtins:
+            # Allow all method calls (anything with a dot)
+            # This includes action_provider.*, call_handle.*, obj.method(), etc.
+            if "." in called:
+                continue
+
+            # Block only truly dangerous built-ins
+            if called in dangerous:
                 raise ValueError(
-                    f"Built-in '{called}' is not permitted in {fn_name}().",
+                    f"Dangerous built-in '{called}' is not permitted in {fn_name}(). "
+                    f"Functions cannot use: {', '.join(sorted(dangerous))}",
                 )
-            if called not in provided_names and called not in allowed:
+
+            # Block direct calls to other user-defined functions
+            # (but not built-ins or exception classes)
+            if called in provided_names:
                 raise ValueError(
-                    f"{fn_name}() references unknown function '{called}'. "
-                    "All referenced functions must be provided together.",
+                    f"{fn_name}() cannot call user-defined function '{called}'. "
+                    "Functions must not call other user-defined functions.",
                 )
+
+            # Everything else is allowed - including all built-ins, exception classes, etc.
 
     # ------------------------------------------------------------------ #
     #  Private helpers for persistence                                    #
@@ -217,6 +217,7 @@ class FunctionManager(threading.Thread):
         self,
         *,
         implementations: Union[str, List[str]],
+        preconditions: Optional[Dict[str, Dict]] = None,
     ) -> Dict[str, str]:
         """
         Validate, compile and persist one or more function implementations.
@@ -225,6 +226,8 @@ class FunctionManager(threading.Thread):
         -------
         Dict[str, str]  –  ``{<name>: "added" | "error: <msg>"}``
         """
+        if preconditions is None:
+            preconditions = {}
         if isinstance(implementations, str):
             implementations = [implementations]
 
@@ -236,7 +239,6 @@ class FunctionManager(threading.Thread):
 
         # Deep validation
         for name, tree, node, _ in parsed:
-            self._ensure_no_imports(tree, name)
             calls = self._collect_function_calls(node)
             self._validate_function_calls(name, calls, provided_names)
 
@@ -256,6 +258,7 @@ class FunctionManager(threading.Thread):
             embedding_text = (
                 f"Function Name: {name}\nSignature: {signature}\nDocstring: {docstring}"
             )
+            precondition = preconditions.get(name)
 
             unify.log(
                 context=self._ctx,
@@ -265,6 +268,7 @@ class FunctionManager(threading.Thread):
                 implementation=source,
                 calls=calls,
                 embedding_text=embedding_text,
+                precondition=precondition,
                 new=True,
             )
 
@@ -283,7 +287,7 @@ class FunctionManager(threading.Thread):
 
         Each value contains:
 
-        * **argspec**   – full signature, e.g. ``(x: int, y: int) -> int``
+        * **argspec** – full signature, e.g. ``(x: int, y: int) -> int``
         * **docstring** – cleaned docstring or empty string
         * **implementation** – full source code (only when
           ``include_implementations=True``)
@@ -298,6 +302,26 @@ class FunctionManager(threading.Thread):
                 data["implementation"] = log.entries["implementation"]
             entries[log.entries["name"]] = data
         return entries
+
+    def get_precondition(self, *, function_name: str) -> Optional[Dict[str, Any]]:
+        """
+        Retrieves the stored precondition for a given function.
+
+        Args:
+            function_name: The name of the function.
+
+        Returns:
+            The precondition dictionary or None if not found or not applicable.
+        """
+        logs = unify.get_logs(
+            context=self._ctx,
+            filter=f"name == '{function_name}'",
+            limit=1,
+        )
+        if not logs:
+            return None
+
+        return logs[0].entries.get("precondition")
 
     # 3. Deletion ------------------------------------------------------- #
 

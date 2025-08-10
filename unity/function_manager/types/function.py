@@ -1,5 +1,5 @@
 from pydantic import BaseModel, Field
-from typing import List
+from typing import List, Optional, Dict, Any
 
 
 class Function(BaseModel):
@@ -25,4 +25,8 @@ class Function(BaseModel):
     embedding_text: str = Field(
         ...,
         description="The text used to generate the function's embedding.",
+    )
+    precondition: Optional[Dict[str, Any]] = Field(
+        None,
+        description="A dictionary representing the state required before the function can be run, e.g., {'url': '...'}.",
     )

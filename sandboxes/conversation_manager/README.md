@@ -60,6 +60,27 @@ python -m sandboxes.conversation_manager.sandbox --full
 
 Real incoming events and calls are processed by the live service; phone calls require a running LiveKit server and properly configured environment variables.
 
+Two-agent simulation mode
+-------------------------
+Alternatively, you can simulate two agents (user & assistant) interacting in-process without spinning up LiveKit or handling real events.
+
+Entry-point: `sandboxes/conversation_manager/simulated.py`
+
+To start the simulation:
+```bash
+python -m sandboxes.conversation_manager.simulated [--voice] [--project_name NAME] [--overwrite] [--num_turns N]
+```
+
+Accepted commands in simulation:
+- `start` / `s`     : begin the first user turn.
+- `continue` / `c`  : run the next round of back-and-forth (default N turns).
+- `medium` / `m`    : change communication medium (`phone`, `sms`, `email`), resets history.
+- `help` / `h`      : show this help menu.
+- `exit` / `quit`   : terminate the simulation.
+
+CLI flags for simulation (in addition to sandbox flags above):
+- `--num_turns` / `-n` : number of back-and-forth turns per cycle (default: 5).
+
 Troubleshooting
 ---------------
 Required environment variables (in addition to those in the root `README.md`):

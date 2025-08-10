@@ -136,6 +136,7 @@ class StartupEvent(Event):
         self.assistant_region = kwargs.pop("assistant_region", None)
         self.assistant_about = kwargs.pop("assistant_about", None)
         self.assistant_number = kwargs.pop("assistant_number", None)
+        self.assistant_email = kwargs.pop("assistant_email", None)
         self.user_name = kwargs.pop("user_name", None)
         self.user_number = kwargs.pop("user_number", None)
         self.user_phone_number = kwargs.pop("user_phone_number", None)

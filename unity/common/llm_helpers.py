@@ -2489,6 +2489,7 @@ class AsyncToolUseLoopHandle(SteerableToolHandle):
         cancel_event: asyncio.Event,
         pause_event: Optional[asyncio.Event] = None,
         client: "unify.AsyncUnify | None" = None,
+        loop_id: str = "",
     ):
         self._task = task
         self._queue = interject_queue
@@ -2500,6 +2501,7 @@ class AsyncToolUseLoopHandle(SteerableToolHandle):
         # forward every steering call to another *SteerableToolHandle*.
         self._delegate: Optional["SteerableToolHandle"] = None
         self._pause_event.set()
+        self._loop_id: str = loop_id
 
         # Buffer interjections that may arrive **before** a downstream handle
         # (e.g. an `ActiveTask`) has been adopted.  Once a delegate is ready we
@@ -2517,6 +2519,7 @@ class AsyncToolUseLoopHandle(SteerableToolHandle):
         The question is read-only (the tool state is not modified whatsoever).
         The calling parent loop is left completely untouched.
         """
+        LOGGER.info(f"🕹️ [{self._loop_id}] Ask requested: {question}")
         # Fast-path: delegated handles answer directly.
         if self._delegate is not None:
             return await self._delegate.ask(
@@ -2528,8 +2531,6 @@ class AsyncToolUseLoopHandle(SteerableToolHandle):
         #     just answer from the final transcript without starting another
         #     loop.
         if self.done():
-            from ..constants import LOGGER
-
             LOGGER.warning(
                 "AsyncToolUseLoopHandle.ask() called on an already-finished "
                 "loop – returning a synthetic handle with a static answer.",
@@ -2641,6 +2642,7 @@ class AsyncToolUseLoopHandle(SteerableToolHandle):
     # -- public API -----------------------------------------------------------
     @functools.wraps(SteerableToolHandle.interject, updated=())
     async def interject(self, message: str) -> None:
+        LOGGER.info(f"��️ [{self._loop_id}] Interject requested: {message}")
         if self._delegate is not None:
             await self._delegate.interject(message)
             return
@@ -2650,6 +2652,7 @@ class AsyncToolUseLoopHandle(SteerableToolHandle):
 
     @functools.wraps(SteerableToolHandle.stop, updated=())
     def stop(self) -> None:
+        LOGGER.info(f"🛑 [{self._loop_id}] Stop requested")
         if self._delegate is not None:
             self._delegate.stop()
             return
@@ -2657,6 +2660,7 @@ class AsyncToolUseLoopHandle(SteerableToolHandle):
 
     @functools.wraps(SteerableToolHandle.pause, updated=())
     def pause(self) -> None:
+        LOGGER.info(f"⏸️ [{self._loop_id}] Pause requested")
         if self._delegate is not None:
             self._delegate.pause()
             return
@@ -2664,6 +2668,7 @@ class AsyncToolUseLoopHandle(SteerableToolHandle):
 
     @functools.wraps(SteerableToolHandle.resume, updated=())
     def resume(self) -> None:
+        LOGGER.info(f"▶️ [{self._loop_id}] Resume requested")
         if self._delegate is not None:
             self._delegate.resume()
             return
@@ -2687,7 +2692,7 @@ class AsyncToolUseLoopHandle(SteerableToolHandle):
         """Switch all steering methods to *new_handle* (in-process only).
 
         Move any *already queued* interjections over to the freshly adopted
-        delegate so that early user steering (issued *before* the delegate was
+        delegate so that early user guidance (issued *before* the delegate was
         ready) is not lost – a common source of hangs during tests that fire
         `interject()` immediately after `execute_task()` returns.
         """
@@ -2775,6 +2780,8 @@ def start_async_tool_use_loop(
     Kick off `_async_tool_use_loop_inner` in its own task and give the caller
     a handle for live interaction.
     """
+    # Ensure a stable loop_id for consistent logging across handle and inner loop
+    loop_id = loop_id if loop_id is not None else short_id()
     interject_queue: asyncio.Queue[str] = asyncio.Queue()
     cancel_event = asyncio.Event()
     pause_event = asyncio.Event()
@@ -2818,6 +2825,7 @@ def start_async_tool_use_loop(
         cancel_event=cancel_event,
         pause_event=pause_event,
         client=client,
+        loop_id=loop_id,
     )
 
     # Let the inner coroutine discover the outer handle so it can switch

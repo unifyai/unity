@@ -26,6 +26,7 @@ def test_create_task():
             "priority": Priority.normal,
             "task_id": 0,
             "instance_id": 0,
+            "response_policy": None,
         },
     ]
 
@@ -47,3 +48,24 @@ def test_delete_task():
     task_scheduler._delete_task(task_id=0)
     task_list = task_scheduler._search_tasks()
     assert task_list == []
+
+
+@_handle_project
+@pytest.mark.unit
+def test_create_task_with_response_policy():
+    ts = TaskScheduler()
+
+    policy = (
+        "During this task, only the project manager may issue instructions. "
+        "The client may view progress updates but cannot steer decisions."
+    )
+
+    ts._create_task(
+        name="PM-only control",
+        description="Carry out project setup steps.",
+        response_policy=policy,
+    )
+
+    rows = ts._search_tasks()
+    assert len(rows) == 1
+    assert rows[0]["response_policy"] == policy

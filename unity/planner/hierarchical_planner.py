@@ -51,6 +51,7 @@ class PlanRuntime:
         self._waiting_for_planner = False
 
         self.action_counter = 0
+        self.cache_miss_counter = 0
         self.path_context: List[str] = []
 
     async def checkpoint(self, label: str = ""):
@@ -172,6 +173,10 @@ class VerificationAssessment(BaseModel):
         description="Outcome: 'ok', 'reimplement_local', 'replan_parent', 'fatal_error', or 'request_clarification'.",
     )
     reason: str = Field(..., description="A concise explanation for the status.")
+    clarification_question: Optional[str] = Field(
+        None,
+        description="The specific question to ask the user if status is 'request_clarification'.",
+    )
 
 
 class CourseCorrectionDecision(BaseModel):
@@ -205,6 +210,16 @@ class PageAnalysis(BaseModel):
     )
 
 
+class StateVerificationDecision(BaseModel):
+    """A structured decision on whether the current state matches the required precondition."""
+
+    matches: bool = Field(
+        ...,
+        description="True if the current browser state satisfies the function's precondition. False otherwise.",
+    )
+    reason: str = Field(..., description="A brief explanation for the decision.")
+
+
 class ImplementationDecision(BaseModel):
     """A structured decision for how to proceed with a function implementation."""
 
@@ -233,6 +248,7 @@ class InterjectionDecision(BaseModel):
         "explore_detached",
         "clarify",
         "complete_task",
+        "refactor_and_generalize",
     ] = Field(..., description="The chosen action based on the user's interjection.")
     reason: str = Field(..., description="A brief justification for the chosen action.")
     modification_request: Optional[str] = Field(
@@ -251,6 +267,10 @@ class InterjectionDecision(BaseModel):
         None,
         description="A question to ask the user for clarification.",
     )
+    generalization_context: Optional[str] = Field(
+        None,
+        description="The context for generalization, e.g., 'all other employees in the folder' or 'Sam Parker'.",
+    )
 
 
 class SandboxMergeDecision(BaseModel):
@@ -267,6 +287,23 @@ class SandboxMergeDecision(BaseModel):
     )
 
 
+class PreconditionDecision(BaseModel):
+    """A structured decision on a function's precondition."""
+
+    status: typing.Literal["ok", "not_applicable"] = Field(
+        ...,
+        description="Whether a precondition was identified or not.",
+    )
+    url: Optional[str] = Field(
+        None,
+        description="The URL of the page that must be present for the function to run.",
+    )
+    description: Optional[str] = Field(
+        None,
+        description="A description of the page state that must be present for the function to run.",
+    )
+
+
 class _HierarchicalPlanState(enum.Enum):
     """Manages the detailed lifecycle state of a hierarchical plan."""
 
@@ -276,7 +313,6 @@ class _HierarchicalPlanState(enum.Enum):
     PAUSED = enum.auto()
     PAUSED_FOR_MODIFICATION = enum.auto()
     PAUSED_FOR_INTERJECTION = enum.auto()
-    PAUSED_FOR_ESCALATION = enum.auto()
     COMPLETED = enum.auto()
     STOPPED = enum.auto()
     ERROR = enum.auto()
@@ -677,13 +713,22 @@ class _SteerableToolHandleProxy:
                 args,
                 kwargs,
             )
-            if cache_key in self._plan.idempotency_cache:
+            self._plan.execution_key_log.append(
+                cache_key,
+            )
+            if self._plan.replay_keys:
+                lookup_key = self._plan.replay_keys.pop(0)
+            else:
+                lookup_key = cache_key
+
+            if lookup_key in self._plan.idempotency_cache:
                 return handle_method_logic(
                     call_repr,
                     True,
-                    self._plan.idempotency_cache[cache_key],
+                    self._plan.idempotency_cache[lookup_key],
                 )
 
+            self._plan.runtime.cache_miss_counter += 1
             self._plan.action_log.append(f"CACHE MISS: Executing {call_repr}")
             logger.debug(f"HANDLE CACHE MISS for: {call_repr}")
 
@@ -707,13 +752,23 @@ class _SteerableToolHandleProxy:
                 args,
                 kwargs,
             )
-            if cache_key in self._plan.idempotency_cache:
+            self._plan.execution_key_log.append(
+                cache_key,
+            )
+
+            if self._plan.replay_keys:
+                lookup_key = self._plan.replay_keys.pop(0)
+            else:
+                lookup_key = cache_key
+
+            if lookup_key in self._plan.idempotency_cache:
                 return handle_method_logic(
                     call_repr,
                     True,
-                    self._plan.idempotency_cache[cache_key],
+                    self._plan.idempotency_cache[lookup_key],
                 )
 
+            self._plan.runtime.cache_miss_counter += 1
             self._plan.action_log.append(f"CACHE MISS: Executing {call_repr}")
             logger.debug(f"HANDLE CACHE MISS for: {call_repr}")
 
@@ -766,15 +821,24 @@ class _ActionProviderProxy:
                 args,
                 kwargs,
             )
+            self._plan.execution_key_log.append(
+                cache_key,
+            )
 
-            if cache_key in self._plan.idempotency_cache:
-                cached_data = self._plan.idempotency_cache[cache_key]
+            if self._plan.replay_keys:
+                lookup_key = self._plan.replay_keys.pop(0)
+                logger.debug(f"found key during replay: {lookup_key}")
+            else:
+                lookup_key = cache_key
+
+            if lookup_key in self._plan.idempotency_cache:
+                cached_data = self._plan.idempotency_cache[lookup_key]
                 cached_result_id = cached_data["result"]
                 cached_interaction = cached_data["interaction_log"]
                 self._plan.action_log.append(
                     f"CACHE HIT: Using cached result for {call_repr}",
                 )
-                logger.debug(f"CACHE HIT for key: {cache_key}")
+                logger.debug(f"CACHE HIT for key: {lookup_key}")
                 interactions_log.append(cached_interaction)
 
                 if (
@@ -795,6 +859,7 @@ class _ActionProviderProxy:
                     )
                 return cached_result_id
 
+            self._plan.runtime.cache_miss_counter += 1
             self._plan.action_log.append(f"CACHE MISS: Executing {call_repr}")
             logger.debug(f"CACHE MISS for key: {cache_key}")
 
@@ -841,15 +906,23 @@ class _ActionProviderProxy:
                 args,
                 kwargs,
             )
+            self._plan.execution_key_log.append(
+                cache_key,
+            )
 
-            if cache_key in self._plan.idempotency_cache:
-                cached_data = self._plan.idempotency_cache[cache_key]
+            if self._plan.replay_keys:
+                lookup_key = self._plan.replay_keys.pop(0)
+            else:
+                lookup_key = cache_key
+
+            if lookup_key in self._plan.idempotency_cache:
+                cached_data = self._plan.idempotency_cache[lookup_key]
                 cached_result_id = cached_data["result"]
                 cached_interaction = cached_data["interaction_log"]
                 self._plan.action_log.append(
                     f"CACHE HIT: Using cached result for {call_repr}",
                 )
-                logger.debug(f"CACHE HIT for key: {cache_key}")
+                logger.debug(f"CACHE HIT for key: {lookup_key}")
                 interactions_log.append(cached_interaction)
 
                 if (
@@ -870,6 +943,7 @@ class _ActionProviderProxy:
                     )
                 return cached_result_id
 
+            self._plan.runtime.cache_miss_counter += 1
             self._plan.action_log.append(f"CACHE MISS: Executing {call_repr}")
             logger.debug(f"CACHE MISS for key: {cache_key}")
 
@@ -940,6 +1014,8 @@ class HierarchicalPlan(BaseActiveTask):
         self.plan_source_code: Optional[str] = None
         self.execution_namespace: Dict[str, Any] = {}
 
+        self.execution_key_log: List[tuple] = []
+        self.replay_keys: List[tuple] = []
         self.idempotency_cache: Dict[tuple, Any] = {}
         self.live_handles: Dict[str, SteerableToolHandle] = {}
         self.runtime = PlanRuntime()
@@ -959,10 +1035,6 @@ class HierarchicalPlan(BaseActiveTask):
         self.interruption_request: Optional[Dict[str, str]] = None
         self._interject_lock = asyncio.Lock()
         self._completion_event = asyncio.Event()
-        self._final_result_str: Optional[str] = None
-        self.clarification_up_q = clarification_up_q or asyncio.Queue()
-        self.parent_chat_context = parent_chat_context
-        self.clarification_down_q = clarification_down_q or asyncio.Queue()
         self.skipped_functions: set = set()
         self._execution_task = asyncio.create_task(self._initialize_and_run())
         self.MAX_ESCALATIONS = max_escalations or 2
@@ -972,6 +1044,14 @@ class HierarchicalPlan(BaseActiveTask):
         self._module_name: str = f"hp_plan_{uuid.uuid4().hex}"
         self._module: Optional[types.ModuleType] = None
         self._module_spec: Optional[importlib.machinery.ModuleSpec] = None
+
+        self._final_result_str: Optional[str] = None
+        self.parent_chat_context = parent_chat_context
+        self.clarification_up_q = clarification_up_q
+        self.clarification_down_q = clarification_down_q
+        self.clarification_enabled = (
+            clarification_up_q is not None and clarification_down_q is not None
+        )
 
         self.plan_generation_client: unify.AsyncUnify = unify.AsyncUnify(
             "gemini-2.5-pro@vertex-ai",
@@ -1123,11 +1203,15 @@ class HierarchicalPlan(BaseActiveTask):
 
     async def _handle_dynamic_implementation(self, function_name: str, **kwargs):
         """
-        Orchestrates the dynamic implementation of a stub function based on the LLM's decision.
+        Orchestrates the dynamic implementation or modification of a function.
 
         Args:
             function_name: The name of the function to implement.
-            **kwargs: Additional context for implementation (e.g., replan reason).
+            **kwargs: Additional context for implementation, including:
+                - replan_reason: The string explaining why this is happening.
+                - clarification_question: The question that was asked to the user.
+                - clarification_answer: The answer received from the user.
+                - ...and other existing kwargs.
         """
         reason = kwargs.get(
             "replan_reason",
@@ -1329,31 +1413,6 @@ class HierarchicalPlan(BaseActiveTask):
             )
             raise
 
-    async def resolve_escalation_with_new_goal(self, new_goal: str) -> str:
-        """
-        Resolves a plan that is paused due to excessive escalations by restarting with a new goal.
-
-        Args:
-            new_goal: The new, revised goal from the user.
-
-        Returns:
-            A status message.
-        """
-        if self._state != _HierarchicalPlanState.PAUSED_FOR_ESCALATION:
-            return f"Error: Plan is not paused for escalation. Current state: {self._state.name}"
-
-        self.action_log.append(f"Resolving escalation with new goal: '{new_goal}'")
-        self.goal = new_goal
-        self.escalation_count = 0
-        self._is_complete = False
-
-        if self.main_loop_handle and not self.main_loop_handle.done():
-            self.main_loop_handle.stop()
-            self.main_loop_handle = None
-
-        await self._initialize_and_run()
-        return f"Plan restarted with new goal: '{new_goal}'"
-
     async def result(self) -> str:
         """
         Waits for the plan to complete and returns its final result.
@@ -1450,6 +1509,7 @@ class HierarchicalPlan(BaseActiveTask):
                 should_resume = decision is None or decision.action not in (
                     "modify_task",
                     "replace_task",
+                    "clarify",
                 )
                 if self._state == _HierarchicalPlanState.PAUSED and should_resume:
                     await self.resume()
@@ -1493,6 +1553,7 @@ class HierarchicalPlan(BaseActiveTask):
             self.interaction_stack.clear()
             self.interaction_stack.append([])
             self.call_stack.clear()
+            self.execution_key_log.clear()
 
             self._execution_task = asyncio.create_task(self._initialize_and_run())
             self.runtime.resume()
@@ -1505,6 +1566,56 @@ class HierarchicalPlan(BaseActiveTask):
             self.action_log.append("Executing decision: replace_task.")
             await self.stop(final_result=f"REPLACE_TASK: {decision.new_goal}")
             return f"Current plan stopped. Requesting new plan for goal: '{decision.new_goal}'"
+
+        elif decision.action == "refactor_and_generalize":
+            self.action_log.append(
+                f"Executing decision: refactor_and_generalize. Context: '{decision.generalization_context}'",
+            )
+            logger.debug(
+                "Refactor and generalize triggered. Proceeding to Phase 2 implementation.",
+            )
+
+            main_plan_name = self._get_main_function_name() or "main_plan"
+            monolithic_code = self.function_source_map.get(
+                main_plan_name,
+                self.plan_source_code,
+            )
+
+            refactor_prompt = prompt_builders.build_refactor_prompt(
+                monolithic_code=monolithic_code,
+                generalization_request=decision.generalization_context,
+                tools=self.planner.tools,
+            )
+
+            refactored_script = await llm_call(
+                self.plan_generation_client,
+                refactor_prompt,
+            )
+            clean_refactored_script = (
+                refactored_script.strip()
+                .replace("```python", "")
+                .replace("```", "")
+                .strip()
+            )
+
+            self.action_log.append("Replacing old plan with newly refactored version.")
+            self.replay_keys = list(self.execution_key_log)
+            self.execution_key_log.clear()
+
+            self.plan_source_code = self.planner._sanitize_code(
+                clean_refactored_script,
+                self,
+            )
+            self.planner._load_plan_module(self)
+
+            if self._execution_task and not self._execution_task.done():
+                self._execution_task.cancel()
+                try:
+                    await self._execution_task
+                except asyncio.CancelledError:
+                    pass
+            self._execution_task = asyncio.create_task(self._initialize_and_run())
+            return "Plan successfully refactored. Resuming execution with the new modular plan."
 
         elif decision.action == "explore_detached":
             self.action_log.append(
@@ -1560,7 +1671,7 @@ class HierarchicalPlan(BaseActiveTask):
                 )
 
                 merge_prompt = prompt_builders.build_sandbox_merge_prompt(
-                    main_goal=self.goal or "No specific goal set",
+                    main_goal=self.goal or "This is a teaching session",
                     main_plan_source=self.plan_source_code
                     or "No plan source available",
                     sandbox_goal=decision.new_goal,
@@ -1644,6 +1755,9 @@ class HierarchicalPlan(BaseActiveTask):
 
         elif decision.action == "complete_task":
             self.action_log.append("Executing decision: complete_task.")
+            if self._state == _HierarchicalPlanState.PAUSED:
+                self._set_state(_HierarchicalPlanState.COMPLETED)
+
             if self.is_teaching_session:
                 self.is_teaching_session = False
                 self._set_state(_HierarchicalPlanState.COMPLETED)
@@ -1784,8 +1898,6 @@ class HierarchicalPlan(BaseActiveTask):
                 _HierarchicalPlanState.PAUSED,
                 _HierarchicalPlanState.RUNNING,
             )
-        if name == "resolve_escalation_with_new_goal":
-            return self._state == _HierarchicalPlanState.PAUSED_FOR_ESCALATION
         return False
 
     @property
@@ -1804,7 +1916,6 @@ class HierarchicalPlan(BaseActiveTask):
             "ask",
             "modify_plan",
             "interject",
-            "resolve_escalation_with_new_goal",
         ]
         for method_name in potential_tools:
             if self._is_valid_method(method_name):
@@ -2058,6 +2169,7 @@ class HierarchicalPlanner(BasePlanner):
                 "tuple",
                 "range",
                 "type",
+                "object",
                 "bytes",
                 "frozenset",
                 "isinstance",
@@ -2135,8 +2247,27 @@ class HierarchicalPlanner(BasePlanner):
 
         async def request_clarification_primitive(question: str) -> str:
             """Allows the plan to ask for clarification during execution."""
-            await plan.clarification_up_q.put(question)
-            return await plan.clarification_down_q.get()
+            if not plan.clarification_enabled:
+                raise RuntimeError("Clarification is not supported in this context.")
+            plan.action_log.append(f"Asking clarification: {question}")
+            call_repr = f"request_clarification('{question}')"
+            try:
+                await asyncio.wait_for(
+                    plan.clarification_up_q.put(question),
+                    timeout=5,
+                )
+                answer = await asyncio.wait_for(
+                    plan.clarification_down_q.get(),
+                    timeout=120,
+                )
+            except asyncio.TimeoutError:
+                raise FatalVerificationError(
+                    "Timed out waiting for user clarification.",
+                )
+            plan.action_log.append(f"Received clarification: {answer}")
+            interaction_to_log = ("tool_call", call_repr, answer)
+            plan.interaction_stack[-1].append(interaction_to_log)
+            return answer
 
         plan.execution_namespace.clear()
         plan.execution_namespace.update(sandbox_globals)
@@ -2176,6 +2307,131 @@ class HierarchicalPlanner(BasePlanner):
 
         self._load_plan_module(plan)
 
+    async def _ensure_precondition(
+        self,
+        plan: HierarchicalPlan,
+        function_name: str,
+    ) -> None:
+        """
+        Checks and enforces the precondition for a function before execution.
+        This is the core of the proactive state drift correction mechanism.
+
+        Args:
+            plan: The active HierarchicalPlan instance.
+            function_name: The name of the function whose precondition needs to be checked.
+        """
+        precondition = self.function_manager.get_precondition(
+            function_name=function_name,
+        )
+
+        if not precondition or precondition.get("status") == "not_applicable":
+            return
+
+        logger.info(f"PRECONDITION CHECK for '{function_name}': {precondition}")
+        plan.action_log.append(
+            f"Verifying precondition for '{function_name}': {precondition}",
+        )
+
+        if url_precondition := precondition.get("url"):
+            try:
+                current_url = await self.action_provider.browser.get_current_url()
+                if current_url != url_precondition:
+                    logger.warning(
+                        f"URL DRIFT: Expected '{url_precondition}', was '{current_url}'. Navigating.",
+                    )
+                    plan.action_log.append(
+                        f"STATE DRIFT: Correcting URL from '{current_url}' to '{url_precondition}'.",
+                    )
+                    await self.action_provider.browser.navigate(url_precondition)
+            except Exception as e:
+                logger.error(
+                    f"Failed to enforce URL precondition for {function_name}: {e}",
+                )
+
+        if description_precondition := precondition.get("description"):
+            try:
+                page_analysis = await self.action_provider.browser.observe(
+                    "Analyze current page for state verification.",
+                    response_format=PageAnalysis,
+                )
+                screenshot = await self.action_provider.browser.get_screenshot()
+
+                verification_prompt = prompt_builders.build_state_verification_prompt(
+                    precondition=precondition,
+                    page_analysis=page_analysis,
+                )
+                plan.verification_client.set_response_format(
+                    StateVerificationDecision,
+                )
+                decision_str = await llm_call(
+                    plan.verification_client,
+                    verification_prompt,
+                    screenshot=screenshot,
+                )
+                verification_decision = StateVerificationDecision.model_validate_json(
+                    decision_str,
+                )
+
+                if verification_decision.matches:
+                    logger.info(
+                        f"PRECONDITION MET for '{function_name}': {verification_decision.reason}",
+                    )
+                    return
+
+                logger.warning(
+                    f"STATE DRIFT for '{function_name}': {verification_decision.reason}. Generating correction script.",
+                )
+                plan.action_log.append(
+                    f"STATE DRIFT for '{function_name}': {verification_decision.reason}",
+                )
+
+                correction_prompt = prompt_builders.build_proactive_correction_prompt(
+                    precondition=precondition,
+                    current_url=page_analysis.url,
+                    current_page_analysis=page_analysis,
+                    has_current_screenshot=screenshot is not None,
+                    tools=self.tools,
+                )
+                plan.course_correction_client.set_response_format(
+                    CourseCorrectionDecision,
+                )
+                correction_str = await llm_call(
+                    plan.course_correction_client,
+                    correction_prompt,
+                    screenshot=screenshot,
+                )
+                correction_decision = CourseCorrectionDecision.model_validate_json(
+                    correction_str,
+                )
+
+                if (
+                    correction_decision.correction_needed
+                    and correction_decision.correction_code
+                ):
+                    plan.action_log.append(
+                        f"PROACTIVE CORRECTION: Running script to meet precondition.",
+                    )
+                    await self._execute_course_correction(
+                        plan,
+                        correction_decision.correction_code,
+                    )
+                    logger.info(
+                        f"Proactive course correction for '{function_name}' completed.",
+                    )
+                else:
+                    logger.warning(
+                        "State drift detected, but LLM decided no correction was needed or failed to provide code.",
+                    )
+
+            except Exception as e:
+                logger.error(
+                    f"Error during proactive state correction for '{function_name}': {e}",
+                    exc_info=True,
+                )
+            finally:
+                plan.verification_client.reset_response_format()
+                plan.course_correction_client.reset_response_format()
+
     def _create_verify_decorator(self, plan: HierarchicalPlan):
         """
         Creates the @verify decorator for a given plan instance.
@@ -2205,9 +2461,23 @@ class HierarchicalPlanner(BasePlanner):
                 )
                 plan.call_stack.append(func_name)
                 plan.interaction_stack.append([])
+
+                entry_screenshot = None
+                if "action_provider.browser" in plan.plan_source_code:
+                    try:
+                        entry_screenshot = (
+                            await self.action_provider.browser.get_screenshot()
+                        )
+                    except Exception as e:
+                        logger.warning(
+                            f"Could not capture entry screenshot for '{func_name}': {e}",
+                        )
                 logger.info(f"VERIFY: Entering '{func_name}'")
                 parent_action_counter = plan.runtime.action_counter
                 plan.runtime.action_counter = 0
+                plan.runtime.cache_miss_counter = 0
+
+                await self._ensure_precondition(plan, func_name)
 
                 try:
                     last_error_reason = ""
@@ -2225,6 +2495,7 @@ class HierarchicalPlanner(BasePlanner):
                                 args,
                                 kwargs,
                                 plan.interaction_stack[-1],
+                                entry_screenshot=entry_screenshot,
                             )
                             return result
 
@@ -2328,6 +2599,7 @@ class HierarchicalPlanner(BasePlanner):
         args,
         kwargs,
         interactions: list,
+        entry_screenshot: Optional[bytes] = None,
     ):
         """
         Executes one function call and verifies its outcome.
@@ -2339,6 +2611,7 @@ class HierarchicalPlanner(BasePlanner):
             args: Positional arguments for the function.
             kwargs: Keyword arguments for the function.
             interactions: A list to log interactions within this step.
+            entry_screenshot: Screenshot captured right when the function was entered.
         """
         result = await fn(*args, **kwargs)
         if inspect.isawaitable(result):
@@ -2359,18 +2632,32 @@ class HierarchicalPlanner(BasePlanner):
             f"VERIFICATION EVIDENCE for '{fn.__name__}':\n{interactions_str}",
         )
 
-        final_screenshot = None
-        if "action_provider.browser" in plan.plan_source_code:
-            final_screenshot = await self.action_provider.browser.get_screenshot()
-        assessment = await self._check_state_against_goal(
-            plan,
-            fn.__name__,
-            fn.__doc__,
-            function_source_code=func_source,
-            interactions=interactions_for_this_step,
-            screenshot=final_screenshot,
-            function_return_value=result,
-        )
+        was_fully_cached = plan.runtime.cache_miss_counter == 0
+
+        if was_fully_cached and plan.replay_keys:
+            logger.info(
+                f"VERIFICATION SKIPPED for '{fn.__name__}' because it was fully executed from cache replay.",
+            )
+            plan.action_log.append(
+                f"Verification for {fn.__name__}: ok (Skipped for cached step)",
+            )
+            assessment = VerificationAssessment(
+                status="ok",
+                reason="Skipped verification for fully cached replay step.",
+            )
+        else:
+            final_screenshot = None
+            if "action_provider.browser" in plan.plan_source_code:
+                final_screenshot = await self.action_provider.browser.get_screenshot()
+            assessment = await self._check_state_against_goal(
+                plan,
+                fn.__name__,
+                fn.__doc__,
+                function_source_code=func_source,
+                interactions=interactions_for_this_step,
+                screenshot=final_screenshot,
+                function_return_value=result,
+            )
         logger.info(
             f"🕵️ VERIFICATION ASSESSMENT for '{fn.__name__}':\n{format_pydantic_model(assessment, indent=2)}",
         )
@@ -2378,6 +2665,29 @@ class HierarchicalPlanner(BasePlanner):
             f"Verification for {fn.__name__}: {assessment.status} - '{assessment.reason}'",
         )
 
+        if assessment.status == "request_clarification":
+            if not assessment.clarification_question:
+                raise FatalVerificationError(
+                    "Verification assessment requested clarification but provided no question.",
+                )
+            plan.action_log.append(
+                f"Verification requires clarification: {assessment.clarification_question}",
+            )
+            user_answer = await plan.execution_namespace["request_clarification"](
+                assessment.clarification_question,
+            )
+            plan.action_log.append(f"Received user clarification: {user_answer}")
+
+            existing_code = plan.clean_function_source_map.get(fn.__name__)
+            await plan._handle_dynamic_implementation(
+                fn.__name__,
+                replan_reason=assessment.reason,
+                failed_interactions=interactions,
+                existing_code_for_modification=existing_code,
+                clarification_question=assessment.clarification_question,
+                clarification_answer=user_answer,
+            )
+            raise _ForcedRetryException("Retrying after receiving user clarification.")
         if assessment.status == "ok":
             try:
 
@@ -2421,7 +2731,7 @@ class HierarchicalPlanner(BasePlanner):
 
             if func_source and self.function_manager and fn.__name__ != "main_plan":
                 try:
-                    func_tree = ast.parse(func_source)
+                    func_tree = ast.parse(plan.clean_function_source_map[fn.__name__])
                     func_node = func_tree.body[0]
 
                     if isinstance(func_node, (ast.FunctionDef, ast.AsyncFunctionDef)):
@@ -2436,10 +2746,40 @@ class HierarchicalPlanner(BasePlanner):
                         include_implementations=True,
                     )
                     is_duplicate = any(
-                        textwrap.dedent(data.get("implementation", "")).strip()
-                        == textwrap.dedent(clean_func_source).strip()
+                        fn.__name__ == data.get("name")
                         for data in existing_funcs.values()
                     )
+
+                    precondition_prompt = prompt_builders.build_precondition_prompt(
+                        function_source_code=clean_func_source,
+                        interactions_log=json.dumps(
+                            interactions_for_this_step,
+                            indent=2,
+                        ),
+                        has_entry_screenshot=entry_screenshot is not None,
+                    )
+
+                    plan.summarization_client.set_response_format(PreconditionDecision)
+                    try:
+                        decision_str = await llm_call(
+                            plan.summarization_client,
+                            precondition_prompt,
+                            screenshot=entry_screenshot,
+                        )
+                        precondition_data = PreconditionDecision.model_validate_json(
+                            decision_str,
+                        )
+                    finally:
+                        plan.summarization_client.reset_response_format()
+
+                    preconditions_for_fm = {}
+                    if precondition_data.status == "ok" and (
+                        precondition_data.url or precondition_data.description
+                    ):
+                        preconditions_for_fm[fn.__name__] = {
+                            "url": precondition_data.url,
+                            "description": precondition_data.description,
+                        }
 
                     if not is_duplicate:
                         plan.action_log.append(
@@ -2450,6 +2790,7 @@ class HierarchicalPlanner(BasePlanner):
                         )
                         self.function_manager.add_functions(
                             implementations=[clean_func_source],
+                            preconditions=preconditions_for_fm,
                         )
                     else:
                         plan.action_log.append(
@@ -2587,6 +2928,9 @@ class HierarchicalPlanner(BasePlanner):
                             )
                     else:
                         plan.action_log.append(
+                            "COURSE CORRECTION: No state deviation detected. Proceeding with reimplementation directly.",
+                        )
+                        logger.info(
                             "COURSE CORRECTION: No state deviation detected. Proceeding with reimplementation directly.",
                         )
 
@@ -2750,6 +3094,15 @@ class HierarchicalPlanner(BasePlanner):
                 else ""
             )
 
+            recent_transcript = None
+            try:
+                # TODO: Add this in case the plan needs the full transcript as context(https://app.clickup.com/t/86c4unzg9)
+                # recent_transcript = await self.action_provider.transcript_manager.ask(
+                #     "Provide a summary of the most recent conversational turns."
+                # )
+                pass
+            except Exception as e:
+                logger.warning(f"Could not fetch recent transcript: {e}")
             prompt = prompt_builders.build_dynamic_implement_prompt(
                 full_plan_source=clean_full_plan_source,
                 call_stack=plan.call_stack,
@@ -2764,6 +3117,10 @@ class HierarchicalPlanner(BasePlanner):
                 existing_code_for_modification=kwargs.get(
                     "existing_code_for_modification",
                 ),
+                clarification_question=kwargs.get("clarification_question"),
+                clarification_answer=kwargs.get("clarification_answer"),
+                recent_transcript=recent_transcript,
+                parent_chat_context=plan.parent_chat_context,
             )
             plan.implementation_client.set_response_format(ImplementationDecision)
             try:
@@ -2834,6 +3191,15 @@ class HierarchicalPlanner(BasePlanner):
         Returns:
             A VerificationAssessment object with the outcome.
         """
+        recent_transcript = None
+        try:
+            # TODO: Add this in case the plan needs the full transcript as context(https://app.clickup.com/t/86c4unzg9)
+            # recent_transcript = await self.action_provider.transcript_manager.ask(
+            #     "Provide a summary of the most recent conversational turns."
+            # )
+            pass
+        except Exception as e:
+            logger.warning(f"Could not fetch recent transcript: {e}")
         prompt = prompt_builders.build_verification_prompt(
             goal=plan.goal,
             function_name=function_name,
@@ -2842,6 +3208,8 @@ class HierarchicalPlanner(BasePlanner):
             interactions=interactions,
             has_browser_screenshot=screenshot is not None,
             function_return_value=function_return_value,
+            recent_transcript=recent_transcript,
+            parent_chat_context=plan.parent_chat_context,
         )
 
         plan.verification_client.set_response_format(VerificationAssessment)

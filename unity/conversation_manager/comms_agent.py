@@ -15,9 +15,10 @@ from unity.conversation_manager.debug_logger import log_job_startup, mark_job_do
 from unity.conversation_manager.comms_actions import (
     _start_call,
     _join_meet_call,
-    _send_email_via_address,
-    _send_sms_message_via_number,
-    _send_whatsapp_message_via_number,
+    Call,
+    send_email,
+    send_sms_message,
+    send_whatsapp_message,
 )
 from unity.conversation_manager.actions import *
 from unity.conversation_manager.events import *
@@ -88,8 +89,8 @@ class CommsAgent:
         start_local: bool = False,
         enabled_tools: list | str | None = "conductor",
         task_context: Dict[str, str] = None,
-        outer_comms_enabled: bool = False,
         user_turn_end_callback: Callable = None,
+        project_name: str = "Assistants",
     ):
         # assistant details
         self.job_name = job_name
@@ -126,13 +127,13 @@ class CommsAgent:
         self.call_mode = False
         self.call_purpose = "general"
         self.task_context = task_context
-        self.outer_comms_enabled = outer_comms_enabled
         self.user_turn_end_callback = user_turn_end_callback
         self.pending_calls = []
 
         # meet conference
         self.meet_id = None
         self.meet_browser = None
+        self.meet_joined = asyncio.Event()
 
         # conductor
         self.conductor = None
@@ -148,6 +149,7 @@ class CommsAgent:
         self.transcript_manager = None
         self.redis = None
         self.broader_context = ""
+        self.project_name = project_name
 
     def _build_enabled_tools_dict(self):
         from unity.common.llm_helpers import AsyncToolUseLoopHandle
@@ -166,13 +168,13 @@ class CommsAgent:
             self.enabled_tools = methods_to_tool_dict(
                 self.conductor.ask,
                 self.conductor.request,
-                # todo: temporary adding them here explicitly
-                self._inner_send_call,
-                self._join_meet,
                 self._start_screen_share,
                 self._stop_screen_share,
-                self._inner_send_email,
-                self._inner_send_sms,
+                self._send_call,
+                self._send_sms,
+                self._send_email,
+                self._send_whatsapp,
+                self._join_meet,
             )
             return
 
@@ -182,8 +184,8 @@ class CommsAgent:
             if tool == "contact":
                 from unity.contact_manager.contact_manager import ContactManager
 
-                manager = ContactManager()
-                tools_list += [manager.ask, manager.update]
+                self.contact_manager = ContactManager()
+                tools_list += [self.contact_manager.ask, self.contact_manager.update]
 
             elif tool == "transcript":
                 if not self.transcript_manager:
@@ -200,37 +202,32 @@ class CommsAgent:
             elif tool == "knowledge":
                 from unity.knowledge_manager.knowledge_manager import KnowledgeManager
 
-                manager = KnowledgeManager()
-                tools_list += [manager.ask, manager.update]
+                self.knowledge_manager = KnowledgeManager()
+                tools_list += [
+                    self.knowledge_manager.ask,
+                    self.knowledge_manager.update,
+                ]
 
             elif tool == "scheduler":
                 from unity.task_scheduler.task_scheduler import TaskScheduler
 
-                manager = TaskScheduler()
-                tools_list += [manager.ask, manager.update]
+                self.task_scheduler = TaskScheduler()
+                tools_list += [self.task_scheduler.ask, self.task_scheduler.update]
 
             elif tool == "comms":
-                tools_list += [self._join_meet]
-                if self.outer_comms_enabled:
-                    tools_list += [
-                        self._outer_send_call,
-                        self._outer_send_sms,
-                        self._outer_send_email,
-                        self._outer_send_whatsapp,
-                    ]
-                else:
-                    tools_list += [
-                        self._inner_send_call,
-                        self._inner_send_sms,
-                        self._inner_send_email,
-                        self._inner_send_whatsapp,
-                    ]
+                tools_list += [
+                    self._send_call,
+                    self._send_sms,
+                    self._send_email,
+                    self._send_whatsapp,
+                    self._join_meet,
+                ]
 
             elif tool == "browser":
                 from unity.planner.hierarchical_planner import HierarchicalPlanner
 
-                planner = HierarchicalPlanner()
-                tools_list += [planner.execute]
+                self.planner = HierarchicalPlanner()
+                tools_list += [self.planner.execute]
 
         self.enabled_tools = methods_to_tool_dict(*tools_list)
 
@@ -370,6 +367,8 @@ class CommsAgent:
                             # await self.meet_browser.act("Click the 'Join' button")
 
                             asyncio.create_task(self.inactivity_check_for_meet())
+                            await asyncio.sleep(5)
+                            self.meet_joined.set()
 
                         continue
                     else:
@@ -582,6 +581,8 @@ class CommsAgent:
             self.past_events = await self.get_bus_events()
 
         if self.call_mode:
+            if self.meet_id:
+                await self.meet_joined.wait()
             return await self.phone_call_llm_run(add_filler=add_filler)
         else:
             return await self.non_phone_call_llm_run()
@@ -727,70 +728,8 @@ class CommsAgent:
 
         await self.meet_browser.act("Click on the 'Stop presenting' button")
 
-    # inner communications
-    async def _inner_send_call(
-        self,
-        purpose: str = "general",
-        task_context: Dict[str, str] = None,
-    ):
-        """
-        Sends a call from the assistant's number to the user's number.
-
-        Args:
-            purpose (str): The purpose of the call. Use 'general' if there is no specific purpose.
-            task_context (Dict[str, str]): The broader task context for the call, with name and description attributes. Use None if there is no task context.
-        """
-        global ONGOING_CALL
-        await _start_call(
-            self.assistant_number,
-            self.user_phone_call_number,
-            purpose,
-            task_context,
-            ongoing_call=ONGOING_CALL,
-        )
-
-    async def _inner_send_sms(self, message: str):
-        """
-        Sends an SMS message from the assistant's number to the user's number.
-
-        Args:
-            message (str): The message content to be sent via SMS.
-        """
-        await _send_sms_message_via_number(
-            self.user_phone_call_number,
-            message,
-        )
-
-    async def _inner_send_email(self, subject: str, message: str):
-        """
-        Sends an email from the assistant's email address to the user's email address.
-
-        Args:
-            subject (str): The subject of the email.
-            message (str): The message content to be sent via email.
-        """
-        await _send_email_via_address(
-            self.user_email,
-            subject,
-            message,
-        )
-
-    async def _inner_send_whatsapp(self, message: str, reply_to_user: bool = False):
-        """
-        Sends a WhatsApp message from the assistant's number to the user's number.
-
-        Args:
-            message (str): The message content to be sent via WhatsApp.
-            reply_to_user (bool): `True` if replying to user's message. `False` if starting a new conversation.
-        """
-        await _send_whatsapp_message_via_number(
-            self.user_number,
-            message,
-            reply_to_user,
-        )
-
     # outer communications
-    async def _outer_send_call(
+    async def _send_call(
         self,
         to_number: str,
         purpose: str = "general",
@@ -804,62 +743,54 @@ class CommsAgent:
             purpose (str): The purpose of the call. Use 'general' if there is no specific purpose.
             task_context (Dict[str, str]): The broader task context for the call, with name and description attributes. Use None if there is no task context.
         """
-        global ONGOING_CALL
-        await _start_call(
-            self.assistant_number,
+        await Call.create(
             to_number,
             purpose,
             task_context,
-            ongoing_call=ONGOING_CALL,
+            tools=methods_to_tool_dict(self.contact_manager.ask),
         )
 
-    async def _outer_send_sms(self, to_number: str, message: str):
-        """
-        Sends an SMS message from the assistant's number to the user's number.
-
-        Args:
-            to_number (str): The number to send the SMS to prefixed with +.
-            message (str): The message content to be sent via SMS.
-        """
-        await _send_sms_message_via_number(
-            to_number,
-            message,
-        )
-
-    async def _outer_send_email(self, to_email: str, subject: str, message: str):
-        """
-        Sends an email from the assistant's email address to the user's email address.
-
-        Args:
-            to_email (str): The email address to send the email to in the format of example@example.com.
-            subject (str): The subject of the email.
-            message (str): The message content to be sent via email.
-        """
-        await _send_email_via_address(
-            to_email,
-            subject,
-            message,
-        )
-
-    async def _outer_send_whatsapp(
+    async def _send_sms(
         self,
-        to_number: str,
-        message: str,
-        reply_to_user: bool = False,
+        description: str,
+        parent_chat_context: list[dict] | None = None,
+    ):
+        """
+        Sends an SMS message from the assistant's number to the intended recipient.
+
+        Args:
+            description (str): The description of the contact and content of the SMS message.
+            parent_chat_context (list[dict]): The parent chat context.
+        """
+        await send_sms_message(description, parent_chat_context)
+
+    async def _send_email(
+        self,
+        description: str,
+        parent_chat_context: list[dict] | None = None,
+    ):
+        """
+        Sends an email from the assistant's email address to the intended recipient.
+
+        Args:
+            description (str): The description of the contact and content of the email.
+            parent_chat_context (list[dict]): The parent chat context.
+        """
+        await send_email(description, parent_chat_context)
+
+    async def _send_whatsapp(
+        self,
+        description: str,
+        parent_chat_context: list[dict] | None = None,
     ):
         """
         Sends a WhatsApp message from the assistant's number to the user's number.
 
         Args:
-            to_number (str): The number to send the WhatsApp message to prefixed with +.
-            message (str): The message content to be sent via WhatsApp.
-            reply_to_user (bool): `True` if replying to user's message. `False` if starting a new conversation.
+            description (str): The description of the WhatsApp message.
+            parent_chat_context (list[dict]): The parent chat context.
         """
-        await _send_whatsapp_message_via_number(
-            to_number,
-            message,
-            reply_to_user,
-        )
+        await send_whatsapp_message(description, parent_chat_context)
 
     async def wait_for_seconds_or_next_event(self, time: int): ...
 
@@ -886,6 +817,7 @@ class CommsAgent:
         self.assistant_region = payload["assistant_region"]
         self.assistant_about = payload["assistant_about"]
         self.assistant_number = payload["assistant_number"]
+        self.assistant_email = payload["assistant_email"]
         self.user_name = payload["user_name"]
         self.user_number = payload["user_number"]
         self.user_phone_call_number = payload["user_phone_number"]
@@ -985,6 +917,7 @@ class CommsAgent:
             if not unity.ASSISTANT:
                 assistant_id = os.environ.get("ASSISTANT_ID", "0")
                 unity.init(
+                    project_name=self.project_name,
                     assistant_id=int(assistant_id.replace("default-assistant-", "")),
                     default_assistant={
                         **DEFAULT_ASSISTANT_PAYLOAD,
@@ -1122,6 +1055,7 @@ class CommsAgent:
                 self.meet_browser.stop()
                 self.meet_browser = None
                 self.meet_id = None
+                self.meet_joined.clear()
 
             if self.call_proc:
                 self.cleanup_call_proc()

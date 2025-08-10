@@ -244,6 +244,15 @@ def _build_initial_plan_rules_and_examples(
             async def my_func():
                 await action_provider.browser_navigate("...")
             ```
+
+         12. **Requesting Clarification:**
+            ```python
+            # ✅ CORRECT: Call as a global function
+            destination = await request_clarification("What is your destination city?")
+
+            # ❌ WRONG: Do not call it on action_provider
+            # destination = await action_provider.request_clarification(...)
+            ```
         """,
     )
 
@@ -813,6 +822,28 @@ def _build_initial_plan_rules_and_examples(
 
             return analysis_results
         ```
+
+        **Example: Proactive Clarification**
+        This example shows how to generate a plan that asks for required information before acting.
+        ```python
+        # This plan is for a vague goal like "Book a hotel for me."
+        # The LLM knows it's missing key details, so it uses the request_clarification primitive.
+        @verify
+        async def get_booking_details_from_user() -> dict:
+            "\"\"\"Asks the user for all necessary details to book a hotel.\"\"\""
+            city = await request_clarification("Sure, I can book a hotel. What city are you traveling to?")
+            check_in = await request_clarification("What is your check-in date?")
+            check_out = await request_clarification("And what is your check-out date?")
+            return {{"city": city, "check_in": check_in, "check_out": check_out}}
+
+        @verify
+        async def main_plan():
+            "\"\"\"Main plan to book a hotel after gathering user input.\"\"\""
+            details = await get_booking_details_from_user()
+            # ... now the plan would proceed to use these details for browser automation ...
+            print(f"Searching for hotels in {{details['city']}} from {{details['check_in']}} to {{details['check_out']}}.")
+            return f"Search initiated for {{details['city']}}."
+        ```
     """,
     )
 
@@ -993,6 +1024,16 @@ def _build_dynamic_implement_rules_and_examples(
             async def my_func():
                 result = await action_provider.browser_navigate("https://example.com")
                 data = await action_provider.browser_observe("Get page title")
+            ```
+
+        9. **Requesting Clarification:**
+            ```python
+            # ✅ CORRECT: Call as a global function
+            destination = await request_clarification("What is your destination city?")
+
+            # ❌ WRONG: Do not call it on action_provider
+            # destination = await action_provider.request_clarification(...)
+            ```
             ```
         """,
     )
@@ -1470,11 +1511,15 @@ def build_dynamic_implement_prompt(
     function_docstring: str,
     parent_code: str,
     browser_state: str | None,
+    clarification_question: str | None,
+    clarification_answer: str | None,
     has_browser_screenshot: bool,
     replan_context: str,
     *,
     tools: Dict[str, Callable],
     existing_code_for_modification: Optional[str] = None,
+    recent_transcript: Optional[str] = None,
+    parent_chat_context: Optional[list] = None,
 ) -> str:
     """Builds the system prompt for dynamically implementing or modifying a function."""
 
@@ -1512,6 +1557,44 @@ def build_dynamic_implement_prompt(
             {replan_context}
             ---
             """,
+        )
+
+    clarification_section = ""
+    if clarification_question and clarification_answer:
+        clarification_section = textwrap.dedent(
+            f"""
+            ---
+            ### User Clarification Provided
+            CRITICAL: The plan was previously stuck, but the user has provided the following clarification. You MUST use this new information to fix the function.
+
+            - **Your Question:** "{clarification_question}"
+            - **User's Answer:** "{clarification_answer}"
+            ---
+            """,
+        )
+
+    transcript_section = ""
+    if recent_transcript:
+        transcript_section = textwrap.dedent(
+            f"""
+        ---
+        ### Recent Conversation Transcript
+        ```
+        {recent_transcript}
+        ```
+        """,
+        )
+
+    chat_context_section = ""
+    if parent_chat_context:
+        chat_context_section = textwrap.dedent(
+            f"""
+        ---
+        ### Full Parent Chat Context
+        ```json
+        {json.dumps(parent_chat_context, indent=2)}
+        ```
+        """,
         )
 
     browser_context_section = ""
@@ -1563,6 +1646,9 @@ def build_dynamic_implement_prompt(
         3.  **`replan_parent`**: Escalate the failure to the calling function. Choose this if the current function is **impossible to implement** because of a mistake made in a *previous* step. For example, if the goal is "apply filters" but the page has no filter controls, the error lies with the parent function that navigated to the wrong page or failed to get to the right state.
 
         {modification_instructions}
+        {clarification_section}
+        {transcript_section}
+        {chat_context_section}
         {context_section}
 
         ### Situation Analysis
@@ -1587,6 +1673,8 @@ def build_verification_prompt(
     interactions: list,
     has_browser_screenshot: bool,
     function_return_value: Any | None,
+    recent_transcript: Optional[str] = None,
+    parent_chat_context: Optional[list] = None,
 ) -> str:
     """
     Builds the prompt for verifying a function's execution.
@@ -1636,6 +1724,32 @@ The full source code of the function that was just executed is provided below. A
 ```
 """
 
+    transcript_section = ""
+    if recent_transcript:
+        transcript_section = textwrap.dedent(
+            f"""
+        ---
+        ### Recent Conversation Transcript
+        The following is a summary of the most recent conversation turns, which may provide context for the function's execution.
+        ```
+        {recent_transcript}
+        ```
+        """,
+        )
+
+    chat_context_section = ""
+    if parent_chat_context:
+        chat_context_section = textwrap.dedent(
+            f"""
+        ---
+        ### Full Parent Chat Context
+        This is the broader conversation history that this plan is a part of.
+        ```json
+        {json.dumps(parent_chat_context, indent=2)}
+        ```
+        """,
+        )
+
     return textwrap.dedent(
         f"""
         You are a meticulous verification agent. Your task is to assess if the executed actions successfully achieved the function's intended purpose and have made **meaningful and accurate progress** toward the **Overall User Goal**.
@@ -1646,6 +1760,8 @@ The full source code of the function that was just executed is provided below. A
 
         {source_code_section}
         {screenshot_context_section}
+        {transcript_section}
+        {chat_context_section}
 
         **Execution Log (Tool Interactions):**
         {interactions_log}
@@ -1665,54 +1781,12 @@ The full source code of the function that was just executed is provided below. A
         - `ok`: The function's purpose was fully and correctly achieved.
         - `reimplement_local`: A tactical error occurred. The goal is correct, but the actions were wrong. The function needs to be re-written.
         - `replan_parent`: A strategic error occurred. The function itself is flawed or was called at the wrong time. The parent function needs to be replanned.
+        - `request_clarification`: The function's goal is correct, but you need more information from the user to fix it. If you choose this, you MUST provide a clear, specific `clarification_question`.
         - `fatal_error`: An unrecoverable error occurred that prevents any further progress.
 
         **Your Response:**
         - status: Choose one of the valid status values above
         - reason: Provide a clear, concise explanation for your assessment
-        """,
-    )
-
-
-def build_plan_surgery_prompt(
-    current_code: str,
-    request: str,
-    *,
-    tools: Dict[str, Callable],
-) -> str:
-    """
-    Builds the prompt for modifying an existing plan script.
-
-    Args:
-        current_code: The current source code of the plan.
-        request: The user's modification request.
-        tools: The tools available to the function.
-    Returns:
-        The complete prompt string.
-    """
-    strategy_instruction = "Your task is to rewrite the script below to incorporate the user's change request."
-    tool_usage_instruction = "Use the `action_provider` global object to interact with the environment. Available tools and their handle APIs have been described in the rules below."
-    rules_and_examples = _build_initial_plan_rules_and_examples(
-        tools,
-        strategy_instruction,
-        tool_usage_instruction,
-    )
-
-    return textwrap.dedent(
-        f"""
-        You are an expert Python programmer specializing in code modification.
-
-        **Modification Request:**
-        "{request}"
-
-        ---
-        ### Current Script
-        ```python
-        {current_code}
-        ```
-        {rules_and_examples}
-
-        Begin your response now. Your response must start immediately with the code.
         """,
     )
 
@@ -1871,17 +1945,22 @@ def build_interjection_prompt(
     - If YES, choose the `replace_task` action. For the `new_goal`, provide the user's new high-level objective.
     - If NO, proceed to Question 3.
 
-    **Question 3: Is the request a direct modification, a new step, or a correction for the *current* task?**
-    - Example: The plan is researching on a website, and the user says, "No, use my LinkedIn profile for this research," or "Now, put those findings into a presentation."
-    - If YES, choose the `modify_task` action. For `modification_request`, rephrase the user's instruction as a clear, actionable request for the planner to implement. For `target_function`, identify the most relevant function from the call stack to modify.
+    **Question 3: Is the user asking to generalize, repeat, or refactor the previously taught steps for a new subject or context?**
+    - Example: After teaching a multi-step process for one item, the user says, "Now do the same for 'Sam Parker'," or "Great, now apply that to all other files in the folder."
+    - If YES, choose the `refactor_and_generalize` action. For `generalization_context`, provide the new context (e.g., "Sam Parker", "all other files in the folder").
     - If NO, proceed to Question 4.
 
-    **Question 4: Is the request a temporary, exploratory side-quest that doesn't alter the main goal?**
-    - Example: The plan is creating a presentation, and the user says, "Quickly run the slide show so I can see how it looks."
-    - If YES, choose the `explore_detached` action. For `new_goal`, provide the specific, temporary goal of the side-quest.
+    **Question 4: Is the request a direct modification, a new step, or a correction for the *current* task?**
+    - Example: The plan is researching on a website, and the user says, "No, use my LinkedIn profile for this research," or "Now, put those findings into a presentation."
+    - If YES, choose the `modify_task` action. For `modification_request`, rephrase the user's instruction as a clear, actionable request for the planner to implement. For `target_function`, identify the most relevant function from the call stack to modify.
     - If NO, proceed to Question 5.
 
-    **Question 5: Is the user's intent unclear, or does it require more information to proceed confidently?**
+    **Question 5: Is the request a temporary, exploratory side-quest that doesn't alter the main goal?**
+    - Example: The plan is creating a presentation, and the user says, "Quickly run the slide show so I can see how it looks."
+    - If YES, choose the `explore_detached` action. For `new_goal`, provide the specific, temporary goal of the side-quest.
+    - If NO, proceed to Question 6.
+
+    **Question 6: Is the user's intent unclear, or does it require more information to proceed confidently?**
     - Example: The user says, "Make it better."
     - If YES, choose the `clarify` action. For `clarification_question`, formulate a concise, multiple-choice or open-ended question to ask the user.
 
@@ -2054,4 +2133,199 @@ def build_sandbox_merge_prompt(
 
     Respond ONLY with a JSON object matching the `SandboxMergeDecision` schema.
     """,
+    )
+
+
+def build_refactor_prompt(
+    monolithic_code: str,
+    generalization_request: str,
+    *,
+    tools: Dict[str, Callable],
+) -> str:
+    """
+    Builds the prompt for refactoring a monolithic plan into modular functions.
+
+    Args:
+        monolithic_code: The source code of the current single-function plan.
+        generalization_request: The user's request to generalize the logic.
+        tools: The available tools for the planner.
+
+    Returns:
+        The complete prompt string for the refactoring LLM call.
+    """
+    strategy_instruction = "Your task is to rewrite the script below to incorporate the user's change request."
+    tool_usage_instruction = "Use the `action_provider` global object to interact with the environment. Available tools and their handle APIs have been described in the rules below."
+    rules_and_examples = _build_initial_plan_rules_and_examples(
+        tools,
+        strategy_instruction,
+        tool_usage_instruction,
+    )
+
+    return textwrap.dedent(
+        f"""
+        You are an expert Python programmer specializing in code refactoring and generalization.
+        Your task is to refactor the provided monolithic Python function into a set of smaller, logical, and reusable `async def` helper functions.
+
+        **User's Generalization Request:**
+        "{generalization_request}"
+
+        **Current Monolithic Code to Refactor:**
+        ```python
+        {monolithic_code}
+        ```
+
+        **Your Task & Instructions:**
+        1.  **Identify the Core Logic:** Analyze the user's request and the existing code to identify the central, repeated sequence of actions (e.g., the steps to process one item).
+        2.  **Create a Parameterized Function:** Encapsulate this core logic within a new, parameterized helper function. For example, `async def process_item(item_name: str)`.
+        3.  **Rewrite `main_plan`:** Rewrite the `main_plan` to be a clean coordinator. It should preserve the logic for the original subject that was taught but should now call your new helper functions, incorporating the user's generalization request.
+        4.  **Follow All Rules:** Your final output must adhere to all the established rules for plan creation, including docstrings, async usage, and placing imports inside functions.
+
+        {rules_and_examples}
+
+        Begin your response now. Your response must be a single, complete Python code block containing the fully refactored script.
+        """,
+    )
+
+
+def build_precondition_prompt(
+    function_source_code: str,
+    interactions_log: str,
+    has_entry_screenshot: bool,
+) -> str:
+    """
+    Builds the prompt to determine the precondition for a function to run.
+
+    Args:
+        function_source_code: The source code of the function.
+        interactions_log: A JSON string of the tool interactions during the function's run.
+        has_entry_screenshot: Whether a screenshot of the browser is provided.
+    """
+    screenshot_section = ""
+    if has_entry_screenshot:
+        screenshot_section = textwrap.dedent(
+            """
+            ---
+            ### CRITICAL: Visual Context (Entry Screenshot)
+            You have been provided with a screenshot of the browser's state at the moment this function was called.
+            - **Use this image as the primary source of truth** to determine the necessary starting conditions.
+            - Analyze the image to describe the required visible elements (dialogs, buttons, forms, etc.).
+            """,
+        )
+
+    return textwrap.dedent(
+        f"""
+        You are a state analysis expert for an autonomous web agent.
+        A function that interacts with a web browser has just executed successfully. Your task is to describe the necessary **precondition** for this function to run correctly based on its first few actions and the visual state when it started.
+
+        **Function Source Code:**
+        ```python
+        {function_source_code}
+        ```
+
+        **Execution Interaction Log:**
+        ```json
+        {interactions_log}
+        ```
+
+        {screenshot_section}
+
+        **Your Task:**
+        1.  Analyze the function's code, its interactions, and the entry screenshot.
+        2.  If the first action is `browser_navigate`, your primary goal is to populate the `precondition.url` field.
+        3.  If the first action is `browser_act` or `browser_observe`, your primary goal is to populate the `precondition.description` field with a clear, verifiable description of the page state seen in the screenshot.
+        4.  If the function does not interact with the browser at all, the status should be "not_applicable".
+
+        Respond with ONLY the JSON object matching the `PreconditionDecision` schema.
+        - `status`: "ok" if a precondition was identified, or "not_applicable" if none is needed.
+        - `url`: If status is "ok", the URL of the page that must be present for the function to run. This is highly recommended.
+        - `description`: If status is "ok", a description of the page state that must be present for the function to run. This is required if URL is not provided.
+        """,
+    )
+
+
+def build_state_verification_prompt(
+    precondition: Dict[str, Any],
+    page_analysis: Any,
+) -> str:
+    """
+    Builds the prompt for an LLM to verify if the current browser state meets a required precondition.
+    """
+    precondition_str = json.dumps(precondition, indent=2)
+    page_analysis_str = page_analysis.model_dump_json(indent=2)
+    return textwrap.dedent(
+        f"""
+        You are a meticulous state verifier for an autonomous web agent. Your task is to determine if the current state of the web browser satisfies a function's required precondition.
+
+        ---
+        ### Analysis Task
+
+        1.  **Required Precondition (The Goal State):**
+            ```json
+            {precondition_str}
+            ```
+
+        2.  **Current Browser State (What you see now):**
+            ```json
+            {page_analysis_str}
+            ```
+        3.  **Visual Evidence:** A screenshot of the current browser page is provided. This is your primary source of truth.
+
+        **Your Decision:**
+        Compare the **Required Precondition** against the **Current Browser State**.
+        - Does the current URL match the required URL (if specified)?
+        - More importantly, does the visual content of the page (from the screenshot) match the required `description`?
+        - For example, if the description is "The 'Admin Panel' dialog must be open", you must visually confirm that this dialog is present and visible in the screenshot.
+
+        Respond with ONLY the JSON object matching the `StateVerificationDecision` schema.
+        """,
+    )
+
+
+def build_proactive_correction_prompt(
+    precondition: Dict[str, Any],
+    current_url: str,
+    current_page_analysis: Any,
+    *,
+    tools: Dict[str, Any],
+) -> str:
+    """
+    Builds the prompt for the LLM to generate a script to get from the current state to a target precondition state.
+    """
+    target_state_str = json.dumps(precondition, indent=2)
+    current_page_analysis_str = current_page_analysis.model_dump_json(indent=2)
+    scripting_rules = _build_simple_script_rules(tools)
+
+    return textwrap.dedent(
+        f"""
+        You are a state recovery specialist for an autonomous web agent. The agent needs to achieve a specific browser state (a "precondition") before it can execute a function.
+
+        Your task is to write a short Python script to bridge the gap between the current state and the target state.
+
+        ---
+        ### State Analysis
+
+        **1. The "Current" State (Where you are now):**
+        - **URL:** `{current_url}`
+        - **Page Analysis:**
+          ```json
+          {current_page_analysis_str}
+          ```
+        - **Screenshot:** A screenshot of this current state is provided.
+
+        **2. The "Target" Precondition (Where you need to be):**
+        ```json
+        {target_state_str}
+        ```
+
+        ---
+        ### Your Task
+        Write a `correction_code` snippet to get from the "Current" state to the "Target" state.
+        - **Goal:** Your script should perform the necessary actions (e.g., clicking a button, filling a field, navigating) to satisfy the target precondition's `description`.
+        - **Example:** If the current page is a dashboard and the target is "The 'Create New User' dialog must be open," your script should be `await action_provider.browser_act("Click the 'Create New User' button")`.
+        - **Keep it simple!** Only write the code needed to achieve the precondition.
+
+        {scripting_rules}
+
+        Respond with ONLY the JSON object matching the `CourseCorrectionDecision` schema. Set `correction_needed` to `true` if you write a script.
+        """,
     )

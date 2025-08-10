@@ -50,6 +50,34 @@ Once the sandbox starts you will see a prompt and a small help table.  The most 
 * `help` / `h`          Show the in-session command reference.
 * `quit`                Exit the sandbox.
 
+### Steering controls (during a running request)
+While an `ask` call is running, you can steer it in-flight. Type these commands (they only work while a request is active):
+
+- **/i <text> | /interject <text> | plain text**: Interject guidance that the tool-loop should incorporate immediately. If you don’t prefix with `/`, any plain text you type during a run is treated as an interjection.
+- **/pause | /p**: Pause the running call.
+- **/resume**: Resume a paused call.
+- **/ask <question> | /? <question>**: Ask a read-only side question about the currently running call; the answer prints inline without changing the main call’s state.
+- **/freeform <text>**: Route free-form text to the best steering command (ask/interject/pause/resume/stop/status).
+- **/r | /record** (voice mode only): Record a voice utterance and route it via freeform. Recording auto-cancels if the task finishes mid-capture.
+- **/stop | /cancel | /s | /c**: Abort the running call.
+- **/status | /st**: Print whether the call is still running or already done.
+- **/help | /h**: Show the one-line controls hint.
+
+Notes:
+- Steering commands are ignored when no call is running; you’ll see a small hint if you try.
+- In voice mode, during TTS playback you can press Enter to skip. Steering commands (including `/r`) are entered after playback finishes.
+
+Example:
+```text
+command> When did Dan last speak with Julia on the phone?
+Controls: /i <text>, /pause, /resume, /ask <q>, /freeform <text>, /r, /stop, /help
+/i include messages from the last 60 days only
+/ask which channels are being searched right now?
+/pause
+/resume
+/status
+```
+
 Example session (text mode)
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ```text

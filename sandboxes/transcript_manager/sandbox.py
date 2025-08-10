@@ -43,9 +43,11 @@ from sandboxes.utils import (  # shared helpers reused in other sandboxes
     transcribe_deepgram as _transcribe_deepgram,
     speak as _speak,
     await_with_interrupt as _await_with_interrupt,
+    steering_controls_hint as _steer_hint,
     build_cli_parser,
     activate_project,
     _wait_for_tts_end as _wait_tts_end,
+    configure_sandbox_logging,
 )
 
 LG = logging.getLogger("transcript_sandbox")
@@ -144,7 +146,8 @@ async def _main_async() -> None:
                     args.project_version,
                 )
 
-    logging.basicConfig(level=logging.INFO, format="%(message)s")
+    # logging via shared helper
+    configure_sandbox_logging(args.log_in_terminal, None, args.log_tcp_port)
     LG.setLevel(logging.INFO)
 
     tm: TranscriptManager = TranscriptManager()
@@ -284,6 +287,13 @@ async def _main_async() -> None:
                     print(f"❌  Failed to generate scenario: {exc}")
                 continue  # back to REPL
 
+            # Ignore steering commands when no request is running
+            if raw.startswith("/"):
+                print(
+                    "(no active request) Steering commands are only available while a call is running.",
+                )
+                continue
+
             # ───────────── remember the user's utterance before dispatch ──────
             _kind, result = await _dispatch_with_context(
                 tm,
@@ -294,10 +304,15 @@ async def _main_async() -> None:
             chat_history.append({"role": "user", "content": raw})
             if args.voice:
                 _speak("Let me take a look, give me a moment")
+                _wait_tts_end()
 
             # ───────────── process result (handle or immediate string) ─────────
             if isinstance(result, SteerableToolHandle):
-                answer = await _await_with_interrupt(result)
+                print(_steer_hint())
+                answer = await _await_with_interrupt(
+                    result,
+                    enable_voice_steering=bool(args.voice),
+                )
                 if isinstance(answer, tuple):  # reasoning steps requested
                     answer, _steps = answer
             else:  # already a string (unlikely path)
@@ -305,6 +320,7 @@ async def _main_async() -> None:
 
             if args.voice:
                 _speak("Okay, that's all done")
+                _wait_tts_end()
             print(f"[{_kind}] → {answer}\n")
 
             # ───────────── remember assistant's reply for follow-up ────────────

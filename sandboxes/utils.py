@@ -34,7 +34,10 @@ import os
 import platform
 import select
 import threading
+import socket
+from queue import SimpleQueue
 import aiohttp
+import logging
 import sys
 import time
 import wave
@@ -94,6 +97,8 @@ c_error_handler = ERROR_HANDLER_FUNC(_py_error_handler)
 # ---------------------------------------------------------------------------
 
 _TTS_LOCK = threading.Lock()
+# Track the current TTS skip event to allow external cancellation
+_CURRENT_TTS_SKIP: Optional[threading.Event] = None
 
 
 def _wait_for_tts_end(start_timeout: float = 0.5, poll: float = 0.05) -> None:
@@ -127,6 +132,28 @@ def noalsaerr():
         yield
 
 
+# New: suppress low-level stderr (e.g. JACK 'server is not running' noise)
+@contextmanager
+def suppress_stderr_fd():
+    """Redirect the process-level stderr FD to os.devnull within the context."""
+    try:
+        # Duplicate original stderr (fd 2)
+        saved_stderr_fd = os.dup(2)
+        with open(os.devnull, "wb") as devnull:
+            os.dup2(devnull.fileno(), 2)
+            yield
+    except Exception:
+        # Best-effort – do not crash callers if redirection fails
+        yield
+    finally:
+        try:
+            if "saved_stderr_fd" in locals():
+                os.dup2(saved_stderr_fd, 2)
+                os.close(saved_stderr_fd)
+        except Exception:
+            pass
+
+
 # ---------------------------------------------------------------------------
 # Simple sine-wave beeps for recording cues
 # ---------------------------------------------------------------------------
@@ -152,18 +179,18 @@ def _generate_tone(
 def _beep(freq: int, duration: float = 0.15) -> None:
     """Play a sine-wave *freq* Hz tone via PortAudio (same path as TTS)."""
     pcm = _generate_tone(freq, duration)
-    with noalsaerr():
+    with noalsaerr(), suppress_stderr_fd():
         pa = pyaudio.PyAudio()
-    stream = pa.open(
-        format=FORMAT,
-        channels=1,
-        rate=SAMPLE_RATE,
-        output=True,
-    )
-    stream.write(pcm)
-    stream.stop_stream()
-    stream.close()
-    pa.terminate()
+        stream = pa.open(
+            format=FORMAT,
+            channels=1,
+            rate=SAMPLE_RATE,
+            output=True,
+        )
+        stream.write(pcm)
+        stream.stop_stream()
+        stream.close()
+        pa.terminate()
 
 
 # ---------------------------------------------------------------------------
@@ -189,16 +216,16 @@ def record_until_enter() -> bytes:
         input("\nPress ↵ to start recording…")
 
         # ───────────── PortAudio set-up ─────────────
-        with noalsaerr():
+        with noalsaerr(), suppress_stderr_fd():
             pa = pyaudio.PyAudio()
-        stream = pa.open(
-            format=FORMAT,
-            channels=CHANNELS,
-            rate=SAMPLE_RATE,
-            input=True,
-            frames_per_buffer=CHUNK,
-        )
-        sample_size = pa.get_sample_size(FORMAT)
+            stream = pa.open(
+                format=FORMAT,
+                channels=CHANNELS,
+                rate=SAMPLE_RATE,
+                input=True,
+                frames_per_buffer=CHUNK,
+            )
+            sample_size = pa.get_sample_size(FORMAT)
 
         frames: List[bytes] = []
         stop = threading.Event()
@@ -223,9 +250,10 @@ def record_until_enter() -> bytes:
         # ───────────── tear-down PortAudio ─────────────
         stop.set()
         thr.join()
-        stream.stop_stream()
-        stream.close()
-        pa.terminate()
+        with suppress_stderr_fd():
+            stream.stop_stream()
+            stream.close()
+            pa.terminate()
 
         # ───────────── cancellation branch ─────────────
         if user_cmd.lower() == "c":
@@ -246,6 +274,124 @@ def record_until_enter() -> bytes:
 
         with open(wav_path, "rb") as f:
             return f.read()
+
+
+# New: interruptible variant used for in-flight steering
+def record_until_enter_interruptible(is_cancelled) -> Optional[bytes]:
+    """
+    Like record_until_enter but cancelable via the is_cancelled() predicate.
+
+    Returns None if cancelled before completion.
+    """
+
+    def _read_line_nonblocking(timeout: float) -> Optional[str]:
+        if platform.system() == "Windows":
+            start_time = time.time()
+            buf: list[str] = []
+            while time.time() - start_time < timeout:
+                if msvcrt.kbhit():  # type: ignore[name-defined]
+                    ch = msvcrt.getche().decode("utf-8")  # type: ignore[name-defined]
+                    if ch == "\r":
+                        print()
+                        return "".join(buf)
+                    buf.append(ch)
+                time.sleep(0.01)
+            return None
+        rlist, _, _ = select.select([sys.stdin], [], [], timeout)
+        if rlist:
+            return sys.stdin.readline().strip()
+        return None
+
+    # Ensure TTS has finished before prompting
+    _wait_for_tts_end()
+
+    print("\nPress ↵ to start recording… (type 'c' then ↵ to cancel)")
+    # Wait for start or cancellation
+    while True:
+        if is_cancelled():
+            print("⚠️  Recording cancelled – task finished.")
+            return None
+        ln = _read_line_nonblocking(0.1)
+        if ln is None:
+            continue
+        if ln.strip().lower() == "c":
+            print("🚫 Cancelled.")
+            return None
+        # Any Enter (incl. empty) starts recording
+        break
+
+    # Set up audio
+    with noalsaerr(), suppress_stderr_fd():
+        pa = pyaudio.PyAudio()
+        stream = pa.open(
+            format=FORMAT,
+            channels=CHANNELS,
+            rate=SAMPLE_RATE,
+            input=True,
+            frames_per_buffer=CHUNK,
+        )
+        sample_size = pa.get_sample_size(FORMAT)
+
+    frames: List[bytes] = []
+    stop = threading.Event()
+
+    def _capture():
+        while not stop.is_set():
+            frames.append(stream.read(CHUNK, exception_on_overflow=False))
+
+    _beep(1000)
+    thr = threading.Thread(target=_capture, daemon=True)
+    thr.start()
+    print("🎙️  Recording… press ↵ to finish (or 'c' + ↵ to abort).")
+
+    # Wait for finish or cancellation
+    while True:
+        if is_cancelled():
+            # Tear down and abort
+            stop.set()
+            thr.join()
+            with suppress_stderr_fd():
+                stream.stop_stream()
+                stream.close()
+                pa.terminate()
+            print("⚠️  Recording cancelled – task finished.")
+            return None
+        ln2 = _read_line_nonblocking(0.1)
+        if ln2 is None:
+            continue
+        if ln2.strip().lower() == "c":
+            stop.set()
+            thr.join()
+            with suppress_stderr_fd():
+                stream.stop_stream()
+                stream.close()
+                pa.terminate()
+            _beep(750)
+            print("🚫 Cancelled.")
+            return None
+        # Any Enter ends recording
+        break
+
+    # Tear down on normal completion
+    stop.set()
+    thr.join()
+    with suppress_stderr_fd():
+        stream.stop_stream()
+        stream.close()
+        pa.terminate()
+
+    _beep(500)
+    print("✅ Recording captured.")
+
+    wav_path = "/tmp/voice_input.wav"
+    with wave.open(wav_path, "wb") as wf:
+        wf.setnchannels(CHANNELS)
+        wf.setsampwidth(sample_size)
+        wf.setframerate(SAMPLE_RATE)
+        wf.writeframes(b"".join(frames))
+
+    with open(wav_path, "rb") as f:
+        return f.read()
 
 
 def transcribe_deepgram(audio_bytes: bytes) -> str:
@@ -278,6 +424,9 @@ async def _speak_async(text: str) -> None:
     # ─────────────── enter-to-skip listener ────────────────
     skip = threading.Event()  # raised when user hits ↵
     listener_done = threading.Event()  # tells the listener to exit
+    # expose skip globally so other parts can cancel speech immediately
+    global _CURRENT_TTS_SKIP
+    _CURRENT_TTS_SKIP = skip
 
     def _listen_enter():
         """Poll stdin so we can shut the thread down cleanly."""
@@ -291,58 +440,61 @@ async def _speak_async(text: str) -> None:
     listener = threading.Thread(target=_listen_enter, daemon=True)
     listener.start()
 
-    # ─────────────── streaming TTS ────────────────
-    async with aiohttp.ClientSession() as session:
-        tts = cartesia.TTS(http_session=session)
+    try:
+        # ─────────────── streaming TTS ────────────────
+        async with aiohttp.ClientSession() as session:
+            tts = cartesia.TTS(http_session=session)
 
-        # Open the PortAudio stream once, before the first frame arrives
-        with noalsaerr():
-            pa = pyaudio.PyAudio()
-        stream = pa.open(
-            format=pyaudio.paInt16,
-            channels=1,
-            rate=tts.sample_rate,  # usually 24 kHz
-            output=True,
-        )
+            # Open the PortAudio stream once, before the first frame arrives
+            with noalsaerr(), suppress_stderr_fd():
+                pa = pyaudio.PyAudio()
+                stream = pa.open(
+                    format=pyaudio.paInt16,
+                    channels=1,
+                    rate=tts.sample_rate,  # usually 24 kHz
+                    output=True,
+                )
 
-        # PortAudio initialisation (and its interaction with JACK) tends to
-        # emit noisy warnings *right here*.  Briefly pause and then print the
-        # skip hint so that it appears **after** those warnings.
-        await asyncio.sleep(1.0)
-        print(f'🗣️ Assistant speaking…\n"{text}"')
-        print("🔇 Press ↵ to skip playback")
+            # PortAudio initialisation (and its interaction with JACK) tends to
+            # emit noisy warnings *right here*.  Briefly pause and then print the
+            # skip hint so that it appears **after** those warnings.
+            await asyncio.sleep(1.0)
+            print(f'🗣️ Assistant speaking…\n"{text}"')
+            print("🔇 Press ↵ to skip playback")
 
-        def _frame_to_pcm(frame: "AudioFrame") -> bytes:
-            """Return raw 16-bit PCM for *any* Cartesia AudioFrame flavour."""
-            if hasattr(frame, "to_pcm_bytes"):  # newest SDK
-                return frame.to_pcm_bytes()
-            if hasattr(frame, "data"):  # mid-2024 builds
-                return bytes(frame.data)
-            if hasattr(frame, "to_wav_bytes"):  # old fallback → strip header
-                return frame.to_wav_bytes()[44:]
-            return bytes(frame)  # last-resort
+            def _frame_to_pcm(frame: "AudioFrame") -> bytes:
+                """Return raw 16-bit PCM for *any* Cartesia AudioFrame flavour."""
+                if hasattr(frame, "to_pcm_bytes"):  # newest SDK
+                    return frame.to_pcm_bytes()
+                if hasattr(frame, "data"):  # mid-2024 builds
+                    return bytes(frame.data)
+                if hasattr(frame, "to_wav_bytes"):  # old fallback → strip header
+                    return frame.to_wav_bytes()[44:]
+                return bytes(frame)  # last-resort
 
-        async with tts.synthesize(text) as synth_stream:
-            async for audio in synth_stream:  # 10-50 ms frames
-                if skip.is_set():
-                    break
-                stream.write(_frame_to_pcm(audio.frame))
+            async with tts.synthesize(text) as synth_stream:
+                async for audio in synth_stream:  # 10-50 ms frames
+                    if skip.is_set():
+                        break
+                    stream.write(_frame_to_pcm(audio.frame))
+            with suppress_stderr_fd():
+                stream.stop_stream()
+                stream.close()
+                pa.terminate()
+    finally:
+        # ─────────────── clean-up ───────────────
+        listener_done.set()
+        listener.join(timeout=0.1)
+        # clear global skip handle now that we're done
+        _CURRENT_TTS_SKIP = None
 
-        stream.stop_stream()
-        stream.close()
-        pa.terminate()
+        if skip.is_set():  # flush the newline the user pressed
+            try:
+                import termios
 
-    # ─────────────── clean-up ───────────────
-    listener_done.set()
-    listener.join(timeout=0.1)
-
-    if skip.is_set():  # flush the newline the user pressed
-        try:
-            import termios
-
-            termios.tcflush(sys.stdin, termios.TCIFLUSH)
-        except Exception:
-            pass
+                termios.tcflush(sys.stdin, termios.TCIFLUSH)
+            except Exception:
+                pass
 
 
 # ────────────────────────────── public shim ────────────────────────────────
@@ -384,6 +536,24 @@ def speak(text: str) -> None:
         # a worker that will release it when done.
         _TTS_LOCK.acquire()
         threading.Thread(target=_run_in_thread, daemon=True).start()
+
+
+def stop_speaking() -> None:
+    """Cancel any in-flight TTS playback immediately if active."""
+    try:
+        # avoid races if called during transitions
+        if _CURRENT_TTS_SKIP is not None:
+            _CURRENT_TTS_SKIP.set()
+    except Exception:
+        pass
+
+
+def is_speaking() -> bool:
+    """Return True if a TTS utterance is currently playing."""
+    try:
+        return _TTS_LOCK.locked()
+    except Exception:
+        return False
 
 
 def input_with_timeout(timeout: float = 0.1) -> Tuple[bool, Optional[str]]:
@@ -530,7 +700,185 @@ def build_cli_parser(description: str) -> argparse.ArgumentParser:
         metavar="IDX",
         help="Project version index to load (default -1 for latest; supports positive and negative indexing)",
     )
+    parser.add_argument(
+        "--log_in_terminal",
+        action="store_true",
+        help="stream logs to terminal in addition to writing .logs.txt (default is file-only)",
+    )
+    parser.add_argument(
+        "--log_tcp_port",
+        type=int,
+        default=-1,
+        metavar="PORT",
+        help="serve logs over TCP on localhost:PORT (default -1 auto-picks an available port; 0 disables; >0 binds requested port)",
+    )
     return parser
+
+
+class _LogBroadcastServer:
+    """Minimal TCP log broadcaster: accepts clients and writes each line to them.
+
+    Designed for local development only (binds to 127.0.0.1). Not for production.
+    """
+
+    def __init__(self, port: int) -> None:
+        self._port = port
+        self._sock: Optional[socket.socket] = None
+        self._clients: list[socket.socket] = []
+        self._queue: SimpleQueue[bytes] = SimpleQueue()
+        self._running = threading.Event()
+
+    def start(self) -> None:
+        # Bind synchronously so the actual port is known before returning
+        try:
+            srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            # Auto-pick free port when port <= 0 (incl. -1 sentinel)
+            bind_port = 0 if self._port <= 0 else self._port
+            srv.bind(("127.0.0.1", bind_port))
+            srv.listen(5)
+            self._sock = srv
+            # Store the actual chosen port (useful when bind_port was 0)
+            self._port = srv.getsockname()[1]
+        except Exception:
+            return
+
+        self._running.set()
+        threading.Thread(target=self._accept_loop, daemon=True).start()
+        threading.Thread(target=self._drain_loop, daemon=True).start()
+
+    def stop(self) -> None:
+        self._running.clear()
+        try:
+            if self._sock:
+                self._sock.close()
+        except Exception:
+            pass
+        for c in list(self._clients):
+            try:
+                c.close()
+            except Exception:
+                pass
+        self._clients.clear()
+
+    def broadcast(self, line: str) -> None:
+        if not self._running.is_set():
+            return
+        self._queue.put((line + "\n").encode("utf-8", errors="ignore"))
+
+    def _accept_loop(self) -> None:
+        srv = self._sock
+        if srv is None:
+            return
+        while self._running.is_set():
+            try:
+                srv.settimeout(0.5)
+                try:
+                    conn, _ = srv.accept()
+                except socket.timeout:
+                    continue
+                conn.setblocking(False)
+                self._clients.append(conn)
+            except Exception:
+                break
+
+    def _drain_loop(self) -> None:
+        while self._running.is_set():
+            try:
+                chunk = self._queue.get(timeout=0.5)
+            except Exception:
+                continue
+            dead: list[socket.socket] = []
+            for c in self._clients:
+                try:
+                    c.sendall(chunk)
+                except Exception:
+                    dead.append(c)
+            for d in dead:
+                try:
+                    d.close()
+                except Exception:
+                    pass
+                if d in self._clients:
+                    self._clients.remove(d)
+
+
+class _BroadcastLogHandler(logging.Handler):
+    def __init__(self, server: _LogBroadcastServer) -> None:
+        super().__init__()
+        self._server = server
+
+    def emit(self, record: logging.LogRecord) -> None:
+        try:
+            msg = self.format(record)
+            self._server.broadcast(msg)
+        except Exception:
+            pass
+
+
+def configure_sandbox_logging(
+    log_in_terminal: bool = False,
+    log_file: Optional[str] = ".logs.txt",
+    tcp_port: int = 0,
+) -> None:
+    """Configure logging to a file by default, with optional terminal streaming.
+
+    - Overwrites the given log_file on each run.
+    - Adds a StreamHandler to stdout when log_in_terminal is True.
+    - Optionally serves logs over TCP on localhost:tcp_port for external viewing.
+    - Prints a short hint on how to watch the last 50 lines live.
+    """
+    import sys as _sys
+    import logging as _logging
+
+    root_logger = _logging.getLogger()
+    root_logger.setLevel(_logging.INFO)
+
+    # Clear any existing handlers to prevent duplicates
+    for _h in list(root_logger.handlers):
+        root_logger.removeHandler(_h)
+
+    _fmt = _logging.Formatter(
+        "%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+        "%Y-%m-%d %H:%M:%S",
+    )
+
+    if log_file:
+        _fh = _logging.FileHandler(log_file, mode="w", encoding="utf-8")
+        _fh.setFormatter(_fmt)
+        root_logger.addHandler(_fh)
+
+    if log_in_terminal:
+        _sh = _logging.StreamHandler(_sys.stdout)
+        _sh.setFormatter(_fmt)
+        root_logger.addHandler(_sh)
+
+    # Optional TCP broadcast for external terminals
+    # tcp_port semantics:
+    #   -1 → auto-pick a free port and enable streaming by default
+    #    0 → disabled
+    #   >0 → bind requested port
+    if tcp_port != 0:
+        try:
+            _srv = _LogBroadcastServer(tcp_port)
+            _srv.start()
+            _bh = _BroadcastLogHandler(_srv)
+            _bh.setFormatter(_fmt)
+            root_logger.addHandler(_bh)
+            _actual = _srv._port
+            print(
+                f"📡 Log stream on 127.0.0.1:{_actual} – connect via: nc 127.0.0.1 {_actual} (Ctrl-C to detach)",
+            )
+        except Exception as _exc:
+            print(f"⚠️  Failed to start log TCP stream on port {tcp_port}: {_exc}")
+
+    # Friendly hints
+    if log_file:
+        print(
+            "📝 Logging to .logs.txt (overwrites each run). "
+            "To follow live with scrollback: less +F .logs.txt (Ctrl-C to pause, F to resume, q to quit). "
+            "Pass --log_in_terminal to also stream logs here.",
+        )
 
 
 # ===========================================================================
@@ -551,31 +899,292 @@ def input_now(timeout: float = 0.1) -> Optional[str]:
     return txt if has_input else None
 
 
+def steering_controls_hint() -> str:
+    """Return a one-line hint with available in-flight steering commands."""
+    return "Controls: /i <text>, /pause, /resume, /ask <q>, /freeform <text>, /r (record voice), /stop, /help"
+
+
 async def await_with_interrupt(  # noqa: D401 – imperative helper
     handle: "SteerableToolHandle",
     poll: float = 0.05,
+    *,
+    enable_voice_steering: bool = False,
 ) -> str:
     """
     **Common wrapper** used by all interactive sandboxes.
 
     Waits on ``handle.result()`` but lets the user:
-    • *interject* arbitrary text ⇒ forwarded via ``handle.interject``
-    • type **stop / cancel**     ⇒ aborts the running tool call
+    • /i <text> or plain text     ⇒ interject via ``handle.interject``
+    • /pause | /p                 ⇒ pause the running call
+    • /resume | /r                ⇒ resume a paused call
+    • /ask <question> | ? <q>     ⇒ ask a read-only question about the running call
+    • /freeform <text>            ⇒ route free-form text to the best steering command via an LLM
+    • /r | /record                ⇒ when enable_voice_steering=True, capture voice and route via freeform
+    • /stop | /cancel             ⇒ abort the running call
+    • /status                     ⇒ print whether the call is done
+    • /help                       ⇒ show available controls
 
-    Consolidating this code removes four nearly identical copies.
+    Commands use a leading '/' prefix to avoid accidental interjections.
     """
 
     import asyncio  # local to avoid widening the public surface
 
+    HELP_TEXT = steering_controls_hint()
+
     while not handle.done():
         txt = input_now(poll * 2)  # same cadence as old versions
         if txt:
-            if txt.lower() in {"stop", "cancel"}:
-                handle.stop()
-                break
-            run_in_loop(handle.interject(txt))
+            stripped = txt.strip()
+            # Command mode with leading '/'
+            if stripped.startswith("/"):
+                parts = stripped[1:].split(maxsplit=1)
+                cmd = parts[0].lower()
+                arg = parts[1].strip() if len(parts) > 1 else ""
+
+                if cmd in {"stop", "cancel", "s", "c"}:
+                    print("stopping…")
+                    handle.stop()
+                    break
+                if cmd in {"pause", "p"}:
+                    try:
+                        print("pausing…")
+                        handle.pause()
+                        print("⏸️  Paused")
+                    except Exception as exc:
+                        print(f"⚠️  Pause failed: {exc}")
+                    continue
+                if cmd in {"resume"}:
+                    try:
+                        print("resuming…")
+                        handle.resume()
+                        print("▶️  Resumed")
+                    except Exception as exc:
+                        print(f"⚠️  Resume failed: {exc}")
+                    continue
+                if cmd in {"i", "interject"}:
+                    if not arg:
+                        print("Usage: /i <text>")
+                    else:
+                        print(f"interjecting: {arg}")
+                        run_in_loop(handle.interject(arg))
+                    continue
+                if cmd in {"ask", "?"}:
+                    if not arg:
+                        print("Usage: /ask <question>")
+                    else:
+                        try:
+                            print(f"asking question: {arg}")
+                            nested = await handle.ask(arg)
+                            ans = await nested.result()
+                            print(f"[ask] → {ans}")
+                            if enable_voice_steering:
+                                speak(str(ans))
+                                _wait_for_tts_end()
+                                print(HELP_TEXT)
+                        except Exception as exc:
+                            print(f"⚠️  Ask failed: {exc}")
+                    continue
+                if enable_voice_steering and cmd in {"record", "rec", "r"}:
+                    try:
+                        print(
+                            "🎙️  Voice steering – press ↵ to start, ↵ again to send, 'c'+↵ to cancel",
+                        )
+                        audio = record_until_enter_interruptible(lambda: handle.done())
+                        if audio is None:
+                            continue
+                        transcript = transcribe_deepgram(audio).strip()
+                        if not transcript:
+                            print("⚠️  Empty transcript – ignoring")
+                            continue
+                        try:
+                            from pydantic import BaseModel, Field
+                            import unify as _unify
+
+                            class _SteeringIntent(BaseModel):
+                                action: str = Field(
+                                    ...,
+                                    pattern="^(ask|interject|pause|resume|stop|status)$",
+                                )
+                                question: str | None = None
+                                cleaned_text: str | None = None
+
+                            _SYS = (
+                                "You are a router that maps a user's free-form message to one of these steering commands: "
+                                "'ask' (include a specific, concise question in 'question'), "
+                                "'interject' (include the text to inject in 'cleaned_text'), "
+                                "'pause', 'resume', 'stop', or 'status'.\n"
+                                "Rules:\n"
+                                "- If the user requests progress, status, or 'how is it going', prefer 'ask' with a concrete question like 'what is the current task progress?'.\n"
+                                "- If the user gives guidance or additional info to incorporate, choose 'interject' and pass it via 'cleaned_text'.\n"
+                                "- Polite commands like 'please pause' → 'pause'. 'continue' → 'resume'. 'cancel/abort/stop' → 'stop'.\n"
+                                "- Return ONLY JSON matching the response schema."
+                            )
+
+                            _judge = _unify.Unify(
+                                "gpt-4o@openai",
+                                response_format=_SteeringIntent,
+                            )
+                            _intent = _SteeringIntent.model_validate_json(
+                                _judge.set_system_message(_SYS).generate(transcript),
+                            )
+
+                            if _intent.action == "ask":
+                                q = (
+                                    _intent.question or _intent.cleaned_text or ""
+                                ).strip()
+                                if not q:
+                                    q = "What is the current task progress?"
+                                print(f"asking question: {q}")
+                                nested = await handle.ask(q)
+                                ans = await nested.result()
+                                print(f"[ask] → {ans}")
+                                if enable_voice_steering:
+                                    speak(str(ans))
+                                    _wait_for_tts_end()
+                                    print(HELP_TEXT)
+                            elif _intent.action == "interject":
+                                txt_to_inject = (
+                                    _intent.cleaned_text or transcript
+                                ).strip()
+                                if not txt_to_inject:
+                                    print(
+                                        "⚠️  Router produced empty interjection – ignoring",
+                                    )
+                                else:
+                                    print(f"interjecting: {txt_to_inject}")
+                                    run_in_loop(handle.interject(txt_to_inject))
+                            elif _intent.action == "pause":
+                                try:
+                                    print("pausing…")
+                                    handle.pause()
+                                    print("⏸️  Paused")
+                                except Exception as exc:
+                                    print(f"⚠️  Pause failed: {exc}")
+                            elif _intent.action == "resume":
+                                try:
+                                    print("resuming…")
+                                    handle.resume()
+                                    print("▶️  Resumed")
+                                except Exception as exc:
+                                    print(f"⚠️  Resume failed: {exc}")
+                            elif _intent.action == "stop":
+                                print("stopping…")
+                                handle.stop()
+                                break
+                            elif _intent.action == "status":
+                                print("status requested")
+                                print("done" if handle.done() else "running")
+                            else:
+                                print(f"interjecting: {transcript}")
+                                run_in_loop(handle.interject(transcript))
+                        except Exception as exc:
+                            print(f"⚠️  Freeform routing failed: {exc}")
+                    except Exception as exc:
+                        print(f"⚠️  Voice steering failed: {exc}")
+                    continue
+                if cmd in {"freeform", "f"}:
+                    if not arg:
+                        print("Usage: /freeform <text>")
+                        continue
+                    try:
+                        from pydantic import BaseModel, Field
+                        import unify as _unify
+
+                        class _SteeringIntent(BaseModel):
+                            action: str = Field(
+                                ...,
+                                pattern="^(ask|interject|pause|resume|stop|status)$",
+                            )
+                            question: str | None = None
+                            cleaned_text: str | None = None
+
+                        _SYS = (
+                            "You are a router that maps a user's free-form message to one of these steering commands: "
+                            "'ask' (include a specific, concise question in 'question'), "
+                            "'interject' (include the text to inject in 'cleaned_text'), "
+                            "'pause', 'resume', 'stop', or 'status'.\n"
+                            "Rules:\n"
+                            "- If the user requests progress, status, or 'how is it going', prefer 'ask' with a concrete question like 'what is the current task progress?'.\n"
+                            "- If the user gives guidance or additional info to incorporate, choose 'interject' and pass it via 'cleaned_text'.\n"
+                            "- Polite commands like 'please pause' → 'pause'. 'continue' → 'resume'. 'cancel/abort/stop' → 'stop'.\n"
+                            "- Return ONLY JSON matching the response schema."
+                        )
+
+                        _judge = _unify.Unify(
+                            "gpt-4o@openai",
+                            response_format=_SteeringIntent,
+                        )
+                        _intent = _SteeringIntent.model_validate_json(
+                            _judge.set_system_message(_SYS).generate(arg),
+                        )
+
+                        if _intent.action == "ask":
+                            q = (_intent.question or _intent.cleaned_text or "").strip()
+                            if not q:
+                                q = "What is the current task progress?"
+                            print(f"asking question: {q}")
+                            nested = await handle.ask(q)
+                            ans = await nested.result()
+                            print(f"[ask] → {ans}")
+                            if enable_voice_steering:
+                                speak(str(ans))
+                                _wait_for_tts_end()
+                                print(HELP_TEXT)
+                        elif _intent.action == "interject":
+                            txt_to_inject = (_intent.cleaned_text or arg).strip()
+                            if not txt_to_inject:
+                                print(
+                                    "⚠️  Router produced empty interjection – ignoring",
+                                )
+                            else:
+                                print(f"interjecting: {txt_to_inject}")
+                                run_in_loop(handle.interject(txt_to_inject))
+                        elif _intent.action == "pause":
+                            try:
+                                print("pausing…")
+                                handle.pause()
+                                print("⏸️  Paused")
+                            except Exception as exc:
+                                print(f"⚠️  Pause failed: {exc}")
+                        elif _intent.action == "resume":
+                            try:
+                                print("resuming…")
+                                handle.resume()
+                                print("▶️  Resumed")
+                            except Exception as exc:
+                                print(f"⚠️  Resume failed: {exc}")
+                        elif _intent.action == "stop":
+                            print("stopping…")
+                            handle.stop()
+                            break
+                        elif _intent.action == "status":
+                            print("status requested")
+                            print("done" if handle.done() else "running")
+                        else:
+                            # Fallback to interject if unknown
+                            print(f"interjecting: {arg}")
+                            run_in_loop(handle.interject(arg))
+                    except Exception as exc:
+                        print(f"⚠️  Freeform routing failed: {exc}")
+                    continue
+                if cmd in {"status", "st"}:
+                    print("status requested")
+                    print("done" if handle.done() else "running")
+                    continue
+                if cmd in {"help", "h"}:
+                    print(HELP_TEXT)
+                    continue
+                # Unknown command → treat as interjection without the '/'
+                print(f"interjecting: {stripped[1:]}")
+                run_in_loop(handle.interject(stripped[1:]))
+            else:
+                # Plain text → interject
+                print(f"interjecting: {stripped}")
+                run_in_loop(handle.interject(stripped))
         await asyncio.sleep(poll)
 
+    # Task completed: cancel any ongoing TTS immediately and return result
+    stop_speaking()
     return await handle.result()
 
 
@@ -919,6 +1528,8 @@ class TranscriptGenerator:
                         WhatsappMessageRecievedEvent,
                         PhoneUtteranceEvent,
                     )
+                    from pydantic import BaseModel
+                    from unity.events.event_bus import Event
                     import unify
 
                     event_obj = None
@@ -948,16 +1559,25 @@ class TranscriptGenerator:
                             content=content,
                         )
                     if event_obj:
-                        ev_dict = event_obj.to_dict()
-                        entries = {
-                            "event_name": ev_dict["event_name"],
-                            **ev_dict["payload"],
-                        }
+                        ev_dict = event_obj.to_bus_event()
+                        payload_dict = (
+                            ev_dict.payload.model_dump(mode="json")
+                            if isinstance(ev_dict.payload, BaseModel)
+                            else Event._to_python(ev_dict.payload)
+                        )
                         unify.create_logs(
                             project=unify.active_project(),
                             context="Assistant/Events/Comms",
                             params={},
-                            entries=entries,
+                            entries={
+                                "row_id": ev_dict.row_id,
+                                "event_id": ev_dict.event_id,
+                                "calling_id": ev_dict.calling_id,
+                                "event_timestamp": ev_dict.timestamp.isoformat(),
+                                "payload_cls": ev_dict.payload_cls,
+                                "type": ev_dict.type,
+                                **payload_dict,
+                            },
                         )
 
             return f"{len(transcript)} messages logged"

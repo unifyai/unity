@@ -94,8 +94,11 @@ class BaseTaskScheduler(ABC, metaclass=SingletonABCMeta):
         Tasks can have one, both, or neither of these specified.
 
         For tasks where the time duration is short and predictable (such as sending an email)
-        then the scheduled `start_at` and the `deadline` should usually be set to the same datetime.
-        Either way, very explicit instructions regarding `start_at` and `deadline` must be given.
+        then it's best to only set the `start_at` and omit the `deadline`.
+        Either way, very explicit instructions regarding `start_at` and `deadline` must always be given.
+
+        If the task is to be started *immediately*, then just put the current datetime as the `start_at`,
+        and omit the deadline if one is not specified.
 
         All parameters mirror :pymeth:`ask`; refer there for detailed
         semantics.

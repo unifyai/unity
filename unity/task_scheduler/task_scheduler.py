@@ -3,7 +3,8 @@ import unify
 import asyncio
 import functools
 from datetime import datetime
-from typing import Dict, List, Any, Optional, Union
+from typing import Dict, List, Any, Optional, Union, Callable
+from typing import Literal
 
 from ..common.embed_utils import EMBED_MODEL, ensure_vector_column
 from ..common.llm_helpers import (
@@ -165,6 +166,11 @@ class TaskScheduler(BaseTaskScheduler):
         clarification_up_q: asyncio.Queue[str] | None = None,
         clarification_down_q: asyncio.Queue[str] | None = None,
         rolling_summary_in_prompts: Optional[bool] = None,
+        tool_policy: Union[
+            Literal["default"],
+            Callable[[int, Dict[str, Any]], tuple[str, Dict[str, Any]]],
+            None,
+        ] = "default",
     ) -> SteerableToolHandle:
         call_id = new_call_id()
         await publish_manager_method_event(
@@ -205,6 +211,15 @@ class TaskScheduler(BaseTaskScheduler):
             build_ask_prompt(tools, include_activity=include_activity),
         )
 
+        # Prepare effective tool_policy
+        if tool_policy == "default":
+            effective_tool_policy = lambda i, current_tools: (
+                ("required", current_tools) if i < 1 else ("auto", current_tools)
+            )
+        else:
+            # pass through callable or None
+            effective_tool_policy = tool_policy
+
         # ── 2.  Kick off the tool-use loop ────────────────────────────────
         handle = start_async_tool_use_loop(
             client,
@@ -214,7 +229,7 @@ class TaskScheduler(BaseTaskScheduler):
             parent_chat_context=parent_chat_context,
             log_steps=_log_tool_steps,
             preprocess_msgs=self._inject_broader_context,
-            tool_policy=lambda i, _: ("required", _) if i < 1 else ("auto", _),
+            tool_policy=effective_tool_policy,
         )
         # ── 3a.  Add logging wrapper ──────────────────────────────────────
         handle = wrap_handle_with_logging(
@@ -250,6 +265,11 @@ class TaskScheduler(BaseTaskScheduler):
         clarification_up_q: asyncio.Queue[str] | None = None,
         clarification_down_q: asyncio.Queue[str] | None = None,
         rolling_summary_in_prompts: Optional[bool] = None,
+        tool_policy: Union[
+            Literal["default"],
+            Callable[[int, Dict[str, Any]], tuple[str, Dict[str, Any]]],
+            None,
+        ] = "default",
     ) -> SteerableToolHandle:
         call_id = new_call_id()
         await publish_manager_method_event(
@@ -291,6 +311,19 @@ class TaskScheduler(BaseTaskScheduler):
             build_update_prompt(tools, include_activity=include_activity),
         )
 
+        # Prepare effective tool_policy
+        if tool_policy == "default":
+
+            def _default_update_policy(i: int, current_tools: Dict[str, Any]):
+                if i < 1:
+                    return ("required", self._ask_tools)
+                return ("auto", current_tools)
+
+            effective_tool_policy = _default_update_policy
+        else:
+            # pass through callable or None
+            effective_tool_policy = tool_policy
+
         # ── 2.  Kick off interactive loop ─────────────────────────────────
         handle = start_async_tool_use_loop(
             client,
@@ -300,9 +333,7 @@ class TaskScheduler(BaseTaskScheduler):
             parent_chat_context=parent_chat_context,
             log_steps=_log_tool_steps,
             preprocess_msgs=self._inject_broader_context,
-            tool_policy=lambda i, _: (
-                ("required", self._ask_tools) if i < 1 else ("auto", _)
-            ),
+            tool_policy=effective_tool_policy,
         )
         # ── 3a.  Add logging wrapper ──────────────────────────────────────
         handle = wrap_handle_with_logging(
@@ -434,9 +465,15 @@ class TaskScheduler(BaseTaskScheduler):
             await clarification_up_q.put(question)
             return await clarification_down_q.get()
 
+        # Wrap update to hard-code tool_policy=None while preserving metadata
+        @functools.wraps(self.update, updated=())
+        async def _update_no_forcing(*args, **kwargs):  # type: ignore[valid-type]
+            kwargs["tool_policy"] = None
+            return await self.update(*args, **kwargs)
+
         tools = methods_to_tool_dict(
             self.ask,
-            self.update,
+            _update_no_forcing,
             request_clarification,
             _execute_task_by_id,
             include_class_name=False,
@@ -451,7 +488,7 @@ class TaskScheduler(BaseTaskScheduler):
             client,
             freeform_text,
             tools,
-            loop_id=f"{self.__class__.__name__}.execute_task_resolver",
+            loop_id=f"{self.__class__.__name__}.{self.execute_task.__name__}",
             parent_chat_context=parent_chat_context,
             log_steps=True,
             preprocess_msgs=self._inject_broader_context,
@@ -729,6 +766,7 @@ class TaskScheduler(BaseTaskScheduler):
         deadline: Optional[str] = None,
         repeat: Optional[List[Union[RepeatPattern, Dict[str, Any]]]] = None,
         priority: Priority = Priority.normal,
+        response_policy: Optional[str] = None,
     ) -> ToolOutcome:
         """
         Create a **brand-new task** and, depending on its attributes, place it
@@ -753,6 +791,8 @@ class TaskScheduler(BaseTaskScheduler):
             the task. Can be either RepeatPattern objects or dictionaries that will be converted to RepeatPattern.
         priority : Priority, default :pyattr:`Priority.normal`
             Relative importance used for queue ordering.
+        response_policy : str | None
+            Freeform policy dictating how the assistant should interact with relevant contacts during the task.
 
         Returns
         -------
@@ -878,6 +918,7 @@ class TaskScheduler(BaseTaskScheduler):
             deadline=deadline,
             repeat=repeat,
             priority=priority,
+            response_policy=response_policy,
         ).to_post_json()
 
         # ------------------  write log immediately  ------------------ #
@@ -1099,7 +1140,7 @@ class TaskScheduler(BaseTaskScheduler):
         • If *task_id* is *None* we begin with **the single active/primed task**
         • Tasks whose status is completed / cancelled / failed are *ignored*.
         • Only the nodes actually traversed are loaded from storage; we never
-          materialise the entire task table in memory.
+        materialise the entire task table in memory.
         """
 
         # ----------------  helpers  ---------------- #
@@ -1372,7 +1413,7 @@ class TaskScheduler(BaseTaskScheduler):
         • Disallowed when the task already has a *schedule*.<br>
         • When a *trigger* is introduced the status becomes **triggerable**.<br>
         • When a *trigger* is removed and the task was *triggerable* it falls
-          back to **queued** (idle, waiting for manual start or queue insert).
+        back to **queued** (idle, waiting for manual start or queue insert).
         """
 
         self._ensure_not_active_task(task_id)
@@ -1755,6 +1796,11 @@ class TaskScheduler(BaseTaskScheduler):
         Return the **k** tasks whose *name + description* embeddings are
         *closest* (cosine distance) to the supplied *text*.
 
+        Always best to use *this tool* when searching for a task with a similar
+        name or description. Semantic similarity based on embeddings are *much*
+        more robust and accurate than trying to get an exact match on multi-word
+        substrings.
+
         Parameters
         ----------
         text : str
@@ -1790,6 +1836,11 @@ class TaskScheduler(BaseTaskScheduler):
         """
         Run a **column-wise Python expression** (`filter`) against every task
         and return the matching rows.
+
+        Do *not* use this tool when searching for a task with a similar name
+        or description. Trying to get an exact match on substrings (especially
+        with multiple words) is very brittle, and likely to return no matches.
+        The `nearest_tasks` tool is *much* more robust and accurate in such cases.
 
         Parameters
         ----------
