@@ -19,9 +19,10 @@ from abc import ABC, abstractmethod
 from typing import Any, Dict, List, Optional
 
 from ..common.llm_helpers import SteerableToolHandle
+from ..singleton_registry import SingletonABCMeta
 
 
-class BaseConductor(ABC):
+class BaseConductor(ABC, metaclass=SingletonABCMeta):
     # ------------------------------------------------------------------ #
     #  ask – read-only                                                   #
     # ------------------------------------------------------------------ #

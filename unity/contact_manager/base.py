@@ -6,9 +6,10 @@ import asyncio
 from typing import Dict, List, Optional, Any, TYPE_CHECKING
 
 from ..common.llm_helpers import SteerableToolHandle
+from ..singleton_registry import SingletonABCMeta
 
 
-class BaseContactManager(ABC):
+class BaseContactManager(ABC, metaclass=SingletonABCMeta):
     """
     *Public* contract that every concrete **contact-manager** must satisfy.
 

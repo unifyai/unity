@@ -19,9 +19,10 @@ from abc import ABC, abstractmethod
 from typing import Any, Dict, List, Optional
 
 from ..common.llm_helpers import SteerableToolHandle
+from ..singleton_registry import SingletonABCMeta
 
 
-class BaseKnowledgeManager(ABC):
+class BaseKnowledgeManager(ABC, metaclass=SingletonABCMeta):
     """
     *Public* contract that every concrete **knowledge-manager** must satisfy.
 
