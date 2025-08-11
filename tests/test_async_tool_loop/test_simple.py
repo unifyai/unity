@@ -286,7 +286,25 @@ async def test_duplicate_tool_calls_are_optionally_pruned() -> None:  # noqa: D4
         "hello",
         "hello",
     ], "With ignore_tool_duplicates=False the tool should be invoked twice."
-    assert [m["role"] for m in client.messages] == [
+    roles = [
+        m["role"]
+        for m in client.messages
+        if not (
+            m.get("role") == "assistant"
+            and m.get("tool_calls")
+            and any(
+                (tc.get("function", {}) or {})
+                .get("name", "")
+                .startswith("check_status_")
+                for tc in m["tool_calls"]
+            )
+        )
+        and not (
+            m.get("role") == "tool"
+            and str(m.get("name", "")).startswith("check_status_")
+        )
+    ]
+    assert roles == [
         "system",
         "user",
         "assistant",
@@ -310,7 +328,25 @@ async def test_duplicate_tool_calls_are_optionally_pruned() -> None:  # noqa: D4
         "hello",
         "hello",
     ], "With ignore_tool_duplicates=True, two invocations are still expected."
-    assert [m["role"] for m in client.messages] == [
+    roles = [
+        m["role"]
+        for m in client.messages
+        if not (
+            m.get("role") == "assistant"
+            and m.get("tool_calls")
+            and any(
+                (tc.get("function", {}) or {})
+                .get("name", "")
+                .startswith("check_status_")
+                for tc in m["tool_calls"]
+            )
+        )
+        and not (
+            m.get("role") == "tool"
+            and str(m.get("name", "")).startswith("check_status_")
+        )
+    ]
+    assert roles == [
         "system",
         "user",
         "assistant",

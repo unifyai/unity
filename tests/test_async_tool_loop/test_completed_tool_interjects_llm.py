@@ -42,12 +42,11 @@ async def very_slow_task() -> str:
 @_handle_project
 async def test_llm_keeps_intermediate_reasoning_when_other_tool_is_very_slow() -> None:
     """
-    fast_task completes → loop triggers LLM reasoning.
-    LLM finishes *before* very_slow_task returns, producing an intermediate
-    assistant message.  Once very_slow_task finishes the loop runs the model
-    again and a final assistant reply is produced.
+    Both tools are requested in the same assistant turn. The fast task typically
+    completes first and can trigger an intermediate assistant reasoning turn, and
+    once the very slow task completes the final assistant reply is produced.
 
-    Expected shape of roles:
+    Expected role shape (excluding any synthetic check_status_* status stubs):
 
         0 user
         1 assistant  (tool_calls: fast & very_slow)
@@ -55,6 +54,9 @@ async def test_llm_keeps_intermediate_reasoning_when_other_tool_is_very_slow() -
         3 assistant  (intermediate reasoning)
         4 tool       (very_slow_task)
         5 assistant  (final answer)
+
+    The test asserts three tool messages and requires three assistant turns,
+    while also checking there is an assistant message between the two tool results.
     """
 
     system_prompt = (
@@ -84,17 +86,49 @@ async def test_llm_keeps_intermediate_reasoning_when_other_tool_is_very_slow() -
 
     # ── Assertions ───────────────────────────────────────────────────────
 
-    # Counts with placeholder: three assistants, three tools
-    assert roles.count("assistant") == 3
-    assert roles.count("tool") == 3
+    # The loop may insert a small assistant→tool status pair (check_status_*) to
+    # preserve ordering when earlier placeholders are no longer at the tail.
+    is_status_assistant = lambda m: (
+        m.get("role") == "assistant"
+        and bool(m.get("tool_calls"))
+        and any(
+            tc.get("function", {}).get("name", "").startswith("check_status_")
+            for tc in m["tool_calls"]
+        )
+    )
+    is_status_tool = lambda m: (
+        m.get("role") == "tool" and str(m.get("name", "")).startswith("check_status_")
+    )
+
+    non_stub_assistants = [
+        m
+        for m in client.messages
+        if m.get("role") == "assistant" and not is_status_assistant(m)
+    ]
+    non_stub_tools = [
+        m for m in client.messages if m.get("role") == "tool" and not is_status_tool(m)
+    ]
+
+    # Counts (excluding status stubs): with pre-emption disabled, we expect an
+    # intermediate reasoning turn: three assistants and three tools.
+    assert len(non_stub_tools) == 3
+    assert len(non_stub_assistants) == 3
 
     # Ensure at least one assistant message lies *between* the two tool results
-    tool_indices = [i for i, r in enumerate(roles) if r == "tool"]
+    # (exclude status stubs) – this validates the intermediate reasoning turn.
+    tool_indices = [
+        i
+        for i, m in enumerate(client.messages)
+        if m.get("role") == "tool" and not is_status_tool(m)
+    ]
     assert len(tool_indices) == 3
     fast_tool, pending_slow_tool, completed_slow_tool = sorted(tool_indices)
 
     # There must be an assistant index strictly between them
-    assert any(r == "assistant" for r in roles[fast_tool + 1 : completed_slow_tool])
+    assert any(
+        m.get("role") == "assistant" and not is_status_assistant(m)
+        for m in client.messages[fast_tool + 1 : completed_slow_tool]
+    )
 
     # Tool names include fast & very_slow; placeholder duplicates don't hurt
     tool_names = {m["name"] for m in client.messages if m["role"] == "tool"}
@@ -110,18 +144,20 @@ async def test_llm_keeps_intermediate_reasoning_when_other_tool_is_very_slow() -
 @_handle_project
 async def test_llm_step_is_preempted_by_late_tool_completion() -> None:
     """
-    The model is instructed to call **both** tools in a single assistant turn.
-    ``fast_task`` completes first, triggering an LLM reasoning step; while the
-    model is still thinking ``slow_task`` finishes.  The patched loop must
-    stop the in-flight `generate`, deliver the new result, and only then run
-    a fresh LLM step.
+    The model is instructed to call both tools in a single assistant turn. The fast
+    task completes first, then the slow task completes while the model may still be
+    thinking. The loop should pre-empt in-flight reasoning, deliver the late tool
+    result, and run the model again to produce the final answer.
 
-    In the final transcript we therefore expect:
+    Expected role shapes (excluding any synthetic check_status_* status stubs):
 
-        user → assistant(tool_calls) → tool → tool → assistant
+        0 user
+        1 assistant (tool_calls fast & slow)
+        2 tool  (fast_task result)
+        3 tool  (slow_task result)
+        4 assistant (final answer)
 
-    i.e. exactly **two** assistant messages (initial selection & final answer)
-    and exactly **two** tool messages (one per tool).
+    The test asserts two assistant turns (initial + final) and two tool messages.
     """
 
     system_prompt = (
@@ -160,8 +196,28 @@ async def test_llm_step_is_preempted_by_late_tool_completion() -> None:
     #   assistant injests both results (final)
     assert roles[0] == "user"
     assert roles[1] == "assistant"
-    assert roles.count("assistant") == 2  # initial + final
-    assert roles.count("tool") == 2  # fast + slow
+    # Exclude status stubs (check_status_*) from strict counts.
+    is_status_assistant = lambda m: (
+        m.get("role") == "assistant"
+        and bool(m.get("tool_calls"))
+        and any(
+            tc.get("function", {}).get("name", "").startswith("check_status_")
+            for tc in m["tool_calls"]
+        )
+    )
+    is_status_tool = lambda m: (
+        m.get("role") == "tool" and str(m.get("name", "")).startswith("check_status_")
+    )
+    non_stub_assistants = [
+        m
+        for m in client.messages
+        if m.get("role") == "assistant" and not is_status_assistant(m)
+    ]
+    non_stub_tools = [
+        m for m in client.messages if m.get("role") == "tool" and not is_status_tool(m)
+    ]
+    assert len(non_stub_assistants) == 2  # initial + final
+    assert len(non_stub_tools) == 2  # fast + slow
 
     # The two tool results must correspond to the two tool names
     tool_names = {m["name"] for m in client.messages if m["role"] == "tool"}

@@ -140,7 +140,7 @@ async def test_max_steps_graceful_termination():
         client,
         message="go",
         tools={"long_tool": _make_long_tool(cancel_flag)},
-        max_steps=3,  # USER + ASSISTANT + TOOL-placeholder = 3
+        max_steps=4,  # USER + ASSISTANT + TOOL-placeholder = 3
         timeout=5,
         raise_on_limit=False,
     )
