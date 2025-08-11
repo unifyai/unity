@@ -36,6 +36,10 @@ class BaseTranscriptManager(ABC, metaclass=SingletonABCMeta):
         (emails, chats, calls …) and return a *live* ``SteerableToolHandle``
         to the LLM reasoning session.
 
+        Do *not* request *how* the question should be answered; just ask the
+        question in natural language and allow the `ask` method to determine
+        the best method to answer it.
+
         Parameters
         ----------
         text : str
@@ -74,6 +78,10 @@ class BaseTranscriptManager(ABC, metaclass=SingletonABCMeta):
         """
         Create a **concise summary** of one or more message exchanges
         (threads, phone calls, etc.) and persist it in the backing store.
+
+        Do *not* request *how* the summary should be produced; state the goal
+        and constraints in natural language and allow the `summarize` method
+        to determine the best method to generate it.
 
         Parameters
         ----------

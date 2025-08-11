@@ -41,6 +41,10 @@ class BaseConductor(ABC, metaclass=SingletonABCMeta):
         Answer a **read-only question** that may reference tasks, contacts,
         transcripts *or* stored knowledge.
 
+        Do *not* request *how* the question should be answered; just ask the
+        question in natural language and allow the `ask` method to determine
+        the best method to answer it.
+
         Parameters
         ----------
         text : str
@@ -83,6 +87,10 @@ class BaseConductor(ABC, metaclass=SingletonABCMeta):
         """
         Execute a **mutation request** – create / edit / delete tasks, contacts
         or knowledge – and return a steerable LLM handle.
+
+        Do *not* request *how* the change should be implemented; describe the
+        desired end-state in natural language and allow the `request` method to
+        determine the best method and tools to apply it.
 
         All parameters & return value mirror :py:meth:`ask`.
         """
