@@ -3,6 +3,7 @@ import json
 import openai
 import os
 import redis
+import time
 import traceback
 from typing import Callable
 from pathlib import Path
@@ -641,8 +642,6 @@ class CommsAgent:
         user_msg = self.get_user_agent_prompt()
         print(user_msg)
 
-        acc_text = ""
-        last_response = ""
         async with client.beta.chat.completions.stream(
             model="gpt-4.1",
             messages=[
@@ -651,23 +650,34 @@ class CommsAgent:
             ],
             response_format=CallAssistantOutput,
         ) as stream:
-
+            acc_text = ""
+            last_response = ""
             async for event in stream:
                 # print(event)
                 if event.type == "content.delta":
                     if event.delta:
                         acc_text += event.delta
-                        output = from_json(acc_text, allow_partial="trailing-strings")
-                        if output.get("phone_utterance"):
-                            new_delta = output["phone_utterance"][len(last_response) :]
-                            last_response = output["phone_utterance"]
-                            if new_delta:
-                                ev = {
-                                    "topic": "call_process",
-                                    "type": "gen_chunk",
-                                    "chunk": new_delta,
-                                }
-                                self.publish(ev)
+                        try:
+                            output = from_json(
+                                acc_text,
+                                allow_partial="trailing-strings",
+                            )
+                        except ValueError:
+                            continue
+
+                        if not output.get("phone_utterance"):
+                            continue
+
+                        new_delta = output["phone_utterance"][len(last_response) :]
+                        if new_delta:
+                            print("delta", new_delta)
+                            ev = {
+                                "topic": "call_process",
+                                "type": "gen_chunk",
+                                "chunk": new_delta,
+                            }
+                            self.publish(ev)
+                        last_response = output["phone_utterance"]
 
             ev = {"topic": "call_process", "type": "end_gen"}
             self.publish(ev)

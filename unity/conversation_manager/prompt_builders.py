@@ -143,12 +143,9 @@ def _build_user_details_section(name: str) -> str:
 
 def _build_broader_context_section(broader_context: str) -> str:
     if broader_context:
-        return (
-            "Broader Context:\n"
-            "------------------\n"
-            f"{broader_context}\n\n"
-        )
+        return f"Broader Context:\n------------------\n{broader_context}\n\n"
     return ""
+
 
 def _build_assistant_details_section(
     name: str,
@@ -168,7 +165,7 @@ def _build_assistant_details_section(
         "to learn through experience to get better at the tasks needed to be done.\n"
         "You are also free to make up your own preferences and personality as you see "
         "fit to fill the gaps to a small extent, provided you're consistent, friendly "
-        "and helpful and abide by the \"Communication\" Rules specified below.\n"
+        'and helpful and abide by the "Communication" Rules specified below.\n'
     )
 
 
