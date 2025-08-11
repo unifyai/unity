@@ -27,7 +27,7 @@ import json
 
 import pytest
 import unify
-from unity.common.llm_helpers import start_async_tool_use_loop
+from unity.common.llm_helpers import start_async_tool_use_loop, SteerableToolHandle
 
 # Shared helpers
 from tests.helpers import _handle_project
@@ -387,3 +387,196 @@ async def test_global_pause_blocks_llm_until_resume(client):
     assert (
         final.strip().upper().startswith("OK")
     ), "final reply should be 'OK' after resume"
+
+
+@pytest.mark.asyncio
+@_handle_project
+async def test_global_resume_idempotent_no_extra_turns(client):
+    """
+    Calling `resume()` multiple times should be harmless and must not create
+    extra assistant turns after the tool completes.
+    """
+    handle = start_async_tool_use_loop(
+        client,
+        message=(
+            "Call the tool `slow`, wait for the result, then reply with the word OK (nothing else)."
+        ),
+        tools={"slow": slow},
+    )
+
+    # Ensure the tool has been requested
+    await _wait_for_tool_request(client, "slow")
+
+    # Pause while tool is running; let it finish while paused
+    handle.pause()
+    await asyncio.sleep(0.7)
+
+    # Resume twice (idempotent)
+    handle.resume()
+    handle.resume()
+
+    final = await handle.result()
+    assert final.strip().upper().startswith("OK")
+
+    # After the last assistant tool-call requesting `slow`, there should be exactly
+    # one more assistant message (the final answer). Multiple resumes must not add more.
+    msgs = client.messages or []
+    last_req_idx = -1
+    for i, m in enumerate(msgs):
+        if m.get("role") == "assistant" and any(
+            tc.get("function", {}).get("name") == "slow"
+            for tc in (m.get("tool_calls") or [])
+        ):
+            last_req_idx = i
+    assert last_req_idx != -1, "expected an assistant tool-call to `slow`"
+
+    assistant_after = [
+        m for m in msgs[last_req_idx + 1 :] if m.get("role") == "assistant"
+    ]
+    assert (
+        len(assistant_after) == 1
+    ), f"expected exactly 1 post-pause assistant turn, got {len(assistant_after)}"
+
+
+@pytest.mark.asyncio
+@_handle_project
+async def test_nested_resume_forwarded_once_to_delegate(client):
+    """
+    When a tool returns a passthrough SteerableToolHandle and the outer handle is adopted,
+    calling `resume()` on the OUTER handle must forward exactly once to the delegate.
+    """
+
+    class MockPassthroughHandle(SteerableToolHandle):
+        __passthrough__ = True
+
+        def __init__(self):
+            self._done = asyncio.Event()
+            self.pause_count = 0
+            self.resume_count = 0
+
+        async def ask(self, question: str) -> "SteerableToolHandle":
+            return self
+
+        async def interject(self, message: str):
+            return None
+
+        def stop(self):
+            self._done.set()
+            return "stopped"
+
+        def pause(self):
+            self.pause_count += 1
+            return "paused"
+
+        def resume(self):
+            self.resume_count += 1
+            return "resumed"
+
+        def done(self) -> bool:
+            return self._done.is_set()
+
+        async def result(self) -> str:
+            await self._done.wait()
+            return "inner_done"
+
+    inner_handle = MockPassthroughHandle()
+
+    @unify.traced
+    async def spawn_handle() -> SteerableToolHandle:  # type: ignore[name-defined]
+        """Return a passthrough handle immediately so the outer loop adopts it."""
+        return inner_handle
+
+    client.set_system_message(
+        "1️⃣ Call `spawn_handle` to start a nested task.\n"
+        "2️⃣ Wait until it finishes.\n"
+        "3️⃣ Then reply with OK.",
+    )
+
+    # Force the first assistant turn to call only `spawn_handle` to avoid model variance
+    def _policy(step_idx, available_tools):
+        if step_idx == 0:
+            return "required", {"spawn_handle": available_tools["spawn_handle"]}
+        return "auto", available_tools
+
+    outer = start_async_tool_use_loop(
+        client,
+        message="start",
+        tools={"spawn_handle": spawn_handle},
+        timeout=120,
+        tool_policy=_policy,
+    )
+
+    # Wait until assistant requests the spawn tool (ensures tool scheduling happened)
+    await _wait_for_tool_request(client, "spawn_handle")
+
+    # Wait until the outer handle adopts the inner delegate
+    t_adopt = time.perf_counter()
+    while (getattr(outer, "_delegate", None) is None) and (
+        time.perf_counter() - t_adopt
+    ) < 10.0:
+        await asyncio.sleep(0.05)
+    assert (
+        getattr(outer, "_delegate", None) is inner_handle
+    ), "outer did not adopt the inner SteerableToolHandle"
+
+    # Pause the outer loop – must forward exactly once to the delegate
+    outer.pause()
+
+    t0 = time.perf_counter()
+    while inner_handle.pause_count < 1 and (time.perf_counter() - t0) < 10.0:
+        await asyncio.sleep(0.05)
+    assert (
+        inner_handle.pause_count == 1
+    ), "delegate did not receive pause() exactly once"
+
+    # Now resume the outer loop – must forward exactly once to the delegate
+    outer.resume()
+
+    t1 = time.perf_counter()
+    while inner_handle.resume_count < 1 and (time.perf_counter() - t1) < 10.0:
+        await asyncio.sleep(0.05)
+    assert (
+        inner_handle.resume_count == 1
+    ), "delegate did not receive resume() exactly once"
+
+    # Let the inner handle complete so the loop can finish
+    inner_handle._done.set()
+
+    final = await outer.result()
+    # Accept either the model's OK or the inner handle's passthrough completion text
+    assert final.strip().lower() == "inner_done"
+
+
+@pytest.mark.asyncio
+@_handle_project
+async def test_resume_when_no_pending_tools_allows_llm_turn(client):
+    """
+    If the loop is paused while no tools are pending, resuming should immediately
+    allow the next LLM turn to proceed and finish.
+    """
+    client.set_system_message(
+        "Immediately reply ONLY with the word OK. Do not call any tools.",
+    )
+
+    # No tools exposed – pure LLM reply
+    h = start_async_tool_use_loop(
+        client,
+        message="start",
+        tools={},
+        timeout=120,
+    )
+
+    # Pause immediately; there are no pending tools. LLM must not speak while paused.
+    h.pause()
+    await asyncio.sleep(0.5)
+
+    # Ensure no assistant message appeared during pause
+    msgs = client.messages or []
+    assert not any(
+        m.get("role") == "assistant" for m in msgs
+    ), "assistant spoke while paused with no pending tools"
+
+    # Resume and finish
+    h.resume()
+    final = await h.result()
+    assert final.strip().upper().startswith("OK")
