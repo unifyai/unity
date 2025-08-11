@@ -121,4 +121,11 @@ async def test_interjection_publishes_user_event() -> None:
     events = await EVENT_BUS.search(filter="type == 'ToolLoop'", limit=10)
     roles = [evt.payload["message"]["role"] for evt in events]
     assert "user" in roles  # initial user
-    assert roles.count("user") == 2  # + the interjection
+    # Interjection is now published as a system message that includes the
+    # user-visible text in bold. Ensure we saw exactly one initial user and a system interjection.
+    assert roles.count("user") == 1
+    assert any(
+        evt.payload["message"]["role"] == "system"
+        and "user: **second**" in (evt.payload["message"].get("content") or "")
+        for evt in events
+    )

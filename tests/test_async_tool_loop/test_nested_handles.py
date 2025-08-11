@@ -310,13 +310,18 @@ async def test_interject_nested_handle(monkeypatch):
     assert msgs[3]["content"].startswith("Nested async tool loop started")
 
     # c) Find the user message "switch to dogs"
-    user_interject_msg = next(
-        (m for m in msgs if m["role"] == "user" and "switch to dogs" in m["content"]),
+    interjection_msg = next(
+        (
+            m
+            for m in msgs
+            if m["role"] == "system"
+            and "user: **switch to dogs**" in (m.get("content") or "")
+        ),
         None,
     )
     assert (
-        user_interject_msg is not None
-    ), "User interjection 'switch to dogs' not found"
+        interjection_msg is not None
+    ), "Interjection 'switch to dogs' system message not found"
 
     # d) Find the assistant message that calls the interject helper
     interject_call_msg = next(
