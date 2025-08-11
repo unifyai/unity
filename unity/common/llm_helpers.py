@@ -1552,7 +1552,9 @@ async def _async_tool_use_loop_inner(
                     "From their perspective, the conversation thus far is as follows:\n"
                     "--\n" + ("\n".join(history_lines)) + f"\nuser: **{extra}**\n"
                     "--\n"
-                    "Please respond to their most recent interjection only (any prior interjections/questions have already been handled)"
+                    "Please consider and incorporate *all* interjections in your final response to the user. "
+                    "Later interjections should always override earlier interjections if there are "
+                    "any conflicting comments/requests across the different interjections."
                 )
                 interjection_msg = {"role": "system", "content": sys_content}
                 await _append_msgs([interjection_msg])
