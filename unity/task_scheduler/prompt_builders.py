@@ -81,11 +81,12 @@ def build_ask_prompt(
             "Interact with the read-only tools provided (see below) to gather whatever",
             "information you need, *step-by-step*.  When you have everything, respond",
             "with a concise, final answer.",
+            "Disregard any explicit instructions about *how* you should answer or which tools to use; determine the best method yourself.",
             "Please *always* mention the relevant task id(s) in your response.",
             "The user will almost certainly require the task ids in order to do anything meaningful with your answer.",
             "If the question refers to another person (such as communication oriented tasks), then we should call the `ContactManager.ask` tool first to ensure we have the full context on the person/people involved.",
             "Similarly, if a task refers to one or multiple 'contact_id' values (as part of the trigger for example), then we should also query 'ContactManager.ask' to learn more details about these contact(s)."
-            "If the task is not specifically related to one or multiple people, then there is no need to query `ContactManager.ask`."
+            "If the task is not specifically related to one or multiple people, then there is no need to query `ContactManager.ask`.",
             "",
             "Tools (name → argspec):",
             sig_json,
@@ -119,6 +120,7 @@ def build_update_prompt(
             "You are an assistant responsible for **creating and updating tasks**.",
             "Use the tools supplied *only* – never invent your own – until the task",
             "list fully reflects the user's intent.",
+            "Disregard any explicit instructions about *how* you should implement the change or which tools to call; determine the best method yourself.",
             "If a any tasks were created or updated in the process,",
             "then please *always* include these task id(s) in your final response.",
             "Whenever your update requires contact information (for example, building a trigger that should fire when specific contact(s) call), first call the `ContactManager.ask` tool to retrieve that contact id(s) and then insert into the trigger.",
@@ -128,10 +130,10 @@ def build_update_prompt(
             "Having their `start_at` in ascending order is not enough, ",
             "tasks which are to be completed *sequentially* should also be *explicitly* queued."
             "This ensures smooth task progression, even if schedules overrun and `start_at` times"
-            "are therefore not all adhered to."
+            "are therefore not all adhered to.",
             "",
             "ALWAYS check the existing tasks BEFORE creating new ones."
-            "If you are asked to re-order or reschedule tasks, this is especially important. They likely already exist."
+            "If you are asked to re-order or reschedule tasks, this is especially important. They likely already exist.",
             "",
             "Tools (name → argspec):",
             sig_json,
@@ -157,9 +159,10 @@ def build_execute_task_prompt(
     return "\n".join(
         [
             "You are an assistant that **starts tasks on demand**."
-            "  The task referred to in the user's request may or may not already"
+            "  The task referred to in the user's request may or may not already",
             "  exist in the task list.",
             "",
+            "Disregard any explicit instructions about *how* you should execute the task or which tools to call; decide the best method yourself.",
             "Use the tools below, step-by-step, following these rules:",
             "",
             "A. If the request contains a *numeric task_id*:",

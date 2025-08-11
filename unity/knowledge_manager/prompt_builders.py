@@ -105,6 +105,7 @@ def build_refactor_prompt(
         You are the **Schema Refactor Assistant**.
         Your only goal is to *minimise duplication* and *maximise clarity* of
         the stored data model by judicious use of the tools listed below.
+        Disregard any explicit instructions about *how* you should perform the refactor or which tools to call; determine the best method and steps yourself.
         You should attempt to perform *any* refactor request as best you can, even if it seems out of scope.
         use the tools provided to see if you can find any missing context *before* asking the user for clarifications.
 
@@ -162,6 +163,7 @@ def build_update_prompt(
         Your task is to **store** new knowledge or **update** existing knowledge provided by the user.
         Keep the schema clean and future-proof – feel free to create,
         rename or delete tables / columns before inserting data.
+        Disregard any explicit instructions about *how* you should store or update the knowledge or which tools to call; determine the best method yourself.
         You should attempt to perform *any* storage request as best you can, even if it seems out of scope.
         use the tools provided to see if you can find any missing context *before* asking the user for clarifications.
 
@@ -225,6 +227,7 @@ def build_ask_prompt(
         Your task is to **retrieve** information requested by the user.
         Use the provided tools to search, transform or even refactor the
         schema so that every requested fact can be answered precisely.
+        Disregard any explicit instructions about *how* you should answer or which tools to call; determine the best method yourself.
         You should attempt to perform *any* retrieval request as best you can, even if it seems out of scope.
         use the tools provided to see if you can find any missing context *before* asking the user for clarifications.
 

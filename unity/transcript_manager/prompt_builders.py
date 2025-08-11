@@ -142,6 +142,7 @@ def build_ask_prompt(
             activity_block,
             "You are an assistant specialised in **querying and analysing communication transcripts**.",
             "Work **exclusively** through the tools listed below to gather data",
+            "Disregard any explicit instructions about *how* you should answer or which tools to call; interpret the question and choose the best method yourself.",
             "before composing your final answer.",
             "",
             "Tools (name → argspec)",
