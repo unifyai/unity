@@ -96,7 +96,6 @@ async def _build_scenario(custom: Optional[str] = None) -> Optional[str]:
 
 class _Intent(BaseModel):
     action: str = Field(..., pattern="^(ask|update|start)$")
-    cleaned_text: str
 
 
 _INTENT_SYS_MSG = (
@@ -105,18 +104,17 @@ _INTENT_SYS_MSG = (
     " - a read-only question about existing tasks ('ask'),\n"
     " - a write/mutation that creates/updates/deletes tasks or metadata ('update'), or\n"
     " - an instruction to begin working on a specific task ('start').\n"
-    "Return ONLY JSON: {'action':'ask'|'update'|'start','cleaned_text':<fixed_input>}.\n"
+    "Return ONLY JSON with this shape: {'action':'ask'|'update'|'start'}. Do not rewrite or summarize the user's input.\n"
     "Rules:\n"
     "- Classify as 'start' when the user asks to begin doing the task now/immediately/ASAP, or uses imperative phrasing to carry out the task (e.g., 'start', 'begin', 'execute', 'work on', 'open a browser').\n"
     "- Classify as 'update' for creating/updating/deleting tasks, schedules, priorities, queues, ordering, or status (pause/resume/cancel).\n"
     "- Classify as 'ask' for information-only queries about the current task list, schedules, priorities, or status.\n"
-    "For cleaned_text: preserve the user's intent while removing hedges/disfluencies; keep identifiers, titles, and numbers intact. If starting a task by id, cleaned_text should ideally be just the id (e.g., '12').\n"
     "Examples:\n"
-    "Input: 'Start task 12 right now' → {'action':'start','cleaned_text':'12'}\n"
-    "Input: 'Could you research ACME ASAP and report back?' → {'action':'start','cleaned_text':'research ACME ASAP and report back'}\n"
-    "Input: 'Move task 3 behind task 5' → {'action':'update','cleaned_text':'Move task 3 behind task 5'}\n"
-    "Input: 'Pause the active task' → {'action':'update','cleaned_text':'Pause the active task'}\n"
-    "Input: 'What is due this week?' → {'action':'ask','cleaned_text':'What is due this week?'}"
+    "Input: 'Start task 12 right now' → {'action':'start'}\n"
+    "Input: 'Could you research ACME ASAP and report back?' → {'action':'start'}\n"
+    "Input: 'Move task 3 behind task 5' → {'action':'update'}\n"
+    "Input: 'Pause the active task' → {'action':'update'}\n"
+    "Input: 'What is due this week?' → {'action':'ask'}"
 )
 
 
@@ -129,8 +127,8 @@ async def _dispatch_with_context(
 ) -> Tuple[str, SteerableToolHandle]:
     """
     Decide whether to call `ask`, `update` or `execute_task`, forwarding
-    *parent_chat_context* to the TaskScheduler methods.  `execute_task` accepts
-    the cleaned text (often a numeric id) from the router.
+    *parent_chat_context* to the TaskScheduler methods. Always pass the original
+    user input (*raw*) unchanged to the selected method.
     """
 
     # LLM-only routing
@@ -139,22 +137,20 @@ async def _dispatch_with_context(
         judge.set_system_message(_INTENT_SYS_MSG).generate(raw),
     )
 
-    # For 'start', call execute_task so the scheduler resolves/creates the
-    # relevant task and launches it.
-    if intent.action in {"update"}:
+    if intent.action == "update":
         handle = await ts.update(
-            intent.cleaned_text,
+            raw,
             parent_chat_context=parent_chat_context,
             _return_reasoning_steps=show_steps,
         )
     elif intent.action == "start":
         handle = await ts.execute_task(
-            intent.cleaned_text,
+            raw,
             parent_chat_context=parent_chat_context,
         )
     else:  # ask
         handle = await ts.ask(
-            intent.cleaned_text,
+            raw,
             parent_chat_context=parent_chat_context,
             _return_reasoning_steps=show_steps,
         )
