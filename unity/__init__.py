@@ -97,5 +97,37 @@ def init(
     _INITIALISED = True
 
 
+def ensure_initialised(
+    project_name: str = "Assistants",
+    assistant_id: Optional[int] = None,
+    overwrite: bool = False,
+    default_assistant: dict | None = None,
+) -> None:
+    """Ensure the runtime is initialised if no active read/write contexts exist.
+
+    If both read and write contexts are already configured, this is a no-op.
+    Otherwise, it calls :pyfunc:`init` to select an assistant and set a
+    consistent context (e.g. "{AssistantName}") before any manager constructs
+    its own sub-context (like "{AssistantName}/Contacts").
+    """
+    try:
+        ctxs = unify.get_active_context()
+        read_ctx = ctxs.get("read") if isinstance(ctxs, dict) else None
+        write_ctx = ctxs.get("write") if isinstance(ctxs, dict) else None
+    except Exception:
+        read_ctx = write_ctx = None
+
+    if read_ctx and write_ctx:
+        return
+
+    # Defer to the canonical initialiser which picks assistant + sets context
+    init(
+        project_name=project_name,
+        assistant_id=assistant_id,
+        overwrite=overwrite,
+        default_assistant=default_assistant,
+    )
+
+
 # What the package exports at top-level
 __all__ = ["init", "ASSISTANT"]
