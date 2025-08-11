@@ -58,16 +58,15 @@ def build_ask_prompt(
 ) -> str:
     """Return the system-prompt used by *ask*."""
     sig_json = json.dumps(_sig_dict(tools), indent=4)
-    # Assume there is exactly *one* search-tool in the dict:
-    search_name = next(iter(tools))
 
     # ------------------------------------------------------------------ #
     #  Dynamic helpers for custom-column tools
     # ------------------------------------------------------------------ #
+    filter_contacts = _tool_name(tools, "filter_contacts")
+    search_contacts = _tool_name(tools, "search_contacts")
     create_custom = _tool_name(tools, "create_custom_column")
     delete_custom = _tool_name(tools, "delete_custom_column")
     list_columns = _tool_name(tools, "list_columns")
-    nearest_search = _tool_name(tools, "nearest_column")
 
     # Clarification helper (only present when the caller provided queues)
     request_clar = _tool_name(tools, "request_clarification")
@@ -80,23 +79,23 @@ def build_ask_prompt(
         Examples
         --------
         • Find contacts with first name **John**
-          `{search_name}(filter="first_name == 'John'")`
+          `{filter_contacts}(filter="first_name == 'John'")`
         • Find surname **Doe**
-          `{search_name}(filter="surname == 'Doe'")`
+          `{filter_contacts}(filter="surname == 'Doe'")`
         • Specific email **john.doe@example.com**
-          `{search_name}(filter="email_address == 'john.doe@example.com'")`
+          `{filter_contacts}(filter="email_address == 'john.doe@example.com'")`
         • Phone containing **555**
-          `{search_name}(filter="'555' in phone_number")`
+          `{filter_contacts}(filter="'555' in phone_number")`
         • Exact phone **+14445556666**
-          `{search_name}(filter="phone_number == '+14445556666'")`
+          `{filter_contacts}(filter="phone_number == '+14445556666'")`
         • Name **Alice Smith**
-          `{search_name}(filter="surname == 'Smith' and first_name == 'Alice'")`
+          `{filter_contacts}(filter="surname == 'Smith' and first_name == 'Alice'")`
         • Email **a@b.com** *or* phone **123-456-7890**
-          `{search_name}(filter="email_address == 'a@b.com' or phone_number == '123-456-7890'")`
+          `{filter_contacts}(filter="email_address == 'a@b.com' or phone_number == '123-456-7890'")`
         • Missing phone number
-          `{search_name}(filter="phone_number is None")`
+          `{filter_contacts}(filter="phone_number is None")`
         • Has any email (not None)
-          `{search_name}(filter="email_address is not None")`
+          `{filter_contacts}(filter="email_address is not None")`
 
         ─ Clarification ─
         • Ambiguous request for "Alice" when multiple Alices exist – ask the user which one they mean
@@ -104,7 +103,7 @@ def build_ask_prompt(
 
         ─ Semantic search ─
         • Find contacts *similar* to "machine-learning expert" in the *bio* field
-          `{nearest_search}(source='bio', text='machine-learning expert')`
+          `{search_contacts}(source='bio', text='machine-learning expert')`
 
         ─ Custom columns ─
         • Inspect schema
@@ -117,12 +116,12 @@ def build_ask_prompt(
     ).strip()
 
     if num_contacts < 50:
-        guidance = f"given that the number of contacts is so small, you should simply use {search_name} with *no filter arguments* for now, so you can unpack the *full* contact list and answer the question directly."
+        guidance = f"given that the number of contacts is so small, you should simply use {filter_contacts} with *no filter arguments* for now, so you can unpack the *full* contact list and answer the question directly."
     else:
         guidance = "\n".join(
             [
                 "If the question is open-ended or doesn't clearly match any of the column names,",
-                f"then try {nearest_search} on the most relevant column(s) and see if you can find any semantic match.",
+                f"then try {search_contacts} on the most relevant column(s) and see if you can find any semantic match.",
             ],
         )
 
@@ -167,13 +166,13 @@ def build_update_prompt(
     # Pick out canonical names heuristically (all dynamic)
     create_name = _tool_name(tools, "create_contact")
     update_name = _tool_name(tools, "update_contact")
-    search_name = _tool_name(tools, "search_contacts")
+    filter_contacts = _tool_name(tools, "filter_contacts")
 
     # Custom-column helpers (dynamic)
     create_custom = _tool_name(tools, "create_custom_column")
     delete_custom = _tool_name(tools, "delete_custom_column")
     list_columns = _tool_name(tools, "list_columns")
-    nearest_search = _tool_name(tools, "nearest_column")
+    search_contacts = _tool_name(tools, "search_contacts")
 
     usage_examples = textwrap.dedent(
         f"""
@@ -186,7 +185,7 @@ def build_update_prompt(
           `{update_name}(contact_id=42, phone_number='+15551234567')` (note spaces and dashes removed)
 
         • **Update** a contact referred to only by name
-          1 Find ID → `{search_name}(filter="first_name == 'John' and surname == 'Doe'")`
+          1 Find ID → `{filter_contacts}(filter="first_name == 'John' and surname == 'Doe'")`
           2 Then update → `{update_name}(contact_id=<returned_id>, email_address='john.new@example.com')`
 
         • **Parse** a full name on create
@@ -202,7 +201,7 @@ def build_update_prompt(
 
         ─ Semantic search example ─
         • Retrieve top 3 contacts whose *department* is semantically close to "data science"
-          `{nearest_search}(source='department', text='data science', k=3)`
+          `{search_contacts}(source='department', text='data science', k=3)`
     """,
     ).strip()
 
