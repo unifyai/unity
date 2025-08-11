@@ -225,12 +225,14 @@ async def main(
         project_name=project_name,
     )
     user_agent.set_event_manager(event_manager)
-    user_agent.subscribe([
-        os.getenv("USER_NUMBER", ""),
-        os.getenv("USER_PHONE_NUMBER", ""),
-        "tool_use",
-        "startup",
-    ])
+    user_agent.subscribe(
+        [
+            os.getenv("USER_NUMBER", ""),
+            os.getenv("USER_PHONE_NUMBER", ""),
+            "tool_use",
+            "startup",
+        ]
+    )
 
     # Initialize Redis connection (waits for Redis to be ready)
     print("Initializing Redis connection...")

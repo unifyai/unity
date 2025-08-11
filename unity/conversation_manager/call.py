@@ -381,6 +381,51 @@ async def entrypoint(ctx: agents.JobContext):
         last_activity_time = asyncio.get_event_loop().time()  # Update activity time
         return handle.chat_message.text_content, handle.interrupted
 
+    def on_response_end(t: asyncio.Task):
+        nonlocal last_activity_time
+        print("FIRED!!!")
+        try:
+            result = t.result()
+            if result:
+                print("RESULT", result)
+                try:
+                    phone_utterance = result[0]
+                except:
+                    phone_utterance = ""
+                if phone_utterance:
+                    # send assistant response as an event to be added in past events
+                    asyncio.create_task(
+                        publish_event(
+                            {
+                                "to": "past",
+                                "topic": from_number,
+                                "event": PhoneUtteranceEvent(
+                                    role="Assistant",
+                                    content=phone_utterance,
+                                ).to_dict(),
+                            },
+                        ),
+                    )
+                    # Update activity time on assistant response
+                    last_activity_time = asyncio.get_event_loop().time()
+                    # send interupt as an event to be added to pending events (?)
+                    # this might confuse things a bit actually, maybe it should be sent to past events instead
+                    # to prevent re-triggering events if nothing happens
+                    # another way would be to signal the event manager that the user is talking now and prevent any
+                    # agent response until the user finishes talking
+                    if result[1]:
+                        asyncio.create_task(
+                            publish_event(
+                                {
+                                    "to": "past",
+                                    "topic": from_number,
+                                    "event": InterruptEvent().to_dict(),
+                                },
+                            ),
+                        )
+        except asyncio.CancelledError:
+            pass
+
     async def collect_events():
         nonlocal last_activity_time, reader
         global chunk_queue
@@ -391,12 +436,14 @@ async def entrypoint(ctx: agents.JobContext):
                 if not raw:
                     break
                 msg = json.loads(raw.decode())
+                print("GOT", msg)
                 # Update activity time on any event
                 last_activity_time = asyncio.get_event_loop().time()
                 # handle msg
                 if msg["type"] == "start_gen":
                     chunk_queue = asyncio.Queue()
                     t = asyncio.create_task(response_task())
+                    t.add_done_callback(on_response_end)
                 elif msg["type"] == "gen_chunk" or msg["type"] == "end_gen":
                     chunk_queue.put_nowait(msg)
                 elif msg["type"] == "stop":
