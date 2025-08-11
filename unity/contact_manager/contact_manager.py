@@ -108,9 +108,7 @@ class ContactManager(BaseContactManager):
         # update-side tools are can read and write
         self._update_tools: Dict[str, Callable] = {
             **methods_to_tool_dict(
-                self._list_columns,
-                self._search_contacts,
-                self._nearest_contacts,
+                self.ask,
                 self._create_contact,
                 self._update_contact,
                 self._delete_contact,
