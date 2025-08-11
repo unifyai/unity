@@ -3,6 +3,12 @@ Conversation Manager Sandbox
 
 This folder contains an **interactive playground** for the `ConversationManager` component that lives in `unity/conversation_manager/`. The goal of the sandbox is to let you experiment with the manager in isolation – simulate user interactions (phone calls, sms, whatsapp, email), observe how events flow through the EventBus, prompt construction, STT/LLM/TTS chains, and tool loops before integrating into a larger system.
 
+Prefer a quick demo? Watch this [video walkthrough](https://www.loom.com/share/f8a87d725e074eaa960c5021164dc3cd?sid=98fc555f-5ca4-47f0-838c-50eadba08d48)
+
+For understanding how natural conversations are, users can also be simulated. Watch this [video walkthrough](https://www.loom.com/share/9a2f1c0655af46c883bf5edb19f90dca?sid=74b9b39d-88e0-4748-b036-b4577144e84e)
+
+This [video walkthrough](https://www.loom.com/share/608a025efdb64e82b48ba3e03b34a055?sid=a1879903-2ec3-46fa-aa67-9555aa132093) also gives a general overview on how assistant is capable of joining Google Meet sessions.
+
 What is the `ConversationManager`?
 -------------------------------
 `ConversationManager` orchestrates real-time conversational flows, handling speech-to-text, LLM interactions, text-to-speech, and event dispatch (e.g. phone calls, SMS, email, WhatsApp). It wires up the shared `EventBus`, manages prompt builders, and auto-pins relevant events while streaming audio.
