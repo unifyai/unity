@@ -1437,6 +1437,7 @@ async def _async_tool_use_loop_inner(
                         await _process_completed_task(t)
                     if cancel_event.is_set():
                         raise asyncio.CancelledError
+                    continue  # remain paused: do not allow the LLM to speak while paused
                 else:
                     # nothing running – just idle until resumed or cancelled
                     done, _ = await asyncio.wait(
