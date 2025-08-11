@@ -42,13 +42,9 @@ class KnowledgeManager(BaseKnowledgeManager):
         """
 
         self._refactor_tools = methods_to_tool_dict(
-            # Search
-            self._search,
-            self._nearest,
-            self._search_join,
-            self._search_multi_join,
+            # Ask
+            self.ask,
             # Tables
-            self._tables_overview,
             self._create_table,
             self._rename_table,
             self._delete_tables,
