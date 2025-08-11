@@ -1304,9 +1304,8 @@ class ContactManager(BaseContactManager):
 
         Do *not* use this tool when searching for a contact with a similar description.
         Trying to get an exact match on substrings (especially with multiple words)
-        is very brittle, and likely to return no matches. The `nearest_tasks` tool is
-        *much* more robust and accurate when searching over any text-based columns such
-        cases.
+        is very brittle, and likely to return no matches. The `search_contacts` tool is
+        *much* more robust and accurate when searching over any text-based columns.
 
         Parameters
         ----------
