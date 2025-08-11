@@ -99,8 +99,8 @@ class ContactManager(BaseContactManager):
         self._ask_tools: Dict[str, Callable] = {
             **methods_to_tool_dict(
                 self._list_columns,
+                self._filter_contacts,
                 self._search_contacts,
-                self._nearest_contacts,
                 include_class_name=False,
             ),
         }
@@ -1244,7 +1244,7 @@ class ContactManager(BaseContactManager):
             },
         }
 
-    def _nearest_contacts(
+    def _search_contacts(
         self,
         *,
         column: str,
@@ -1252,8 +1252,9 @@ class ContactManager(BaseContactManager):
         k: int = 5,
     ) -> List[Dict[str, Any]]:
         """
-        Return the **k** tasks whose text embeddings are *closest* (cosine distance)
-        to the supplied *text*
+        Search the contacts based on a general text description for the column contents.
+        Specifically, return the **k** tasks whose text embeddings are *closest*
+        (cosine distance) to the supplied *text*
 
         It's always best to use *this tool* when searching for a contact with a similar
         description, role, or any other text-based column. Semantic similarity based
@@ -1290,7 +1291,7 @@ class ContactManager(BaseContactManager):
         )
         return [Contact(**lg.entries) for lg in logs]
 
-    def _search_contacts(
+    def _filter_contacts(
         self,
         *,
         filter: Optional[str] = None,

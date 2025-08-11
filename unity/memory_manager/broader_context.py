@@ -57,7 +57,7 @@ def get_broader_context() -> str:  # noqa: D401 – imperative helper name
         # 1.  Gather assistant & user bios (robust to missing data) ---------
         cm = ContactManager()
         contacts = sorted(
-            cm._search_contacts(
+            cm._filter_contacts(
                 filter="(contact_id == 0) or (contact_id == 1)",
                 limit=2,
             ),
@@ -73,7 +73,7 @@ def get_broader_context() -> str:  # noqa: D401 – imperative helper name
         assistant_bio = assist.bio if assist.bio else ""
 
         # user -----------------------------------------------------
-        user = cm._search_contacts(filter="contact_id == 1", limit=1)
+        user = cm._filter_contacts(filter="contact_id == 1", limit=1)
         u = user[0]
         user_name = " ".join(p for p in [u.first_name, u.surname] if p).strip()
         user_bio = u.bio if u.bio else ""

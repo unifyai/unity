@@ -51,7 +51,7 @@ class TranscriptManager(BaseTranscriptManager):
             self._contact_manager = ContactManager()
 
         self._tools = methods_to_tool_dict(
-            self._contact_manager._search_contacts,
+            self._contact_manager._filter_contacts,
             self._search_messages,
             self._nearest_messages,
             include_class_name=False,
@@ -424,7 +424,7 @@ class TranscriptManager(BaseTranscriptManager):
             if cid in name_cache:
                 return name_cache[cid]
             try:
-                recs = cm._search_contacts(filter=f"contact_id == {cid}", limit=1)
+                recs = cm._filter_contacts(filter=f"contact_id == {cid}", limit=1)
                 if recs:
                     rec = recs[0]
                     full = " ".join(

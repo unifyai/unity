@@ -543,7 +543,7 @@ class MemoryManager(BaseMemoryManager):
             traced=json.loads(os.getenv("UNIFY_TRACED", "true")),
         )
         contacts = await asyncio.to_thread(
-            self._contact_manager._search_contacts,
+            self._contact_manager._filter_contacts,
             filter=f"contact_id == {contact_id}",
             limit=1,
         )
@@ -567,7 +567,7 @@ class MemoryManager(BaseMemoryManager):
         # implementation is synchronous and may hit the network.
         try:
             contacts = await asyncio.to_thread(
-                self._contact_manager._search_contacts,
+                self._contact_manager._filter_contacts,
                 filter=f"contact_id == {contact_id}",
                 limit=1,
             )
@@ -646,7 +646,7 @@ class MemoryManager(BaseMemoryManager):
         # ----------------------------------------------------------------
         try:
             contacts = await asyncio.to_thread(
-                self._contact_manager._search_contacts,
+                self._contact_manager._filter_contacts,
                 filter=f"contact_id == {contact_id}",
                 limit=1,
             )
@@ -754,7 +754,7 @@ class MemoryManager(BaseMemoryManager):
         # ----------------------------------------------------------------
         try:
             contacts = await asyncio.to_thread(
-                self._contact_manager._search_contacts,
+                self._contact_manager._filter_contacts,
                 filter=f"contact_id == {contact_id}",
                 limit=1,
             )
