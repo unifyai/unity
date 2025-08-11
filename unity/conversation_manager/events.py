@@ -158,6 +158,7 @@ class StartupEvent(Event):
                 "assistant_region": self.assistant_region,
                 "assistant_about": self.assistant_about,
                 "assistant_number": self.assistant_number,
+                "assistant_email": self.assistant_email,
                 "user_name": self.user_name,
                 "user_number": self.user_number,
                 "user_phone_number": self.user_phone_number,
