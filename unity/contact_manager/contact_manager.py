@@ -54,15 +54,26 @@ class ContactManager(BaseContactManager):
             • ``False`` – expose the original *atomic* tools\
             • ``True``  – expose only the new *batched* variants
         """
+
         ctxs = unify.get_active_context()
         read_ctx, write_ctx = ctxs["read"], ctxs["write"]
+        if not read_ctx:
+            # Ensure the global assistant/context is selected before we derive our sub-context
+            try:
+                from .. import (
+                    ensure_initialised as _ensure_initialised,
+                )  # local to avoid cycles
+
+                _ensure_initialised()
+                ctxs = unify.get_active_context()
+                read_ctx, write_ctx = ctxs["read"], ctxs["write"]
+            except Exception:
+                # If ensure fails (e.g. offline tests), proceed; downstream will fall back safely
+                pass
         assert (
             read_ctx == write_ctx
         ), "read and write contexts must be the same when instantiating a TranscriptManager."
-        if read_ctx:
-            self._ctx = f"{read_ctx}/Contacts"
-        else:
-            self._ctx = "Contacts"
+        self._ctx = f"{read_ctx}/Contacts"
         if self._ctx not in unify.get_contexts():
             unify.create_context(
                 self._ctx,

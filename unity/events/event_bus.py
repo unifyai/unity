@@ -269,6 +269,19 @@ class EventBus:
         # ── Unify setup ────────────────────────────────────────────────
         active_ctx = unify.get_active_context()
         base_ctx = active_ctx["write"]
+        if not base_ctx:
+            # Ensure the global assistant/context is selected before we derive our sub-context
+            try:
+                from .. import (
+                    ensure_initialised as _ensure_initialised,
+                )  # local to avoid cycles
+
+                _ensure_initialised()
+                active_ctx = unify.get_active_context()
+                base_ctx = active_ctx["write"]
+            except Exception:
+                # If ensure fails (e.g. offline tests), proceed; downstream will fall back safely
+                pass
         self._global_ctx = f"{base_ctx}/Events" if base_ctx else "Events"
         upstream_ctxs = unify.get_contexts()
         if self._global_ctx not in upstream_ctxs:

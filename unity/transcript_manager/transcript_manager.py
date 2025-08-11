@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import os
 import json
 import asyncio
@@ -42,6 +44,7 @@ class TranscriptManager(BaseTranscriptManager):
         """
         Responsible for *searching through* the full transcripts across all communcation channels exposed to the assistant.
         """
+
         if contact_manager is not None:
             self._contact_manager = contact_manager
         else:
@@ -56,6 +59,19 @@ class TranscriptManager(BaseTranscriptManager):
 
         ctxs = unify.get_active_context()
         read_ctx, write_ctx = ctxs["read"], ctxs["write"]
+        if not read_ctx:
+            # Ensure the global assistant/context is selected before we derive our sub-context
+            try:
+                from .. import (
+                    ensure_initialised as _ensure_initialised,
+                )  # local to avoid cycles
+
+                _ensure_initialised()
+                ctxs = unify.get_active_context()
+                read_ctx, write_ctx = ctxs["read"], ctxs["write"]
+            except Exception:
+                # If ensure fails (e.g. offline tests), proceed; downstream will fall back safely
+                pass
         assert (
             read_ctx == write_ctx
         ), "read and write contexts must be the same when instantiating a TranscriptManager."
