@@ -1243,7 +1243,13 @@ class ContactManager(BaseContactManager):
         k: int = 5,
     ) -> List[Dict[str, Any]]:
         """
-        Semantic nearest-neighbour search over the source column.
+        Return the **k** tasks whose text embeddings are *closest* (cosine distance)
+        to the supplied *text*
+
+        It's always best to use *this tool* when searching for a contact with a similar
+        description, role, or any other text-based column. Semantic similarity based
+        on embeddings are *much* more robust and accurate than trying to get an exact
+        match on multi-word substrings for any text-based columns.
 
         Parameters
         ----------
@@ -1283,7 +1289,14 @@ class ContactManager(BaseContactManager):
         limit: int = 100,
     ) -> List[Contact]:
         """
-        Retrieve one or many contacts matching an arbitrary Python expression.
+        Run a **column-wise Python expression** (`filter`) against every contact
+        and return the matching rows.
+
+        Do *not* use this tool when searching for a contact with a similar description.
+        Trying to get an exact match on substrings (especially with multiple words)
+        is very brittle, and likely to return no matches. The `nearest_tasks` tool is
+        *much* more robust and accurate when searching over any text-based columns such
+        cases.
 
         Parameters
         ----------
