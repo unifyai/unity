@@ -32,8 +32,8 @@ You are a skilful assistant whose job is **answering questions** about tasks,
 contacts, transcripts or stored knowledge.  You have *read-only* access to the
 following tools and may call them as many times as needed:
 
-• {TaskScheduler._search_tasks.__name__.lstrip('_')}(filter?, offset=0, limit=100) → List[Task]
-• {TaskScheduler._nearest_tasks.__name__.lstrip('_')}(text, k=5)                    → List[Task]
+• {TaskScheduler._filter_tasks.__name__.lstrip('_')}(filter?, offset=0, limit=100) → List[Task]
+• {TaskScheduler._search_tasks.__name__.lstrip('_')}(text, k=5)                    → List[Task]
 • {ContactManager.ask.__qualname__}(text)
 • {TranscriptManager.ask.__qualname__}(text)
 • {KnowledgeManager.ask.__qualname__}(text)
@@ -93,8 +93,8 @@ execute_task = f"""
 Your job is to **launch a task** so that it becomes the single *active* task.
 
 Tools available:
-• {TaskScheduler._search_tasks.__name__.lstrip('_')}(filter?) /
-  {TaskScheduler._nearest_tasks.__name__.lstrip('_')}(text) – locate the task.
+• {TaskScheduler._filter_tasks.__name__.lstrip('_')}(filter?) /
+  {TaskScheduler._search_tasks.__name__.lstrip('_')}(text) – locate the task.
 • _execute_task_call_(task_id)                  – call **exactly once**.
 
 Important rules

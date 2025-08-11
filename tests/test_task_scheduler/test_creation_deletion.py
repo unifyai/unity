@@ -13,7 +13,7 @@ def test_create_task():
         name="Promote Jeff Smith",
         description="Send an email to Jeff Smith, kindly congratulating him and explaining that he has been promoted from sales rep to sales manager.",
     )
-    task_list = task_scheduler._search_tasks()
+    task_list = task_scheduler._filter_tasks()
     assert task_list == [
         {
             "name": "Promote Jeff Smith",
@@ -41,12 +41,12 @@ def test_delete_task():
         name="Promote Jeff Smith",
         description="Send an email to Jeff Smith, kindly congratulating him and explaining that he has been promoted from sales rep to sales manager.",
     )
-    task_list = task_scheduler._search_tasks()
+    task_list = task_scheduler._filter_tasks()
     assert len(task_list) == 1
 
     # delete
     task_scheduler._delete_task(task_id=0)
-    task_list = task_scheduler._search_tasks()
+    task_list = task_scheduler._filter_tasks()
     assert task_list == []
 
 
@@ -66,6 +66,6 @@ def test_create_task_with_response_policy():
         response_policy=policy,
     )
 
-    rows = ts._search_tasks()
+    rows = ts._filter_tasks()
     assert len(rows) == 1
     assert rows[0]["response_policy"] == policy

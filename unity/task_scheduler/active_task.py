@@ -72,7 +72,7 @@ class ActiveTask(BaseActiveTask):
         ret = await self._active_task.result()
         # If the task wasn't explicitly cancelled/failed, mark as completed.
         if self._scheduler and self._task_id is not None:
-            row = self._scheduler._search_tasks(  # type: ignore[attr-defined]
+            row = self._scheduler._filter_tasks(  # type: ignore[attr-defined]
                 filter=f"task_id == {self._task_id} and instance_id == {self._instance_id}",
                 limit=1,
             )[0]

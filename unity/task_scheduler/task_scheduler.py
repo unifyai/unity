@@ -72,8 +72,8 @@ class TaskScheduler(BaseTaskScheduler):
         # Query-only helpers – safe, read-only operations.  Include the *external* contact lookup
         self._ask_tools = {
             **methods_to_tool_dict(
+                self._filter_tasks,
                 self._search_tasks,
-                self._nearest_tasks,
                 self._get_task_queue,
                 include_class_name=False,  # redundant, all same class (this one)
             ),
@@ -155,7 +155,7 @@ class TaskScheduler(BaseTaskScheduler):
         # tool; until then it may legitimately stay as ``None``.
         # {'task_id': int, 'instance_id': int, 'handle': ActiveTask}
         self._active_task: Optional[Dict[str, Any]] = None
-        primed_tasks = self._search_tasks(filter="status == 'primed'")
+        primed_tasks = self._filter_tasks(filter="status == 'primed'")
         if primed_tasks:
             assert (
                 len(primed_tasks) == 1
@@ -543,7 +543,7 @@ class TaskScheduler(BaseTaskScheduler):
         if self._active_task is not None:
             raise RuntimeError("Another task is already running – stop it first.")
 
-        candidate_rows = self._search_tasks(
+        candidate_rows = self._filter_tasks(
             filter=(
                 f"task_id == {task_id} and status not in "
                 "('completed','cancelled','failed','active')"
@@ -1038,7 +1038,7 @@ class TaskScheduler(BaseTaskScheduler):
             When trying to cancel the currently *active* task.
         """
         self._ensure_not_active_task(task_ids)
-        completed_tasks = self._search_tasks(filter="status == 'completed'")
+        completed_tasks = self._filter_tasks(filter="status == 'completed'")
         completed_task_ids = [lg["task_id"] for lg in completed_tasks]
         assert not set(task_ids).intersection(
             set(completed_task_ids),
@@ -1096,7 +1096,7 @@ class TaskScheduler(BaseTaskScheduler):
             neighbours.append(("prev_task", "next_task", schedule["next_task"]))
 
         for field_to_set, _, neighbour_id in neighbours:
-            rows = self._search_tasks(filter=f"task_id == {neighbour_id}", limit=1)
+            rows = self._filter_tasks(filter=f"task_id == {neighbour_id}", limit=1)
             if not rows:
                 raise ValueError(
                     f"Broken queue linkage: referenced task_id {neighbour_id} not found.",
@@ -1143,7 +1143,7 @@ class TaskScheduler(BaseTaskScheduler):
         if task_id is None:
             return
 
-        rows = self._search_tasks(filter=f"task_id == {task_id}", limit=1)
+        rows = self._filter_tasks(filter=f"task_id == {task_id}", limit=1)
         self._primed_task = rows[0] if rows else None
 
     def _get_task_queue(
@@ -1162,7 +1162,7 @@ class TaskScheduler(BaseTaskScheduler):
         # ----------------  helpers  ---------------- #
         def _get_task_by_task_id(tid: int) -> Optional[dict]:
             """Fetch exactly one task row by id or return None."""
-            rows = self._search_tasks(filter=f"task_id == {tid}", limit=1)
+            rows = self._filter_tasks(filter=f"task_id == {tid}", limit=1)
             return rows[0] if rows else None
 
         # ----------------  starting node  ---------------- #
@@ -1175,7 +1175,7 @@ class TaskScheduler(BaseTaskScheduler):
                 task_id = execute_task["task_id"]
             else:
                 # Derive the head: the runnable task whose `prev_task` is None
-                head_candidates = self._search_tasks(
+                head_candidates = self._filter_tasks(
                     filter=self._HEAD_FILTER,
                     limit=2,
                 )
@@ -1192,7 +1192,7 @@ class TaskScheduler(BaseTaskScheduler):
 
         if execute_task is None:
             # fall back to queue head: node with no prev_task and non-terminal status
-            head_candidates = self._search_tasks(
+            head_candidates = self._filter_tasks(
                 filter=self._HEAD_FILTER,
                 limit=2,
             )
@@ -1294,7 +1294,7 @@ class TaskScheduler(BaseTaskScheduler):
 
         # -------  gather existing logs  -------
         for tid in new:
-            row = self._search_tasks(filter=f"task_id == {tid}", limit=1)[0]
+            row = self._filter_tasks(filter=f"task_id == {tid}", limit=1)[0]
             if row.get("trigger") is not None:
                 raise ValueError(
                     f"Task {tid} is trigger-based and cannot be placed in the queue.",
@@ -1303,7 +1303,7 @@ class TaskScheduler(BaseTaskScheduler):
         # linkage pointers *and* any existing start_at value.
         existing_logs = {
             t["task_id"]: t
-            for t in self._search_tasks()
+            for t in self._filter_tasks()
             if t.get("schedule") is not None
         }
 
@@ -1434,7 +1434,7 @@ class TaskScheduler(BaseTaskScheduler):
 
         self._ensure_not_active_task(task_id)
 
-        current_rows = self._search_tasks(filter=f"task_id == {task_id}", limit=1)
+        current_rows = self._filter_tasks(filter=f"task_id == {task_id}", limit=1)
         if not current_rows:
             raise ValueError(f"No task found with id={task_id}")
 
@@ -1590,7 +1590,7 @@ class TaskScheduler(BaseTaskScheduler):
 
         # ── Invariant check *per task* if new_status becomes 'scheduled' ─────
         if str(new_status) == Status.scheduled.value:
-            rows = self._search_tasks(filter=f"task_id in {task_ids}")
+            rows = self._filter_tasks(filter=f"task_id in {task_ids}")
             for row in rows:
                 self._validate_scheduled_invariants(
                     status=new_status,
@@ -1599,7 +1599,7 @@ class TaskScheduler(BaseTaskScheduler):
                 )
         # ── Invariant check when transitioning to 'queued' ───────────────
         if str(new_status) == Status.queued.value:
-            rows = self._search_tasks(filter=f"task_id in {task_ids}")
+            rows = self._filter_tasks(filter=f"task_id in {task_ids}")
             for row in rows:
                 self._validate_scheduled_invariants(
                     status=new_status,
@@ -1655,7 +1655,7 @@ class TaskScheduler(BaseTaskScheduler):
             new_start_at = new_start_at.isoformat()
 
         # Fetch current row (needed for invariants & trigger check)
-        current_rows = self._search_tasks(filter=f"task_id == {task_id}", limit=1)
+        current_rows = self._filter_tasks(filter=f"task_id == {task_id}", limit=1)
 
         if current_rows and current_rows[0].get("trigger") is not None:
             raise ValueError(
@@ -1802,7 +1802,7 @@ class TaskScheduler(BaseTaskScheduler):
             derived_expr=expr,
         )
 
-    def _nearest_tasks(
+    def _search_tasks(
         self,
         *,
         text: str,
@@ -1842,7 +1842,7 @@ class TaskScheduler(BaseTaskScheduler):
             )
         ]
 
-    def _search_tasks(
+    def _filter_tasks(
         self,
         *,
         filter: Optional[str] = None,

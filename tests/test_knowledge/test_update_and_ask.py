@@ -48,7 +48,7 @@ async def test_update_simple_fact():
     handle = await km.update("The ZX-99 gizmo was released in 1994.")
     await handle.result()
 
-    all_data = km._search()
+    all_data = km._filter()
     assert _contains(json.dumps(all_data), "1994"), all_data
 
 
@@ -80,7 +80,7 @@ async def test_ask_simple_fact():
         answer,
         reasoning,
         "Answer does not contain expected birth year",
-        {"Knowledge Data": km._search()},
+        {"Knowledge Data": km._filter()},
     )
 
 
@@ -109,7 +109,7 @@ async def test_round_trip_simple_fact():
         answer,
         reasoning,
         "Answer does not contain expected birth year",
-        {"Knowledge Data": km._search()},
+        {"Knowledge Data": km._filter()},
     )
 
 
@@ -143,7 +143,7 @@ async def test_schema_expands_and_new_field_retrievable():
         answer,
         reasoning,
         "Answer does not contain expected age",
-        {"Knowledge Data": km._search()},
+        {"Knowledge Data": km._filter()},
     )
 
     handle = await km.update(
@@ -161,7 +161,7 @@ async def test_schema_expands_and_new_field_retrievable():
         answer,
         reasoning,
         "Answer does not contain expected height",
-        {"Knowledge Data": km._search()},
+        {"Knowledge Data": km._filter()},
     )
 
     handle = await km.ask(
@@ -174,7 +174,7 @@ async def test_schema_expands_and_new_field_retrievable():
         answer,
         reasoning,
         "Answer does not contain expected favorite color",
-        {"Knowledge Data": km._search()},
+        {"Knowledge Data": km._filter()},
     )
 
     handle = await km.ask(
@@ -187,7 +187,7 @@ async def test_schema_expands_and_new_field_retrievable():
         answer,
         reasoning,
         "Answer does not contain expected age after schema expansion",
-        {"Knowledge Data": km._search()},
+        {"Knowledge Data": km._filter()},
     )
 
 
@@ -229,7 +229,7 @@ async def test_multiple_tables_and_join_like_query():
         answer,
         reasoning,
         "Answer does not contain expected price",
-        {"Knowledge Data": km._search()},
+        {"Knowledge Data": km._filter()},
     )
 
 
@@ -272,7 +272,7 @@ async def test_incremental_updates_and_refactor():
         answer,
         reasoning,
         "Answer does not contain both expected pet names",
-        {"Knowledge Data": km._search()},
+        {"Knowledge Data": km._filter()},
     )
 
 
@@ -312,7 +312,7 @@ async def test_numeric_reasoning_after_multiple_points():
         answer,
         reasoning,
         "Answer does not correctly identify only point P",
-        {"Knowledge Data": km._search()},
+        {"Knowledge Data": km._filter()},
     )
 
 
@@ -349,7 +349,7 @@ async def test_update_interjection():
         "Output containing both 'Sector 7' and '1990'",
         out,
         "Output does not contain both expected details about Bob",
-        {"Knowledge Data": km._search()},
+        {"Knowledge Data": km._filter()},
     )
 
 

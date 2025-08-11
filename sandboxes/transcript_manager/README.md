@@ -11,7 +11,7 @@ What is the `TranscriptManager`?
 
 * **`ask(text)`** – read-only questions such as *"When did Dan last speak with Julia on the phone?"*
 
-Under the hood the method launches a _tool-loop_ where an LLM can call a small, strongly-typed tool-kit (`_search_messages`, `_nearest_messages`, `_search_contacts`, …) until it reaches a final answer.  The extensive unit-test suite in `tests/test_transcript_manager/` exercises all public and private helpers – skim through those tests if you want concrete examples of typical usage patterns, clarification flows, semantic search, event logging, etc.
+Under the hood the method launches a _tool-loop_ where an LLM can call a small, strongly-typed tool-kit (`_search_messages`, `_filter_messages`, `_search_contacts`, …) until it reaches a final answer.  The extensive unit-test suite in `tests/test_transcript_manager/` exercises all public and private helpers – skim through those tests if you want concrete examples of typical usage patterns, clarification flows, semantic search, event logging, etc.
 
 Running the sandbox
 -------------------

@@ -52,8 +52,8 @@ class TranscriptManager(BaseTranscriptManager):
 
         self._tools = methods_to_tool_dict(
             self._contact_manager._filter_contacts,
+            self._filter_messages,
             self._search_messages,
-            self._nearest_messages,
             include_class_name=False,
         )
 
@@ -492,7 +492,7 @@ class TranscriptManager(BaseTranscriptManager):
 
     # Tools #
     # ------#
-    def _nearest_messages(
+    def _search_messages(
         self,
         *,
         text: str,
@@ -529,11 +529,7 @@ class TranscriptManager(BaseTranscriptManager):
         )
         return [Message(**lg.entries) for lg in logs]
 
-    # _nearest_summaries removed – summary functionality deprecated.
-    def _nearest_summaries(self, *args, **kwargs):
-        raise NotImplementedError("Summary functionality removed.")
-
-    def _search_messages(
+    def _filter_messages(
         self,
         *,
         filter: Optional[str] = None,

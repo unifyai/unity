@@ -66,7 +66,7 @@ async def test_request_multi_step_workflow(
     await task_handle.result()
 
     # Programmatic check
-    tasks = ts._search_tasks(filter="'Carlos' in name")
+    tasks = ts._filter_tasks(filter="'Carlos' in name")
     assert len(tasks) > 0, "Task for Carlos was not created."
     assert "GlobalCorp" in tasks[0]["name"], "Task name did not include updated info."
 
@@ -109,7 +109,7 @@ async def test_request_complex_single_shot(
     ), "TaskScheduler.update was not called."
 
     # Final state check
-    created_task = conductor._task_scheduler._search_tasks(
+    created_task = conductor._task_scheduler._filter_tasks(
         filter="'Review Q2 Report' in name",
     )
     assert len(created_task) == 1
@@ -132,7 +132,7 @@ async def test_request_executes_task(
     task_to_run_id = id_maps["tasks"]["write_quarterly_report"]
 
     # The task starts as 'primed' from the scenario
-    initial_task = ts._search_tasks(filter=f"task_id == {task_to_run_id}")[0]
+    initial_task = ts._filter_tasks(filter=f"task_id == {task_to_run_id}")[0]
     assert initial_task["status"] == "primed"
 
     # Execute the task via a natural language request
@@ -144,7 +144,7 @@ async def test_request_executes_task(
 
     # Check the task's final status. Since we injected a SimulatedPlanner,
     # it should complete quickly.
-    final_task = ts._search_tasks(filter=f"task_id == {task_to_run_id}")[0]
+    final_task = ts._filter_tasks(filter=f"task_id == {task_to_run_id}")[0]
     assert final_task["status"] == "completed", assertion_failed(
         "Task status 'completed'",
         final_task["status"],

@@ -115,7 +115,7 @@ async def test_join_used_for_department_query(monkeypatch):
         answer,
         reasoning,
         "Answer does not reflect the correct number of employees",
-        {"All Knowledge": json.dumps(km._search())},
+        {"All Knowledge": json.dumps(km._filter())},
     )
 
     assert called["flag"], (

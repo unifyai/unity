@@ -48,11 +48,11 @@ async def test_transcript_embedding_semantic_search():
     tm.join_published()
 
     # Ensure that a lexical search for the word 'budgeting' returns no results
-    lexical_results = tm._search_messages(filter="'budgeting' in content")
+    lexical_results = tm._filter_messages(filter="'budgeting' in content")
     assert lexical_results == []
 
     # Use semantic search to find the nearest messages to the query
-    nearest = tm._nearest_messages(text="banking and budgeting", k=2)
+    nearest = tm._search_messages(text="banking and budgeting", k=2)
 
     # Verify the result length and type
     assert len(nearest) == 2
@@ -62,5 +62,5 @@ async def test_transcript_embedding_semantic_search():
     assert msgs[-1].content not in set([n.content for n in nearest])
 
     # Test k-limit behavior
-    all_nearest = tm._nearest_messages(text="banking and budgeting", k=10)
+    all_nearest = tm._search_messages(text="banking and budgeting", k=10)
     assert len(all_nearest) == 3  # Should return all 3 messages we inserted

@@ -79,7 +79,7 @@ class ScenarioBuilder:
 
 def _answer_semantic(ts: TaskScheduler, question: str) -> str:
     q = question.lower()
-    tasks = ts._search_tasks()
+    tasks = ts._filter_tasks()
 
     if "currently primed" in q:
         return next(t for t in tasks if t["status"] == "primed")["name"]

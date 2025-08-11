@@ -43,7 +43,7 @@ def _answer_semantic(
 ) -> str:
     """Compute the *correct* answer directly from stored data."""
     q = question.lower()
-    messages = tm._search_messages(limit=None)
+    messages = tm._filter_messages(limit=None)
 
     def cid(name: str) -> int:
         return _ID_BY_NAME[name]
