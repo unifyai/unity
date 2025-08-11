@@ -944,20 +944,39 @@ async def await_with_interrupt(  # noqa: D401 – imperative helper
                 if cmd in {"stop", "cancel", "s", "c"}:
                     print("stopping…")
                     handle.stop()
+                    print("✅ Stop sent.")
+                    if enable_voice_steering:
+                        speak("Stop sent")
+                        _wait_for_tts_end()
+                        print(HELP_TEXT)
+                    else:
+                        print(HELP_TEXT)
                     break
                 if cmd in {"pause", "p"}:
                     try:
                         print("pausing…")
                         handle.pause()
                         print("⏸️  Paused")
+                        if enable_voice_steering:
+                            speak("Paused")
+                            _wait_for_tts_end()
+                            print(HELP_TEXT)
+                        else:
+                            print(HELP_TEXT)
                     except Exception as exc:
                         print(f"⚠️  Pause failed: {exc}")
                     continue
-                if cmd in {"resume"}:
+                if cmd in {"resume", "play", "continue"}:
                     try:
                         print("resuming…")
                         handle.resume()
                         print("▶️  Resumed")
+                        if enable_voice_steering:
+                            speak("Resumed")
+                            _wait_for_tts_end()
+                            print(HELP_TEXT)
+                        else:
+                            print(HELP_TEXT)
                     except Exception as exc:
                         print(f"⚠️  Resume failed: {exc}")
                     continue
@@ -967,6 +986,13 @@ async def await_with_interrupt(  # noqa: D401 – imperative helper
                     else:
                         print(f"interjecting: {arg}")
                         run_in_loop(handle.interject(arg))
+                        print("✅ Interjection sent.")
+                        if enable_voice_steering:
+                            speak("Interjection sent")
+                            _wait_for_tts_end()
+                            print(HELP_TEXT)
+                        else:
+                            print(HELP_TEXT)
                     continue
                 if cmd in {"ask", "?"}:
                     if not arg:
@@ -1053,11 +1079,24 @@ async def await_with_interrupt(  # noqa: D401 – imperative helper
                                 else:
                                     print(f"interjecting: {txt_to_inject}")
                                     run_in_loop(handle.interject(txt_to_inject))
+                                    print("✅ Interjection sent.")
+                                    if enable_voice_steering:
+                                        speak("Interjection sent")
+                                        _wait_for_tts_end()
+                                        print(HELP_TEXT)
+                                    else:
+                                        print(HELP_TEXT)
                             elif _intent.action == "pause":
                                 try:
                                     print("pausing…")
                                     handle.pause()
                                     print("⏸️  Paused")
+                                    if enable_voice_steering:
+                                        speak("Paused")
+                                        _wait_for_tts_end()
+                                        print(HELP_TEXT)
+                                    else:
+                                        print(HELP_TEXT)
                                 except Exception as exc:
                                     print(f"⚠️  Pause failed: {exc}")
                             elif _intent.action == "resume":
@@ -1065,18 +1104,45 @@ async def await_with_interrupt(  # noqa: D401 – imperative helper
                                     print("resuming…")
                                     handle.resume()
                                     print("▶️  Resumed")
+                                    if enable_voice_steering:
+                                        speak("Resumed")
+                                        _wait_for_tts_end()
+                                        print(HELP_TEXT)
+                                    else:
+                                        print(HELP_TEXT)
                                 except Exception as exc:
                                     print(f"⚠️  Resume failed: {exc}")
                             elif _intent.action == "stop":
                                 print("stopping…")
                                 handle.stop()
+                                print("✅ Stop sent.")
+                                if enable_voice_steering:
+                                    speak("Stop sent")
+                                    _wait_for_tts_end()
+                                    print(HELP_TEXT)
+                                else:
+                                    print(HELP_TEXT)
                                 break
                             elif _intent.action == "status":
                                 print("status requested")
-                                print("done" if handle.done() else "running")
+                                _state = "done" if handle.done() else "running"
+                                print(_state)
+                                if enable_voice_steering:
+                                    speak(f"Status: {_state}")
+                                    _wait_for_tts_end()
+                                    print(HELP_TEXT)
+                                else:
+                                    print(HELP_TEXT)
                             else:
                                 print(f"interjecting: {transcript}")
                                 run_in_loop(handle.interject(transcript))
+                                print("✅ Interjection sent.")
+                                if enable_voice_steering:
+                                    speak("Interjection sent")
+                                    _wait_for_tts_end()
+                                    print(HELP_TEXT)
+                                else:
+                                    print(HELP_TEXT)
                         except Exception as exc:
                             print(f"⚠️  Freeform routing failed: {exc}")
                     except Exception as exc:
@@ -1139,11 +1205,24 @@ async def await_with_interrupt(  # noqa: D401 – imperative helper
                             else:
                                 print(f"interjecting: {txt_to_inject}")
                                 run_in_loop(handle.interject(txt_to_inject))
+                                print("✅ Interjection sent.")
+                                if enable_voice_steering:
+                                    speak("Interjection sent")
+                                    _wait_for_tts_end()
+                                    print(HELP_TEXT)
+                                else:
+                                    print(HELP_TEXT)
                         elif _intent.action == "pause":
                             try:
                                 print("pausing…")
                                 handle.pause()
                                 print("⏸️  Paused")
+                                if enable_voice_steering:
+                                    speak("Paused")
+                                    _wait_for_tts_end()
+                                    print(HELP_TEXT)
+                                else:
+                                    print(HELP_TEXT)
                             except Exception as exc:
                                 print(f"⚠️  Pause failed: {exc}")
                         elif _intent.action == "resume":
@@ -1151,25 +1230,59 @@ async def await_with_interrupt(  # noqa: D401 – imperative helper
                                 print("resuming…")
                                 handle.resume()
                                 print("▶️  Resumed")
+                                if enable_voice_steering:
+                                    speak("Resumed")
+                                    _wait_for_tts_end()
+                                    print(HELP_TEXT)
+                                else:
+                                    print(HELP_TEXT)
                             except Exception as exc:
                                 print(f"⚠️  Resume failed: {exc}")
                         elif _intent.action == "stop":
                             print("stopping…")
                             handle.stop()
+                            print("✅ Stop sent.")
+                            if enable_voice_steering:
+                                speak("Stop sent")
+                                _wait_for_tts_end()
+                                print(HELP_TEXT)
+                            else:
+                                print(HELP_TEXT)
                             break
                         elif _intent.action == "status":
                             print("status requested")
-                            print("done" if handle.done() else "running")
+                            _state = "done" if handle.done() else "running"
+                            print(_state)
+                            if enable_voice_steering:
+                                speak(f"Status: {_state}")
+                                _wait_for_tts_end()
+                                print(HELP_TEXT)
+                            else:
+                                print(HELP_TEXT)
                         else:
                             # Fallback to interject if unknown
                             print(f"interjecting: {arg}")
                             run_in_loop(handle.interject(arg))
+                            print("✅ Interjection sent.")
+                            if enable_voice_steering:
+                                speak("Interjection sent")
+                                _wait_for_tts_end()
+                                print(HELP_TEXT)
+                            else:
+                                print(HELP_TEXT)
                     except Exception as exc:
                         print(f"⚠️  Freeform routing failed: {exc}")
                     continue
                 if cmd in {"status", "st"}:
                     print("status requested")
-                    print("done" if handle.done() else "running")
+                    state = "done" if handle.done() else "running"
+                    print(state)
+                    if enable_voice_steering:
+                        speak(f"Status: {state}")
+                        _wait_for_tts_end()
+                        print(HELP_TEXT)
+                    else:
+                        print(HELP_TEXT)
                     continue
                 if cmd in {"help", "h"}:
                     print(HELP_TEXT)
@@ -1177,10 +1290,24 @@ async def await_with_interrupt(  # noqa: D401 – imperative helper
                 # Unknown command → treat as interjection without the '/'
                 print(f"interjecting: {stripped[1:]}")
                 run_in_loop(handle.interject(stripped[1:]))
+                print("✅ Interjection sent.")
+                if enable_voice_steering:
+                    speak("Interjection sent")
+                    _wait_for_tts_end()
+                    print(HELP_TEXT)
+                else:
+                    print(HELP_TEXT)
             else:
                 # Plain text → interject
                 print(f"interjecting: {stripped}")
                 run_in_loop(handle.interject(stripped))
+                print("✅ Interjection sent.")
+                if enable_voice_steering:
+                    speak("Interjection sent")
+                    _wait_for_tts_end()
+                    print(HELP_TEXT)
+                else:
+                    print(HELP_TEXT)
         await asyncio.sleep(poll)
 
     # Task completed: cancel any ongoing TTS immediately and return result
