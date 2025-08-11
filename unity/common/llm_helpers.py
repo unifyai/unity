@@ -1514,8 +1514,57 @@ async def _async_tool_use_loop_inner(
                     break
 
                 llm_turn_required = True
-                msg = {"role": "user", "content": extra}
-                await _append_msgs([msg])
+                # Build system message based on the user-visible history stored on the outer handle.
+                history_lines: list[str] = []
+                try:
+                    outer_handle = (
+                        outer_handle_container[0] if outer_handle_container else None
+                    )
+                    uvh = (
+                        getattr(outer_handle, "_user_visible_history", [])
+                        if outer_handle
+                        else []
+                    )
+                    for _m in uvh:
+                        role = _m.get("role")
+                        content = (_m.get("content") or "").strip()
+                        if role in ("user", "assistant") and content:
+                            history_lines.append(f"{role}: {content}")
+                except Exception:
+                    # Fallback to just the original user prompt if available
+                    try:
+                        first_user = next(
+                            (
+                                m.get("content", "")
+                                for m in client.messages
+                                if m.get("role") == "user"
+                            ),
+                            "",
+                        )
+                        if first_user:
+                            history_lines = [f"user: {first_user}"]
+                    except Exception:
+                        history_lines = []
+
+                sys_content = (
+                    "The user *cannot* see *any* the contents of this ongoing tool use chat context. "
+                    "They have just interjected with the following message (in bold at the bottom). "
+                    "From their perspective, the conversation thus far is as follows:\n"
+                    "--\n" + ("\n".join(history_lines)) + f"\nuser: **{extra}**\n"
+                    "--\n"
+                    "Please respond to their most recent interjection only (any prior interjections/questions have already been handled)"
+                )
+                interjection_msg = {"role": "system", "content": sys_content}
+                await _append_msgs([interjection_msg])
+
+                # Append this interjection to the user-visible history for future context
+                try:
+                    if outer_handle:
+                        outer_handle._user_visible_history.append(
+                            {"role": "user", "content": extra},
+                        )
+                except Exception:
+                    pass
 
             # ── A.  Wait for tool completion OR cancellation  ───────────────
             # If a child just asked for clarification we also want to give
@@ -2701,6 +2750,7 @@ class AsyncToolUseLoopHandle(SteerableToolHandle):
         pause_event: Optional[asyncio.Event] = None,
         client: "unify.AsyncUnify | None" = None,
         loop_id: str = "",
+        initial_user_message: Optional[str] = None,
     ):
         self._task = task
         self._queue = interject_queue
@@ -2718,6 +2768,14 @@ class AsyncToolUseLoopHandle(SteerableToolHandle):
         # (e.g. an `ActiveTask`) has been adopted.  Once a delegate is ready we
         # forward all queued messages so that no early user guidance is lost.
         self._early_interjects: list[str] = []
+
+        # Maintain a user-visible history (what the end-user would see):
+        # Records: original prompt (user), interjections (user), ask Q/A (user/assistant).
+        self._user_visible_history: list[dict] = []
+        if initial_user_message:
+            self._user_visible_history.append(
+                {"role": "user", "content": initial_user_message},
+            )
 
     async def ask(
         self,
@@ -2737,6 +2795,12 @@ class AsyncToolUseLoopHandle(SteerableToolHandle):
                 question,
                 _return_reasoning_steps=_return_reasoning_steps,
             )
+
+        # Record the user-visible question immediately (even if delegated)
+        try:
+            self._user_visible_history.append({"role": "user", "content": question})
+        except Exception:
+            pass
 
         # 0.  Defensive guard: if the outer loop has already finished we can
         #     just answer from the final transcript without starting another
@@ -2840,11 +2904,31 @@ class AsyncToolUseLoopHandle(SteerableToolHandle):
             timeout=60,
         )
 
+        # Monkey-patch result() to record the assistant answer when available
         if not _return_reasoning_steps:
+            _orig_result = helper_handle.result
+
+            async def _rec_result():  # type: ignore[return-type]
+                ans = await _orig_result()
+                try:
+                    self._user_visible_history.append(
+                        {"role": "assistant", "content": ans},
+                    )
+                except Exception:
+                    pass
+                return ans
+
+            helper_handle.result = _rec_result  # type: ignore[attr-defined]
             return helper_handle
 
         async def _wrap():
             answer = await helper_handle.result()
+            try:
+                self._user_visible_history.append(
+                    {"role": "assistant", "content": answer},
+                )
+            except Exception:
+                pass
             return answer, inspection_client.messages
 
         helper_handle.result = _wrap  # type: ignore[attr-defined]
@@ -3037,6 +3121,9 @@ def start_async_tool_use_loop(
         pause_event=pause_event,
         client=client,
         loop_id=loop_id,
+        initial_user_message=(
+            message["content"] if isinstance(message, dict) else message
+        ),
     )
 
     # Let the inner coroutine discover the outer handle so it can switch
